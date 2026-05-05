@@ -127,6 +127,10 @@ export default function Chat() {
   // Cleared when characterId changes (new character may have different job location context).
   // This prevents a full location fetch on EVERY message send for characters with occupation_location_id.
   const locationsSessionCacheRef = useRef({ data: null, fetchedForCharacterId: null });
+  // Emoji reaction cooldown — max once every 3 messages per character per session.
+  // Without this, every 50%-chance message fires a concurrent LLM call alongside the main response.
+  const emojiMsgCountRef = useRef(0);
+  const lastEmojiMsgIndexRef = useRef(-3);
   const [convoLoadError, setConvoLoadError] = useState(null);
 
   useEffect(() => {
@@ -460,7 +464,8 @@ export default function Chat() {
     }
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
 
-    base44.functions.invoke('processUserIncome', { mode: 'message' }).catch(() => {});
+    // Fire processUserIncome after a short delay — not critical path, doesn't need to block anything
+    setTimeout(() => base44.functions.invoke('processUserIncome', { mode: 'message' }).catch(() => {}), 2000);
 
     if (isPhone) {
       const sysMsg = getTextSystemMessage(character);
@@ -1149,7 +1154,13 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
     
-    if (Math.random() > 0.5) {
+    // EMOJI REACTION COOLDOWN: max once every 3 messages per character per session.
+    // Without this guard, 50% of messages fire a concurrent LLM call alongside the main LLM response,
+    // directly competing for quota. The cooldown reduces emoji LLM calls by ~67%.
+    emojiMsgCountRef.current += 1;
+    const shouldRunEmoji = Math.random() > 0.5 && (emojiMsgCountRef.current - lastEmojiMsgIndexRef.current) >= 3;
+    if (shouldRunEmoji) {
+      lastEmojiMsgIndexRef.current = emojiMsgCountRef.current;
       setTimeout(async () => {
         const isImage = !!userImageUrl;
         const messageDesc = isImage
@@ -1204,69 +1215,11 @@ Reply with ONLY the single emoji or the word "none".`,
     };
     setPreviousLevels(prevLevels);
 
-    base44.functions.invoke("checkAchievements", {
-      characterId,
-      characterName: character.name,
-      userMessage: text,
-      characterState: {
-        health_status: character.health_status,
-        current_education_activity: character.current_education_activity,
-        future_life_goals: character.future_life_goals,
-        emotional_state: character.emotional_state,
-        friendship_level: character.friendship_level,
-        romantic_level: character.romantic_level,
-        chosen_family_level: character.chosen_family_level,
-      },
-    }).catch(() => {});
-
-    if (responseText) {
-      // Use the cached characters list from React Query instead of a fresh full-account scan.
-      // This avoids a Character.filter({ owner_email }) call on every single message sent.
-      const cachedChars = queryClient.getQueryData(["characters", currentUser.email]);
-      const allCharsForApproval = Array.isArray(cachedChars) ? cachedChars : [character];
-      checkForApprovalEvents(responseText, character, allCharsForApproval, text);
-    }
-
-    base44.functions.invoke("classifyConversationEvent", {
-      characterId,
-      characterName: character.name,
-      conversationId: convoId,
-      userMessage: text,
-      characterReply: responseText || "(image sent)",
-      recentMessages: recentMsgs.slice(-8),
-      characterState: {
-        emotional_state: character.emotional_state,
-        health_status: character.health_status,
-        current_activity: character.current_activity,
-        personality_summary: character.personality_summary,
-        fictional_relationships: (character.fictional_relationships || []).map(r => ({ person_name: r.person_name, related_character_id: r.related_character_id, relationship_type: r.relationship_type })),
-      },
-    }).catch(() => {});
-
-    if (responseText) {
-      base44.functions.invoke("extractMemoriesFromTurn", {
-        characterId,
-        conversationId: convoId,
-        userMessage: text,
-        characterReply: responseText,
-        playingAsCharacterId: activeCharacter?.id || null,
-      }).then(res => {
-        const detected = res?.data?.newPeopleDetected?.relationships;
-        if (detected?.length > 0) setNewPeopleDetected(detected);
-      }).catch(() => {});
-
-      // If playing as an active character, also sync World Phone memory bi-directionally
-      if (activeCharacter?.id && responseText) {
-        base44.functions.invoke("syncWorldPhoneMemory", {
-          senderCharacterId: activeCharacter.id,
-          receiverCharacterId: characterId,
-          messageContent: text,
-          context: isPhone ? 'world_phone' : 'character_chat',
-          conversationId: convoId,
-        }).catch(() => {});
-      }
-    }
-
+    // ── POST-SEND BACKGROUND CALLS ─────────────────────────────────────────────
+    // STAGGERED to prevent concurrent API burst. Chat response is already saved above.
+    // These are all fire-and-forget — none block the UI. Delays prevent quota contention.
+    //
+    // Tier 1 (0ms) — location/activity updates: lightest, purely writes, no LLM
     base44.functions.invoke("updateCharacterActivityFromMessage", {
       characterId,
       messageContent: text,
@@ -1290,28 +1243,97 @@ Reply with ONLY the single emoji or the word "none".`,
       }).catch(() => {});
     }
 
-    base44.functions.invoke("updateRelationshipLevels", {
-      characterId,
-      userMessage: text,
-      characterReply: responseText || "(image)",
-      recentMessages: recentMsgs,
-      playingAsCharacterId: activeCharacter?.id || null,
-    }).then(async res => {
-      if (res?.data?.reason) setLastChangeReason(res.data.reason);
-      if (res?.data?.milestone_messages?.length > 0) {
-        for (const milestone of res.data.milestone_messages) {
-          await base44.entities.Message.create({
-            conversation_id: convoId,
-            sender_type: "character",
-            character_id: characterId,
-            character_name: character.name,
-            content: milestone.text,
-            is_narrative: true,
-            timestamp: new Date().toISOString(),
-          });
+    // Tier 2 (1.5s) — approval check (local, no API) + classify event (LLM-light)
+    setTimeout(() => {
+      if (responseText) {
+        const cachedChars = queryClient.getQueryData(["characters", currentUser.email]);
+        const allCharsForApproval = Array.isArray(cachedChars) ? cachedChars : [character];
+        checkForApprovalEvents(responseText, character, allCharsForApproval, text);
+      }
+
+      base44.functions.invoke("classifyConversationEvent", {
+        characterId,
+        characterName: character.name,
+        conversationId: convoId,
+        userMessage: text,
+        characterReply: responseText || "(image sent)",
+        recentMessages: recentMsgs.slice(-8),
+        characterState: {
+          emotional_state: character.emotional_state,
+          health_status: character.health_status,
+          current_activity: character.current_activity,
+          personality_summary: character.personality_summary,
+          fictional_relationships: (character.fictional_relationships || []).map(r => ({ person_name: r.person_name, related_character_id: r.related_character_id, relationship_type: r.relationship_type })),
+        },
+      }).catch(() => {});
+    }, 1500);
+
+    // Tier 3 (3s) — memory extraction + relationship levels (LLM-heavy, most expensive)
+    setTimeout(() => {
+      if (responseText) {
+        base44.functions.invoke("extractMemoriesFromTurn", {
+          characterId,
+          conversationId: convoId,
+          userMessage: text,
+          characterReply: responseText,
+          playingAsCharacterId: activeCharacter?.id || null,
+        }).then(res => {
+          const detected = res?.data?.newPeopleDetected?.relationships;
+          if (detected?.length > 0) setNewPeopleDetected(detected);
+        }).catch(() => {});
+
+        if (activeCharacter?.id) {
+          base44.functions.invoke("syncWorldPhoneMemory", {
+            senderCharacterId: activeCharacter.id,
+            receiverCharacterId: characterId,
+            messageContent: text,
+            context: isPhone ? 'world_phone' : 'character_chat',
+            conversationId: convoId,
+          }).catch(() => {});
         }
       }
-    }).catch(() => {});
+    }, 3000);
+
+    // Tier 4 (5s) — relationship levels + achievements (lowest urgency, heaviest LLM)
+    setTimeout(() => {
+      base44.functions.invoke("checkAchievements", {
+        characterId,
+        characterName: character.name,
+        userMessage: text,
+        characterState: {
+          health_status: character.health_status,
+          current_education_activity: character.current_education_activity,
+          future_life_goals: character.future_life_goals,
+          emotional_state: character.emotional_state,
+          friendship_level: character.friendship_level,
+          romantic_level: character.romantic_level,
+          chosen_family_level: character.chosen_family_level,
+        },
+      }).catch(() => {});
+
+      base44.functions.invoke("updateRelationshipLevels", {
+        characterId,
+        userMessage: text,
+        characterReply: responseText || "(image)",
+        recentMessages: recentMsgs,
+        playingAsCharacterId: activeCharacter?.id || null,
+      }).then(async res => {
+        if (res?.data?.reason) setLastChangeReason(res.data.reason);
+        if (res?.data?.milestone_messages?.length > 0) {
+          for (const milestone of res.data.milestone_messages) {
+            await base44.entities.Message.create({
+              conversation_id: convoId,
+              sender_type: "character",
+              character_id: characterId,
+              character_name: character.name,
+              content: milestone.text,
+              is_narrative: true,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+      }).catch(() => {});
+    }, 5000);
 
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
