@@ -89,6 +89,12 @@ const SYSTEM_ISSUES = [
     label: 'Characters at closed venues',
     description: 'Find characters whose current resolved location is a venue outside its operating hours'
   },
+  {
+    id: 'backfill_owner_email',
+    label: 'Backfill Character Owner Email',
+    description: 'Repair legacy character records missing owner_email — only repaired when owner_user_id proves they belong to your account. Records without sufficient evidence are flagged, not guessed.',
+    isAction: true,
+  },
 ];
 
 // ── RESULT DISPLAY (shared) ──────────────────────────────────────────────────
@@ -160,25 +166,45 @@ function IssueSelector({ issues, selected, onToggle, onRun, onClose, isRunning }
       <p className="text-sm text-muted-foreground">Select the issues to diagnose:</p>
       <div className="space-y-2">
         {issues.map(issue => (
-          <button
-            key={issue.id}
-            onClick={() => onToggle(issue.id)}
-            className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
-              selected.includes(issue.id) ? 'border-primary bg-primary/10' : 'border-border bg-secondary/50 hover:bg-secondary'
-            }`}
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-foreground">{issue.label}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{issue.description}</p>
+          issue.isAction ? (
+            // Action items launch their own dedicated panel — not added to diagnostic batch
+            <button
+              key={issue.id}
+              onClick={() => onToggle(issue.id)}
+              className="w-full text-left p-3 rounded-lg border-2 border-amber-500/30 bg-amber-500/5 hover:bg-amber-500/10 transition-all"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm font-medium text-foreground">{issue.label}</p>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium">Action</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">{issue.description}</p>
+                </div>
+                <div className="text-xs text-amber-400 flex-shrink-0 ml-2 mt-1">Run →</div>
               </div>
-              <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ml-2 ${
-                selected.includes(issue.id) ? 'bg-primary border-primary' : 'border-border'
-              }`}>
-                {selected.includes(issue.id) && <CheckCircle2 className="w-4 h-4 text-primary-foreground" />}
+            </button>
+          ) : (
+            <button
+              key={issue.id}
+              onClick={() => onToggle(issue.id)}
+              className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
+                selected.includes(issue.id) ? 'border-primary bg-primary/10' : 'border-border bg-secondary/50 hover:bg-secondary'
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-foreground">{issue.label}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{issue.description}</p>
+                </div>
+                <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ml-2 ${
+                  selected.includes(issue.id) ? 'bg-primary border-primary' : 'border-border'
+                }`}>
+                  {selected.includes(issue.id) && <CheckCircle2 className="w-4 h-4 text-primary-foreground" />}
+                </div>
               </div>
-            </div>
-          </button>
+            </button>
+          )
         ))}
       </div>
       <div className="flex gap-2 pt-2">
@@ -200,6 +226,129 @@ function IssueSelector({ issues, selected, onToggle, onRun, onClose, isRunning }
   );
 }
 
+// ── BACKFILL OWNER EMAIL PANEL (action item — runs its own function) ──────────
+
+function BackfillOwnerEmailPanel({ onReset }) {
+  const [status, setStatus] = useState('idle'); // idle | running | done | error
+  const [result, setResult] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const queryClient = useQueryClient();
+
+  const run = async () => {
+    setStatus('running');
+    setResult(null);
+    setErrorMsg(null);
+    try {
+      const res = await base44.functions.invoke('backfillMyCharacterOwnerEmail', {});
+      const d = res?.data;
+      if (!d) throw new Error('No response from backfill function');
+      setResult(d);
+      setStatus('done');
+      queryClient.invalidateQueries({ queryKey: ['characters'] });
+    } catch (err) {
+      setErrorMsg(err.message || 'Backfill failed');
+      setStatus('error');
+    }
+  };
+
+  if (status === 'idle') {
+    return (
+      <div className="space-y-4">
+        <div className="bg-secondary/50 border border-border rounded-lg p-3 space-y-1.5">
+          <p className="text-sm font-medium text-foreground">Backfill Character Owner Email</p>
+          <p className="text-xs text-muted-foreground">
+            Scans your character records for any missing <code className="text-primary">owner_email</code> fields.
+            Repairs only records where <code className="text-primary">owner_user_id</code> matches your account ID — no guessing, no cross-account access.
+          </p>
+          <p className="text-xs text-amber-400 font-medium mt-1">
+            Evidence required: owner_user_id must match your account. Records without sufficient evidence are flagged for admin review — not modified.
+          </p>
+        </div>
+        <button
+          onClick={run}
+          className="w-full px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors text-sm"
+        >
+          Run Backfill
+        </button>
+        <button onClick={onReset} className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors text-sm">
+          Back
+        </button>
+      </div>
+    );
+  }
+
+  if (status === 'running') {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 gap-3">
+        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+        <p className="text-sm text-muted-foreground">Scanning and repairing character records…</p>
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="space-y-3">
+        <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+          <p className="text-sm text-destructive">{errorMsg}</p>
+        </div>
+        <button onClick={() => setStatus('idle')} className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground text-sm font-medium">Try Again</button>
+      </div>
+    );
+  }
+
+  // Done — show results
+  const r = result?.results || {};
+  const needsAdmin = result?.admin_required;
+  return (
+    <div className="space-y-3">
+      <div className={`p-3 rounded-xl border text-xs ${r.repaired?.length > 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-secondary border-border'}`}>
+        <p className="font-semibold text-foreground">{result?.summary}</p>
+      </div>
+
+      <div className="space-y-1 text-xs">
+        <p className="text-muted-foreground">Records scanned: <span className="text-foreground font-medium">{r.scanned ?? '—'}</span></p>
+        <p className="text-muted-foreground">Already correct: <span className="text-foreground font-medium">{r.already_correct ?? 0}</span></p>
+        <p className="text-muted-foreground">Repaired: <span className="text-emerald-400 font-medium">{r.repaired?.length ?? 0}</span></p>
+        {r.repaired?.length > 0 && (
+          <div className="pl-3 space-y-0.5">
+            {r.repaired.map((rec, i) => (
+              <p key={i} className="text-emerald-400">✓ {rec.name} <span className="font-mono text-foreground/50">({rec.id?.substring(0, 8)}…)</span></p>
+            ))}
+          </div>
+        )}
+        {r.skipped_wrong_account?.length > 0 && (
+          <div className="mt-2">
+            <p className="text-destructive font-medium">Blocked — cross-account or mismatched evidence ({r.skipped_wrong_account.length}):</p>
+            {r.skipped_wrong_account.map((rec, i) => (
+              <p key={i} className="text-muted-foreground pl-3">{rec.name}: {rec.reason}</p>
+            ))}
+          </div>
+        )}
+        {r.errors?.length > 0 && (
+          <div className="mt-2">
+            <p className="text-destructive font-medium">Write errors ({r.errors.length}):</p>
+            {r.errors.map((rec, i) => (
+              <p key={i} className="text-muted-foreground pl-3">{rec.name}: {rec.error}</p>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {needsAdmin && (
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-400">
+          <p className="font-medium">Some records require manual admin repair</p>
+          <p className="text-muted-foreground mt-0.5">Records without sufficient evidence (no owner_user_id or mismatched ID) cannot be repaired from your account. A support report has been created.</p>
+        </div>
+      )}
+
+      <button onClick={onReset} className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors">
+        Done
+      </button>
+    </div>
+  );
+}
+
 // ── TAB PANEL ────────────────────────────────────────────────────────────────
 
 function TabPanel({ title, icon: Icon, issues, functionName, onClose, user }) {
@@ -207,16 +356,30 @@ function TabPanel({ title, icon: Icon, issues, functionName, onClose, user }) {
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
+  const [activeAction, setActiveAction] = useState(null); // id of an action-type issue being executed
   const queryClient = useQueryClient();
 
-  const toggle = (id) => setSelected(p => p.includes(id) ? p.filter(i => i !== id) : [...p, id]);
+  const toggle = (id) => {
+    const issue = issues.find(i => i.id === id);
+    // Action items: clicking launches them directly rather than adding to the diagnostic batch
+    if (issue?.isAction) {
+      setActiveAction(id);
+      return;
+    }
+    setSelected(p => p.includes(id) ? p.filter(i => i !== id) : [...p, id]);
+  };
+
+  const resetAction = () => setActiveAction(null);
 
   const run = async () => {
+    // Filter out action items — they are handled separately
+    const diagnosticIssues = selected.filter(id => !issues.find(i => i.id === id)?.isAction);
+    if (diagnosticIssues.length === 0) return;
     setIsRunning(true);
     setError(null);
     setResults(null);
     try {
-      const res = await base44.functions.invoke(functionName, { selectedIssues: selected });
+      const res = await base44.functions.invoke(functionName, { selectedIssues: diagnosticIssues });
       const d = res?.data?.data || res?.data;
       if (d) {
         setResults({
@@ -236,6 +399,11 @@ function TabPanel({ title, icon: Icon, issues, functionName, onClose, user }) {
       setIsRunning(false);
     }
   };
+
+  // If an action item is active, render its dedicated panel
+  if (activeAction === 'backfill_owner_email') {
+    return <BackfillOwnerEmailPanel onReset={resetAction} />;
+  }
 
   return (
     <div className="space-y-4">

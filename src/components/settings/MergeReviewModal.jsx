@@ -238,9 +238,22 @@ export default function MergeReviewModal({ isOpen, onClose, dupeGroup, ownerEmai
                       </div>
                     );
                   })}
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    Run <strong>Backfill Character Owner Email</strong> from Settings → Troubleshoot to repair missing owner_email fields, then retry.
-                  </p>
+                  {/* Per-error-type guidance — do NOT show the same instruction for all states */}
+                  {previewData.unsafe_records?.some(r => r.ownership_state === 'LEGACY_MISSING_OWNER') && (
+                    <p className="text-[10px] text-amber-400 mt-1">
+                      To repair missing <code>owner_email</code> fields: go to <strong>Settings → Troubleshoot → System &amp; Data → Backfill Character Owner Email</strong>, then retry this merge.
+                    </p>
+                  )}
+                  {previewData.unsafe_records?.some(r => r.ownership_state === 'RECORD_NOT_FOUND') && (
+                    <p className="text-[10px] text-destructive mt-1">
+                      ⚠ One or more records could not be found — this is a <strong>dangling reference</strong>, not a missing owner_email problem. The original record no longer exists. Run <strong>Clean Ghost Character References</strong> from Settings → System &amp; Data to remove the stale link.
+                    </p>
+                  )}
+                  {previewData.unsafe_records?.some(r => r.ownership_state === 'CROSS_ACCOUNT_BLOCKED') && (
+                    <p className="text-[10px] text-destructive mt-1">
+                      ⚠ One or more records belong to a different account. Cross-account merges are permanently blocked. Contact support if this is unexpected.
+                    </p>
+                  )}
                 </div>
               )}
 
