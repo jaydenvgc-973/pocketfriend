@@ -416,8 +416,61 @@ Deno.serve(async (req) => {
           reason === 'adaptive_pre_sleep_return'   ||
           reason === 'no_valid_sleep_location'
         ) {
-          // Already in a confirmed sleep state — do not disturb
-          console.log(`[autonomousMovement] ${char.name}: SLEEP STATE — no disturbance (${reason || status})`);
+          // Character is in a sleep state — validate that their current location is a valid sleep location.
+          // Valid = current_home_location_id OR temporary_housing_location_id (explicit alternate sleep).
+          // MUST NOT write home fields, residence fields, or location ownership. Presence fields only.
+          const assignedHomeId       = char.current_home_location_id;
+          const assignedSleepAltId   = char.temporary_housing_location_id; // explicitly assigned alternate
+          const currentLocId         = char.resolved_current_location_id;
+
+          const isAtHome    = assignedHomeId    && currentLocId === assignedHomeId;
+          const isAtSleepAlt = assignedSleepAltId && currentLocId === assignedSleepAltId;
+
+          if (isAtHome || isAtSleepAlt) {
+            // Valid sleep location — no action needed
+            console.log(`[autonomousMovement] ${char.name}: SLEEP STATE valid (${reason || status})`);
+            continue;
+          }
+
+          // Invalid sleep location — correct presence to assigned home or sleep alternate.
+          // NEVER write home_location_id, residence fields, or location assignments.
+          const validSleepLocId   = assignedHomeId || assignedSleepAltId;
+          const validSleepLoc     = validSleepLocId ? userLocations.find(loc => loc.id === validSleepLocId) : null;
+
+          if (!validSleepLoc) {
+            // No valid sleep location assigned — fail visibly, do not pick random location
+            const failMsg = `${char.name}: SLEEP_LOCATION_INVALID — current=${currentLocId || 'none'}, assigned_home=${assignedHomeId || 'MISSING'}, sleep_alt=${assignedSleepAltId || 'MISSING'} — needs housing assignment`;
+            blockedLog.push(failMsg);
+            console.warn(`[autonomousMovement] ⚠️ SLEEP_INVALID: ${failMsg}`);
+            // Mark character as needing sleep-location assignment — presence-only field, no home write
+            await base44.entities.Character.update(char.id, {
+              resolved_source_reason: 'no_valid_sleep_location',
+              resolved_presence_status: 'sleeping', // keep sleeping but flag the issue
+            }).catch(() => base44.asServiceRole.entities.Character.update(char.id, {
+              resolved_source_reason: 'no_valid_sleep_location',
+            }).catch(() => {}));
+            continue;
+          }
+
+          // Correct presence to valid sleep location — presence fields ONLY
+          const sleepCorrectionPayload = {
+            resolved_current_location_id:   validSleepLoc.id,
+            resolved_current_location_name: validSleepLoc.name,
+            resolved_presence_status:       'sleeping',
+            resolved_location_type:         validSleepLoc.id === assignedHomeId ? 'home' : 'temporary_housing',
+            resolved_source_reason:         'sleep_location_correction',
+            last_arrived_time:              new Date().toISOString(),
+            // Explicitly DO NOT write: current_home_location_id, temporary_housing_location_id,
+            // resident fields, location ownership, or any location record fields.
+          };
+          try {
+            await base44.entities.Character.update(char.id, sleepCorrectionPayload);
+          } catch {
+            await base44.asServiceRole.entities.Character.update(char.id, sleepCorrectionPayload);
+          }
+          totalMoved++;
+          moveLog.push(`${char.name} → ${validSleepLoc.name} [SLEEP_LOCATION_CORRECTION] was at invalid: ${currentLocId}`);
+          console.log(`[autonomousMovement] ✓ ${char.name}: sleep correction → ${validSleepLoc.name} (was at invalid ${currentLocId})`);
           continue;
         }
 
