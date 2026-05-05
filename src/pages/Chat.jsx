@@ -104,6 +104,8 @@ export default function Chat() {
     setConvoLoadError(null);
     setUserScrolledAway(false); // Reset scroll position tracking on character switch
     setCatchupNarrativeText(null); // Don't carry over catchup from previous character
+    // Clear location session cache on character switch — different character may have different job context
+    locationsSessionCacheRef.current = { data: null, fetchedForCharacterId: null };
   }, [characterId]);
 
   const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
@@ -121,6 +123,10 @@ export default function Chat() {
   // Session cache for system_prompt_url content — prevents re-fetching on every message send.
   // Keyed as "characterId::url" so prompt leakage between characters is impossible.
   const systemPromptCacheRef = useRef({});
+  // Session cache for locations — fetchAllLocationsForUser is expensive and stable within a session.
+  // Cleared when characterId changes (new character may have different job location context).
+  // This prevents a full location fetch on EVERY message send for characters with occupation_location_id.
+  const locationsSessionCacheRef = useRef({ data: null, fetchedForCharacterId: null });
   const [convoLoadError, setConvoLoadError] = useState(null);
 
   useEffect(() => {
@@ -577,9 +583,36 @@ export default function Chat() {
       // occupation_location_id triggers this fetch so worker_shifts are available.
       // Without locations, buildEmploymentPromptBlock cannot read worker_shifts and
       // the LLM falls back to training knowledge (9am-5pm default).
+      //
+      // RATE LIMIT GUARD: Cache location data for the lifetime of this chat session.
+      // fetchAllLocationsForUser is the single biggest 429 contributor — it was firing
+      // on EVERY message send for any character with a job. Now fetches once per character
+      // per session. Cache is cleared when navigating to a different character.
       const needsLocationFetch = !!(character.occupation_location_id || character.current_activity ||
         character.additional_occupation_locations?.length > 0);
       let allLocationsForContext = [];
+
+      const getLocationsForContext = async () => {
+        if (!needsLocationFetch) return null;
+        // Use cached data if available for this character (stable within a session)
+        const cache = locationsSessionCacheRef.current;
+        if (cache.data && cache.fetchedForCharacterId === characterId) {
+          allLocationsForContext = cache.data;
+          const allActiveChars = queryClient.getQueryData(["characters", currentUser.email]) || [];
+          const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
+          const occupancyMap = buildSpatialOccupancyMap(allActiveChars, cache.data);
+          return buildSpatialContextString(characterId, occupancyMap, cache.data) || null;
+        }
+        // Cache miss — fetch once and store
+        const allLocRes = await base44.functions.invoke('fetchAllLocationsForUser', {});
+        const allLocs = allLocRes?.data?.locations || [];
+        locationsSessionCacheRef.current = { data: allLocs, fetchedForCharacterId: characterId };
+        allLocationsForContext = allLocs;
+        const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser.email, status: 'active' });
+        const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
+        const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
+        return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
+      };
 
       const [memoryResult, progressionResult, pastLookupsResult, spatialResult] = await Promise.all([
         base44.functions.invoke('retrieveActiveMemory', {
@@ -593,16 +626,7 @@ export default function Chat() {
         }),
         base44.functions.invoke('buildProgressionFilteredContext', { characterId, currentMessage: text }).catch(() => null),
         base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10).catch(() => []),
-        needsLocationFetch
-          ? base44.functions.invoke('fetchAllLocationsForUser', {}).then(async (allLocRes) => {
-              const allLocs = allLocRes?.data?.locations || [];
-              allLocationsForContext = allLocs; // capture for employment block below
-              const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser.email, status: 'active' });
-              const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
-              const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
-              return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
-            }).catch(() => null)
-          : Promise.resolve(null),
+        getLocationsForContext().catch(() => null),
       ]);
 
       let memoryContext = "";
