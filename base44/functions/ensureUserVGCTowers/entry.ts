@@ -21,20 +21,14 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     // STEP 1: Fetch the authoritative template from adobevgc@gmail.com
-    const [templateByCreated, templateByOwner] = await Promise.all([
-      base44.asServiceRole.entities.LocationReference.filter({
-        created_by: 'adobevgc@gmail.com',
-        name: 'VGC Towers',
-        scope: { $ne: 'shared' }
-      }),
-      base44.asServiceRole.entities.LocationReference.filter({
-        owner_email: 'adobevgc@gmail.com',
-        name: 'VGC Towers',
-        scope: { $ne: 'shared' }
-      }),
-    ]);
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const templateResults = await base44.asServiceRole.entities.LocationReference.filter({
+      owner_email: 'adobevgc@gmail.com',
+      name: 'VGC Towers',
+      scope: { $ne: 'shared' }
+    });
 
-    const templateVGC = templateByCreated[0] || templateByOwner[0];
+    const templateVGC = templateResults[0];
     if (!templateVGC) {
       return Response.json({
         error: 'Template VGC Towers not found on adobevgc@gmail.com account',
@@ -50,24 +44,11 @@ Deno.serve(async (req) => {
     };
 
     // STEP 2: Fetch all personal (non-shared) VGC Towers for this user
-    const [userByCreated, userByOwner] = await Promise.all([
-      base44.entities.LocationReference.filter({
-        created_by: user.email,
-        name: 'VGC Towers',
-        scope: { $ne: 'shared' }
-      }),
-      base44.entities.LocationReference.filter({
-        owner_email: user.email,
-        name: 'VGC Towers',
-        scope: { $ne: 'shared' }
-      }),
-    ]);
-
-    const seen = new Set();
-    const userInstances = [...userByCreated, ...userByOwner].filter(l => {
-      if (seen.has(l.id)) return false;
-      seen.add(l.id);
-      return true;
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const userInstances = await base44.entities.LocationReference.filter({
+      owner_email: user.email,
+      name: 'VGC Towers',
+      scope: { $ne: 'shared' }
     });
 
     // STEP 3: If multiple instances, delete all but one and update the remaining

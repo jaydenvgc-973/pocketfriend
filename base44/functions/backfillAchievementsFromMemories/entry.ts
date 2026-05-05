@@ -105,7 +105,8 @@ Deno.serve(async (req) => {
     const characters = await base44.asServiceRole.entities.Character.filter({ is_default: false });
 
     // Get all existing achievements for this user upfront
-    const existing = await base44.entities.UserAchievement.filter({ created_by: user.email });
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const existing = await base44.entities.UserAchievement.filter({ owner_email: user.email });
     const existingIds = existing.map(a => a.achievement_id);
 
     const allUnlocked = [];

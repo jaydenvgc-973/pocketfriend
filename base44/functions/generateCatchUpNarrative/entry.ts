@@ -97,7 +97,8 @@ Generate a natural, brief summary that ${character.name} would mention in respon
       character_id: characterId,
       character_name: character.name,
       owner_user_id: character.owner_user_id,
-      owner_email: character.owner_email || character.created_by,
+      // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+      owner_email: character.owner_email,
       event_type: 'catch_up_summary',
       narrative_text: catchUpSummary,
       memory_summary: catchUpText,

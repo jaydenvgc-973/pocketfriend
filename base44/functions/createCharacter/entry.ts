@@ -22,7 +22,7 @@ Deno.serve(async (req) => {
       ...characterData,
       owner_email: user.email.toLowerCase(),
       owner_user_id: user.id,
-      // created_by is set automatically by the platform but we set it here for audit clarity
+      // owner_email and owner_user_id are the only ownership fields — created_by is permanently forbidden
     };
 
     const character = await base44.entities.Character.create(dataToCreate);

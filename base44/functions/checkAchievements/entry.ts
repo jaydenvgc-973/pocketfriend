@@ -133,9 +133,10 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
     allCharacters,
     allConversations,
   ] = await Promise.all([
-    base44.asServiceRole.entities.Message.filter({ created_by: userEmail }, '-created_date', 500),
-    base44.asServiceRole.entities.Character.filter({ created_by: userEmail, status: 'active' }),
-    base44.asServiceRole.entities.Conversation.filter({ created_by: userEmail }),
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    base44.asServiceRole.entities.Message.filter({ owner_email: userEmail }, '-created_date', 500),
+    base44.asServiceRole.entities.Character.filter({ owner_email: userEmail, status: 'active' }),
+    base44.asServiceRole.entities.Conversation.filter({ owner_email: userEmail }),
   ]);
 
   const userMessages = allMessages.filter(m => m.sender_type === 'user');
@@ -278,7 +279,8 @@ Deno.serve(async (req) => {
     if (!characterId) return Response.json({ unlocked: [] });
 
     // Get existing achievements
-    const existing = await base44.entities.UserAchievement.filter({ created_by: user.email });
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const existing = await base44.entities.UserAchievement.filter({ owner_email: user.email });
     const existingIds = existing.map(a => a.achievement_id);
 
     // Run both detection passes in parallel

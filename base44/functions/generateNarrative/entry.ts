@@ -326,7 +326,8 @@ No adult emotional complexity in narrative. Reflect their developmental stage ac
       : '';
 
     // ── RESOLVE USER LABEL (account-scoped — never global list) ──────────────
-    const settingsList = await base44.entities.UserSettings.filter({ created_by: user.email }).catch(() => []);
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const settingsList = await base44.entities.UserSettings.filter({ owner_email: user.email }).catch(() => []);
     const settings = settingsList?.[0] || {};
     const worldName = settings?.fictional_world_name || null;
     const userLabel = worldName || 'them';

@@ -184,7 +184,9 @@ Deno.serve(async (req) => {
   }
 
   const allCharacters = await base44.asServiceRole.entities.Character.list();
-  const characters = allCharacters.filter(c => (!c.status || c.status === 'active') && c.created_by);
+  // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+  // Only process characters that have a valid owner_email (fail visible if missing)
+  const characters = allCharacters.filter(c => (!c.status || c.status === 'active') && c.owner_email);
 
   const results = [];
 
@@ -239,7 +241,8 @@ Deno.serve(async (req) => {
       let locationAffinityContext = null;
       try {
         const allLocations = await base44.asServiceRole.entities.LocationReference.list('-created_date', 50);
-        const userLocations = allLocations.filter(l => !l.created_by || l.created_by === character.created_by);
+        // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+        const userLocations = allLocations.filter(l => !l.owner_email || l.owner_email === character.owner_email);
         locationAffinityContext = buildCharacterAffinityContext(character, userLocations);
       } catch (_) {}
 

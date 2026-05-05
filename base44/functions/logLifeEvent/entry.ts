@@ -221,7 +221,8 @@ Deno.serve(async (req) => {
       if (candidateAchievements.length > 0) {
         audit.achievement_evaluated = true;
         // Fetch existing achievements
-        const existing = await base44.entities.UserAchievement.filter({ created_by: userEmail });
+        // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+        const existing = await base44.entities.UserAchievement.filter({ owner_email: userEmail });
         const existingIds = new Set(existing.map(a => a.achievement_id));
 
         const toGrant = candidateAchievements.filter(id => !existingIds.has(id));

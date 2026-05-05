@@ -19,8 +19,9 @@ Deno.serve(async (req) => {
     const payload = await req.json().catch(() => ({}));
     const excludeCharacterIds = payload.excludeCharacterIds || [];
 
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
     const allCharacters = await base44.entities.Character.filter({
-      created_by: user.email,
+      owner_email: user.email,
       status: 'active',
     });
 

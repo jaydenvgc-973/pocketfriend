@@ -65,8 +65,9 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
     const characters = await base44.entities.Character.filter({
-      created_by: user.email,
+      owner_email: user.email,
       status: 'active',
     });
 

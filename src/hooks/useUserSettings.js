@@ -4,7 +4,20 @@ import { base44 } from "@/api/base44Client";
 async function fetchAndConsolidate(userEmail) {
   if (!userEmail) return null;
   const list = await base44.entities.UserSettings.filter({ owner_email: userEmail });
-  if (list.length === 0) return null;
+
+  // If nothing found: existing records may be missing owner_email (pre-migration state).
+  // Trigger a one-time safe migration scoped to the current user, then re-fetch.
+  if (list.length === 0) {
+    const migrationKey = `user_settings_migrated_${userEmail}`;
+    if (!sessionStorage.getItem(migrationKey)) {
+      sessionStorage.setItem(migrationKey, '1');
+      await base44.functions.invoke("backfillUserSettingsOwnerEmail", {}).catch(() => {});
+      const afterMigration = await base44.entities.UserSettings.filter({ owner_email: userEmail });
+      return afterMigration[0] || null;
+    }
+    return null;
+  }
+
   if (list.length === 1) return list[0];
   // Consolidate duplicates — but only once per session to avoid 429 storms
   const consolidateKey = `settings_consolidated_${userEmail}`;

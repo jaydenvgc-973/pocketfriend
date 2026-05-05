@@ -19,7 +19,8 @@ Deno.serve(async (req) => {
     const { mode = 'message' } = await req.json().catch(() => ({}));
 
     // Fetch current settings
-    const settingsList = await base44.entities.UserSettings.filter({ created_by: user.email });
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const settingsList = await base44.entities.UserSettings.filter({ owner_email: user.email });
     const settings = settingsList[0];
     if (!settings) return Response.json({ error: 'No settings found' }, { status: 404 });
 

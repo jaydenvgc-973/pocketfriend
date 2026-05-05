@@ -47,17 +47,9 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 2: Check if NPC with this name already exists for this user ─────
-    // Use service role to catch all ownership variants (owner_email, created_by)
-    const [existingByCreated, existingByOwner] = await Promise.all([
-      base44.asServiceRole.entities.Character.filter({ created_by: user.email, name }),
-      base44.asServiceRole.entities.Character.filter({ owner_email: user.email, name }),
-    ]);
-    const seen = new Set();
-    const existing = [...existingByCreated, ...existingByOwner].filter(c => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
-      return c.status !== 'deleted';
-    });
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const existingByOwner = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email, name });
+    const existing = existingByOwner.filter(c => c.status !== 'deleted');
 
     if (existing.length > 0) {
       const existingNPC = existing[0];

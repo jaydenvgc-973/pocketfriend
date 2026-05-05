@@ -15,11 +15,12 @@ Deno.serve(async (req) => {
     const now = Date.now();
 
     // Fetch all data in parallel
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
     const [existing, allMessages, allCharacters, allConversations] = await Promise.all([
-      base44.entities.UserAchievement.filter({ created_by: userEmail }),
-      base44.asServiceRole.entities.Message.filter({ created_by: userEmail }, '-created_date', 1000),
-      base44.asServiceRole.entities.Character.filter({ created_by: userEmail }),
-      base44.asServiceRole.entities.Conversation.filter({ created_by: userEmail }),
+      base44.entities.UserAchievement.filter({ owner_email: userEmail }),
+      base44.asServiceRole.entities.Message.filter({ owner_email: userEmail }, '-created_date', 1000),
+      base44.asServiceRole.entities.Character.filter({ owner_email: userEmail }),
+      base44.asServiceRole.entities.Conversation.filter({ owner_email: userEmail }),
     ]);
 
     const existingIds = new Set(existing.map(a => a.achievement_id));

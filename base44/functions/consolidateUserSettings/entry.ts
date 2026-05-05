@@ -69,7 +69,8 @@ Deno.serve(async (req) => {
   }
 
   // Update the canonical record with merged data
-  const { id, created_date, updated_date, created_by, ...updateData } = merged;
+  // Strip platform-managed read-only fields before updating — created_by is permanently forbidden and ignored
+  const { id, created_date, updated_date, ...updateData } = merged;
   await base44.entities.UserSettings.update(canonical.id, updateData);
   console.log('CONSOLIDATION: Canonical record updated successfully');
 

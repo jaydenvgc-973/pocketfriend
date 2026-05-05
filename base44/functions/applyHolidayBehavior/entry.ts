@@ -7,7 +7,8 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     // Check if holiday observation is enabled
-    const userSettings = await base44.entities.UserSettings.filter({ created_by: user.email });
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const userSettings = await base44.entities.UserSettings.filter({ owner_email: user.email });
     const settings = userSettings[0] || {};
     
     if (settings.holiday_observation_enabled === false) {
@@ -31,7 +32,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    const characters = await base44.entities.Character.filter({ created_by: user.email });
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const characters = await base44.entities.Character.filter({ owner_email: user.email });
     const relationships = await base44.entities.CharacterRelationship.list();
     const locations = await base44.entities.LocationReference.list();
 
