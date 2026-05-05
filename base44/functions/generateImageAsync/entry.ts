@@ -1132,6 +1132,12 @@ Deno.serve(async (req) => {
     // Mutation logging is already done above immediately after sanitization — no duplicate needed here.
 
     // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
+    // SYNC NOTE: The classifySceneContext + sanitizePrompt functions above are
+    // intentionally identical to the inlined versions in regenerateImageWithReason.
+    // Deno functions cannot share local imports — both inline the same code.
+    // If you change the sanitizer here, you MUST update regenerateImageWithReason too.
+    // Any drift between the two sanitizers is a bug.
+
     const serverTime = new Date();
     const finalPrompt = buildPrompt({
       prompt: sanitizedPrompt,
@@ -1215,7 +1221,15 @@ Deno.serve(async (req) => {
       attempts: [],           // staging log — all attempts stored here
     };
 
+    // ── DISPATCH LOG — logged once before loop, updated on camera override ─────
+    console.log(`[generateImageAsync] ── PROVIDER DISPATCH ──`);
+    console.log(`  raw prompt:       ${rawPromptForSanitize.substring(0, 200)}${rawPromptForSanitize.length > 200 ? '…' : ''}`);
+    console.log(`  sanitized prompt: ${sanitizedPrompt.substring(0, 200)}${sanitizedPrompt.length > 200 ? '…' : ''}`);
+    console.log(`  char refs: ${CHAR_SLOTS} | env refs: ${ENV_SLOTS} | user refs: ${USER_SLOTS}`);
+
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      // Log final assembled provider prompt for this attempt (capped at 400 chars)
+      console.log(`[generateImageAsync] Attempt ${attempt} — final provider prompt (first 400): ${attemptPrompt.substring(0, 400)}…`);
       let attemptGenRes = null;
       try {
         attemptGenRes = await base44.asServiceRole.integrations.Core.GenerateImage({

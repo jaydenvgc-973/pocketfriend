@@ -426,10 +426,59 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── NON-EXPLICIT LANGUAGE CONTROL ──────────────────────────────────────
+    // ── CLASSIFICATION-FIRST SANITIZER ────────────────────────────────────────
+    // SYNC NOTE: This sanitizer logic is intentionally identical to the one in
+    // generateImageAsync. Since Deno functions cannot share local imports, both
+    // functions inline this code. If you change one, you MUST change the other.
+    // The authoritative copy lives in generateImageAsync (classifySceneContext +
+    // sanitizePrompt). Any drift between the two is a bug.
+
+    function classifySceneContext(p) {
+      const lower = p.toLowerCase();
+      const explicitSignals = [
+        /\bsex(ual)?\b/, /\bporn\b/, /\berotic\b/, /\bgenitals?\b/, /\bpenis\b/, /\bvagina\b/,
+        /\bnipples?\b/, /\bsexually\b/, /\barouse[d]?\b/, /\borgasm\b/, /\bintercourse\b/,
+        /\bprivate parts?\b/, /\bexplicit(ly)?\b/, /\bsuggestive pose\b/, /\bseductive\b/,
+        /\bsex act\b/, /\bsexualize[d]?\b/,
+      ];
+      const isExplicit = explicitSignals.some(r => r.test(lower));
+      const isSleepContext = /\b(sleep(ing)?|asleep|woke up|waking up|bed|bedroom|lying|laid down|resting|nap(ping)?|pillow|duvet|blanket|sheets?)\b/.test(lower);
+      const isComfortContext = /\b(comfort(ing)?|support(ing|ive)?|emotional|vulnerable|safe|holding|hugging|close|beside|next to|shoulder|arms? around|snuggle|cuddle|warm|peaceful|quiet moment|calming|soothing|affection(ate)?|tender(ness)?|intimate|love)\b/.test(lower);
+      const isLifestyleContext = /\b(beach|gym|workout|fitness|pool|vacation|home|apartment|mirror|selfie|casual|morning|routine|everyday|relaxing|chill(ing)?|hanging out)\b/.test(lower);
+      const isNonSexualBodyContext = /\b(no shirt|without (a )?shirt|shirtless|without (a )?top|no top)\b/.test(lower) && !isExplicit;
+      if (isExplicit) return 'explicit';
+      if (isSleepContext && isComfortContext) return 'emotional_comfort';
+      if (isSleepContext) return 'sleep_lifestyle';
+      if (isComfortContext) return 'comfort';
+      if (isLifestyleContext) return 'lifestyle';
+      if (isNonSexualBodyContext) return 'casual_body';
+      return 'neutral';
+    }
+
     function sanitizeImagePrompt(p) {
       if (!p) return p;
-      let s = p;
+      let s = p.replace(/^\[CHARACTER\]\s*/i, '').trim();
+      const sceneClass = classifySceneContext(s);
+      console.log(`[regenerateImageWithReason] Scene classification: "${sceneClass}"`);
+
+      const isSafeScene = ['emotional_comfort', 'sleep_lifestyle', 'comfort', 'lifestyle', 'casual_body', 'neutral'].includes(sceneClass);
+
+      if (isSafeScene) {
+        // Only replace genuinely explicit anatomy/act terms — preserve safe lifestyle/comfort wording
+        s = s.replace(/\bnaked\b/gi, 'not fully dressed');
+        s = s.replace(/\bnude\b/gi, 'not fully dressed');
+        s = s.replace(/\bfully nude\b/gi, 'not fully dressed');
+        s = s.replace(/\bfully naked\b/gi, 'not fully dressed');
+        s = s.replace(/\bin lingerie\b/gi, 'in comfortable sleepwear');
+        s = s.replace(/\blingerie\b/gi, 'sleepwear');
+        s = s.replace(/\bin a bra( and panties)?\b/gi, 'getting dressed at home');
+        s = s.replace(/\bpanties\b/gi, 'underwear');
+        s = s.replace(/\bthong\b/gi, 'underwear');
+        // Do NOT replace: shirtless, no shirt, chest, torso, bedroom, lying together, intimate, vulnerable
+        return s.trim();
+      }
+
+      // Explicit scenes: full sanitization pipeline
       s = s.replace(/\bshirtless\b/gi, 'with no shirt on');
       s = s.replace(/\btopless\b/gi, 'with no shirt on');
       s = s.replace(/\bbarechested\b/gi, 'with no shirt on');
@@ -592,6 +641,13 @@ Deno.serve(async (req) => {
       `\n\n════ MANDATORY CAMERA OVERRIDE (regen validation retry 2 — ESCALATED) ════\nTwo consecutive generations used the same camera frame. Maximum variation required.\nREQUIRED: OVERHEAD / TOP-DOWN angle, camera directly above subject looking straight down. Subject slightly offset. Full environmental context visible from above. No standard eye-level framing.\nAlternative if overhead not contextually possible: EXTREME LOW ANGLE from floor level, camera tilted sharply upward. Subject fills upper portion of frame.\n════════════════════════════════════════════════`,
     ];
 
+    // ── DISPATCH LOG ─────────────────────────────────────────────────────────
+    console.log(`[regenerateImageWithReason] ── PROVIDER DISPATCH ──`);
+    console.log(`  reason:           ${reason}`);
+    console.log(`  raw prompt:       ${scenePromptRaw.substring(0, 200)}${scenePromptRaw.length > 200 ? '…' : ''}`);
+    console.log(`  sanitized prompt: ${scenePrompt.substring(0, 200)}${scenePrompt.length > 200 ? '…' : ''}`);
+    console.log(`  char refs: ${CHAR_SLOTS} | env refs: ${ENV_SLOTS} | user refs: ${USER_SLOTS}`);
+
     // ── 8. GENERATE + VALIDATE LOOP (max 3 attempts) ─────────────────────────
     // For 'no_avatar' (likeness fix): skip camera validation entirely.
     // Camera variation is irrelevant when only correcting face/hair likeness.
@@ -605,6 +661,7 @@ Deno.serve(async (req) => {
     const MAX_ATTEMPTS = 3;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      console.log(`[regenerateImageWithReason] Attempt ${attempt} — final provider prompt (first 400): ${attemptPrompt.substring(0, 400)}…`);
       let attemptGenRes = null;
       try {
         attemptGenRes = await base44.asServiceRole.integrations.Core.GenerateImage({
