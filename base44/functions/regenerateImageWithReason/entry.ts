@@ -345,7 +345,8 @@ Deno.serve(async (req) => {
     const message = msgList?.[0];
     if (!message) return Response.json({ error: 'Message not found' }, { status: 404 });
 
-    const requestingUser = message.created_by || user.email;
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const requestingUser = user.email;
     const ctx = message.generation_context || {};
 
     const originalCharId    = ctx.character_id || message.character_id || null;
@@ -481,7 +482,7 @@ Deno.serve(async (req) => {
         const locRecord = locListSR?.[0] || null;
 
         if (locRecord) {
-          const locOwner = locRecord.owner_email || locRecord.created_by;
+          const locOwner = locRecord.owner_email;
           const isShared = locRecord.scope === 'shared' || locRecord.location_type === 'shared';
           if (locOwner && locOwner !== requestingUser && !isShared) {
             return Response.json({ success: false, error: 'Location does not belong to your account.' }, { status: 403 });
@@ -580,6 +581,12 @@ Deno.serve(async (req) => {
     ];
 
     // ── 8. GENERATE + VALIDATE LOOP (max 3 attempts) ─────────────────────────
+    // For 'no_avatar' (likeness fix): skip camera validation entirely.
+    // Camera variation is irrelevant when only correcting face/hair likeness.
+    // Running the camera loop on no_avatar causes progressive shot-type escalation
+    // across repeated clicks, drifting the scene away from the original.
+    const skipCameraValidation = reason === 'no_avatar';
+
     let genRes = null;
     let acceptedCameraVars = null;
     let attemptPrompt = finalPrompt;
@@ -593,11 +600,58 @@ Deno.serve(async (req) => {
           existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
         });
       } catch (genErr) {
-        const msg = genErr?.message || '';
-        if (/filter|guideline|block|violat/i.test(msg)) {
-          return Response.json({ success: false, filtered: true, error: 'Image blocked by content filter. Try rephrasing.' });
+        const msg = (genErr?.message || '').toLowerCase();
+        const statusCode = genErr?.status || genErr?.statusCode || genErr?.code || null;
+
+        // Only label as content policy block when the provider explicitly signals it.
+        // Real content policy errors use specific phrases — NOT generic network/infra errors.
+        const isRealContentPolicyBlock = (
+          // Explicit policy violation phrases from providers (OpenAI, Google, etc.)
+          msg.includes('content policy') ||
+          msg.includes('safety system') ||
+          msg.includes('violates our content') ||
+          msg.includes('violates our usage') ||
+          msg.includes('against our usage policies') ||
+          msg.includes('policy violation') ||
+          msg.includes('moderation') ||
+          msg.includes('safety filter') ||
+          msg.includes('flagged by our safety') ||
+          msg.includes('cannot generate') && msg.includes('explicit') ||
+          // HTTP 400 with specific safety/policy payload (not generic 400s)
+          (statusCode === 400 && (msg.includes('safety') || msg.includes('policy') || msg.includes('blocked_by_safety')))
+        );
+
+        if (isRealContentPolicyBlock) {
+          console.warn(`[regenerateImageWithReason] Content policy block on attempt ${attempt}: ${msg.substring(0, 200)}`);
+          return Response.json({ success: false, filtered: true, error: 'Content policy block — the provider rejected this specific image content. Try a different scene description.' });
         }
-        throw genErr;
+
+        // All other errors: classify accurately rather than hiding behind "content filter"
+        const isTimeout = msg.includes('timeout') || msg.includes('timed out') || statusCode === 408 || statusCode === 504;
+        const isRateLimit = msg.includes('rate limit') || msg.includes('too many requests') || statusCode === 429;
+        const isBadPrompt = msg.includes('invalid') && msg.includes('prompt') || msg.includes('prompt too long') || msg.includes('token');
+        const isMissingRef = msg.includes('invalid image') || msg.includes('image url') || msg.includes('reference image');
+
+        if (isTimeout) {
+          return Response.json({ success: false, error: 'Image provider timeout — the generation took too long. Please try again.' }, { status: 504 });
+        }
+        if (isRateLimit) {
+          return Response.json({ success: false, error: 'Rate limit hit — too many requests. Wait a moment and try again.' }, { status: 429 });
+        }
+        if (isBadPrompt) {
+          return Response.json({ success: false, error: 'Prompt could not be processed — the scene description may be too long or contain unsupported content.' }, { status: 400 });
+        }
+        if (isMissingRef) {
+          return Response.json({ success: false, error: 'Reference image missing or inaccessible — the character or location photo could not be loaded by the provider.' }, { status: 422 });
+        }
+
+        // Unknown provider error — log the real message, surface a generic but non-misleading label
+        console.error(`[regenerateImageWithReason] Provider error attempt ${attempt}:`, genErr?.message || genErr);
+        if (attempt < MAX_ATTEMPTS) {
+          console.warn(`[regenerateImageWithReason] Retrying after provider error (attempt ${attempt}/${MAX_ATTEMPTS})`);
+          continue;
+        }
+        return Response.json({ success: false, error: `Likeness regeneration failed — the image provider returned an error. Please try again.` }, { status: 500 });
       }
 
       if (!attemptGenRes?.url) {
@@ -606,8 +660,16 @@ Deno.serve(async (req) => {
       }
 
       const thisCameraVars = extractCameraVarsFromPrompt(attemptPrompt);
-      const diffCount = countCameraDiffs(previousCameraVars, thisCameraVars);
 
+      // no_avatar: skip camera validation — only likeness is being corrected, preserve scene as-is
+      if (skipCameraValidation) {
+        console.log(`[regenerateImageWithReason] ✅ no_avatar — camera validation skipped, accepting image`);
+        genRes = attemptGenRes;
+        acceptedCameraVars = previousCameraVars || thisCameraVars; // preserve existing camera state
+        break;
+      }
+
+      const diffCount = countCameraDiffs(previousCameraVars, thisCameraVars);
       console.log(`[regenerateImageWithReason] Attempt ${attempt}: camera diffs = ${diffCount} | dist=${thisCameraVars.distance} angle=${thisCameraVars.angle} framing=${thisCameraVars.framing}`);
 
       if (!previousCameraVars || diffCount >= 2) {

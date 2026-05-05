@@ -154,12 +154,12 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         directZoneName: manualZoneId || null,
         directLocationName: directLocationName || null,
       });
-      if (res?.data?.success === false) {
-        setRegenError(res.data.error || 'Failed to regenerate. Please try again.');
+      if (res?.data?.filtered) {
+        setRegenError(res.data.error || 'Content policy block — try rephrasing the scene description.');
         return;
       }
-      if (res?.data?.filtered) {
-        setRegenError(res.data.error || 'Image was blocked by content filter. Try a different description.');
+      if (res?.data?.success === false) {
+        setRegenError(res.data.error || 'Regeneration failed. Please try again.');
         return;
       }
       // Success — hydrate local state and close modal
