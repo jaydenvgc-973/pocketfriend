@@ -27,6 +27,14 @@ Deno.serve(async (req) => {
     const minute = nowET.getMinutes();
     const currentMinutes = hour * 60 + minute;
 
+    // ── FAST LOCKDOWN EXIT (before any DB calls) ─────────────────────────────
+    // During 1 AM – 10 AM, movement is disabled. Exit immediately to avoid
+    // unnecessary DB reads that contribute to rate limit exhaustion.
+    const isLockdown = hour >= 1 && hour < 10;
+    if (isLockdown) {
+      return Response.json({ success: true, mode: 'lockdown', message: 'Return-home automation active (1-10 AM). No DB reads needed.', distributed: 0 });
+    }
+
     // Define travel blocks explicitly
     const blocks = [
       { name: 'DEPARTURE', start: 10 * 60, end: 13 * 60 },      // 10 AM - 1 PM
@@ -45,9 +53,6 @@ Deno.serve(async (req) => {
         }
       }
     }
-
-    // Outside active travel window (1 AM - 10 AM) — skip movement, let return-home automation handle it
-    const isLockdown = hour >= 1 && hour < 10;
 
     // Load this user's characters + ALL locations (user-owned + shared)
     // CRITICAL: Use owner_email ONLY for ownership scoping
@@ -117,12 +122,6 @@ Deno.serve(async (req) => {
     );
     log.push(`[BLOCK: ${currentBlock}] Time: ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} ET`);
 
-    // ── LOCKDOWN: Skip movement during 1-10 AM (return-home automation handles 1 AM return)
-    if (isLockdown) {
-      log.push('LOCKDOWN MODE (1-10 AM): Return-home handled by separate automation. Movement disabled.');
-      return Response.json({ success: true, mode: 'lockdown', message: 'Return-home automation active', distributed: 0, log });
-    }
-    
     // If no active block, return early (safety check)
     if (!currentBlock) {
       log.push('No active travel block at this time.');
