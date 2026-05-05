@@ -5,10 +5,11 @@ import { X, Wand2, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 
-export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, conversationId, chatHistory, onNarrativeSubmitted }) {
+export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, conversationId, chatHistory, onNarrativeSubmitted, currentUser }) {
   const [narrativeText, setNarrativeText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleGenerate = async () => {
     if (!characterId || chatHistory.length < 2) return;
@@ -31,13 +32,40 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
   };
 
   const handleSubmit = async () => {
-    if (!narrativeText.trim() || !characterId || !conversationId) return;
+    if (!narrativeText.trim() || !characterId) return;
 
     setIsSubmitting(true);
+    setError(null);
     try {
+      // Resolve conversationId — may be null if no messages sent yet in this session.
+      // In that case, look up the existing conversation or create one now.
+      let resolvedConvoId = conversationId;
+      if (!resolvedConvoId) {
+        // Try to find an existing direct conversation for this character
+        try {
+          const existing = await base44.entities.Conversation.filter({ character_ids: [characterId] }, '-last_message_date', 1);
+          resolvedConvoId = existing[0]?.id || null;
+        } catch {}
+        // Still nothing — create a fresh conversation
+        if (!resolvedConvoId) {
+          const newConvo = await base44.entities.Conversation.create({
+            title: `Chat`,
+            type: 'direct',
+            character_ids: [characterId],
+            ...(currentUser?.email ? { owner_email: currentUser.email } : {}),
+          });
+          resolvedConvoId = newConvo?.id || null;
+        }
+      }
+
+      if (!resolvedConvoId) {
+        setError('Could not create conversation. Try sending a message first.');
+        return;
+      }
+
       const res = await base44.functions.invoke('submitNarrative', {
         characterId,
-        conversationId,
+        conversationId: resolvedConvoId,
         narrativeContent: narrativeText
       });
 
@@ -45,9 +73,12 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
         setNarrativeText('');
         onNarrativeSubmitted?.();
         onClose();
+      } else {
+        setError('Narrative submission failed. Try again.');
       }
     } catch (err) {
       console.error('Failed to submit narrative:', err);
+      setError('Something went wrong. Try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -115,6 +146,8 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
                 </Button>
               </div>
 
+              {/* Error */}
+              {error && <p className="text-xs text-destructive">{error}</p>}
               {/* Helper Text */}
               <p className="text-xs text-muted-foreground">This will become part of the story and affect how the character responds.</p>
             </div>

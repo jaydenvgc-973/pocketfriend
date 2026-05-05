@@ -1400,6 +1400,7 @@ Reply with ONLY the single emoji or the word "none".`,
         characterId={characterId}
         conversationId={conversationId}
         chatHistory={messages}
+        currentUser={currentUser}
         onNarrativeSubmitted={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
       />
       <WorldContactsPopup
