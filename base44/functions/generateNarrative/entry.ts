@@ -1014,6 +1014,131 @@ CHECK IN (emotional temperature):
   • Light vs deep scaling — knowing when to go further or back off
 
 ════════════════════════════════════
+NARRATIVE REFERENCE LIBRARY — TONE, PACING, AND EMOTIONAL STRUCTURE
+════════════════════════════════════
+These are living reference examples. Do NOT copy them. Do NOT repeat their exact wording.
+Use them to calibrate emotional depth, body language, pacing, tension, and scene progression.
+Adapt pronouns, tone, and dynamics to the actual characters involved.
+These work for any gender pairing, any relationship stage, any emotional register.
+
+GENDER AND ROLE FLEXIBILITY:
+All examples may use any pronoun for readability. The AI must adapt to the actual character's
+gender, pronouns, orientation, and relational dynamic. Emotional logic matters more than pronouns.
+
+CORE FLOW RULE — MANDATORY FOR ALL NARRATIVES:
+Every beat must answer: what happened → reaction → what changed → new position.
+Do NOT loop on: the same touch, the same facial expression, the same body part, the same sentence rhythm.
+After an action lands: move to reaction / release / reposition / interruption / escalation / consequence.
+
+── REFERENCE: LET THEM ACT ──
+Pattern A (instinct-driven):
+There's a shift before anything else — subtle, but enough to change the energy. No announcement,
+no overthinking. Just movement guided by instinct and whatever's been building under the surface.
+A brief check — unspoken — then action, without waiting for permission. Whatever it is: stepping
+closer, reaching out, saying the thing that's been sitting right there on the edge. It feels real.
+The moment unfolds from tension, timing, and the connection between them. Not performance. Something
+that was always going to happen — they just finally let it.
+
+Pattern B (raw / emotional):
+No softening this time. No smoothing the edges. Whatever has been held back breaks through —
+purposeful, heated, refusing to stay quiet. "Stop acting like this doesn't matter." Voice tight,
+not loud but loaded. Hands come up — not aggressive, firm enough to hold attention, to prevent
+the slip into distance or avoidance. Frustration on the surface, but underneath: care, fear,
+intensity that's been building too long. "You don't get to shut me out when I'm standing right
+here trying to show up for you." Breath uneven, eyes locked in. Messy. Honest. And even in that
+roughness — not pushing away. Fighting to stay connected.
+
+── REFERENCE: COMFORT ──
+Pattern A (warmth and closeness):
+The shift is noticed before anything is said — the dip in energy, the drift in focus. No
+immediate call-out. Just a move closer, easing into the space in a way that feels natural,
+not intrusive. "Hey…" Softer now, steady, grounding. A hand brushes against theirs, then
+lingers — offering contact without forcing it. "You don't have to carry all of that by yourself."
+Quiet patience. Not rushing. Not trying to fix everything. Just being there.
+
+Pattern B (thoughtful / deep care):
+No loud entrance. No overwhelming questions. Moving closer in a way that feels intentional —
+like approaching something important. "I've been watching you." Not invasive — acknowledgment.
+"You've been carrying more than you're saying." No pressure in it. A hand resting over theirs,
+firm but gentle. "You don't have to hold it together right now. Not with me." Not temporary
+comfort. Not surface reassurance. Something deeper — a quiet promise to sit in it however long it takes.
+
+Pattern C (passion-filled comfort):
+Closing the distance slowly — like every inch matters. A hand lifts, brushes along the arm,
+settles at the side — not to control, to steady. "Look at me." Low, full. Not demanding — anchoring.
+When eyes meet: nothing rushed. No distraction. Just focus. A thumb traces slow patterns — deliberate,
+trying to reach something deeper than the surface. "You don't have to fight everything alone. Not
+when I'm right here." The closeness is intentional. Taking care of them isn't obligation. It's choice.
+
+── REFERENCE: FLIRT ──
+Pattern A (playful tension):
+Lightness in the air when they look — playful but intentional. Leaning slightly closer than
+necessary, enough to blur the line between casual and something more. "Careful. You keep looking
+at me like that, people are going to start getting the wrong idea." Teasing tone, but quiet confidence
+behind it — already knowing the effect. Not rushing the moment. Letting the tension settle, letting
+it be felt.
+
+Pattern B (deep / familiar flirt):
+No testing the waters anymore. Knowing how they react, what makes them soften, what makes them
+push back — using that knowledge like a private language. A hand finds theirs without asking, fingers
+threading through like they belong. "You know exactly what you do to me, right?" Low, almost teasing
+but not quite — too much truth underneath. Leaning in just enough to blur the space between almost
+and actually. "Don't act surprised now." This isn't flirting for attention. It's something rooted —
+in history, in familiarity, in wanting them to feel how much they matter.
+
+Pattern C (passion-driven):
+No distance anymore. Movement is intentional, slow, every inch of the shift felt. A hand lifts
+to their face — not rushed, fingers brushing along the jaw with deliberate care. "You don't even
+realize what you do to me, do you?" Voice heavier now, less teasing, more honest. Thumb lingers,
+traces slowly — memorizing. No performance. Just connection. "I don't flirt with you for fun.
+I do it because I mean it." The look that follows: not light anymore. Felt.
+
+── REFERENCE: CONFRONT ──
+Pattern A (tension / emotional):
+A shift in posture first — the kind that signals something isn't sitting right. Voice doesn't raise
+immediately, but there's an edge now — sharper than before. "We're not just going to ignore that."
+Steady, firm. Eyes stay on them, not aggressive but unwavering — not trying to escalate, trying to
+address something real. The space between them feels tighter now, charged with emotion not fully
+released. Not stepping away from it. Leaning into it — making clear this moment matters.
+
+── REFERENCE: SPEND TIME ──
+Pattern A (presence / ease):
+No urgency. No pressure to fill silence with something meaningful. Just staying near, comfortable
+in the shared space like it's something valued without explanation needed. "Come here." Casual,
+shifting just enough to make room. Not demanding, not overly soft — just natural, like it's already
+understood. Time stretches differently like this. Conversations drift in and out. The closeness
+builds in small ways — a glance, a shared laugh, a moment where neither says anything and neither
+pulls away.
+
+Pattern B (deep presence / connection):
+Not passing through the moment — settling into it fully, like their presence is worth slowing
+down for. The outside world fades. "You ever notice how everything feels quieter when it's just
+us like this?" Voice low, thoughtful, not performative. Leaning back but attention never leaving —
+not distracted, not split, just present and intentional. Really listening when they speak. Not
+waiting to respond — taking them in, reacting, remembering. When laughing, it's genuine. When
+looking, it lingers a second longer than expected. This isn't passing time. This is choosing to be here.
+
+── REFERENCE: CHECK IN ──
+Pattern A (light attention):
+Head tilts slightly, studying them a beat longer than usual. Not invasive — picking up on something
+small others might miss. "You good?" Simple and direct. Not heavy, not careless — quiet attentiveness
+behind it, ready to hear whatever answer comes. No rush. Just present, letting the question sit.
+
+Pattern B (deep / attentive):
+Not just a glance — really looking. Piecing together what hasn't been said out loud. A subtle
+shift in expression — concern without panic. "Talk to me. What's been going on with you?" Not
+surface-level. Open, patient, leaving space for something honest instead of something easy.
+Not interrupting when they respond. Not redirecting. Staying with them through it, asking the kind
+of follow-up that proves real listening. "You don't have to filter it. I'm here for all of it."
+And it's clear — meant.
+
+VARIATION RULE FOR ALL REFERENCE PATTERNS:
+Vary body language, emotional pressure, pacing, dialogue, proximity, softness/intensity,
+character confidence, setting, history between characters, current mood, and relationship stage.
+Every generated action must feel character-specific — never generic, never copied.
+════════════════════════════════════
+
+════════════════════════════════════
 GLOBAL ROOT THEMES — EMBED AT LEAST ONE PER NARRATIVE
 ════════════════════════════════════
 These apply to every scene type. Choose one and weave it naturally — never state it directly.
