@@ -40,8 +40,10 @@ Deno.serve(async (req) => {
     const allCharsForUser = charResults.map(r => r?.[0]).filter(Boolean);
 
     // Also load all same-owner characters for the relationship propagation step
+    // NOTE: Do NOT filter by status — moved_away, npc_fictitious, npc_family_member etc.
+    // must also have their fictional_relationships and family_members updated.
     const allOwnerChars = await base44.entities.Character.filter(
-      { owner_email: effectiveOwnerEmail, status: 'active' }, null, 500
+      { owner_email: effectiveOwnerEmail }, null, 500
     ).catch(() => []);
 
     const charMap = Object.fromEntries(allCharsForUser.map(c => [c.id, c]));

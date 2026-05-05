@@ -78,11 +78,11 @@ export default function MergeReviewModal({ isOpen, onClose, dupeGroup, ownerEmai
       const d = res?.data;
       if (d?.error) throw new Error(d.error);
       setPreviewData(d);
-      // Pre-select recommended survivor
-      setSurvivorId(d.recommended_primary_id || dupeGroup.records[0]?.id);
+      // Only pre-select survivor from VERIFIED records
+      setSurvivorId(d.recommended_primary_id || d.characters?.[0]?.id || null);
       // Pre-select avatar: whoever has one, or recommended primary
       const avatarHolder = d.characters?.find(c => c.avatar_url);
-      setAvatarCharId(avatarHolder?.id || d.recommended_primary_id || dupeGroup.records[0]?.id);
+      setAvatarCharId(avatarHolder?.id || d.recommended_primary_id || d.characters?.[0]?.id || null);
     } catch (err) {
       setError(err.message || 'Failed to load merge preview');
     } finally {
@@ -183,8 +183,31 @@ export default function MergeReviewModal({ isOpen, onClose, dupeGroup, ownerEmai
           {/* Preview panel */}
           {previewData && !mergeResult && !loading && (
             <>
-              {/* Ownership warning if mismatch */}
-              {previewData.ownership_warning && (
+              {/* Merge blocked — unsafe/legacy records detected */}
+              {previewData.merge_blocked && (
+                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-destructive font-medium">⚠ Merge blocked — {previewData.merge_blocked_reason}</p>
+                  {previewData.unsafe_records?.map(r => (
+                    <div key={r.id} className="bg-secondary/50 rounded-lg px-3 py-2 space-y-0.5">
+                      <p className="text-xs font-medium text-foreground">
+                        {r.name || '(unnamed)'} — <span className={
+                          r.ownership_state === 'LEGACY_MISSING_OWNER' ? 'text-amber-400' :
+                          r.ownership_state === 'CROSS_ACCOUNT_BLOCKED' ? 'text-destructive' :
+                          'text-muted-foreground'
+                        }>{r.ownership_state}</span>
+                      </p>
+                      <p className="text-[10px] text-muted-foreground font-mono">ID: {r.id}</p>
+                      <p className="text-[10px] text-amber-400">{r.repair_message}</p>
+                    </div>
+                  ))}
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Run <strong>Backfill Character Owner Email</strong> from Settings → Troubleshoot to repair missing owner_email fields, then retry.
+                  </p>
+                </div>
+              )}
+
+              {/* Legacy ownership warning (old field) */}
+              {previewData.ownership_warning && !previewData.merge_blocked && (
                 <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
                   <p className="text-xs text-destructive font-medium">⚠ {previewData.ownership_warning}</p>
                   <p className="text-xs text-muted-foreground mt-1">Cannot merge characters from different accounts. Owner email must match.</p>
@@ -319,7 +342,7 @@ export default function MergeReviewModal({ isOpen, onClose, dupeGroup, ownerEmai
                 </Button>
                 <Button
                   onClick={handleMerge}
-                  disabled={!survivorId || merging || !!previewData.ownership_warning}
+                  disabled={!survivorId || merging || !!previewData.ownership_warning || !!previewData.merge_blocked}
                   className="flex-1 rounded-xl bg-primary hover:bg-primary/90"
                 >
                   {merging ? (
