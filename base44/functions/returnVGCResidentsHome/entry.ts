@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
     // Process each account's VGC Towers independently (account isolation)
     for (const vgcTowers of vgcTowersList) {
       const VGC_ID = vgcTowers.id;
-      const ownerEmail = vgcTowers.created_by || vgcTowers.owner_email;
+      const ownerEmail = vgcTowers.owner_email;
 
       const vgcResidents = allCharacters.filter(c =>
         c.current_home_location_id === VGC_ID &&
