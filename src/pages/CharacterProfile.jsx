@@ -357,6 +357,7 @@ export default function CharacterProfile() {
         onClose={() => setShowEditSettings(false)}
         character={character}
         allCharacters={allCharacters}
+        currentUser={currentUser}
       />
 
       <div className="max-w-lg mx-auto px-6 py-6 space-y-6">

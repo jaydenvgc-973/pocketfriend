@@ -254,9 +254,10 @@ function GhostLinkModal({ npc, allCharacters, character, onConfirm, onCancel }) 
 }
 
 // ── People In Their World Editor ──────────────────────────────────────────────
-function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
+function WorldPeopleEditor({ character, allCharacters, onMoveToKnown, currentUser }) {
   const queryClient = useQueryClient();
   const [linkingNpc, setLinkingNpc] = useState(null);
+  const [linkError, setLinkError] = useState(null);
 
   // Routing rule: People in Their World = catch-all for everything that is NOT
   // active_created_character and NOT this character's own family_members entry.
@@ -289,6 +290,19 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
   };
 
   const linkNpcToCharacter = async (npc, targetChar) => {
+    setLinkError(null);
+
+    // Ownership diagnostic log — verify update target before attempting write
+    console.log('[linkNpcToCharacter] OWNERSHIP CHECK:', {
+      editedCharacterId: character.id,
+      editedCharacterName: character.name,
+      editedCharacterOwnerEmail: character.owner_email,
+      currentUserEmail: currentUser?.email,
+      targetNpcId: targetChar.id,
+      targetNpcName: targetChar.name,
+      targetNpcOwnerEmail: targetChar.owner_email,
+    });
+
     const updated = (character.fictional_relationships || []).map(r => {
       if (r.person_name?.toLowerCase() === npc.person_name?.toLowerCase() && !r.related_character_id) {
         return { ...r, person_name: targetChar.name, related_character_id: targetChar.id, avatar_url: targetChar.avatar_url || r.avatar_url || null };
@@ -307,13 +321,31 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
         return true;
       });
     }
-    try {
-      await base44.entities.Character.update(character.id, { fictional_relationships: finalRels });
-      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-    } catch (err) {
-      console.warn('[CharacterEditSettingsPanel] linkNpcToCharacter: permission denied or update failed:', err.message);
+
+    // Only update the character the user owns. Include owner_email explicitly so
+    // RLS can match it even if the local object has a stale or stripped value.
+    const updatePayload = { fictional_relationships: finalRels };
+    if (character.owner_email) {
+      updatePayload.owner_email = character.owner_email;
+    } else if (currentUser?.email) {
+      // owner_email is missing from local state — supply it from current session to satisfy RLS
+      console.warn('[linkNpcToCharacter] owner_email missing from character object — using currentUser.email as fallback for RLS');
+      updatePayload.owner_email = currentUser.email;
     }
-    setLinkingNpc(null);
+
+    try {
+      await base44.entities.Character.update(character.id, updatePayload);
+      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+      setLinkingNpc(null);
+    } catch (err) {
+      console.error('[linkNpcToCharacter] Update FAILED:', {
+        characterId: character.id,
+        ownerEmailUsed: updatePayload.owner_email,
+        error: err.message,
+      });
+      setLinkError(`Relationship could not be saved because the app was blocked from updating this character record. (${err.message})`);
+      // Do NOT close modal — user must see the failure
+    }
   };
 
   // Move an NPC fictitious character to "Characters They Know" by setting related_character_id to an active char
@@ -381,6 +413,12 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
         );
       })}
 
+      {linkError && (
+        <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs text-destructive leading-relaxed">
+          {linkError}
+        </div>
+      )}
+
       <AnimatePresence>
         {linkingNpc && (
           <GhostLinkModal
@@ -388,7 +426,7 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
             allCharacters={allCharacters}
             character={character}
             onConfirm={(targetChar) => linkNpcToCharacter(linkingNpc, targetChar)}
-            onCancel={() => setLinkingNpc(null)}
+            onCancel={() => { setLinkingNpc(null); setLinkError(null); }}
           />
         )}
       </AnimatePresence>
@@ -818,7 +856,7 @@ function EducationEditor({ character }) {
 }
 
 // ── Main Panel ────────────────────────────────────────────────────────────────
-export default function CharacterEditSettingsPanel({ isOpen, onClose, character, allCharacters }) {
+export default function CharacterEditSettingsPanel({ isOpen, onClose, character, allCharacters, currentUser }) {
   const queryClient = useQueryClient();
 
   // Move a relationship from "People In Their World" → "Characters They Know"
@@ -953,7 +991,7 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
                   <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">People In Their World</p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">Unlinked NPCs and NPC fictitious people they know. Use "→ Known" to move someone to active character relationships, or link them.</p>
                 </div>
-                <WorldPeopleEditor character={character} allCharacters={allCharacters} onMoveToKnown={handleMoveToKnown} />
+                <WorldPeopleEditor character={character} allCharacters={allCharacters} onMoveToKnown={handleMoveToKnown} currentUser={currentUser} />
               </section>
 
               {/* Characters They Know */}
