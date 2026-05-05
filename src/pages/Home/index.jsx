@@ -19,6 +19,7 @@ import InviteOutModal from "@/components/home/InviteOutModal";
 import NPCContactPanel from "@/components/home/NPCContactPanel";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
+import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -36,52 +37,11 @@ export default function Home() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: characters = [], isLoading } = useQuery({
-    queryKey: ["characters", currentUser?.email],
-    queryFn: async () => {
-      if (!currentUser?.email) return [];
-      // Query by owner_email ONLY — sole ownership authority. Limit 300 matches Settings.
-      const characters = await base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date", 300);
-      // EXCLUDE diagnostic/test characters from homepage
-      return characters.filter(c => {
-        if (c.is_test_character === true) return false;
-        if (c.diagnostic_only === true) return false;
-        if (c.exclude_from_homepage === true) return false;
-        return true;
-      });
-    },
-    enabled: !!currentUser?.email,
-    staleTime: 0,
-    refetchOnMount: true,
-    refetchOnWindowFocus: true,
-  });
-
-  // Fetch NPC fictitious characters via service-role backend — same query key as Settings
-  // staleTime: 0 + refetchOnMount: true ensures IDs are always fresh.
-  // The simulator submits these IDs directly to the backend; stale IDs cause 404s.
-  const { data: npcFictitiousFromBackend = [] } = useQuery({
-    queryKey: ["npc-characters", currentUser?.id],
-    queryFn: async () => {
-      if (!currentUser?.id) return [];
-      const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      return res?.data?.npcs || [];
-    },
-    enabled: !!currentUser?.id,
-    staleTime: 0,
-    gcTime: 10 * 60 * 1000,
-    refetchOnMount: true,
-    refetchOnWindowFocus: true,
-  });
-
-  // Merge RLS characters + NPC backend results, deduped by ID — matches Settings merge logic exactly
-  const allCharacters = (() => {
-    const seen = new Set();
-    return [...characters, ...npcFictitiousFromBackend].filter(c => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
-      return true;
-    });
-  })();
+  const {
+    allCharacters,
+    rlsCharacters: characters,
+    isInitialLoading: isLoading,
+  } = useOwnedCharacters(currentUser);
 
   // Fetch locations — staleTime:0 + refetchOnMount:"always" ensures UserCard dropdown
   // never shows an empty list from a stale cache when real locations exist.

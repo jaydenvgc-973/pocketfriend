@@ -24,6 +24,7 @@ import { canCharacterTravelToLocation } from "@/lib/characterEditableListResolve
 import { resolveTravelPresenceEntities, getPresenceAtLocation, isLocationEmpty } from "@/lib/travelPresenceResolver";
 import { shouldVGCResidentBeAtHome } from "@/lib/vgcTowersPresenceEngine";
 import { useUserPresence } from "@/hooks/useUserPresence";
+import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 
 export default function Travel() {
   const navigate = useNavigate();
@@ -60,87 +61,15 @@ export default function Travel() {
   });
   const safeSettingsList = Array.isArray(settingsList) ? settingsList : [];
 
-  // Active playable characters only
-  // staleTime: 30s so cached data is served during revalidation — prevents empty→data flash
-  const { data: activeCharacters = [], isLoading: isLoadingActive } = useQuery({
-    queryKey: ["activeCharacters", currentUser?.email],
-    queryFn: () => base44.entities.Character.filter({
-      owner_email: currentUser.email,
-      status: "active",
-      character_type: "active_created_character"
-    }),
-    enabled: !!currentUser?.email,
-    staleTime: 30 * 1000,
-    gcTime: 5 * 60 * 1000,
-  });
-
-  // npc_fictitious — via backend (catches service-account-created ones)
-  const { data: backendNpcFictitious = [], isLoading: isLoadingNpc } = useQuery({
-    queryKey: ["npcCharacters", currentUser?.id],
-    queryFn: async () => {
-      if (!currentUser?.id) return [];
-      const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      return (res?.data?.npcs || []).filter(c => c.character_type === 'npc_fictitious');
-    },
-    enabled: !!currentUser?.id,
-    staleTime: 30 * 1000,
-    gcTime: 5 * 60 * 1000,
-  });
-
-  // npc_fictitious — via direct RLS query (catches user-created ones)
-  const { data: rlsNpcFictitious = [] } = useQuery({
-    queryKey: ["npcFictitiousRls", currentUser?.email],
-    queryFn: () => base44.entities.Character.filter(
-      { owner_email: currentUser.email, character_type: 'npc_fictitious' },
-      '-created_date',
-      300
-    ),
-    enabled: !!currentUser?.email,
-    staleTime: 30 * 1000,
-    gcTime: 5 * 60 * 1000,
-  });
-
-  // npc_family_member — via owner_email (primary ownership field)
-  const { data: rlsFamilyByCreatedBy = [] } = useQuery({
-    queryKey: ["npcFamilyMembers", currentUser?.email],
-    queryFn: () => base44.entities.Character.filter(
-      { owner_email: currentUser.email, character_type: 'npc_family_member' },
-      '-created_date',
-      300
-    ),
-    enabled: !!currentUser?.email,
-    staleTime: 30 * 1000,
-    gcTime: 5 * 60 * 1000,
-  });
-
-  // npc_regular — Home loads ALL types via { owner_email }; Travel must not miss this type
-  const { data: npcRegularChars = [] } = useQuery({
-    queryKey: ["npcRegular", currentUser?.email],
-    queryFn: () => base44.entities.Character.filter(
-      { owner_email: currentUser.email, character_type: 'npc_regular' },
-      '-created_date',
-      300
-    ),
-    enabled: !!currentUser?.email,
-    staleTime: 30 * 1000,
-    gcTime: 5 * 60 * 1000,
-  });
-
-  // Merge all sources, deduplicated
-  const npcCharacters = (() => {
-    const seen = new Set();
-    return [...backendNpcFictitious, ...rlsNpcFictitious, ...npcRegularChars].filter(c => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
-      return true;
-    });
-  })();
-
-  const npcFamilyMembers = rlsFamilyByCreatedBy;
-
-  // travelCompanions: active_created_character + npc_fictitious + npc_family_member (who can come with you)
-  // IMPORTANT: npc_family_member must be included — Home page loads all types, Travel must match
-  const travelCompanions = [...activeCharacters, ...npcCharacters, ...npcFamilyMembers];
+  // Single shared character source — same cache keys as Home, never flickers
+  const {
+    activeCreated: activeCharacters,
+    npcFictitious: npcCharacters,
+    npcFamilyMembers,
+    travelCompanions,
+    isInitialLoading: isLoadingActive,
+    isRefreshing: isLoadingNpc,
+  } = useOwnedCharacters(currentUser);
 
   const { data: locationsData = [] } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
@@ -237,8 +166,9 @@ export default function Travel() {
     base44.functions.invoke('distributeVGCTowersNPCs', {})
       .then(() => new Promise(r => setTimeout(r, 1000)))
       .then(() => {
-        queryClient.invalidateQueries({ queryKey: ['npcCharacters', currentUser.email] });
-        queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser.email] });
+        // Use the SHARED query keys so cache is invalidated consistently across Home + Travel
+        queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
+        queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser.id] });
         queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser.email] });
       })
       .catch(() => {});
@@ -838,10 +768,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     try {
                       const res = await base44.functions.invoke('distributeVGCTowersNPCs', {});
                       setDistributeResult(res?.data || { error: 'No response' });
-                      // Refetch characters so UI reflects new locations immediately
-                      await queryClient.invalidateQueries({ queryKey: ['npcCharacters', currentUser?.id] });
-                      await queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] });
-                      await queryClient.invalidateQueries({ queryKey: ['npcFamilyMembers', currentUser?.email] });
+                      // Use shared query keys — same as Home
+                      await queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+                      await queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
                     } catch (e) {
                       setDistributeResult({ error: e.message });
                     } finally {
