@@ -39,12 +39,14 @@ export function useUserSettings() {
 
   const queryKey = ["userSettings", user?.email];
 
-  const { data: settings = null, isLoading } = useQuery({
+  const { data: settings = null, isLoading, isError } = useQuery({
     queryKey,
     queryFn: () => fetchAndConsolidate(user?.email),
     staleTime: 5 * 60 * 1000,    // 5 min — settings are stable; mutation invalidates on explicit save
     refetchOnWindowFocus: false,  // Prevents refetch storm on tab switch
     enabled: !!user?.email,
+    retry: 2,
+    retryDelay: (attempt) => attempt * 1500, // 1.5s, 3s — back off on 429s
   });
 
   const mutation = useMutation({
@@ -69,6 +71,8 @@ export function useUserSettings() {
   return {
     settings: settings || {},
     isLoading,
+    isError,
+    settingsLoaded: !isLoading && !isError && settings !== null,
     updateSettings: mutation.mutate,
     isSaving: mutation.isPending,
   };

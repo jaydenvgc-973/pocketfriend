@@ -1,33 +1,23 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * STRICT ACCOUNT ISOLATION — Fetch only locations belonging to the current user's account.
+ * STRICT ACCOUNT ISOLATION — Scoped queries only. No global list reads.
  *
- * VISIBILITY RULES:
- *   1. OWNED       — owner_email === current user. This is the ONLY valid ownership check.
- *                    created_by is permanently forbidden for ownership resolution.
- *                    Visible ONLY to that user and their characters. "Global" scope here means
- *                    global across THIS user's characters — NOT across all user accounts.
+ * QUERY STRATEGY (scoped-first, no broad service-role list):
+ *   Query 1: owner_email === currentUser.email  →  all user-owned locations
+ *   Query 2: scope === 'shared', created_by_role === 'admin'  →  all admin-shared locations
+ *   These two queries replace the former LocationReference.list('-created_date', 500)
+ *   which was a global cross-account read that burned the entire 500-record budget
+ *   regardless of how many locations the user actually has.
  *
- *   2. CHARACTER-SPECIFIC — location tied to a character owned by this user
- *                    (owner_character_id, assigned_character_id, character_id, or resident_character_ids
- *                    match one of this user's characters).
+ * CHARACTER-LINKED LOCATIONS:
+ *   After the two scoped queries, any character-linked or resident-linked location IDs
+ *   that did NOT appear in the owned set are resolved via a third targeted query
+ *   using only the specific IDs (not another global list).
  *
- *   3. CHARACTER-LINKED — explicitly referenced by one of this user's character profile fields
- *                    (home, work, school, etc.) AND not owned by a different account.
- *
- *   4. RESIDENT-LINKED — location has one of this user's characters as a resident
- *                    AND is not explicitly owned by a different account.
- *
- *   5. SHARED       — ONLY locations where created_by_role === 'admin' AND scope === 'shared'.
- *                    These are the ONLY locations visible across different user accounts.
- *                    Regular users can view but not edit these.
- *
- * WHAT IS NEVER ALLOWED:
- *   - Any location owned by another user account is NEVER visible to this user.
- *   - "Global" scope does NOT mean visible to all users. It means available to all
- *     characters within the SAME user's account.
- *   - There is NO fallback that makes unowned or unscoped locations visible to everyone.
+ * OWNERSHIP RULES:
+ *   - owner_email is the ONLY valid ownership field. created_by is permanently forbidden.
+ *   - No cross-account data is ever returned.
  */
 Deno.serve(async (req) => {
   try {
@@ -35,25 +25,36 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Fetch all locations via service role (we apply strict filtering below)
-    const allLocations = await base44.asServiceRole.entities.LocationReference.list(
+    // ── QUERY 1: User-owned locations (scoped by owner_email) ─────────────────
+    // This replaces the broad LocationReference.list('-created_date', 500).
+    // Only reads records owned by this user — no cross-account exposure.
+    const ownedLocations = await base44.entities.LocationReference.filter(
+      { owner_email: user.email },
       '-created_date',
-      500
+      200
     );
 
-    // Get this user's characters to resolve character-linked locations
+    // ── QUERY 2: Admin-shared locations (scoped by scope + created_by_role) ───
+    // These are the ONLY cross-account visible locations — admin-created and explicitly shared.
+    const sharedLocations = await base44.asServiceRole.entities.LocationReference.filter(
+      { scope: 'shared', created_by_role: 'admin' },
+      '-created_date',
+      100
+    );
+
+    // ── QUERY 3: User's characters — needed to resolve character-linked location IDs ──
     // owner_email is the sole ownership source of truth — created_by is permanently forbidden
     const userCharacters = await base44.entities.Character.filter(
       { owner_email: user.email },
       '-created_date',
-      500
+      200
     );
 
-    // Build set of this user's character IDs
+    // Build set of character IDs for character-specific location matching
     const userCharacterIds = new Set(userCharacters.map(c => c.id));
-    userCharacterIds.add(user.id); // include the user's own entity ID
+    userCharacterIds.add(user.id);
 
-    // Build set of location IDs explicitly linked from this user's character profiles
+    // Collect all location IDs explicitly referenced in character profile fields
     const charLinkedLocationIds = new Set();
     for (const char of userCharacters) {
       if (char.occupation_location_id) charLinkedLocationIds.add(char.occupation_location_id);
@@ -74,54 +75,73 @@ Deno.serve(async (req) => {
       }
     }
 
-    const relevantLocations = allLocations.filter(loc => {
+    // Build the combined set from owned + shared — deduplicated by ID
+    const seen = new Set();
+    const combined = [];
 
-      // ── LAYER 1: OWNED BY THIS ACCOUNT ────────────────────────────────────
-      // owner_email is the sole source of truth — created_by is permanently forbidden
-      if (loc.owner_email && loc.owner_email === user.email) return true;
+    for (const loc of [...ownedLocations, ...sharedLocations]) {
+      if (!seen.has(loc.id)) {
+        seen.add(loc.id);
+        combined.push(loc);
+      }
+    }
 
-      // ── LAYER 2: CHARACTER-SPECIFIC for this user's characters ────────────
+    // ── QUERY 4 (targeted): Fetch any char-linked location IDs not yet in the combined set ──
+    // This only runs if there are missing IDs — and uses specific ID lookups, not a global list.
+    const missingLinkedIds = [...charLinkedLocationIds].filter(id => !seen.has(id));
+
+    if (missingLinkedIds.length > 0) {
+      // Fetch in batches of 10 IDs at a time to avoid oversized queries
+      const BATCH = 10;
+      for (let i = 0; i < missingLinkedIds.length; i += BATCH) {
+        const batch = missingLinkedIds.slice(i, i + BATCH);
+        // Use service role to read by ID — validate ownership below before including
+        const batchResults = await Promise.all(
+          batch.map(id =>
+            base44.asServiceRole.entities.LocationReference.filter({ id }, null, 1)
+              .then(res => res[0] || null)
+              .catch(() => null)
+          )
+        );
+        for (const loc of batchResults) {
+          if (!loc) continue;
+          if (seen.has(loc.id)) continue;
+          // Only include if not owned by a DIFFERENT user account — no cross-account leakage
+          if (loc.owner_email && loc.owner_email !== user.email) continue;
+          seen.add(loc.id);
+          combined.push(loc);
+        }
+      }
+    }
+
+    // ── LAYER: character-specific locations (scope === 'character_specific') ───
+    // These are already included if they're owned by this user (Query 1).
+    // The character-specific check here is a safety pass for any that slipped through.
+    const charSpecificInCombined = combined.filter(loc => {
       const isCharSpecific = loc.location_type === 'character_specific' || loc.scope === 'character_specific';
-      if (isCharSpecific) {
-        if (loc.owner_character_id && userCharacterIds.has(loc.owner_character_id)) return true;
-        if (loc.assigned_character_id && userCharacterIds.has(loc.assigned_character_id)) return true;
-        if (loc.character_id && userCharacterIds.has(loc.character_id)) return true;
-        if (loc.resident_character_ids?.some(id => userCharacterIds.has(id))) return true;
-      }
-
-      // ── LAYER 3: CHARACTER-LINKED — referenced in this user's char profiles ──
-      // Only include if the location is not owned by a different user account
-      if (charLinkedLocationIds.has(loc.id)) {
-        if (!loc.owner_email || loc.owner_email === user.email) return true;
-        return false; // Owned by another account — exclude
-      }
-
-      // ── LAYER 4: RESIDENT-LINKED — one of this user's chars lives here ────
-      // Only include if not explicitly owned by another user account
-      if (loc.resident_character_ids?.some(id => userCharacterIds.has(id))) {
-        if (!loc.owner_email || loc.owner_email === user.email) return true;
-      }
-
-      // ── LAYER 5: ADMIN-SHARED — the ONLY cross-account visibility ─────────
-      // STRICT: must be admin-created AND explicitly scoped as 'shared'
-      // This is the ONLY exception to account isolation.
-      if (loc.created_by_role === 'admin' && loc.scope === 'shared') return true;
-
-      // Everything else is excluded — no fallback global visibility
+      if (!isCharSpecific) return true; // not char-specific — keep as-is
+      // char-specific: keep only if it belongs to one of this user's characters
+      if (loc.owner_character_id && userCharacterIds.has(loc.owner_character_id)) return true;
+      if (loc.assigned_character_id && userCharacterIds.has(loc.assigned_character_id)) return true;
+      if (loc.character_id && userCharacterIds.has(loc.character_id)) return true;
+      if (loc.resident_character_ids?.some(id => userCharacterIds.has(id))) return true;
+      // char-specific but not linked to this user's characters — exclude
       return false;
     });
 
-    // Sort alphabetically by name
-    relevantLocations.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    // Sort alphabetically
+    charSpecificInCombined.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     return Response.json({
       success: true,
-      locations: relevantLocations,
-      totalCount: relevantLocations.length,
+      locations: charSpecificInCombined,
+      totalCount: charSpecificInCombined.length,
       summary: {
-        ownedByAccount: relevantLocations.filter(l => l.owner_email === user.email).length,
-        adminShared: relevantLocations.filter(l => l.created_by_role === 'admin' && l.scope === 'shared').length,
-        characterLinked: relevantLocations.filter(l => charLinkedLocationIds.has(l.id)).length,
+        ownedByAccount: charSpecificInCombined.filter(l => l.owner_email === user.email).length,
+        adminShared: charSpecificInCombined.filter(l => l.created_by_role === 'admin' && l.scope === 'shared').length,
+        characterLinked: charSpecificInCombined.filter(l => charLinkedLocationIds.has(l.id)).length,
+        queriesUsed: missingLinkedIds.length > 0 ? 4 : 3,
+        broadListUsed: false,
       },
     });
   } catch (error) {

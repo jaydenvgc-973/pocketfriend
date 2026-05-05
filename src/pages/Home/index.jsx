@@ -28,7 +28,7 @@ export default function Home() {
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [invitations, setInvitations] = useState(null);
 
-  const { settings: userSettings } = useUserSettings();
+  const { settings: userSettings, isLoading: isSettingsLoading, isError: isSettingsError } = useUserSettings();
   // Keep settings as array-compatible for legacy references (onClose invite modal)
   const settings = userSettings?.id ? [userSettings] : [];
 
@@ -45,19 +45,22 @@ export default function Home() {
 
   // Fetch locations — staleTime:0 + refetchOnMount:"always" ensures UserCard dropdown
   // never shows an empty list from a stale cache when real locations exist.
-  const { data: locationsData = [], isLoading: isLocationsLoading } = useQuery({
+  const { data: locationsData = [], isLoading: isLocationsLoading, isError: isLocationsError } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
       const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
+      if (!res?.data?.success) throw new Error(res?.data?.error || 'fetchAllLocationsForUser failed');
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
-    staleTime: 0,
-    gcTime: 60000,
-    refetchOnMount: "always",
+    staleTime: 60 * 1000,        // 1 min — avoid redundant re-fetches within the same session window
+    gcTime: 5 * 60 * 1000,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     retry: 2,
+    retryDelay: (attempt) => attempt * 2000, // 2s, 4s — back off on 429s
+    placeholderData: (prev) => prev,          // keep previous cached locations while retrying
   });
 
   // Real-time: invalidate locations when any LocationReference changes.
@@ -272,8 +275,11 @@ export default function Home() {
               user={currentUser}
               settings={userSettings || {}}
               settingsId={userSettings?.id}
+              settingsLoading={isSettingsLoading}
+              settingsError={isSettingsError}
               locations={locationsData}
               isLocationsLoading={isLocationsLoading}
+              isLocationsError={isLocationsError}
             />
           )}
           {defaultChar && (

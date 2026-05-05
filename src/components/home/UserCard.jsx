@@ -4,10 +4,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import { User, DollarSign, MapPin, ChevronDown, LogOut, Check } from "lucide-react";
 import { useUserPresence } from "@/hooks/useUserPresence";
 
-export default function UserCard({ user, settings, settingsId, locations = [], isLocationsLoading = false }) {
+export default function UserCard({ user, settings, settingsId, settingsLoading = false, settingsError = false, locations = [], isLocationsLoading = false, isLocationsError = false }) {
+  // Only use fictional_world_name if settings actually loaded — never fall back to full_name as if it were the world name
   const displayName = settings?.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
-  const balance = settings?.user_balance ?? 6000;
+  // Never show a fake balance. Only show the value when settings are confirmed loaded.
+  // If settings failed or are still loading, show "—" so the user knows the real value isn't available.
+  const balanceKnown = !settingsLoading && !settingsError && settings?.user_balance !== undefined;
+  const balance = balanceKnown ? settings.user_balance : null;
 
   const { userPresence, setUserLocation, setUserAway } = useUserPresence(user, settings, settingsId);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -118,6 +122,8 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
                         <div className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin flex-shrink-0" />
                         <p className="text-xs text-muted-foreground">Loading locations...</p>
                       </div>
+                    ) : isLocationsError ? (
+                      <p className="text-xs text-amber-400 px-3 py-2">Locations could not load. Please refresh.</p>
                     ) : sortedLocations.length === 0 ? (
                       <p className="text-xs text-muted-foreground px-3 py-2">No locations yet. Add them in Places.</p>
                     ) : (
@@ -150,10 +156,16 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
           </div>
         </div>
 
-        {/* Balance */}
+        {/* Balance — only shown when settings are confirmed loaded; never fakes $6,000 */}
         <div className="flex items-center gap-1 bg-green-500/10 px-2.5 py-1 rounded-full flex-shrink-0">
           <DollarSign className="w-3 h-3 text-green-400" />
-          <span className="text-xs font-semibold text-green-400">{balance.toLocaleString()}</span>
+          {settingsLoading ? (
+            <span className="text-xs font-semibold text-green-400/50">...</span>
+          ) : settingsError ? (
+            <span className="text-xs font-semibold text-amber-400" title="Balance could not load">—</span>
+          ) : (
+            <span className="text-xs font-semibold text-green-400">{balance?.toLocaleString() ?? "—"}</span>
+          )}
         </div>
       </div>
     </motion.div>
