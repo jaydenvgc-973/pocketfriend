@@ -121,46 +121,28 @@ Deno.serve(async (req) => {
   // resolve each requested id from that set. No ID transformation occurs.
   trace.character_lookup_started = true;
 
-  // CRITICAL: asServiceRole.entities.Character.filter({ owner_email }) only returns NPC types
-  // on this account — it does NOT return active_created_character records via service role.
-  // This is the same split that exists on the Home page, which fetches two separate lists:
-  //   1. User-scoped (RLS) query → active_created_character records
-  //   2. Service-role backend (fetchNPCsForUser) → NPC types
-  //
-  // We must replicate the same dual-fetch here. The user-scoped base44.entities path (NOT
-  // asServiceRole) returns all character types the authenticated user owns via RLS.
+  // CRITICAL ROOT CAUSE (confirmed via runtime logs):
+  // asServiceRole.entities.Character.filter({ owner_email }) returns only NPC types for this
+  // account — active_created_character records are invisible to it. The user-scoped
+  // base44.entities.Character (RLS path) returns ALL character types the authenticated user
+  // owns, including active_created_character. This is the single correct fetch path.
+  // A second asServiceRole fetch causes rate-limit 429s and is unnecessary.
   let allOwnedChars = [];
   try {
-    // Sequential to avoid rate-limit (429) from simultaneous queries on the same account
-    // Path 1: user-scoped RLS — returns active_created_character records
-    const activeChars = await base44.entities.Character.filter(
-      { owner_email: user.email },
-      '-created_date',
-      300
-    );
-    await new Promise(r => setTimeout(r, 200));
-    // Path 2: service-role — returns NPC types (npc_fictitious, npc_family_member, npc_regular)
-    const npcChars = await base44.asServiceRole.entities.Character.filter(
+    allOwnedChars = await base44.entities.Character.filter(
       { owner_email: user.email },
       '-created_date',
       300
     );
 
-    // Merge and deduplicate by id — same pattern as Home's allCharacters merge
-    const seen = new Set();
-    for (const c of [...activeChars, ...npcChars]) {
-      if (!seen.has(c.id) && c.status !== 'deleted' && c.status !== 'soft_deleted') {
-        seen.add(c.id);
-        allOwnedChars.push(c);
-      }
-    }
+    // Exclude hard-deleted records
+    allOwnedChars = allOwnedChars.filter(c => c.status !== 'deleted' && c.status !== 'soft_deleted');
 
     trace.character_lookup_results.push({
       stage: 'owner_fetch',
       total_owned: allOwnedChars.length,
-      active_chars_count: activeChars.length,
-      npc_chars_count: npcChars.length,
       owner_email_used: user.email,
+      types_found: [...new Set(allOwnedChars.map(c => c.character_type))],
     });
   } catch (fetchErr) {
     return Response.json({
@@ -385,7 +367,7 @@ Return a JSON object with:
           }
         }
       },
-      model: 'gemini_3_flash'
+      model: 'gpt_5_mini'
     });
     trace.ai_response_completed = true;
   } catch (aiErr) {
