@@ -2,8 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   HelpCircle, Send, Loader2, User, Brain, RefreshCw,
-  CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp,
-  FileText, Wrench
+  CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Wrench, FileText
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import ReactMarkdown from "react-markdown";
@@ -12,7 +11,10 @@ function ts() {
   return new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
-// ── Diagnostic check row ──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Diagnostic sub-components (kept small and focused)
+// ─────────────────────────────────────────────────────────────────────────────
+
 function CheckRow({ check }) {
   const icon = check.status === 'passed'
     ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
@@ -23,8 +25,7 @@ function CheckRow({ check }) {
   return (
     <div className={`flex items-start gap-2 p-2 rounded-lg text-xs ${
       check.status === 'passed' ? 'bg-emerald-500/5' :
-      check.status === 'warning' ? 'bg-amber-500/10' :
-      'bg-destructive/10'
+      check.status === 'warning' ? 'bg-amber-500/10' : 'bg-destructive/10'
     }`}>
       {icon}
       <div>
@@ -35,7 +36,6 @@ function CheckRow({ check }) {
   );
 }
 
-// ── Collapsible section ───────────────────────────────────────────────────────
 function DiagSection({ title, checks = [], issueCount }) {
   const [open, setOpen] = useState(issueCount > 0);
   return (
@@ -47,19 +47,16 @@ function DiagSection({ title, checks = [], issueCount }) {
         <span>{title}</span>
         <div className="flex items-center gap-2">
           {issueCount > 0 && (
-            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[10px] font-bold">{issueCount} issue{issueCount !== 1 ? 's' : ''}</span>
+            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[10px] font-bold">
+              {issueCount} issue{issueCount !== 1 ? 's' : ''}
+            </span>
           )}
           {open ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
         </div>
       </button>
       <AnimatePresence initial={false}>
         {open && (
-          <motion.div
-            initial={{ height: 0 }}
-            animate={{ height: 'auto' }}
-            exit={{ height: 0 }}
-            className="overflow-hidden"
-          >
+          <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
             <div className="p-3 space-y-2">
               {checks.map((c, i) => <CheckRow key={i} check={c} />)}
             </div>
@@ -70,11 +67,37 @@ function DiagSection({ title, checks = [], issueCount }) {
   );
 }
 
+// ── RepairButton — only renders if the repair_action is in the confirmed live list ──
+function RepairButton({ repairAction, label, description, availableRepairs, onRepair, isRepairing }) {
+  const isLive = (availableRepairs || []).includes(repairAction);
+  if (!isLive) {
+    // Fail visibly rather than silently hiding or pretending the button works
+    return (
+      <div className="p-2.5 rounded-xl border border-destructive/20 bg-destructive/5 text-xs">
+        <p className="text-destructive font-medium">⚠ Repair path unavailable: <code>{repairAction}</code></p>
+        <p className="text-muted-foreground mt-0.5">This action was not confirmed in the current diagnostic response. No changes can be made.</p>
+      </div>
+    );
+  }
+  return (
+    <button
+      onClick={() => onRepair(repairAction)}
+      disabled={isRepairing}
+      className="w-full flex items-center gap-2 p-3 rounded-xl bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors text-xs text-left disabled:opacity-50"
+    >
+      <Wrench className="w-4 h-4 text-primary flex-shrink-0" />
+      <div>
+        <p className="font-medium text-foreground">{label}</p>
+        <p className="text-muted-foreground">{description}</p>
+      </div>
+    </button>
+  );
+}
+
 // ── Full diagnostic panel ─────────────────────────────────────────────────────
 function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
   if (!diagData) return null;
-  const { summary, findings, errors } = diagData;
-
+  const { summary, findings, errors, available_repairs } = diagData;
   const allIssues = Object.values(findings || {}).flatMap(f => (f.checks || []).filter(c => c.status !== 'passed'));
   const hasIssues = allIssues.length > 0;
 
@@ -82,7 +105,7 @@ function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
     <div className="space-y-3">
       <div className={`p-3 rounded-xl border text-xs ${hasIssues ? 'bg-amber-500/10 border-amber-500/30' : 'bg-emerald-500/10 border-emerald-500/30'}`}>
         <p className="font-semibold text-foreground">{summary}</p>
-        <p className="text-muted-foreground mt-0.5">Account: {diagData.owner_email}</p>
+        <p className="text-muted-foreground mt-0.5">Account: {diagData.owner_email} · {new Date(diagData.checked_at).toLocaleTimeString()}</p>
       </div>
 
       {findings?.characters && (
@@ -120,42 +143,77 @@ function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
           issueCount={(findings.financial.checks || []).filter(c => c.status !== 'passed').length}
         />
       )}
+      {findings?.schedules && (
+        <DiagSection
+          title="Schedules & Work Links"
+          checks={findings.schedules.checks || []}
+          issueCount={(findings.schedules.checks || []).filter(c => c.status !== 'passed').length}
+        />
+      )}
 
       {errors?.length > 0 && (
         <div className="p-3 rounded-xl border border-destructive/30 bg-destructive/5 text-xs text-destructive space-y-1">
-          <p className="font-semibold">Diagnostic Errors (these checks could not run):</p>
+          <p className="font-semibold">Checks that could not run (fail visible):</p>
           {errors.map((e, i) => <p key={i}>{e.area}: {e.error}</p>)}
         </div>
       )}
 
-      {/* Repair actions — only shown when issues exist */}
+      {/* Repair actions — driven entirely by live available_repairs returned from backend */}
       {hasIssues && (
         <div className="space-y-2">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Available Repairs</p>
+
           {findings?.characters?.duplicateGroupCount > 0 && (
             <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/5 text-xs">
               <p className="font-medium text-foreground">Duplicate Characters</p>
-              <p className="text-muted-foreground mt-0.5">Use <strong>Suggested Duplicates → Review &amp; Merge</strong> in Settings to safely merge with full verification. This cannot be done automatically.</p>
+              <p className="text-muted-foreground mt-0.5">
+                Use <strong>Suggested Duplicates → Review &amp; Merge</strong> in Settings to safely merge with full verification. Auto-merge is blocked — manual review required.
+              </p>
             </div>
           )}
-          {(findings?.characters?.staleResolved?.length > 0 || findings?.locations?.noScope > 0) && (
-            <button
-              onClick={() => onRepair('fix_character_locations')}
-              disabled={isRepairing}
-              className="w-full flex items-center gap-2 p-3 rounded-xl bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors text-xs text-left disabled:opacity-50"
-            >
-              <Wrench className="w-4 h-4 text-primary flex-shrink-0" />
-              <div>
-                <p className="font-medium text-foreground">Sync character location presence</p>
-                <p className="text-muted-foreground">Re-runs location enforcement for all your active characters</p>
-              </div>
-            </button>
+
+          {(findings?.characters?.staleResolved?.length > 0 || findings?.locations?.noScopeCount > 0) && (
+            <RepairButton
+              repairAction="fix_character_locations"
+              label="Sync character location presence"
+              description="Re-runs location enforcement for all your active characters"
+              availableRepairs={available_repairs}
+              onRepair={onRepair}
+              isRepairing={isRepairing}
+            />
           )}
+
           {findings?.characters?.missingType?.length > 0 && (
-            <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/5 text-xs">
-              <p className="font-medium text-foreground">Characters missing type classification</p>
-              <p className="text-muted-foreground mt-0.5">These records need manual review. Use <strong>Edit Character Type</strong> in Settings to classify them correctly.</p>
-            </div>
+            <RepairButton
+              repairAction="repair_invalid_types"
+              label="Repair missing character type classifications"
+              description={`${findings.characters.missingType.length} character(s) need type assigned`}
+              availableRepairs={available_repairs}
+              onRepair={onRepair}
+              isRepairing={isRepairing}
+            />
+          )}
+
+          {(findings?.conversations?.emptyCharIds?.length > 0 || findings?.conversations?.danglingConvs?.length > 0) && (
+            <RepairButton
+              repairAction="troubleshoot_thread"
+              label="Troubleshoot conversation linkage"
+              description="Checks and repairs broken character → conversation links"
+              availableRepairs={available_repairs}
+              onRepair={onRepair}
+              isRepairing={isRepairing}
+            />
+          )}
+
+          {(findings?.schedules?.workersMissingWorkLocation?.length > 0 || findings?.schedules?.studentsMissingSchoolLocation?.length > 0) && (
+            <RepairButton
+              repairAction="troubleshoot_locations"
+              label="Repair location links for workers/students"
+              description="Re-links work and school location references"
+              availableRepairs={available_repairs}
+              onRepair={onRepair}
+              isRepairing={isRepairing}
+            />
           )}
         </div>
       )}
@@ -163,12 +221,11 @@ function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
   );
 }
 
-// ── Chat message bubble ───────────────────────────────────────────────────────
-function ChatMessage({ msg }) {
+// ── Chat message renderer ─────────────────────────────────────────────────────
+function ChatMessage({ msg, onRepair, isRepairing }) {
   const isUser = msg.role === 'user';
-  const isSystem = msg.role === 'system';
 
-  if (isSystem) {
+  if (msg.role === 'system') {
     return (
       <div className="flex items-center gap-2 py-1 px-3">
         <div className="flex-1 h-px bg-border/50" />
@@ -181,11 +238,7 @@ function ChatMessage({ msg }) {
   if (msg.role === 'diagnostic') {
     return (
       <div className="px-3 py-2">
-        <DiagnosticPanel
-          diagData={msg.diagData}
-          onRepair={msg.onRepair}
-          isRepairing={msg.isRepairing}
-        />
+        <DiagnosticPanel diagData={msg.diagData} onRepair={onRepair} isRepairing={isRepairing} />
       </div>
     );
   }
@@ -201,11 +254,9 @@ function ChatMessage({ msg }) {
           <Brain className="w-3.5 h-3.5 text-sky-400" />
         </div>
       )}
-      <div className={`max-w-[88%] space-y-1.5 ${isUser ? 'items-end' : 'items-start'} flex flex-col`}>
+      <div className={`max-w-[88%] flex flex-col ${isUser ? 'items-end' : 'items-start'} space-y-1`}>
         <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
-          isUser
-            ? 'bg-primary text-primary-foreground rounded-tr-sm'
-            : 'bg-secondary text-foreground rounded-tl-sm'
+          isUser ? 'bg-primary text-primary-foreground rounded-tr-sm' : 'bg-secondary text-foreground rounded-tl-sm'
         }`}>
           {isUser ? (
             <p className="whitespace-pre-wrap">{msg.content}</p>
@@ -234,21 +285,7 @@ function ChatMessage({ msg }) {
   );
 }
 
-// ── Create IssueReport scoped to this user ────────────────────────────────────
-async function createIssueReport(ownerEmail, userId, category, title, description, diagSnapshot, findings) {
-  return base44.entities.IssueReport.create({
-    owner_email: ownerEmail,
-    owner_user_id: userId,
-    category,
-    title,
-    description,
-    status: 'received',
-    diagnostic_snapshot: diagSnapshot || {},
-    findings: findings || [],
-  });
-}
-
-// ── Determine category from user text ─────────────────────────────────────────
+// ── Category classifier ───────────────────────────────────────────────────────
 function detectCategory(text) {
   const t = text.toLowerCase();
   if (/duplic|same character|two.*character|merge/i.test(t)) return 'character_duplicates';
@@ -264,14 +301,6 @@ function detectCategory(text) {
   return 'other';
 }
 
-// ── Current live functions the assistant can call (user-scoped only) ───────────
-const USER_REPAIR_FUNCTIONS = {
-  fix_character_locations: 'enforceLocationPresenceForOwner',
-  troubleshoot_locations: 'troubleshootLocations',
-  troubleshoot_system: 'troubleshootSystemData',
-  troubleshoot_moments: 'troubleshootMoments',
-};
-
 // ── Main SupportAssistant ─────────────────────────────────────────────────────
 export default function SupportAssistant({ user }) {
   const ownerEmail = user?.email;
@@ -280,7 +309,7 @@ export default function SupportAssistant({ user }) {
   const [messages, setMessages] = useState([{
     id: 'welcome',
     role: 'ai',
-    content: `Hi! I'm your **Account Help & Repair** assistant.\n\nI can:\n- **Run a full account diagnostic** — characters, chats, memories, locations, finances\n- **Find duplicate characters** — and guide you to the safe merge tool\n- **Check chat/memory linkage** — spot broken references and dangling records\n- **Check location & schedule issues** — presence sync, home assignments\n- **File a support report** — when a repair needs review\n\nAll checks run against your account only (${ownerEmail ? ownerEmail.split('@')[0] + '…' : 'your account'}).\n\nType a problem or say **"run diagnostic"** to start.`,
+    content: `Hi! I'm your **Account Help & Repair** assistant.\n\nI can run a real diagnostic against your account and help you fix issues with:\n- **Characters** — duplicates, missing types, no home assigned\n- **Conversations & chats** — broken links, dangling references\n- **Memories** — unresolved identities, dangling records\n- **Locations** — stale presence, missing scope\n- **Financial** — missing records, negative balances\n- **Schedules** — workers/students missing location links\n\nAll checks run against your account only.\n\nType a problem or say **"run diagnostic"** to start.`,
     ts: ts(),
   }]);
   const [input, setInput] = useState("");
@@ -299,39 +328,83 @@ export default function SupportAssistant({ user }) {
     return id;
   };
 
+  // ── Run full diagnostic via live backend function ──────────────────────────
   const runFullDiagnostic = async () => {
     addMessage({ role: 'system', content: '🔍 Running full account diagnostic…', ts: ts() });
     const res = await base44.functions.invoke('userAccountDiagnostic', { categories: 'all' });
     const diagData = res?.data;
-    if (!diagData) throw new Error('Diagnostic returned no data');
+    if (!diagData) throw new Error('Diagnostic returned no data — function may have failed');
     setLastDiagData(diagData);
     return diagData;
   };
 
-  const handleRepair = async (repair_action) => {
-    if (!USER_REPAIR_FUNCTIONS[repair_action]) {
-      addMessage({ role: 'ai', content: `⚠️ Repair action \`${repair_action}\` is not a current live path. This repair needs to be updated before it can run.`, ts: ts() });
-      return;
+  // ── Repair dispatch — repair_action must be in diagData.available_repairs ──
+  const handleRepair = async (repair_action, repair_character_id = null) => {
+    // Verify against last known available_repairs before calling backend
+    // This prevents calling paths that were not confirmed in the last diagnostic run
+    if (lastDiagData?.available_repairs && !lastDiagData.available_repairs.includes(repair_action)) {
+      // Per-character repairs are in available_character_repairs
+      const isCharRepair = (lastDiagData?.available_character_repairs || []).includes(repair_action);
+      if (!isCharRepair) {
+        addMessage({
+          role: 'ai',
+          content: `⚠️ I cannot run repair path \`${repair_action}\` — it was not confirmed as available in the last diagnostic response. No changes were made.`,
+          ts: ts(),
+        });
+        return;
+      }
     }
+
     setIsRepairing(true);
     addMessage({ role: 'system', content: `⚙️ Running repair: ${repair_action}…`, ts: ts() });
     try {
-      const res = await base44.functions.invoke('userAccountDiagnostic', { categories: 'all', repair_action });
+      const payload = { categories: 'none', repair_action };
+      if (repair_character_id) payload.repair_character_id = repair_character_id;
+
+      const res = await base44.functions.invoke('userAccountDiagnostic', payload);
       const result = res?.data?.repair;
-      addMessage({
-        role: 'ai',
-        content: result?.error
-          ? `Repair encountered an issue: ${result.error}`
-          : `Repair complete. ${result?.result ? JSON.stringify(result.result)?.slice(0, 200) : 'Done.'}`,
-        ts: ts(),
-      });
+
+      if (result?.blocked) {
+        addMessage({
+          role: 'ai',
+          content: `**Repair blocked:** ${result.reason}\n\nNo changes were made. A support report has been filed.`,
+          ts: ts(),
+        });
+        // Create IssueReport for blocked repair
+        base44.entities.IssueReport.create({
+          owner_email: ownerEmail,
+          owner_user_id: userId,
+          category: 'other',
+          title: `Repair blocked: ${repair_action}`,
+          description: result.reason,
+          status: 'repair_pending',
+          findings: [],
+        }).catch(() => {});
+      } else if (result?.error) {
+        addMessage({ role: 'ai', content: `**Repair encountered an error:** ${result.error}`, ts: ts() });
+      } else {
+        addMessage({
+          role: 'ai',
+          content: `**Repair complete** ✓\n\nAction: \`${repair_action}\`\n${typeof result?.result === 'object' ? JSON.stringify(result.result, null, 2).slice(0, 400) : (result?.result || 'Done.')}`,
+          ts: ts(),
+        });
+        // Re-run diagnostic after repair to verify state
+        addMessage({ role: 'system', content: '🔍 Re-running diagnostic to verify repair…', ts: ts() });
+        const verifyData = await runFullDiagnostic();
+        addMessage({
+          role: 'diagnostic',
+          diagData: verifyData,
+          ts: ts(),
+        });
+      }
     } catch (e) {
-      addMessage({ role: 'ai', content: `Repair failed: ${e.message}`, ts: ts() });
+      addMessage({ role: 'ai', content: `Repair failed: ${e.message}. No changes were made.`, ts: ts() });
     } finally {
       setIsRepairing(false);
     }
   };
 
+  // ── Handle user submit ────────────────────────────────────────────────────
   const handleSubmit = async () => {
     const text = input.trim();
     if (!text || isProcessing || !ownerEmail) return;
@@ -343,21 +416,20 @@ export default function SupportAssistant({ user }) {
     setMessages(prev => [...prev, { id: thinkingId, role: 'system', content: '🔍 Working on it…', ts: ts() }]);
 
     try {
-      const wantsDiagnostic = /run diagnostic|check.*account|full check|what.*wrong|diagnose|scan|audit/i.test(text);
+      const wantsDiagnostic = /run diagnostic|check.*account|full check|what.*wrong|diagnose|scan|audit|check everything/i.test(text);
       const wantsReport = /file.*report|create.*report|submit.*issue|log.*issue|report.*problem/i.test(text);
 
       let diagData = null;
 
-      // Always run diagnostic if explicitly asked
       if (wantsDiagnostic) {
         diagData = await runFullDiagnostic();
       }
 
-      // Build LLM context
+      // Build context for LLM — always include what was actually found, not invented
       const recentHistory = messages
         .filter(m => m.role === 'user' || m.role === 'ai')
-        .slice(-8)
-        .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, 300)}`)
+        .slice(-6)
+        .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, 250)}`)
         .join('\n\n');
 
       let diagContext = '';
@@ -365,42 +437,33 @@ export default function SupportAssistant({ user }) {
         const allChecks = Object.values(diagData.findings || {}).flatMap(f => f.checks || []);
         const issues = allChecks.filter(c => c.status !== 'passed');
         diagContext = issues.length > 0
-          ? `\n\nLIVE DIAGNOSTIC RESULTS for ${ownerEmail}:\n${issues.map(c => `- [${c.status.toUpperCase()}] ${c.check}: ${c.detail}`).join('\n')}`
-          : `\n\nLIVE DIAGNOSTIC: All checks passed — no issues found.`;
+          ? `\n\nLIVE DIAGNOSTIC RESULTS for ${ownerEmail}:\n${issues.map(c => `- [${c.status.toUpperCase()}] ${c.check}: ${c.detail}`).join('\n')}\n\nAvailable repair paths confirmed by backend: ${(diagData.available_repairs || []).join(', ')}`
+          : `\n\nLIVE DIAGNOSTIC: All checks passed for ${ownerEmail}.`;
       } else if (lastDiagData) {
-        diagContext = `\n\n(Previous diagnostic summary: ${lastDiagData.summary})`;
+        diagContext = `\n\n(Previous diagnostic: ${lastDiagData.summary} at ${lastDiagData.checked_at})`;
       }
 
-      // CURRENT live repair functions (so LLM never hallucinates old ones)
-      const currentFunctions = `
-CURRENT LIVE REPAIR FUNCTIONS (only reference these, never invent others):
-- userAccountDiagnostic — full account check, all areas
-- enforceLocationPresenceForOwner — sync character location presence for this user
-- troubleshootLocations — location-specific diagnostics
-- troubleshootSystemData — character type/orphan diagnostics
-- troubleshootMoments — achievement/badge diagnostics
-- mergeCharacters — safe merge (requires explicit user confirmation + UI review first)
-
-UI TOOLS IN SETTINGS:
-- "Suggested Duplicates → Review & Merge" — the only safe way to merge duplicate characters
-- "Edit Character Type" — classify untyped characters
-- "Troubleshoot — Location, Moments & System" — panel with scoped checks`;
+      // LLM only references functions that are confirmed in the diagnostic response
+      const confirmedRepairs = diagData?.available_repairs || lastDiagData?.available_repairs || [];
+      const repairList = confirmedRepairs.length > 0
+        ? `\n\nCONFIRMED LIVE REPAIR PATHS (from current diagnostic response — do not invent others):\n${confirmedRepairs.map(r => `- ${r}`).join('\n')}`
+        : '';
 
       const prompt = `You are the Account Help & Repair assistant for a character-based social simulation app ("Own Your Life").
 
-You are helping user: ${ownerEmail}
+You are helping the user whose account email is: ${ownerEmail}
 
 STRICT RULES:
-- Only reference this user's data. Never mention other accounts.
-- Never use "created_by". Ownership = owner_email only.
-- Never suggest browser console, developer tools, or direct DB edits.
-- Never promise a repair you cannot confirm is a live function.
-- If a repair path might be outdated, say: "This repair path may need to be updated — I'll flag it."
-- For duplicates: always direct to "Suggested Duplicates → Review & Merge" in Settings.
-- When filing a report: confirm to the user that a support ticket has been created.
-- Be clear, plain-language, non-technical in your response.
-
-${currentFunctions}
+- Only discuss this user's data. Never mention or compare other accounts.
+- created_by is permanently forbidden — never reference it.
+- Never promise a repair you cannot confirm is in the live repair list.
+- If a repair path is NOT in the confirmed live repair paths, say: "I cannot run that repair — it's not in the confirmed live paths."
+- For duplicate characters: always direct to "Suggested Duplicates → Review & Merge" in Settings.
+- When filing a report: confirm a ticket was created.
+- Be plain-language and specific. Name the exact characters, conversations, or records involved.
+- Do not say "everything looks fine" if there are unresolved warnings.
+- If you cannot verify a fix happened, say: "I cannot confirm this was fixed without a re-diagnostic."
+${repairList}
 
 Recent conversation:
 ${recentHistory}
@@ -408,7 +471,7 @@ ${diagContext}
 
 User message: ${text}
 
-Respond helpfully. If the user is asking about a specific issue, give a concrete next step. If you found issues in the diagnostic, explain each one in plain language.`;
+Respond with specific, honest, actionable information. If issues were found, name them. If repairs are available, name them by their exact repair_action key. If you cannot fix something, explain why and what the user should do next.`;
 
       const response = await base44.integrations.Core.InvokeLLM({
         prompt,
@@ -417,33 +480,38 @@ Respond helpfully. If the user is asking about a specific issue, give a concrete
 
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
 
-      // Show AI response
-      addMessage({ role: 'ai', content: response || 'I was unable to generate a response. Please try again.', ts: ts() });
+      addMessage({ role: 'ai', content: response || 'Unable to generate a response. Please try again.', ts: ts() });
 
-      // Show diagnostic panel inline if we ran one
+      // Always show diagnostic panel after running one
       if (diagData) {
-        addMessage({
-          role: 'diagnostic',
-          diagData,
-          onRepair: handleRepair,
-          isRepairing,
-          ts: ts(),
-        });
+        addMessage({ role: 'diagnostic', diagData, ts: ts() });
       }
 
-      // Auto-create IssueReport if issues found and user seems to have a problem
-      const looksLikeIssue = !wantsDiagnostic || (diagData && Object.values(diagData.findings || {}).flatMap(f => f.checks || []).some(c => c.status !== 'passed'));
-      if (looksLikeIssue && !wantsDiagnostic) {
-        // Create issue report silently
+      // IssueReport: create when user describes a problem (not just a diagnostic run)
+      // Also create when diagnostic finds real issues
+      const diagFoundIssues = diagData && Object.values(diagData.findings || {}).flatMap(f => f.checks || []).some(c => c.status !== 'passed');
+      const userReportingIssue = !wantsDiagnostic || wantsReport;
+
+      if ((wantsReport || (userReportingIssue && !wantsDiagnostic)) || (diagFoundIssues && wantsDiagnostic)) {
         const category = detectCategory(text);
-        const snapshot = diagData?.findings || {};
-        const findings = diagData ? Object.values(diagData.findings || {}).flatMap(f => f.checks || []) : [];
-        createIssueReport(ownerEmail, userId, category, text.slice(0, 120), text, snapshot, findings).catch(() => {});
-        addMessage({
-          role: 'system',
-          content: '📋 Support ticket created — your issue has been logged for review.',
-          ts: ts(),
-        });
+        const findings = diagData
+          ? Object.values(diagData.findings || {}).flatMap(f => f.checks || []).filter(c => c.status !== 'passed')
+          : [];
+
+        base44.entities.IssueReport.create({
+          owner_email: ownerEmail,
+          owner_user_id: userId,
+          category,
+          title: text.slice(0, 120),
+          description: text,
+          status: 'received',
+          diagnostic_snapshot: diagData?.findings || {},
+          findings,
+        }).catch(() => {});
+
+        if (wantsReport || userReportingIssue) {
+          addMessage({ role: 'system', content: '📋 Support ticket created — logged for review.', ts: ts() });
+        }
       }
 
     } catch (err) {
@@ -486,18 +554,18 @@ Respond helpfully. If the user is asking about a specific issue, give a concrete
         </button>
       </div>
 
-      {/* Quick actions */}
+      {/* Quick-action chips */}
       <div className="flex gap-2 px-3 pt-2 pb-1 flex-shrink-0 overflow-x-auto scrollbar-hide">
         {[
           { label: 'Run Diagnostic', action: 'run diagnostic' },
-          { label: 'Check Duplicates', action: 'check for duplicate characters' },
-          { label: 'Chat Issues', action: 'check my chat and message history' },
+          { label: 'Duplicates', action: 'check for duplicate characters' },
+          { label: 'Chat Issues', action: 'check my chat and message linkage' },
           { label: 'Location Sync', action: 'check location and schedule issues' },
-          { label: 'File Report', action: 'file a support report' },
+          { label: 'File Report', action: 'I have a problem I need to report' },
         ].map(({ label, action }) => (
           <button
             key={label}
-            onClick={() => { setInput(action); }}
+            onClick={() => setInput(action)}
             className="flex-shrink-0 text-[10px] px-2.5 py-1 rounded-full bg-secondary border border-border hover:border-sky-400/40 hover:text-sky-400 text-muted-foreground transition-colors"
           >
             {label}
@@ -509,14 +577,12 @@ Respond helpfully. If the user is asking about a specific issue, give a concrete
       <div className="flex-1 overflow-y-auto py-2 space-y-1">
         <AnimatePresence>
           {messages.map(msg => (
-            <ChatMessage key={msg.id} msg={msg} />
+            <ChatMessage key={msg.id} msg={msg} onRepair={handleRepair} isRepairing={isRepairing} />
           ))}
         </AnimatePresence>
         {isProcessing && (
           <div className="flex items-center gap-2 px-4 py-2">
-            <div className="w-5 h-5 rounded-full bg-sky-400/10 flex items-center justify-center">
-              <Loader2 className="w-3 h-3 text-sky-400 animate-spin" />
-            </div>
+            <Loader2 className="w-3 h-3 text-sky-400 animate-spin" />
             <div className="flex gap-1">
               <div className="w-1.5 h-1.5 rounded-full bg-sky-400/60 typing-dot-1" />
               <div className="w-1.5 h-1.5 rounded-full bg-sky-400/60 typing-dot-2" />

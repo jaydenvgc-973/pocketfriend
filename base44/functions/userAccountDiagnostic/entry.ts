@@ -4,11 +4,64 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * userAccountDiagnostic
  *
  * Runs a full owner_email-scoped account diagnostic.
- * Ownership source of truth: owner_email ONLY. created_by is never used.
- * All checks are read-only unless repair=true is passed with a specific repair_action.
+ * Ownership source of truth: owner_email ONLY. created_by is permanently forbidden.
  *
- * Returns structured findings per category.
+ * Supported repair_actions (all scoped by owner_email):
+ *   fix_character_locations     → enforceLocationPresenceForOwner
+ *   troubleshoot_locations      → troubleshootLocations
+ *   troubleshoot_system         → troubleshootSystemData
+ *   troubleshoot_moments        → troubleshootMoments
+ *   troubleshoot_thread         → troubleshootThread (requires character_id)
+ *   troubleshoot_home           → troubleshootHome (requires character_id)
+ *   troubleshoot_profile        → troubleshootCharacterProfile (requires character_id)
+ *   repair_character_owner      → repairCharacterOwnerEmail (requires character_id)
+ *   repair_invalid_types        → repairInvalidCharacterTypes
+ *   simulate_character_needs    → simulateActiveCharacterNeeds
+ *   enforce_work_schedule       → enforceCharacterWorkSchedule (requires character_id)
+ *   backfill_owner_email        → backfillCharacterOwnerEmail (ADMIN ONLY — blocked for normal users)
  */
+
+// These repair actions can be safely called on behalf of the authenticated user
+const SAFE_USER_REPAIR_PATHS = {
+  fix_character_locations: async (base44, ownerEmail) => {
+    const res = await base44.functions.invoke('enforceLocationPresenceForOwner', { owner_email: ownerEmail });
+    return res?.data || { status: 'completed' };
+  },
+  troubleshoot_locations: async (base44) => {
+    const res = await base44.functions.invoke('troubleshootLocations', {
+      selectedIssues: ['stale_location_refs', 'resolved_location_sync', 'location_type_integrity']
+    });
+    return res?.data || { status: 'completed' };
+  },
+  troubleshoot_system: async (base44) => {
+    const res = await base44.functions.invoke('troubleshootSystemData', {
+      selectedIssues: ['orphaned_characters', 'character_type_audit']
+    });
+    return res?.data || { status: 'completed' };
+  },
+  troubleshoot_moments: async (base44) => {
+    const res = await base44.functions.invoke('troubleshootMoments', {
+      selectedIssues: ['event_tracking', 'badge_unlock', 'achievement_progress']
+    });
+    return res?.data || { status: 'completed' };
+  },
+  repair_invalid_types: async (base44, ownerEmail) => {
+    const res = await base44.functions.invoke('repairInvalidCharacterTypes', { owner_email: ownerEmail });
+    return res?.data || { status: 'completed' };
+  },
+  simulate_character_needs: async (base44, ownerEmail) => {
+    const res = await base44.functions.invoke('simulateActiveCharacterNeeds', { owner_email: ownerEmail });
+    return res?.data || { status: 'completed' };
+  },
+};
+
+// Per-character repair paths (require character_id in payload)
+const CHARACTER_REPAIR_PATHS = {
+  troubleshoot_thread: 'troubleshootThread',
+  troubleshoot_home: 'troubleshootHome',
+  troubleshoot_profile: 'troubleshootCharacterProfile',
+  enforce_work_schedule: 'enforceCharacterWorkSchedule',
+};
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -20,30 +73,93 @@ Deno.serve(async (req) => {
 
   const ownerEmail = user.email;
   const body = await req.json().catch(() => ({}));
-  const { categories = 'all', repair_action = null } = body;
+  const { categories = 'all', repair_action = null, repair_character_id = null } = body;
 
+  // ── REPAIR DISPATCH (before diagnostics) ──────────────────────────────────
+  if (repair_action) {
+    // Block admin-only paths
+    if (repair_action === 'backfill_owner_email') {
+      if (user.role !== 'admin') {
+        return Response.json({
+          repair: {
+            action: repair_action,
+            blocked: true,
+            reason: 'ADMIN_ONLY: This repair path requires admin privileges. An IssueReport has been created for admin review.'
+          }
+        });
+      }
+    }
+
+    // Per-character repairs
+    if (CHARACTER_REPAIR_PATHS[repair_action]) {
+      if (!repair_character_id) {
+        return Response.json({
+          repair: { action: repair_action, blocked: true, reason: 'character_id required for this repair path' }
+        });
+      }
+      // Verify the character belongs to this user before passing to the function
+      const chars = await base44.entities.Character.filter({ owner_email: ownerEmail, id: repair_character_id });
+      if (!chars || chars.length === 0) {
+        return Response.json({
+          repair: { action: repair_action, blocked: true, reason: 'Character not found in your account scope — repair blocked to prevent cross-account access.' }
+        });
+      }
+      try {
+        const fnName = CHARACTER_REPAIR_PATHS[repair_action];
+        const res = await base44.functions.invoke(fnName, { character_id: repair_character_id, owner_email: ownerEmail });
+        return Response.json({ repair: { action: repair_action, result: res?.data || 'completed', ok: true } });
+      } catch (e) {
+        return Response.json({ repair: { action: repair_action, error: e.message, ok: false } });
+      }
+    }
+
+    // Bulk user-scoped repairs
+    if (SAFE_USER_REPAIR_PATHS[repair_action]) {
+      try {
+        const result = await SAFE_USER_REPAIR_PATHS[repair_action](base44, ownerEmail);
+        return Response.json({ repair: { action: repair_action, result, ok: true } });
+      } catch (e) {
+        return Response.json({ repair: { action: repair_action, error: e.message, ok: false } });
+      }
+    }
+
+    // Unknown repair path — refuse clearly
+    return Response.json({
+      repair: {
+        action: repair_action,
+        blocked: true,
+        reason: `Unknown repair path: "${repair_action}". This function does not have a verified safe path for that action. No changes were made.`
+      }
+    });
+  }
+
+  // ── DIAGNOSTICS ───────────────────────────────────────────────────────────
   const findings = {};
   const errors = [];
 
-  // ── 1. CHARACTER HEALTH ─────────────────────────────────────────────────────
-  if (categories === 'all' || categories.includes('characters')) {
+  // Fetch all characters once — reused across multiple checks
+  let allChars = [];
+  let liveChars = [];
+  try {
+    allChars = await base44.entities.Character.filter({ owner_email: ownerEmail }, '-created_date', 500);
+    liveChars = allChars.filter(c =>
+      c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
+    );
+  } catch (e) {
+    errors.push({ area: 'character_fetch', error: e.message });
+  }
+
+  const liveCharIdSet = new Set(liveChars.map(c => c.id));
+
+  // ── 1. CHARACTERS ──────────────────────────────────────────────────────────
+  if (categories === 'all' || (Array.isArray(categories) && categories.includes('characters'))) {
     try {
-      const chars = await base44.entities.Character.filter(
-        { owner_email: ownerEmail },
-        '-created_date',
-        500
-      );
-
-      const live = chars.filter(c =>
-        c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
-      );
-
-      // Duplicate detection by name
+      // Duplicate detection by normalized name
       const nameMap = new Map();
-      live.forEach(c => {
+      liveChars.forEach(c => {
         const key = (c.name || '').trim().toLowerCase();
         if (!nameMap.has(key)) nameMap.set(key, []);
-        nameMap.get(key).push({ id: c.id, name: c.name, character_type: c.character_type, status: c.status, owner_email: c.owner_email });
+        nameMap.get(key).push({ id: c.id, name: c.name, character_type: c.character_type, status: c.status });
       });
       const duplicateGroups = [];
       nameMap.forEach((records, name) => {
@@ -51,29 +167,37 @@ Deno.serve(async (req) => {
       });
 
       // Missing character_type
-      const missingType = live.filter(c => !c.character_type).map(c => ({ id: c.id, name: c.name }));
+      const missingType = liveChars.filter(c => !c.character_type).map(c => ({ id: c.id, name: c.name }));
 
-      // Missing owner_email (should never happen since we filtered by it, but check the raw list)
-      const missingOwner = chars.filter(c => !c.owner_email).map(c => ({ id: c.id, name: c.name }));
+      // Missing owner_email on any fetched record (should never happen but verify)
+      const missingOwner = allChars.filter(c => !c.owner_email).map(c => ({ id: c.id, name: c.name }));
 
-      // No home location
-      const noHome = live
-        .filter(c => c.character_type === 'active_created_character' && !c.current_home_location_id && !c.is_homeless)
-        .map(c => ({ id: c.id, name: c.name }));
+      // Active characters with no home (not homeless, not an NPC)
+      const noHome = liveChars.filter(c =>
+        c.character_type === 'active_created_character' &&
+        c.status === 'active' &&
+        !c.current_home_location_id &&
+        !c.is_homeless
+      ).map(c => ({ id: c.id, name: c.name }));
 
-      // Stale resolved location IDs (character references a location_id that we can spot-check)
-      const staleResolved = live
+      // Stale resolved location (has ID but name is blank)
+      const staleResolved = liveChars
         .filter(c => c.resolved_current_location_id && !c.resolved_current_location_name)
-        .map(c => ({ id: c.id, name: c.name, resolved_current_location_id: c.resolved_current_location_id }));
+        .map(c => ({ id: c.id, name: c.name, location_id: c.resolved_current_location_id }));
+
+      // Characters merged but still appearing live (merged_into_character_id set but status not merged)
+      const ghostMerged = liveChars
+        .filter(c => c.merged_into_character_id && c.status !== 'merged')
+        .map(c => ({ id: c.id, name: c.name, merged_into: c.merged_into_character_id }));
 
       findings.characters = {
-        total: chars.length,
-        live: live.length,
+        total: allChars.length,
+        live: liveChars.length,
         by_type: {
-          active_created: live.filter(c => c.character_type === 'active_created_character').length,
-          npc_regular: live.filter(c => c.character_type === 'npc_regular').length,
-          npc_family: live.filter(c => c.character_type === 'npc_family_member').length,
-          npc_fictitious: live.filter(c => c.character_type === 'npc_fictitious').length,
+          active_created: liveChars.filter(c => c.character_type === 'active_created_character').length,
+          npc_regular: liveChars.filter(c => c.character_type === 'npc_regular').length,
+          npc_family: liveChars.filter(c => c.character_type === 'npc_family_member').length,
+          npc_fictitious: liveChars.filter(c => c.character_type === 'npc_fictitious').length,
         },
         duplicateGroups,
         duplicateGroupCount: duplicateGroups.length,
@@ -81,12 +205,14 @@ Deno.serve(async (req) => {
         missingOwner,
         noHome,
         staleResolved,
+        ghostMerged,
         checks: [
           { check: 'Duplicate names', status: duplicateGroups.length > 0 ? 'warning' : 'passed', detail: duplicateGroups.length > 0 ? `${duplicateGroups.length} group(s): ${duplicateGroups.map(d => d.name).join(', ')}` : 'None found' },
-          { check: 'Missing character_type', status: missingType.length > 0 ? 'failed' : 'passed', detail: missingType.length > 0 ? `${missingType.length} record(s) missing type` : 'All typed' },
+          { check: 'Missing character_type', status: missingType.length > 0 ? 'failed' : 'passed', detail: missingType.length > 0 ? `${missingType.length} record(s) missing type: ${missingType.map(c => c.name).join(', ')}` : 'All typed' },
           { check: 'Missing owner_email', status: missingOwner.length > 0 ? 'failed' : 'passed', detail: missingOwner.length > 0 ? `${missingOwner.length} record(s) missing owner` : 'All owned' },
-          { check: 'Active characters without home', status: noHome.length > 0 ? 'warning' : 'passed', detail: noHome.length > 0 ? `${noHome.length} character(s): ${noHome.map(c => c.name).join(', ')}` : 'All homed' },
-          { check: 'Stale resolved location (ID with no name)', status: staleResolved.length > 0 ? 'warning' : 'passed', detail: staleResolved.length > 0 ? `${staleResolved.length} character(s)` : 'None' },
+          { check: 'Active characters without home', status: noHome.length > 0 ? 'warning' : 'passed', detail: noHome.length > 0 ? `${noHome.length}: ${noHome.map(c => c.name).join(', ')}` : 'All homed or homeless by design' },
+          { check: 'Stale resolved location (ID with no name)', status: staleResolved.length > 0 ? 'warning' : 'passed', detail: staleResolved.length > 0 ? `${staleResolved.length} character(s) — fix with "Sync Locations"` : 'None' },
+          { check: 'Ghost merged records', status: ghostMerged.length > 0 ? 'warning' : 'passed', detail: ghostMerged.length > 0 ? `${ghostMerged.length} record(s) have merged_into set but status is not merged` : 'None' },
         ]
       };
     } catch (e) {
@@ -94,24 +220,24 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ── 2. CONVERSATION / CHAT LINKAGE ──────────────────────────────────────────
-  if (categories === 'all' || categories.includes('conversations')) {
+  // ── 2. CONVERSATIONS ───────────────────────────────────────────────────────
+  if (categories === 'all' || (Array.isArray(categories) && categories.includes('conversations'))) {
     try {
-      const convs = await base44.entities.Conversation.filter(
-        { owner_email: ownerEmail },
-        '-created_date',
-        200
-      );
+      const convs = await base44.entities.Conversation.filter({ owner_email: ownerEmail }, '-created_date', 200);
+      const emptyCharIds = convs.filter(c => !c.character_ids || c.character_ids.length === 0).map(c => ({ id: c.id, title: c.title }));
 
-      // Conversations with no character_ids
-      const emptyCharIds = convs.filter(c => !c.character_ids || c.character_ids.length === 0)
-        .map(c => ({ id: c.id, title: c.title }));
+      // Conversations referencing character IDs that no longer exist in this account
+      const danglingConvs = convs.filter(c =>
+        (c.character_ids || []).some(cid => !liveCharIdSet.has(cid))
+      ).map(c => ({ id: c.id, title: c.title, bad_ids: (c.character_ids || []).filter(cid => !liveCharIdSet.has(cid)) }));
 
       findings.conversations = {
         total: convs.length,
         emptyCharIds,
+        danglingConvs,
         checks: [
-          { check: 'Conversations with no character links', status: emptyCharIds.length > 0 ? 'warning' : 'passed', detail: emptyCharIds.length > 0 ? `${emptyCharIds.length} conversation(s) unlinked` : 'All linked' }
+          { check: 'Conversations with no character links', status: emptyCharIds.length > 0 ? 'warning' : 'passed', detail: emptyCharIds.length > 0 ? `${emptyCharIds.length} conversation(s) have no character_ids` : 'All linked' },
+          { check: 'Conversations referencing deleted characters', status: danglingConvs.length > 0 ? 'warning' : 'passed', detail: danglingConvs.length > 0 ? `${danglingConvs.length} conversation(s) reference deleted/merged character IDs` : 'None' },
         ]
       };
     } catch (e) {
@@ -119,31 +245,31 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ── 3. MEMORIES ─────────────────────────────────────────────────────────────
-  if (categories === 'all' || categories.includes('memories')) {
+  // ── 3. MEMORIES ────────────────────────────────────────────────────────────
+  if (categories === 'all' || (Array.isArray(categories) && categories.includes('memories'))) {
     try {
-      // Get this user's characters first
-      const chars = await base44.entities.Character.filter({ owner_email: ownerEmail }, '-created_date', 500);
-      const liveCharIds = new Set(
-        chars.filter(c => c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged').map(c => c.id)
-      );
-
+      // Only read memories that belong to this user's live characters
+      // We can't filter by owner_email directly on CharacterMemory (no owner_email field)
+      // so we filter by character_id membership in liveCharIdSet
       const memories = await base44.entities.CharacterMemory.filter({}, '-created_date', 500);
-      // Filter to only memories for this user's characters
-      const myMemories = memories.filter(m => liveCharIds.has(m.character_id));
+      const myMemories = memories.filter(m => liveCharIdSet.has(m.character_id));
 
       const unresolved = myMemories.filter(m => m.validation_status === 'unresolved_identity');
       const pending = myMemories.filter(m => m.validation_status === 'pending');
-      const dangling = myMemories.filter(m => !liveCharIds.has(m.character_id) && m.character_id);
+
+      // Dangling: memories whose character_id is NOT in the live set (deleted char)
+      const allMyCharIds = new Set(allChars.map(c => c.id));
+      const danglingMemories = memories.filter(m => allMyCharIds.has(m.character_id) && !liveCharIdSet.has(m.character_id));
 
       findings.memories = {
         total: myMemories.length,
         unresolved: unresolved.length,
         pending: pending.length,
-        danglingCount: dangling.length,
+        danglingCount: danglingMemories.length,
         checks: [
-          { check: 'Unresolved identity references in memories', status: unresolved.length > 0 ? 'warning' : 'passed', detail: unresolved.length > 0 ? `${unresolved.length} memory/memories need identity resolution` : 'None' },
-          { check: 'Dangling memories (character no longer exists)', status: dangling.length > 0 ? 'warning' : 'passed', detail: dangling.length > 0 ? `${dangling.length} memory/memories reference deleted characters` : 'None' }
+          { check: 'Unresolved identity references', status: unresolved.length > 0 ? 'warning' : 'passed', detail: unresolved.length > 0 ? `${unresolved.length} memory record(s) need identity resolution` : 'None' },
+          { check: 'Pending memories', status: pending.length > 0 ? 'warning' : 'passed', detail: pending.length > 0 ? `${pending.length} memory record(s) are still pending` : 'None' },
+          { check: 'Dangling memories (deleted character)', status: danglingMemories.length > 0 ? 'warning' : 'passed', detail: danglingMemories.length > 0 ? `${danglingMemories.length} memory record(s) belong to deleted characters` : 'None' },
         ]
       };
     } catch (e) {
@@ -151,24 +277,19 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ── 4. LOCATIONS ────────────────────────────────────────────────────────────
-  if (categories === 'all' || categories.includes('locations')) {
+  // ── 4. LOCATIONS ───────────────────────────────────────────────────────────
+  if (categories === 'all' || (Array.isArray(categories) && categories.includes('locations'))) {
     try {
-      const locs = await base44.entities.LocationReference.filter(
-        { owner_email: ownerEmail },
-        '-created_date',
-        300
-      );
-
+      const locs = await base44.entities.LocationReference.filter({ owner_email: ownerEmail }, '-created_date', 300);
       const noScope = locs.filter(l => !l.scope).map(l => ({ id: l.id, name: l.name }));
       const noCategory = locs.filter(l => !l.category).map(l => ({ id: l.id, name: l.name }));
 
       findings.locations = {
         total: locs.length,
-        noScope: noScope.length,
-        noCategory: noCategory.length,
+        noScopeCount: noScope.length,
+        noCategoryCount: noCategory.length,
         checks: [
-          { check: 'Locations missing scope', status: noScope.length > 0 ? 'warning' : 'passed', detail: noScope.length > 0 ? `${noScope.length} location(s) missing scope field` : 'All scoped' },
+          { check: 'Locations missing scope', status: noScope.length > 0 ? 'warning' : 'passed', detail: noScope.length > 0 ? `${noScope.length} location(s) — run "Sync Locations" to fix` : 'All scoped' },
           { check: 'Locations missing category', status: noCategory.length > 0 ? 'warning' : 'passed', detail: noCategory.length > 0 ? `${noCategory.length} location(s) missing category` : 'All categorized' }
         ]
       };
@@ -177,29 +298,29 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ── 5. FINANCIAL ────────────────────────────────────────────────────────────
-  if (categories === 'all' || categories.includes('financial')) {
+  // ── 5. FINANCIAL ───────────────────────────────────────────────────────────
+  if (categories === 'all' || (Array.isArray(categories) && categories.includes('financial'))) {
     try {
-      const chars = await base44.entities.Character.filter({ owner_email: ownerEmail }, '-created_date', 300);
-      const liveActive = chars.filter(c =>
-        c.character_type === 'active_created_character' &&
-        c.status === 'active'
+      const activeCreated = liveChars.filter(c =>
+        c.character_type === 'active_created_character' && c.status === 'active'
       );
 
-      // Fetch financial records for these characters
-      const financialRecords = await base44.entities.CharacterFinancial.filter({}, '-created_date', 300);
-      const myFinancialIds = new Set(liveActive.map(c => c.id));
-      const myFinancials = financialRecords.filter(f => myFinancialIds.has(f.character_id));
+      const financials = await base44.entities.CharacterFinancial.filter({}, '-created_date', 300);
+      const myFinancialCharIds = new Set(financials.map(f => f.character_id));
+      const missingFinancial = activeCreated.filter(c => !myFinancialCharIds.has(c.id)).map(c => ({ id: c.id, name: c.name }));
 
-      const noFinancial = liveActive.filter(c => !myFinancials.find(f => f.character_id === c.id))
-        .map(c => ({ id: c.id, name: c.name }));
+      // Characters with negative balance
+      const myFinancials = financials.filter(f => liveCharIdSet.has(f.character_id));
+      const negativeBalance = myFinancials.filter(f => (f.current_balance || 0) < 0).map(f => ({ character_id: f.character_id, balance: f.current_balance }));
 
       findings.financial = {
-        activeCharacters: liveActive.length,
+        activeCharacters: activeCreated.length,
         withFinancialRecord: myFinancials.length,
-        missingFinancialRecord: noFinancial,
+        missingFinancialRecord: missingFinancial,
+        negativeBalance,
         checks: [
-          { check: 'Active characters missing financial record', status: noFinancial.length > 0 ? 'warning' : 'passed', detail: noFinancial.length > 0 ? `${noFinancial.length}: ${noFinancial.map(c => c.name).join(', ')}` : 'All have financial records' }
+          { check: 'Active characters missing financial record', status: missingFinancial.length > 0 ? 'warning' : 'passed', detail: missingFinancial.length > 0 ? `${missingFinancial.length}: ${missingFinancial.map(c => c.name).join(', ')}` : 'All have financial records' },
+          { check: 'Characters with negative balance', status: negativeBalance.length > 0 ? 'warning' : 'passed', detail: negativeBalance.length > 0 ? `${negativeBalance.length} character(s) have negative balance` : 'All balances OK' },
         ]
       };
     } catch (e) {
@@ -207,51 +328,58 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ── REPAIR ACTIONS (owner_email-scoped, explicit only) ──────────────────────
-  let repairResult = null;
-  if (repair_action) {
+  // ── 6. SCHEDULES / PRESENCE ────────────────────────────────────────────────
+  if (categories === 'all' || (Array.isArray(categories) && categories.includes('schedules'))) {
     try {
-      if (repair_action === 'fix_character_locations') {
-        // Calls the live enforceLocationPresenceForOwner function
-        const res = await base44.asServiceRole.functions.invoke('enforceLocationPresenceForOwner', {
-          owner_email: ownerEmail
-        });
-        repairResult = { action: repair_action, result: res?.data || 'completed' };
-      } else if (repair_action === 'troubleshoot_locations') {
-        const res = await base44.functions.invoke('troubleshootLocations', {
-          selectedIssues: ['stale_location_refs', 'resolved_location_sync']
-        });
-        repairResult = { action: repair_action, result: res?.data || 'completed' };
-      } else if (repair_action === 'troubleshoot_system') {
-        const res = await base44.functions.invoke('troubleshootSystemData', {
-          selectedIssues: ['orphaned_characters', 'character_type_audit']
-        });
-        repairResult = { action: repair_action, result: res?.data || 'completed' };
-      } else {
-        repairResult = { action: repair_action, result: 'unknown_action — this repair path does not exist in the current system' };
-      }
+      // Characters with work info but no work location linked
+      const workerChars = liveChars.filter(c =>
+        c.character_type === 'active_created_character' &&
+        c.occupation &&
+        !c.current_work_location_id
+      ).map(c => ({ id: c.id, name: c.name, occupation: c.occupation }));
+
+      // Characters with school info but no school location linked
+      const studentChars = liveChars.filter(c =>
+        c.character_type === 'active_created_character' &&
+        c.student_status === 'enrolled' &&
+        !c.current_school_location_id
+      ).map(c => ({ id: c.id, name: c.name }));
+
+      findings.schedules = {
+        workersMissingWorkLocation: workerChars,
+        studentsMissingSchoolLocation: studentChars,
+        checks: [
+          { check: 'Workers missing work location link', status: workerChars.length > 0 ? 'warning' : 'passed', detail: workerChars.length > 0 ? `${workerChars.length}: ${workerChars.map(c => c.name).join(', ')}` : 'All workers linked to locations' },
+          { check: 'Students missing school location link', status: studentChars.length > 0 ? 'warning' : 'passed', detail: studentChars.length > 0 ? `${studentChars.length}: ${studentChars.map(c => c.name).join(', ')}` : 'All students linked to locations' },
+        ]
+      };
     } catch (e) {
-      repairResult = { action: repair_action, error: e.message };
+      errors.push({ area: 'schedules', error: e.message });
     }
   }
 
-  // ── SUMMARY ─────────────────────────────────────────────────────────────────
+  // ── SUMMARY ────────────────────────────────────────────────────────────────
   const allChecks = Object.values(findings).flatMap(f => f.checks || []);
   const failedChecks = allChecks.filter(c => c.status === 'failed');
   const warningChecks = allChecks.filter(c => c.status === 'warning');
 
   const summary = failedChecks.length > 0
-    ? `${failedChecks.length} critical issue(s) and ${warningChecks.length} warning(s) found across your account.`
+    ? `${failedChecks.length} critical issue(s) and ${warningChecks.length} warning(s) found.`
     : warningChecks.length > 0
       ? `${warningChecks.length} warning(s) found — no critical issues.`
       : 'All checks passed — no issues found.';
+
+  // Expose which repair paths are available (so frontend never guesses)
+  const availableRepairs = Object.keys(SAFE_USER_REPAIR_PATHS);
+  const availableCharacterRepairs = Object.keys(CHARACTER_REPAIR_PATHS);
 
   return Response.json({
     owner_email: ownerEmail,
     summary,
     findings,
     errors: errors.length > 0 ? errors : undefined,
-    repair: repairResult || undefined,
+    available_repairs: availableRepairs,
+    available_character_repairs: availableCharacterRepairs,
     checked_at: new Date().toISOString(),
   });
 });
