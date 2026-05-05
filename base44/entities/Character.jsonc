@@ -36,16 +36,6 @@
           "created_by": "{{user.email}}"
         }
       ]
-    },
-    "write": {
-      "$or": [
-        {
-          "data.owner_email": "{{user.email}}"
-        },
-        {
-          "created_by": "{{user.email}}"
-        }
-      ]
     }
   },
   "properties": {
