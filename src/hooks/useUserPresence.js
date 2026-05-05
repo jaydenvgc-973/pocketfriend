@@ -65,10 +65,17 @@ export function useUserPresence(currentUser, settings, settingsId) {
    * Applies optimistic update immediately — backend write happens in parallel.
    */
   const setUserLocation = useCallback(async (locationId, locationName) => {
-    if (!settingsId) {
+    let resolvedSettingsId = settingsId;
+    if (!resolvedSettingsId && currentUser?.email) {
+      // settingsId not yet loaded — fetch it directly before writing
+      const list = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
+      resolvedSettingsId = list[0]?.id;
+    }
+    if (!resolvedSettingsId) {
       console.error("[useUserPresence] setUserLocation: no settingsId — cannot write presence");
       return;
     }
+    const settingsId = resolvedSettingsId;
     // OPTIMISTIC: update UI immediately without waiting for refetch
     setOptimisticPresence({ isAway: false, locationId, locationName, status: "present" });
     base44.entities.UserSettings.update(settingsId, {
@@ -80,17 +87,23 @@ export function useUserPresence(currentUser, settings, settingsId) {
       // Revert on error
       setOptimisticPresence(null);
     });
-  }, [settingsId, invalidate]);
+  }, [settingsId, currentUser?.email, invalidate]);
 
   /**
    * Set user as Away (outside the app world).
    * Applies optimistic update immediately.
    */
   const setUserAway = useCallback(async () => {
-    if (!settingsId) {
+    let resolvedSettingsId = settingsId;
+    if (!resolvedSettingsId && currentUser?.email) {
+      const list = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
+      resolvedSettingsId = list[0]?.id;
+    }
+    if (!resolvedSettingsId) {
       console.error("[useUserPresence] setUserAway: no settingsId — cannot write presence");
       return;
     }
+    const settingsId = resolvedSettingsId;
     // OPTIMISTIC: update UI immediately
     setOptimisticPresence({ isAway: true, locationId: null, locationName: null, status: "away" });
     base44.entities.UserSettings.update(settingsId, {
@@ -101,7 +114,7 @@ export function useUserPresence(currentUser, settings, settingsId) {
     }).then(() => invalidate()).catch(() => {
       setOptimisticPresence(null);
     });
-  }, [settingsId, invalidate]);
+  }, [settingsId, currentUser?.email, invalidate]);
 
   // Merge: optimistic state wins over server state while pending
   const serverPresence = readUserPresence(currentUser, settings);
