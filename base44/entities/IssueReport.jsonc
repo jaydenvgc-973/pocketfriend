@@ -1,0 +1,115 @@
+{
+  "name": "IssueReport",
+  "type": "object",
+  "properties": {
+    "owner_email": {
+      "type": "string",
+      "description": "The email of the user who submitted this report. Primary ownership source of truth."
+    },
+    "owner_user_id": {
+      "type": "string",
+      "description": "Supporting field only. Never used for ownership decisions."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "received",
+        "in_review",
+        "repair_pending",
+        "fixed",
+        "cannot_fix",
+        "escalated"
+      ],
+      "default": "received",
+      "description": "Current status of this issue report."
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "character_duplicates",
+        "ghost_records",
+        "dangling_references",
+        "ownership_mismatch",
+        "chat_linkage",
+        "missing_memories",
+        "location_presence",
+        "schedule_travel",
+        "financial",
+        "images_voice",
+        "other"
+      ],
+      "description": "Which area of the account this issue affects."
+    },
+    "title": {
+      "type": "string",
+      "description": "Short summary of the issue."
+    },
+    "description": {
+      "type": "string",
+      "description": "Full user-reported description of the problem."
+    },
+    "diagnostic_snapshot": {
+      "type": "object",
+      "description": "The raw diagnostic data captured at time of report.",
+      "additionalProperties": true
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "check": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "warning",
+              "failed"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "default": [],
+      "description": "Individual diagnostic check results."
+    },
+    "repair_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "default": [],
+      "description": "Log of repair actions taken."
+    },
+    "admin_notes": {
+      "type": "string",
+      "description": "Notes added by admin during review."
+    },
+    "resolved_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this issue was marked as fixed."
+    }
+  },
+  "required": [
+    "owner_email",
+    "category",
+    "title"
+  ]
+}

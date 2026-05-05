@@ -28,6 +28,7 @@ import SettingsTroubleshootingPanel from "@/components/settings/SettingsTroubles
 import EditCharacterType from "@/components/settings/EditCharacterType";
 import NarrativeDiagnosticPanel from "@/components/settings/NarrativeDiagnosticPanel";
 import SupportAssistant from "@/components/settings/SupportAssistant";
+import AdminIssueReportViewer from "@/components/settings/AdminIssueReportViewer";
 import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
 
 export default function Settings() {
@@ -553,11 +554,14 @@ export default function Settings() {
           <SupportAssistant user={user} />
         </div>
 
-        {/* Admin AI — only for admin account */}
+        {/* Admin only — Console + Issue Reports */}
         {isAdmin && (
-          <div className="pt-4 border-t border-border space-y-1">
+          <div className="pt-4 border-t border-border space-y-4">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Admin Console</p>
             <AdminConsole />
+            <div className="pt-4 border-t border-border">
+              <AdminIssueReportViewer />
+            </div>
           </div>
         )}
 
