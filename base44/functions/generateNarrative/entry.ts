@@ -146,9 +146,21 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'characterId and chatHistory are required' }, { status: 400 });
     }
 
-    const character = await base44.entities.Character.filter({ id: characterId });
+    console.log(`[generateNarrative] ENTRY characterId=${characterId} owner=${user?.email}`);
+
+    // Use user-scoped client — same path as Chat page. asServiceRole.filter({ id }) has
+    // a platform-level visibility gap and returns empty for valid characters.
+    let character = await base44.entities.Character.filter({ id: characterId });
     if (!character || character.length === 0) {
-      return Response.json({ error: 'Character not found' }, { status: 404 });
+      console.warn(`[generateNarrative] User-scope filter empty for id=${characterId} — trying NPC fallback`);
+      const npcRes = await base44.functions.invoke('fetchNPCsForUser', {}).catch(() => null);
+      const npcs = npcRes?.data?.npcs || npcRes?.npcs || [];
+      const found = npcs.find(c => c.id === characterId);
+      if (found) character = [found];
+    }
+    if (!character || character.length === 0) {
+      console.error(`[generateNarrative] Character not found: id=${characterId} owner=${user?.email}`);
+      return Response.json({ error: `Character not found: id=${characterId}` }, { status: 404 });
     }
 
     const char = character[0];

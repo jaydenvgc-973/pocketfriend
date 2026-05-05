@@ -11,15 +11,30 @@ Deno.serve(async (req) => {
 
     const { characterId, conversationId, narrativeContent } = await req.json();
 
+    console.log(`[submitNarrative] ENTRY characterId=${characterId} conversationId=${conversationId} owner=${user.email} narrativeLength=${narrativeContent?.length}`);
+
     if (!characterId || !conversationId || !narrativeContent) {
       return Response.json({ error: 'characterId, conversationId, and narrativeContent are required' }, { status: 400 });
     }
 
-    // Use service role for the character lookup so NPCs (which are owned by the user
-    // but may only be readable via the NPC fetch path) are always found.
-    const character = await base44.asServiceRole.entities.Character.filter({ id: characterId, owner_email: user.email });
+    // Use user-scoped client for character lookup — same query path the Chat page uses.
+    // asServiceRole.filter({ id, owner_email }) has a platform-level visibility gap that
+    // causes it to return empty for valid characters. User-scoped filter({ id }) works
+    // correctly and is already ownership-verified via base44.auth.me() above.
+    let character = await base44.entities.Character.filter({ id: characterId });
     if (!character || character.length === 0) {
-      return Response.json({ error: 'Character not found or not owned by this user' }, { status: 404 });
+      // Fallback: character may be an NPC — try the NPC fetch path
+      console.warn(`[submitNarrative] User-scope filter returned empty for id=${characterId} — trying fetchNPCsForUser fallback`);
+      const npcRes = await base44.functions.invoke('fetchNPCsForUser', {}).catch(() => null);
+      const npcs = npcRes?.data?.npcs || npcRes?.npcs || [];
+      const found = npcs.find(c => c.id === characterId);
+      if (found) {
+        character = [found];
+      }
+    }
+    if (!character || character.length === 0) {
+      console.error(`[submitNarrative] Character not found: id=${characterId} owner=${user.email}`);
+      return Response.json({ error: `Character not found: id=${characterId}` }, { status: 404 });
     }
 
     const nowISO = new Date().toISOString();
