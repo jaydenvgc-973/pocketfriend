@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -34,6 +34,23 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
   const [isApprovalMode, setIsApprovalMode] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [simulationError, setSimulationError] = useState(null);
+  // Rate-limit cooldown state — disables the button until cooldown expires
+  const [rateLimitCooldownUntil, setRateLimitCooldownUntil] = useState(null);
+  const [cooldownSecondsLeft, setCooldownSecondsLeft] = useState(0);
+
+  // Tick down the cooldown every second
+  useEffect(() => {
+    if (!rateLimitCooldownUntil) return;
+    const interval = setInterval(() => {
+      const left = Math.max(0, Math.ceil((rateLimitCooldownUntil - Date.now()) / 1000));
+      setCooldownSecondsLeft(left);
+      if (left === 0) {
+        setRateLimitCooldownUntil(null);
+        setSimulationError(null);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [rateLimitCooldownUntil]);
 
   // MongoDB ObjectId = 24 hex chars exactly.
   // Any id that isn't exactly 24 chars is not a real Character entity id.
@@ -65,18 +82,36 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
     }
   };
 
+  /**
+   * Extracts a user-facing error string and determines if it's a rate_limit.
+   * Returns { message, isRateLimit, retryAfterSeconds }
+   */
   const parseError = (err, res) => {
-    // When Axios throws on non-2xx, the response body is in err.response.data — NOT res.data.
-    // res may be undefined or contain only the last successful partial response.
-    // Always check err.response.data first to surface the real backend stage/error.
     const errBody = err?.response?.data || {};
     const resBody = res?.data || {};
-    const data = (errBody.stage || errBody.error) ? errBody : resBody;
+    // Prefer the body that has explicit status/reason fields
+    const data = (errBody.status || errBody.stage || errBody.error) ? errBody : resBody;
 
-    const stage = data.stage ? `[${data.stage}] ` : '';
-    if (data.error) return `${stage}${data.error}`;
-    if (err?.message) return err.message;
-    return 'Unknown error occurred.';
+    const isRateLimit = data.status === 'rate_limited' || data.reason === 'rate_limit' ||
+      (data.error || '').toLowerCase().includes('rate limit') ||
+      err?.response?.status === 429;
+
+    const retryAfterSeconds = data.retry_after_seconds || 30;
+
+    // Build human-readable reason label
+    const reasonLabel = {
+      missing_character: 'missing character',
+      ownership_mismatch: 'ownership mismatch',
+      rate_limit: 'rate limit',
+      missing_conversation: 'missing conversation',
+      missing_location: 'missing location',
+      invalid_character_id: 'invalid character ID',
+    }[data.reason] || null;
+
+    const prefix = reasonLabel ? `Action stopped — ${reasonLabel}: ` : (data.stage ? `[${data.stage}] ` : '');
+    const message = data.detail || data.error || err?.message || 'Unknown error occurred.';
+
+    return { message: `${prefix}${message}`, isRateLimit, retryAfterSeconds };
   };
 
   const handleSimulate = async () => {
@@ -120,14 +155,26 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
         setShowModal(true);
         setIsApprovalMode(true);
       } else {
-        const errMsg = parseError(null, res);
+        const { message, isRateLimit, retryAfterSeconds } = parseError(null, res);
         console.error('[SimulateInteraction] Backend returned failure:', res?.data);
-        setSimulationError(`Simulation failed: ${errMsg}`);
+        if (isRateLimit) {
+          setRateLimitCooldownUntil(Date.now() + retryAfterSeconds * 1000);
+          setCooldownSecondsLeft(retryAfterSeconds);
+          setSimulationError(`Rate limit active — button disabled for ${retryAfterSeconds}s. ${message}`);
+        } else {
+          setSimulationError(message);
+        }
       }
     } catch (err) {
-      const errMsg = parseError(err, res);
+      const { message, isRateLimit, retryAfterSeconds } = parseError(err, res);
       console.error('[SimulateInteraction] Exception:', err);
-      setSimulationError(`Simulation failed: ${errMsg}`);
+      if (isRateLimit) {
+        setRateLimitCooldownUntil(Date.now() + retryAfterSeconds * 1000);
+        setCooldownSecondsLeft(retryAfterSeconds);
+        setSimulationError(`Rate limit active — button disabled for ${retryAfterSeconds}s. ${message}`);
+      } else {
+        setSimulationError(message);
+      }
     } finally {
       setIsRunning(false);
     }
@@ -148,10 +195,24 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
         setResult(res.data.interaction);
         setIsApprovalMode(true);
       } else {
-        setSimulationError(`Regeneration failed: ${parseError(null, res)}`);
+        const { message, isRateLimit, retryAfterSeconds } = parseError(null, res);
+        if (isRateLimit) {
+          setRateLimitCooldownUntil(Date.now() + retryAfterSeconds * 1000);
+          setCooldownSecondsLeft(retryAfterSeconds);
+          setSimulationError(`Rate limit active — wait ${retryAfterSeconds}s before retrying.`);
+        } else {
+          setSimulationError(message);
+        }
       }
     } catch (err) {
-      setSimulationError(`Regeneration failed: ${parseError(err, res)}`);
+      const { message, isRateLimit, retryAfterSeconds } = parseError(err, res);
+      if (isRateLimit) {
+        setRateLimitCooldownUntil(Date.now() + retryAfterSeconds * 1000);
+        setCooldownSecondsLeft(retryAfterSeconds);
+        setSimulationError(`Rate limit active — wait ${retryAfterSeconds}s before retrying.`);
+      } else {
+        setSimulationError(message);
+      }
     } finally {
       setIsRegenerating(false);
     }
@@ -267,11 +328,15 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
 
         <Button
           onClick={handleSimulate}
-          disabled={selected.length < 2 || isRunning}
+          disabled={selected.length < 2 || isRunning || !!rateLimitCooldownUntil}
           className="w-full h-10 rounded-xl"
         >
           <Play className="w-4 h-4 mr-2" />
-          {isRunning ? 'Simulating...' : 'Simulate Interaction'}
+          {isRunning
+            ? 'Simulating...'
+            : rateLimitCooldownUntil
+            ? `Rate limited — retry in ${cooldownSecondsLeft}s`
+            : 'Simulate Interaction'}
         </Button>
       </div>
 

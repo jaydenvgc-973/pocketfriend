@@ -106,7 +106,22 @@ Deno.serve(async (req) => {
     } catch { /* scheduled — no user session */ }
 
     // ── LOAD ALL ELIGIBLE CHARACTERS (service role, all users) ──────────────
-    const allChars = await base44.asServiceRole.entities.Character.list('-resolved_last_updated_at', 500);
+    let allChars;
+    try {
+      allChars = await base44.asServiceRole.entities.Character.list('-resolved_last_updated_at', 500);
+    } catch (fetchErr) {
+      const msg = fetchErr?.message || String(fetchErr);
+      if (msg.toLowerCase().includes('rate limit') || msg.includes('429')) {
+        console.warn('[organicInteractions] RATE LIMITED on character fetch — stopping all downstream work.');
+        return Response.json({
+          status: 'rate_limited',
+          reason: 'rate_limit',
+          detail: 'Character fetch was rate limited. No interactions processed. Will retry on next scheduled run.',
+          interactions_generated: 0,
+        }, { status: 429 });
+      }
+      throw fetchErr;
+    }
 
     // Filter: only eligible types, active status, not sleeping/jailed/test
     const eligible = allChars.filter(c =>
@@ -121,11 +136,13 @@ Deno.serve(async (req) => {
     console.log(`[organicInteractions] Eligible characters: ${eligible.length}`);
 
     // ── GROUP BY USER (owner_email) TO ENFORCE USER SCOPE ───────────────────
+    // owner_email is the ONLY ownership source of truth. created_by is FORBIDDEN.
     const byUser = {};
     for (const c of eligible) {
       const email = c.owner_email;
       if (!email) {
-        console.warn(`[organicInteractions] Character id=${c.id} name="${c.name}" missing owner_email — skipping`);
+        // FAIL VISIBLE: log and skip — do not infer ownership from any other field
+        console.warn(`[organicInteractions] BLOCKED: Character id=${c.id} name="${c.name}" missing owner_email — skipping (ownership cannot be verified)`);
         continue;
       }
       if (!byUser[email]) byUser[email] = [];

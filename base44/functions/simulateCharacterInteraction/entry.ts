@@ -145,8 +145,21 @@ Deno.serve(async (req) => {
       types_found: [...new Set(allOwnedChars.map(c => c.character_type))],
     });
   } catch (fetchErr) {
+    const fetchMsg = fetchErr?.message || String(fetchErr);
+    // RATE LIMIT: hard stop — do not continue downstream, do not generate fallbacks
+    if (fetchMsg.toLowerCase().includes('rate limit') || fetchMsg.includes('429')) {
+      return Response.json({
+        status: 'rate_limited',
+        reason: 'rate_limit',
+        detail: 'Character data could not be loaded due to rate limiting. No simulation was run. Please wait 30 seconds and try again.',
+        retry_after_seconds: 30,
+        stage: 'character_fetch_all_owned',
+        trace
+      }, { status: 429 });
+    }
     return Response.json({
-      error: `Failed to fetch owned characters for user ${user.email}: ${fetchErr?.message || String(fetchErr)}`,
+      status: 'failed',
+      error: `Failed to fetch owned characters for user ${user.email}: ${fetchMsg}`,
       stage: 'character_fetch_all_owned',
       current_user_email: user.email,
       trace
