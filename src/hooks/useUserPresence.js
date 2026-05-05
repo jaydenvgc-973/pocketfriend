@@ -56,6 +56,19 @@ export function useUserPresence(currentUser, settings, settingsId) {
 
   const queryKey = ["userSettings", currentUser?.email];
 
+  /**
+   * Resolve settingsId: prefer the prop, then fall back to the React Query cache.
+   * This avoids a live network fetch (which can 429) when the cache already has the record.
+   */
+  const resolveSettingsIdFromCache = useCallback(() => {
+    if (settingsId) return settingsId;
+    const cached = queryClient.getQueryData(queryKey);
+    if (!cached) return null;
+    // cached may be array (Travel shape) or object (useUserSettings shape)
+    if (Array.isArray(cached)) return cached[0]?.id || null;
+    return cached?.id || null;
+  }, [settingsId, queryClient, queryKey]);
+
   const invalidate = useCallback(() => {
     if (!currentUser?.email) return;
     queryClient.invalidateQueries({ queryKey })
@@ -84,32 +97,43 @@ export function useUserPresence(currentUser, settings, settingsId) {
    * Applies optimistic update immediately — backend write happens in parallel.
    */
   const setUserLocation = useCallback(async (locationId, locationName) => {
-    let resolvedSettingsId = settingsId;
+    let resolvedSettingsId = resolveSettingsIdFromCache();
+    console.log("[useUserPresence] setUserLocation: resolvedSettingsId from cache →", resolvedSettingsId);
 
     if (!resolvedSettingsId && currentUser?.email) {
       // settingsId not yet loaded — fetch it directly before writing
-      const list = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
-      resolvedSettingsId = list[0]?.id;
+      console.warn("[useUserPresence] setUserLocation: settingsId missing, fetching live for", currentUser.email);
+      try {
+        const list = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
+        resolvedSettingsId = list[0]?.id;
+        console.log("[useUserPresence] setUserLocation: live fetch result →", resolvedSettingsId || "NOT FOUND");
+      } catch (fetchErr) {
+        console.error("[useUserPresence] setUserLocation: live fetch FAILED (rate limit or network?) →", fetchErr?.message || fetchErr);
+      }
 
       // No record exists yet — create one now so the write can succeed
       if (!resolvedSettingsId) {
         console.warn("[useUserPresence] setUserLocation: no UserSettings record found — creating one for", currentUser.email);
-        const created = await base44.entities.UserSettings.create({
-          owner_email: currentUser.email,
-          owner_user_id: currentUser.id || null,
-        });
-        resolvedSettingsId = created?.id;
+        try {
+          const created = await base44.entities.UserSettings.create({
+            owner_email: currentUser.email,
+            owner_user_id: currentUser.id || null,
+          });
+          resolvedSettingsId = created?.id;
+        } catch (createErr) {
+          console.error("[useUserPresence] setUserLocation: create FAILED →", createErr?.message || createErr);
+        }
         if (!resolvedSettingsId) {
-          console.error("[useUserPresence] setUserLocation: failed to create UserSettings — cannot write presence");
+          console.error("[useUserPresence] setUserLocation: WRITE ABORTED — no settingsId after create attempt");
           return;
         }
         console.log("[useUserPresence] setUserLocation: created new UserSettings →", resolvedSettingsId);
-        invalidate(); // refresh so the hook has the new record going forward
+        invalidate();
       }
     }
 
     if (!resolvedSettingsId) {
-      console.error("[useUserPresence] setUserLocation: no settingsId after all attempts — cannot write presence");
+      console.error("[useUserPresence] setUserLocation: WRITE ABORTED — no settingsId after all attempts");
       return;
     }
 
@@ -135,28 +159,38 @@ export function useUserPresence(currentUser, settings, settingsId) {
       console.error("[useUserPresence] setUserLocation WRITE FAILED →", err);
       setOptimisticPresence(null);
     });
-  }, [settingsId, currentUser?.email, currentUser?.id, invalidate]);
+  }, [resolveSettingsIdFromCache, currentUser?.email, currentUser?.id, invalidate]);
 
   /**
    * Set user as Away (outside the app world).
    * Applies optimistic update immediately.
    */
   const setUserAway = useCallback(async () => {
-    let resolvedSettingsId = settingsId;
+    let resolvedSettingsId = resolveSettingsIdFromCache();
 
     if (!resolvedSettingsId && currentUser?.email) {
-      const list = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
-      resolvedSettingsId = list[0]?.id;
+      console.warn("[useUserPresence] setUserAway: settingsId missing, fetching live for", currentUser.email);
+      try {
+        const list = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
+        resolvedSettingsId = list[0]?.id;
+        console.log("[useUserPresence] setUserAway: live fetch result →", resolvedSettingsId || "NOT FOUND");
+      } catch (fetchErr) {
+        console.error("[useUserPresence] setUserAway: live fetch FAILED →", fetchErr?.message || fetchErr);
+      }
 
       if (!resolvedSettingsId) {
-        console.warn("[useUserPresence] setUserAway: no UserSettings record found — creating one for", currentUser.email);
-        const created = await base44.entities.UserSettings.create({
-          owner_email: currentUser.email,
-          owner_user_id: currentUser.id || null,
-        });
-        resolvedSettingsId = created?.id;
+        console.warn("[useUserPresence] setUserAway: no record found — creating one for", currentUser.email);
+        try {
+          const created = await base44.entities.UserSettings.create({
+            owner_email: currentUser.email,
+            owner_user_id: currentUser.id || null,
+          });
+          resolvedSettingsId = created?.id;
+        } catch (createErr) {
+          console.error("[useUserPresence] setUserAway: create FAILED →", createErr?.message || createErr);
+        }
         if (!resolvedSettingsId) {
-          console.error("[useUserPresence] setUserAway: failed to create UserSettings — cannot write presence");
+          console.error("[useUserPresence] setUserAway: WRITE ABORTED — no settingsId");
           return;
         }
         console.log("[useUserPresence] setUserAway: created new UserSettings →", resolvedSettingsId);
@@ -165,7 +199,7 @@ export function useUserPresence(currentUser, settings, settingsId) {
     }
 
     if (!resolvedSettingsId) {
-      console.error("[useUserPresence] setUserAway: no settingsId after all attempts — cannot write presence");
+      console.error("[useUserPresence] setUserAway: WRITE ABORTED — no settingsId after all attempts");
       return;
     }
 
@@ -186,7 +220,7 @@ export function useUserPresence(currentUser, settings, settingsId) {
     }).then(() => invalidate()).catch(() => {
       setOptimisticPresence(null);
     });
-  }, [settingsId, currentUser?.email, currentUser?.id, invalidate]);
+  }, [resolveSettingsIdFromCache, currentUser?.email, currentUser?.id, invalidate]);
 
   // Merge: optimistic state wins over server state while pending
   const serverPresence = readUserPresence(currentUser, settings);
