@@ -112,8 +112,10 @@ export default function Travel() {
     locations: locationsData,
   }), [
     currentUser?.id,
+    safeSettings?.id,
     userPresence.isAway,
     userPresence.locationId,
+    userPresence.locationName,
     activeCharacters.length,
     npcCharacters.length,
     npcFamilyMembers.length,
