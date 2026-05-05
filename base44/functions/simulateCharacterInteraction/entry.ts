@@ -75,30 +75,24 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'At least 2 character IDs required' }, { status: 400 });
     }
 
-    // Use service role to fetch characters — ownership is already verified via user.auth.me().
-    // User-scoped filter by id alone fails for characters missing owner_email (Nick Decker pattern).
-    // After fetching, we explicitly verify owner_email == user.email before proceeding.
-    const characterResults = await Promise.all(
-      character_ids.map(id => base44.asServiceRole.entities.Character.filter({ id }))
+    // Use service role to fetch ALL characters in a single query by owner_email + id filter.
+    // Avoids N parallel Character.filter({id}) calls that triggered 429 rate limits.
+    // After fetching, we verify each requested id was returned and owner_email is correct.
+    const fetchedChars = await base44.asServiceRole.entities.Character.filter(
+      { owner_email: user.email },
+      null,
+      200
     );
-    const characters = characterResults.map(arr => arr[0]);
+
+    const characters = character_ids.map(id => fetchedChars.find(c => c.id === id));
 
     const notFound = character_ids.filter((id, i) => !characters[i]);
     if (notFound.length > 0) {
       return Response.json({
-        error: `Characters not found: ${notFound.join(', ')}`,
+        error: `Characters not found for owner ${user.email}: ${notFound.join(', ')}`,
         stage: 'character_fetch',
         character_ids: notFound
       }, { status: 404 });
-    }
-
-    // Ownership verification — every character must belong to the current user
-    const ownershipFailures = characters.filter(c => c.owner_email !== user.email);
-    if (ownershipFailures.length > 0) {
-      return Response.json({
-        error: `Ownership verification failed for: ${ownershipFailures.map(c => `${c.name} (owner_email=${c.owner_email}, expected=${user.email})`).join('; ')}`,
-        stage: 'ownership_verification'
-      }, { status: 403 });
     }
 
     // Character type eligibility check
