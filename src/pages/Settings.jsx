@@ -568,13 +568,34 @@ export default function Settings() {
           
           <GenericLocationFixer />
           
-          {/* Suggested duplicates — detected client-side from already-loaded character data */}
+          {/* Suggested duplicates — always fetches fresh Character records before scanning */}
           <button
-            onClick={() => {
-              // Group characters by normalized name, scoped to owner_email only
+            onClick={async () => {
+              if (!user?.email) return;
+              // ALWAYS fetch fresh from DB — never use stale cached allCharacters.
+              // Stale cache can contain ghost IDs from fetchNPCsForUser that no longer
+              // exist in the DB, causing previewCharacterMerge to return RECORD_NOT_FOUND.
+              let freshChars = [];
+              try {
+                freshChars = await base44.entities.Character.filter(
+                  { owner_email: user.email },
+                  '-created_date',
+                  500
+                );
+              } catch (err) {
+                console.error('[SuggestedDuplicates] fresh fetch failed', err);
+                return;
+              }
+              // Only live records with full IDs
+              const live = freshChars.filter(c =>
+                c.id &&
+                c.name &&
+                c.status !== 'deleted' &&
+                c.status !== 'soft_deleted' &&
+                c.status !== 'merged'
+              );
               const nameMap = new Map();
-              allCharacters.forEach(c => {
-                if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted' || c.status === 'merged') return;
+              live.forEach(c => {
                 const key = c.name.trim().toLowerCase();
                 if (!nameMap.has(key)) nameMap.set(key, []);
                 nameMap.get(key).push(c);
