@@ -93,6 +93,7 @@ export default function Travel() {
 
   // Build a synthetic userSettings object that merges server data with optimistic presence
   // so resolveTravelPresenceEntities always sees the current user location (not stale DB value)
+  console.log("[Travel] userPresence →", { isAway: userPresence.isAway, locationId: userPresence.locationId, locationName: userPresence.locationName, safeSettingsId: safeSettings?.id, rawDBStatus: safeSettings?.user_presence_status, rawDBLocId: safeSettings?.user_current_location_id });
   const mergedUserSettingsForResolver = safeSettings ? {
     ...safeSettings,
     user_presence_status: userPresence.isAway ? 'away' : 'present',

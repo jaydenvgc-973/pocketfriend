@@ -76,6 +76,7 @@ export function useUserPresence(currentUser, settings, settingsId) {
       return;
     }
     const settingsId = resolvedSettingsId;
+    console.log("[useUserPresence] setUserLocation WRITE →", { settingsId, locationId, locationName, email: currentUser?.email });
     // OPTIMISTIC: update UI immediately without waiting for refetch
     setOptimisticPresence({ isAway: false, locationId, locationName, status: "present" });
     base44.entities.UserSettings.update(settingsId, {
@@ -83,7 +84,11 @@ export function useUserPresence(currentUser, settings, settingsId) {
       user_current_location_name: locationName,
       user_presence_status: "present",
       user_presence_updated_at: new Date().toISOString(),
-    }).then(() => invalidate()).catch(() => {
+    }).then((result) => {
+      console.log("[useUserPresence] setUserLocation WRITE SUCCESS →", { saved_status: result?.user_presence_status, saved_loc: result?.user_current_location_name });
+      invalidate();
+    }).catch((err) => {
+      console.error("[useUserPresence] setUserLocation WRITE FAILED →", err);
       // Revert on error
       setOptimisticPresence(null);
     });

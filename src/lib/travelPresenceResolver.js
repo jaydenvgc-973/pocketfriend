@@ -50,6 +50,12 @@ export function resolveTravelPresenceEntities({
     const userLocationName = userSettings.user_current_location_name || null;
     // Do NOT gate on locationMap[userLocationId] — locations may not be fully loaded yet
     // or the specific location may not be in the local array. Trust UserSettings fields directly.
+    console.log("[travelPresenceResolver] user presence check →", {
+      user_presence_status: userPresenceStatus,
+      user_current_location_id: userLocationId,
+      user_current_location_name: userLocationName,
+      settingsId: userSettings?.id,
+    });
     const isUserPresent = userPresenceStatus === 'present' && !!userLocationId;
 
     if (isUserPresent) {
