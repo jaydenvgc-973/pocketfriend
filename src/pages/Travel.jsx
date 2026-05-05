@@ -840,6 +840,20 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
               )}
             </div>
             <div className="space-y-1 text-xs border-t border-border pt-2">
+              <p className="font-medium text-muted-foreground">User Presence State:</p>
+              <div className="text-[10px] bg-secondary/50 rounded p-1.5 space-y-0.5">
+                <p className={userPresence.isAway ? 'text-amber-400' : 'text-green-400'}>
+                  status: {userPresence.isAway ? 'away' : 'present'}
+                </p>
+                <p className="text-muted-foreground/70">locationId: {userPresence.locationId || '[none]'}</p>
+                <p className="text-muted-foreground/70">locationName: {userPresence.locationName || '[none]'}</p>
+                <p className="text-muted-foreground/70">settingsId: {safeSettings?.id || '[null — not loaded]'}</p>
+                <p className={allPresenceEntities.some(e => e.effective_presence_type === 'user') ? 'text-green-400' : 'text-red-400'}>
+                  user in entities: {allPresenceEntities.some(e => e.effective_presence_type === 'user') ? 'YES' : 'NO'}
+                </p>
+              </div>
+            </div>
+            <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">Unified Presence: {allPresenceEntities.length} total · {allPresenceEntities.filter(e => e.is_currently_present).length} present</p>
               {allPresenceEntities.filter(e => e.effective_presence_type === 'npc_family_member').map(e => (
                 <div key={e.id} className="text-[10px]">
