@@ -67,15 +67,14 @@ function DiagSection({ title, checks = [], issueCount }) {
   );
 }
 
-// ── RepairButton — only renders if the repair_action is in the confirmed live list ──
-function RepairButton({ repairAction, label, description, availableRepairs, onRepair, isRepairing }) {
-  const isLive = (availableRepairs || []).includes(repairAction);
+// ── RepairButton — checks both bulk and per-character repair lists ────────────
+function RepairButton({ repairAction, label, description, availableRepairs, availableCharacterRepairs, onRepair, isRepairing }) {
+  const isLive = (availableRepairs || []).includes(repairAction) || (availableCharacterRepairs || []).includes(repairAction);
   if (!isLive) {
-    // Fail visibly rather than silently hiding or pretending the button works
     return (
       <div className="p-2.5 rounded-xl border border-destructive/20 bg-destructive/5 text-xs">
         <p className="text-destructive font-medium">⚠ Repair path unavailable: <code>{repairAction}</code></p>
-        <p className="text-muted-foreground mt-0.5">This action was not confirmed in the current diagnostic response. No changes can be made.</p>
+        <p className="text-muted-foreground mt-0.5">Not confirmed in the current diagnostic response. No changes can be made.</p>
       </div>
     );
   }
@@ -97,7 +96,7 @@ function RepairButton({ repairAction, label, description, availableRepairs, onRe
 // ── Full diagnostic panel ─────────────────────────────────────────────────────
 function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
   if (!diagData) return null;
-  const { summary, findings, errors, available_repairs } = diagData;
+  const { summary, findings, errors, available_repairs, available_character_repairs } = diagData;
   const allIssues = Object.values(findings || {}).flatMap(f => (f.checks || []).filter(c => c.status !== 'passed'));
   const hasIssues = allIssues.length > 0;
 
@@ -178,6 +177,7 @@ function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
               label="Sync character location presence"
               description="Re-runs location enforcement for all your active characters"
               availableRepairs={available_repairs}
+              availableCharacterRepairs={available_character_repairs}
               onRepair={onRepair}
               isRepairing={isRepairing}
             />
@@ -189,6 +189,7 @@ function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
               label="Repair missing character type classifications"
               description={`${findings.characters.missingType.length} character(s) need type assigned`}
               availableRepairs={available_repairs}
+              availableCharacterRepairs={available_character_repairs}
               onRepair={onRepair}
               isRepairing={isRepairing}
             />
@@ -196,10 +197,11 @@ function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
 
           {(findings?.conversations?.emptyCharIds?.length > 0 || findings?.conversations?.danglingConvs?.length > 0) && (
             <RepairButton
-              repairAction="troubleshoot_thread"
-              label="Troubleshoot conversation linkage"
-              description="Checks and repairs broken character → conversation links"
+              repairAction="troubleshoot_locations"
+              label="Troubleshoot conversation & location linkage"
+              description={`${(findings.conversations.danglingConvs || []).length} conversation(s) have broken character links`}
               availableRepairs={available_repairs}
+              availableCharacterRepairs={available_character_repairs}
               onRepair={onRepair}
               isRepairing={isRepairing}
             />
@@ -211,6 +213,7 @@ function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
               label="Repair location links for workers/students"
               description="Re-links work and school location references"
               availableRepairs={available_repairs}
+              availableCharacterRepairs={available_character_repairs}
               onRepair={onRepair}
               isRepairing={isRepairing}
             />
@@ -449,20 +452,90 @@ export default function SupportAssistant({ user }) {
         ? `\n\nCONFIRMED LIVE REPAIR PATHS (from current diagnostic response — do not invent others):\n${confirmedRepairs.map(r => `- ${r}`).join('\n')}`
         : '';
 
-      const prompt = `You are the Account Help & Repair assistant for a character-based social simulation app ("Own Your Life").
+      const prompt = `You are the Account Help & Repair assistant for "Own Your Life" — a character-based social simulation app.
 
-You are helping the user whose account email is: ${ownerEmail}
+You help the user whose account email is: ${ownerEmail}
 
-STRICT RULES:
-- Only discuss this user's data. Never mention or compare other accounts.
-- created_by is permanently forbidden — never reference it.
+═══════════════════════════════════════
+APP SYSTEM KNOWLEDGE (use this to answer behavioral questions)
+═══════════════════════════════════════
+
+CHARACTER TYPES:
+- active_created_character: User's main characters. Full simulation (needs, schedule, travel, emotions, memories, finances). Appear on Home page.
+- npc_family_member: Family NPCs. Chat-capable, limited schedule, no full needs simulation.
+- npc_fictitious: Background/world NPCs. Limited interaction. Do not appear on Home.
+- npc_regular: Standard NPC. Shared world presence.
+
+PRESENCE & LOCATION RULES:
+- Each character has exactly one resolved presence at any moment.
+- Source of truth fields: resolved_current_location_id, resolved_current_location_name, resolved_presence_status.
+- Presence is driven by: schedule (work/school) → needs → autonomous travel → VGC Towers home default.
+- If presence_stay_lock = true, character is frozen at a location until the lock is cleared.
+- VGC Towers: each user has their own private instance. Characters return there by default when no other location is active.
+- Travel happens when: schedule says go to work/school, needs are critically low (hunger→food, energy→home), autonomous_travel_enabled=true and character decides to wander.
+- Characters do NOT travel when: sleeping, jailed, presence_stay_lock=true, autonomous_travel_enabled=false, or no valid destination exists.
+
+NEEDS SYSTEM:
+- Needs: hunger, energy, health, stress, social, fun, hygiene, comfort (scale 0-100).
+- Needs decay over time.  Low needs trigger behavior changes.
+- hunger < 20 → character seeks food location
+- energy < 20 → character seeks home/rest
+- social < 20 → character may initiate contact or go out
+- Needs influence: dialogue tone, travel decisions, emotional state, what they say and how they say it.
+- Needs are simulated by: simulateActiveCharacterNeeds function (runs on a schedule).
+
+EMOTIONAL STATE:
+- emotional_state field drives dialogue tone, responses, and actions.
+- Valid states: calm, irritated, defensive, reflective, closed-off, joyful, anxious, sad, excited, overwhelmed, content, frustrated, etc.
+- Emotions change based on: life events, messages from user, needs state, schedule compliance.
+
+MEMORY SYSTEM:
+- CharacterMemory: structured memory records per character_id. Types: identity, relationship, event, preference, location, fact.
+- Memory entity: older/simpler memory records.
+- Life Journal (CharacterAutomaticNarrative): continuous log of what happened to a character.
+- Memories influence character responses — they provide continuity across conversations.
+- unresolved_identity memories = character mentioned someone the system hasn't linked yet.
+
+IMAGE GENERATION RULES (for diagnosing wrong images):
+- Avatar = source of truth for face, age, body type, skin tone, identity.
+- Never use avatar image as background. Background = current location + zone images.
+- Camera moves, subject does not scale — "zoom in" means camera moves closer, not subject gets bigger.
+- Lighting must match time of day — overrides reference photos.
+- If image looks wrong: check avatar_url is set, check reference_image_urls are present, check current location has zone images.
+
+DUPLICATE / MERGE RULES:
+- Duplicates are detected by normalized character name.
+- Ghost merged = merged_into_character_id is set but status ≠ 'merged' — this is a data integrity violation.
+- Safe merge path: Settings → "Suggested Duplicates → Review & Merge" only. Never auto-merge.
+- Merge remaps: all conversations, messages, memories, life events, relationships to the surviving ID.
+- Never merge across accounts. Never merge without previewing the diff.
+
+CONVERSATION LINKAGE:
+- Conversations have character_ids array. If a character was deleted, those IDs become dangling.
+- Dangling conversations still exist but the chat page may show errors or blank state.
+- Fix path: troubleshoot_locations repair (which calls troubleshootLocations scoped to this account).
+
+FINANCIAL SYSTEM:
+- Each active_created_character should have a CharacterFinancial record.
+- Payroll runs via processPayroll function. Housing costs via processHousingCosts.
+- Missing financial record = character won't receive pay or be billed correctly.
+
+OWNERSHIP RULES (critical):
+- owner_email = ONLY valid ownership proof.
+- created_by = forbidden, never use it.
+- All data is isolated per owner_email. No cross-account access.
+
+═══════════════════════════════════════
+STRICT RULES FOR YOUR RESPONSES:
+═══════════════════════════════════════
+- Only discuss this user's data (${ownerEmail}). Never reference or compare other accounts.
+- Never reference created_by under any circumstance.
 - Never promise a repair you cannot confirm is in the live repair list.
-- If a repair path is NOT in the confirmed live repair paths, say: "I cannot run that repair — it's not in the confirmed live paths."
-- For duplicate characters: always direct to "Suggested Duplicates → Review & Merge" in Settings.
-- When filing a report: confirm a ticket was created.
-- Be plain-language and specific. Name the exact characters, conversations, or records involved.
-- Do not say "everything looks fine" if there are unresolved warnings.
-- If you cannot verify a fix happened, say: "I cannot confirm this was fixed without a re-diagnostic."
+- For duplicates: always direct to "Suggested Duplicates → Review & Merge" in Settings.
+- Be plain-language. Name exact characters/records when the diagnostic has them.
+- Do not say "all looks fine" if warnings exist.
+- If you cannot confirm a fix without re-running diagnostic, say so.
+- If the user asks WHY something happened, use the system knowledge above to explain the actual mechanism.
 ${repairList}
 
 Recent conversation:
@@ -471,7 +544,7 @@ ${diagContext}
 
 User message: ${text}
 
-Respond with specific, honest, actionable information. If issues were found, name them. If repairs are available, name them by their exact repair_action key. If you cannot fix something, explain why and what the user should do next.`;
+Respond with specific, honest, actionable information. Name exact characters and records. Explain root causes when asked about behavior. If repairs are available, name the repair_action key. If you cannot fix something, explain why and what the user should do next.`;
 
       const response = await base44.integrations.Core.InvokeLLM({
         prompt,

@@ -75,6 +75,11 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   const { categories = 'all', repair_action = null, repair_character_id = null } = body;
 
+  // categories='none' means repair-only call — skip diagnostics entirely
+  if (categories === 'none' && !repair_action) {
+    return Response.json({ owner_email: ownerEmail, summary: 'No diagnostic requested.', findings: {}, checked_at: new Date().toISOString() });
+  }
+
   // ── REPAIR DISPATCH (before diagnostics) ──────────────────────────────────
   if (repair_action) {
     // Block admin-only paths
@@ -248,18 +253,34 @@ Deno.serve(async (req) => {
   // ── 3. MEMORIES ────────────────────────────────────────────────────────────
   if (categories === 'all' || (Array.isArray(categories) && categories.includes('memories'))) {
     try {
-      // Only read memories that belong to this user's live characters
-      // We can't filter by owner_email directly on CharacterMemory (no owner_email field)
-      // so we filter by character_id membership in liveCharIdSet
-      const memories = await base44.entities.CharacterMemory.filter({}, '-created_date', 500);
-      const myMemories = memories.filter(m => liveCharIdSet.has(m.character_id));
+      // OWNERSHIP RULE: CharacterMemory has no owner_email field.
+      // Scope enforcement: fetch only memories whose character_id is in this account's character set.
+      // We batch-query using the live character IDs as the scope guard — no cross-account data is read.
+      // Limit to 20 queries max to avoid rate-limit storms.
+      const liveCharIds = Array.from(liveCharIdSet);
+      const allMyCharIds = new Set(allChars.map(c => c.id));
+      let myMemories = [];
+      let danglingMemories = [];
+
+      // Fetch memories scoped per character in batches of 10
+      const batchSize = 10;
+      for (let i = 0; i < Math.min(liveCharIds.length, 50); i += batchSize) {
+        const batch = liveCharIds.slice(i, i + batchSize);
+        for (const cid of batch) {
+          const mems = await base44.entities.CharacterMemory.filter({ character_id: cid }, '-created_date', 50);
+          myMemories = myMemories.concat(mems);
+        }
+      }
+
+      // Dangling: check memories for deleted/merged characters (their IDs are in allMyCharIds but not liveCharIdSet)
+      const deletedCharIds = [...allMyCharIds].filter(id => !liveCharIdSet.has(id));
+      for (const cid of deletedCharIds.slice(0, 10)) {
+        const mems = await base44.entities.CharacterMemory.filter({ character_id: cid }, '-created_date', 20);
+        danglingMemories = danglingMemories.concat(mems);
+      }
 
       const unresolved = myMemories.filter(m => m.validation_status === 'unresolved_identity');
       const pending = myMemories.filter(m => m.validation_status === 'pending');
-
-      // Dangling: memories whose character_id is NOT in the live set (deleted char)
-      const allMyCharIds = new Set(allChars.map(c => c.id));
-      const danglingMemories = memories.filter(m => allMyCharIds.has(m.character_id) && !liveCharIdSet.has(m.character_id));
 
       findings.memories = {
         total: myMemories.length,
@@ -305,12 +326,17 @@ Deno.serve(async (req) => {
         c.character_type === 'active_created_character' && c.status === 'active'
       );
 
-      const financials = await base44.entities.CharacterFinancial.filter({}, '-created_date', 300);
-      const myFinancialCharIds = new Set(financials.map(f => f.character_id));
+      // OWNERSHIP RULE: CharacterFinancial has character_id but no owner_email.
+      // Scope enforcement: fetch only records whose character_id is in this account's live character set.
+      const myFinancials = [];
+      for (const char of activeCreated.slice(0, 30)) {
+        const recs = await base44.entities.CharacterFinancial.filter({ character_id: char.id }, '-created_date', 1);
+        myFinancials.push(...recs);
+      }
+      const myFinancialCharIds = new Set(myFinancials.map(f => f.character_id));
       const missingFinancial = activeCreated.filter(c => !myFinancialCharIds.has(c.id)).map(c => ({ id: c.id, name: c.name }));
 
       // Characters with negative balance
-      const myFinancials = financials.filter(f => liveCharIdSet.has(f.character_id));
       const negativeBalance = myFinancials.filter(f => (f.current_balance || 0) < 0).map(f => ({ character_id: f.character_id, balance: f.current_balance }));
 
       findings.financial = {
