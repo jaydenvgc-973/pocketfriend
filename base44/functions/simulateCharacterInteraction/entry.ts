@@ -75,12 +75,40 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'At least 2 character IDs required' }, { status: 400 });
     }
 
-    const characters = await Promise.all(
-      character_ids.map(id => base44.entities.Character.filter({ id }))
-    ).then(results => results.map(arr => arr[0]));
+    // Use service role to fetch characters — ownership is already verified via user.auth.me().
+    // User-scoped filter by id alone fails for characters missing owner_email (Nick Decker pattern).
+    // After fetching, we explicitly verify owner_email == user.email before proceeding.
+    const characterResults = await Promise.all(
+      character_ids.map(id => base44.asServiceRole.entities.Character.filter({ id }))
+    );
+    const characters = characterResults.map(arr => arr[0]);
 
-    if (characters.some(c => !c)) {
-      return Response.json({ error: 'One or more characters not found' }, { status: 404 });
+    const notFound = character_ids.filter((id, i) => !characters[i]);
+    if (notFound.length > 0) {
+      return Response.json({
+        error: `Characters not found: ${notFound.join(', ')}`,
+        stage: 'character_fetch',
+        character_ids: notFound
+      }, { status: 404 });
+    }
+
+    // Ownership verification — every character must belong to the current user
+    const ownershipFailures = characters.filter(c => c.owner_email !== user.email);
+    if (ownershipFailures.length > 0) {
+      return Response.json({
+        error: `Ownership verification failed for: ${ownershipFailures.map(c => `${c.name} (owner_email=${c.owner_email}, expected=${user.email})`).join('; ')}`,
+        stage: 'ownership_verification'
+      }, { status: 403 });
+    }
+
+    // Character type eligibility check
+    const SUPPORTED_TYPES = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'];
+    const unsupportedChars = characters.filter(c => !SUPPORTED_TYPES.includes(c.character_type));
+    if (unsupportedChars.length > 0) {
+      return Response.json({
+        error: `Unsupported character type(s): ${unsupportedChars.map(c => `${c.name} (${c.character_type})`).join(', ')}`,
+        stage: 'type_eligibility'
+      }, { status: 400 });
     }
 
     const getRelationshipContext = (fromChar, toChar) => {

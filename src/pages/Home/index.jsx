@@ -311,11 +311,19 @@ export default function Home() {
             </div>
           )}
           {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
-            <CharacterInteractionSimulator characters={[
-              ...(defaultChar ? [defaultChar] : []),
-              ...activeCustomChars,
-              ...allCharacters.filter(c => c.character_type === 'npc_fictitious' && c.status === 'active' && !c.is_test_character && !c.diagnostic_only),
-            ]} />
+            <CharacterInteractionSimulator
+              currentUser={currentUser}
+              characters={[
+                ...(defaultChar ? [defaultChar] : []),
+                ...activeCustomChars,
+                ...allCharacters.filter(c =>
+                  ['npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type) &&
+                  c.status === 'active' &&
+                  !c.is_test_character &&
+                  !c.diagnostic_only
+                ),
+              ]}
+            />
           ) : null}
           
           <div>
