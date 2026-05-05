@@ -363,9 +363,10 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {occupants.map(o => {
+              const isUser = o.isUserMarker || o.type === "user";
               const isActiveChar = o.type === "active_created_character";
               const isFamilyChar = o.isFamilyMember || o.type === "npc_family_member";
-              const pinColor = isActiveChar ? "#3b82f6" : isFamilyChar ? "#f43f5e" : "#8b5cf6";
+              const pinColor = isUser ? "#f59e0b" : isActiveChar ? "#3b82f6" : isFamilyChar ? "#f43f5e" : "#8b5cf6";
               // Ensure initials exist for family members from location record
               const safeInitials = o.initials || o.name?.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
               // HYDRATE: Get real avatar from character profile if available
@@ -394,7 +395,7 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{o.name}</div>
                     <div style={{ fontSize: 10, color: "#64748b" }}>
-                      {o.isAsleep ? "😴 Sleeping" : isFamilyChar ? "Family" : label}
+                      {o.isAsleep ? "😴 Sleeping" : isUser ? "You" : isFamilyChar ? "Family" : label}
                     </div>
                   </div>
                 </div>
@@ -669,15 +670,14 @@ function buildMarkers(entities, locations, gridCoords) {
     const locId = entity.resolved_current_location_id;
     if (!locId || !entity.is_currently_present) continue;
     
-    // For user entity: trust the location ID directly, don't gate on locationMap
+    // Look up the location record. For user entities, the location may not be in the
+    // local locations array (timing/staleness) — fall back to coordinates by locId directly.
     const location = locationMap.get(locId);
-    const isUserEntity = entity.effective_presence_type === 'user';
-    
-    // Non-user entities require the location to be in the map
-    if (!location && !isUserEntity) continue;
-    
-    const coordinates = gridCoords[locId];
+    const coordinates = location ? gridCoords[location.id] : gridCoords[locId];
     if (!coordinates) continue;
+    
+    // Use location from map if available, or synthesize minimal shape for the user entity
+    const resolvedLocation = location || { id: locId, name: entity.resolved_current_location_name || locId };
     
     seenIds.add(entity.id);
     
@@ -685,14 +685,15 @@ function buildMarkers(entities, locations, gridCoords) {
       characterId: entity.id,
       name: entity.display_name,
       initials: entity.initials,
+      // Use effective_presence_type as the canonical type — includes 'user' for user entity
       type: entity.effective_presence_type || entity.character_type || 'npc_fictitious',
       avatarUrl: entity.avatar_url,
       locationId: locId,
-      locationName: location?.name || entity.resolved_current_location_name,
+      locationName: resolvedLocation.name,
       coordinates,
       isAsleep: entity.resolved_presence_status === 'sleeping' || entity.resolved_presence_status === 'napping',
       isFamilyMember: entity.effective_presence_type === 'npc_family_member',
-      isUserMarker: isUserEntity,
+      isUserMarker: entity.effective_presence_type === 'user',
     });
   }
   return markers;

@@ -48,7 +48,9 @@ export function resolveTravelPresenceEntities({
     const userPresenceStatus = userSettings.user_presence_status || 'away';
     const userLocationId = userSettings.user_current_location_id || null;
     const userLocationName = userSettings.user_current_location_name || null;
-    const isUserPresent = userPresenceStatus === 'present' && !!userLocationId && !!locationMap[userLocationId];
+    // Do NOT gate on locationMap[userLocationId] — locations may not be fully loaded yet
+    // or the specific location may not be in the local array. Trust UserSettings fields directly.
+    const isUserPresent = userPresenceStatus === 'present' && !!userLocationId;
 
     if (isUserPresent) {
       const displayName = userSettings.fictional_world_name || currentUser.full_name || 'You';
@@ -61,7 +63,7 @@ export function resolveTravelPresenceEntities({
         avatar_url: avatarUrl,
         initials: displayName.charAt(0).toUpperCase(),
         resolved_current_location_id: userLocationId,
-        resolved_current_location_name: userLocationName || locationMap[userLocationId]?.name,
+        resolved_current_location_name: userLocationName || locationMap[userLocationId]?.name || null,
         resolved_presence_status: 'present',
         residence_location_id: null,
         is_home_resident: false,
