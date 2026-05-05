@@ -25,6 +25,7 @@ import { resolveTravelPresenceEntities, getPresenceAtLocation, isLocationEmpty }
 import { shouldVGCResidentBeAtHome } from "@/lib/vgcTowersPresenceEngine";
 import { useUserPresence } from "@/hooks/useUserPresence";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
+import { checkWeatherTravelBlock, getWeatherStatusLine, getWeatherEmoji, classifyWeather } from "@/lib/weatherSystem";
 
 export default function Travel() {
   const navigate = useNavigate();
@@ -360,6 +361,16 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       }]);
       return;
     }
+    // Weather block check — outdoor locations during severe weather
+    const weatherBlock = checkWeatherTravelBlock(selectedLocation, settings.daily_weather_cache);
+    if (weatherBlock.blocked) {
+      setUnavailablePopup([{
+        character: { id: "weather_block", name: selectedLocation.name, avatar_url: null },
+        reason: { iconType: "out", message: weatherBlock.reason, color: "text-blue-400" },
+        availableAt: "Check the weather later",
+      }]);
+      return;
+    }
     // NOTE: Removed "no one home" block — locations with listed residents are always visitable
     const unavailable = selectedCharacterIds
       .filter(id => !convincedCharacterIds.includes(id))
@@ -389,6 +400,16 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
         character: { id: "closed", name: location.name, avatar_url: null },
         reason: { iconType: "out", message: `${location.name} is closed right now.`, color: "text-amber-400" },
         availableAt: hoursStr ? `Hours: ${hoursStr}` : "Check back later",
+      }]);
+      return;
+    }
+    // Weather block check for solo travel
+    const weatherBlock = checkWeatherTravelBlock(location, settings.daily_weather_cache);
+    if (weatherBlock.blocked) {
+      setUnavailablePopup([{
+        character: { id: "weather_block", name: location.name, avatar_url: null },
+        reason: { iconType: "out", message: weatherBlock.reason, color: "text-blue-400" },
+        availableAt: "Check the weather later",
       }]);
       return;
     }
@@ -462,6 +483,27 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-6 relative z-10">
+
+        {/* Weather banner — shows when weather data is available */}
+        {settings.daily_weather_cache?.conditions && (() => {
+          const wc = settings.daily_weather_cache;
+          const severity = classifyWeather(wc.conditions);
+          const statusLine = getWeatherStatusLine(wc);
+          const emoji = getWeatherEmoji(wc);
+          const isSevere = severity === 'severe';
+          const isMild = severity === 'mild_bad';
+          return (
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium border ${
+              isSevere ? 'bg-blue-500/10 border-blue-500/30 text-blue-300' :
+              isMild ? 'bg-slate-500/10 border-slate-500/30 text-muted-foreground' :
+              'bg-amber-500/10 border-amber-500/20 text-amber-400'
+            }`}>
+              <span className="text-base leading-none">{emoji}</span>
+              <span className="flex-1">{statusLine}</span>
+              {isSevere && <span className="text-[10px] text-blue-400 font-semibold">⚠ Outdoor locations blocked</span>}
+            </div>
+          );
+        })()}
 
         {/* Live Presence Map */}
         <AnimatePresence>
