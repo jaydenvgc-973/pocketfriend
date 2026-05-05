@@ -566,6 +566,80 @@ No adult emotional complexity in narrative. Reflect their developmental stage ac
 
     const overusedWords = extractDistinctiveWords([...recentNarratives, ...recentCharMsgs]);
 
+    // ── BEAT PROGRESSION ENGINE ────────────────────────────────────────────────
+    // Reads the last 1-3 narrative beats to determine what has already happened,
+    // then instructs the LLM to advance — not repeat — the scene.
+    const lastBeat = recentNarratives[recentNarratives.length - 1] || null;
+    const prevBeat = recentNarratives[recentNarratives.length - 2] || null;
+
+    // Extract the dominant action/gesture/position anchor from last beat
+    // to give the LLM something concrete to NOT repeat.
+    function extractBeatAnchor(text) {
+      if (!text) return null;
+      // Pull first full sentence as the beat anchor
+      const firstSentence = text.match(/^[^.!?]*[.!?]/)?.[0]?.trim() || text.substring(0, 100);
+      return firstSentence;
+    }
+
+    const lastBeatAnchor = extractBeatAnchor(lastBeat);
+    const prevBeatAnchor = extractBeatAnchor(prevBeat);
+
+    // Detect if the last beat ended on a high-tension or intense moment (needs a pause beat)
+    const INTENSITY_MARKERS = [
+      'kiss','kissed','kissing','touch','touched','pulled','pulled her','pulled him',
+      'grabbed','held','embraced','breath','breathless','leaned in','leaned into',
+      'pressed','against','closer','closest','lips','hands found','broke','breaking',
+      'burst','exploded','slammed','snapped','shaking','tears','crying','sobbing',
+      'froze','frozen','silence fell','everything stopped',
+    ];
+    const lastBeatIsIntense = lastBeat
+      ? INTENSITY_MARKERS.some(m => lastBeat.toLowerCase().includes(m))
+      : false;
+
+    const beatProgressionBlock = `
+════════════════════════════════════
+BEAT PROGRESSION ENGINE — MANDATORY
+════════════════════════════════════
+This is NOT the first narrative. A scene is already in motion.
+Each output is ONE NEW BEAT — a small unit of time where something changes.
+
+LAST BEAT (what just happened — DO NOT repeat or re-describe):
+${lastBeatAnchor ? `"${lastBeatAnchor}"` : 'No prior beat — this is the opening.'}
+${prevBeatAnchor ? `\nBEAT BEFORE THAT:\n"${prevBeatAnchor}"` : ''}
+
+BEAT STRUCTURE — EXECUTE IN ORDER:
+1. CAUSE — what triggered this beat (the consequence of the last beat)
+2. EFFECT — the immediate physical or emotional reaction
+3. SHIFT — something changes (position, tone, energy, focus, dynamic)
+4. NEXT POSITION — where the scene lands at the end of this beat (new setup)
+
+Then STOP. Do not continue past the next position.
+
+MANDATORY RULES:
+  ✗ Do NOT re-describe the same action from the last beat
+  ✗ Do NOT re-anchor to the same body part, gesture, or object used in the last beat
+  ✗ Do NOT restate the same emotional reaction already expressed
+  ✗ Do NOT freeze the scene — something must change
+
+TIME HAS PASSED: Even if minimal, assume a small amount of time has elapsed since the last beat.
+${lastBeatIsIntense ? `\n⚑ INTENSITY DETECTED IN LAST BEAT: Insert a micro-pause beat first.\n  → Allow breath, reset, or reaction before moving into new action.\n  → Characters must react before they move again.` : ''}
+
+FOCUS SHIFT REQUIRED — shift at least ONE of:
+  • physical position or spatial relationship
+  • emotional tone or energy level
+  • control / power dynamic
+  • environment detail or interaction
+  • what is being attended to
+
+SCENE MOTION PRINCIPLE:
+  movement → reaction → change → movement
+  NOT: movement → description → description → description
+
+After an action completes its EFFECT, it must transition to:
+  release / reposition / escalation / interruption / aftermath
+  — NOT stay frozen in the same description.
+════════════════════════════════════`;
+
     // ── HOME ACTIVITY REPETITION DETECTOR ─────────────────────────────────────
     // Scan recent narratives for overused home activity anchor phrases
     const HOME_ACTIVITY_ANCHORS = [
@@ -1245,10 +1319,12 @@ ${homeActivityGuardBlock}
 ${repetitionGuardBlock}
 ${antiRepetitionStyleBlock}
 
+${recentNarratives.length > 0 ? beatProgressionBlock : ''}
+
 Chat History:
 ${formattedChatHistory}
 
-Generate a narrative of 2 to 4 sentences. It must feel like a live continuation of ${characterName}'s day — time-aware, location-accurate, emotionally continuous, and specific to this exact moment.
+Generate a narrative of 2 to 4 sentences. It must feel like a live continuation of ${characterName}'s day — a NEW BEAT, not a repetition of the last one. Time-aware, location-accurate, emotionally continuous, and specific to this exact moment.
 
 Narrative:`;
 
