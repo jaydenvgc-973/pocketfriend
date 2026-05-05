@@ -12,20 +12,23 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
   const [error, setError] = useState(null);
 
   const handleGenerate = async () => {
-    if (!characterId || chatHistory.length < 2) return;
-
+    if (!characterId) return;
     setIsGenerating(true);
+    setError(null);
     try {
       const res = await base44.functions.invoke('generateNarrative', {
         characterId,
-        chatHistory: chatHistory.slice(-5) // Use last 5 messages for context
+        chatHistory: chatHistory.slice(-10),
       });
-
-      if (res?.data?.success) {
+      if (res?.data?.success && res.data.narrative) {
         setNarrativeText(res.data.narrative);
+      } else {
+        setError(res?.data?.error || 'Generation returned no content. Try again.');
       }
     } catch (err) {
       console.error('Failed to generate narrative:', err);
+      const msg = err?.response?.data?.error || err?.message || 'Generation failed.';
+      setError(msg.includes('Rate limit') ? 'Rate limited — wait a moment and try again.' : `Generation failed: ${msg}`);
     } finally {
       setIsGenerating(false);
     }
@@ -71,14 +74,17 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
 
       if (res?.data?.success) {
         setNarrativeText('');
+        setError(null);
         onNarrativeSubmitted?.();
         onClose();
       } else {
-        setError('Narrative submission failed. Try again.');
+        const reason = res?.data?.error || 'Submission failed — unknown reason.';
+        setError(reason);
       }
     } catch (err) {
       console.error('Failed to submit narrative:', err);
-      setError('Something went wrong. Try again.');
+      const msg = err?.response?.data?.error || err?.message || 'Unknown error';
+      setError(msg.includes('Rate limit') ? 'Rate limited — wait a moment and try again.' : `Submission failed: ${msg}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -130,7 +136,7 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
                 <Button
                   variant="outline"
                   onClick={handleGenerate}
-                  disabled={isGenerating || chatHistory.length < 2}
+                  disabled={isGenerating || !characterId}
                   className="flex-1"
                 >
                   <Wand2 className="w-4 h-4 mr-2" />

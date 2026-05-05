@@ -177,9 +177,10 @@ Deno.serve(async (req) => {
 
     // ── UNIFIED TEMPORAL STATE (single source of truth) ──────────────────────
     // Get the last message timestamp for elapsed-time + continuity calculation
+    // NOTE: temporalBlock is built AFTER settingsList/sunriseTime/sunsetTime are resolved below.
     const lastMsg = chatHistory?.length > 0 ? chatHistory[chatHistory.length - 1] : null;
     const lastMsgTimestamp = lastMsg?.timestamp || lastMsg?.created_date || null;
-    const temporalBlock = buildTemporalBlock(char, lastMsgTimestamp);
+    // temporalBlock will be set after weather resolution — see below
 
     // Derive isAsleep and time string from the same logic used in buildTemporalBlock
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -334,10 +335,15 @@ No adult emotional complexity in narrative. Reflect their developmental stage ac
 
     // ── GET CACHED WEATHER DATA ───────────────────────────────────────────────
     // Sunrise and sunset times are fetched daily at 4 AM ET and cached in UserSettings
+    // CRITICAL: These must be resolved BEFORE buildTemporalBlock is called below,
+    // because the temporal block template references sunriseTime and sunsetTime.
     const cachedWeather = settings?.daily_weather_cache || {};
-    const sunriseTime = cachedWeather.sunrise || '06:15'; // fallback time
-    const sunsetTime = cachedWeather.sunset || '19:45'; // fallback time
+    const sunriseTime = cachedWeather.sunrise || '06:15';
+    const sunsetTime = cachedWeather.sunset || '19:45';
     const weatherConditions = cachedWeather.conditions || 'clear';
+
+    // ── BUILD TEMPORAL BLOCK — after sunriseTime/sunsetTime are resolved ──────
+    const temporalBlock = buildTemporalBlock(char, lastMsgTimestamp);
 
     // ── RESOLVE ACTIVE CHARACTER IDENTITY (who is the user acting as?) ──────
     // If the most recent user messages reference a played_as_character_name, use that.
