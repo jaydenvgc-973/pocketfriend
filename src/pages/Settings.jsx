@@ -576,25 +576,20 @@ export default function Settings() {
             onClick={async () => {
               console.log('[DupeScan] click fired');
               setDupeScanError(null);
-              // user query defaults to {} — email won't be present until query resolves
               const email = user?.email;
-              console.log('[DupeScan] user object:', user);
-              console.log('[DupeScan] email at click time:', email);
+              console.log('EMAIL:', email);
               if (!email) {
-                console.log('[DupeScan] STOPPED — email is falsy');
-                setDupeScanError('User email not available yet. Please wait a moment and try again.');
+                setDupeScanError('User not loaded yet. Try again in a second.');
                 return;
               }
               setIsDupeScanLoading(true);
               try {
-                console.log('[DupeScan] calling Character.filter with owner_email:', email);
                 const freshChars = await base44.entities.Character.filter(
                   { owner_email: email },
                   '-created_date',
                   500
                 );
-                console.log('[DupeScan] freshChars count:', freshChars.length);
-                // Only live records with full IDs
+                console.log('FETCH RESULT:', freshChars);
                 const live = freshChars.filter(c =>
                   c.id &&
                   c.name &&
@@ -602,7 +597,7 @@ export default function Settings() {
                   c.status !== 'soft_deleted' &&
                   c.status !== 'merged'
                 );
-                console.log('[DupeScan] live count:', live.length);
+                console.log('LIVE COUNT:', live.length);
                 const nameMap = new Map();
                 live.forEach(c => {
                   const key = c.name.trim().toLowerCase();
@@ -613,14 +608,16 @@ export default function Settings() {
                 nameMap.forEach((records, name) => {
                   if (records.length >= 2) dupes.push({ name, records });
                 });
-                console.log('[DupeScan] dupe groups found:', dupes.length, dupes.map(d => d.name));
-                console.log('[DupeScan] calling setSuggestedDupes + setShowSuggestedDupes(true)');
+                console.log('DUPE GROUPS:', dupes.length);
+                if (dupes.length === 0) {
+                  setDupeScanError('No duplicates found.');
+                }
                 setSuggestedDupes(dupes);
                 setShowSuggestedDupes(true);
-                console.log('[DupeScan] state calls complete — modal should open');
               } catch (err) {
-                console.error('[DupeScan] CATCH block hit:', err);
+                console.error('[DupeScan] CATCH:', err);
                 setDupeScanError(`Scan failed: ${err.message || 'Unknown error'}`);
+                setShowSuggestedDupes(true);
               } finally {
                 setIsDupeScanLoading(false);
               }
