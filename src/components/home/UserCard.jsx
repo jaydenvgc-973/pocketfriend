@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { User, DollarSign, MapPin, ChevronDown, LogOut, Check } from "lucide-react";
@@ -13,15 +13,7 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
   const [showDropdown, setShowDropdown] = useState(false);
   const wrapperRef = useRef(null);
 
-  // Close on outside click
-  useEffect(() => {
-    if (!showDropdown) return;
-    const handler = (e) => {
-      if (!wrapperRef.current?.contains(e.target)) setShowDropdown(false);
-    };
-    document.addEventListener("pointerdown", handler);
-    return () => document.removeEventListener("pointerdown", handler);
-  }, [showDropdown]);
+  // Outside click is handled by the fixed click-catcher div rendered when showDropdown is true
 
   const handleSelectLocation = (loc) => {
     setShowDropdown(false);
@@ -51,6 +43,7 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
     <motion.div
       whileTap={{ scale: 0.99 }}
       className="bg-card border border-border rounded-2xl p-4 hover:border-primary/30 transition-colors"
+      style={{ position: "relative", zIndex: showDropdown ? 100 : "auto" }}
     >
       <div className="flex items-center gap-3">
         {/* Avatar — links to profile */}
@@ -84,7 +77,15 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
               </span>
             </button>
 
-            {/* Inline absolute dropdown — positioned relative to wrapper, no iframe coordinate issues */}
+            {/* Click-catcher: fixed overlay above all cards, closes dropdown on outside click */}
+            {showDropdown && (
+              <div
+                style={{ position: "fixed", inset: 0, zIndex: 99 }}
+                onClick={() => setShowDropdown(false)}
+              />
+            )}
+
+            {/* Inline absolute dropdown — z-index above click-catcher and all card content */}
             <AnimatePresence>
               {showDropdown && (
                 <motion.div
@@ -92,7 +93,8 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -4, scale: 0.97 }}
                   transition={{ duration: 0.12 }}
-                  className="absolute left-0 top-full mt-1 z-50 bg-card border border-border rounded-xl shadow-2xl overflow-hidden min-w-[220px]"
+                  className="absolute left-0 top-full mt-1 rounded-xl shadow-2xl overflow-hidden min-w-[220px]"
+                  style={{ zIndex: 200, backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }}
                 >
                   {/* Away option */}
                   <button
