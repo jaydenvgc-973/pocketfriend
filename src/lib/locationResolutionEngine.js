@@ -15,6 +15,7 @@
 
 import { isLocationOpen } from '@/lib/locationHoursUtils';
 import { resolveHousingLocationForCharacter } from '@/lib/resolveHousingLocationForCharacter';
+import { isCharacterAsleep as isCharacterAsleepFromUtils } from '@/lib/sleepUtils';
 
 /**
  * Main resolution function: determine ONE true current location for a character
@@ -462,25 +463,12 @@ function isInPreSleepReturnWindow(character, currentTime) {
 }
 
 /**
- * Check if character is sleeping
+ * Check if character is sleeping.
+ * SINGLE SOURCE OF TRUTH: delegates to sleepUtils.isCharacterAsleep
+ * so locationResolutionEngine and UI use identical logic.
  */
 function isCharacterSleeping(character) {
-  if (!character.sleep_start_time || !character.wake_up_time) {
-    return false;
-  }
-
-  // CRITICAL: Use Eastern Time for sleep schedule checks
-  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const hour = nowET.getHours();
-
-  const sleepStart = parseInt(character.sleep_start_time.split(':')[0]);
-  const wakeUp = parseInt(character.wake_up_time.split(':')[0]);
-
-  // Handle sleep that crosses midnight
-  if (sleepStart > wakeUp) {
-    return hour >= sleepStart || hour < wakeUp;
-  }
-  return hour >= sleepStart && hour < wakeUp;
+  return isCharacterAsleepFromUtils(character);
 }
 
 /**

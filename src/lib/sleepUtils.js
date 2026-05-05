@@ -63,9 +63,14 @@ export function buildSleepInterruptionUpdate(character) {
 }
 
 /**
- * Computes the adaptive sleep window for a character.
- * For active_created_character: built around next work/school obligation.
- * For all others: uses stored schedule or defaults.
+ * Computes the sleep window for a character.
+ *
+ * PRIORITY ORDER (source of truth rule):
+ * 1. Stored sleep_start_time + wake_up_time on the character record — ALWAYS wins if present.
+ *    This is the explicitly configured schedule. Never override it with derived logic.
+ * 2. If NO stored schedule exists: derive from next work/school obligation (adaptive fallback).
+ * 3. If neither: return null (cannot assume sleep — fail safe = awake).
+ *
  * Returns { sleepStartMin, wakeMin } in minutes-since-midnight (ET), or null.
  */
 function computeAdaptiveSleepWindow(character) {
@@ -73,6 +78,17 @@ function computeAdaptiveSleepWindow(character) {
   const PRE_SHIFT_BUFFER = 60;
   const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
 
+  // PRIORITY 1: Stored schedule is the source of truth — use it directly.
+  // A character with sleep_start_time = "02:00" and wake_up_time = "10:00"
+  // must use those values regardless of their work schedule.
+  if (character.sleep_start_time && character.wake_up_time) {
+    const s = toMin(character.sleep_start_time);
+    const w = toMin(character.wake_up_time);
+    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w };
+  }
+
+  // PRIORITY 2: No stored schedule — derive from work/school obligation only.
+  // This adaptive path is only for characters who have NO explicit sleep schedule set.
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const dayOfWeek = nowET.getDay();
 
@@ -110,13 +126,7 @@ function computeAdaptiveSleepWindow(character) {
     }
   }
 
-  // No obligation — use stored schedule
-  if (character.sleep_start_time && character.wake_up_time) {
-    const s = toMin(character.sleep_start_time);
-    const w = toMin(character.wake_up_time);
-    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w };
-  }
-
+  // PRIORITY 3: Nothing determinable — fail safe (return null = treat as awake).
   return null;
 }
 
