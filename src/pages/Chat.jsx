@@ -917,7 +917,10 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     } catch (err) {
       if (isMountedRef.current) {
         setIsTyping(false);
-        setSendError("Couldn't get a response. Try again.");
+        const isRateLimit = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit') || err?.status === 429;
+        setSendError(isRateLimit
+          ? "Too many requests right now — please wait a few seconds and try again."
+          : "Couldn't get a response. Try again.");
       }
       return;
     }
