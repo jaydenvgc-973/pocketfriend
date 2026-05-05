@@ -75,27 +75,50 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'At least 2 character IDs required' }, { status: 400 });
     }
 
-    // Use service role to fetch ALL characters in a single query by owner_email + id filter.
-    // Avoids N parallel Character.filter({id}) calls that triggered 429 rate limits.
-    // After fetching, we verify each requested id was returned and owner_email is correct.
-    const fetchedChars = await base44.asServiceRole.entities.Character.filter(
-      { owner_email: user.email },
-      null,
-      200
-    );
+    // Single batched fetch — avoids N parallel Character.filter({id}) calls that triggered 429.
+    // Paginated to handle accounts with > 200 characters safely.
+    // Scoped strictly to owner_email: user.email — no cross-account data possible.
+    const PAGE_SIZE = 200;
+    let allFetchedChars = [];
+    let page = 0;
+    while (true) {
+      const batch = await base44.asServiceRole.entities.Character.filter(
+        { owner_email: user.email },
+        null,
+        PAGE_SIZE,
+        page * PAGE_SIZE
+      );
+      allFetchedChars = allFetchedChars.concat(batch);
+      if (batch.length < PAGE_SIZE) break; // last page
+      page++;
+      if (page > 10) break; // hard safety cap at 2000 characters
+    }
 
-    const characters = character_ids.map(id => fetchedChars.find(c => c.id === id));
+    const characters = character_ids.map(id => allFetchedChars.find(c => c.id === id));
 
+    // SAFETY VERIFICATION 1: Every requested id must resolve to a record
     const notFound = character_ids.filter((id, i) => !characters[i]);
     if (notFound.length > 0) {
       return Response.json({
         error: `Characters not found for owner ${user.email}: ${notFound.join(', ')}`,
         stage: 'character_fetch',
-        character_ids: notFound
+        character_ids: notFound,
+        fetched_total: allFetchedChars.length
       }, { status: 404 });
     }
 
-    // Character type eligibility check
+    // SAFETY VERIFICATION 2: Every resolved character must have owner_email == user.email
+    // Guards against future query changes or mixed-scope data leaking through
+    const ownershipFailures = characters.filter(c => c.owner_email !== user.email);
+    if (ownershipFailures.length > 0) {
+      return Response.json({
+        error: `Ownership mismatch — records returned but owner_email does not match: ${ownershipFailures.map(c => `${c.name} (owner_email=${c.owner_email})`).join(', ')}`,
+        stage: 'ownership_verification',
+        expected_owner: user.email
+      }, { status: 403 });
+    }
+
+    // SAFETY VERIFICATION 3: Every resolved character must be a supported type
     const SUPPORTED_TYPES = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'];
     const unsupportedChars = characters.filter(c => !SUPPORTED_TYPES.includes(c.character_type));
     if (unsupportedChars.length > 0) {
