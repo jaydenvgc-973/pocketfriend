@@ -766,7 +766,8 @@ Deno.serve(async (req) => {
     if (!message) {
       return Response.json({ error: 'Message not found' }, { status: 404 });
     }
-    const requestingUser = message.created_by || user.email;
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    const requestingUser = user.email;
 
     // ── SANITIZE PROMPT EARLY ─────────────────────────────────────────
     // CLASSIFICATION-FIRST APPROACH:
@@ -870,7 +871,21 @@ Deno.serve(async (req) => {
 
       return s.trim();
     }
-    const sanitizedPrompt = prompt;
+    // CRITICAL: sanitizePrompt IS defined above — call it here.
+    // Previously this line was `const sanitizedPrompt = prompt` which bypassed the entire
+    // classification-first sanitization system, making it dead code.
+    // The original scene prompt must be sanitized before being passed to buildPrompt.
+    // The sanitizer classifies context first (safe vs explicit) and only rewrites when necessary.
+    const rawPromptForSanitize = prompt.replace(/^\[CHARACTER\]\s*/i, '').trim();
+    const sanitizedPrompt = sanitizePrompt(rawPromptForSanitize);
+
+    if (sanitizedPrompt !== rawPromptForSanitize) {
+      console.log(`[generateImageAsync] ⚠️ PROMPT MUTATION DETECTED:`);
+      console.log(`  BEFORE: ${rawPromptForSanitize}`);
+      console.log(`  AFTER:  ${sanitizedPrompt}`);
+    } else {
+      console.log(`[generateImageAsync] ✓ Prompt passed sanitizer unchanged`);
+    }
 
     // ── 2. RESOLVE CHARACTER ──────────────────────────────────────────────────
     let charRecord = null;
@@ -886,7 +901,7 @@ Deno.serve(async (req) => {
         const charListSR = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
         const candidate = charListSR?.[0] || null;
         if (candidate) {
-          const owner = candidate.owner_email || candidate.created_by;
+          const owner = candidate.owner_email;
           if (owner && owner !== requestingUser) {
             console.error(`[generateImageAsync] ⛔ Cross-account character: ${characterId} owned by ${owner}, request from ${requestingUser}`);
             await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
@@ -1008,7 +1023,7 @@ Deno.serve(async (req) => {
           const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []);
           const candidate = locListSR?.[0] || null;
           if (candidate) {
-            const locOwner = candidate.owner_email || candidate.created_by;
+            const locOwner = candidate.owner_email;
             const isShared = candidate.scope === 'shared' || candidate.location_type === 'shared';
             if (locOwner && locOwner !== requestingUser && !isShared) {
               console.error(`[generateImageAsync] ⛔ Cross-account location: ${locationId} owned by ${locOwner}`);
@@ -1114,9 +1129,7 @@ Deno.serve(async (req) => {
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length}`);
 
 
-    if (sanitizedPrompt !== prompt.replace(/^\[CHARACTER\]\s*/i, '').trim()) {
-      console.log(`[generateImageAsync] Prompt sanitized for content filter compliance`);
-    }
+    // Mutation logging is already done above immediately after sanitization — no duplicate needed here.
 
     // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
     const serverTime = new Date();
@@ -1210,12 +1223,40 @@ Deno.serve(async (req) => {
           existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
         });
       } catch (genErr) {
-        const msg = genErr?.message || '';
-        if (/filter|guideline|block|violat/i.test(msg)) {
+        const msg = (genErr?.message || '').toLowerCase();
+        const statusCode = genErr?.status || genErr?.statusCode || genErr?.code || null;
+
+        // Only label as content policy when the provider explicitly signals it.
+        // The old broad regex (/filter|guideline|block|violat/i) matched network errors,
+        // rate limits, and infra blocks — all of which got mislabeled as "content filter."
+        const isRealContentPolicyBlock = (
+          msg.includes('content policy') ||
+          msg.includes('safety system') ||
+          msg.includes('violates our content') ||
+          msg.includes('violates our usage') ||
+          msg.includes('against our usage policies') ||
+          msg.includes('policy violation') ||
+          msg.includes('moderation') ||
+          msg.includes('safety filter') ||
+          msg.includes('flagged by our safety') ||
+          (msg.includes('cannot generate') && msg.includes('explicit')) ||
+          (statusCode === 400 && (msg.includes('safety') || msg.includes('policy') || msg.includes('blocked_by_safety')))
+        );
+
+        if (isRealContentPolicyBlock) {
+          console.warn(`[generateImageAsync] Content policy block on attempt ${attempt}: ${msg.substring(0, 200)}`);
           await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-          return Response.json({ success: false, filtered: true, error: 'Image blocked by content filter. Try rephrasing.' });
+          return Response.json({ success: false, filtered: true, error: 'Content policy block — the provider rejected this specific image content. Try a different scene description.' });
         }
-        throw genErr;
+
+        // All other errors: log accurately, retry if attempts remain, else surface real error
+        console.error(`[generateImageAsync] Provider error attempt ${attempt}: ${genErr?.message || genErr}`);
+        if (attempt < MAX_ATTEMPTS) {
+          console.warn(`[generateImageAsync] Retrying after provider error (attempt ${attempt}/${MAX_ATTEMPTS})`);
+          continue;
+        }
+        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+        return Response.json({ success: false, error: `Image generation failed — the provider returned an error. Please try again.` }, { status: 500 });
       }
 
       if (!attemptGenRes?.url) {

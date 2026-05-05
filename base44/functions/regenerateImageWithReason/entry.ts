@@ -455,13 +455,25 @@ Deno.serve(async (req) => {
     }
 
     // ── 3a. DETERMINE SCENE PROMPT (needed for zone resolution) ──────────────
-    let scenePrompt = originalPrompt;
+    let scenePromptRaw = originalPrompt;
     if (reason === 'dont_like' && customPrompt?.trim()) {
-      scenePrompt = customPrompt.trim();
+      scenePromptRaw = customPrompt.trim();
     } else if (reason === 'custom_prompt' && customPrompt?.trim()) {
-      scenePrompt = customPrompt.trim();
+      scenePromptRaw = customPrompt.trim();
     }
-    if (!scenePrompt) scenePrompt = 'candid natural moment, everyday life';
+    if (!scenePromptRaw) scenePromptRaw = 'candid natural moment, everyday life';
+
+    // Apply sanitizer — uses the context-aware minimal-rewrite logic defined above.
+    // For no_avatar / flawed / wrong_location: the prompt is the stored original — only
+    // genuinely explicit terms are replaced. Lifestyle/comfort wording is preserved.
+    const scenePrompt = sanitizeImagePrompt(scenePromptRaw);
+    if (scenePrompt !== scenePromptRaw) {
+      console.log(`[regenerateImageWithReason] ⚠️ PROMPT MUTATION DETECTED:`);
+      console.log(`  BEFORE: ${scenePromptRaw}`);
+      console.log(`  AFTER:  ${scenePrompt}`);
+    } else {
+      console.log(`[regenerateImageWithReason] ✓ Prompt passed sanitizer unchanged`);
+    }
 
     // ── 3b. RESOLVE ENVIRONMENT REFS ─────────────────────────────────────────
     let envRefs = [];
