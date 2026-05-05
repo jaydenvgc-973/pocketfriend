@@ -4,7 +4,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * STRICT ACCOUNT ISOLATION — Fetch only locations belonging to the current user's account.
  *
  * VISIBILITY RULES:
- *   1. OWNED       — owner_email === current user OR created_by === current user (no owner_email set).
+ *   1. OWNED       — owner_email === current user. This is the ONLY valid ownership check.
+ *                    created_by is permanently forbidden for ownership resolution.
  *                    Visible ONLY to that user and their characters. "Global" scope here means
  *                    global across THIS user's characters — NOT across all user accounts.
  *
@@ -41,8 +42,9 @@ Deno.serve(async (req) => {
     );
 
     // Get this user's characters to resolve character-linked locations
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
     const userCharacters = await base44.entities.Character.filter(
-      { created_by: user.email },
+      { owner_email: user.email },
       '-created_date',
       500
     );
@@ -75,10 +77,8 @@ Deno.serve(async (req) => {
     const relevantLocations = allLocations.filter(loc => {
 
       // ── LAYER 1: OWNED BY THIS ACCOUNT ────────────────────────────────────
-      // Primary ownership field
+      // owner_email is the sole source of truth — created_by is permanently forbidden
       if (loc.owner_email && loc.owner_email === user.email) return true;
-      // Legacy: created_by when owner_email is not set
-      if (!loc.owner_email && loc.created_by === user.email) return true;
 
       // ── LAYER 2: CHARACTER-SPECIFIC for this user's characters ────────────
       const isCharSpecific = loc.location_type === 'character_specific' || loc.scope === 'character_specific';
@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
       locations: relevantLocations,
       totalCount: relevantLocations.length,
       summary: {
-        ownedByAccount: relevantLocations.filter(l => l.owner_email === user.email || (!l.owner_email && l.created_by === user.email)).length,
+        ownedByAccount: relevantLocations.filter(l => l.owner_email === user.email).length,
         adminShared: relevantLocations.filter(l => l.created_by_role === 'admin' && l.scope === 'shared').length,
         characterLinked: relevantLocations.filter(l => charLinkedLocationIds.has(l.id)).length,
       },

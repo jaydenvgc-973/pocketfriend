@@ -22,8 +22,18 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character not found', characterId }, { status: 404 });
     }
 
-    const ownerEmail = character.owner_email || character.created_by;
+    // owner_email is the sole source of truth — created_by is permanently forbidden
+    const ownerEmail = character.owner_email;
     const ownerUser = character.owner_user_id;
+
+    if (!ownerEmail) {
+      console.error(`[generateAutomaticNarrative] BLOCKED: Character id=${characterId} name="${character.name}" has no owner_email — cannot write narrative. Ownership cannot be verified.`);
+      return Response.json({
+        success: false,
+        error: `Character "${character.name}" (id=${characterId}) is missing owner_email. Narrative generation stopped. Fix ownership data before retrying.`,
+        reason: 'missing_owner_email',
+      }, { status: 422 });
+    }
 
     console.log(`[generateAutomaticNarrative] ▶ Character: ${character.name} (${characterId}) | trigger: ${trigger}`);
 
