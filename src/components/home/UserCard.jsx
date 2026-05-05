@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { User, DollarSign, MapPin, ChevronDown, LogOut, Check } from "lucide-react";
@@ -11,33 +12,38 @@ export default function UserCard({ user, settings, settingsId, locations = [] })
 
   const { userPresence, setUserLocation, setUserAway } = useUserPresence(user, settings, settingsId);
   const [showDropdown, setShowDropdown] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const triggerRef = useRef(null);
   const dropdownRef = useRef(null);
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
+
+  // Position the portal dropdown below the trigger button
+  const updateDropdownPos = () => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setDropdownPos({ top: rect.bottom + 4, left: rect.left });
+  };
 
   // Close on outside click
   useEffect(() => {
     if (!showDropdown) return;
+    updateDropdownPos();
     const handler = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setShowDropdown(false);
-      }
+      const inTrigger = triggerRef.current?.contains(e.target);
+      const inDropdown = dropdownRef.current?.contains(e.target);
+      if (!inTrigger && !inDropdown) setShowDropdown(false);
     };
     document.addEventListener("pointerdown", handler);
     return () => document.removeEventListener("pointerdown", handler);
   }, [showDropdown]);
 
-  const handleSelectLocation = async (loc) => {
-    setIsSaving(true);
+  const handleSelectLocation = (loc) => {
     setShowDropdown(false);
-    await setUserLocation(loc.id, loc.name);
-    setIsSaving(false);
+    setUserLocation(loc.id, loc.name); // optimistic — no await needed
   };
 
-  const handleSetAway = async () => {
-    setIsSaving(true);
+  const handleSetAway = () => {
     setShowDropdown(false);
-    await setUserAway();
-    setIsSaving(false);
+    setUserAway(); // optimistic — no await needed
   };
 
   const presenceLabel = userPresence.isAway
@@ -78,27 +84,31 @@ export default function UserCard({ user, settings, settingsId, locations = [] })
             <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">You</span>
           </Link>
 
-          {/* Presence label — clickable to open dropdown */}
-          <div className="relative mt-0.5" ref={dropdownRef}>
+          {/* Presence label — clickable to open portal dropdown */}
+          <div className="relative mt-0.5">
             <button
+              ref={triggerRef}
               onClick={() => setShowDropdown(v => !v)}
               className="flex items-center gap-1.5 group"
             >
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColor}`} />
               <span className={`text-xs font-medium ${presenceColor} group-hover:text-foreground transition-colors flex items-center gap-0.5`}>
-                {isSaving ? "Updating..." : presenceLabel}
+                {presenceLabel}
                 <ChevronDown className={`w-3 h-3 transition-transform ${showDropdown ? "rotate-180" : ""}`} />
               </span>
             </button>
 
+            {/* Portal: renders above ALL other elements, never clipped */}
             <AnimatePresence>
-              {showDropdown && (
+              {showDropdown && createPortal(
                 <motion.div
+                  ref={dropdownRef}
                   initial={{ opacity: 0, y: -4, scale: 0.97 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -4, scale: 0.97 }}
                   transition={{ duration: 0.12 }}
-                  className="absolute left-0 top-full mt-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden min-w-[200px] z-50"
+                  style={{ position: "fixed", top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999 }}
+                  className="bg-card border border-border rounded-xl shadow-2xl overflow-hidden min-w-[220px]"
                 >
                   {/* Away option */}
                   <button
@@ -141,7 +151,8 @@ export default function UserCard({ user, settings, settingsId, locations = [] })
                       </div>
                     </div>
                   )}
-                </motion.div>
+                </motion.div>,
+                document.body
               )}
             </AnimatePresence>
           </div>

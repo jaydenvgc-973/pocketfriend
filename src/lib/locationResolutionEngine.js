@@ -672,9 +672,24 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   const presenceStatus = character.resolved_presence_status || character.location_status;
 
   // Sleep state (sleeping / napping)
+  // RULE: Only show sleep icon when sleep is CONFIRMED — schedule must be active OR source_reason
+  // explicitly set by sleep enforcement. Do NOT show sleep from stale DB field alone.
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') {
-    const label = presenceStatus === 'napping' ? 'Napping' : 'Sleeping';
-    return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
+    const sleepIsConfirmed = isCharacterSleeping(character) ||
+      character.resolved_source_reason === 'adaptive_sleep_location_lock' ||
+      character.resolved_source_reason === 'sleep_location_correction' ||
+      character.resolved_source_reason === 'home_sleeping' ||
+      character.resolved_source_reason === 'sleep_return_home' ||
+      character.resolved_source_reason === 'pass_out_recovery' ||
+      character.resolved_source_reason === 'adaptive_pre_sleep_return' ||
+      character.resolved_source_reason === 'recovery_nap' ||
+      presenceStatus === 'napping'; // napping = confirmed recovery state
+
+    if (sleepIsConfirmed) {
+      const label = presenceStatus === 'napping' ? 'Napping' : 'Sleeping';
+      return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
+    }
+    // Sleep status in DB but schedule says awake — fall through to correct state
   }
 
   // Sleep interrupted by chat — character is now awake at their location

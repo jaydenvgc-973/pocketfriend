@@ -60,7 +60,7 @@ export default function Travel() {
   const safeSettingsList = Array.isArray(settingsList) ? settingsList : [];
 
   // Active playable characters only
-  const { data: activeCharacters = [] } = useQuery({
+  const { data: activeCharacters = [], isLoading: isLoadingActive } = useQuery({
     queryKey: ["activeCharacters", currentUser?.email],
     queryFn: () => base44.entities.Character.filter({
       owner_email: currentUser.email,
@@ -73,7 +73,7 @@ export default function Travel() {
   });
 
   // npc_fictitious — via backend (catches service-account-created ones)
-  const { data: backendNpcFictitious = [] } = useQuery({
+  const { data: backendNpcFictitious = [], isLoading: isLoadingNpc } = useQuery({
     queryKey: ["npcCharacters", currentUser?.id],
     queryFn: async () => {
       if (!currentUser?.id) return [];
@@ -534,16 +534,26 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             >
               <div className="space-y-2 pb-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Live World Map</p>
-                <LivePresenceMap
-                   locations={locationsData}
-                   characters={mapCharacters}
-                   allCharacters={[...activeCharacters, ...npcCharacters, ...npcFamilyMembers]}
-                   onLocationClick={(locationId) => {
-                     const loc = locationsData.find(l => l.id === locationId);
-                     if (loc) setSelectedLocation(loc);
-                   }}
-                   onLocationPanelGoHere={handleSoloTravel}
-                 />
+                {/* LOADING GATE: render map only when ALL character data is loaded — never render partial world */}
+                {(isLoadingActive || isLoadingNpc) ? (
+                  <div className="flex items-center justify-center h-[420px] rounded-[18px] bg-card border border-border">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-6 h-6 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+                      <p className="text-xs text-muted-foreground">Loading world state...</p>
+                    </div>
+                  </div>
+                ) : (
+                  <LivePresenceMap
+                    locations={locationsData}
+                    characters={mapCharacters}
+                    allCharacters={[...activeCharacters, ...npcCharacters, ...npcFamilyMembers]}
+                    onLocationClick={(locationId) => {
+                      const loc = locationsData.find(l => l.id === locationId);
+                      if (loc) setSelectedLocation(loc);
+                    }}
+                    onLocationPanelGoHere={handleSoloTravel}
+                  />
+                )}
                 <p className="text-[10px] text-muted-foreground text-center">Tap a location to select it · Character pins show real-time presence</p>
               </div>
             </motion.div>

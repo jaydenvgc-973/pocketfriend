@@ -678,7 +678,20 @@ function buildMarkers(entities, locations, gridCoords) {
       locationId: locId,
       locationName: location.name,
       coordinates,
-      isAsleep: entity.resolved_presence_status === "sleeping" || entity.resolved_presence_status === "napping",
+      // isAsleep: only show moon overlay when sleep is backed by enforcement source_reason, not stale DB status
+      isAsleep: (
+        entity.resolved_presence_status === "napping" ||
+        (
+          (entity.resolved_presence_status === "sleeping") &&
+          (
+            entity.resolved_source_reason === 'adaptive_sleep_location_lock' ||
+            entity.resolved_source_reason === 'sleep_location_correction' ||
+            entity.resolved_source_reason === 'home_sleeping' ||
+            entity.resolved_source_reason === 'pass_out_recovery' ||
+            entity.resolved_source_reason === 'sleep_return_home'
+          )
+        )
+      ),
       isFamilyMember: entity.effective_presence_type === 'npc_family_member',
     });
   }

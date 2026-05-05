@@ -14,7 +14,7 @@
  * - setUserAway clears location fields + sets presence_status: 'away'
  */
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -51,50 +51,69 @@ export function readUserPresence(currentUser, settings) {
  */
 export function useUserPresence(currentUser, settings, settingsId) {
   const queryClient = useQueryClient();
+  // Optimistic local override — applied immediately on user action, cleared on successful refetch
+  const [optimisticPresence, setOptimisticPresence] = useState(null);
 
   const invalidate = useCallback(() => {
     if (!currentUser?.email) return;
-    queryClient.invalidateQueries({ queryKey: ["userSettings", currentUser.email] });
+    queryClient.invalidateQueries({ queryKey: ["userSettings", currentUser.email] })
+      .then(() => setOptimisticPresence(null)); // clear optimistic once server state arrives
   }, [currentUser?.email, queryClient]);
 
   /**
    * Set user as present at a specific location.
-   * @param {string} locationId
-   * @param {string} locationName
+   * Applies optimistic update immediately — backend write happens in parallel.
    */
   const setUserLocation = useCallback(async (locationId, locationName) => {
     if (!settingsId) {
       console.error("[useUserPresence] setUserLocation: no settingsId — cannot write presence");
       return;
     }
-    await base44.entities.UserSettings.update(settingsId, {
+    // OPTIMISTIC: update UI immediately without waiting for refetch
+    setOptimisticPresence({ isAway: false, locationId, locationName, status: "present" });
+    base44.entities.UserSettings.update(settingsId, {
       user_current_location_id: locationId,
       user_current_location_name: locationName,
       user_presence_status: "present",
       user_presence_updated_at: new Date().toISOString(),
+    }).then(() => invalidate()).catch(() => {
+      // Revert on error
+      setOptimisticPresence(null);
     });
-    invalidate();
   }, [settingsId, invalidate]);
 
   /**
    * Set user as Away (outside the app world).
-   * Clears location fields.
+   * Applies optimistic update immediately.
    */
   const setUserAway = useCallback(async () => {
     if (!settingsId) {
       console.error("[useUserPresence] setUserAway: no settingsId — cannot write presence");
       return;
     }
-    await base44.entities.UserSettings.update(settingsId, {
+    // OPTIMISTIC: update UI immediately
+    setOptimisticPresence({ isAway: true, locationId: null, locationName: null, status: "away" });
+    base44.entities.UserSettings.update(settingsId, {
       user_current_location_id: null,
       user_current_location_name: null,
       user_presence_status: "away",
       user_presence_updated_at: new Date().toISOString(),
+    }).then(() => invalidate()).catch(() => {
+      setOptimisticPresence(null);
     });
-    invalidate();
   }, [settingsId, invalidate]);
 
-  const userPresence = readUserPresence(currentUser, settings);
+  // Merge: optimistic state wins over server state while pending
+  const serverPresence = readUserPresence(currentUser, settings);
+  const userPresence = optimisticPresence
+    ? {
+        ...serverPresence,
+        ...optimisticPresence,
+        displayName: serverPresence.displayName,
+        ownerEmail: serverPresence.ownerEmail,
+        ownerUserId: serverPresence.ownerUserId,
+      }
+    : serverPresence;
 
   return { userPresence, setUserLocation, setUserAway, isAway: userPresence.isAway };
 }
