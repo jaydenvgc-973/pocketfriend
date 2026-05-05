@@ -289,9 +289,144 @@ Deno.serve(async (req) => {
       conflict_resolution_snapshot: conflictResolutions,
     }).catch(() => {});
 
-    // ── DELETE SECONDARY CHARACTERS ───────────────────────────────────────
+    // ── VERIFICATION GATE — must pass before any deletion ────────────────
+    // Re-query all dependent records that referenced a secondary ID.
+    // If any still point to a secondary, do NOT delete — return repair-needed state.
+    const verificationFailures = [];
+
+    // Verify conversations
+    const convoCheck = await base44.asServiceRole.entities.Conversation.list('-updated_date', 2000);
+    for (const convo of convoCheck) {
+      const ids = convo.character_ids || [];
+      if (ids.some(id => secondaryIds.includes(id))) {
+        verificationFailures.push(`Conversation ${convo.id} still references secondary ID`);
+      }
+    }
+
+    // Verify messages
+    const msgCheck = await base44.asServiceRole.entities.Message.list('-updated_date', 5000);
+    for (const msg of msgCheck) {
+      if (secondaryIds.includes(msg.character_id)) {
+        verificationFailures.push(`Message ${msg.id} still has character_id pointing to secondary`);
+      }
+      if (secondaryIds.includes(msg.played_as_character_id)) {
+        verificationFailures.push(`Message ${msg.id} still has played_as_character_id pointing to secondary`);
+      }
+    }
+
+    // Verify Memory
+    try {
+      const memCheck = await base44.asServiceRole.entities.Memory.list('-updated_date', 5000);
+      for (const mem of memCheck) {
+        if (secondaryIds.includes(mem.character_id)) {
+          verificationFailures.push(`Memory ${mem.id} still references secondary`);
+        }
+      }
+    } catch (_) {}
+
+    // Verify CharacterMemory
+    try {
+      const cmCheck = await base44.asServiceRole.entities.CharacterMemory.list('-updated_date', 5000);
+      for (const cm of cmCheck) {
+        if (secondaryIds.includes(cm.character_id) || secondaryIds.includes(cm.related_character_id)) {
+          verificationFailures.push(`CharacterMemory ${cm.id} still references secondary`);
+        }
+      }
+    } catch (_) {}
+
+    // Verify LifeEvent
+    try {
+      const leCheck = await base44.asServiceRole.entities.LifeEvent.list('-updated_date', 1000);
+      for (const ev of leCheck) {
+        if (secondaryIds.includes(ev.character_id)) {
+          verificationFailures.push(`LifeEvent ${ev.id} still references secondary`);
+        }
+      }
+    } catch (_) {}
+
+    // Verify RelationshipState
+    try {
+      const rsCheck = await base44.asServiceRole.entities.RelationshipState.list('-updated_date', 1000);
+      for (const rs of rsCheck) {
+        if (secondaryIds.includes(rs.character_id)) {
+          verificationFailures.push(`RelationshipState ${rs.id} still references secondary`);
+        }
+      }
+    } catch (_) {}
+
+    // Verify CharacterRelationship
+    try {
+      const crCheck = await base44.asServiceRole.entities.CharacterRelationship.list('-updated_date', 2000);
+      for (const cr of crCheck) {
+        if (secondaryIds.includes(cr.source_character_id) || secondaryIds.includes(cr.target_character_id)) {
+          verificationFailures.push(`CharacterRelationship ${cr.id} still references secondary`);
+        }
+      }
+    } catch (_) {}
+
+    // Verify PendingMessage
+    try {
+      const pmCheck = await base44.asServiceRole.entities.PendingMessage.list('-updated_date', 500);
+      for (const pm of pmCheck) {
+        if (secondaryIds.includes(pm.character_id)) {
+          verificationFailures.push(`PendingMessage ${pm.id} still references secondary`);
+        }
+      }
+    } catch (_) {}
+
+    // Verify CharacterAutonomyEvent
+    try {
+      const aeCheck = await base44.asServiceRole.entities.CharacterAutonomyEvent.list('-updated_date', 500);
+      for (const ae of aeCheck) {
+        if (secondaryIds.includes(ae.character_id)) {
+          verificationFailures.push(`CharacterAutonomyEvent ${ae.id} still references secondary`);
+        }
+      }
+    } catch (_) {}
+
+    // Verify survivor exists and is intact
+    const survivorCheck = await base44.asServiceRole.entities.Character.filter(
+      { id: primary.id }, null, 1
+    ).catch(() => []);
+    if (!survivorCheck?.[0]) {
+      verificationFailures.push(`CRITICAL: Survivor character ${primary.id} not found after relinking`);
+    }
+
+    // If any verification failed — STOP. Do not delete anything.
+    if (verificationFailures.length > 0) {
+      return Response.json({
+        success: false,
+        verification_failed: true,
+        verification_failures: verificationFailures,
+        message: `Verification failed — ${verificationFailures.length} issue(s) found. No records were deleted. Review the failures and retry.`,
+        primary_character_id: primary.id,
+        primary_character_name: finalName,
+      });
+    }
+
+    // ── DELETE SECONDARY CHARACTERS — only after verification passes ──────
     for (const secondaryId of secondaryIds) {
       await base44.asServiceRole.entities.Character.delete(secondaryId).catch(() => {});
+    }
+
+    // Final confirmation: verify secondaries are actually gone
+    const deleteConfirmations = await Promise.all(
+      secondaryIds.map(id =>
+        base44.asServiceRole.entities.Character.filter({ id }, null, 1)
+          .then(r => ({ id, stillExists: (r?.length || 0) > 0 }))
+          .catch(() => ({ id, stillExists: false }))
+      )
+    );
+    const deleteFailures = deleteConfirmations.filter(d => d.stillExists);
+    if (deleteFailures.length > 0) {
+      return Response.json({
+        success: false,
+        delete_confirmation_failed: true,
+        message: `Relinking succeeded but ${deleteFailures.length} secondary record(s) could not be deleted. They have been fully relinked to the survivor but still exist. Contact support if they reappear as ghost cards.`,
+        still_exists: deleteFailures.map(d => d.id),
+        primary_character_id: primary.id,
+        primary_character_name: finalName,
+      });
     }
 
     return Response.json({
@@ -301,7 +436,8 @@ Deno.serve(async (req) => {
       merged_character_ids: secondaryIds,
       merged_names: oldNames.filter(n => n !== primary.name),
       avatar_propagated: !!finalAvatar,
-      message: `Merged ${secondaryIds.length} character(s) into "${finalName}". Avatar and name propagated across all characters.`,
+      verification_passed: true,
+      message: `Merged ${secondaryIds.length} character(s) into "${finalName}". All data relinked and verified. Secondary record(s) deleted.`,
     });
   } catch (error) {
     console.error('[mergeCharacters]', error);

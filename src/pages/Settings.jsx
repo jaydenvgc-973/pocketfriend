@@ -597,28 +597,16 @@ export default function Settings() {
             </div>
           </button>
 
-          {/* Auto-merge duplicates */}
-          <button
-            onClick={async () => {
-              if (!window.confirm('Auto-merge all detected duplicate characters into their masters?\n\nThis uses creation date to pick the strongest version.')) return;
-              try {
-                const res = await base44.functions.invoke('autoMergeDuplicates', {});
-                alert(`✓ Merged ${res.data?.merged || 0} duplicate character(s)`);
-                queryClient.invalidateQueries({ queryKey: ['characters', user?.email] });
-              } catch (err) {
-                alert('Auto-merge failed. Try manually in Character Manager.');
-              }
-            }}
-            className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-green-500/40 transition-colors text-left mb-3"
-          >
-            <div className="w-9 h-9 rounded-xl bg-green-500/10 flex items-center justify-center flex-shrink-0">
-              <GitMerge className="w-4 h-4 text-green-500" />
+          {/* Auto-merge — diagnostic scan only, does NOT perform real merge */}
+          <div className="w-full flex items-start gap-3 p-3 rounded-xl bg-card border border-amber-500/20 text-left mb-3 opacity-70 cursor-not-allowed select-none">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <GitMerge className="w-4 h-4 text-amber-500" />
             </div>
             <div className="flex-1">
               <p className="text-sm font-medium text-foreground">Auto-merge Duplicates</p>
-              <p className="text-xs text-muted-foreground">Automatically merge all detected duplicate characters</p>
+              <p className="text-xs text-amber-400/80 mt-0.5">⚠ Disabled — auto-merge leaves ghost records. Use <strong>Suggested Duplicates → Review &amp; Merge</strong> above to safely merge with full verification.</p>
             </div>
-          </button>
+          </div>
 
           {/* Diagnostic button */}
           <button

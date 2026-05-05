@@ -57,11 +57,30 @@ export default function MergeReviewModal({ isOpen, onClose, dupeGroup, ownerEmai
   const [merging, setMerging] = useState(false);
   const [mergeResult, setMergeResult] = useState(null);
   const [error, setError] = useState(null);
+  const [repairingId, setRepairingId] = useState(null);
+  const [repairResults, setRepairResults] = useState({}); // recordId -> { repaired, reason, message }
 
   useEffect(() => {
     if (!isOpen || !dupeGroup) return;
     loadPreview();
   }, [isOpen, dupeGroup]);
+
+  const handleRepair = async (recordId) => {
+    setRepairingId(recordId);
+    try {
+      const res = await base44.functions.invoke('repairCharacterOwnerEmail', { characterId: recordId });
+      const d = res?.data;
+      setRepairResults(prev => ({ ...prev, [recordId]: d }));
+      // If repair succeeded, reload preview to re-classify records
+      if (d?.repaired) {
+        await loadPreview();
+      }
+    } catch (err) {
+      setRepairResults(prev => ({ ...prev, [recordId]: { repaired: false, reason: 'ERROR', message: err.message } }));
+    } finally {
+      setRepairingId(null);
+    }
+  };
 
   const loadPreview = async () => {
     setLoading(true);
@@ -187,19 +206,38 @@ export default function MergeReviewModal({ isOpen, onClose, dupeGroup, ownerEmai
               {previewData.merge_blocked && (
                 <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 space-y-2">
                   <p className="text-xs text-destructive font-medium">⚠ Merge blocked — {previewData.merge_blocked_reason}</p>
-                  {previewData.unsafe_records?.map(r => (
-                    <div key={r.id} className="bg-secondary/50 rounded-lg px-3 py-2 space-y-0.5">
-                      <p className="text-xs font-medium text-foreground">
-                        {r.name || '(unnamed)'} — <span className={
-                          r.ownership_state === 'LEGACY_MISSING_OWNER' ? 'text-amber-400' :
-                          r.ownership_state === 'CROSS_ACCOUNT_BLOCKED' ? 'text-destructive' :
-                          'text-muted-foreground'
-                        }>{r.ownership_state}</span>
-                      </p>
-                      <p className="text-[10px] text-muted-foreground font-mono">ID: {r.id}</p>
-                      <p className="text-[10px] text-amber-400">{r.repair_message}</p>
-                    </div>
-                  ))}
+                  {previewData.unsafe_records?.map(r => {
+                    const repairResult = repairResults[r.id];
+                    const isRepairing = repairingId === r.id;
+                    const canRepair = r.ownership_state === 'LEGACY_MISSING_OWNER';
+                    return (
+                      <div key={r.id} className="bg-secondary/50 rounded-lg px-3 py-2 space-y-1.5">
+                        <p className="text-xs font-medium text-foreground">
+                          {r.name || '(unnamed)'} — <span className={
+                            r.ownership_state === 'LEGACY_MISSING_OWNER' ? 'text-amber-400' :
+                            r.ownership_state === 'CROSS_ACCOUNT_BLOCKED' ? 'text-destructive' :
+                            'text-muted-foreground'
+                          }>{r.ownership_state}</span>
+                        </p>
+                        <p className="text-[10px] text-muted-foreground font-mono">ID: {r.id}</p>
+                        <p className="text-[10px] text-amber-400">{r.repair_message}</p>
+                        {canRepair && !repairResult && (
+                          <button
+                            onClick={() => handleRepair(r.id)}
+                            disabled={isRepairing}
+                            className="mt-1 text-[10px] font-semibold px-2 py-1 rounded-lg bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors disabled:opacity-50"
+                          >
+                            {isRepairing ? 'Repairing...' : 'Attempt Repair →'}
+                          </button>
+                        )}
+                        {repairResult && (
+                          <p className={`text-[10px] font-medium ${repairResult.repaired ? 'text-emerald-400' : 'text-destructive'}`}>
+                            {repairResult.repaired ? '✓ Repaired — reloading preview...' : `✗ ${repairResult.message}`}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
                   <p className="text-[10px] text-muted-foreground mt-1">
                     Run <strong>Backfill Character Owner Email</strong> from Settings → Troubleshoot to repair missing owner_email fields, then retry.
                   </p>
