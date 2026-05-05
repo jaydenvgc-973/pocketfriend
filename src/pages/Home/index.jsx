@@ -311,6 +311,7 @@ export default function Home() {
               settings={userSettings || {}}
               settingsId={userSettings?.id}
               locations={locationsData}
+              isLocationsLoading={isLocationsLoading}
             />
           )}
           {defaultChar && (

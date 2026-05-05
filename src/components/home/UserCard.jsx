@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { User, DollarSign, MapPin, ChevronDown, LogOut, Check } from "lucide-react";
 import { useUserPresence } from "@/hooks/useUserPresence";
 
-export default function UserCard({ user, settings, settingsId, locations = [] }) {
+export default function UserCard({ user, settings, settingsId, locations = [], isLocationsLoading = false }) {
   const displayName = settings?.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
   const balance = settings?.user_balance ?? 6000;
@@ -125,9 +125,16 @@ export default function UserCard({ user, settings, settingsId, locations = [] })
                     {userPresence.isAway && <Check className="w-3 h-3 text-primary flex-shrink-0" />}
                   </button>
 
-                  {sortedLocations.length > 0 && (
-                    <div className="border-t border-border/50">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-3 pt-2 pb-1">Locations</p>
+                  <div className="border-t border-border/50">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-3 pt-2 pb-1">Locations</p>
+                    {isLocationsLoading ? (
+                      <div className="flex items-center gap-2 px-3 py-3">
+                        <div className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin flex-shrink-0" />
+                        <p className="text-xs text-muted-foreground">Loading locations...</p>
+                      </div>
+                    ) : sortedLocations.length === 0 ? (
+                      <p className="text-xs text-muted-foreground px-3 py-2">No locations loaded. Add locations in Places.</p>
+                    ) : (
                       <div className="max-h-48 overflow-y-auto">
                         {sortedLocations.map(loc => {
                           const isSelected = !userPresence.isAway && userPresence.locationId === loc.id;
@@ -149,8 +156,8 @@ export default function UserCard({ user, settings, settingsId, locations = [] })
                           );
                         })}
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </motion.div>,
                 document.body
               )}

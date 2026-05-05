@@ -124,10 +124,23 @@ export default function Travel() {
     gcTime: 0,
   });
 
+  // npc_regular — Home loads ALL types via { owner_email }; Travel must not miss this type
+  const { data: npcRegularChars = [] } = useQuery({
+    queryKey: ["npcRegular", currentUser?.email],
+    queryFn: () => base44.entities.Character.filter(
+      { owner_email: currentUser.email, character_type: 'npc_regular' },
+      '-created_date',
+      300
+    ),
+    enabled: !!currentUser?.email,
+    staleTime: 0,
+    gcTime: 0,
+  });
+
   // Merge all sources, deduplicated
   const npcCharacters = (() => {
     const seen = new Set();
-    return [...backendNpcFictitious, ...rlsNpcFictitious].filter(c => {
+    return [...backendNpcFictitious, ...rlsNpcFictitious, ...npcRegularChars].filter(c => {
       if (seen.has(c.id)) return false;
       seen.add(c.id);
       return true;
@@ -143,8 +156,9 @@ export default function Travel() {
     });
   })();
 
-  // travelCompanions: active_created_character + npc_fictitious ONLY (who can come with you)
-  const travelCompanions = [...activeCharacters, ...npcCharacters];
+  // travelCompanions: active_created_character + npc_fictitious + npc_family_member (who can come with you)
+  // IMPORTANT: npc_family_member must be included — Home page loads all types, Travel must match
+  const travelCompanions = [...activeCharacters, ...npcCharacters, ...npcFamilyMembers];
 
   const { data: locationsData = [] } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
@@ -174,6 +188,8 @@ export default function Travel() {
     locations: locationsData,
   }), [
     currentUser?.id,
+    safeSettings?.user_presence_status,
+    safeSettings?.user_current_location_id,
     activeCharacters.length,
     npcCharacters.length,
     npcFamilyMembers.length,
