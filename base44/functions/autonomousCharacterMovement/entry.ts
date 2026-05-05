@@ -525,6 +525,207 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ── TIER 3.5: ACTIVE WORK / SCHOOL DISPATCH ─────────────────────────
+        // Runs immediately after sleep/wake evaluation, BEFORE energy or needs scoring.
+        // If the character's actual schedule is active right now, send them to work/school.
+        // This is the correct post-wake priority: schedule > needs.
+        //
+        // RULES:
+        //   - Reads the character's actual fields: work_days, work_start_time, work_end_time,
+        //     occupation_location_id, additional_occupation_locations, education_location_id
+        //   - Does NOT hardcode 09:00–17:00
+        //   - Respects work_exception_status === 'called_out' for today
+        //   - If shift active AND character not already at work location → dispatch
+        //   - If shift active AND character already there → preserve work_schedule reason + continue
+        //   - If no shift active → fall through to existing tiers unchanged
+        //
+        // ENERGY RULE: Energy does NOT block work dispatch after a completed sleep window.
+        // A character who just woke (adaptive_sleep_ended_wake) is considered awake-ready.
+        // Energy is already at 100 for most characters after sleep; even if low it must not
+        // prevent the character from going to work — energy-critical path (Tier 4) is below.
+        {
+          const todayET = nowET.toISOString().slice(0, 10); // YYYY-MM-DD in ET
+          const nowMin  = nowET.getHours() * 60 + nowET.getMinutes();
+          const dowNow  = nowET.getDay(); // 0=Sun, 6=Sat
+
+          // ── WORK SCHEDULE CHECK ────────────────────────────────────────────
+          // Use the character's actual stored fields — do not assume any defaults.
+          let workDispatchDone = false;
+
+          if (
+            Array.isArray(char.work_days) && char.work_days.length > 0 &&
+            char.work_start_time && char.work_end_time &&
+            char.occupation_location_id
+          ) {
+            const isWorkDay = char.work_days.includes(dowNow);
+
+            if (isWorkDay) {
+              const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+              const shiftStart = toMin(char.work_start_time);
+              const shiftEnd   = toMin(char.work_end_time);
+              // Overnight shift support (e.g. 22:00–06:00)
+              const isOvernightShift = shiftEnd < shiftStart;
+              const shiftActiveNow   = isOvernightShift
+                ? (nowMin >= shiftStart || nowMin < shiftEnd)
+                : (nowMin >= shiftStart && nowMin < shiftEnd);
+
+              if (shiftActiveNow) {
+                // CALLOUT GUARD: skip if character has a valid callout for today
+                const hasCallout = char.work_exception_status === 'called_out' &&
+                                   char.work_exception_date === todayET;
+                if (hasCallout) {
+                  console.log(`[autonomousMovement] ${char.name}: WORK DISPATCH skipped — valid callout for ${todayET}`);
+                } else {
+                  // Resolve work location — check worker_shifts[char.id] on location record
+                  // for per-character shift overrides. If none, use character-level schedule.
+                  // Primary location: occupation_location_id. Additional locations checked
+                  // only if they have an active per-character shift right now.
+                  let activeWorkLocId = char.occupation_location_id;
+
+                  // Check additional_occupation_locations for an alternate active shift
+                  if (Array.isArray(char.additional_occupation_locations)) {
+                    for (const entry of char.additional_occupation_locations) {
+                      if (!entry.location_id) continue;
+                      const altLoc = userLocations.find(l => l.id === entry.location_id);
+                      if (!altLoc) continue;
+                      // If this alternate location has a worker_shifts entry for this character,
+                      // check if it is active right now — if so, it takes priority.
+                      const altShift = altLoc.worker_shifts?.[char.id];
+                      if (altShift && altShift.start && altShift.end) {
+                        const altStart = toMin(altShift.start);
+                        const altEnd   = toMin(altShift.end);
+                        const altOvernight = altEnd < altStart;
+                        const altActive = altOvernight
+                          ? (nowMin >= altStart || nowMin < altEnd)
+                          : (nowMin >= altStart && nowMin < altEnd);
+                        if (altActive) {
+                          // Also check day constraint on shift if present
+                          const altDayOk = !Array.isArray(altShift.days) || altShift.days.length === 0 || altShift.days.includes(dowNow);
+                          if (altDayOk) {
+                            activeWorkLocId = entry.location_id;
+                            break;
+                          }
+                        }
+                      }
+                    }
+                  }
+
+                  const workLoc = userLocations.find(l => l.id === activeWorkLocId);
+                  if (!workLoc) {
+                    console.warn(`[autonomousMovement] ${char.name}: WORK DISPATCH — shift active but work location id=${activeWorkLocId} not in user scope`);
+                  } else if (char.resolved_current_location_id === workLoc.id) {
+                    // Already at work — ensure source reason is correct and skip
+                    if (char.resolved_source_reason !== 'work_schedule') {
+                      try {
+                        await base44.entities.Character.update(char.id, {
+                          resolved_presence_status: 'at_work',
+                          resolved_location_type:   'work',
+                          resolved_source_reason:   'work_schedule',
+                          resolved_last_updated_at: nowET.toISOString(),
+                        });
+                      } catch {
+                        await base44.asServiceRole.entities.Character.update(char.id, {
+                          resolved_presence_status: 'at_work',
+                          resolved_location_type:   'work',
+                          resolved_source_reason:   'work_schedule',
+                          resolved_last_updated_at: nowET.toISOString(),
+                        });
+                      }
+                    }
+                    console.log(`[autonomousMovement] ${char.name}: WORK — already at ${workLoc.name}`);
+                    workDispatchDone = true;
+                  } else {
+                    // Dispatch to work
+                    const workPayload = {
+                      resolved_current_location_id:   workLoc.id,
+                      resolved_current_location_name: workLoc.name,
+                      resolved_presence_status:       'at_work',
+                      resolved_location_type:         'work',
+                      resolved_source_reason:         'work_schedule',
+                      resolved_last_updated_at:       nowET.toISOString(),
+                      last_arrived_time:              nowET.toISOString(),
+                      travel_status:                  'not_traveling',
+                      travel_destination_location_id: null,
+                    };
+                    try {
+                      await base44.entities.Character.update(char.id, workPayload);
+                    } catch {
+                      await base44.asServiceRole.entities.Character.update(char.id, workPayload);
+                    }
+                    totalMoved++;
+                    moveLog.push(`${char.name} → ${workLoc.name} [WORK_SCHEDULE] shift: ${char.work_start_time}–${char.work_end_time}`);
+                    console.log(`[autonomousMovement] ✓ ${char.name}: WORK DISPATCH → ${workLoc.name}`);
+                    workDispatchDone = true;
+                  }
+                }
+              }
+            }
+          }
+
+          if (workDispatchDone) continue;
+
+          // ── SCHOOL SCHEDULE CHECK ──────────────────────────────────────────
+          // Only for enrolled students with an assigned education_location_id.
+          // School hours use the standard 08:00–15:00 window (no stored override field).
+          if (
+            char.student_status === 'enrolled' &&
+            char.education_location_id
+          ) {
+            const SCHOOL_START = 8 * 60;   // 08:00
+            const SCHOOL_END   = 15 * 60;  // 15:00
+            const schoolActiveNow = nowMin >= SCHOOL_START && nowMin < SCHOOL_END;
+
+            if (schoolActiveNow) {
+              const schoolLoc = userLocations.find(l => l.id === char.education_location_id);
+              if (!schoolLoc) {
+                console.warn(`[autonomousMovement] ${char.name}: SCHOOL DISPATCH — enrolled but location id=${char.education_location_id} not in user scope`);
+              } else if (char.resolved_current_location_id === schoolLoc.id) {
+                if (char.resolved_source_reason !== 'school_schedule') {
+                  try {
+                    await base44.entities.Character.update(char.id, {
+                      resolved_presence_status: 'at_school',
+                      resolved_location_type:   'school',
+                      resolved_source_reason:   'school_schedule',
+                      resolved_last_updated_at: nowET.toISOString(),
+                    });
+                  } catch {
+                    await base44.asServiceRole.entities.Character.update(char.id, {
+                      resolved_presence_status: 'at_school',
+                      resolved_location_type:   'school',
+                      resolved_source_reason:   'school_schedule',
+                      resolved_last_updated_at: nowET.toISOString(),
+                    });
+                  }
+                }
+                console.log(`[autonomousMovement] ${char.name}: SCHOOL — already at ${schoolLoc.name}`);
+                continue;
+              } else {
+                const schoolPayload = {
+                  resolved_current_location_id:   schoolLoc.id,
+                  resolved_current_location_name: schoolLoc.name,
+                  resolved_presence_status:       'at_school',
+                  resolved_location_type:         'school',
+                  resolved_source_reason:         'school_schedule',
+                  resolved_last_updated_at:       nowET.toISOString(),
+                  last_arrived_time:              nowET.toISOString(),
+                  travel_status:                  'not_traveling',
+                  travel_destination_location_id: null,
+                };
+                try {
+                  await base44.entities.Character.update(char.id, schoolPayload);
+                } catch {
+                  await base44.asServiceRole.entities.Character.update(char.id, schoolPayload);
+                }
+                totalMoved++;
+                moveLog.push(`${char.name} → ${schoolLoc.name} [SCHOOL_SCHEDULE]`);
+                console.log(`[autonomousMovement] ✓ ${char.name}: SCHOOL DISPATCH → ${schoolLoc.name}`);
+                continue;
+              }
+            }
+          }
+        }
+        // END TIER 3.5
+
         // ── TIER 4: CRITICAL ENERGY (< 25) — force home regardless of toggle ─
         // Not at pass-out level but critically low. Must go home NOW.
         // Overrides stay-lock and toggle.
