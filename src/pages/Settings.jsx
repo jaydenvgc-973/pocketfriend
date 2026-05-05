@@ -42,6 +42,7 @@ export default function Settings() {
   const [suggestedDupes, setSuggestedDupes] = useState([]);
   const [isDupeScanLoading, setIsDupeScanLoading] = useState(false);
   const [dupeScanError, setDupeScanError] = useState(null);
+  const [dupeScanTrace, setDupeScanTrace] = useState(null);
 
   const { settings, isLoading: isLoadingSettings, updateSettings } = useUserSettings();
 
@@ -574,14 +575,15 @@ export default function Settings() {
           <button
             disabled={isDupeScanLoading}
             onClick={async () => {
-              console.log('[DupeScan] click fired');
               setDupeScanError(null);
+              setDupeScanTrace(null);
               const email = user?.email;
-              console.log('EMAIL:', email);
               if (!email) {
+                setDupeScanTrace({ email: null, fetchCount: null, liveCount: null, dupeCount: null, status: 'email missing' });
                 setDupeScanError('User not loaded yet. Try again in a second.');
                 return;
               }
+              setDupeScanTrace({ email, fetchCount: null, liveCount: null, dupeCount: null, status: 'fetching…' });
               setIsDupeScanLoading(true);
               try {
                 const freshChars = await base44.entities.Character.filter(
@@ -589,7 +591,6 @@ export default function Settings() {
                   '-created_date',
                   500
                 );
-                console.log('FETCH RESULT:', freshChars);
                 const live = freshChars.filter(c =>
                   c.id &&
                   c.name &&
@@ -597,7 +598,6 @@ export default function Settings() {
                   c.status !== 'soft_deleted' &&
                   c.status !== 'merged'
                 );
-                console.log('LIVE COUNT:', live.length);
                 const nameMap = new Map();
                 live.forEach(c => {
                   const key = c.name.trim().toLowerCase();
@@ -608,14 +608,19 @@ export default function Settings() {
                 nameMap.forEach((records, name) => {
                   if (records.length >= 2) dupes.push({ name, records });
                 });
-                console.log('DUPE GROUPS:', dupes.length);
+                const status = live.length === 0
+                  ? 'no live characters'
+                  : dupes.length === 0
+                    ? 'no duplicate groups'
+                    : 'modal opened';
+                setDupeScanTrace({ email, fetchCount: freshChars.length, liveCount: live.length, dupeCount: dupes.length, status });
                 if (dupes.length === 0) {
                   setDupeScanError('No duplicates found.');
                 }
                 setSuggestedDupes(dupes);
                 setShowSuggestedDupes(true);
               } catch (err) {
-                console.error('[DupeScan] CATCH:', err);
+                setDupeScanTrace({ email, fetchCount: null, liveCount: null, dupeCount: null, status: `fetch failed: ${err.message}` });
                 setDupeScanError(`Scan failed: ${err.message || 'Unknown error'}`);
                 setShowSuggestedDupes(true);
               } finally {
@@ -634,6 +639,19 @@ export default function Settings() {
               </p>
             </div>
           </button>
+
+          {/* UI diagnostic trace — visible in app, no console needed */}
+          {dupeScanTrace && (
+            <div className="mb-3 rounded-xl border border-border bg-secondary/40 p-3 space-y-1 text-xs font-mono">
+              <p className="text-muted-foreground font-semibold text-[10px] uppercase tracking-wider mb-1">Scan Diagnostic</p>
+              <p><span className="text-muted-foreground">Email:</span> <span className={dupeScanTrace.email ? 'text-emerald-400' : 'text-destructive'}>{dupeScanTrace.email || 'not loaded'}</span></p>
+              <p><span className="text-muted-foreground">Fetched:</span> <span className="text-foreground">{dupeScanTrace.fetchCount !== null ? `${dupeScanTrace.fetchCount} records` : '—'}</span></p>
+              <p><span className="text-muted-foreground">Live:</span> <span className="text-foreground">{dupeScanTrace.liveCount !== null ? `${dupeScanTrace.liveCount} characters` : '—'}</span></p>
+              <p><span className="text-muted-foreground">Dupes:</span> <span className="text-foreground">{dupeScanTrace.dupeCount !== null ? `${dupeScanTrace.dupeCount} groups` : '—'}</span></p>
+              <p><span className="text-muted-foreground">Status:</span> <span className={dupeScanTrace.status === 'modal opened' ? 'text-emerald-400' : 'text-amber-400'}>{dupeScanTrace.status}</span></p>
+            </div>
+          )}
+
           {dupeScanError && (
             <p className="text-xs text-destructive mb-3 px-1">{dupeScanError}</p>
           )}
