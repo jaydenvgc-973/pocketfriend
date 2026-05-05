@@ -1134,26 +1134,28 @@ export default function Scene() {
     }));
 
     try {
-      // In private mode, only the pulled-aside character responds
-      const activeSceneChars = privateTarget
-        ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
-        : sceneCharacters;
-
-      const charSummaries = displayCharacters.map(c =>
-        `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`
-      ).join("; ");
-
       const conversationHistory = messages.slice(-12).map(m =>
         `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
       ).join("\n");
 
-      const knownChars = displayCharacters.filter(c => !c.isNpc);
       const privateNote = privateTarget ? `\nNOTE: ${displayName} pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond.` : "";
+
+      // SPEAKER SELECTION: Only dialogue-eligible characters may respond.
+      // This is the SOLE source of truth for who speaks — it must drive BOTH charSummaries AND npcInstruction.
+      // displayCharacters (full scene roster) is intentionally NOT used here — it is for image generation only.
       const dialogueEligible = privateTarget
         ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
         : selectedNpcs.length > 0
           ? selectedNpcs
           : [];
+
+      // charSummaries MUST come from dialogueEligible, not displayCharacters.
+      // Passing the full roster as "People present" causes the LLM to override the npcInstruction gate.
+      const charSummaries = dialogueEligible.map(c =>
+        `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`
+      ).join("; ");
+
+      const knownChars = dialogueEligible.filter(c => !c.isNpc);
 
       const eligibleKnownChars = dialogueEligible.filter(c => !c.isNpc);
       const eligibleNpcList = dialogueEligible
