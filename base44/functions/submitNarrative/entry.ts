@@ -52,9 +52,9 @@ Deno.serve(async (req) => {
     });
 
     // Update character's current_life_event to reflect this narrative.
-    // Use service role so the update succeeds regardless of whether the character
-    // is an NPC or active character — ownership was already verified via auth.me() above.
-    const updatedCharacter = await base44.asServiceRole.entities.Character.update(characterId, {
+    // Use user-scoped client — the Character RLS allows update when owner_email matches
+    // the authenticated user. asServiceRole does NOT satisfy the Character RLS update condition.
+    const updatedCharacter = await base44.entities.Character.update(characterId, {
       current_life_event: narrativeContent.substring(0, 150),
       life_last_updated: nowISO
     });
