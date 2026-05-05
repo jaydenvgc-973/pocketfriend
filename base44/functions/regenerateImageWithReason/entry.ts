@@ -368,7 +368,7 @@ Deno.serve(async (req) => {
         const charListSR = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
         const candidate = charListSR?.[0] || null;
         if (candidate) {
-          const owner = candidate.owner_email || candidate.created_by;
+          const owner = candidate.owner_email;
           if (owner && owner !== requestingUser) {
             console.error(`[regenerateImageWithReason] ⛔ Cross-account: char ${originalCharId} owned by ${owner}`);
             return Response.json({ success: false, error: 'Character does not belong to your account.' }, { status: 403 });
