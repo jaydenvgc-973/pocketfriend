@@ -83,18 +83,32 @@ Deno.serve(async (req) => {
 
     const characters = [];
     for (const id of character_ids) {
-      // Small sequential delay to be kind to the rate limiter
+      // Small sequential delay between lookups to be kind to the rate limiter
       if (characters.length > 0) await new Promise(r => setTimeout(r, 150));
 
-      const results = await base44.asServiceRole.entities.Character.filter({ id }, null, 1);
-      const char = results?.[0] || null;
+      // Use .get(id) — the correct SDK method for direct entity ID lookup.
+      // filter({ id }) does NOT work because `id` is a built-in system field,
+      // not a queryable schema property. filter({ id }) returns 0 results for
+      // any valid character, causing false 404s.
+      let char = null;
+      let lookupMethod = 'get';
+      let lookupError = null;
+      try {
+        char = await base44.asServiceRole.entities.Character.get(id);
+      } catch (err) {
+        lookupError = err?.message || String(err);
+        char = null;
+      }
 
       // SAFETY VERIFICATION 1: Direct id fetch must return a record
       if (!char) {
         return Response.json({
-          error: `Simulation failed while resolving character id ${id}. The selected character could not be loaded directly.`,
+          error: `Simulation failed while resolving character id "${id}". The selected character could not be loaded directly.`,
           stage: 'character_fetch',
-          character_id: id
+          character_id: id,
+          lookup_method: lookupMethod,
+          lookup_error: lookupError,
+          current_user_email: user.email
         }, { status: 404 });
       }
 
