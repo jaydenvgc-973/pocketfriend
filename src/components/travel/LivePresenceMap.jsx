@@ -669,10 +669,14 @@ function buildMarkers(entities, locations, gridCoords) {
     const locId = entity.resolved_current_location_id;
     if (!locId || !entity.is_currently_present) continue;
     
+    // For user entity: trust the location ID directly, don't gate on locationMap
     const location = locationMap.get(locId);
-    if (!location) continue;
+    const isUserEntity = entity.effective_presence_type === 'user';
     
-    const coordinates = gridCoords[location.id];
+    // Non-user entities require the location to be in the map
+    if (!location && !isUserEntity) continue;
+    
+    const coordinates = gridCoords[locId];
     if (!coordinates) continue;
     
     seenIds.add(entity.id);
@@ -681,15 +685,14 @@ function buildMarkers(entities, locations, gridCoords) {
       characterId: entity.id,
       name: entity.display_name,
       initials: entity.initials,
-      // Use effective_presence_type as the canonical type — includes 'user' for user entity
       type: entity.effective_presence_type || entity.character_type || 'npc_fictitious',
       avatarUrl: entity.avatar_url,
       locationId: locId,
-      locationName: location.name,
+      locationName: location?.name || entity.resolved_current_location_name,
       coordinates,
       isAsleep: entity.resolved_presence_status === 'sleeping' || entity.resolved_presence_status === 'napping',
       isFamilyMember: entity.effective_presence_type === 'npc_family_member',
-      isUserMarker: entity.effective_presence_type === 'user',
+      isUserMarker: isUserEntity,
     });
   }
   return markers;
