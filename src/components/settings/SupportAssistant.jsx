@@ -419,8 +419,10 @@ export default function SupportAssistant({ user }) {
     setMessages(prev => [...prev, { id: thinkingId, role: 'system', content: '🔍 Working on it…', ts: ts() }]);
 
     try {
-      const wantsDiagnostic = /run diagnostic|check.*account|full check|what.*wrong|diagnose|scan|audit|check everything/i.test(text);
-      const wantsReport = /file.*report|create.*report|submit.*issue|log.*issue|report.*problem/i.test(text);
+      const wantsDiagnostic = /run diagnostic|check.*account|full check|what.*wrong|diagnose|scan|audit|check everything|something.*broken|broken|not working|isn't working|won't work|check my/i.test(text);
+      const wantsReport = /file.*report|create.*report|submit.*issue|log.*issue|report.*problem|please log|please report/i.test(text);
+      // Behavioral/explanatory questions — needs real context but no scan required
+      const wantsBehaviorExplanation = /why (did|didn't|is|isn't|does|doesn't|won't|can't)|how does|what.*cause|explain|not traveling|not going|not responding|wrong image|looks wrong|not saving|not updating|wrong location|wrong character|stuck|missing/i.test(text);
 
       let diagData = null;
 
@@ -436,12 +438,14 @@ export default function SupportAssistant({ user }) {
         .join('\n\n');
 
       let diagContext = '';
-      if (diagData) {
-        const allChecks = Object.values(diagData.findings || {}).flatMap(f => f.checks || []);
+      const activeDiag = diagData || (wantsBehaviorExplanation ? lastDiagData : null);
+      if (activeDiag) {
+        const allChecks = Object.values(activeDiag.findings || {}).flatMap(f => f.checks || []);
         const issues = allChecks.filter(c => c.status !== 'passed');
+        const label = diagData ? 'LIVE' : 'PREVIOUS';
         diagContext = issues.length > 0
-          ? `\n\nLIVE DIAGNOSTIC RESULTS for ${ownerEmail}:\n${issues.map(c => `- [${c.status.toUpperCase()}] ${c.check}: ${c.detail}`).join('\n')}\n\nAvailable repair paths confirmed by backend: ${(diagData.available_repairs || []).join(', ')}`
-          : `\n\nLIVE DIAGNOSTIC: All checks passed for ${ownerEmail}.`;
+          ? `\n\n${label} DIAGNOSTIC RESULTS for ${ownerEmail}:\n${issues.map(c => `- [${c.status.toUpperCase()}] ${c.check}: ${c.detail}`).join('\n')}\n\nAvailable repair paths confirmed by backend: ${(activeDiag.available_repairs || []).join(', ')}`
+          : `\n\n${label} DIAGNOSTIC: All checks passed for ${ownerEmail}.`;
       } else if (lastDiagData) {
         diagContext = `\n\n(Previous diagnostic: ${lastDiagData.summary} at ${lastDiagData.checked_at})`;
       }
@@ -457,85 +461,116 @@ export default function SupportAssistant({ user }) {
 You help the user whose account email is: ${ownerEmail}
 
 ═══════════════════════════════════════
-APP SYSTEM KNOWLEDGE (use this to answer behavioral questions)
+APP SYSTEM KNOWLEDGE
 ═══════════════════════════════════════
 
 CHARACTER TYPES:
-- active_created_character: User's main characters. Full simulation (needs, schedule, travel, emotions, memories, finances). Appear on Home page.
-- npc_family_member: Family NPCs. Chat-capable, limited schedule, no full needs simulation.
-- npc_fictitious: Background/world NPCs. Limited interaction. Do not appear on Home.
+- active_created_character: Full simulation — needs, schedule, travel, emotions, memories, finances. Appears on Home page.
+- npc_family_member: Family NPC. Chat-capable, limited schedule, no full needs simulation.
+- npc_fictitious: Background/world NPC. Limited interaction. Does NOT appear on Home.
 - npc_regular: Standard NPC. Shared world presence.
 
-PRESENCE & LOCATION RULES:
-- Each character has exactly one resolved presence at any moment.
-- Source of truth fields: resolved_current_location_id, resolved_current_location_name, resolved_presence_status.
-- Presence is driven by: schedule (work/school) → needs → autonomous travel → VGC Towers home default.
-- If presence_stay_lock = true, character is frozen at a location until the lock is cleared.
-- VGC Towers: each user has their own private instance. Characters return there by default when no other location is active.
-- Travel happens when: schedule says go to work/school, needs are critically low (hunger→food, energy→home), autonomous_travel_enabled=true and character decides to wander.
-- Characters do NOT travel when: sleeping, jailed, presence_stay_lock=true, autonomous_travel_enabled=false, or no valid destination exists.
+PRESENCE & LOCATION:
+- One character = one resolved presence (never omnipresent).
+- Source of truth: resolved_current_location_id, resolved_current_location_name, resolved_presence_status.
+- Priority chain: schedule (work/school) → needs → autonomous travel → VGC Towers default.
+- presence_stay_lock = true → character is frozen at that location; nothing overrides it until cleared.
+- VGC Towers = per-user private instance. Characters return there when no other destination is active.
+- Travel triggers: scheduled shift start/end, needs critically low (hunger<20→food, energy<20→home, social<20→go out), autonomous_travel_enabled=true.
+- Travel blocked when: sleeping, jailed, stay_lock=true, autonomous_travel_enabled=false, no valid destination.
 
-NEEDS SYSTEM:
-- Needs: hunger, energy, health, stress, social, fun, hygiene, comfort (scale 0-100).
-- Needs decay over time.  Low needs trigger behavior changes.
-- hunger < 20 → character seeks food location
-- energy < 20 → character seeks home/rest
-- social < 20 → character may initiate contact or go out
-- Needs influence: dialogue tone, travel decisions, emotional state, what they say and how they say it.
-- Needs are simulated by: simulateActiveCharacterNeeds function (runs on a schedule).
+NEEDS SYSTEM (drives behavior):
+- Needs: hunger, energy, health, stress, social, fun, hygiene, comfort (0–100). Decay over time.
+- Low needs trigger: movement changes, dialogue tone shifts, emotional state changes.
+- Needs are simulated by simulateActiveCharacterNeeds (scheduled function).
+- If a character seems "stuck" or not reacting normally, low or zero needs are a common root cause.
 
 EMOTIONAL STATE:
-- emotional_state field drives dialogue tone, responses, and actions.
-- Valid states: calm, irritated, defensive, reflective, closed-off, joyful, anxious, sad, excited, overwhelmed, content, frustrated, etc.
-- Emotions change based on: life events, messages from user, needs state, schedule compliance.
+- emotional_state field drives tone, responses, actions.
+- States: calm, irritated, defensive, reflective, closed-off, joyful, anxious, sad, excited, overwhelmed, content, frustrated.
+- Changes based on: life events, messages from user, needs state, schedule compliance.
 
 MEMORY SYSTEM:
-- CharacterMemory: structured memory records per character_id. Types: identity, relationship, event, preference, location, fact.
-- Memory entity: older/simpler memory records.
-- Life Journal (CharacterAutomaticNarrative): continuous log of what happened to a character.
-- Memories influence character responses — they provide continuity across conversations.
-- unresolved_identity memories = character mentioned someone the system hasn't linked yet.
+- CharacterMemory: structured records per character_id. Types: identity, relationship, event, preference, location, fact.
+- Memory entity: older/simpler records.
+- Life Journal (CharacterAutomaticNarrative): continuous timeline log.
+- Memories give continuity across conversations. Missing memories = character "forgets."
+- unresolved_identity = character mentioned someone the system hasn't linked yet.
 
-IMAGE GENERATION RULES (for diagnosing wrong images):
-- Avatar = source of truth for face, age, body type, skin tone, identity.
-- Never use avatar image as background. Background = current location + zone images.
-- Camera moves, subject does not scale — "zoom in" means camera moves closer, not subject gets bigger.
-- Lighting must match time of day — overrides reference photos.
-- If image looks wrong: check avatar_url is set, check reference_image_urls are present, check current location has zone images.
+IMAGE GENERATION:
+- Avatar = identity source (face, age, body, skin). NEVER use as background.
+- Background = current location + zone images.
+- Camera moves, subject does NOT scale — "zoom in" = camera moves closer.
+- Lighting must match time-of-day — overrides reference photos.
+- Wrong image? Check: avatar_url set, reference_image_urls present, location has zone images.
+
+DATA NOT SAVING / STUCK STATE:
+- If edits don't persist: check if the write call succeeded, check for cache vs. live data mismatch, check if owner_email is present on the record.
+- Profile edits reverting = usually a stale query cache re-loading old data over the new write.
+- Location not sticking = resolved_current_location_id may be getting overwritten by the presence enforcement function on next run.
+- Updates not showing in UI = React Query cache may need invalidation; the write succeeded but the UI is showing stale data.
+
+CHARACTER CARD / LOCATION ERRORS:
+- Characters showing wrong location = resolved_presence_status or resolved_current_location_name is stale. Run "Sync character location presence" repair.
+- All characters showing "at work" = schedule enforcement override may be stuck. Check work schedule data and presence_stay_lock.
+- User character card incorrect = user_presence_status in UserSettings may be stale.
+
+FINANCE / MONEY ISSUES:
+- Money not calculating = check if CharacterFinancial record exists for the character.
+- Housing costs not applied = processHousingCosts function may not have run, or the location is missing rent_or_housing_cost.
+- Hotel charges not applied = nightly_rate missing on the hotel LocationReference.
+- Negative balance = check recurring_expenses vs income sources; may have been billed without receiving pay.
+- Payroll manually triggered via "Force a Payday" in Settings → System & Data.
+
+WORK / SCHEDULE FAILURES:
+- Character not going to work = check: occupation set, current_work_location_id linked, work_days and work_start_time/work_end_time configured.
+- Incorrect work times = check work schedule data on the character and the CharacterScheduleProfile if it exists.
+- Schedule not applied = enforceCharacterWorkSchedule function may need to run for that character.
+
+TRAVEL / MOVEMENT ISSUES:
+- Not traveling when expected = check needs values (are they low enough to trigger movement?), check autonomous_travel_enabled in UserSettings.
+- Traveling to wrong place = check travel_destination_location_id and whether needs-based or schedule-based logic determined the destination.
+- Traveling at wrong time = check sleep state (sleeping blocks travel), check work schedule windows.
+
+SCENES / MOMENTS:
+- Wrong characters in scene = check selectedNpcIds used to build the scene.
+- Dropdown selection not respected = scene prompt may not be correctly reading the selected character IDs.
+- Moments not updating = check if life events are being written; run "event_tracking" troubleshoot check in Troubleshoot → Moments.
+
+CHARACTER BEHAVIOR / QUIRKS:
+- Inconsistent personality = check personality_traits, emotional_state, and recent CharacterMemory records.
+- Unexpected emotional response = may be driven by emotional_triggers_high or emotional_baggage fields.
+- Actions not matching state = needs system and emotional_state must align. Check if simulateActiveCharacterNeeds has run recently.
 
 DUPLICATE / MERGE RULES:
-- Duplicates are detected by normalized character name.
-- Ghost merged = merged_into_character_id is set but status ≠ 'merged' — this is a data integrity violation.
-- Safe merge path: Settings → "Suggested Duplicates → Review & Merge" only. Never auto-merge.
-- Merge remaps: all conversations, messages, memories, life events, relationships to the surviving ID.
-- Never merge across accounts. Never merge without previewing the diff.
+- Duplicates detected by normalized name.
+- Ghost merged = merged_into_character_id set but status ≠ 'merged' — integrity violation.
+- Safe merge: Settings → "Suggested Duplicates → Review & Merge" ONLY. Never auto-merge.
+- Merge remaps all conversations, messages, memories, life events, relationships.
+- Never merge across accounts.
 
 CONVERSATION LINKAGE:
-- Conversations have character_ids array. If a character was deleted, those IDs become dangling.
-- Dangling conversations still exist but the chat page may show errors or blank state.
-- Fix path: troubleshoot_locations repair (which calls troubleshootLocations scoped to this account).
+- Conversations have character_ids array. Deleted character = dangling ID.
+- Dangling = chat page may show errors or blank state.
+- Fix: troubleshoot_locations repair.
 
-FINANCIAL SYSTEM:
-- Each active_created_character should have a CharacterFinancial record.
-- Payroll runs via processPayroll function. Housing costs via processHousingCosts.
-- Missing financial record = character won't receive pay or be billed correctly.
-
-OWNERSHIP RULES (critical):
+OWNERSHIP RULES:
 - owner_email = ONLY valid ownership proof.
-- created_by = forbidden, never use it.
-- All data is isolated per owner_email. No cross-account access.
+- created_by = forbidden entirely.
+- All data isolated per owner_email. Zero cross-account access.
 
 ═══════════════════════════════════════
 STRICT RULES FOR YOUR RESPONSES:
 ═══════════════════════════════════════
-- Only discuss this user's data (${ownerEmail}). Never reference or compare other accounts.
-- Never reference created_by under any circumstance.
-- Never promise a repair you cannot confirm is in the live repair list.
+- Only discuss this user's data (${ownerEmail}).
+- Never reference created_by.
+- Never promise a repair not confirmed in the live repair list.
 - For duplicates: always direct to "Suggested Duplicates → Review & Merge" in Settings.
-- Be plain-language. Name exact characters/records when the diagnostic has them.
+- Name exact characters/records when diagnostic data is available.
 - Do not say "all looks fine" if warnings exist.
 - If you cannot confirm a fix without re-running diagnostic, say so.
-- If the user asks WHY something happened, use the system knowledge above to explain the actual mechanism.
+- When asked WHY something happened, explain the actual mechanism using the system knowledge above.
+- If the issue could be a data problem (not just behavioral), tell the user to say "run diagnostic" so you can check their actual data.
 ${repairList}
 
 Recent conversation:
@@ -560,12 +595,12 @@ Respond with specific, honest, actionable information. Name exact characters and
         addMessage({ role: 'diagnostic', diagData, ts: ts() });
       }
 
-      // IssueReport: create when user describes a problem (not just a diagnostic run)
-      // Also create when diagnostic finds real issues
+      // IssueReport: only create when:
+      // (a) user explicitly requests a report, OR
+      // (b) diagnostic ran AND found real issues (not just general questions/explanations)
       const diagFoundIssues = diagData && Object.values(diagData.findings || {}).flatMap(f => f.checks || []).some(c => c.status !== 'passed');
-      const userReportingIssue = !wantsDiagnostic || wantsReport;
 
-      if ((wantsReport || (userReportingIssue && !wantsDiagnostic)) || (diagFoundIssues && wantsDiagnostic)) {
+      if (wantsReport || (diagFoundIssues && wantsDiagnostic)) {
         const category = detectCategory(text);
         const findings = diagData
           ? Object.values(diagData.findings || {}).flatMap(f => f.checks || []).filter(c => c.status !== 'passed')
@@ -577,14 +612,12 @@ Respond with specific, honest, actionable information. Name exact characters and
           category,
           title: text.slice(0, 120),
           description: text,
-          status: 'received',
+          status: wantsReport ? 'received' : 'in_review',
           diagnostic_snapshot: diagData?.findings || {},
           findings,
         }).catch(() => {});
 
-        if (wantsReport || userReportingIssue) {
-          addMessage({ role: 'system', content: '📋 Support ticket created — logged for review.', ts: ts() });
-        }
+        addMessage({ role: 'system', content: '📋 Support ticket created — logged for review.', ts: ts() });
       }
 
     } catch (err) {
@@ -631,9 +664,12 @@ Respond with specific, honest, actionable information. Name exact characters and
       <div className="flex gap-2 px-3 pt-2 pb-1 flex-shrink-0 overflow-x-auto scrollbar-hide">
         {[
           { label: 'Run Diagnostic', action: 'run diagnostic' },
-          { label: 'Duplicates', action: 'check for duplicate characters' },
+          { label: 'Travel Issues', action: 'why is my character not traveling?' },
+          { label: 'Wrong Image', action: 'why does the generated image look wrong?' },
+          { label: 'Money Issues', action: 'why is my character\'s money not correct?' },
+          { label: 'Work Schedule', action: 'why isn\'t my character going to work?' },
           { label: 'Chat Issues', action: 'check my chat and message linkage' },
-          { label: 'Location Sync', action: 'check location and schedule issues' },
+          { label: 'Behavior', action: 'why is my character acting differently than expected?' },
           { label: 'File Report', action: 'I have a problem I need to report' },
         ].map(({ label, action }) => (
           <button
