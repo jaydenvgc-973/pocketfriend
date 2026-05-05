@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   HelpCircle, Send, Loader2, User, Brain, RefreshCw,
-  CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Wrench, FileText
+  CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Wrench, Play, Shield
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import ReactMarkdown from "react-markdown";
@@ -11,9 +11,7 @@ function ts() {
   return new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Diagnostic sub-components (kept small and focused)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Diagnostic sub-components ─────────────────────────────────────────────────
 
 function CheckRow({ check }) {
   const icon = check.status === 'passed'
@@ -21,7 +19,6 @@ function CheckRow({ check }) {
     : check.status === 'warning'
       ? <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
       : <XCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />;
-
   return (
     <div className={`flex items-start gap-2 p-2 rounded-lg text-xs ${
       check.status === 'passed' ? 'bg-emerald-500/5' :
@@ -67,33 +64,6 @@ function DiagSection({ title, checks = [], issueCount }) {
   );
 }
 
-// ── RepairButton — checks both bulk and per-character repair lists ────────────
-function RepairButton({ repairAction, label, description, availableRepairs, availableCharacterRepairs, onRepair, isRepairing }) {
-  const isLive = (availableRepairs || []).includes(repairAction) || (availableCharacterRepairs || []).includes(repairAction);
-  if (!isLive) {
-    return (
-      <div className="p-2.5 rounded-xl border border-destructive/20 bg-destructive/5 text-xs">
-        <p className="text-destructive font-medium">⚠ Repair path unavailable: <code>{repairAction}</code></p>
-        <p className="text-muted-foreground mt-0.5">Not confirmed in the current diagnostic response. No changes can be made.</p>
-      </div>
-    );
-  }
-  return (
-    <button
-      onClick={() => onRepair(repairAction)}
-      disabled={isRepairing}
-      className="w-full flex items-center gap-2 p-3 rounded-xl bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors text-xs text-left disabled:opacity-50"
-    >
-      <Wrench className="w-4 h-4 text-primary flex-shrink-0" />
-      <div>
-        <p className="font-medium text-foreground">{label}</p>
-        <p className="text-muted-foreground">{description}</p>
-      </div>
-    </button>
-  );
-}
-
-// ── Full diagnostic panel ─────────────────────────────────────────────────────
 function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
   if (!diagData) return null;
   const { summary, findings, errors, available_repairs, available_character_repairs } = diagData;
@@ -106,117 +76,50 @@ function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
         <p className="font-semibold text-foreground">{summary}</p>
         <p className="text-muted-foreground mt-0.5">Account: {diagData.owner_email} · {new Date(diagData.checked_at).toLocaleTimeString()}</p>
       </div>
-
       {findings?.characters && (
-        <DiagSection
-          title={`Characters (${findings.characters.live} live / ${findings.characters.total} total)`}
-          checks={findings.characters.checks || []}
-          issueCount={(findings.characters.checks || []).filter(c => c.status !== 'passed').length}
-        />
+        <DiagSection title={`Characters (${findings.characters.live} live / ${findings.characters.total} total)`} checks={findings.characters.checks || []} issueCount={(findings.characters.checks || []).filter(c => c.status !== 'passed').length} />
       )}
       {findings?.conversations && (
-        <DiagSection
-          title={`Conversations (${findings.conversations.total})`}
-          checks={findings.conversations.checks || []}
-          issueCount={(findings.conversations.checks || []).filter(c => c.status !== 'passed').length}
-        />
+        <DiagSection title={`Conversations (${findings.conversations.total})`} checks={findings.conversations.checks || []} issueCount={(findings.conversations.checks || []).filter(c => c.status !== 'passed').length} />
       )}
       {findings?.memories && (
-        <DiagSection
-          title={`Memories (${findings.memories.total})`}
-          checks={findings.memories.checks || []}
-          issueCount={(findings.memories.checks || []).filter(c => c.status !== 'passed').length}
-        />
+        <DiagSection title={`Memories (${findings.memories.total})`} checks={findings.memories.checks || []} issueCount={(findings.memories.checks || []).filter(c => c.status !== 'passed').length} />
       )}
       {findings?.locations && (
-        <DiagSection
-          title={`Locations (${findings.locations.total})`}
-          checks={findings.locations.checks || []}
-          issueCount={(findings.locations.checks || []).filter(c => c.status !== 'passed').length}
-        />
+        <DiagSection title={`Locations (${findings.locations.total})`} checks={findings.locations.checks || []} issueCount={(findings.locations.checks || []).filter(c => c.status !== 'passed').length} />
       )}
       {findings?.financial && (
-        <DiagSection
-          title={`Financial (${findings.financial.activeCharacters} active characters)`}
-          checks={findings.financial.checks || []}
-          issueCount={(findings.financial.checks || []).filter(c => c.status !== 'passed').length}
-        />
+        <DiagSection title={`Financial (${findings.financial.activeCharacters} active characters)`} checks={findings.financial.checks || []} issueCount={(findings.financial.checks || []).filter(c => c.status !== 'passed').length} />
       )}
       {findings?.schedules && (
-        <DiagSection
-          title="Schedules & Work Links"
-          checks={findings.schedules.checks || []}
-          issueCount={(findings.schedules.checks || []).filter(c => c.status !== 'passed').length}
-        />
+        <DiagSection title="Schedules & Work Links" checks={findings.schedules.checks || []} issueCount={(findings.schedules.checks || []).filter(c => c.status !== 'passed').length} />
       )}
-
       {errors?.length > 0 && (
         <div className="p-3 rounded-xl border border-destructive/30 bg-destructive/5 text-xs text-destructive space-y-1">
-          <p className="font-semibold">Checks that could not run (fail visible):</p>
+          <p className="font-semibold">Checks that could not run:</p>
           {errors.map((e, i) => <p key={i}>{e.area}: {e.error}</p>)}
         </div>
       )}
-
-      {/* Repair actions — driven entirely by live available_repairs returned from backend */}
       {hasIssues && (
         <div className="space-y-2">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Available Repairs</p>
-
           {findings?.characters?.duplicateGroupCount > 0 && (
             <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/5 text-xs">
               <p className="font-medium text-foreground">Duplicate Characters</p>
-              <p className="text-muted-foreground mt-0.5">
-                Use <strong>Suggested Duplicates → Review &amp; Merge</strong> in Settings to safely merge with full verification. Auto-merge is blocked — manual review required.
-              </p>
+              <p className="text-muted-foreground mt-0.5">Use <strong>Suggested Duplicates → Review &amp; Merge</strong> in Settings to safely merge with full verification.</p>
             </div>
           )}
-
           {(findings?.characters?.staleResolved?.length > 0 || findings?.locations?.noScopeCount > 0) && (
-            <RepairButton
-              repairAction="fix_character_locations"
-              label="Sync character location presence"
-              description="Re-runs location enforcement for all your active characters"
-              availableRepairs={available_repairs}
-              availableCharacterRepairs={available_character_repairs}
-              onRepair={onRepair}
-              isRepairing={isRepairing}
-            />
+            <ActionButton repairAction="fix_character_locations" label="Sync character location presence" description="Re-runs location enforcement for all your active characters" availableRepairs={available_repairs} availableCharacterRepairs={available_character_repairs} onRepair={onRepair} isRepairing={isRepairing} />
           )}
-
           {findings?.characters?.missingType?.length > 0 && (
-            <RepairButton
-              repairAction="repair_invalid_types"
-              label="Repair missing character type classifications"
-              description={`${findings.characters.missingType.length} character(s) need type assigned`}
-              availableRepairs={available_repairs}
-              availableCharacterRepairs={available_character_repairs}
-              onRepair={onRepair}
-              isRepairing={isRepairing}
-            />
+            <ActionButton repairAction="repair_invalid_types" label="Repair missing character type classifications" description={`${findings.characters.missingType.length} character(s) need type assigned`} availableRepairs={available_repairs} availableCharacterRepairs={available_character_repairs} onRepair={onRepair} isRepairing={isRepairing} />
           )}
-
           {(findings?.conversations?.emptyCharIds?.length > 0 || findings?.conversations?.danglingConvs?.length > 0) && (
-            <RepairButton
-              repairAction="troubleshoot_locations"
-              label="Troubleshoot conversation & location linkage"
-              description={`${(findings.conversations.danglingConvs || []).length} conversation(s) have broken character links`}
-              availableRepairs={available_repairs}
-              availableCharacterRepairs={available_character_repairs}
-              onRepair={onRepair}
-              isRepairing={isRepairing}
-            />
+            <ActionButton repairAction="troubleshoot_locations" label="Fix conversation & location linkage" description={`${(findings.conversations.danglingConvs || []).length} conversation(s) have broken character links`} availableRepairs={available_repairs} availableCharacterRepairs={available_character_repairs} onRepair={onRepair} isRepairing={isRepairing} />
           )}
-
           {(findings?.schedules?.workersMissingWorkLocation?.length > 0 || findings?.schedules?.studentsMissingSchoolLocation?.length > 0) && (
-            <RepairButton
-              repairAction="troubleshoot_locations"
-              label="Repair location links for workers/students"
-              description="Re-links work and school location references"
-              availableRepairs={available_repairs}
-              availableCharacterRepairs={available_character_repairs}
-              onRepair={onRepair}
-              isRepairing={isRepairing}
-            />
+            <ActionButton repairAction="troubleshoot_locations" label="Repair location links for workers/students" description="Re-links work and school location references" availableRepairs={available_repairs} availableCharacterRepairs={available_character_repairs} onRepair={onRepair} isRepairing={isRepairing} />
           )}
         </div>
       )}
@@ -224,8 +127,51 @@ function DiagnosticPanel({ diagData, onRepair, isRepairing }) {
   );
 }
 
+function ActionButton({ repairAction, label, description, availableRepairs, availableCharacterRepairs, onRepair, isRepairing }) {
+  const isLive = (availableRepairs || []).includes(repairAction) || (availableCharacterRepairs || []).includes(repairAction);
+  if (!isLive) return (
+    <div className="p-2.5 rounded-xl border border-destructive/20 bg-destructive/5 text-xs">
+      <p className="text-destructive font-medium">⚠ Repair unavailable: <code>{repairAction}</code></p>
+      <p className="text-muted-foreground mt-0.5">Not confirmed in diagnostic. No changes can be made.</p>
+    </div>
+  );
+  return (
+    <button onClick={() => onRepair(repairAction)} disabled={isRepairing}
+      className="w-full flex items-center gap-2 p-3 rounded-xl bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors text-xs text-left disabled:opacity-50">
+      <Wrench className="w-4 h-4 text-primary flex-shrink-0" />
+      <div>
+        <p className="font-medium text-foreground">{label}</p>
+        <p className="text-muted-foreground">{description}</p>
+      </div>
+    </button>
+  );
+}
+
+// ── Confirm action card (for destructive or targeted repairs) ─────────────────
+function ConfirmCard({ msg, onConfirm, onDeny, isRepairing }) {
+  return (
+    <div className="mx-3 my-1 p-3 rounded-xl border border-amber-500/30 bg-amber-500/5 text-xs space-y-2">
+      <div className="flex items-start gap-2">
+        <Shield className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+        <p className="text-foreground font-medium">{msg}</p>
+      </div>
+      <div className="flex gap-2 pt-1">
+        <button onClick={onConfirm} disabled={isRepairing}
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50">
+          {isRepairing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+          {isRepairing ? 'Running…' : 'Yes, run it'}
+        </button>
+        <button onClick={onDeny} disabled={isRepairing}
+          className="flex-1 py-2 rounded-lg bg-secondary text-foreground hover:bg-secondary/80 transition-colors">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Chat message renderer ─────────────────────────────────────────────────────
-function ChatMessage({ msg, onRepair, isRepairing }) {
+function ChatMessage({ msg, onRepair, isRepairing, onConfirm, onDeny }) {
   const isUser = msg.role === 'user';
 
   if (msg.role === 'system') {
@@ -246,12 +192,13 @@ function ChatMessage({ msg, onRepair, isRepairing }) {
     );
   }
 
+  if (msg.role === 'confirm') {
+    return <ConfirmCard msg={msg.content} onConfirm={() => onConfirm(msg.actionKey, msg.actionPayload)} onDeny={onDeny} isRepairing={isRepairing} />;
+  }
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`flex gap-2.5 px-3 py-1.5 ${isUser ? 'justify-end' : 'justify-start'}`}
-    >
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+      className={`flex gap-2.5 px-3 py-1.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
       {!isUser && (
         <div className="w-6 h-6 rounded-full bg-sky-500/20 flex items-center justify-center flex-shrink-0 mt-1 ring-1 ring-sky-500/30">
           <Brain className="w-3.5 h-3.5 text-sky-400" />
@@ -288,7 +235,46 @@ function ChatMessage({ msg, onRepair, isRepairing }) {
   );
 }
 
-// ── Category classifier ───────────────────────────────────────────────────────
+// ── Intent router — maps plain text to a direct action (no LLM needed) ────────
+function detectIntent(text) {
+  const t = text.toLowerCase();
+
+  if (/run.*owner.*email.*backfill|backfill.*owner|repair.*owner.*email|fix.*owner.*email/i.test(t))
+    return { type: 'backfill_owner_email' };
+
+  if (/clean.*ghost|ghost.*reference|dangling.*reference|record.*not.*found|remove.*stale/i.test(t))
+    return { type: 'clean_ghost_references' };
+
+  if (/run.*diagnostic|check.*account|full.*check|diagnose.*everything|scan.*account|what.*wrong.*account|check.*everything/i.test(t))
+    return { type: 'full_diagnostic' };
+
+  if (/merge.*blocked|blocked.*merge|ownership.*needs.*repair|legacy.*owner|missing.*owner.*email/i.test(t))
+    return { type: 'merge_blocked' };
+
+  if (/sync.*location|location.*sync|character.*wrong.*location|location.*wrong|presence.*wrong|where.*character/i.test(t))
+    return { type: 'sync_locations' };
+
+  if (/not.*go.*work|won't.*work|won't go to work|skip.*work|miss.*work|not.*show.*work|work.*schedule.*broken/i.test(t))
+    return { type: 'work_schedule' };
+
+  if (/money.*wrong|wrong.*money|balance.*wrong|negative.*balance|not.*paid|payroll|finance.*issue|money.*missing/i.test(t))
+    return { type: 'finance_check' };
+
+  if (/world.*name.*won't.*save|world.*name.*not.*saving|name.*won't.*save|my.*name.*not.*saving/i.test(t))
+    return { type: 'world_name_save' };
+
+  if (/not.*traveling|won't.*travel|stuck.*location|travel.*broken|not.*moving/i.test(t))
+    return { type: 'travel_check' };
+
+  if (/character.*missing|can't.*find.*character|missing.*character|disappeared/i.test(t))
+    return { type: 'missing_character' };
+
+  if (/wrong.*image|image.*wrong|image.*broken|picture.*wrong|photo.*wrong/i.test(t))
+    return { type: 'image_issue' };
+
+  return null;
+}
+
 function detectCategory(text) {
   const t = text.toLowerCase();
   if (/duplic|same character|two.*character|merge/i.test(t)) return 'character_duplicates';
@@ -312,125 +298,383 @@ export default function SupportAssistant({ user }) {
   const [messages, setMessages] = useState([{
     id: 'welcome',
     role: 'ai',
-    content: `Hi! I'm your **Account Help & Repair** assistant.\n\nI can run a real diagnostic against your account and help you fix issues with:\n- **Characters** — duplicates, missing types, no home assigned\n- **Conversations & chats** — broken links, dangling references\n- **Memories** — unresolved identities, dangling records\n- **Locations** — stale presence, missing scope\n- **Financial** — missing records, negative balances\n- **Schedules** — workers/students missing location links\n\nAll checks run against your account only.\n\nType a problem or say **"run diagnostic"** to start.`,
+    content: `Hi! I'm your **Account Help & Repair** assistant — I can run real diagnostics and repairs directly.\n\nJust describe what's wrong:\n- *"My merge is blocked"*\n- *"My character isn't going to work"*\n- *"My money is wrong"*\n- *"Run the owner email backfill"*\n- *"My character is missing"*\n- *"Sync my locations"*\n\nI'll identify the issue, run the right tool, and show you what I find — no dashboards or console logs needed.`,
     ts: ts(),
   }]);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRepairing, setIsRepairing] = useState(false);
   const [lastDiagData, setLastDiagData] = useState(null);
+  // pending confirm: { actionKey, actionPayload, confirmMsgId }
+  const [pendingConfirm, setPendingConfirm] = useState(null);
   const bottomRef = useRef(null);
 
   useEffect(() => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
   }, [messages]);
 
-  const addMessage = (msg) => {
+  const addMsg = (msg) => {
     const id = `msg_${Date.now()}_${Math.random()}`;
     setMessages(prev => [...prev, { id, ...msg }]);
     return id;
   };
 
-  // ── Run full diagnostic via live backend function ──────────────────────────
+  const removeMsgById = (id) => setMessages(prev => prev.filter(m => m.id !== id));
+
+  // ── Full account diagnostic ───────────────────────────────────────────────
   const runFullDiagnostic = async () => {
-    addMessage({ role: 'system', content: '🔍 Running full account diagnostic…', ts: ts() });
+    addMsg({ role: 'system', content: '🔍 Running full account diagnostic…', ts: ts() });
     const res = await base44.functions.invoke('userAccountDiagnostic', { categories: 'all' });
     const diagData = res?.data;
-    if (!diagData) throw new Error('Diagnostic returned no data — function may have failed');
+    if (!diagData) throw new Error('Diagnostic returned no data');
     setLastDiagData(diagData);
     return diagData;
   };
 
-  // ── Repair dispatch — repair_action must be in diagData.available_repairs ──
-  const handleRepair = async (repair_action, repair_character_id = null) => {
-    // Verify against last known available_repairs before calling backend
-    // This prevents calling paths that were not confirmed in the last diagnostic run
-    if (lastDiagData?.available_repairs && !lastDiagData.available_repairs.includes(repair_action)) {
-      // Per-character repairs are in available_character_repairs
-      const isCharRepair = (lastDiagData?.available_character_repairs || []).includes(repair_action);
-      if (!isCharRepair) {
-        addMessage({
-          role: 'ai',
-          content: `⚠️ I cannot run repair path \`${repair_action}\` — it was not confirmed as available in the last diagnostic response. No changes were made.`,
-          ts: ts(),
-        });
-        return;
-      }
-    }
-
+  // ── Repair dispatch via userAccountDiagnostic ─────────────────────────────
+  const runRepairAction = async (repair_action, repair_character_id = null) => {
     setIsRepairing(true);
-    addMessage({ role: 'system', content: `⚙️ Running repair: ${repair_action}…`, ts: ts() });
+    addMsg({ role: 'system', content: `⚙️ Running: ${repair_action}…`, ts: ts() });
     try {
       const payload = { categories: 'none', repair_action };
       if (repair_character_id) payload.repair_character_id = repair_character_id;
-
       const res = await base44.functions.invoke('userAccountDiagnostic', payload);
       const result = res?.data?.repair;
-
       if (result?.blocked) {
-        addMessage({
-          role: 'ai',
-          content: `**Repair blocked:** ${result.reason}\n\nNo changes were made. A support report has been filed.`,
-          ts: ts(),
-        });
-        // Create IssueReport for blocked repair
-        base44.entities.IssueReport.create({
-          owner_email: ownerEmail,
-          owner_user_id: userId,
-          category: 'other',
-          title: `Repair blocked: ${repair_action}`,
-          description: result.reason,
-          status: 'repair_pending',
-          findings: [],
-        }).catch(() => {});
+        addMsg({ role: 'ai', content: `**Repair blocked:** ${result.reason}\n\nNo changes were made.`, ts: ts() });
+        base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'other', title: `Repair blocked: ${repair_action}`, description: result.reason, status: 'repair_pending', findings: [] }).catch(() => {});
       } else if (result?.error) {
-        addMessage({ role: 'ai', content: `**Repair encountered an error:** ${result.error}`, ts: ts() });
+        addMsg({ role: 'ai', content: `**Repair error:** ${result.error}`, ts: ts() });
       } else {
-        addMessage({
-          role: 'ai',
-          content: `**Repair complete** ✓\n\nAction: \`${repair_action}\`\n${typeof result?.result === 'object' ? JSON.stringify(result.result, null, 2).slice(0, 400) : (result?.result || 'Done.')}`,
-          ts: ts(),
-        });
-        // Re-run diagnostic after repair to verify state
-        addMessage({ role: 'system', content: '🔍 Re-running diagnostic to verify repair…', ts: ts() });
+        const resultText = typeof result?.result === 'object' ? JSON.stringify(result.result, null, 2).slice(0, 400) : (result?.result || 'Done.');
+        addMsg({ role: 'ai', content: `**Repair complete ✓**\n\n${resultText}\n\nRe-running diagnostic to verify…`, ts: ts() });
         const verifyData = await runFullDiagnostic();
-        addMessage({
-          role: 'diagnostic',
-          diagData: verifyData,
-          ts: ts(),
-        });
+        addMsg({ role: 'diagnostic', diagData: verifyData, ts: ts() });
       }
     } catch (e) {
-      addMessage({ role: 'ai', content: `Repair failed: ${e.message}. No changes were made.`, ts: ts() });
+      addMsg({ role: 'ai', content: `Repair failed: ${e.message}. No changes were made.`, ts: ts() });
     } finally {
       setIsRepairing(false);
     }
   };
 
+  // ── Handle confirm card click ─────────────────────────────────────────────
+  const handleConfirm = async (actionKey, actionPayload) => {
+    // Remove the confirm card
+    if (pendingConfirm?.confirmMsgId) removeMsgById(pendingConfirm.confirmMsgId);
+    setPendingConfirm(null);
+
+    if (actionKey === 'backfill_owner_email') {
+      setIsRepairing(true);
+      addMsg({ role: 'system', content: '⚙️ Running owner email backfill…', ts: ts() });
+      try {
+        const res = await base44.functions.invoke('backfillMyCharacterOwnerEmail', {});
+        const d = res?.data;
+        if (!d) throw new Error('No response');
+        const r = d.results || {};
+        const lines = [
+          `**Owner Email Backfill Complete**`,
+          ``,
+          `- Scanned: **${r.scanned ?? 0}** records`,
+          `- Already correct: **${r.already_correct ?? 0}**`,
+          `- Repaired: **${r.repaired?.length ?? 0}**`,
+          r.repaired?.length > 0 ? r.repaired.map(x => `  ✓ ${x.name}`).join('\n') : null,
+          r.skipped_wrong_account?.length > 0 ? `- Blocked (cross-account): **${r.skipped_wrong_account.length}** — not modified` : null,
+          r.errors?.length > 0 ? `- Errors: **${r.errors.length}**` : null,
+        ].filter(Boolean).join('\n');
+        addMsg({ role: 'ai', content: lines, ts: ts() });
+        if (d.admin_required) {
+          addMsg({ role: 'ai', content: `Some records couldn't be repaired because they lack both \`owner_email\` and a matching \`owner_user_id\`. These require admin review — a support ticket has been filed.`, ts: ts() });
+          base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: 'Owner email backfill — admin review required', description: `Records found without sufficient ownership evidence during backfill.`, status: 'repair_pending', findings: [] }).catch(() => {});
+        }
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Backfill failed: ${err.message}. No changes were made.`, ts: ts() });
+      } finally {
+        setIsRepairing(false);
+      }
+      return;
+    }
+
+    if (actionKey === 'clean_ghost_references') {
+      await runRepairAction('troubleshoot_locations');
+      return;
+    }
+
+    if (actionKey === 'sync_locations') {
+      await runRepairAction('fix_character_locations');
+      return;
+    }
+
+    // Generic repair path
+    await runRepairAction(actionKey, actionPayload?.character_id);
+  };
+
+  const handleDeny = () => {
+    if (pendingConfirm?.confirmMsgId) removeMsgById(pendingConfirm.confirmMsgId);
+    setPendingConfirm(null);
+    addMsg({ role: 'ai', content: 'Cancelled — no changes were made.', ts: ts() });
+  };
+
+  // ── Direct action handlers (bypass LLM, run tools immediately) ────────────
+  const runDirectAction = async (intent, originalText) => {
+    const { type } = intent;
+
+    if (type === 'full_diagnostic') {
+      try {
+        const diagData = await runFullDiagnostic();
+        const allChecks = Object.values(diagData.findings || {}).flatMap(f => f.checks || []);
+        const issues = allChecks.filter(c => c.status !== 'passed');
+        if (issues.length === 0) {
+          addMsg({ role: 'ai', content: `✅ **All checks passed** — your account looks healthy.\n\nNo issues found across characters, conversations, memories, locations, finances, or schedules.`, ts: ts() });
+        } else {
+          addMsg({ role: 'ai', content: `Found **${issues.length} issue(s)** on your account. See the diagnostic panel below — available repairs are shown as buttons you can click.`, ts: ts() });
+        }
+        addMsg({ role: 'diagnostic', diagData, ts: ts() });
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Diagnostic failed: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
+    if (type === 'backfill_owner_email') {
+      const confirmId = addMsg({
+        role: 'confirm',
+        content: 'Run Owner Email Backfill? This will scan your character records for missing owner_email fields and repair only those where owner_user_id confirms they belong to your account. No guessing, no cross-account changes.',
+        actionKey: 'backfill_owner_email',
+        actionPayload: {},
+        ts: ts(),
+      });
+      setPendingConfirm({ actionKey: 'backfill_owner_email', actionPayload: {}, confirmMsgId: confirmId });
+      return true;
+    }
+
+    if (type === 'clean_ghost_references') {
+      // First verify — check if there are actually dangling refs
+      addMsg({ role: 'system', content: '🔍 Checking for ghost character references…', ts: ts() });
+      try {
+        const diagData = await runFullDiagnostic();
+        const danglingConvs = diagData.findings?.conversations?.danglingConvs || [];
+        const danglingMems = diagData.findings?.memories?.danglingCount || 0;
+        if (danglingConvs.length === 0 && danglingMems === 0) {
+          addMsg({ role: 'ai', content: `✅ **No ghost references found.** Your conversations and memories all link to valid characters — nothing to clean up.`, ts: ts() });
+          addMsg({ role: 'diagnostic', diagData, ts: ts() });
+        } else {
+          const confirmId = addMsg({
+            role: 'confirm',
+            content: `Found ${danglingConvs.length} conversation(s) with broken character links and ${danglingMems} memory record(s) for deleted characters. Run cleanup to re-link or remove these stale references?`,
+            actionKey: 'clean_ghost_references',
+            actionPayload: {},
+            ts: ts(),
+          });
+          setPendingConfirm({ actionKey: 'clean_ghost_references', actionPayload: {}, confirmMsgId: confirmId });
+          addMsg({ role: 'diagnostic', diagData, ts: ts() });
+        }
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Check failed: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
+    if (type === 'merge_blocked') {
+      // Run diagnostic to understand why merge is blocked
+      addMsg({ role: 'system', content: '🔍 Checking account for merge blockers…', ts: ts() });
+      try {
+        const diagData = await runFullDiagnostic();
+        const missingOwner = diagData.findings?.characters?.missingOwner || [];
+        const ghostMerged = diagData.findings?.characters?.ghostMerged || [];
+        if (missingOwner.length > 0) {
+          addMsg({ role: 'ai', content: `**Found ${missingOwner.length} character(s) missing owner_email** — this is why the merge is blocked.\n\nAffected: ${missingOwner.map(c => c.name).join(', ')}\n\nI can run the **Owner Email Backfill** to repair these records, which will allow the merge to proceed. The repair only touches records where your account ID is already on file — no guessing.`, ts: ts() });
+          const confirmId = addMsg({
+            role: 'confirm',
+            content: `Run Owner Email Backfill to repair ${missingOwner.length} record(s) missing owner_email? This is required before the merge can proceed.`,
+            actionKey: 'backfill_owner_email',
+            actionPayload: {},
+            ts: ts(),
+          });
+          setPendingConfirm({ actionKey: 'backfill_owner_email', actionPayload: {}, confirmMsgId: confirmId });
+        } else if (ghostMerged.length > 0) {
+          addMsg({ role: 'ai', content: `**Found ${ghostMerged.length} ghost-merged record(s)** — characters with \`merged_into_character_id\` set but status not updated to "merged". This can block the merge.\n\nRun the location sync repair to fix these integrity violations, then retry the merge from Settings → Suggested Duplicates.`, ts: ts() });
+        } else {
+          addMsg({ role: 'ai', content: `**Merge blockers checked.** No missing owner_email or ghost-merge issues found in your account data.\n\nIf the merge is still blocked, the issue may be specific to those two records — try opening **Suggested Duplicates → Review & Merge** in Settings and look at the error shown there for more detail.`, ts: ts() });
+        }
+        addMsg({ role: 'diagnostic', diagData, ts: ts() });
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Check failed: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
+    if (type === 'sync_locations') {
+      addMsg({ role: 'system', content: '🔍 Checking location presence for your characters…', ts: ts() });
+      try {
+        const diagData = await runFullDiagnostic();
+        const staleResolved = diagData.findings?.characters?.staleResolved || [];
+        const noScope = diagData.findings?.locations?.noScopeCount || 0;
+        if (staleResolved.length === 0 && noScope === 0) {
+          addMsg({ role: 'ai', content: `✅ **All character locations look correct.** No stale presence or missing scope found.`, ts: ts() });
+          addMsg({ role: 'diagnostic', diagData, ts: ts() });
+        } else {
+          const confirmId = addMsg({
+            role: 'confirm',
+            content: `Found ${staleResolved.length} character(s) with stale location data and ${noScope} location(s) missing scope. Run "Sync Character Locations" to fix?`,
+            actionKey: 'sync_locations',
+            actionPayload: {},
+            ts: ts(),
+          });
+          setPendingConfirm({ actionKey: 'sync_locations', actionPayload: {}, confirmMsgId: confirmId });
+          addMsg({ role: 'diagnostic', diagData, ts: ts() });
+        }
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Check failed: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
+    if (type === 'work_schedule') {
+      addMsg({ role: 'system', content: '🔍 Checking work schedule and location links…', ts: ts() });
+      try {
+        const diagData = await runFullDiagnostic();
+        const workers = diagData.findings?.schedules?.workersMissingWorkLocation || [];
+        if (workers.length > 0) {
+          addMsg({ role: 'ai', content: `**Found ${workers.length} character(s) with broken work location links:**\n${workers.map(c => `- ${c.name} (occupation: ${c.occupation || 'set'})`).join('\n')}\n\nThe work location ID is not linked on the character record — this prevents the schedule enforcement from knowing where to send them.\n\nI can run a repair to re-link work and school locations.`, ts: ts() });
+          const confirmId = addMsg({
+            role: 'confirm',
+            content: `Repair work/school location links for ${workers.length} character(s)? This will re-link their work location references.`,
+            actionKey: 'troubleshoot_locations',
+            actionPayload: {},
+            ts: ts(),
+          });
+          setPendingConfirm({ actionKey: 'troubleshoot_locations', actionPayload: {}, confirmMsgId: confirmId });
+        } else {
+          addMsg({ role: 'ai', content: `**Work location links look correct** — all working characters have their locations linked.\n\nIf a character still isn't going to work, the issue may be:\n- **Sleep or energy block** — character is sleeping or energy is too low\n- **stay_lock** — manually locked to a location; needs to be cleared\n- **Shift hours** — work_start_time or work_end_time may not cover the current time\n- **autonomous_travel_enabled = false** — travel is disabled in Settings\n\nWould you like me to run a full diagnostic to check?`, ts: ts() });
+        }
+        addMsg({ role: 'diagnostic', diagData, ts: ts() });
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Check failed: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
+    if (type === 'finance_check') {
+      addMsg({ role: 'system', content: '🔍 Checking financial records…', ts: ts() });
+      try {
+        const diagData = await runFullDiagnostic();
+        const missing = diagData.findings?.financial?.missingFinancialRecord || [];
+        const negative = diagData.findings?.financial?.negativeBalance || [];
+        if (missing.length === 0 && negative.length === 0) {
+          addMsg({ role: 'ai', content: `✅ **Financial records look healthy** — all active characters have financial records and no negative balances detected.\n\nIf money still seems wrong, it may be a billing timing issue. Use **"Force a Payday"** or **"Force Pay Bills"** in Settings → System & Data to manually trigger payroll or bill processing.`, ts: ts() });
+        } else {
+          let parts = [];
+          if (missing.length > 0) parts.push(`**${missing.length} character(s) missing financial records:** ${missing.map(c => c.name).join(', ')}`);
+          if (negative.length > 0) parts.push(`**${negative.length} character(s) with negative balance** — expenses may have been processed without corresponding income.`);
+          addMsg({ role: 'ai', content: parts.join('\n\n') + `\n\nUse **"Force a Payday"** in Settings → System & Data to trigger payroll and replenish balances.`, ts: ts() });
+        }
+        addMsg({ role: 'diagnostic', diagData, ts: ts() });
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Check failed: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
+    if (type === 'missing_character') {
+      addMsg({ role: 'system', content: '🔍 Scanning character records…', ts: ts() });
+      try {
+        const diagData = await runFullDiagnostic();
+        const total = diagData.findings?.characters?.total || 0;
+        const live = diagData.findings?.characters?.live || 0;
+        const missingType = diagData.findings?.characters?.missingType || [];
+        const ghostMerged = diagData.findings?.characters?.ghostMerged || [];
+        let reply = `Found **${live} live character(s)** out of ${total} total records on your account.\n\n`;
+        if (missingType.length > 0) {
+          reply += `**${missingType.length} character(s) are missing a character_type** — these may not appear in lists: ${missingType.map(c => c.name).join(', ')}\n\n`;
+        }
+        if (ghostMerged.length > 0) {
+          reply += `**${ghostMerged.length} ghost-merged record(s)** — marked as merged but not removed cleanly.\n\n`;
+        }
+        if (missingType.length === 0 && ghostMerged.length === 0) {
+          reply += `No missing type or ghost-merge issues found. If a character you created is still not showing up, check the character type filter on the Home page — NPC Fictitious characters don't appear on Home.`;
+        }
+        addMsg({ role: 'ai', content: reply.trim(), ts: ts() });
+        addMsg({ role: 'diagnostic', diagData, ts: ts() });
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Check failed: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
+    if (type === 'travel_check') {
+      addMsg({ role: 'ai', content: `**Travel blockers I'll check for:**\n\n- Character is asleep or energy is critically low\n- \`presence_stay_lock = true\` — manually frozen at a location\n- \`autonomous_travel_enabled = false\` in your Settings\n- No valid destination assigned\n- Character is jailed\n\nRunning a full diagnostic to check your account data now…`, ts: ts() });
+      try {
+        const diagData = await runFullDiagnostic();
+        const stale = diagData.findings?.characters?.staleResolved || [];
+        if (stale.length > 0) {
+          addMsg({ role: 'ai', content: `**Found ${stale.length} character(s) with stale location data** — this can cause travel to appear broken even when the logic is correct.\n\nWould you like to sync all character locations?`, ts: ts() });
+        } else {
+          addMsg({ role: 'ai', content: `Location data looks current. If travel is still blocked, it's likely a **stay_lock** or **sleep state** issue — those can only be cleared from the character profile or chat page.\n\nIs there a specific character you're asking about? I can narrow this down.`, ts: ts() });
+        }
+        addMsg({ role: 'diagnostic', diagData, ts: ts() });
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Check failed: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
+    if (type === 'image_issue') {
+      addMsg({ role: 'ai', content: `**Common image generation issues and their root causes:**\n\n- **Wrong face / character** — \`avatar_url\` is missing or pointing to the wrong URL. Check the character's photo settings.\n- **Wrong background** — the location has no zone images uploaded. Go to Locations → upload zone photos.\n- **Wrong lighting** — time-of-day must match; the system overrides reference photos with current lighting.\n- **Blurry or generic** — \`reference_image_urls\` are missing on the character. Add reference photos for consistency.\n- **Camera didn't zoom** — "zoom in" moves the camera, not the subject scale. This is correct behavior.\n\nWould you like me to run a diagnostic to check your account's character and location data?`, ts: ts() });
+      return true;
+    }
+
+    if (type === 'world_name_save') {
+      addMsg({ role: 'ai', content: `**World name saves to \`UserSettings.fictional_world_name\`.** Here's what I'll check:\n\n1. Does your UserSettings record exist and have a valid \`owner_email\`?\n2. Is the save write succeeding but the cache re-loading old data?\n\nRunning a check now…`, ts: ts() });
+      try {
+        const settings = await base44.entities.UserSettings.filter({ owner_email: ownerEmail });
+        const s = settings[0];
+        if (!s) {
+          addMsg({ role: 'ai', content: `**No UserSettings record found** for your account. This means nothing can be saved yet. Try navigating away from Settings and back — the record should be created automatically on first load.\n\nIf the problem persists, contact support.`, ts: ts() });
+        } else if (!s.owner_email) {
+          addMsg({ role: 'ai', content: `**Your UserSettings record is missing owner_email** (ID: ${s.id?.substring(0, 8)}…). This is a data integrity issue that can cause saves to fail silently. Contact support or file a report.`, ts: ts() });
+          base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: 'UserSettings missing owner_email', description: `Settings record ${s.id} has no owner_email — saves may fail silently.`, status: 'received', findings: [] }).catch(() => {});
+        } else {
+          addMsg({ role: 'ai', content: `✅ **Your UserSettings record exists and has a valid owner_email.**\n\nCurrent \`fictional_world_name\`: **"${s.fictional_world_name || '(not set yet)'}"**\n\nIf you just saved it and it's not showing up, the React Query cache may be stale. Try pulling down to refresh on the Settings page, or navigating away and back. The data write itself should be succeeding.`, ts: ts() });
+        }
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Could not read settings record: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
+    return false; // No direct intent matched — fall through to LLM
+  };
+
   // ── Handle user submit ────────────────────────────────────────────────────
   const handleSubmit = async () => {
     const text = input.trim();
-    if (!text || isProcessing || !ownerEmail) return;
+    if (!text || isProcessing || isRepairing || !ownerEmail) return;
     setInput("");
-    addMessage({ role: 'user', content: text, ts: ts() });
+    addMsg({ role: 'user', content: text, ts: ts() });
     setIsProcessing(true);
 
     const thinkingId = `thinking_${Date.now()}`;
     setMessages(prev => [...prev, { id: thinkingId, role: 'system', content: '🔍 Working on it…', ts: ts() }]);
 
     try {
+      // 1. Try direct intent routing first (no LLM needed)
+      const intent = detectIntent(text);
+      if (intent) {
+        setMessages(prev => prev.filter(m => m.id !== thinkingId));
+        await runDirectAction(intent, text);
+        return;
+      }
+
+      // 2. Determine if LLM needs live diagnostic context
       const wantsDiagnostic = /run diagnostic|check.*account|full check|what.*wrong|diagnose|scan|audit|check everything|something.*broken|broken|not working|isn't working|won't work|check my/i.test(text);
       const wantsReport = /file.*report|create.*report|submit.*issue|log.*issue|report.*problem|please log|please report/i.test(text);
-      // Behavioral/explanatory questions — needs real context but no scan required
-      const wantsBehaviorExplanation = /why (did|didn't|is|isn't|does|doesn't|won't|can't)|how does|what.*cause|explain|not traveling|not going|not responding|wrong image|looks wrong|not saving|not updating|wrong location|wrong character|stuck|missing/i.test(text);
 
       let diagData = null;
-
       if (wantsDiagnostic) {
         diagData = await runFullDiagnostic();
       }
 
-      // Build context for LLM — always include what was actually found, not invented
       const recentHistory = messages
         .filter(m => m.role === 'user' || m.role === 'ai')
         .slice(-6)
@@ -438,140 +682,38 @@ export default function SupportAssistant({ user }) {
         .join('\n\n');
 
       let diagContext = '';
-      const activeDiag = diagData || (wantsBehaviorExplanation ? lastDiagData : null);
+      const activeDiag = diagData || lastDiagData;
       if (activeDiag) {
         const allChecks = Object.values(activeDiag.findings || {}).flatMap(f => f.checks || []);
         const issues = allChecks.filter(c => c.status !== 'passed');
         const label = diagData ? 'LIVE' : 'PREVIOUS';
         diagContext = issues.length > 0
-          ? `\n\n${label} DIAGNOSTIC RESULTS for ${ownerEmail}:\n${issues.map(c => `- [${c.status.toUpperCase()}] ${c.check}: ${c.detail}`).join('\n')}\n\nAvailable repair paths confirmed by backend: ${(activeDiag.available_repairs || []).join(', ')}`
+          ? `\n\n${label} DIAGNOSTIC for ${ownerEmail}:\n${issues.map(c => `- [${c.status.toUpperCase()}] ${c.check}: ${c.detail}`).join('\n')}\n\nConfirmed repair paths: ${(activeDiag.available_repairs || []).join(', ')}`
           : `\n\n${label} DIAGNOSTIC: All checks passed for ${ownerEmail}.`;
-      } else if (lastDiagData) {
-        diagContext = `\n\n(Previous diagnostic: ${lastDiagData.summary} at ${lastDiagData.checked_at})`;
       }
 
-      // LLM only references functions that are confirmed in the diagnostic response
-      const confirmedRepairs = diagData?.available_repairs || lastDiagData?.available_repairs || [];
-      const repairList = confirmedRepairs.length > 0
-        ? `\n\nCONFIRMED LIVE REPAIR PATHS (from current diagnostic response — do not invent others):\n${confirmedRepairs.map(r => `- ${r}`).join('\n')}`
-        : '';
-
       const prompt = `You are the Account Help & Repair assistant for "Own Your Life" — a character-based social simulation app.
-
 You help the user whose account email is: ${ownerEmail}
 
-═══════════════════════════════════════
-APP SYSTEM KNOWLEDGE
-═══════════════════════════════════════
+SYSTEM KNOWLEDGE (use this to explain root causes):
+- Characters: active_created_character (full sim), npc_family_member, npc_fictitious (no Home page), npc_regular
+- Presence source of truth: resolved_current_location_id, resolved_current_location_name, resolved_presence_status
+- Travel priority: schedule → needs (hunger<20, energy<20, social<20) → autonomous → VGC Towers
+- Travel blocked when: sleeping, jailed, stay_lock=true, autonomous_travel_enabled=false
+- Memory: CharacterMemory (structured), Memory (legacy), CharacterAutomaticNarrative (Life Journal)
+- Finance: CharacterFinancial record per character. Payroll via processPayroll. Bills via processHousingCosts.
+- Ownership: owner_email ONLY. created_by is forbidden entirely.
+- Merge blocked by: missing owner_email (LEGACY_MISSING_OWNER), RECORD_NOT_FOUND (dangling ref — NOT an owner issue), CROSS_ACCOUNT_BLOCKED
+- RECORD_NOT_FOUND = ghost reference. Fix via "Clean Ghost Character References", NOT backfill.
+- LEGACY_MISSING_OWNER = missing owner_email. Fix via "Run Owner Email Backfill".
 
-CHARACTER TYPES:
-- active_created_character: Full simulation — needs, schedule, travel, emotions, memories, finances. Appears on Home page.
-- npc_family_member: Family NPC. Chat-capable, limited schedule, no full needs simulation.
-- npc_fictitious: Background/world NPC. Limited interaction. Does NOT appear on Home.
-- npc_regular: Standard NPC. Shared world presence.
-
-PRESENCE & LOCATION:
-- One character = one resolved presence (never omnipresent).
-- Source of truth: resolved_current_location_id, resolved_current_location_name, resolved_presence_status.
-- Priority chain: schedule (work/school) → needs → autonomous travel → VGC Towers default.
-- presence_stay_lock = true → character is frozen at that location; nothing overrides it until cleared.
-- VGC Towers = per-user private instance. Characters return there when no other destination is active.
-- Travel triggers: scheduled shift start/end, needs critically low (hunger<20→food, energy<20→home, social<20→go out), autonomous_travel_enabled=true.
-- Travel blocked when: sleeping, jailed, stay_lock=true, autonomous_travel_enabled=false, no valid destination.
-
-NEEDS SYSTEM (drives behavior):
-- Needs: hunger, energy, health, stress, social, fun, hygiene, comfort (0–100). Decay over time.
-- Low needs trigger: movement changes, dialogue tone shifts, emotional state changes.
-- Needs are simulated by simulateActiveCharacterNeeds (scheduled function).
-- If a character seems "stuck" or not reacting normally, low or zero needs are a common root cause.
-
-EMOTIONAL STATE:
-- emotional_state field drives tone, responses, actions.
-- States: calm, irritated, defensive, reflective, closed-off, joyful, anxious, sad, excited, overwhelmed, content, frustrated.
-- Changes based on: life events, messages from user, needs state, schedule compliance.
-
-MEMORY SYSTEM:
-- CharacterMemory: structured records per character_id. Types: identity, relationship, event, preference, location, fact.
-- Memory entity: older/simpler records.
-- Life Journal (CharacterAutomaticNarrative): continuous timeline log.
-- Memories give continuity across conversations. Missing memories = character "forgets."
-- unresolved_identity = character mentioned someone the system hasn't linked yet.
-
-IMAGE GENERATION:
-- Avatar = identity source (face, age, body, skin). NEVER use as background.
-- Background = current location + zone images.
-- Camera moves, subject does NOT scale — "zoom in" = camera moves closer.
-- Lighting must match time-of-day — overrides reference photos.
-- Wrong image? Check: avatar_url set, reference_image_urls present, location has zone images.
-
-DATA NOT SAVING / STUCK STATE:
-- If edits don't persist: check if the write call succeeded, check for cache vs. live data mismatch, check if owner_email is present on the record.
-- Profile edits reverting = usually a stale query cache re-loading old data over the new write.
-- Location not sticking = resolved_current_location_id may be getting overwritten by the presence enforcement function on next run.
-- Updates not showing in UI = React Query cache may need invalidation; the write succeeded but the UI is showing stale data.
-
-CHARACTER CARD / LOCATION ERRORS:
-- Characters showing wrong location = resolved_presence_status or resolved_current_location_name is stale. Run "Sync character location presence" repair.
-- All characters showing "at work" = schedule enforcement override may be stuck. Check work schedule data and presence_stay_lock.
-- User character card incorrect = user_presence_status in UserSettings may be stale.
-
-FINANCE / MONEY ISSUES:
-- Money not calculating = check if CharacterFinancial record exists for the character.
-- Housing costs not applied = processHousingCosts function may not have run, or the location is missing rent_or_housing_cost.
-- Hotel charges not applied = nightly_rate missing on the hotel LocationReference.
-- Negative balance = check recurring_expenses vs income sources; may have been billed without receiving pay.
-- Payroll manually triggered via "Force a Payday" in Settings → System & Data.
-
-WORK / SCHEDULE FAILURES:
-- Character not going to work = check: occupation set, current_work_location_id linked, work_days and work_start_time/work_end_time configured.
-- Incorrect work times = check work schedule data on the character and the CharacterScheduleProfile if it exists.
-- Schedule not applied = enforceCharacterWorkSchedule function may need to run for that character.
-
-TRAVEL / MOVEMENT ISSUES:
-- Not traveling when expected = check needs values (are they low enough to trigger movement?), check autonomous_travel_enabled in UserSettings.
-- Traveling to wrong place = check travel_destination_location_id and whether needs-based or schedule-based logic determined the destination.
-- Traveling at wrong time = check sleep state (sleeping blocks travel), check work schedule windows.
-
-SCENES / MOMENTS:
-- Wrong characters in scene = check selectedNpcIds used to build the scene.
-- Dropdown selection not respected = scene prompt may not be correctly reading the selected character IDs.
-- Moments not updating = check if life events are being written; run "event_tracking" troubleshoot check in Troubleshoot → Moments.
-
-CHARACTER BEHAVIOR / QUIRKS:
-- Inconsistent personality = check personality_traits, emotional_state, and recent CharacterMemory records.
-- Unexpected emotional response = may be driven by emotional_triggers_high or emotional_baggage fields.
-- Actions not matching state = needs system and emotional_state must align. Check if simulateActiveCharacterNeeds has run recently.
-
-DUPLICATE / MERGE RULES:
-- Duplicates detected by normalized name.
-- Ghost merged = merged_into_character_id set but status ≠ 'merged' — integrity violation.
-- Safe merge: Settings → "Suggested Duplicates → Review & Merge" ONLY. Never auto-merge.
-- Merge remaps all conversations, messages, memories, life events, relationships.
-- Never merge across accounts.
-
-CONVERSATION LINKAGE:
-- Conversations have character_ids array. Deleted character = dangling ID.
-- Dangling = chat page may show errors or blank state.
-- Fix: troubleshoot_locations repair.
-
-OWNERSHIP RULES:
-- owner_email = ONLY valid ownership proof.
-- created_by = forbidden entirely.
-- All data isolated per owner_email. Zero cross-account access.
-
-═══════════════════════════════════════
-STRICT RULES FOR YOUR RESPONSES:
-═══════════════════════════════════════
-- Only discuss this user's data (${ownerEmail}).
-- Never reference created_by.
-- Never promise a repair not confirmed in the live repair list.
-- For duplicates: always direct to "Suggested Duplicates → Review & Merge" in Settings.
-- Name exact characters/records when diagnostic data is available.
-- Do not say "all looks fine" if warnings exist.
-- If you cannot confirm a fix without re-running diagnostic, say so.
-- When asked WHY something happened, explain the actual mechanism using the system knowledge above.
-- If the issue could be a data problem (not just behavioral), tell the user to say "run diagnostic" so you can check their actual data.
-${repairList}
+RULES:
+- Explain root causes mechanistically — what field, what function, what chain caused this.
+- Name exact characters when diagnostic data is available.
+- Never say "run backfill" for RECORD_NOT_FOUND — that is a dangling reference, not an ownership problem.
+- Never suggest created_by.
+- Keep responses concise and plain-language. No technical jargon unless explaining a mechanism.
+- If a direct action can help, say clearly what the user should type (e.g. "type 'sync my locations'").
 
 Recent conversation:
 ${recentHistory}
@@ -579,60 +721,36 @@ ${diagContext}
 
 User message: ${text}
 
-Respond with specific, honest, actionable information. Name exact characters and records. Explain root causes when asked about behavior. If repairs are available, name the repair_action key. If you cannot fix something, explain why and what the user should do next.`;
+Respond helpfully, name exact records when available, explain the real cause.`;
 
-      const response = await base44.integrations.Core.InvokeLLM({
-        prompt,
-        model: 'gemini_3_flash',
-      });
+      const response = await base44.integrations.Core.InvokeLLM({ prompt, model: 'gemini_3_flash' });
 
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
+      addMsg({ role: 'ai', content: response || 'Unable to generate a response. Please try again.', ts: ts() });
 
-      addMessage({ role: 'ai', content: response || 'Unable to generate a response. Please try again.', ts: ts() });
+      if (diagData) addMsg({ role: 'diagnostic', diagData, ts: ts() });
 
-      // Always show diagnostic panel after running one
-      if (diagData) {
-        addMessage({ role: 'diagnostic', diagData, ts: ts() });
-      }
-
-      // IssueReport: only create when:
-      // (a) user explicitly requests a report, OR
-      // (b) diagnostic ran AND found real issues (not just general questions/explanations)
       const diagFoundIssues = diagData && Object.values(diagData.findings || {}).flatMap(f => f.checks || []).some(c => c.status !== 'passed');
-
       if (wantsReport || (diagFoundIssues && wantsDiagnostic)) {
-        const category = detectCategory(text);
-        const findings = diagData
-          ? Object.values(diagData.findings || {}).flatMap(f => f.checks || []).filter(c => c.status !== 'passed')
-          : [];
-
+        const findings = diagData ? Object.values(diagData.findings || {}).flatMap(f => f.checks || []).filter(c => c.status !== 'passed') : [];
         base44.entities.IssueReport.create({
-          owner_email: ownerEmail,
-          owner_user_id: userId,
-          category,
-          title: text.slice(0, 120),
-          description: text,
+          owner_email: ownerEmail, owner_user_id: userId,
+          category: detectCategory(text), title: text.slice(0, 120), description: text,
           status: wantsReport ? 'received' : 'in_review',
-          diagnostic_snapshot: diagData?.findings || {},
-          findings,
+          diagnostic_snapshot: diagData?.findings || {}, findings,
         }).catch(() => {});
-
-        addMessage({ role: 'system', content: '📋 Support ticket created — logged for review.', ts: ts() });
+        addMsg({ role: 'system', content: '📋 Support ticket created — logged for review.', ts: ts() });
       }
-
     } catch (err) {
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
-      addMessage({ role: 'ai', content: `Something went wrong: ${err.message}. Please try again.`, ts: ts() });
+      addMsg({ role: 'ai', content: `Something went wrong: ${err.message}. Please try again.`, ts: ts() });
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
   };
 
   if (!ownerEmail) {
@@ -643,40 +761,38 @@ Respond with specific, honest, actionable information. Name exact characters and
     );
   }
 
+  const CHIPS = [
+    { label: 'Run Diagnostic', action: 'run diagnostic' },
+    { label: 'Merge Blocked', action: 'my duplicate merge is blocked' },
+    { label: 'Owner Email Backfill', action: 'run the owner email backfill' },
+    { label: 'Ghost References', action: 'clean ghost character references' },
+    { label: 'Sync Locations', action: 'sync my character locations' },
+    { label: 'Work Schedule', action: "my character isn't going to work" },
+    { label: 'Money Wrong', action: 'my money is wrong' },
+    { label: 'Character Missing', action: 'my character is missing' },
+    { label: 'Travel Issues', action: "my character isn't traveling" },
+    { label: 'File Report', action: 'I need to file a support report' },
+  ];
+
   return (
-    <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col" style={{ height: 520 }}>
+    <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col" style={{ height: 560 }}>
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border bg-card/80 flex-shrink-0">
         <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
         <HelpCircle className="w-3.5 h-3.5 text-sky-400" />
         <span className="text-xs font-bold text-sky-400 uppercase tracking-wider">Account Help & Repair</span>
         <span className="text-[9px] text-muted-foreground/40 ml-auto truncate max-w-[140px]">{ownerEmail}</span>
-        <button
-          onClick={() => setMessages(prev => prev.slice(0, 1))}
-          className="text-muted-foreground hover:text-foreground transition-colors p-1"
-          title="Clear conversation"
-        >
+        <button onClick={() => { setMessages(prev => prev.slice(0, 1)); setPendingConfirm(null); }}
+          className="text-muted-foreground hover:text-foreground transition-colors p-1" title="Clear conversation">
           <RefreshCw className="w-3 h-3" />
         </button>
       </div>
 
       {/* Quick-action chips */}
       <div className="flex gap-2 px-3 pt-2 pb-1 flex-shrink-0 overflow-x-auto scrollbar-hide">
-        {[
-          { label: 'Run Diagnostic', action: 'run diagnostic' },
-          { label: 'Travel Issues', action: 'why is my character not traveling?' },
-          { label: 'Wrong Image', action: 'why does the generated image look wrong?' },
-          { label: 'Money Issues', action: 'why is my character\'s money not correct?' },
-          { label: 'Work Schedule', action: 'why isn\'t my character going to work?' },
-          { label: 'Chat Issues', action: 'check my chat and message linkage' },
-          { label: 'Behavior', action: 'why is my character acting differently than expected?' },
-          { label: 'File Report', action: 'I have a problem I need to report' },
-        ].map(({ label, action }) => (
-          <button
-            key={label}
-            onClick={() => setInput(action)}
-            className="flex-shrink-0 text-[10px] px-2.5 py-1 rounded-full bg-secondary border border-border hover:border-sky-400/40 hover:text-sky-400 text-muted-foreground transition-colors"
-          >
+        {CHIPS.map(({ label, action }) => (
+          <button key={label} onClick={() => setInput(action)}
+            className="flex-shrink-0 text-[10px] px-2.5 py-1 rounded-full bg-secondary border border-border hover:border-sky-400/40 hover:text-sky-400 text-muted-foreground transition-colors">
             {label}
           </button>
         ))}
@@ -686,10 +802,15 @@ Respond with specific, honest, actionable information. Name exact characters and
       <div className="flex-1 overflow-y-auto py-2 space-y-1">
         <AnimatePresence>
           {messages.map(msg => (
-            <ChatMessage key={msg.id} msg={msg} onRepair={handleRepair} isRepairing={isRepairing} />
+            <ChatMessage key={msg.id} msg={msg}
+              onRepair={(action, charId) => runRepairAction(action, charId)}
+              isRepairing={isRepairing}
+              onConfirm={handleConfirm}
+              onDeny={handleDeny}
+            />
           ))}
         </AnimatePresence>
-        {isProcessing && (
+        {(isProcessing || isRepairing) && (
           <div className="flex items-center gap-2 px-4 py-2">
             <Loader2 className="w-3 h-3 text-sky-400 animate-spin" />
             <div className="flex gap-1">
@@ -709,21 +830,18 @@ Respond with specific, honest, actionable information. Name exact characters and
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Describe an issue or say 'run diagnostic'…"
+            placeholder="Describe a problem — I'll run the right tool automatically…"
             rows={2}
-            disabled={isProcessing}
+            disabled={isProcessing || isRepairing}
             className="flex-1 bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-sky-400 disabled:opacity-50"
           />
-          <button
-            onClick={handleSubmit}
-            disabled={!input.trim() || isProcessing}
-            className="h-10 w-10 rounded-xl bg-sky-600 flex items-center justify-center flex-shrink-0 hover:bg-sky-500 transition-colors disabled:opacity-40"
-          >
+          <button onClick={handleSubmit} disabled={!input.trim() || isProcessing || isRepairing}
+            className="h-10 w-10 rounded-xl bg-sky-600 flex items-center justify-center flex-shrink-0 hover:bg-sky-500 transition-colors disabled:opacity-40">
             <Send className="w-4 h-4 text-white" />
           </button>
         </div>
         <p className="text-[9px] text-muted-foreground/30 mt-1.5 text-center">
-          Scoped to your account only · owner_email isolated · Enter to send
+          Runs real tools · Scoped to your account only · Enter to send
         </p>
       </div>
     </div>

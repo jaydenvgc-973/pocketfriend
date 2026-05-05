@@ -27,7 +27,7 @@ import GenericLocationFixer from "@/components/settings/GenericLocationFixer";
 import SettingsTroubleshootingPanel from "@/components/settings/SettingsTroubleshootingPanel";
 import EditCharacterType from "@/components/settings/EditCharacterType";
 import NarrativeDiagnosticPanel from "@/components/settings/NarrativeDiagnosticPanel";
-import SupportAssistant from "@/components/settings/SupportAssistant";
+import SupportAssistant from "@/components/settings/SupportAssistant.jsx";
 import AdminIssueReportViewer from "@/components/settings/AdminIssueReportViewer";
 import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
 
