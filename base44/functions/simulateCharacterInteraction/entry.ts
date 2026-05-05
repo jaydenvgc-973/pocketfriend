@@ -75,57 +75,49 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'At least 2 character IDs required' }, { status: 400 });
     }
 
-    // Single batched fetch — avoids N parallel Character.filter({id}) calls that triggered 429.
-    // Paginated to handle accounts with > 200 characters safely.
-    // Scoped strictly to owner_email: user.email — no cross-account data possible.
-    const PAGE_SIZE = 200;
-    let allFetchedChars = [];
-    let page = 0;
-    while (true) {
-      const batch = await base44.asServiceRole.entities.Character.filter(
-        { owner_email: user.email },
-        null,
-        PAGE_SIZE,
-        page * PAGE_SIZE
-      );
-      allFetchedChars = allFetchedChars.concat(batch);
-      if (batch.length < PAGE_SIZE) break; // last page
-      page++;
-      if (page > 10) break; // hard safety cap at 2000 characters
-    }
-
-    const characters = character_ids.map(id => allFetchedChars.find(c => c.id === id));
-
-    // SAFETY VERIFICATION 1: Every requested id must resolve to a record
-    const notFound = character_ids.filter((id, i) => !characters[i]);
-    if (notFound.length > 0) {
-      return Response.json({
-        error: `Characters not found for owner ${user.email}: ${notFound.join(', ')}`,
-        stage: 'character_fetch',
-        character_ids: notFound,
-        fetched_total: allFetchedChars.length
-      }, { status: 404 });
-    }
-
-    // SAFETY VERIFICATION 2: Every resolved character must have owner_email == user.email
-    // Guards against future query changes or mixed-scope data leaking through
-    const ownershipFailures = characters.filter(c => c.owner_email !== user.email);
-    if (ownershipFailures.length > 0) {
-      return Response.json({
-        error: `Ownership mismatch — records returned but owner_email does not match: ${ownershipFailures.map(c => `${c.name} (owner_email=${c.owner_email})`).join(', ')}`,
-        stage: 'ownership_verification',
-        expected_owner: user.email
-      }, { status: 403 });
-    }
-
-    // SAFETY VERIFICATION 3: Every resolved character must be a supported type
+    // Direct per-ID resolution — safe for 2–4 characters (no rate limit risk from large list scans).
+    // Fetches each selected character directly by id using service role, then verifies ownership.
+    // This avoids false 404s caused by batch scans missing valid characters (e.g. NPC records
+    // that do not appear in the first N results of a filter({ owner_email }) query).
     const SUPPORTED_TYPES = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'];
-    const unsupportedChars = characters.filter(c => !SUPPORTED_TYPES.includes(c.character_type));
-    if (unsupportedChars.length > 0) {
-      return Response.json({
-        error: `Unsupported character type(s): ${unsupportedChars.map(c => `${c.name} (${c.character_type})`).join(', ')}`,
-        stage: 'type_eligibility'
-      }, { status: 400 });
+
+    const characters = [];
+    for (const id of character_ids) {
+      // Small sequential delay to be kind to the rate limiter
+      if (characters.length > 0) await new Promise(r => setTimeout(r, 150));
+
+      const results = await base44.asServiceRole.entities.Character.filter({ id }, null, 1);
+      const char = results?.[0] || null;
+
+      // SAFETY VERIFICATION 1: Direct id fetch must return a record
+      if (!char) {
+        return Response.json({
+          error: `Simulation failed while resolving character id ${id}. The selected character could not be loaded directly.`,
+          stage: 'character_fetch',
+          character_id: id
+        }, { status: 404 });
+      }
+
+      // SAFETY VERIFICATION 2: Resolved character must be owned by the current user
+      if (char.owner_email !== user.email) {
+        return Response.json({
+          error: `Ownership mismatch for "${char.name}" (id=${id}): owner_email=${char.owner_email}, expected=${user.email}`,
+          stage: 'ownership_verification',
+          character_id: id,
+          expected_owner: user.email
+        }, { status: 403 });
+      }
+
+      // SAFETY VERIFICATION 3: Resolved character must be a supported type
+      if (!SUPPORTED_TYPES.includes(char.character_type)) {
+        return Response.json({
+          error: `Unsupported character type for "${char.name}" (${char.character_type}). Supported: ${SUPPORTED_TYPES.join(', ')}`,
+          stage: 'type_eligibility',
+          character_id: id
+        }, { status: 400 });
+      }
+
+      characters.push(char);
     }
 
     const getRelationshipContext = (fromChar, toChar) => {
