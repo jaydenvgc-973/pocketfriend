@@ -53,30 +53,33 @@ export default function Home() {
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
-    staleTime: 60 * 1000,        // 1 min — avoid redundant re-fetches within the same session window
-    gcTime: 5 * 60 * 1000,
-    refetchOnMount: true,
+    staleTime: 5 * 60 * 1000,   // 5 min — location data is stable; only changes when user edits locations
+    gcTime: 10 * 60 * 1000,
+    refetchOnMount: false,       // cache is sufficient on re-mount; avoids duplicate calls on navigation
     refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
+    refetchOnReconnect: false,   // reconnect does not change location data
     retry: 2,
-    retryDelay: (attempt) => attempt * 2000, // 2s, 4s — back off on 429s
-    placeholderData: (prev) => prev,          // keep previous cached locations while retrying
+    retryDelay: (attempt) => attempt * 2000,
+    placeholderData: (prev) => prev,
   });
 
-  // Real-time: invalidate locations when any LocationReference changes.
-  // DEBOUNCED — minimum 30s between re-fetches to prevent 429 storms from bulk
-  // location writes (presence enforcement, home assignments, etc.) firing
-  // one fetchAllLocationsForUser call per event.
+  // Real-time: invalidate locations when a LocationReference is created or deleted.
+  // IMPORTANT: automations write Character records, not LocationReference records — so
+  // this subscriber fires only when the user explicitly adds/removes a location.
+  // UPDATE events are intentionally excluded: name/zone edits don't affect the dropdown list.
+  // DEBOUNCE: 5 minutes — location structure changes are infrequent user actions.
+  // This prevents automation-triggered LocationReference writes (e.g. temporary housing
+  // creation) from firing a fetchAllLocationsForUser call on every automation tick.
   const locationInvalidateTimerRef = useRef(null);
   useEffect(() => {
     const unsubscribe = base44.entities.LocationReference.subscribe((event) => {
-      if (event.type === "create" || event.type === "update" || event.type === "delete") {
-        if (locationInvalidateTimerRef.current) return; // already scheduled — skip
-        locationInvalidateTimerRef.current = setTimeout(() => {
-          locationInvalidateTimerRef.current = null;
-          queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
-        }, 30000); // 30s debounce — location map data is stable within a session
-      }
+      // Only react to structural changes (create/delete), not field updates
+      if (event.type !== "create" && event.type !== "delete") return;
+      if (locationInvalidateTimerRef.current) return; // already scheduled — skip
+      locationInvalidateTimerRef.current = setTimeout(() => {
+        locationInvalidateTimerRef.current = null;
+        queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+      }, 5 * 60 * 1000); // 5 min debounce — structural location changes are rare user actions
     });
     return () => {
       unsubscribe();

@@ -44,14 +44,23 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
    );
    const isDisabled = !hasValidLocation || currentLabel === 'Away';
 
+  // Use owner_email from the character to match the SAME queryKey as Home's location query.
+  // This allows React Query to deduplicate — no second network call is made when Home
+  // already has the data cached under ["locationReferences", ownerEmail].
+  const ownerEmail = character.owner_email || null;
+
   const { data: locations = [], isLoading } = useQuery({
-    queryKey: ["allLocationsForTeleport"],
+    queryKey: ["locationReferences", ownerEmail],
     queryFn: async () => {
       const res = await base44.functions.invoke("fetchAllLocationsForUser", {});
       return res?.data?.locations || [];
     },
-    staleTime: 60000,
-    enabled: open,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    // Only fetch if cache is empty — otherwise serve from Home's already-loaded cache
+    enabled: open && !!ownerEmail,
   });
 
   // Filter out locations that ARE the character's current resolved location
