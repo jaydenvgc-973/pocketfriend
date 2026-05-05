@@ -40,6 +40,8 @@ export default function Settings() {
   const [showSettingsTroubleshooting, setShowSettingsTroubleshooting] = useState(false);
   const [showSuggestedDupes, setShowSuggestedDupes] = useState(false);
   const [suggestedDupes, setSuggestedDupes] = useState([]);
+  const [isDupeScanLoading, setIsDupeScanLoading] = useState(false);
+  const [dupeScanError, setDupeScanError] = useState(null);
 
   const { settings, isLoading: isLoadingSettings, updateSettings } = useUserSettings();
 
@@ -570,53 +572,66 @@ export default function Settings() {
           
           {/* Suggested duplicates — always fetches fresh Character records before scanning */}
           <button
+            disabled={isDupeScanLoading}
             onClick={async () => {
-              if (!user?.email) return;
-              // ALWAYS fetch fresh from DB — never use stale cached allCharacters.
-              // Stale cache can contain ghost IDs from fetchNPCsForUser that no longer
-              // exist in the DB, causing previewCharacterMerge to return RECORD_NOT_FOUND.
-              let freshChars = [];
+              setDupeScanError(null);
+              // user query defaults to {} — email won't be present until query resolves
+              const email = user?.email;
+              if (!email) {
+                setDupeScanError('User email not available yet. Please wait a moment and try again.');
+                return;
+              }
+              setIsDupeScanLoading(true);
               try {
-                freshChars = await base44.entities.Character.filter(
-                  { owner_email: user.email },
+                // ALWAYS fetch fresh from DB — never use stale cached allCharacters.
+                // Stale cache can contain ghost IDs from fetchNPCsForUser that no longer
+                // exist in the DB, causing previewCharacterMerge to return RECORD_NOT_FOUND.
+                const freshChars = await base44.entities.Character.filter(
+                  { owner_email: email },
                   '-created_date',
                   500
                 );
+                // Only live records with full IDs
+                const live = freshChars.filter(c =>
+                  c.id &&
+                  c.name &&
+                  c.status !== 'deleted' &&
+                  c.status !== 'soft_deleted' &&
+                  c.status !== 'merged'
+                );
+                const nameMap = new Map();
+                live.forEach(c => {
+                  const key = c.name.trim().toLowerCase();
+                  if (!nameMap.has(key)) nameMap.set(key, []);
+                  nameMap.get(key).push(c);
+                });
+                const dupes = [];
+                nameMap.forEach((records, name) => {
+                  if (records.length >= 2) dupes.push({ name, records });
+                });
+                setSuggestedDupes(dupes);
+                setShowSuggestedDupes(true);
               } catch (err) {
-                console.error('[SuggestedDuplicates] fresh fetch failed', err);
-                return;
+                setDupeScanError(`Scan failed: ${err.message || 'Unknown error'}`);
+              } finally {
+                setIsDupeScanLoading(false);
               }
-              // Only live records with full IDs
-              const live = freshChars.filter(c =>
-                c.id &&
-                c.name &&
-                c.status !== 'deleted' &&
-                c.status !== 'soft_deleted' &&
-                c.status !== 'merged'
-              );
-              const nameMap = new Map();
-              live.forEach(c => {
-                const key = c.name.trim().toLowerCase();
-                if (!nameMap.has(key)) nameMap.set(key, []);
-                nameMap.get(key).push(c);
-              });
-              const dupes = [];
-              nameMap.forEach((records, name) => {
-                if (records.length >= 2) dupes.push({ name, records });
-              });
-              setSuggestedDupes(dupes);
-              setShowSuggestedDupes(true);
             }}
-            className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-amber-500/40 transition-colors text-left mb-3"
+            className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-amber-500/40 transition-colors text-left mb-1 disabled:opacity-60"
           >
             <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
               <GitMerge className="w-4 h-4 text-amber-500" />
             </div>
             <div className="flex-1">
               <p className="text-sm font-medium text-foreground">Suggested Duplicates</p>
-              <p className="text-xs text-muted-foreground">Review and merge duplicate characters</p>
+              <p className="text-xs text-muted-foreground">
+                {isDupeScanLoading ? 'Scanning duplicates…' : 'Review and merge duplicate characters'}
+              </p>
             </div>
           </button>
+          {dupeScanError && (
+            <p className="text-xs text-destructive mb-3 px-1">{dupeScanError}</p>
+          )}
 
           {/* Auto-merge — diagnostic scan only, does NOT perform real merge */}
           <div className="w-full flex items-start gap-3 p-3 rounded-xl bg-card border border-amber-500/20 text-left mb-3 opacity-70 cursor-not-allowed select-none">
