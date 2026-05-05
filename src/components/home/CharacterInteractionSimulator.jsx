@@ -35,7 +35,29 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [simulationError, setSimulationError] = useState(null);
 
-  const toggleSelect = (id) => {
+  // MongoDB ObjectId = 24 hex chars exactly.
+  // Any id that isn't exactly 24 chars is not a real Character entity id.
+  const OBJECT_ID_LENGTH = 24;
+
+  const toggleSelect = (id, char) => {
+    // ID integrity guard — block selection of corrupted/transformed objects
+    if (!id || id.length !== OBJECT_ID_LENGTH) {
+      console.error('[SimulateInteraction] BLOCKED: invalid character id', {
+        id,
+        idLength: id?.length,
+        expectedLength: OBJECT_ID_LENGTH,
+        name: char?.name,
+        type: char?.character_type,
+        owner_email: char?.owner_email,
+      });
+      return;
+    }
+    console.log('[SimulateInteraction] Selecting character', {
+      id,
+      name: char?.name,
+      type: char?.character_type,
+      owner_email: char?.owner_email,
+    });
     if (selected.includes(id)) {
       setSelected(selected.filter(s => s !== id));
     } else if (selected.length < 4) {
@@ -64,10 +86,22 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
     setSimulationError(null);
 
     const selectedChars = characters.filter(c => selected.includes(c.id));
-    console.log('[SimulateInteraction] Starting simulation', {
+
+    // Pre-submit ID integrity audit — every submitted id must be a real 24-char ObjectId
+    const invalidChars = selectedChars.filter(c => !c.id || c.id.length !== OBJECT_ID_LENGTH);
+    if (invalidChars.length > 0) {
+      const details = invalidChars.map(c => `"${c.name}" (id="${c.id}", len=${c.id?.length})`).join(', ');
+      console.error('[SimulateInteraction] BLOCKED: invalid ids in selection', invalidChars);
+      setSimulationError(`Cannot simulate: the following characters have invalid IDs: ${details}. Please reload the page and try again.`);
+      setIsRunning(false);
+      return;
+    }
+
+    console.log('[SimulateInteraction] Starting simulation — all IDs verified', {
       currentUser: currentUser?.email,
       characters: selectedChars.map(c => ({
         id: c.id,
+        idLength: c.id.length,
         name: c.name,
         type: c.character_type,
         owner_email: c.owner_email,
@@ -201,7 +235,7 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
                 {eligibleByType[type].map(char => (
                   <button
                     key={char.id}
-                    onClick={() => toggleSelect(char.id)}
+                    onClick={() => toggleSelect(char.id, char)}
                     className={`p-2 rounded-xl border transition-colors text-left text-xs ${
                       selected.includes(char.id)
                         ? 'bg-primary/10 border-primary'

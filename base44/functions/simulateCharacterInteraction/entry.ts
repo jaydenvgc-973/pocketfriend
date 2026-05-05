@@ -121,16 +121,45 @@ Deno.serve(async (req) => {
   // resolve each requested id from that set. No ID transformation occurs.
   trace.character_lookup_started = true;
 
+  // CRITICAL: asServiceRole.entities.Character.filter({ owner_email }) only returns NPC types
+  // on this account — it does NOT return active_created_character records via service role.
+  // This is the same split that exists on the Home page, which fetches two separate lists:
+  //   1. User-scoped (RLS) query → active_created_character records
+  //   2. Service-role backend (fetchNPCsForUser) → NPC types
+  //
+  // We must replicate the same dual-fetch here. The user-scoped base44.entities path (NOT
+  // asServiceRole) returns all character types the authenticated user owns via RLS.
   let allOwnedChars = [];
   try {
-    allOwnedChars = await base44.asServiceRole.entities.Character.filter(
+    // Sequential to avoid rate-limit (429) from simultaneous queries on the same account
+    // Path 1: user-scoped RLS — returns active_created_character records
+    const activeChars = await base44.entities.Character.filter(
       { owner_email: user.email },
       '-created_date',
       300
     );
+    await new Promise(r => setTimeout(r, 200));
+    // Path 2: service-role — returns NPC types (npc_fictitious, npc_family_member, npc_regular)
+    const npcChars = await base44.asServiceRole.entities.Character.filter(
+      { owner_email: user.email },
+      '-created_date',
+      300
+    );
+
+    // Merge and deduplicate by id — same pattern as Home's allCharacters merge
+    const seen = new Set();
+    for (const c of [...activeChars, ...npcChars]) {
+      if (!seen.has(c.id) && c.status !== 'deleted' && c.status !== 'soft_deleted') {
+        seen.add(c.id);
+        allOwnedChars.push(c);
+      }
+    }
+
     trace.character_lookup_results.push({
       stage: 'owner_fetch',
       total_owned: allOwnedChars.length,
+      active_chars_count: activeChars.length,
+      npc_chars_count: npcChars.length,
       owner_email_used: user.email,
     });
   } catch (fetchErr) {
