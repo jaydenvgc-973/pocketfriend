@@ -66,20 +66,39 @@ export function useUserPresence(currentUser, settings, settingsId) {
    */
   const setUserLocation = useCallback(async (locationId, locationName) => {
     let resolvedSettingsId = settingsId;
+
     if (!resolvedSettingsId && currentUser?.email) {
       // settingsId not yet loaded — fetch it directly before writing
       const list = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
       resolvedSettingsId = list[0]?.id;
+
+      // No record exists yet — create one now so the write can succeed
+      if (!resolvedSettingsId) {
+        console.warn("[useUserPresence] setUserLocation: no UserSettings record found — creating one for", currentUser.email);
+        const created = await base44.entities.UserSettings.create({
+          owner_email: currentUser.email,
+          owner_user_id: currentUser.id || null,
+        });
+        resolvedSettingsId = created?.id;
+        if (!resolvedSettingsId) {
+          console.error("[useUserPresence] setUserLocation: failed to create UserSettings — cannot write presence");
+          return;
+        }
+        console.log("[useUserPresence] setUserLocation: created new UserSettings →", resolvedSettingsId);
+        invalidate(); // refresh so the hook has the new record going forward
+      }
     }
+
     if (!resolvedSettingsId) {
-      console.error("[useUserPresence] setUserLocation: no settingsId — cannot write presence");
+      console.error("[useUserPresence] setUserLocation: no settingsId after all attempts — cannot write presence");
       return;
     }
-    const settingsId = resolvedSettingsId;
-    console.log("[useUserPresence] setUserLocation WRITE →", { settingsId, locationId, locationName, email: currentUser?.email });
+
+    const activeSettingsId = resolvedSettingsId;
+    console.log("[useUserPresence] setUserLocation WRITE →", { activeSettingsId, locationId, locationName, email: currentUser?.email });
     // OPTIMISTIC: update UI immediately without waiting for refetch
     setOptimisticPresence({ isAway: false, locationId, locationName, status: "present" });
-    base44.entities.UserSettings.update(settingsId, {
+    base44.entities.UserSettings.update(activeSettingsId, {
       user_current_location_id: locationId,
       user_current_location_name: locationName,
       user_presence_status: "present",
@@ -89,10 +108,9 @@ export function useUserPresence(currentUser, settings, settingsId) {
       invalidate();
     }).catch((err) => {
       console.error("[useUserPresence] setUserLocation WRITE FAILED →", err);
-      // Revert on error
       setOptimisticPresence(null);
     });
-  }, [settingsId, currentUser?.email, invalidate]);
+  }, [settingsId, currentUser?.email, currentUser?.id, invalidate]);
 
   /**
    * Set user as Away (outside the app world).
@@ -100,18 +118,36 @@ export function useUserPresence(currentUser, settings, settingsId) {
    */
   const setUserAway = useCallback(async () => {
     let resolvedSettingsId = settingsId;
+
     if (!resolvedSettingsId && currentUser?.email) {
       const list = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
       resolvedSettingsId = list[0]?.id;
+
+      if (!resolvedSettingsId) {
+        console.warn("[useUserPresence] setUserAway: no UserSettings record found — creating one for", currentUser.email);
+        const created = await base44.entities.UserSettings.create({
+          owner_email: currentUser.email,
+          owner_user_id: currentUser.id || null,
+        });
+        resolvedSettingsId = created?.id;
+        if (!resolvedSettingsId) {
+          console.error("[useUserPresence] setUserAway: failed to create UserSettings — cannot write presence");
+          return;
+        }
+        console.log("[useUserPresence] setUserAway: created new UserSettings →", resolvedSettingsId);
+        invalidate();
+      }
     }
+
     if (!resolvedSettingsId) {
-      console.error("[useUserPresence] setUserAway: no settingsId — cannot write presence");
+      console.error("[useUserPresence] setUserAway: no settingsId after all attempts — cannot write presence");
       return;
     }
-    const settingsId = resolvedSettingsId;
+
+    const activeSettingsId = resolvedSettingsId;
     // OPTIMISTIC: update UI immediately
     setOptimisticPresence({ isAway: true, locationId: null, locationName: null, status: "away" });
-    base44.entities.UserSettings.update(settingsId, {
+    base44.entities.UserSettings.update(activeSettingsId, {
       user_current_location_id: null,
       user_current_location_name: null,
       user_presence_status: "away",
@@ -119,7 +155,7 @@ export function useUserPresence(currentUser, settings, settingsId) {
     }).then(() => invalidate()).catch(() => {
       setOptimisticPresence(null);
     });
-  }, [settingsId, currentUser?.email, invalidate]);
+  }, [settingsId, currentUser?.email, currentUser?.id, invalidate]);
 
   // Merge: optimistic state wins over server state while pending
   const serverPresence = readUserPresence(currentUser, settings);
