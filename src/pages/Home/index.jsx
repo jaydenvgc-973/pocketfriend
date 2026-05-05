@@ -57,6 +57,8 @@ export default function Home() {
   });
 
   // Fetch NPC fictitious characters via service-role backend — same query key as Settings
+  // staleTime: 0 + refetchOnMount: true ensures IDs are always fresh.
+  // The simulator submits these IDs directly to the backend; stale IDs cause 404s.
   const { data: npcFictitiousFromBackend = [] } = useQuery({
     queryKey: ["npc-characters", currentUser?.id],
     queryFn: async () => {
@@ -65,8 +67,10 @@ export default function Home() {
       return res?.data?.npcs || [];
     },
     enabled: !!currentUser?.id,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 0,
     gcTime: 10 * 60 * 1000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 
   // Merge RLS characters + NPC backend results, deduped by ID — matches Settings merge logic exactly

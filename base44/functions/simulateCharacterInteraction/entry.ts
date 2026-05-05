@@ -112,37 +112,45 @@ Deno.serve(async (req) => {
   const SUPPORTED_TYPES = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'];
 
   // ── STAGE: character_lookup ────────────────────────────────────────────────
-  const characters = [];
+  // Root cause of prior 404s: Character.get(id) via asServiceRole fails for valid characters
+  // owned by a user — the method does not reliably bypass RLS for all record types.
+  //
+  // The proven working pattern used by Home, Chat, fetchNPCsForUser, and every other
+  // character resolver in the app is: filter({ owner_email }) then look up by id in-memory.
+  // This is the same source-of-truth query. We fetch all owned characters once, then
+  // resolve each requested id from that set. No ID transformation occurs.
   trace.character_lookup_started = true;
 
+  let allOwnedChars = [];
+  try {
+    allOwnedChars = await base44.asServiceRole.entities.Character.filter(
+      { owner_email: user.email },
+      '-created_date',
+      300
+    );
+    trace.character_lookup_results.push({
+      stage: 'owner_fetch',
+      total_owned: allOwnedChars.length,
+      owner_email_used: user.email,
+    });
+  } catch (fetchErr) {
+    return Response.json({
+      error: `Failed to fetch owned characters for user ${user.email}: ${fetchErr?.message || String(fetchErr)}`,
+      stage: 'character_fetch_all_owned',
+      current_user_email: user.email,
+      trace
+    }, { status: 500 });
+  }
+
+  // Build a lookup map from the fetched set — O(1) per requested id
+  const ownedById = {};
+  for (const c of allOwnedChars) {
+    ownedById[c.id] = c;
+  }
+
+  const characters = [];
   for (const id of character_ids) {
-    if (characters.length > 0) await new Promise(r => setTimeout(r, 150));
-
-    let char = null;
-    let lookupError = null;
-    let getMethodExists = false;
-
-    try {
-      // Test whether .get() exists before calling it
-      getMethodExists = typeof base44.asServiceRole.entities.Character.get === 'function';
-
-      if (!getMethodExists) {
-        trace.character_lookup_results.push({ id, outcome: 'get_method_missing' });
-        return Response.json({
-          error: `Character.get(id) is not available on this SDK version. Cannot perform direct ID lookup.`,
-          stage: 'character_lookup_method_invalid',
-          character_id: id,
-          get_method_type: typeof base44.asServiceRole.entities.Character.get,
-          current_user_email: user.email,
-          trace
-        }, { status: 500 });
-      }
-
-      char = await base44.asServiceRole.entities.Character.get(id);
-    } catch (lookupErr) {
-      lookupError = lookupErr?.message || String(lookupErr);
-      char = null;
-    }
+    const char = ownedById[id] || null;
 
     trace.character_lookup_results.push({
       id,
@@ -150,22 +158,25 @@ Deno.serve(async (req) => {
       name: char?.name || null,
       owner_email: char?.owner_email || null,
       character_type: char?.character_type || null,
-      get_method_exists: getMethodExists,
-      lookup_error: lookupError,
+      in_owned_set: !!char,
     });
 
     if (!char) {
+      // Character id submitted by the frontend was not found in the owner's character set.
+      // This means either: stale frontend cache, wrong id, or the character was deleted.
+      // Report all owned ids so the caller can cross-check.
       return Response.json({
-        error: `Simulation failed while resolving character id "${id}". The selected character could not be loaded directly. lookup_error: ${lookupError || 'none'}`,
+        error: `Character id "${id}" was not found among ${allOwnedChars.length} characters owned by ${user.email}. The selected card may be showing a stale id. Reload the Home page and try again.`,
         stage: 'character_fetch',
         character_id: id,
-        get_method_exists: getMethodExists,
-        lookup_error: lookupError,
+        total_owned_characters: allOwnedChars.length,
+        owned_character_ids: allOwnedChars.map(c => ({ id: c.id, name: c.name, type: c.character_type })),
         current_user_email: user.email,
         trace
       }, { status: 404 });
     }
 
+    // owner_email is guaranteed equal because we fetched by owner_email — but verify explicitly
     if (char.owner_email !== user.email) {
       return Response.json({
         error: `Ownership mismatch for "${char.name}" (id=${id}): owner_email=${char.owner_email}, expected=${user.email}`,
