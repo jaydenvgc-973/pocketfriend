@@ -7,7 +7,6 @@
  */
 
 import { callLLMWithRetry } from "@/lib/llmUtils";
-import { getWeatherMoodModifier } from "@/lib/weatherSystem";
 
 // ── EDUCATION & TRAINING CONTEXT ─────────────────────────────────────────────
 
@@ -200,24 +199,6 @@ The room is a 3D space. Treat it as one. Every image prompt must include: (1) ch
 BEDROOM RULE: bedroom is NOT always "lying in bed close-up". Sleeping: wide doorway view, character under covers from across the room, side view at distance. Awake: sitting on bed edge | by the window | standing near dresser | on the floor | folding clothes.
 ${lastImagePromptSnippet ? `ANTI-REPETITION — last image used: "${lastImagePromptSnippet.substring(0, 120)}..." — use a DIFFERENT camera position, distance, and pose.` : `ANTI-REPETITION: vary camera, distance, and pose every time.`}
 FORMAT: [CHARACTER] [action]. Camera [position]. [Wide/Medium/Close]. [Time-of-day lighting]. [Zone — 1-2 furniture anchors]."`;
-}
-
-// ── WEATHER MOOD CONTEXT ──────────────────────────────────────────────────────
-
-/**
- * Build a persistent weather mood context string injected into every character prompt.
- * Source of truth: UserSettings.daily_weather_cache
- *
- * This is separate from buildDynamicContexts (which is keyword-triggered).
- * This always injects mood influence when severe/notable weather exists.
- *
- * @param {Object|null} weatherCache - UserSettings.daily_weather_cache
- * @param {Object} character - Character record
- * @returns {string} — empty string if no notable weather
- */
-export function buildWeatherMoodContext(weatherCache, character) {
-  const modifier = getWeatherMoodModifier(weatherCache, character);
-  return modifier ? `\n\n${modifier}` : '';
 }
 
 // ── LOCATION RESPONSE VALIDATOR ───────────────────────────────────────────────
