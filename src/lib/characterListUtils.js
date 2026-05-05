@@ -22,9 +22,9 @@ export async function fetchCharacterListForPicker(base44, userEmail) {
   
   const settings = settingsList?.[0] || {};
   
-  // Fetch all non-deleted characters created by user
+  // owner_email is the sole ownership source of truth — created_by is permanently forbidden
   const all = await base44.entities.Character.filter({ 
-    created_by: userEmail 
+    owner_email: userEmail 
   });
   
   const active = all.filter(c => c.status !== 'deleted');

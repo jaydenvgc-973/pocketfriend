@@ -11,13 +11,9 @@ export async function preventDuplicateVGCTowers(base44, newLocationName, userEma
     return false; // Not a VGC Towers, allow creation
   }
 
+  // owner_email is the sole ownership source of truth — created_by is permanently forbidden
   const existing = await base44.asServiceRole.entities.LocationReference.filter(
-    {
-      $or: [
-        { created_by: userEmail, name: { $regex: 'VGC Towers', $options: 'i' } },
-        { owner_email: userEmail, name: { $regex: 'VGC Towers', $options: 'i' } },
-      ],
-    },
+    { owner_email: userEmail, name: { $regex: 'VGC Towers', $options: 'i' } },
     '-created_date',
     10
   ).catch(() => []);

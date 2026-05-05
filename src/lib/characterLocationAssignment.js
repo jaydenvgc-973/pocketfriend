@@ -74,9 +74,9 @@ export function getLocationAssignableCharacters(allCharacters, currentUserId, cu
 function isCharacterOwnedByUser(character, currentUserId, currentUserEmail) {
   if (!character) return false;
   
+  // owner_email is the sole ownership source of truth — created_by is permanently forbidden
   if (character.owner_user_id && character.owner_user_id === currentUserId) return true;
   if (character.owner_email && character.owner_email === currentUserEmail) return true;
-  if (character.created_by === currentUserEmail && !character.owner_user_id && !character.owner_email) return true;
   if (character.assigned_user_id === currentUserId) return true;
   if (character.profile_owner === currentUserEmail) return true;
   

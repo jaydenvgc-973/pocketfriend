@@ -57,10 +57,11 @@ export async function fetchUnifiedRoster(base44, userEmail) {
 
   const [user, settingsList, all] = await Promise.all([
     base44.auth.me().catch(() => null),
-    base44.entities.UserSettings.filter({ created_by: userEmail }).catch(() => []),
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    base44.entities.UserSettings.filter({ owner_email: userEmail }).catch(() => []),
     isAdmin
       ? base44.entities.Character.list('-created_date', 200).catch(() => [])
-      : base44.entities.Character.filter({ created_by: userEmail }, '-created_date', 200).catch(() => []),
+      : base44.entities.Character.filter({ owner_email: userEmail }, '-created_date', 200).catch(() => []),
   ]);
 
   const settings = Array.isArray(settingsList) ? settingsList[0] : settingsList || {};
