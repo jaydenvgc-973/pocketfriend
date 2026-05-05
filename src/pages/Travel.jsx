@@ -23,6 +23,7 @@ import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { canCharacterTravelToLocation } from "@/lib/characterEditableListResolver";
 import { resolveTravelPresenceEntities, getPresenceAtLocation, isLocationEmpty } from "@/lib/travelPresenceResolver";
 import { shouldVGCResidentBeAtHome } from "@/lib/vgcTowersPresenceEngine";
+import { useUserPresence } from "@/hooks/useUserPresence";
 
 export default function Travel() {
   const navigate = useNavigate();
@@ -151,17 +152,29 @@ export default function Travel() {
   });
 
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
-  const settings = safeSettingsList[0] || {};
+  const safeSettings = safeSettingsList[0] || null;
+  const settings = safeSettings || {};
+
+  // useUserPresence: gives optimistic-aware presence (survives cache staleness and optimistic UI)
+  const { userPresence } = useUserPresence(currentUser, safeSettings, safeSettings?.id);
 
   // ALL character records for internal family scanning (parent character lookup)
   const allCharactersForFamilyScan = [...activeCharacters, ...npcCharacters, ...npcFamilyMembers];
 
+  // Build a synthetic userSettings object that merges server data with optimistic presence
+  // so resolveTravelPresenceEntities always sees the current user location (not stale DB value)
+  const mergedUserSettingsForResolver = safeSettings ? {
+    ...safeSettings,
+    user_presence_status: userPresence.isAway ? 'away' : 'present',
+    user_current_location_id: userPresence.isAway ? null : userPresence.locationId,
+    user_current_location_name: userPresence.isAway ? null : userPresence.locationName,
+  } : null;
+
   // UNIFIED PRESENCE RESOLVER — single source of truth for map, popup, counts
   // Includes: active_created, npc_fictitious, npc_family_member, internal family, + user when present
-  const safeSettings = safeSettingsList[0] || null;
   const allPresenceEntities = useMemo(() => resolveTravelPresenceEntities({
     currentUser,
-    userSettings: safeSettings,
+    userSettings: mergedUserSettingsForResolver,
     activeCharacters,
     npcFictitious: npcCharacters,
     npcFamilyMembers,
@@ -169,8 +182,8 @@ export default function Travel() {
     locations: locationsData,
   }), [
     currentUser?.id,
-    safeSettings?.user_presence_status,
-    safeSettings?.user_current_location_id,
+    userPresence.isAway,
+    userPresence.locationId,
     activeCharacters.length,
     npcCharacters.length,
     npcFamilyMembers.length,

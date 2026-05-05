@@ -465,9 +465,10 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
 function CharacterPin({ marker, onClick, offset }) {
   const [hovered, setHovered] = useState(false);
   const isActive = marker.type === "active_created_character";
+  const isUser = marker.isUserMarker || marker.type === "user";
   const isFamilyMember = marker.isFamilyMember;
-  // active = blue, family = pink/rose, npc_fictitious = purple
-  const borderColor = isActive ? "#3b82f6" : isFamilyMember ? "#f43f5e" : "#8b5cf6";
+  // user = gold, active = blue, family = pink/rose, npc_fictitious = purple
+  const borderColor = isUser ? "#f59e0b" : isActive ? "#3b82f6" : isFamilyMember ? "#f43f5e" : "#8b5cf6";
 
   return (
     <button
@@ -508,7 +509,18 @@ function CharacterPin({ marker, onClick, offset }) {
           {marker.initials || marker.name?.slice(0, 1)?.toUpperCase() || '?'}
         </div>
       )}
-      {/* Sleep face overlay removed per UI rule: no icons covering avatar faces */}
+      {/* "You" badge for user marker */}
+      {isUser && (
+        <div style={{
+          position: "absolute", bottom: -6, left: "50%", transform: "translateX(-50%)",
+          background: "#f59e0b", color: "#fff",
+          fontSize: 7, fontWeight: 800,
+          padding: "1px 4px", borderRadius: 4,
+          whiteSpace: "nowrap", pointerEvents: "none", lineHeight: 1.4,
+        }}>
+          YOU
+        </div>
+      )}
       <AnimatePresence>
         {hovered && (
           <motion.div
@@ -669,15 +681,15 @@ function buildMarkers(entities, locations, gridCoords) {
       characterId: entity.id,
       name: entity.display_name,
       initials: entity.initials,
+      // Use effective_presence_type as the canonical type — includes 'user' for user entity
       type: entity.effective_presence_type || entity.character_type || 'npc_fictitious',
       avatarUrl: entity.avatar_url,
       locationId: locId,
       locationName: location.name,
       coordinates,
-      // isAsleep: only show moon on map pin when backend confirmed sleep state.
-      // SLEEP TRUTH: resolved_presence_status is the single source of truth — no schedule inference.
       isAsleep: entity.resolved_presence_status === 'sleeping' || entity.resolved_presence_status === 'napping',
       isFamilyMember: entity.effective_presence_type === 'npc_family_member',
+      isUserMarker: entity.effective_presence_type === 'user',
     });
   }
   return markers;
