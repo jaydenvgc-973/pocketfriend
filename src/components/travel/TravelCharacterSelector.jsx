@@ -36,6 +36,10 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
     .filter(c => c.character_type === 'npc_fictitious')
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
+  const npcFamilyChars = characters
+    .filter(c => c.character_type === 'npc_family_member')
+    .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
+
   const renderCharCard = (char) => {
     let availability = { available: true, reason: null, availableAt: null };
     try { availability = getCharacterTravelAvailability(char, locationMap); } catch (e) {}
@@ -129,7 +133,15 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
         </>
       )}
 
-      {activeCreatedChars.length === 0 && npcFictitiousChars.length === 0 && (
+      {/* NPC Family Members — shown only if they exist */}
+      {npcFamilyChars.length > 0 && (
+        <>
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1 pt-2">Family</p>
+          {npcFamilyChars.map(renderCharCard)}
+        </>
+      )}
+
+      {activeCreatedChars.length === 0 && npcFictitiousChars.length === 0 && npcFamilyChars.length === 0 && (
         <p className="text-xs text-muted-foreground text-center py-4">No characters available</p>
       )}
     </div>

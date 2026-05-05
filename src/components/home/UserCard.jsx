@@ -26,7 +26,6 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
   // Close on outside click
   useEffect(() => {
     if (!showDropdown) return;
-    updateDropdownPos();
     const handler = (e) => {
       const inTrigger = triggerRef.current?.contains(e.target);
       const inDropdown = dropdownRef.current?.contains(e.target);
@@ -88,7 +87,10 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
           <div className="relative mt-0.5">
             <button
               ref={triggerRef}
-              onClick={() => setShowDropdown(v => !v)}
+              onClick={() => {
+                updateDropdownPos();
+                setShowDropdown(v => !v);
+              }}
               className="flex items-center gap-1.5 group"
             >
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColor}`} />
