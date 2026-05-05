@@ -131,6 +131,127 @@ Reject and regenerate if temporal language does not match actual times above.
 ════════════════════════════════════`;
 }
 
+// ── INLINE SOAP OPERA LIFE CONTEXT BUILDER ───────────────────────────────────
+// Deno cannot import local lib files, so this mirrors lib/promptContextBuilders.js
+// buildSoapOperaLifeContext() — keep in sync with the frontend version.
+function buildSoapOperaLifeContextInline(character, recentMemories = []) {
+  const lines = [];
+  const threads = [];
+
+  // Romance / relationship threads
+  const relationships = character.fictional_relationships || [];
+  const romanticRels = relationships.filter(r =>
+    r.romantic_level > 40 || r.attraction_level > 50 ||
+    ['lover','partner','ex','situationship','complicated','crush'].some(k =>
+      (r.relationship_type||'').toLowerCase().includes(k)||(r.description||'').toLowerCase().includes(k))
+  );
+  if (romanticRels.length > 0) {
+    const r = romanticRels[0];
+    const name = r.person_name || r.display_name || 'someone';
+    const status = r.current_status || r.relationship_type || 'complicated';
+    const tension = r.relational_jealousy > 50 ? ' — jealousy is active' : r.romantic_level > 75 ? ' — deeply invested' : '';
+    threads.push(`ROMANCE THREAD: ${name} (${status})${tension}. ${r.last_interaction_summary || ''}`);
+  }
+  // Family
+  const fam = (character.family_members || []).slice(0, 3).map(f => f.name || f.relationship).filter(Boolean);
+  if (fam.length > 0) threads.push(`FAMILY THREAD: Active family ties — ${fam.join(', ')}.`);
+  // Housing
+  if (character.is_homeless) threads.push(`HOUSING THREAD: Without stable housing — affects daily planning, emotional security, and social interactions.`);
+  else if (character.housing_context === 'temporary_shelter') threads.push(`HOUSING THREAD: Temporary shelter. Stability is not guaranteed.`);
+  // Health
+  if (character.health_status && character.health_status.length > 5) threads.push(`HEALTH THREAD: ${character.health_status.substring(0,150)}.`);
+  // Work
+  if (character.occupation) threads.push(`WORK THREAD: ${character.occupation}. Workplace dynamics, pressures, and career concerns are present.`);
+  // Financial pressure
+  if ((character.financial_need_value ?? 60) < 40) threads.push(`FINANCIAL THREAD: Under real financial pressure — affects decisions and mood.`);
+  // Faith
+  const religion = (character.religion||'').trim();
+  if (religion && religion !== 'None' && religion.toLowerCase() !== 'none') {
+    const devout = character.belief_level === 'devout' ? ' — devout' : character.belief_level === 'moderate' ? ' — moderately practicing' : '';
+    threads.push(`FAITH THREAD: ${religion}${devout}. Community, ritual, guilt, comfort, and identity surface through this.`);
+  }
+  // Criminal history
+  if (character.criminal_record && character.criminal_record.length > 3 && character.criminal_record.toLowerCase() !== 'none') {
+    threads.push(`LEGAL HISTORY: ${character.criminal_record.substring(0,120)}.`);
+  }
+  // Current situation / life event
+  if (character.current_situation?.length > 10) threads.push(`CURRENT SITUATION: ${character.current_situation.substring(0,200)}`);
+  if (character.current_life_event?.length > 5) threads.push(`ACTIVE LIFE EVENT: ${character.current_life_event.substring(0,200)}`);
+  // Business
+  const biz = (character.businesses||[])[0];
+  if (biz) threads.push(`BUSINESS THREAD: Owns or runs "${biz.name||'a business'}" — ongoing concerns around staff, finances, reputation.`);
+
+  if (threads.length > 0) {
+    lines.push(`════════════════════════════════════
+ACTIVE LIFE THREADS — SOAP OPERA CONTEXT
+These threads run in the background. They color behavior, tone, and what the character notices.
+${threads.join('\n\n')}`);
+  }
+
+  // Emotional interior
+  const privateLines = [];
+  if (character.emotional_baggage?.length > 5) privateLines.push(`EMOTIONAL BAGGAGE: ${character.emotional_baggage.substring(0,200)}`);
+  if (character.loyalty_view?.length > 5) privateLines.push(`LOYALTY/TRUST: ${character.loyalty_view.substring(0,120)}`);
+  if (character.upset_reaction?.length > 5) privateLines.push(`WHEN UPSET: ${character.upset_reaction.substring(0,120)}`);
+  if (privateLines.length > 0) lines.push(`════════════════════════════════════
+PRIVATE EMOTIONAL INTERIOR
+${privateLines.join('\n')}`);
+
+  // Behavioral texture (trait flags + quirks)
+  const traitFlags = [
+    character.trait_oversharer && 'tends to overshare',
+    character.trait_dry_humor && 'uses dry humor as deflection or armor',
+    character.trait_night_owl && 'naturally alert at night, slower in mornings',
+    character.trait_hot_and_cold && 'runs hot and cold — not always predictable',
+    character.trait_flirty && 'naturally flirtatious, often without fully meaning it',
+    character.trait_overcorrects && 'overcorrects after conflict — may apologize or over-explain',
+    character.trait_blunt && 'says what they think without filtering',
+    character.trait_easily_distracted && 'thoughts jump — easily distracted',
+    character.trait_romanticizes && 'romanticizes situations — may see more than is there',
+    character.trait_hard_to_read && 'intentionally or not — hard to read',
+    character.trait_competitive && 'has a competitive streak that shows in unexpected moments',
+  ].filter(Boolean);
+  const quirks = (character.quirks||[]).filter(q=>q.description||q.name).slice(0,3).map(q=>q.description||q.name);
+  const allTexture = [...traitFlags, ...quirks];
+  if (allTexture.length > 0) {
+    lines.push(`════════════════════════════════════
+BEHAVIORAL TEXTURE — HOW THEY MOVE THROUGH THE WORLD
+${allTexture.map(t=>`• ${t}`).join('\n')}
+These traits show in HOW they respond — not in what they say about themselves.`);
+  }
+
+  // Off-screen memories
+  const mems = recentMemories.filter(m=>m.importance_score>=5).slice(0,4);
+  if (mems.length > 0) {
+    lines.push(`════════════════════════════════════
+OFF-SCREEN LIFE — RECENT MEMORY
+Things that happened before this conversation. Let them color the moment when relevant.
+${mems.map(m=>`• ${m.memory_text.substring(0,180)}`).join('\n')}`);
+  }
+
+  // Future goals
+  const goals = (character.future_life_goals||[]).slice(0,2).map(g=>g.goal||g.description||g.title).filter(Boolean);
+  if (goals.length > 0) {
+    lines.push(`════════════════════════════════════
+WHAT THEY'RE WORKING TOWARD
+${goals.map(g=>`• ${g.substring(0,130)}`).join('\n')}
+Shapes hope, fear of failure, and what they don't freely discuss.`);
+  }
+
+  // Tone directive
+  lines.push(`════════════════════════════════════
+WORLD TONE — SOAP OPERA / TELENOVELA DEPTH
+BALANCE: Not every moment is dramatic. Not every character is depressed. Not every interaction is romantic.
+A character can struggle and still laugh. Have a family moment while someone else is in crisis.
+OFF-SCREEN RULE: Characters had a life before this conversation. Work happened. A call came in. A moment landed.
+These may surface as: "Work was a lot today." / "I had a moment earlier." / "I missed you today." / "I'm trying not to let earlier ruin the night."
+ROMANCE (when established): Eye contact, breath, closeness, voice shifts, interrupted moments, fade-to-black.
+Mature implication. Never explicit. Soap opera intensity — family drama accessibility.
+════════════════════════════════════`);
+
+  return lines.length > 0 ? '\n\n' + lines.join('\n\n') : '';
+}
+
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
 
@@ -337,6 +458,17 @@ No adult emotional complexity in narrative. Reflect their developmental stage ac
     const activityContext = char.current_activity
       ? `Current activity: ${char.current_activity}`
       : '';
+
+    // ── FETCH RECENT HIGH-IMPORTANCE MEMORIES (for soap opera context) ───────
+    let recentHighMemories = [];
+    try {
+      const memsFetched = await base44.entities.CharacterMemory.filter(
+        { character_id: characterId },
+        '-created_date',
+        10
+      ).catch(() => []);
+      recentHighMemories = memsFetched.filter(m => m.importance_score >= 5);
+    } catch { /* non-blocking */ }
 
     // ── RESOLVE USER LABEL (account-scoped — never global list) ──────────────
     // owner_email is the sole ownership source of truth — created_by is permanently forbidden
@@ -1108,6 +1240,7 @@ IF the output contains "the user" → it must be replaced with "${actorLabel}" b
 
 Do not refer to anyone as "the user" — use their name (${actorLabel}) or natural pronouns.
 ${sceneReactionBlock}
+${buildSoapOperaLifeContextInline(char, recentHighMemories)}
 ${homeActivityGuardBlock}
 ${repetitionGuardBlock}
 ${antiRepetitionStyleBlock}

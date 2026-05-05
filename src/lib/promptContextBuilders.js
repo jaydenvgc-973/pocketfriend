@@ -201,6 +201,250 @@ ${lastImagePromptSnippet ? `ANTI-REPETITION — last image used: "${lastImagePro
 FORMAT: [CHARACTER] [action]. Camera [position]. [Wide/Medium/Close]. [Time-of-day lighting]. [Zone — 1-2 furniture anchors]."`;
 }
 
+// ── SOAP OPERA LIFE CONTEXT BUILDER ──────────────────────────────────────────
+
+/**
+ * buildSoapOperaLifeContext
+ *
+ * Builds a rich, emotionally layered life-context block from existing character data.
+ * Injects off-screen life, active personal threads, relationship tension, world pressures,
+ * and private emotional state into the LLM system prompt — without adding new entities.
+ *
+ * Sources used (all existing fields):
+ *   character.memories, character.quirks, character.personality_traits, character.archetype,
+ *   character.current_life_event, character.emotional_state, character.family_members,
+ *   character.fictional_relationships, character.occupation, character.housing_context,
+ *   character.is_homeless, character.health_status, character.current_situation,
+ *   character.financial need fields, character.religion, character.criminal_record,
+ *   character.emotional_baggage, character.loyalty_view, character.upset_reaction,
+ *   character.triggered_milestones, character.future_life_goals, character.businesses
+ *
+ * @param {object} character - Full character object
+ * @param {object[]} recentMemories - Recent CharacterMemory records (optional, already fetched)
+ * @returns {string}
+ */
+export function buildSoapOperaLifeContext(character, recentMemories = []) {
+  const lines = [];
+
+  // ── ACTIVE LIFE THREADS ───────────────────────────────────────────────────
+  // These are the "soap opera arcs" — drawn from existing data, not invented.
+  const threads = [];
+
+  // Romance / Relationship threads
+  const relationships = character.fictional_relationships || [];
+  const romanticRelationships = relationships.filter(r =>
+    r.romantic_level > 40 || r.attraction_level > 50 ||
+    ['lover', 'partner', 'ex', 'situationship', 'complicated', 'crush'].some(k =>
+      (r.relationship_type || '').toLowerCase().includes(k) ||
+      (r.description || '').toLowerCase().includes(k)
+    )
+  );
+  if (romanticRelationships.length > 0) {
+    const r = romanticRelationships[0];
+    const name = r.person_name || r.display_name || 'someone';
+    const status = r.current_status || r.relationship_type || 'complicated';
+    const tension = r.relational_jealousy > 50 ? ' — jealousy is active' : r.romantic_level > 75 ? ' — deeply invested' : '';
+    threads.push(`ROMANCE THREAD: ${name} (${status})${tension}. ${r.last_interaction_summary || ''}`);
+  }
+
+  // Family threads
+  const familyMembers = character.family_members || [];
+  if (familyMembers.length > 0) {
+    const closeFam = familyMembers.slice(0, 3).map(f => f.name || f.relationship).filter(Boolean).join(', ');
+    threads.push(`FAMILY THREAD: Active family ties — ${closeFam}. Family bonds shape decisions, sense of obligation, and emotional baseline.`);
+  }
+
+  // Housing thread
+  if (character.is_homeless) {
+    threads.push(`HOUSING THREAD: Actively without stable housing. This is a lived reality, not background detail — it affects daily planning, emotional security, and social interactions.`);
+  } else if (character.housing_context === 'temporary_shelter') {
+    threads.push(`HOUSING THREAD: Living in temporary shelter. Stability is not guaranteed. This creates underlying stress that may surface in conversation or behavior.`);
+  }
+
+  // Health thread
+  if (character.health_status && character.health_status.length > 5) {
+    threads.push(`HEALTH THREAD: ${character.health_status}. This is an active part of life — it may affect energy, mood, plans, or what they talk about.`);
+  }
+
+  // Work/career thread
+  if (character.occupation) {
+    const workDetails = character.work_details;
+    const workNote = workDetails?.stress_level === 'high' ? ' — currently high stress' :
+      workDetails?.is_new_job ? ' — relatively new to this role' : '';
+    threads.push(`WORK THREAD: ${character.occupation}${workNote}. Work history, workplace dynamics, and career pressures are real and present.`);
+  }
+
+  // Financial thread
+  const financialNeed = character.financial_need_value ?? 60;
+  if (financialNeed < 40) {
+    threads.push(`FINANCIAL THREAD: Under financial pressure right now — this is real and affects decisions, mood, and what they can or cannot do.`);
+  }
+
+  // Faith/purpose thread
+  const religion = (character.religion || '').trim();
+  if (religion && religion !== 'None' && religion.toLowerCase() !== 'none') {
+    const devout = character.belief_level === 'devout' ? ' — deeply devout' : character.belief_level === 'moderate' ? ' — moderately practicing' : '';
+    threads.push(`FAITH/PURPOSE THREAD: ${religion}${devout}. Community, ritual, belief, guilt, comfort, and identity may all surface naturally through this lens.`);
+  }
+
+  // Criminal/legal thread
+  if (character.criminal_record && character.criminal_record.length > 3 && character.criminal_record.toLowerCase() !== 'none') {
+    threads.push(`LEGAL HISTORY THREAD: Past criminal record or legal history — ${character.criminal_record.substring(0, 100)}. This shapes how they navigate trust, authority, and opportunity.`);
+  }
+
+  // Personal growth / secret thread
+  if (character.current_situation && character.current_situation.length > 10) {
+    threads.push(`CURRENT SITUATION: ${character.current_situation.substring(0, 200)}`);
+  }
+
+  if (character.current_life_event && character.current_life_event.length > 5) {
+    threads.push(`ACTIVE LIFE EVENT: ${character.current_life_event.substring(0, 200)}`);
+  }
+
+  // Business ownership thread
+  const businesses = character.businesses || [];
+  if (businesses.length > 0) {
+    const biz = businesses[0];
+    threads.push(`BUSINESS THREAD: Owns or runs "${biz.name || 'a business'}" — entrepreneurship, staff, finances, and reputation are ongoing concerns.`);
+  }
+
+  if (threads.length > 0) {
+    lines.push(`════════════════════════════════════
+ACTIVE LIFE THREADS — SOAP OPERA CONTEXT
+These threads are running in the background of this character's life.
+They do not need to dominate the conversation — but they MUST color behavior, tone, and what the character notices.
+════════════════════════════════════
+${threads.join('\n\n')}`);
+  }
+
+  // ── EMOTIONAL BAGGAGE & PRIVATE LIFE ─────────────────────────────────────
+  const privateLines = [];
+  if (character.emotional_baggage && character.emotional_baggage.length > 5) {
+    privateLines.push(`EMOTIONAL BAGGAGE: ${character.emotional_baggage.substring(0, 250)}`);
+  }
+  if (character.loyalty_view && character.loyalty_view.length > 5) {
+    privateLines.push(`LOYALTY & TRUST: ${character.loyalty_view.substring(0, 150)}`);
+  }
+  if (character.upset_reaction && character.upset_reaction.length > 5) {
+    privateLines.push(`WHEN UPSET, THEY: ${character.upset_reaction.substring(0, 150)}`);
+  }
+  if (privateLines.length > 0) {
+    lines.push(`════════════════════════════════════
+PRIVATE EMOTIONAL INTERIOR
+════════════════════════════════════
+${privateLines.join('\n')}`);
+  }
+
+  // ── PERSONALITY QUIRKS (behavioral texture) ───────────────────────────────
+  const quirks = (character.quirks || []).filter(q => q.description || q.name);
+  const traitFlags = [
+    character.trait_oversharer && 'tends to overshare',
+    character.trait_dry_humor && 'uses dry humor as deflection',
+    character.trait_night_owl && 'naturally alert at night, slower in mornings',
+    character.trait_hot_and_cold && 'runs hot and cold emotionally — not always predictable',
+    character.trait_flirty && 'naturally flirtatious, often without fully meaning it',
+    character.trait_overcorrects && 'overcorrects after conflict — may apologize or over-explain',
+    character.trait_blunt && 'says what they think, sometimes without filtering',
+    character.trait_easily_distracted && 'easily distracted — thoughts jump',
+    character.trait_romanticizes && 'romanticizes situations — may see more than is there',
+    character.trait_hard_to_read && 'hard to read — intentional or not',
+    character.trait_competitive && 'has a competitive streak',
+  ].filter(Boolean);
+
+  const quirkTexts = quirks.slice(0, 3).map(q => q.description || q.name);
+  const allTexture = [...traitFlags, ...quirkTexts];
+
+  if (allTexture.length > 0) {
+    lines.push(`════════════════════════════════════
+BEHAVIORAL TEXTURE — HOW THEY ACTUALLY MOVE THROUGH THE WORLD
+════════════════════════════════════
+${allTexture.map(t => `• ${t}`).join('\n')}
+
+These traits must show up in HOW they respond — not in what they say about themselves.`);
+  }
+
+  // ── RECENT MEMORY CONTEXT (off-screen life) ───────────────────────────────
+  const relevantMemories = recentMemories
+    .filter(m => m.memory_text && m.importance_score >= 5)
+    .slice(0, 4);
+
+  if (relevantMemories.length > 0) {
+    lines.push(`════════════════════════════════════
+OFF-SCREEN LIFE — RECENT MEMORY (what happened before this conversation)
+════════════════════════════════════
+These are real events from this character's life. They may have happened earlier today, yesterday, or recently.
+They are available to surface naturally — as passing references, mood influences, or conversation openers.
+Do NOT force them. Do NOT ignore them entirely. Let them color the moment when relevant.
+
+${relevantMemories.map(m => `• ${m.memory_text.substring(0, 180)}`).join('\n')}`);
+  }
+
+  // ── FUTURE GOALS / ASPIRATIONS ────────────────────────────────────────────
+  const goals = (character.future_life_goals || []).slice(0, 2);
+  if (goals.length > 0) {
+    const goalTexts = goals.map(g => g.goal || g.description || g.title).filter(Boolean);
+    if (goalTexts.length > 0) {
+      lines.push(`════════════════════════════════════
+WHAT THEY'RE WORKING TOWARD
+════════════════════════════════════
+${goalTexts.map(g => `• ${g.substring(0, 150)}`).join('\n')}
+
+These aspirations shape what they're quietly hopeful about, what they're afraid to fail at, and what they don't talk about freely.`);
+    }
+  }
+
+  // ── SOAP OPERA TONE DIRECTIVE ─────────────────────────────────────────────
+  lines.push(`════════════════════════════════════
+WORLD TONE — SOAP OPERA / TELENOVELA DEPTH
+════════════════════════════════════
+This world has real emotional weight. Characters carry joy AND pain, passion AND conflict, hope AND fear.
+
+BALANCE LAW:
+• Not every moment is dramatic.
+• Not every character is depressed.
+• Not every environment is dangerous.
+• Not every interaction is romantic.
+
+A character can have a beautiful family moment while another is in crisis.
+A character can be loving in public and passionate in private.
+A character can be stressed and still laugh.
+A character can struggle and still have hope.
+
+OFF-SCREEN LIFE RULE:
+Characters have experiences the user did not witness. They went places. Things happened.
+Work was hard. A call came in. They saw something. They felt something.
+These off-screen moments give them MORE to bring to the conversation — not less.
+
+When returning to a conversation, a character may reference:
+  • "Work was a lot today."
+  • "I had a moment earlier that's been on my mind."
+  • "I passed something that reminded me of something I haven't dealt with."
+  • "I had a good moment today, actually." (balance — not always heavy)
+  • "I missed you today, and I didn't expect that."
+  • "I'm trying not to let what happened earlier ruin the rest of the night."
+
+These references should feel earned, not scripted. They arise from the character's real thread state above.
+
+MATURE ROMANCE DIRECTIVE:
+If romance is active and the relationship is established:
+  • Use eye contact, body position, voice shift, closeness, breath, interrupted moments
+  • Passion may be implied — urgently, tenderly, or tensely — without being explicit
+  • Fade-to-black is always valid when a scene reaches a private threshold
+  • Aftermath and emotional vulnerability are part of intimacy, not just the act itself
+  • A quiet, domestic romantic scene is as valid as an intense one
+
+NEVER:
+  • Explicit anatomy or sexual step-by-step description
+  • Content that reads like adult content
+  • Forced romance where trust or attraction has not been established
+
+The tone target: soap opera intensity + family drama accessibility + telenovela emotional range.
+Mature implication without graphic detail.
+════════════════════════════════════`);
+
+  return lines.length > 0 ? '\n\n' + lines.join('\n\n') : '';
+}
+
 // ── LOCATION RESPONSE VALIDATOR ───────────────────────────────────────────────
 
 /**

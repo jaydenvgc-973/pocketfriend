@@ -19,6 +19,67 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * - Character updates (needs) use asServiceRole — acceptable for system-driven need drift.
  */
 
+// ── INLINE SOAP OPERA LIFE CONTEXT BUILDER ───────────────────────────────────
+function buildSoapOperaLifeContextInline(character, recentMemories = []) {
+  const lines = [];
+  const threads = [];
+  const romanticRels = (character.fictional_relationships||[]).filter(r =>
+    r.romantic_level > 40 || r.attraction_level > 50 ||
+    ['lover','partner','ex','situationship','complicated','crush'].some(k =>
+      (r.relationship_type||'').toLowerCase().includes(k)||(r.description||'').toLowerCase().includes(k))
+  );
+  if (romanticRels.length > 0) {
+    const r = romanticRels[0];
+    const name = r.person_name || r.display_name || 'someone';
+    const status = r.current_status || r.relationship_type || 'complicated';
+    const tension = r.relational_jealousy > 50 ? ' — jealousy is active' : r.romantic_level > 75 ? ' — deeply invested' : '';
+    threads.push(`ROMANCE THREAD: ${name} (${status})${tension}. ${r.last_interaction_summary || ''}`);
+  }
+  const fam = (character.family_members||[]).slice(0,3).map(f=>f.name||f.relationship).filter(Boolean);
+  if (fam.length > 0) threads.push(`FAMILY THREAD: Active family ties — ${fam.join(', ')}.`);
+  if (character.is_homeless) threads.push(`HOUSING THREAD: Without stable housing.`);
+  else if (character.housing_context === 'temporary_shelter') threads.push(`HOUSING THREAD: Temporary shelter — stability not guaranteed.`);
+  if (character.health_status?.length > 5) threads.push(`HEALTH THREAD: ${character.health_status.substring(0,120)}.`);
+  if (character.occupation) threads.push(`WORK THREAD: ${character.occupation}.`);
+  if ((character.financial_need_value??60) < 40) threads.push(`FINANCIAL THREAD: Under real financial pressure.`);
+  const religion = (character.religion||'').trim();
+  if (religion && religion !== 'None' && religion.toLowerCase() !== 'none') {
+    threads.push(`FAITH THREAD: ${religion}. Community, belief, identity surface through this.`);
+  }
+  if (character.criminal_record?.length > 3 && character.criminal_record.toLowerCase() !== 'none') {
+    threads.push(`LEGAL HISTORY: ${character.criminal_record.substring(0,100)}.`);
+  }
+  if (character.current_situation?.length > 10) threads.push(`CURRENT SITUATION: ${character.current_situation.substring(0,180)}`);
+  if (character.current_life_event?.length > 5) threads.push(`ACTIVE LIFE EVENT: ${character.current_life_event.substring(0,180)}`);
+  const biz = (character.businesses||[])[0];
+  if (biz) threads.push(`BUSINESS THREAD: Runs "${biz.name||'a business'}" — staff, finances, reputation are active concerns.`);
+  if (threads.length > 0) lines.push(`ACTIVE LIFE THREADS:\n${threads.join('\n')}`);
+
+  const privateLines = [];
+  if (character.emotional_baggage?.length > 5) privateLines.push(`EMOTIONAL BAGGAGE: ${character.emotional_baggage.substring(0,180)}`);
+  if (character.upset_reaction?.length > 5) privateLines.push(`WHEN UPSET: ${character.upset_reaction.substring(0,100)}`);
+  if (privateLines.length > 0) lines.push(privateLines.join('\n'));
+
+  const traitFlags = [
+    character.trait_oversharer && 'tends to overshare',
+    character.trait_dry_humor && 'uses dry humor as deflection',
+    character.trait_hot_and_cold && 'runs hot and cold emotionally',
+    character.trait_flirty && 'naturally flirtatious',
+    character.trait_blunt && 'says what they think without filtering',
+    character.trait_romanticizes && 'romanticizes situations',
+    character.trait_hard_to_read && 'hard to read',
+  ].filter(Boolean);
+  const quirks = (character.quirks||[]).filter(q=>q.description||q.name).slice(0,2).map(q=>q.description||q.name);
+  const allTexture = [...traitFlags,...quirks];
+  if (allTexture.length > 0) lines.push(`BEHAVIORAL TEXTURE:\n${allTexture.map(t=>`• ${t}`).join('\n')}`);
+
+  const mems = recentMemories.filter(m=>m.importance_score>=5).slice(0,3);
+  if (mems.length > 0) lines.push(`OFF-SCREEN LIFE:\n${mems.map(m=>`• ${m.memory_text.substring(0,150)}`).join('\n')}`);
+
+  lines.push(`WORLD TONE: Soap opera / telenovela depth. Balance: not every moment is dramatic. Characters carry joy AND pain. Off-screen life shapes what they bring to this moment.`);
+  return lines.length > 0 ? '\n\n' + lines.join('\n\n') : '';
+}
+
 function getTimeOfDay(hour) {
   if (hour >= 5 && hour < 7) return 'early_morning';
   if (hour >= 7 && hour < 10) return 'morning';
@@ -132,6 +193,15 @@ Deno.serve(async (req) => {
         const travelDestination = character.traveling_to_location_name || null;
         const presenceStatus = character.resolved_presence_status || 'home';
 
+        // ── FETCH MEMORIES FOR SOAP OPERA CONTEXT ──────────────────────────
+        let soapMemories = [];
+        try {
+          const memsFetched = await base44.asServiceRole.entities.CharacterMemory.filter(
+            { character_id: characterId }, '-created_date', 8
+          ).catch(() => []);
+          soapMemories = memsFetched.filter(m => m.importance_score >= 5);
+        } catch { /* non-blocking */ }
+
         // ── NEEDS SNAPSHOT ──────────────────────────────────────────────────
         const needsSnapshot = {
           hunger: character.hunger_value ?? 70,
@@ -185,11 +255,14 @@ Pronouns: ${charPronouns} (${subPronoun}/${posPronoun}) — use ONLY these, neve
 Personality: ${character.personality_summary || 'not defined'}
 Emotional state: ${character.emotional_state || 'calm'}
 
+${buildSoapOperaLifeContextInline(character, soapMemories)}
+
 RULES:
 1. Match the SITUATION block exactly — do not contradict it.
 2. Present tense, third-person, immersive and specific.
-3. No dialogue. No future speculation. Just this exact moment.
-4. 2-4 sentences only.
+3. Let the life threads above color the tone and behavior naturally — they should shape the moment without dominating it.
+4. No dialogue. No future speculation. Just this exact moment.
+5. 2-4 sentences only.
 
 RESPOND WITH JSON:
 {
