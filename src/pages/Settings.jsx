@@ -568,17 +568,23 @@ export default function Settings() {
           
           <GenericLocationFixer />
           
-          {/* Suggested duplicates */}
+          {/* Suggested duplicates — detected client-side from already-loaded character data */}
           <button
-            onClick={async () => {
-              try {
-                const res = await base44.functions.invoke('comprehensiveCharacterDiagnostic', {});
-                const dupes = res.data?.issues?.duplicateNames || [];
-                setSuggestedDupes(dupes);
-                setShowSuggestedDupes(true);
-              } catch (err) {
-                alert('Failed to load duplicates');
-              }
+            onClick={() => {
+              // Group characters by normalized name, scoped to owner_email only
+              const nameMap = new Map();
+              allCharacters.forEach(c => {
+                if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted' || c.status === 'merged') return;
+                const key = c.name.trim().toLowerCase();
+                if (!nameMap.has(key)) nameMap.set(key, []);
+                nameMap.get(key).push(c);
+              });
+              const dupes = [];
+              nameMap.forEach((records, name) => {
+                if (records.length >= 2) dupes.push({ name, records });
+              });
+              setSuggestedDupes(dupes);
+              setShowSuggestedDupes(true);
             }}
             className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-amber-500/40 transition-colors text-left mb-3"
           >
