@@ -1126,10 +1126,15 @@ Reply with ONLY the single emoji or the word "none".`,
         const picked = emojiRes?.trim();
         const validEmojis = ["❤️", "👍", "😢", "😡", "😲"];
         if (picked && validEmojis.includes(picked)) {
-          const nonCharReactions = (userMsg.reactions || []).filter(r => r.reactor_type !== "character");
-          const updatedUserMsgReactions = [...nonCharReactions, { emoji: picked, reactor_type: "character", reactor_id: characterId }];
-          await base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions });
-          setMessages(prev => prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m));
+          // Guard: message may have been deleted while the LLM was running
+          setMessages(prev => {
+            const stillExists = prev.some(m => m.id === userMsg.id);
+            if (!stillExists) return prev;
+            const nonCharReactions = (userMsg.reactions || []).filter(r => r.reactor_type !== "character");
+            const updatedUserMsgReactions = [...nonCharReactions, { emoji: picked, reactor_type: "character", reactor_id: characterId }];
+            base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions }).catch(() => {});
+            return prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m);
+          });
         }
       }, 2000 + Math.random() * 3000);
     }
