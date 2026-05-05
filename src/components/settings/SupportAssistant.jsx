@@ -260,7 +260,7 @@ function detectIntent(text) {
   if (/money.*wrong|wrong.*money|balance.*wrong|negative.*balance|not.*paid|payroll|finance.*issue|money.*missing/i.test(t))
     return { type: 'finance_check' };
 
-  if (/world.*name.*won't.*save|world.*name.*not.*saving|name.*won't.*save|my.*name.*not.*saving/i.test(t))
+  if (/world.*name.*won't.*save|world.*name.*not.*saving|name.*won't.*save|my.*name.*not.*saving|save.*world.*name|set.*world.*name|change.*world.*name|update.*world.*name/i.test(t))
     return { type: 'world_name_save' };
 
   if (/not.*traveling|won't.*travel|stuck.*location|travel.*broken|not.*moving/i.test(t))
@@ -405,6 +405,52 @@ export default function SupportAssistant({ user }) {
       return;
     }
 
+    if (actionKey === 'targeted_owner_repair') {
+      // Run targeted single-record repair
+      await runTargetedOwnerRepair(actionPayload.character_id, actionPayload.character_name);
+      // If there are remaining records to repair, queue the next one
+      const remaining = actionPayload.remaining || [];
+      if (remaining.length > 0) {
+        const next = remaining[0];
+        addMsg({ role: 'ai', content: `There ${remaining.length > 1 ? `are ${remaining.length} more` : 'is 1 more'} record(s) that need repair.`, ts: ts() });
+        const confirmId = addMsg({
+          role: 'confirm',
+          content: `Repair owner_email for "${next.name}" next? Same rules apply — only repaired if owner_user_id matches your account.`,
+          actionKey: 'targeted_owner_repair',
+          actionPayload: { character_id: next.id, character_name: next.name, remaining: remaining.slice(1) },
+          ts: ts(),
+        });
+        setPendingConfirm({ actionKey: 'targeted_owner_repair', actionPayload: { character_id: next.id, character_name: next.name, remaining: remaining.slice(1) }, confirmMsgId: confirmId });
+      } else {
+        addMsg({ role: 'ai', content: `All records processed. You can now retry the merge from **Settings → Suggested Duplicates**.`, ts: ts() });
+      }
+      return;
+    }
+
+    if (actionKey === 'save_world_name') {
+      setIsRepairing(true);
+      addMsg({ role: 'system', content: '⚙️ Saving world name…', ts: ts() });
+      try {
+        const settings = await base44.entities.UserSettings.filter({ owner_email: ownerEmail });
+        const s = settings[0];
+        if (!s?.id) throw new Error('No UserSettings record found to update');
+        await base44.entities.UserSettings.update(s.id, { fictional_world_name: actionPayload.world_name });
+        // Verify the write
+        const verify = await base44.entities.UserSettings.filter({ owner_email: ownerEmail });
+        const saved = verify[0]?.fictional_world_name;
+        if (saved === actionPayload.world_name) {
+          addMsg({ role: 'ai', content: `✅ **World name saved successfully.**\n\nYour world name is now: **"${saved}"**\n\nThis will take effect the next time a character references your identity.`, ts: ts() });
+        } else {
+          addMsg({ role: 'ai', content: `⚠️ Write appeared to succeed but verification returned: **"${saved || '(empty)'}"**. The cache may still be stale — try refreshing Settings.`, ts: ts() });
+        }
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Save failed: ${err.message}. No changes were made.`, ts: ts() });
+      } finally {
+        setIsRepairing(false);
+      }
+      return;
+    }
+
     // Generic repair path
     await runRepairAction(actionKey, actionPayload?.character_id);
   };
@@ -413,6 +459,34 @@ export default function SupportAssistant({ user }) {
     if (pendingConfirm?.confirmMsgId) removeMsgById(pendingConfirm.confirmMsgId);
     setPendingConfirm(null);
     addMsg({ role: 'ai', content: 'Cancelled — no changes were made.', ts: ts() });
+  };
+
+  // ── Targeted single-record owner_email repair via repairCharacterOwnerEmail ──
+  const runTargetedOwnerRepair = async (characterId, characterName) => {
+    setIsRepairing(true);
+    addMsg({ role: 'system', content: `⚙️ Repairing owner_email for "${characterName}"…`, ts: ts() });
+    try {
+      const res = await base44.functions.invoke('repairCharacterOwnerEmail', { characterId });
+      const d = res?.data;
+      if (!d) throw new Error('No response from repair function');
+      if (d.repaired) {
+        addMsg({ role: 'ai', content: `✅ **Repaired** — \`owner_email\` set on **${characterName}**.\n\nProof used: \`owner_user_id\` matched your account ID.\n\nYou can now retry the merge from Settings → Suggested Duplicates.`, ts: ts() });
+      } else if (d.reason === 'CROSS_ACCOUNT') {
+        addMsg({ role: 'ai', content: `🚫 **Blocked** — "${characterName}" belongs to a different account. Cross-account repair is permanently blocked.\n\nA support ticket has been filed if this is unexpected.`, ts: ts() });
+        base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: `CROSS_ACCOUNT_BLOCKED: ${characterName}`, description: `Character ${characterId} has owner_email belonging to a different account. Repair blocked.`, status: 'escalated', findings: [] }).catch(() => {});
+      } else if (d.reason === 'ALREADY_SET') {
+        addMsg({ role: 'ai', content: `ℹ️ **Already correct** — "${characterName}" already has a valid \`owner_email\`. No changes needed.\n\nIf the merge is still blocked, there may be a different blocker — run a full diagnostic.`, ts: ts() });
+      } else if (d.reason === 'NO_EVIDENCE') {
+        addMsg({ role: 'ai', content: `⚠️ **Cannot repair** — "${characterName}" has no \`owner_user_id\` to verify against. Cannot confirm ownership without evidence.\n\nA support ticket has been filed for admin review.`, ts: ts() });
+        base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: `NO_EVIDENCE for owner repair: ${characterName}`, description: `Character ${characterId} has no owner_user_id — ownership cannot be confirmed without admin review.`, status: 'repair_pending', findings: [] }).catch(() => {});
+      } else {
+        addMsg({ role: 'ai', content: `Repair returned: ${d.reason || d.message || 'Unknown result'}. No changes confirmed.`, ts: ts() });
+      }
+    } catch (err) {
+      addMsg({ role: 'ai', content: `Targeted repair failed: ${err.message}. No changes were made.`, ts: ts() });
+    } finally {
+      setIsRepairing(false);
+    }
   };
 
   // ── Direct action handlers (bypass LLM, run tools immediately) ────────────
@@ -476,26 +550,90 @@ export default function SupportAssistant({ user }) {
     }
 
     if (type === 'merge_blocked') {
-      // Run diagnostic to understand why merge is blocked
+      // Step 1: Run account diagnostic to find characters missing owner_email
       addMsg({ role: 'system', content: '🔍 Checking account for merge blockers…', ts: ts() });
       try {
         const diagData = await runFullDiagnostic();
         const missingOwner = diagData.findings?.characters?.missingOwner || [];
         const ghostMerged = diagData.findings?.characters?.ghostMerged || [];
-        if (missingOwner.length > 0) {
-          addMsg({ role: 'ai', content: `**Found ${missingOwner.length} character(s) missing owner_email** — this is why the merge is blocked.\n\nAffected: ${missingOwner.map(c => c.name).join(', ')}\n\nI can run the **Owner Email Backfill** to repair these records, which will allow the merge to proceed. The repair only touches records where your account ID is already on file — no guessing.`, ts: ts() });
-          const confirmId = addMsg({
-            role: 'confirm',
-            content: `Run Owner Email Backfill to repair ${missingOwner.length} record(s) missing owner_email? This is required before the merge can proceed.`,
-            actionKey: 'backfill_owner_email',
-            actionPayload: {},
-            ts: ts(),
-          });
-          setPendingConfirm({ actionKey: 'backfill_owner_email', actionPayload: {}, confirmMsgId: confirmId });
+        const dupGroups = diagData.findings?.characters?.duplicateGroups || [];
+
+        // Step 2: For each duplicate group that has a missing-owner record, inspect via previewCharacterMerge
+        // to get the exact unsafe_records with their ownership_state
+        if (missingOwner.length > 0 || dupGroups.length > 0) {
+          // Find the intersection — duplicate groups where at least one record is missing owner_email
+          const missingOwnerIds = new Set(missingOwner.map(r => r.id));
+          const affectedGroups = dupGroups.filter(g => g.records.some(r => missingOwnerIds.has(r.id)));
+
+          if (affectedGroups.length > 0) {
+            // Preview the first blocked group to get the exact ownership_state breakdown
+            const firstGroup = affectedGroups[0];
+            addMsg({ role: 'system', content: `🔍 Inspecting merge records for "${firstGroup.name}"…`, ts: ts() });
+            let previewData = null;
+            try {
+              const prevRes = await base44.functions.invoke('previewCharacterMerge', {
+                characterIds: firstGroup.records.map(r => r.id),
+                ownerEmail,
+              });
+              previewData = prevRes?.data;
+            } catch (_) { /* preview failed — fall back to account diag data */ }
+
+            const unsafeRecords = previewData?.unsafe_records || [];
+
+            // Route by ownership_state — different states need different repairs
+            const legacyRecords = unsafeRecords.filter(r => r.ownership_state === 'LEGACY_MISSING_OWNER');
+            const notFoundRecords = unsafeRecords.filter(r => r.ownership_state === 'RECORD_NOT_FOUND');
+            const crossAccountRecords = unsafeRecords.filter(r => r.ownership_state === 'CROSS_ACCOUNT_BLOCKED');
+
+            if (crossAccountRecords.length > 0) {
+              // CROSS_ACCOUNT_BLOCKED — permanently blocked, no repair possible
+              addMsg({ role: 'ai', content: `🚫 **Merge permanently blocked** — ${crossAccountRecords.length} record(s) belong to a different account:\n${crossAccountRecords.map(r => `- **${r.name}** (${r.ownership_state})`).join('\n')}\n\nCross-account merges are permanently blocked by design. No repair can override this.\n\nA support ticket has been filed if this is unexpected.`, ts: ts() });
+              base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: `CROSS_ACCOUNT_BLOCKED merge: ${firstGroup.name}`, description: `Records: ${crossAccountRecords.map(r => r.id).join(', ')}`, status: 'escalated', findings: [] }).catch(() => {});
+            } else if (notFoundRecords.length > 0) {
+              // RECORD_NOT_FOUND — dangling reference, NOT an ownership problem
+              addMsg({ role: 'ai', content: `⚠️ **The merge is blocked because ${notFoundRecords.length} record(s) no longer exist:**\n${notFoundRecords.map(r => `- **${r.name || '(unnamed)'}** (ID: \`${r.id?.substring(0, 10)}…\`) — record not found in the database`).join('\n')}\n\n**This is a dangling reference — not a missing owner_email issue.** Running the owner backfill will NOT fix this.\n\nThe original record was deleted but the reference was not cleaned up. I can run the ghost reference cleanup to remove these stale links.`, ts: ts() });
+              const confirmId = addMsg({
+                role: 'confirm',
+                content: `Run ghost reference cleanup to remove ${notFoundRecords.length} stale reference(s) that no longer exist? This will not delete any real character data — only broken pointers.`,
+                actionKey: 'clean_ghost_references',
+                actionPayload: {},
+                ts: ts(),
+              });
+              setPendingConfirm({ actionKey: 'clean_ghost_references', actionPayload: {}, confirmMsgId: confirmId });
+            } else if (legacyRecords.length > 0) {
+              // LEGACY_MISSING_OWNER — ownership can be repaired via repairCharacterOwnerEmail
+              const firstLegacy = legacyRecords[0];
+              addMsg({ role: 'ai', content: `**Found ${legacyRecords.length} legacy record(s) missing \`owner_email\`** — this is the merge blocker:\n${legacyRecords.map(r => `- **${r.name}** (ID: \`${r.id?.substring(0, 10)}…\`)`).join('\n')}\n\nI can run a targeted repair for each record. The repair only writes \`owner_email\` if the record's \`owner_user_id\` already matches your account ID — no guessing, no cross-account access.`, ts: ts() });
+              const confirmId = addMsg({
+                role: 'confirm',
+                content: `Run targeted owner_email repair for "${firstLegacy.name}"? Proof required: owner_user_id must match your account. If evidence is missing, the record will be flagged — not modified.`,
+                actionKey: 'targeted_owner_repair',
+                actionPayload: { character_id: firstLegacy.id, character_name: firstLegacy.name, remaining: legacyRecords.slice(1) },
+                ts: ts(),
+              });
+              setPendingConfirm({ actionKey: 'targeted_owner_repair', actionPayload: { character_id: firstLegacy.id, character_name: firstLegacy.name, remaining: legacyRecords.slice(1) }, confirmMsgId: confirmId });
+            } else if (previewData?.merge_blocked) {
+              // Blocked for another reason
+              addMsg({ role: 'ai', content: `**Merge blocked:** ${previewData.merge_blocked_reason || 'Unknown reason'}\n\nNo unsafe records with known states were found. A full diagnostic may reveal more.`, ts: ts() });
+            } else {
+              addMsg({ role: 'ai', content: `**Merge blockers checked.** No unsafe records detected in the preview for "${firstGroup.name}".\n\nIf the merge is still blocked in the UI, try refreshing and re-opening the merge review panel.`, ts: ts() });
+            }
+          } else {
+            // Records with missing owner but not in any duplicate group
+            addMsg({ role: 'ai', content: `**Found ${missingOwner.length} character(s) missing \`owner_email\`** that may block merges:\n${missingOwner.map(c => `- **${c.name}**`).join('\n')}\n\nWould you like me to run the owner email backfill for all these records?`, ts: ts() });
+            const confirmId = addMsg({
+              role: 'confirm',
+              content: `Run Owner Email Backfill for ${missingOwner.length} record(s) missing owner_email? Only repairs where owner_user_id confirms ownership.`,
+              actionKey: 'backfill_owner_email',
+              actionPayload: {},
+              ts: ts(),
+            });
+            setPendingConfirm({ actionKey: 'backfill_owner_email', actionPayload: {}, confirmMsgId: confirmId });
+          }
         } else if (ghostMerged.length > 0) {
-          addMsg({ role: 'ai', content: `**Found ${ghostMerged.length} ghost-merged record(s)** — characters with \`merged_into_character_id\` set but status not updated to "merged". This can block the merge.\n\nRun the location sync repair to fix these integrity violations, then retry the merge from Settings → Suggested Duplicates.`, ts: ts() });
+          addMsg({ role: 'ai', content: `**Found ${ghostMerged.length} ghost-merged record(s)** — characters with \`merged_into_character_id\` set but status not updated to "merged". This integrity violation can block merges.\n\nRetry the merge from Settings → Suggested Duplicates after running a location sync.`, ts: ts() });
         } else {
-          addMsg({ role: 'ai', content: `**Merge blockers checked.** No missing owner_email or ghost-merge issues found in your account data.\n\nIf the merge is still blocked, the issue may be specific to those two records — try opening **Suggested Duplicates → Review & Merge** in Settings and look at the error shown there for more detail.`, ts: ts() });
+          addMsg({ role: 'ai', content: `**No merge blockers found** in your account diagnostic.\n\nIf a specific merge is still blocked, open **Settings → Suggested Duplicates → Review & Merge** and note the exact error state shown there. You can paste it here and I'll diagnose it directly.`, ts: ts() });
         }
         addMsg({ role: 'diagnostic', diagData, ts: ts() });
       } catch (err) {
@@ -625,17 +763,35 @@ export default function SupportAssistant({ user }) {
     }
 
     if (type === 'world_name_save') {
-      addMsg({ role: 'ai', content: `**World name saves to \`UserSettings.fictional_world_name\`.** Here's what I'll check:\n\n1. Does your UserSettings record exist and have a valid \`owner_email\`?\n2. Is the save write succeeding but the cache re-loading old data?\n\nRunning a check now…`, ts: ts() });
+      addMsg({ role: 'system', content: '🔍 Checking UserSettings record…', ts: ts() });
       try {
         const settings = await base44.entities.UserSettings.filter({ owner_email: ownerEmail });
         const s = settings[0];
         if (!s) {
-          addMsg({ role: 'ai', content: `**No UserSettings record found** for your account. This means nothing can be saved yet. Try navigating away from Settings and back — the record should be created automatically on first load.\n\nIf the problem persists, contact support.`, ts: ts() });
+          addMsg({ role: 'ai', content: `**No UserSettings record found** for your account. The record should be created automatically on first load of Settings. Try navigating away and back.\n\nIf it still doesn't appear, file a support report.`, ts: ts() });
         } else if (!s.owner_email) {
-          addMsg({ role: 'ai', content: `**Your UserSettings record is missing owner_email** (ID: ${s.id?.substring(0, 8)}…). This is a data integrity issue that can cause saves to fail silently. Contact support or file a report.`, ts: ts() });
+          addMsg({ role: 'ai', content: `**Your UserSettings record is missing \`owner_email\`** (ID: ${s.id?.substring(0, 8)}…). This is a data integrity issue that causes saves to fail silently. A support ticket has been filed.`, ts: ts() });
           base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: 'UserSettings missing owner_email', description: `Settings record ${s.id} has no owner_email — saves may fail silently.`, status: 'received', findings: [] }).catch(() => {});
         } else {
-          addMsg({ role: 'ai', content: `✅ **Your UserSettings record exists and has a valid owner_email.**\n\nCurrent \`fictional_world_name\`: **"${s.fictional_world_name || '(not set yet)'}"**\n\nIf you just saved it and it's not showing up, the React Query cache may be stale. Try pulling down to refresh on the Settings page, or navigating away and back. The data write itself should be succeeding.`, ts: ts() });
+          const current = s.fictional_world_name || '';
+          // Extract the desired name from the original text if present (e.g. "save world name as Alex")
+          const nameMatch = originalText.match(/(?:as|to|name[d]?|called?|set.*?to)\s+"?([^"]+)"?\s*$/i);
+          const desiredName = nameMatch?.[1]?.trim();
+
+          if (desiredName) {
+            // User told us what they want — offer to write it directly
+            const confirmId = addMsg({
+              role: 'confirm',
+              content: `Save your world name as **"${desiredName}"**? (Current: "${current || 'not set'}")`,
+              actionKey: 'save_world_name',
+              actionPayload: { world_name: desiredName },
+              ts: ts(),
+            });
+            setPendingConfirm({ actionKey: 'save_world_name', actionPayload: { world_name: desiredName }, confirmMsgId: confirmId });
+          } else {
+            // Record exists and is healthy — tell them what's set and ask what they want
+            addMsg({ role: 'ai', content: `✅ **Your settings record is healthy.**\n\nCurrent world name: **"${current || '(not set)'}"**\n\nWhat would you like your world name to be? Tell me the name and I'll save it directly — e.g. *"save world name as Alex"*.`, ts: ts() });
+          }
         }
       } catch (err) {
         addMsg({ role: 'ai', content: `Could not read settings record: ${err.message}`, ts: ts() });
@@ -663,7 +819,7 @@ export default function SupportAssistant({ user }) {
       if (intent) {
         setMessages(prev => prev.filter(m => m.id !== thinkingId));
         await runDirectAction(intent, text);
-        return;
+        return; // isProcessing is cleared in finally below
       }
 
       // 2. Determine if LLM needs live diagnostic context
