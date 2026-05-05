@@ -29,6 +29,7 @@ import LeaveLocationModal from "@/components/scene/LeaveLocationModal";
 import ProductPurchaseModal from "@/components/scene/ProductPurchaseModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
+import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
 import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
 import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
@@ -1802,6 +1803,20 @@ Return JSON:
           </button>
         </div>
       )}
+
+      {/* NPC Evolution Tracker — watches venue NPC interactions, surfaces Level 4 promotion prompt */}
+      <NPCEvolutionTracker
+        messages={messages}
+        selectedNpcs={selectedNpcs}
+        currentUser={currentUser}
+        locationName={location.name}
+        onNpcSaved={(name) => setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          sender: "narrative",
+          content: `${name} has been saved to your world.`,
+          timestamp: new Date().toISOString(),
+        }])}
+      />
 
       {/* Input bar — stable, never remounts. Uses stable callbacks to prevent re-renders. */}
       <SceneInputBar
