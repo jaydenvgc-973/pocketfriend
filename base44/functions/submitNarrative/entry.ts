@@ -15,9 +15,11 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'characterId, conversationId, and narrativeContent are required' }, { status: 400 });
     }
 
-    const character = await base44.entities.Character.filter({ id: characterId });
+    // Use service role for the character lookup so NPCs (which are owned by the user
+    // but may only be readable via the NPC fetch path) are always found.
+    const character = await base44.asServiceRole.entities.Character.filter({ id: characterId, owner_email: user.email });
     if (!character || character.length === 0) {
-      return Response.json({ error: 'Character not found' }, { status: 404 });
+      return Response.json({ error: 'Character not found or not owned by this user' }, { status: 404 });
     }
 
     const nowISO = new Date().toISOString();
@@ -34,8 +36,10 @@ Deno.serve(async (req) => {
       is_narrative: true
     });
 
-    // Update character's current_life_event to reflect this narrative
-    const updatedCharacter = await base44.entities.Character.update(characterId, {
+    // Update character's current_life_event to reflect this narrative.
+    // Use service role so the update succeeds regardless of whether the character
+    // is an NPC or active character — ownership was already verified via auth.me() above.
+    const updatedCharacter = await base44.asServiceRole.entities.Character.update(characterId, {
       current_life_event: narrativeContent.substring(0, 150),
       life_last_updated: nowISO
     });
