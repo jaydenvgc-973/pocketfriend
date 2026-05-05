@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from "react";
-import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { User, DollarSign, MapPin, ChevronDown, LogOut, Check } from "lucide-react";
@@ -12,24 +11,13 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
 
   const { userPresence, setUserLocation, setUserAway } = useUserPresence(user, settings, settingsId);
   const [showDropdown, setShowDropdown] = useState(false);
-  const triggerRef = useRef(null);
-  const dropdownRef = useRef(null);
-  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
-
-  // Position the portal dropdown below the trigger button
-  const updateDropdownPos = () => {
-    if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    setDropdownPos({ top: rect.bottom + 4, left: rect.left });
-  };
+  const wrapperRef = useRef(null);
 
   // Close on outside click
   useEffect(() => {
     if (!showDropdown) return;
     const handler = (e) => {
-      const inTrigger = triggerRef.current?.contains(e.target);
-      const inDropdown = dropdownRef.current?.contains(e.target);
-      if (!inTrigger && !inDropdown) setShowDropdown(false);
+      if (!wrapperRef.current?.contains(e.target)) setShowDropdown(false);
     };
     document.addEventListener("pointerdown", handler);
     return () => document.removeEventListener("pointerdown", handler);
@@ -37,12 +25,12 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
 
   const handleSelectLocation = (loc) => {
     setShowDropdown(false);
-    setUserLocation(loc.id, loc.name); // optimistic — no await needed
+    setUserLocation(loc.id, loc.name);
   };
 
   const handleSetAway = () => {
     setShowDropdown(false);
-    setUserAway(); // optimistic — no await needed
+    setUserAway();
   };
 
   const presenceLabel = userPresence.isAway
@@ -83,14 +71,10 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
             <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">You</span>
           </Link>
 
-          {/* Presence label — clickable to open portal dropdown */}
-          <div className="relative mt-0.5">
+          {/* Presence trigger — inline absolute dropdown, no portal */}
+          <div ref={wrapperRef} className="relative mt-0.5">
             <button
-              ref={triggerRef}
-              onClick={() => {
-                updateDropdownPos();
-                setShowDropdown(v => !v);
-              }}
+              onClick={() => setShowDropdown(v => !v)}
               className="flex items-center gap-1.5 group"
             >
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColor}`} />
@@ -100,17 +84,15 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
               </span>
             </button>
 
-            {/* Portal: renders above ALL other elements, never clipped */}
+            {/* Inline absolute dropdown — positioned relative to wrapper, no iframe coordinate issues */}
             <AnimatePresence>
-              {showDropdown && createPortal(
+              {showDropdown && (
                 <motion.div
-                  ref={dropdownRef}
                   initial={{ opacity: 0, y: -4, scale: 0.97 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -4, scale: 0.97 }}
                   transition={{ duration: 0.12 }}
-                  style={{ position: "fixed", top: dropdownPos.top, left: dropdownPos.left, zIndex: 9999 }}
-                  className="bg-card border border-border rounded-xl shadow-2xl overflow-hidden min-w-[220px]"
+                  className="absolute left-0 top-full mt-1 z-50 bg-card border border-border rounded-xl shadow-2xl overflow-hidden min-w-[220px]"
                 >
                   {/* Away option */}
                   <button
@@ -135,7 +117,7 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
                         <p className="text-xs text-muted-foreground">Loading locations...</p>
                       </div>
                     ) : sortedLocations.length === 0 ? (
-                      <p className="text-xs text-muted-foreground px-3 py-2">No locations loaded. Add locations in Places.</p>
+                      <p className="text-xs text-muted-foreground px-3 py-2">No locations yet. Add them in Places.</p>
                     ) : (
                       <div className="max-h-48 overflow-y-auto">
                         {sortedLocations.map(loc => {
@@ -160,8 +142,7 @@ export default function UserCard({ user, settings, settingsId, locations = [], i
                       </div>
                     )}
                   </div>
-                </motion.div>,
-                document.body
+                </motion.div>
               )}
             </AnimatePresence>
           </div>

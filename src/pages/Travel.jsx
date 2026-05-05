@@ -60,6 +60,7 @@ export default function Travel() {
   const safeSettingsList = Array.isArray(settingsList) ? settingsList : [];
 
   // Active playable characters only
+  // staleTime: 30s so cached data is served during revalidation — prevents empty→data flash
   const { data: activeCharacters = [], isLoading: isLoadingActive } = useQuery({
     queryKey: ["activeCharacters", currentUser?.email],
     queryFn: () => base44.entities.Character.filter({
@@ -68,8 +69,8 @@ export default function Travel() {
       character_type: "active_created_character"
     }),
     enabled: !!currentUser?.email,
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
   });
 
   // npc_fictitious — via backend (catches service-account-created ones)
@@ -81,8 +82,8 @@ export default function Travel() {
       return (res?.data?.npcs || []).filter(c => c.character_type === 'npc_fictitious');
     },
     enabled: !!currentUser?.id,
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
   });
 
   // npc_fictitious — via direct RLS query (catches user-created ones)
@@ -94,8 +95,8 @@ export default function Travel() {
       300
     ),
     enabled: !!currentUser?.email,
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
   });
 
   // npc_family_member — via owner_email (primary ownership field)
@@ -107,8 +108,8 @@ export default function Travel() {
       300
     ),
     enabled: !!currentUser?.email,
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
   });
 
   // npc_regular — Home loads ALL types via { owner_email }; Travel must not miss this type
@@ -120,8 +121,8 @@ export default function Travel() {
       300
     ),
     enabled: !!currentUser?.email,
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
   });
 
   // Merge all sources, deduplicated
