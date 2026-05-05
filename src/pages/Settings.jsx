@@ -27,6 +27,7 @@ import GenericLocationFixer from "@/components/settings/GenericLocationFixer";
 import SettingsTroubleshootingPanel from "@/components/settings/SettingsTroubleshootingPanel";
 import EditCharacterType from "@/components/settings/EditCharacterType";
 import NarrativeDiagnosticPanel from "@/components/settings/NarrativeDiagnosticPanel";
+import SupportAssistant from "@/components/settings/SupportAssistant";
 import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
 
 export default function Settings() {
@@ -546,8 +547,16 @@ export default function Settings() {
         <StorageBackup />
         <CommonQuestions />
 
+        {/* Support Assistant — available to all users, scoped to their owner_email */}
+        <div className="pt-4 border-t border-border space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Account Help & Repair</p>
+          <SupportAssistant user={user} />
+        </div>
+
+        {/* Admin AI — only for admin account */}
         {isAdmin && (
           <div className="pt-4 border-t border-border space-y-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Admin Console</p>
             <AdminConsole />
           </div>
         )}
