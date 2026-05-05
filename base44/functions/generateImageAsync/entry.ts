@@ -844,20 +844,17 @@ Deno.serve(async (req) => {
       s = s.replace(/\bbarechested\b/gi, 'with no shirt on');
       s = s.replace(/\bbare[- ]?chest(ed)?\b/gi, 'with no shirt on');
 
-      // Lower body
-      s = s.replace(/\bin (his|her|their) underwear\b/gi, 'in comfortable shorts');
-      s = s.replace(/\bin underwear\b/gi, 'in comfortable shorts');
-      s = s.replace(/\bin boxers\b/gi, 'in comfortable shorts');
-      s = s.replace(/\bin briefs\b/gi, 'in comfortable shorts');
-      s = s.replace(/\bonly in (his|her|their) underwear\b/gi, 'in comfortable shorts at home');
-      s = s.replace(/\bunderwear\b/gi, 'shorts');
+      // Lower body — NOTE: "underwear", "boxers", "briefs" are NOT rewritten even in explicit scenes.
+      // Underwear is ordinary clothing. It must be evaluated by full scene context, not as an isolated word.
+      // The explicit signal set (sex, porn, erotic, etc.) already handles true violations.
+      // Rewriting underwear → shorts in non-sexual scenes produces unnatural, incorrect wording.
 
-      // Lingerie-style
+      // Lingerie-style (these ARE typically scene-contextually relevant to rewrite)
       s = s.replace(/\bin lingerie\b/gi, 'in comfortable sleepwear');
       s = s.replace(/\blingerie\b/gi, 'sleepwear');
       s = s.replace(/\bin a bra( and panties)?\b/gi, 'getting dressed at home');
-      s = s.replace(/\bpanties\b/gi, 'shorts');
-      s = s.replace(/\bthong\b/gi, 'shorts');
+      s = s.replace(/\bpanties\b/gi, 'underwear');
+      s = s.replace(/\bthong\b/gi, 'underwear');
 
       // Anatomy-focused
       s = s.replace(/\bexposed (chest|abs|torso|stomach|midriff)\b/gi, 'no shirt on');
