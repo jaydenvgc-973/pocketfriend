@@ -83,7 +83,8 @@ export default function Home() {
     });
   })();
 
-  // Fetch locations with zero cache to prevent stale empty data
+  // Fetch locations — staleTime:0 + refetchOnMount:"always" ensures UserCard dropdown
+  // never shows an empty list from a stale cache when real locations exist.
   const { data: locationsData = [], isLoading: isLocationsLoading } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
@@ -91,8 +92,9 @@ export default function Home() {
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
-    staleTime: 30000,
+    staleTime: 0,
     gcTime: 60000,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     retry: 2,

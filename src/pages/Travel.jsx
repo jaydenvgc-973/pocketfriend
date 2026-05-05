@@ -111,19 +111,6 @@ export default function Travel() {
     gcTime: 0,
   });
 
-  // npc_family_member — via owner_email (service-created or migrated family records)
-  const { data: rlsFamilyByOwnerEmail = [] } = useQuery({
-    queryKey: ["npcFamilyMembersByOwner", currentUser?.email],
-    queryFn: () => base44.entities.Character.filter(
-      { owner_email: currentUser.email, character_type: 'npc_family_member' },
-      '-created_date',
-      300
-    ),
-    enabled: !!currentUser?.email,
-    staleTime: 0,
-    gcTime: 0,
-  });
-
   // npc_regular — Home loads ALL types via { owner_email }; Travel must not miss this type
   const { data: npcRegularChars = [] } = useQuery({
     queryKey: ["npcRegular", currentUser?.email],
@@ -147,14 +134,7 @@ export default function Travel() {
     });
   })();
 
-  const npcFamilyMembers = (() => {
-    const seen = new Set();
-    return [...rlsFamilyByCreatedBy, ...rlsFamilyByOwnerEmail].filter(c => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
-      return true;
-    });
-  })();
+  const npcFamilyMembers = rlsFamilyByCreatedBy;
 
   // travelCompanions: active_created_character + npc_fictitious + npc_family_member (who can come with you)
   // IMPORTANT: npc_family_member must be included — Home page loads all types, Travel must match
@@ -848,7 +828,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       await queryClient.invalidateQueries({ queryKey: ['npcCharacters', currentUser?.id] });
                       await queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] });
                       await queryClient.invalidateQueries({ queryKey: ['npcFamilyMembers', currentUser?.email] });
-                      await queryClient.invalidateQueries({ queryKey: ['npcFamilyMembersByOwner', currentUser?.email] });
                     } catch (e) {
                       setDistributeResult({ error: e.message });
                     } finally {
