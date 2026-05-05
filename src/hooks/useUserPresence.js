@@ -54,10 +54,29 @@ export function useUserPresence(currentUser, settings, settingsId) {
   // Optimistic local override — applied immediately on user action, cleared on successful refetch
   const [optimisticPresence, setOptimisticPresence] = useState(null);
 
+  const queryKey = ["userSettings", currentUser?.email];
+
   const invalidate = useCallback(() => {
     if (!currentUser?.email) return;
-    queryClient.invalidateQueries({ queryKey: ["userSettings", currentUser.email] })
+    queryClient.invalidateQueries({ queryKey })
       .then(() => setOptimisticPresence(null)); // clear optimistic once server state arrives
+  }, [currentUser?.email, queryClient]);
+
+  /**
+   * Write presence fields directly into the React Query cache so any component
+   * on any page (Home, Travel, etc.) reads the updated values immediately —
+   * without waiting for the DB write + invalidate round-trip.
+   */
+  const writeToCache = useCallback((presenceFields) => {
+    if (!currentUser?.email) return;
+    queryClient.setQueryData(queryKey, (old) => {
+      if (!old) return old;
+      // old may be a single object (useUserSettings shape) or an array (Travel query shape)
+      if (Array.isArray(old)) {
+        return old.map((item, idx) => idx === 0 ? { ...item, ...presenceFields } : item);
+      }
+      return { ...old, ...presenceFields };
+    });
   }, [currentUser?.email, queryClient]);
 
   /**
@@ -96,8 +115,14 @@ export function useUserPresence(currentUser, settings, settingsId) {
 
     const activeSettingsId = resolvedSettingsId;
     console.log("[useUserPresence] setUserLocation WRITE →", { activeSettingsId, locationId, locationName, email: currentUser?.email });
-    // OPTIMISTIC: update UI immediately without waiting for refetch
+    // OPTIMISTIC: update local state AND shared React Query cache so Travel picks it up immediately
+    const presenceFields = {
+      user_current_location_id: locationId,
+      user_current_location_name: locationName,
+      user_presence_status: "present",
+    };
     setOptimisticPresence({ isAway: false, locationId, locationName, status: "present" });
+    writeToCache(presenceFields);
     base44.entities.UserSettings.update(activeSettingsId, {
       user_current_location_id: locationId,
       user_current_location_name: locationName,
@@ -145,8 +170,14 @@ export function useUserPresence(currentUser, settings, settingsId) {
     }
 
     const activeSettingsId = resolvedSettingsId;
-    // OPTIMISTIC: update UI immediately
+    // OPTIMISTIC: update local state AND shared React Query cache
+    const presenceFields = {
+      user_current_location_id: null,
+      user_current_location_name: null,
+      user_presence_status: "away",
+    };
     setOptimisticPresence({ isAway: true, locationId: null, locationName: null, status: "away" });
+    writeToCache(presenceFields);
     base44.entities.UserSettings.update(activeSettingsId, {
       user_current_location_id: null,
       user_current_location_name: null,
