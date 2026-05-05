@@ -1,8 +1,8 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// Current valid character_type values per schema
-const ACTIVE_CHARACTER_TYPES = ['active', 'promoted_npc'];
-const ALL_NPC_TYPES = ['npc', 'family_npc', 'background', 'promoted_npc'];
+// Current valid character_type values per schema (updated — created_by is PERMANENTLY FORBIDDEN)
+const ACTIVE_CHARACTER_TYPES = ['active_created_character'];
+const ALL_NPC_TYPES = ['npc_fictitious', 'npc_regular', 'npc_family_member'];
 
 Deno.serve(async (req) => {
   try {
@@ -19,13 +19,13 @@ Deno.serve(async (req) => {
       issues_found: [],
     };
 
-    // Load all active user characters (scoped to this account only)
-    const userChars = await base44.asServiceRole.entities.Character.filter(
-      { created_by: user.email, status: 'active' }, '-created_date', 200
+    // Load all active user characters — owner_email scoped only (created_by is FORBIDDEN)
+    const userChars = await base44.entities.Character.filter(
+      { owner_email: user.email, status: 'active' }, '-created_date', 200
     );
 
-    // Load all locations accessible to this user: user-created + shared
-    const userLocations = await base44.asServiceRole.entities.LocationReference.filter({ created_by: user.email });
+    // Load all locations accessible to this user: owner_email scoped + shared
+    const userLocations = await base44.entities.LocationReference.filter({ owner_email: user.email });
     const sharedLocations = await base44.asServiceRole.entities.LocationReference.filter({ scope: 'shared' });
     const allLocations = [...userLocations, ...sharedLocations];
     const validLocationIds = new Set(allLocations.map(l => l.id));
@@ -118,8 +118,8 @@ Deno.serve(async (req) => {
           const loc = locationById[char.resolved_current_location_id];
           if (loc && loc.name !== char.resolved_current_location_name) {
             results.issues_found.push(`"${char.name}": resolved_current_location_name="${char.resolved_current_location_name}" but location record name is "${loc.name}" — name is stale`);
-            // Auto-fix: update the stale name
-            await base44.asServiceRole.entities.Character.update(char.id, {
+            // Auto-fix: update the stale name — user-scoped (ownership confirmed by initial owner_email filter)
+            await base44.entities.Character.update(char.id, {
               resolved_current_location_name: loc.name,
             });
             results.fixes_applied.push(`"${char.name}": corrected stale resolved_current_location_name to "${loc.name}"`);

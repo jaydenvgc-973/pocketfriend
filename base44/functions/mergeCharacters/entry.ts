@@ -1,12 +1,14 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
  * mergeCharacters - COMPLETE MERGE WITH FULL DATA CONSOLIDATION
- * 
+ *
+ * - Ownership-scoped: all characters must share owner_email with authenticated user
+ * - created_by is NEVER used
  * - Consolidates ALL memory, relationships, family, schedules, locations
  * - Remaps ALL dependent records (conversations, messages, memories, etc.)
  * - PROPAGATES master's avatar_url and name into all fictional_relationships on ALL characters
- * - DELETES all secondary characters after consolidation
+ * - DELETES all secondary characters AFTER consolidation is confirmed
  * - Creates CharacterAlias entries for merged names
  * - Creates CharacterMergeAudit
  */
@@ -15,16 +17,43 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user?.email) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterIds, primaryCharacterId, conflictResolutions = {}, masterAvatarUrl, masterName } = await req.json();
+    const { characterIds, primaryCharacterId, conflictResolutions = {}, masterAvatarUrl, masterName, ownerEmail } = await req.json();
+
+    // OWNERSHIP GUARD: ownerEmail must match authenticated user
+    const effectiveOwnerEmail = ownerEmail || user.email;
+    if (effectiveOwnerEmail !== user.email) {
+      return Response.json({ error: 'ownerEmail must match authenticated user — cross-account merge is forbidden' }, { status: 403 });
+    }
     if (!characterIds || !Array.isArray(characterIds) || characterIds.length < 2) {
       return Response.json({ error: 'At least 2 characterIds required' }, { status: 400 });
     }
 
-    // ── FETCH ALL CHARACTERS (single list, find by ID) ───────────────────
-    const allCharsForUser = await base44.asServiceRole.entities.Character.list('-updated_date', 1000);
+    // ── FETCH ALL CHARACTERS — owner_email scoped (NO created_by, NO list-all) ──
+    // Load each character by ID with owner_email filter to verify ownership before touching anything
+    const charResults = await Promise.all(
+      characterIds.map(id =>
+        base44.entities.Character.filter({ id, owner_email: effectiveOwnerEmail }, null, 1).catch(() => [])
+      )
+    );
+    const allCharsForUser = charResults.map(r => r?.[0]).filter(Boolean);
+
+    // Also load all same-owner characters for the relationship propagation step
+    const allOwnerChars = await base44.entities.Character.filter(
+      { owner_email: effectiveOwnerEmail, status: 'active' }, null, 500
+    ).catch(() => []);
+
     const charMap = Object.fromEntries(allCharsForUser.map(c => [c.id, c]));
+
+    // VERIFY: all requested character IDs belong to this owner
+    for (const id of characterIds) {
+      if (!charMap[id]) {
+        return Response.json({
+          error: `Character ${id} not found or does not belong to owner_email "${effectiveOwnerEmail}". Merge aborted.`
+        }, { status: 403 });
+      }
+    }
 
     // SELECT PRIMARY — must exist and be the designated master
     let primary = primaryCharacterId ? charMap[primaryCharacterId] : null;
@@ -174,7 +203,7 @@ Deno.serve(async (req) => {
     // ── PROPAGATE MASTER AVATAR + NAME INTO ALL OTHER CHARACTERS' fictional_relationships ──
     // Any character that references a secondary's name in their fictional_relationships
     // must be updated to use the master's name and avatar
-    const allActiveChars = allCharsForUser.filter(c =>
+    const allActiveChars = allOwnerChars.filter(c =>
       c.id !== primary.id &&
       !secondaryIds.includes(c.id) &&
       c.status !== 'deleted' &&

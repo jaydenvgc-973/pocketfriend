@@ -831,6 +831,7 @@ export default function Settings() {
         isOpen={showSuggestedDupes} 
         onClose={() => setShowSuggestedDupes(false)}
         duplicates={suggestedDupes}
+        ownerEmail={user?.email}
         onMergeComplete={() => {
           queryClient.invalidateQueries({ queryKey: ['characters', user?.email] });
           setShowSuggestedDupes(false);

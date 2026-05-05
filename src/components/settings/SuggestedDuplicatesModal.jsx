@@ -1,93 +1,106 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { motion, AnimatePresence } from 'framer-motion';
-import { base44 } from '@/api/base44Client';
+import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { AlertTriangle, ChevronRight } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
+import MergeReviewModal from './MergeReviewModal';
 
-export default function SuggestedDuplicatesModal({ isOpen, onClose, duplicates = [], onMergeComplete }) {
-  const [merging, setMerging] = useState(null);
+/**
+ * SuggestedDuplicatesModal
+ *
+ * Lists detected duplicate groups. Clicking "Review & Merge" opens the full
+ * MergeReviewModal which shows the pre-merge comparison before anything is written.
+ * No auto-merge. No auto-delete.
+ */
+export default function SuggestedDuplicatesModal({ isOpen, onClose, duplicates = [], ownerEmail, onMergeComplete }) {
+  const [activeGroup, setActiveGroup] = useState(null);
 
-  const handleMerge = async (dupeGroup) => {
-    if (!window.confirm(`Merge ${dupeGroup.name} into one character?`)) return;
-    
-    setMerging(dupeGroup.name);
-    try {
-      await base44.functions.invoke('mergeCharacters', {
-        characterIds: dupeGroup.records.map(r => r.id),
-        primaryCharacterId: dupeGroup.records[0].id,
-      });
-      onMergeComplete?.();
-    } catch (err) {
-      alert('Merge failed: ' + err.message);
-    } finally {
-      setMerging(null);
-    }
+  const handleMergeComplete = () => {
+    setActiveGroup(null);
+    onMergeComplete?.();
   };
 
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={onClose}>
-      <motion.div
-        initial={{ y: 80, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 80, opacity: 0 }}
-        className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-6 space-y-4 max-h-96 overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-amber-500" />
-          <h3 className="text-sm font-semibold text-foreground">Suggested Duplicates</h3>
-        </div>
-
-        {duplicates.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-6">No duplicates detected</p>
-        ) : (
-          <div className="space-y-2">
-            {duplicates.map((dupeGroup, idx) => (
-              <div key={idx} className="border border-border rounded-xl p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground capitalize">{dupeGroup.name}</p>
-                    <p className="text-xs text-muted-foreground">{dupeGroup.records.length} copies found</p>
-                  </div>
-                  <Button
-                    onClick={() => handleMerge(dupeGroup)}
-                    disabled={merging === dupeGroup.name}
-                    size="sm"
-                    className="rounded-lg"
-                  >
-                    {merging === dupeGroup.name ? 'Merging...' : 'Merge'}
-                  </Button>
-                </div>
-                <div className="space-y-2 mt-3">
-                  {dupeGroup.records.map((r) => (
-                    <div key={r.id} className="flex items-center gap-3 p-2 bg-secondary/40 rounded-lg">
-                      {r.avatar_url ? (
-                        <img src={r.avatar_url} alt={r.name} className="w-8 h-8 rounded object-cover flex-shrink-0" />
-                      ) : (
-                        <div className="w-8 h-8 rounded bg-primary/20 flex items-center justify-center flex-shrink-0">
-                          <span className="text-xs font-semibold text-primary">{r.name?.[0]?.toUpperCase()}</span>
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">{r.name}</p>
-                        <p className="text-[10px] text-muted-foreground">Created: {new Date(r.created_date).toLocaleDateString()}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
+    <>
+      <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={onClose}>
+        <motion.div
+          initial={{ y: 80, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: 80, opacity: 0 }}
+          className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-6 space-y-4 max-h-[80vh] overflow-y-auto"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-amber-500" />
+            <h3 className="text-sm font-semibold text-foreground">Suggested Duplicates</h3>
           </div>
-        )}
+          <p className="text-xs text-muted-foreground">
+            These character names appear more than once. Click "Review &amp; Merge" to compare both records before merging. No data will be lost.
+          </p>
 
-        <Button onClick={onClose} variant="outline" size="sm" className="w-full rounded-lg">
-          Done
-        </Button>
-      </motion.div>
-    </div>,
+          {duplicates.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-6">No duplicates detected</p>
+          ) : (
+            <div className="space-y-3">
+              {duplicates.map((dupeGroup, idx) => (
+                <div key={idx} className="border border-border rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground capitalize">{dupeGroup.name}</p>
+                      <p className="text-xs text-muted-foreground">{dupeGroup.records.length} records found</p>
+                    </div>
+                    <Button
+                      onClick={() => setActiveGroup(dupeGroup)}
+                      size="sm"
+                      variant="outline"
+                      className="rounded-lg border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
+                    >
+                      Review &amp; Merge
+                    </Button>
+                  </div>
+
+                  {/* Record summary cards */}
+                  <div className="space-y-2">
+                    {dupeGroup.records.map((r) => (
+                      <div key={r.id} className="flex items-center gap-3 p-2 bg-secondary/40 rounded-lg">
+                        {r.avatar_url ? (
+                          <img src={r.avatar_url} alt={r.name} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                            <span className="text-xs font-semibold text-primary">{r.name?.[0]?.toUpperCase()}</span>
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate">{r.name}</p>
+                          <p className="text-[10px] text-muted-foreground font-mono">{r.id?.substring(0, 12)}… · {r.character_type || 'unknown type'}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <Button onClick={onClose} variant="outline" size="sm" className="w-full rounded-lg">
+            Done
+          </Button>
+        </motion.div>
+      </div>
+
+      {/* Full pre-merge review opens on top */}
+      {activeGroup && (
+        <MergeReviewModal
+          isOpen={!!activeGroup}
+          onClose={() => setActiveGroup(null)}
+          dupeGroup={activeGroup}
+          ownerEmail={ownerEmail}
+          onMergeComplete={handleMergeComplete}
+        />
+      )}
+    </>,
     document.body
   );
 }

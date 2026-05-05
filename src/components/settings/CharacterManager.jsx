@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { fetchUnifiedRoster, getInitial } from '@/lib/unifiedRosterUtils';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
+import MergeReviewModal from '@/components/settings/MergeReviewModal';
 
 const CATEGORY_OPTIONS = [
   { id: 'user', label: 'User', color: 'bg-primary/10 border-primary/30' },
@@ -126,7 +127,10 @@ export default function CharacterManager() {
   });
 
   const mergeMutation = useMutation({
-    mutationFn: (data) => base44.functions.invoke('mergeCharacters', data),
+    mutationFn: (data) => base44.functions.invoke('mergeCharacters', {
+      ...data,
+      ownerEmail: currentUser?.email, // ownership scoping — required, never cross-account
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
       setMergeMode(false);
@@ -286,68 +290,47 @@ export default function CharacterManager() {
   const submitMerge = () => {
     if (selectedForMerge.size < 2) return;
     const selectedEntries = Array.from(selectedForMerge.values());
-    // item is stored directly on the entry — no lookup needed
     const selectedItems = selectedEntries.map(entry => ({ item: entry.item, entry })).filter(e => e.item);
     setMergeConfirmModal({ selectedItems, selectedEntries });
   };
 
-  const confirmMerge = (masterEntry) => {
+  // confirmMerge is now only used for NPC-only (relationship-level) deduplication.
+  // Character-to-character merges go through MergeReviewModal.
+  const confirmNPCDedupe = (masterEntry) => {
     if (!mergeConfirmModal) return;
     const { selectedEntries } = mergeConfirmModal;
-
-    // Handle character-to-character merges only (not NPC deduplication)
-    const charEntries = selectedEntries.filter(e => e.type === 'character');
-    
-    if (charEntries.length >= 2) {
-      // All selected character IDs — master is designated via primaryCharacterId
-      const charIds = charEntries.map(e => e.charId);
-      // Get master's avatar_url to propagate
-      const masterItem = charEntries.find(e => e.charId === masterEntry.charId);
-      const masterAvatarUrl = masterItem?.item?.data?.avatar_url || null;
-      mergeMutation.mutate({ 
-        characterIds: charIds, 
-        primaryCharacterId: masterEntry.charId,
-        masterAvatarUrl,
-        masterName: masterItem?.item?.data?.name || null,
+    const masterName = masterEntry.personName;
+    const allChars = roster.filter(c => c.is_character || c.fictional_relationships);
+    Promise.all(allChars.map(char => {
+      const rels = char.fictional_relationships || [];
+      const seen = new Map();
+      rels.forEach(r => {
+        const key = r.person_name?.toLowerCase();
+        if (!key) return;
+        if (!seen.has(key)) {
+          seen.set(key, { ...r });
+        } else {
+          const existing = seen.get(key);
+          seen.set(key, {
+            ...existing,
+            friendship_level: Math.max(existing.friendship_level ?? 50, r.friendship_level ?? 50),
+            user_respect_level: Math.max(existing.user_respect_level ?? 50, r.user_respect_level ?? 50),
+            romantic_level: Math.max(existing.romantic_level ?? 0, r.romantic_level ?? 0),
+            attraction_level: Math.max(existing.attraction_level ?? 0, r.attraction_level ?? 0),
+          });
+        }
       });
+      const deduped = Array.from(seen.values());
+      if (deduped.length === rels.length) return Promise.resolve();
+      return base44.entities.Character.update(char.id, { fictional_relationships: deduped });
+    }))
+    .then(() => {
+      queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+      setSelectedForMerge(new Map());
+      setMergeMode(false);
       setMergeConfirmModal(null);
-    } else {
-      // NPC-only merge (deduplication)
-      const npcEntries = selectedEntries.filter(e => e.type === 'npc');
-      const masterName = masterEntry.personName;
-      
-      const allChars = roster.filter(c => c.is_character || c.fictional_relationships);
-      Promise.all(allChars.map(char => {
-        const rels = char.fictional_relationships || [];
-        const seen = new Map();
-        rels.forEach(r => {
-          const key = r.person_name?.toLowerCase();
-          if (!key) return;
-          if (!seen.has(key)) {
-            seen.set(key, { ...r });
-          } else {
-            const existing = seen.get(key);
-            seen.set(key, {
-              ...existing,
-              friendship_level: Math.max(existing.friendship_level ?? 50, r.friendship_level ?? 50),
-              user_respect_level: Math.max(existing.user_respect_level ?? 50, r.user_respect_level ?? 50),
-              romantic_level: Math.max(existing.romantic_level ?? 0, r.romantic_level ?? 0),
-              attraction_level: Math.max(existing.attraction_level ?? 0, r.attraction_level ?? 0),
-            });
-          }
-        });
-        const deduped = Array.from(seen.values());
-        if (deduped.length === rels.length) return Promise.resolve();
-        return base44.entities.Character.update(char.id, { fictional_relationships: deduped });
-      }))
-      .then(() => {
-        queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
-        setSelectedForMerge(new Map());
-        setMergeMode(false);
-        setMergeConfirmModal(null);
-      })
-      .catch(() => {});
-    }
+    })
+    .catch(() => {});
   };
 
   const editable = roster.filter(c => !c.is_protected && !c.is_default && !c.is_user);
@@ -732,69 +715,73 @@ export default function CharacterManager() {
         <p className="text-xs text-muted-foreground text-center py-2">Select 2+ characters to merge</p>
       )}
 
-      {/* Merge confirmation modal */}
-      {mergeConfirmModal && createPortal(
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={() => setMergeConfirmModal(null)}>
-          <motion.div
-            initial={{ y: 80, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-6 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="space-y-1">
-              <h3 className="text-sm font-semibold text-foreground">Who is the REAL person?</h3>
-              <p className="text-xs text-muted-foreground">The one you pick is the master. The other(s) are duplicates — they will be permanently erased and replaced everywhere by the master's name and photo.</p>
-            </div>
-            <div className="space-y-3 max-h-60 overflow-y-auto">
-              {mergeConfirmModal.selectedItems.map(({ item, entry }) => {
-                const isNPC = item.type === 'world_person' || item.type === 'family';
-                const isUser = item.type === 'user';
-                const itemData = item.data;
-                const itemName = isUser
-                  ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
-                  : itemData.name;
-                const avatarUrl = isUser 
-                  ? (itemData.avatar_url || userSettings?.generated_avatar_urls?.[0] || userSettings?.reference_image_urls?.[0])
-                  : (itemData.avatar_url);
+      {/* Merge confirmation — routes to MergeReviewModal for character merges, inline for NPC deduplication */}
+      {mergeConfirmModal && (() => {
+        const charEntries = mergeConfirmModal.selectedEntries.filter(e => e.type === 'character');
+        const isCharMerge = charEntries.length >= 2;
 
-                return (
-                  <button
-                    key={entry.key}
-                    onClick={() => confirmMerge(entry)}
-                    className="w-full text-left p-3 rounded-lg border-2 border-border hover:border-emerald-500 hover:bg-emerald-500/5 transition-colors flex gap-3 items-center"
-                  >
-                    {avatarUrl ? (
-                      <img src={avatarUrl} alt={itemName} className="w-12 h-12 rounded-full object-cover flex-shrink-0" />
-                    ) : (
-                      <div className={`w-12 h-12 rounded-full ${isUser ? 'bg-primary' : isNPC ? 'bg-purple-500' : 'bg-secondary'} flex items-center justify-center flex-shrink-0`}>
-                        <span className={`text-sm font-semibold ${isUser || isNPC ? 'text-white' : 'text-foreground'}`}>
-                          {itemName[0].toUpperCase()}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-foreground">{itemName}</p>
-                      <p className="text-xs text-emerald-500 font-medium mt-0.5">✓ This is the real person — keep this one</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-xs text-destructive/80 font-medium">
-              ⚠ The character(s) you do NOT pick will be permanently deleted and all their appearances replaced by the master.
-            </p>
-            <Button
-              onClick={() => setMergeConfirmModal(null)}
-              variant="outline"
-              size="sm"
-              className="w-full rounded-lg"
+        if (isCharMerge) {
+          // Full pre-merge review for character-to-character merges
+          const dupeGroup = {
+            name: charEntries[0]?.item?.data?.name || 'Character',
+            records: charEntries.map(e => e.item?.data).filter(Boolean),
+          };
+          return (
+            <MergeReviewModal
+              isOpen={true}
+              onClose={() => { setMergeConfirmModal(null); setMergeMode(false); setSelectedForMerge(new Map()); }}
+              dupeGroup={dupeGroup}
+              ownerEmail={currentUser?.email}
+              onMergeComplete={() => {
+                setMergeConfirmModal(null);
+                setMergeMode(false);
+                setSelectedForMerge(new Map());
+                queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+              }}
+            />
+          );
+        }
+
+        // NPC-only deduplication — simple inline picker
+        return createPortal(
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={() => setMergeConfirmModal(null)}>
+            <motion.div
+              initial={{ y: 80, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-6 space-y-4"
+              onClick={(e) => e.stopPropagation()}
             >
-              Cancel
-            </Button>
-          </motion.div>
-        </div>,
-        document.body
-      )}
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold text-foreground">Deduplicate NPC relationship entries</h3>
+                <p className="text-xs text-muted-foreground">This will merge duplicate relationship entries in fictional_relationships arrays. No character records will be deleted.</p>
+              </div>
+              <div className="space-y-3 max-h-60 overflow-y-auto">
+                {mergeConfirmModal.selectedItems.map(({ item, entry }) => {
+                  const itemData = item.data;
+                  const itemName = itemData.person_name || itemData.name || 'Unknown';
+                  return (
+                    <button
+                      key={entry.key}
+                      onClick={() => confirmNPCDedupe(entry)}
+                      className="w-full text-left p-3 rounded-lg border-2 border-border hover:border-emerald-500 hover:bg-emerald-500/5 transition-colors flex gap-3 items-center"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center flex-shrink-0">
+                        <span className="text-sm font-semibold text-purple-400">{itemName[0]?.toUpperCase()}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-foreground">{itemName}</p>
+                        <p className="text-xs text-emerald-500 font-medium mt-0.5">✓ Keep this entry as canonical</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <Button onClick={() => setMergeConfirmModal(null)} variant="outline" size="sm" className="w-full rounded-lg">Cancel</Button>
+            </motion.div>
+          </div>,
+          document.body
+        );
+      })()}
     </div>
   );
 }
