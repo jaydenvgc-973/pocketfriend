@@ -39,6 +39,20 @@
     }
   },
   "properties": {
+    "presence_stay_lock": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when user explicitly chose STAY for this character at a scene exit. Automations must not override the resolved location while this is true."
+    },
+    "presence_stay_lock_location_id": {
+      "type": "string",
+      "description": "The location ID where the character is locked by user STAY decision."
+    },
+    "presence_stay_lock_set_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the stay lock was set. VGC Towers travel logic uses this to know when to clear the lock."
+    },
     "character_type": {
       "type": "string",
       "enum": [
@@ -127,52 +141,7 @@
     "aliases": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "text": {
-            "type": "string"
-          },
-          "normalized": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "nickname",
-              "family_role",
-              "descriptor",
-              "title",
-              "contextual_name",
-              "short_name",
-              "alternate_spelling"
-            ]
-          },
-          "source_context_type": {
-            "type": "string",
-            "enum": [
-              "chat",
-              "text",
-              "location",
-              "media",
-              "memory_import",
-              "manual_user_entry"
-            ]
-          },
-          "location_scope_id": {
-            "type": "string"
-          },
-          "relationship_scope_character_id": {
-            "type": "string"
-          },
-          "user_confirmed": {
-            "type": "boolean",
-            "default": false
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
+        "type": "object"
       },
       "default": []
     },
@@ -229,49 +198,7 @@
       "type": "string"
     },
     "appearance_lock": {
-      "type": "object",
-      "properties": {
-        "skin_tone": {
-          "type": "string"
-        },
-        "hair_type": {
-          "type": "string"
-        },
-        "hairstyle": {
-          "type": "string"
-        },
-        "facial_hair": {
-          "type": "string"
-        },
-        "makeup": {
-          "type": "string"
-        },
-        "clothing_style": {
-          "type": "string"
-        },
-        "footwear": {
-          "type": "string"
-        },
-        "overall_aesthetic": {
-          "type": "string"
-        },
-        "custom_keywords": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": []
-        },
-        "height_inches": {
-          "type": "number"
-        },
-        "height_display": {
-          "type": "string"
-        },
-        "head_ratio": {
-          "type": "number"
-        }
-      }
+      "type": "object"
     },
     "fictional_entity_images": {
       "type": "object",
@@ -345,83 +272,6 @@
     },
     "emotional_state": {
       "type": "string",
-      "enum": [
-        "calm",
-        "irritated",
-        "defensive",
-        "reflective",
-        "closed-off",
-        "flirtatious",
-        "bored",
-        "burnt out",
-        "joyful",
-        "anxious",
-        "sad",
-        "excited",
-        "overwhelmed",
-        "content",
-        "frustrated",
-        "joy",
-        "happiness",
-        "contentment",
-        "excitement",
-        "elation",
-        "hope",
-        "relief",
-        "gratitude",
-        "love",
-        "affection",
-        "compassion",
-        "empathy",
-        "pride",
-        "confidence",
-        "peacefulness",
-        "satisfaction",
-        "curiosity",
-        "interest",
-        "amusement",
-        "surprise",
-        "awe",
-        "anticipation",
-        "nostalgia",
-        "longing",
-        "desire",
-        "passion",
-        "infatuation",
-        "tenderness",
-        "vulnerability",
-        "trust",
-        "security",
-        "belonging",
-        "acceptance",
-        "patience",
-        "annoyance",
-        "irritation",
-        "anger",
-        "rage",
-        "resentment",
-        "jealousy",
-        "envy",
-        "insecurity",
-        "doubt",
-        "confusion",
-        "stress",
-        "fear",
-        "panic",
-        "worry",
-        "guilt",
-        "shame",
-        "embarrassment",
-        "regret",
-        "disappointment",
-        "grief",
-        "loneliness",
-        "hopelessness",
-        "despair",
-        "detachment",
-        "numbness",
-        "apathy"
-      ],
       "default": "calm"
     },
     "loyalty_view": {
@@ -435,37 +285,8 @@
     },
     "memories": {
       "type": "array",
-      "description": "Formative experiences that shaped the character \u2014 displayed in profile, injected into chat prompt, and used by system prompt builder.",
       "items": {
-        "type": "object",
-        "properties": {
-          "title": {
-            "type": "string",
-            "description": "Short label for this memory (e.g. 'First heartbreak')"
-          },
-          "description": {
-            "type": "string",
-            "description": "Full scene or narrative description of what happened"
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "challenges",
-              "positive",
-              "growth",
-              "custom"
-            ],
-            "description": "Thematic category: challenges, positive, growth, or custom for uncategorized"
-          },
-          "emotional_impact": {
-            "type": "string",
-            "description": "How this event affected the character emotionally and how it still shapes them"
-          },
-          "lesson_learned": {
-            "type": "string",
-            "description": "The takeaway or belief this experience embedded in them"
-          }
-        }
+        "type": "object"
       },
       "default": []
     },
@@ -514,54 +335,7 @@
     "quirks": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "quirk_id": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "spending",
-              "addiction",
-              "lifestyle",
-              "emotional",
-              "work"
-            ]
-          },
-          "intensity": {
-            "type": "string",
-            "enum": [
-              "mild",
-              "moderate",
-              "strong"
-            ],
-            "default": "moderate"
-          },
-          "active": {
-            "type": "boolean",
-            "default": true
-          },
-          "last_triggered_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "trigger_count": {
-            "type": "integer",
-            "default": 0
-          },
-          "notes": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "quirk_id",
-          "label",
-          "category"
-        ]
+        "type": "object"
       },
       "default": []
     },
@@ -578,112 +352,12 @@
       "type": "string"
     },
     "current_outfit": {
-      "type": "object",
-      "properties": {
-        "outfit_id": {
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        },
-        "category": {
-          "type": "string"
-        },
-        "top": {
-          "type": "string"
-        },
-        "bottom": {
-          "type": "string"
-        },
-        "shoes": {
-          "type": "string"
-        },
-        "outerwear": {
-          "type": "string"
-        },
-        "accessories": {
-          "type": "string"
-        },
-        "hair_state": {
-          "type": "string"
-        },
-        "full_description": {
-          "type": "string"
-        },
-        "last_changed_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "change_reason": {
-          "type": "string"
-        }
-      }
+      "type": "object"
     },
     "character_closet": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "outfit_id": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "daily_casual",
-              "work",
-              "gym",
-              "church",
-              "nightlife",
-              "formal",
-              "sleepwear",
-              "lounge",
-              "outdoor",
-              "special"
-            ],
-            "default": "daily_casual"
-          },
-          "top": {
-            "type": "string"
-          },
-          "bottom": {
-            "type": "string"
-          },
-          "shoes": {
-            "type": "string"
-          },
-          "outerwear": {
-            "type": "string"
-          },
-          "accessories": {
-            "type": "string"
-          },
-          "hair_state": {
-            "type": "string"
-          },
-          "full_description": {
-            "type": "string"
-          },
-          "image_url": {
-            "type": "string"
-          },
-          "is_favorite": {
-            "type": "boolean",
-            "default": false
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "outfit_id",
-          "label",
-          "category"
-        ]
+        "type": "object"
       },
       "default": []
     },
@@ -691,8 +365,7 @@
       "type": "string"
     },
     "temporary_housing_location_id": {
-      "type": "string",
-      "description": "ID of temporary lodging (hotel or shelter). Not a permanent home. Set when character is placed in hotel or shelter."
+      "type": "string"
     },
     "current_work_location_id": {
       "type": "string"
@@ -747,17 +420,14 @@
         "late_callout",
         "missed_shift",
         "no_call_no_show"
-      ],
-      "description": "Active work exception status for today. Cleared at day boundary."
+      ]
     },
     "work_exception_date": {
       "type": "string",
-      "format": "date",
-      "description": "The date (YYYY-MM-DD ET) this exception applies to. Must match today for it to be valid."
+      "format": "date"
     },
     "work_exception_reason": {
-      "type": "string",
-      "description": "Reason for the work exception (sick, personal, emergency, etc.)"
+      "type": "string"
     },
     "traveling_to_location_id": {
       "type": "string"
@@ -809,30 +479,13 @@
     "recent_location_history": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "location_id": {
-            "type": "string"
-          },
-          "location_name": {
-            "type": "string"
-          },
-          "arrived_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "left_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
+        "type": "object"
       },
       "default": []
     },
     "is_homeless": {
       "type": "boolean",
-      "default": false,
-      "description": "True if character has no stable home \u2014 set when assigned homeless context at a location"
+      "default": false
     },
     "housing_context": {
       "type": "string",
@@ -840,8 +493,7 @@
         "stable_home",
         "temporary_shelter",
         "homeless_unsheltered"
-      ],
-      "description": "Character's current housing situation. Drives narrative, sleep, scene, and travel logic."
+      ]
     },
     "pending_invite_id": {
       "type": "string"
@@ -907,24 +559,7 @@
       "type": "string"
     },
     "work_details": {
-      "type": "object",
-      "properties": {
-        "job_title": {
-          "type": "string"
-        },
-        "workplace_type": {
-          "type": "string"
-        },
-        "work_environment": {
-          "type": "string"
-        },
-        "coworker_names": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      }
+      "type": "object"
     },
     "occupation_location_id": {
       "type": "string"
@@ -935,18 +570,7 @@
     "additional_occupation_locations": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "location_id": {
-            "type": "string"
-          },
-          "location_name": {
-            "type": "string"
-          },
-          "job_title": {
-            "type": "string"
-          }
-        }
+        "type": "object"
       }
     },
     "education_location_id": {
@@ -958,53 +582,13 @@
     "additional_education_locations": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "location_id": {
-            "type": "string"
-          },
-          "location_name": {
-            "type": "string"
-          },
-          "program_name": {
-            "type": "string"
-          }
-        }
+        "type": "object"
       }
     },
     "education_enrollments": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "location_id": {
-            "type": "string"
-          },
-          "location_name": {
-            "type": "string"
-          },
-          "tuition_amount": {
-            "type": "number"
-          },
-          "scholarship_enabled": {
-            "type": "boolean",
-            "default": false
-          },
-          "enroll_date": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "active",
-              "suspended",
-              "graduated",
-              "dropped"
-            ],
-            "default": "active"
-          }
-        }
+        "type": "object"
       },
       "default": []
     },
@@ -1021,21 +605,7 @@
       "format": "date-time"
     },
     "education_details": {
-      "type": "object",
-      "properties": {
-        "course_name": {
-          "type": "string"
-        },
-        "institution": {
-          "type": "string"
-        },
-        "location": {
-          "type": "string"
-        },
-        "duration_days": {
-          "type": "number"
-        }
-      }
+      "type": "object"
     },
     "current_job_training_activity": {
       "type": "string",
@@ -1050,63 +620,18 @@
       "format": "date-time"
     },
     "job_training_details": {
-      "type": "object",
-      "properties": {
-        "training_name": {
-          "type": "string"
-        },
-        "company": {
-          "type": "string"
-        },
-        "position_title": {
-          "type": "string"
-        },
-        "duration_days": {
-          "type": "number"
-        }
-      }
+      "type": "object"
     },
     "completed_education": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "course_name": {
-            "type": "string"
-          },
-          "institution": {
-            "type": "string"
-          },
-          "start_date": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "completion_date": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
+        "type": "object"
       }
     },
     "completed_job_training": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "training_name": {
-            "type": "string"
-          },
-          "company": {
-            "type": "string"
-          },
-          "position_title": {
-            "type": "string"
-          },
-          "completion_date": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
+        "type": "object"
       }
     },
     "frequented_places": {
@@ -1121,25 +646,7 @@
     "family_members": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "relationship_type": {
-            "type": "string"
-          },
-          "photo_url": {
-            "type": "string"
-          },
-          "age_at_creation": {
-            "type": "number"
-          },
-          "age_set_date": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
+        "type": "object"
       }
     },
     "family_list_locked": {
@@ -1156,169 +663,19 @@
     "fictional_relationships": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "person_name": {
-            "type": "string"
-          },
-          "related_character_id": {
-            "type": "string"
-          },
-          "relationship_type": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "current_status": {
-            "type": "string"
-          },
-          "emotional_impact": {
-            "type": "string"
-          },
-          "last_interaction_summary": {
-            "type": "string"
-          },
-          "history_summary": {
-            "type": "string"
-          },
-          "avatar_url": {
-            "type": "string"
-          },
-          "current_location_id": {
-            "type": "string"
-          },
-          "user_respect_level": {
-            "type": "number",
-            "default": 50
-          },
-          "friendship_level": {
-            "type": "number",
-            "default": 75
-          },
-          "romantic_level": {
-            "type": "number",
-            "default": 0
-          },
-          "attraction_level": {
-            "type": "number",
-            "default": 0
-          },
-          "chosen_family_level": {
-            "type": "number",
-            "default": 0
-          },
-          "trust_level": {
-            "type": "number",
-            "default": 50
-          },
-          "relational_jealousy": {
-            "type": "number",
-            "default": 0
-          },
-          "envy_jealousy": {
-            "type": "number",
-            "default": 0
-          }
-        }
+        "type": "object"
       }
     },
     "transient_encounters": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "description": {
-            "type": "string"
-          },
-          "context": {
-            "type": "string"
-          },
-          "emotional_reaction": {
-            "type": "string"
-          },
-          "date": {
-            "type": "string"
-          }
-        }
+        "type": "object"
       }
     },
     "businesses": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          },
-          "visibility": {
-            "type": "string",
-            "enum": [
-              "public",
-              "private",
-              "secret"
-            ]
-          },
-          "income": {
-            "type": "number",
-            "default": 0
-          },
-          "notes": {
-            "type": "string"
-          },
-          "linked_location_id": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "employees": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "character_id": {
-                  "type": "string"
-                },
-                "character_name": {
-                  "type": "string"
-                },
-                "avatar_url": {
-                  "type": "string"
-                },
-                "job_title": {
-                  "type": "string"
-                },
-                "pay_rate": {
-                  "type": "number",
-                  "default": 0
-                },
-                "pay_type": {
-                  "type": "string",
-                  "enum": [
-                    "hourly",
-                    "monthly"
-                  ],
-                  "default": "monthly"
-                }
-              }
-            },
-            "default": []
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "type",
-          "visibility"
-        ]
+        "type": "object"
       },
       "default": []
     },
@@ -1334,18 +691,7 @@
     "departed_characters": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "cause": {
-            "type": "string"
-          },
-          "relationship_closeness": {
-            "type": "string"
-          }
-        }
+        "type": "object"
       }
     },
     "triggered_milestones": {
@@ -1358,119 +704,19 @@
     "songs_heard": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "title": {
-            "type": "string"
-          },
-          "artist": {
-            "type": "string"
-          },
-          "spotify_id": {
-            "type": "string"
-          },
-          "lyrics_excerpt": {
-            "type": "string"
-          },
-          "full_lyrics": {
-            "type": "string"
-          },
-          "platform": {
-            "type": "string"
-          },
-          "link": {
-            "type": "string"
-          },
-          "preview_url": {
-            "type": "string"
-          },
-          "added_date": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
+        "type": "object"
       }
     },
     "videos_watched": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "title": {
-            "type": "string"
-          },
-          "creator": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "platform": {
-            "type": "string"
-          },
-          "duration": {
-            "type": "string"
-          },
-          "link": {
-            "type": "string"
-          },
-          "added_date": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
+        "type": "object"
       }
     },
     "future_life_goals": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "description": {
-            "type": "string"
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "personal_development",
-              "health_wellness",
-              "career_financial",
-              "relationships_family",
-              "adventure_travel",
-              "giving_back_spiritual"
-            ]
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "active",
-              "achieved",
-              "on_hold",
-              "abandoned"
-            ],
-            "default": "active"
-          },
-          "priority": {
-            "type": "string",
-            "enum": [
-              "low",
-              "medium",
-              "high"
-            ],
-            "default": "medium"
-          },
-          "details": {
-            "type": "string"
-          },
-          "revealed_to_user": {
-            "type": "boolean",
-            "default": false
-          },
-          "achieved_date": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
+        "type": "object"
       }
     },
     "user_respect_level": {

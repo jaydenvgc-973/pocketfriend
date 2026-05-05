@@ -2,6 +2,13 @@
   "name": "UserSettings",
   "type": "object",
   "properties": {
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email \u2014 primary ownership source of truth"
+    },
+    "owner_user_id": {
+      "type": "string"
+    },
     "has_completed_onboarding": {
       "type": "boolean",
       "default": false
@@ -314,7 +321,7 @@
     },
     "world_context_cache": {
       "type": "object",
-      "description": "Cached daily world context: news, entertainment, crime stats, health data, politics. Fetched at 5 AM ET. Used by narratives, character conversations, and world authenticity.",
+      "description": "Cached daily world context: news, entertainment, crime stats, health data, politics.",
       "properties": {
         "dateStr": {
           "type": "string",
@@ -408,6 +415,33 @@
     "holiday_observation_enabled": {
       "type": "boolean",
       "default": true
+    },
+    "user_current_location_id": {
+      "type": "string",
+      "description": "ID of the location where the user is currently present in the app world. Null when Away."
+    },
+    "user_current_location_name": {
+      "type": "string",
+      "description": "Display name of the user's current location. Null when Away."
+    },
+    "user_presence_status": {
+      "type": "string",
+      "enum": [
+        "present",
+        "away"
+      ],
+      "default": "away",
+      "description": "Whether the user is actively present at a location or Away (outside the app world)."
+    },
+    "user_presence_updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of last user presence update."
+    },
+    "autonomous_travel_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "When false, characters only travel based on schedules, needs, and personality quirks \u2014 not random wandering."
     }
   },
   "required": []

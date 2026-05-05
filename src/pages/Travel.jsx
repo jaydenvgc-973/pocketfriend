@@ -162,9 +162,11 @@ export default function Travel() {
   const allCharactersForFamilyScan = [...activeCharacters, ...npcCharacters, ...npcFamilyMembers];
 
   // UNIFIED PRESENCE RESOLVER — single source of truth for map, popup, counts
-  // Includes: active_created, npc_fictitious, npc_family_member, internal family
+  // Includes: active_created, npc_fictitious, npc_family_member, internal family, + user when present
+  const safeSettings = safeSettingsList[0] || null;
   const allPresenceEntities = useMemo(() => resolveTravelPresenceEntities({
     currentUser,
+    userSettings: safeSettings,
     activeCharacters,
     npcFictitious: npcCharacters,
     npcFamilyMembers,

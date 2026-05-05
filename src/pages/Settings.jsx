@@ -219,6 +219,20 @@ export default function Settings() {
               }}
             />
           </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm text-foreground">Autonomous Travel</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">When off, characters only move based on schedules, needs, and personality — not random wandering. VGC Towers travel is unaffected.</p>
+            </div>
+            <Switch
+              checked={settings.autonomous_travel_enabled !== false}
+              onCheckedChange={v => {
+                if (!isLoadingSettings && settings.id) {
+                  mutation.mutate({ autonomous_travel_enabled: v });
+                }
+              }}
+            />
+          </div>
         </div>
 
         <div className="space-y-4 pt-2 border-t border-border">

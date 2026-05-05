@@ -323,6 +323,17 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Check if autonomous travel is enabled for this user (default: ON)
+      // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+      let autonomousTravelEnabled = true;
+      try {
+        const userSettingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: userEmail }, null, 1);
+        const userSettings = userSettingsList?.[0];
+        if (userSettings && userSettings.autonomous_travel_enabled === false) {
+          autonomousTravelEnabled = false;
+        }
+      } catch { /* non-fatal — default to enabled */ }
+
       for (const char of userChars) {
         const status = char.resolved_presence_status || '';
         const reason = char.resolved_source_reason || '';
@@ -347,6 +358,26 @@ Deno.serve(async (req) => {
           char.is_jailed
         ) {
           console.log(`[autonomousMovement] ${char.name}: SLEEP/HARD BLOCK (${reason || status})`);
+          continue;
+        }
+
+        // ── PRESENCE STAY LOCK ─────────────────────────────────────────────
+        // User explicitly chose STAY for this character at a scene exit.
+        // Automation must not override until the lock is cleared.
+        if (char.presence_stay_lock === true) {
+          console.log(`[autonomousMovement] ${char.name}: STAY_LOCK active — skipping (locked at ${char.presence_stay_lock_location_id})`);
+          skippedLog.push(`${char.name}: STAY_LOCK active`);
+          continue;
+        }
+
+        // ── AUTONOMOUS TRAVEL TOGGLE ────────────────────────────────────────
+        // When autonomous travel is OFF, only allow mandatory movement (needs < 50 or emergency).
+        // Personality-driven wandering (optional movement at urgency 0-1) is blocked.
+        // Schedule-based and needs-emergency movement still allowed.
+        const topNeedCheck = highestUrgencyEntry(needValues(char));
+        if (!autonomousTravelEnabled && topNeedCheck.urgency < 2) {
+          // Not urgent enough to force movement when autonomous travel is disabled
+          skippedLog.push(`${char.name}: autonomous travel OFF, needs not urgent enough`);
           continue;
         }
 

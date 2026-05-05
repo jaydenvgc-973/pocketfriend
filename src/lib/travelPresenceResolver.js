@@ -13,16 +13,18 @@
  * 
  * @param {Object} params
  * @param {Object} params.currentUser - authenticated user
+ * @param {Object} params.userSettings - UserSettings record (for user live presence)
  * @param {Array} params.activeCharacters - active_created_character records
  * @param {Array} params.npcFictitious - npc_fictitious records (from backend + RLS queries)
- * @param {Array} params.npcFamilyMembers - npc_family_member records (from created_by + owner_email queries)
- * @param {Array} params.allCharacters - all characters in user scope (used to find internal family)
+ * @param {Array} params.npcFamilyMembers - npc_family_member records
+ * @param {Array} params.allCharacters - all characters in user scope
  * @param {Array} params.locations - location reference records
  * 
  * @returns {Array} normalized presence entities ready for map, popup, counts
  */
 export function resolveTravelPresenceEntities({
   currentUser,
+  userSettings = null,
   activeCharacters = [],
   npcFictitious = [],
   npcFamilyMembers = [],
@@ -39,6 +41,42 @@ export function resolveTravelPresenceEntities({
   };
 
   debugLog(`Starting resolution: user=${currentUser?.id}, active=${activeCharacters.length}, npc_fict=${npcFictitious.length}, npc_fam=${npcFamilyMembers.length}, locs=${locations.length}`);
+
+  // 0. Include USER as a presence entity when they are not Away
+  // Source of truth: UserSettings.user_presence_status + user_current_location_id
+  if (currentUser && userSettings) {
+    const userPresenceStatus = userSettings.user_presence_status || 'away';
+    const userLocationId = userSettings.user_current_location_id || null;
+    const userLocationName = userSettings.user_current_location_name || null;
+    const isUserPresent = userPresenceStatus === 'present' && !!userLocationId && !!locationMap[userLocationId];
+
+    if (isUserPresent) {
+      const displayName = userSettings.fictional_world_name || currentUser.full_name || 'You';
+      const avatarUrl = currentUser.generated_avatar_urls?.[0] || currentUser.reference_image_urls?.[0] || null;
+      normalized.push({
+        id: `user_${currentUser.id}`,
+        display_name: displayName,
+        name: displayName,
+        character_type: 'user',
+        avatar_url: avatarUrl,
+        initials: displayName.charAt(0).toUpperCase(),
+        resolved_current_location_id: userLocationId,
+        resolved_current_location_name: userLocationName || locationMap[userLocationId]?.name,
+        resolved_presence_status: 'present',
+        residence_location_id: null,
+        is_home_resident: false,
+        is_currently_present: true,
+        is_home: false,
+        is_away: false,
+        is_user: true,
+        source_type: 'user_presence',
+        effective_presence_type: 'user',
+      });
+      debugLog(`+ user: ${displayName} → ${userLocationName || locationMap[userLocationId]?.name}`);
+    } else {
+      debugLog(`user is Away or has no location — excluded from map`);
+    }
+  }
 
   // 1. Include explicit npc_family_member Character records
   npcFamilyMembers.forEach(char => {

@@ -129,6 +129,7 @@ export default function Scene() {
   const unifiedPresenceEntities = useMemo(() => {
     const resolved = resolveTravelPresenceEntities({
       currentUser,
+      userSettings: settings || null,
       activeCharacters: activeChars,
       npcFictitious: [...backendNpcFictitious, ...rlsNpcFictitious].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i),
       npcFamilyMembers: [...familyByCreatedBy, ...familyByOwner].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i),
@@ -635,8 +636,7 @@ export default function Scene() {
 
   const handleLeaveWithCharacters = async () => {
     setShowLeaveModal(false);
-    // PRESENCE ENFORCEMENT: Characters leave with user → reset their authoritative resolved fields back to home.
-    // This clears the scene presence so Home page card, Travel page, and all popups reflect home correctly.
+    // Characters leave with user → reset to home and clear any stay lock.
     const homeNow = new Date().toISOString();
     await Promise.all(
       broughtCharacters.map(char => {
@@ -648,6 +648,10 @@ export default function Scene() {
           resolved_presence_status: 'home',
           resolved_source_reason: 'returned_home_with_user',
           resolved_last_updated_at: homeNow,
+          // Clear the stay lock — they left
+          presence_stay_lock: false,
+          presence_stay_lock_location_id: null,
+          presence_stay_lock_set_at: null,
           travel_status: 'not_traveling',
           travel_destination_location_id: null,
         }).catch(() => {});
@@ -659,8 +663,29 @@ export default function Scene() {
 
   const handleLeaveCharactersBehind = async () => {
     setShowLeaveModal(false);
-    // Characters stay at this location — their resolved presence remains as-is.
-    // No change needed; they are correctly placed here already.
+    // STAY DECISION: Characters remain at this location.
+    // Write presence_stay_lock so automations know this is a deliberate user decision.
+    // Automations must not override presence_stay_lock until the next scheduled VGC travel move
+    // or until the lock is cleared by a future user travel action.
+    const now = new Date().toISOString();
+    await Promise.all(
+      broughtCharacters.map(char =>
+        base44.entities.Character.update(char.id, {
+          // Lock their presence at this exact location
+          resolved_current_location_id: location.id,
+          resolved_current_location_name: location.name,
+          resolved_presence_status: location.category === 'home' ? 'home' : 'visiting',
+          resolved_source_reason: 'user_stay_decision',
+          resolved_last_updated_at: now,
+          // Stay lock — automations must respect this
+          presence_stay_lock: true,
+          presence_stay_lock_location_id: location.id,
+          presence_stay_lock_set_at: now,
+          travel_status: 'not_traveling',
+          travel_destination_location_id: null,
+        }).catch(() => {})
+      )
+    );
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     navigate("/travel");
   };

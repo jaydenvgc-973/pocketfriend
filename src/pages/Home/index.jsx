@@ -306,7 +306,12 @@ export default function Home() {
             <ThomasAndersonFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />
           )}
           {currentUser && (
-            <UserCard user={currentUser} settings={userSettings || {}} />
+            <UserCard
+              user={currentUser}
+              settings={userSettings || {}}
+              settingsId={userSettings?.id}
+              locations={locationsData}
+            />
           )}
           {defaultChar && (
             <div>
