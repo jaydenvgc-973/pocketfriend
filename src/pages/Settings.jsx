@@ -29,6 +29,7 @@ import EditCharacterType from "@/components/settings/EditCharacterType";
 import NarrativeDiagnosticPanel from "@/components/settings/NarrativeDiagnosticPanel";
 import SupportAssistant from "@/components/settings/SupportAssistant.jsx";
 import AdminIssueReportViewer from "@/components/settings/AdminIssueReportViewer";
+import HomeAnchorsEditor from "@/components/settings/HomeAnchorsEditor";
 import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
 
 export default function Settings() {
@@ -707,6 +708,14 @@ export default function Settings() {
 
           <div className="mb-3">
             <EditCharacterType characters={characters} currentUser={user} />
+          </div>
+
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Home Anchor Characters</p>
+          <div className="mb-4 bg-card border border-border rounded-2xl p-4">
+            <HomeAnchorsEditor
+              userSettings={settings}
+              activeCharacters={characters.filter(c => c.character_type === 'active_created_character')}
+            />
           </div>
 
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Manage Characters</p>

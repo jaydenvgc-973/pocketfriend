@@ -79,7 +79,16 @@ function isCachePartial(email, currentCount) {
   return currentCount < meta.lastSuccessfulCount - 1;
 }
 
-export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = null) {
+/**
+ * anchorCharacterIds: optional array of stable character IDs (e.g. [ethanId, melodyId])
+ * that MUST be present in the loaded universe before the cache is blessed as authoritative.
+ * If ANY anchor is missing from the merged list, recovery is triggered regardless of count.
+ * These represent continuity anchor characters — their absence means the load is incomplete.
+ *
+ * expectedDefaultCharacterId: the user's `default_character_id` from UserSettings.
+ * Kept for backwards compatibility alongside anchorCharacterIds.
+ */
+export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = null, anchorCharacterIds = []) {
   const email = currentUser?.email || null;
   const userId = currentUser?.id || null;
   const queryClient = useQueryClient();
@@ -206,7 +215,22 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
       );
     }
 
-    const needsRecovery = isEmpty || isPartialVsPrior || isSuspectFirstFetch || isDefaultCharacterMissing;
+    // ANCHOR CHARACTER PRESENCE CHECK:
+    // home_anchor_character_ids stores the continuity anchor characters (e.g. Ethan, Melody).
+    // If ANY anchor ID is absent from the merged list, the load is incomplete — regardless of count.
+    // A result that contains only Shiloh (newest-created, low-priority) must never be blessed.
+    const missingAnchors = (anchorCharacterIds || []).filter(
+      id => !!id && !allCharacters.some(c => c.id === id)
+    );
+    const isAnchorMissing = missingAnchors.length > 0;
+    if (isAnchorMissing) {
+      console.warn(
+        `[useOwnedCharacters] ANCHOR MISSING — continuity anchor characters not in loaded list. ` +
+        `missingIds=${missingAnchors.join(',')} | mergedCount=${mergedCount} | Treating load as incomplete.`
+      );
+    }
+
+    const needsRecovery = isEmpty || isPartialVsPrior || isSuspectFirstFetch || isDefaultCharacterMissing || isAnchorMissing;
 
     if (!needsRecovery) {
       // Cache looks complete — record the authoritative merged count
@@ -231,7 +255,8 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
       `[useOwnedCharacters] Bootstrap recovery triggered. ` +
       `mergedCount=${mergedCount} | priorCount=${priorCount ?? 'none'} | ` +
       `isEmpty=${isEmpty} | isPartialVsPrior=${isPartialVsPrior} | isSuspectFirstFetch=${isSuspectFirstFetch} | ` +
-      `isDefaultCharacterMissing=${isDefaultCharacterMissing} | sort=created_date_asc | email=${email}`
+      `isDefaultCharacterMissing=${isDefaultCharacterMissing} | isAnchorMissing=${isAnchorMissing} | ` +
+      `missingAnchors=${missingAnchors.join(',') || 'none'} | sort=created_date_asc | email=${email}`
     );
 
     // Stamp a cooldown timestamp NOW (before fetch) so rapid re-mounts don't pile up
@@ -246,7 +271,9 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
     } catch {}
 
     refetchRls();
-  }, [email, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc, allCharacters.length, expectedDefaultCharacterId]);
+  // anchorCharacterIds is an array — stringify for stable dep comparison
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc, allCharacters.length, expectedDefaultCharacterId, JSON.stringify(anchorCharacterIds)]);
 
   // ── Derived character lists by type ─────────────────────────────────────────
   const activeCreated = allCharacters.filter(

@@ -38,12 +38,17 @@ export default function Home() {
     queryFn: () => base44.auth.me(),
   });
 
+  // home_anchor_character_ids: stable IDs of continuity anchor characters (e.g. Ethan, Melody).
+  // The hook uses these to verify the load is authoritative before blessing the cache.
+  // If any anchor is missing, recovery is triggered. Defaults to empty = no anchor check.
+  const anchorCharacterIds = userSettings?.home_anchor_character_ids || [];
+
   const {
     allCharacters,
     rlsCharacters: characters,
     isInitialLoading,
     isInitialLoading: isLoading,
-  } = useOwnedCharacters(currentUser, userSettings?.default_character_id || null);
+  } = useOwnedCharacters(currentUser, userSettings?.default_character_id || null, anchorCharacterIds);
 
   // Fetch locations — staleTime:0 + refetchOnMount:"always" ensures UserCard dropdown
   // never shows an empty list from a stale cache when real locations exist.
@@ -255,11 +260,23 @@ export default function Home() {
   // Use unified resolver to get homepage-eligible characters from the full merged pool
   const { activeCharacters } = getCharactersForHomepage(customChars, currentUser?.id, currentUser?.email);
   
-  // Sort remaining active created characters alphabetically
+  // Sort active custom characters: anchor characters first (by their position in anchorCharacterIds),
+  // then remaining characters alphabetically.
+  // ANCHOR PRIORITY: Ethan (index 0) and Melody (index 1) must always appear before Shiloh or any
+  // newer/lower-continuity character, regardless of created_date or name sort order.
   // STRICT TYPE GUARD: only active_created_character may appear as character cards on the homepage
   const activeCustomChars = activeCharacters
     .filter(c => (c.status === "active" || !c.status) && c.name !== "Leo Parker" && c.character_type === "active_created_character")
     .sort((a, b) => {
+      const aAnchorIdx = anchorCharacterIds.indexOf(a.id);
+      const bAnchorIdx = anchorCharacterIds.indexOf(b.id);
+      // Both are anchors — sort by their declared priority order
+      if (aAnchorIdx !== -1 && bAnchorIdx !== -1) return aAnchorIdx - bAnchorIdx;
+      // Only a is an anchor — a comes first
+      if (aAnchorIdx !== -1) return -1;
+      // Only b is an anchor — b comes first
+      if (bAnchorIdx !== -1) return 1;
+      // Neither is an anchor — alphabetical
       const nameA = (a.display_name || a.name || '').toLowerCase();
       const nameB = (b.display_name || b.name || '').toLowerCase();
       return nameA.localeCompare(nameB);

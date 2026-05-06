@@ -16,6 +16,14 @@
     "default_character_id": {
       "type": "string"
     },
+    "home_anchor_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Stable IDs of continuity anchor characters. Ordered by priority: [0]=primary anchor (Ethan), [1]=fallback anchor (Melody). If ANY of these IDs are absent from the loaded character universe, the load is treated as incomplete and recovery is triggered. Must be set by the user via Settings or by admin tooling."
+    },
     "response_length": {
       "type": "string",
       "enum": [
