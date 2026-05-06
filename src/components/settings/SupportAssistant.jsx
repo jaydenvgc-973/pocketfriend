@@ -272,6 +272,9 @@ function detectIntent(text) {
   if (/wrong.*image|image.*wrong|image.*broken|picture.*wrong|photo.*wrong/i.test(t))
     return { type: 'image_issue' };
 
+  if (/diagnose.*owner|ownership.*diagnostic|check.*owner.*email|owner.*email.*status|read.*only.*owner|inspect.*ownership|ownership.*issue|legacy.*owner|legacy.*character.*owner/i.test(t))
+    return { type: 'ownership_diagnostic' };
+
   return null;
 }
 
@@ -290,6 +293,38 @@ function detectCategory(text) {
   return 'other';
 }
 
+// ── Visibility snapshot — captured before any repair, verified after ──────────
+// Returns { ids, names, count } for the current user's visible characters.
+async function captureVisibilitySnapshot(ownerEmail) {
+  try {
+    const chars = await base44.entities.Character.filter(
+      { owner_email: ownerEmail },
+      "created_date",
+      300
+    );
+    const live = chars.filter(c => c.is_test_character !== true && c.diagnostic_only !== true && c.status !== 'deleted');
+    return {
+      ids: live.map(c => c.id),
+      names: live.map(c => c.name || '(unnamed)'),
+      count: live.length,
+      capturedAt: Date.now(),
+    };
+  } catch (e) {
+    return null; // snapshot unavailable — block repair
+  }
+}
+
+// Verify snapshot after repair. Returns { safe, lost, gained }
+function verifyVisibilitySnapshot(before, after) {
+  if (!before || !after) return { safe: false, lost: [], gained: [] };
+  const beforeIds = new Set(before.ids);
+  const afterIds = new Set(after.ids);
+  const lost = before.ids.filter(id => !afterIds.has(id));
+  const gained = after.ids.filter(id => !beforeIds.has(id));
+  // Safe only if no characters were lost. Gains are fine (visibility restored).
+  return { safe: lost.length === 0, lost, gained };
+}
+
 // ── Main SupportAssistant ─────────────────────────────────────────────────────
 export default function SupportAssistant({ user }) {
   const ownerEmail = user?.email;
@@ -298,7 +333,7 @@ export default function SupportAssistant({ user }) {
   const [messages, setMessages] = useState([{
     id: 'welcome',
     role: 'ai',
-    content: `Hi! I'm your **Account Help & Repair** assistant — I can run real diagnostics and repairs directly.\n\nJust describe what's wrong:\n- *"My merge is blocked"*\n- *"My character isn't going to work"*\n- *"My money is wrong"*\n- *"Run the owner email backfill"*\n- *"My character is missing"*\n- *"Sync my locations"*\n\nI'll identify the issue, run the right tool, and show you what I find — no dashboards or console logs needed.`,
+    content: `Hi! I'm your **Account Help & Repair** assistant — I can run real diagnostics and repairs directly.\n\nJust describe what's wrong:\n- *"My merge is blocked"*\n- *"My character isn't going to work"*\n- *"My money is wrong"*\n- *"Run the owner email backfill"*\n- *"My character is missing"*\n- *"Diagnose my ownership"*\n- *"Sync my locations"*\n\nI'll identify the issue, run the right tool, and show you what I find — no dashboards or console logs needed.\n\n⚠️ All repairs require your confirmation and capture a visibility snapshot before and after to ensure no characters disappear.`,
     ts: ts(),
   }]);
   const [input, setInput] = useState("");
@@ -332,14 +367,30 @@ export default function SupportAssistant({ user }) {
   };
 
   // ── Repair dispatch via userAccountDiagnostic ─────────────────────────────
+  // VISIBILITY SAFETY: captures snapshot before repair, verifies after.
+  // If ANY character disappears after repair, immediately reports the loss and
+  // marks the repair as requiring rollback review. Does NOT auto-rollback (that
+  // would require storing prior field values, which adds complexity), but
+  // DOES surface the visibility failure visibly so the user can report it.
   const runRepairAction = async (repair_action, repair_character_id = null) => {
     setIsRepairing(true);
     addMsg({ role: 'system', content: `⚙️ Running: ${repair_action}…`, ts: ts() });
+
+    // STEP 1: Capture visibility snapshot BEFORE repair
+    const snapshotBefore = await captureVisibilitySnapshot(ownerEmail);
+    if (!snapshotBefore) {
+      addMsg({ role: 'ai', content: `⚠️ **Repair paused** — could not capture a visibility snapshot before proceeding. No changes were made.\n\nThis is a safety check: repairs require a baseline snapshot to verify no characters disappear afterward. Please try again.`, ts: ts() });
+      setIsRepairing(false);
+      return;
+    }
+    addMsg({ role: 'system', content: `📸 Visibility snapshot: ${snapshotBefore.count} visible characters`, ts: ts() });
+
     try {
       const payload = { categories: 'none', repair_action };
       if (repair_character_id) payload.repair_character_id = repair_character_id;
       const res = await base44.functions.invoke('userAccountDiagnostic', payload);
       const result = res?.data?.repair;
+
       if (result?.blocked) {
         addMsg({ role: 'ai', content: `**Repair blocked:** ${result.reason}\n\nNo changes were made.`, ts: ts() });
         base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'other', title: `Repair blocked: ${repair_action}`, description: result.reason, status: 'repair_pending', findings: [] }).catch(() => {});
@@ -347,9 +398,28 @@ export default function SupportAssistant({ user }) {
         addMsg({ role: 'ai', content: `**Repair error:** ${result.error}`, ts: ts() });
       } else {
         const resultText = typeof result?.result === 'object' ? JSON.stringify(result.result, null, 2).slice(0, 400) : (result?.result || 'Done.');
-        addMsg({ role: 'ai', content: `**Repair complete ✓**\n\n${resultText}\n\nRe-running diagnostic to verify…`, ts: ts() });
-        const verifyData = await runFullDiagnostic();
-        addMsg({ role: 'diagnostic', diagData: verifyData, ts: ts() });
+
+        // STEP 2: Verify visibility snapshot AFTER repair
+        const snapshotAfter = await captureVisibilitySnapshot(ownerEmail);
+        const verify = verifyVisibilitySnapshot(snapshotBefore, snapshotAfter);
+
+        if (!verify.safe) {
+          const lostNames = verify.lost.map(id => snapshotBefore.names[snapshotBefore.ids.indexOf(id)] || id);
+          addMsg({ role: 'ai', content: `🚨 **VISIBILITY FAILURE DETECTED**\n\nRepair ran but **${verify.lost.length} character(s) became invisible afterward:**\n${lostNames.map(n => `- ${n}`).join('\n')}\n\nBefore: ${snapshotBefore.count} visible | After: ${snapshotAfter?.count ?? '?'} visible\n\n**This repair may have had an unintended side effect.** A support ticket has been filed automatically. Your characters still exist in the database — this may be a visibility/cache issue that resolves on refresh.`, ts: ts() });
+          base44.entities.IssueReport.create({
+            owner_email: ownerEmail, owner_user_id: userId,
+            category: 'ownership_mismatch',
+            title: `VISIBILITY_FAILURE after repair: ${repair_action}`,
+            description: `Before: ${snapshotBefore.count} chars (${snapshotBefore.ids.join(', ')}). After: ${snapshotAfter?.count}. Lost IDs: ${verify.lost.join(', ')}`,
+            status: 'escalated',
+            findings: [],
+          }).catch(() => {});
+        } else {
+          const gainedNote = verify.gained.length > 0 ? ` (+${verify.gained.length} newly visible)` : '';
+          addMsg({ role: 'ai', content: `**Repair complete ✓** — Visibility safe: ${snapshotAfter?.count} characters visible${gainedNote}\n\n${resultText}\n\nRe-running diagnostic to verify…`, ts: ts() });
+          const verifyData = await runFullDiagnostic();
+          addMsg({ role: 'diagnostic', diagData: verifyData, ts: ts() });
+        }
       }
     } catch (e) {
       addMsg({ role: 'ai', content: `Repair failed: ${e.message}. No changes were made.`, ts: ts() });
@@ -367,6 +437,16 @@ export default function SupportAssistant({ user }) {
     if (actionKey === 'backfill_owner_email') {
       setIsRepairing(true);
       addMsg({ role: 'system', content: '⚙️ Running owner email backfill…', ts: ts() });
+
+      // VISIBILITY SNAPSHOT BEFORE
+      const snapshotBefore = await captureVisibilitySnapshot(ownerEmail);
+      if (!snapshotBefore) {
+        addMsg({ role: 'ai', content: `⚠️ **Repair paused** — could not capture a visibility snapshot. No changes made. Please try again.`, ts: ts() });
+        setIsRepairing(false);
+        return;
+      }
+      addMsg({ role: 'system', content: `📸 Visibility snapshot: ${snapshotBefore.count} visible characters`, ts: ts() });
+
       try {
         const res = await base44.functions.invoke('backfillMyCharacterOwnerEmail', {});
         const d = res?.data;
@@ -383,6 +463,18 @@ export default function SupportAssistant({ user }) {
           r.errors?.length > 0 ? `- Errors: **${r.errors.length}**` : null,
         ].filter(Boolean).join('\n');
         addMsg({ role: 'ai', content: lines, ts: ts() });
+
+        // VISIBILITY SNAPSHOT AFTER
+        const snapshotAfter = await captureVisibilitySnapshot(ownerEmail);
+        const verify = verifyVisibilitySnapshot(snapshotBefore, snapshotAfter);
+        if (!verify.safe) {
+          const lostNames = verify.lost.map(id => snapshotBefore.names[snapshotBefore.ids.indexOf(id)] || id);
+          addMsg({ role: 'ai', content: `🚨 **VISIBILITY FAILURE** — ${verify.lost.length} character(s) became invisible after backfill: ${lostNames.join(', ')}. Support ticket filed.`, ts: ts() });
+          base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: `VISIBILITY_FAILURE after backfill`, description: `Lost IDs: ${verify.lost.join(', ')}`, status: 'escalated', findings: [] }).catch(() => {});
+        } else {
+          addMsg({ role: 'system', content: `✅ Visibility safe: ${snapshotAfter?.count} characters still visible`, ts: ts() });
+        }
+
         if (d.admin_required) {
           addMsg({ role: 'ai', content: `Some records couldn't be repaired because they lack both \`owner_email\` and a matching \`owner_user_id\`. These require admin review — a support ticket has been filed.`, ts: ts() });
           base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: 'Owner email backfill — admin review required', description: `Records found without sufficient ownership evidence during backfill.`, status: 'repair_pending', findings: [] }).catch(() => {});
@@ -462,15 +554,36 @@ export default function SupportAssistant({ user }) {
   };
 
   // ── Targeted single-record owner_email repair via repairCharacterOwnerEmail ──
+  // VISIBILITY SAFETY: captures snapshot before and after. If any character
+  // disappears, surfaces the failure immediately and files a support ticket.
   const runTargetedOwnerRepair = async (characterId, characterName) => {
     setIsRepairing(true);
     addMsg({ role: 'system', content: `⚙️ Repairing owner_email for "${characterName}"…`, ts: ts() });
+
+    // Snapshot BEFORE
+    const snapshotBefore = await captureVisibilitySnapshot(ownerEmail);
+    if (!snapshotBefore) {
+      addMsg({ role: 'ai', content: `⚠️ **Repair paused** — could not capture a visibility snapshot. No changes made.`, ts: ts() });
+      setIsRepairing(false);
+      return;
+    }
+    addMsg({ role: 'system', content: `📸 Visibility snapshot: ${snapshotBefore.count} visible characters`, ts: ts() });
+
     try {
       const res = await base44.functions.invoke('repairCharacterOwnerEmail', { characterId });
       const d = res?.data;
       if (!d) throw new Error('No response from repair function');
       if (d.repaired) {
-        addMsg({ role: 'ai', content: `✅ **Repaired** — \`owner_email\` set on **${characterName}**.\n\nProof used: \`owner_user_id\` matched your account ID.\n\nYou can now retry the merge from Settings → Suggested Duplicates.`, ts: ts() });
+        // Snapshot AFTER
+        const snapshotAfter = await captureVisibilitySnapshot(ownerEmail);
+        const verify = verifyVisibilitySnapshot(snapshotBefore, snapshotAfter);
+        if (!verify.safe) {
+          const lostNames = verify.lost.map(id => snapshotBefore.names[snapshotBefore.ids.indexOf(id)] || id);
+          addMsg({ role: 'ai', content: `🚨 **VISIBILITY FAILURE** — Repair ran but ${verify.lost.length} character(s) became invisible: ${lostNames.join(', ')}. Support ticket filed. Your characters still exist — try refreshing.`, ts: ts() });
+          base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: `VISIBILITY_FAILURE after targeted repair: ${characterName}`, description: `Lost IDs: ${verify.lost.join(', ')}`, status: 'escalated', findings: [] }).catch(() => {});
+        } else {
+          addMsg({ role: 'ai', content: `✅ **Repaired** — \`owner_email\` set on **${characterName}**.\n\nProof used: \`owner_user_id\` matched your account ID.\nVisibility safe: ${snapshotAfter?.count} characters still visible.\n\nYou can now retry the merge from Settings → Suggested Duplicates.`, ts: ts() });
+        }
       } else if (d.reason === 'CROSS_ACCOUNT') {
         addMsg({ role: 'ai', content: `🚫 **Blocked** — "${characterName}" belongs to a different account. Cross-account repair is permanently blocked.\n\nA support ticket has been filed if this is unexpected.`, ts: ts() });
         base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: `CROSS_ACCOUNT_BLOCKED: ${characterName}`, description: `Character ${characterId} has owner_email belonging to a different account. Repair blocked.`, status: 'escalated', findings: [] }).catch(() => {});
@@ -486,6 +599,98 @@ export default function SupportAssistant({ user }) {
       addMsg({ role: 'ai', content: `Targeted repair failed: ${err.message}. No changes were made.`, ts: ts() });
     } finally {
       setIsRepairing(false);
+    }
+  };
+
+  // ── Read-only ownership diagnostic — NO writes, just inspection ───────────
+  const runOwnershipDiagnostic = async () => {
+    addMsg({ role: 'system', content: '🔍 Running read-only ownership diagnostic…', ts: ts() });
+    try {
+      // Capture visibility snapshot (read-only baseline)
+      const snapshot = await captureVisibilitySnapshot(ownerEmail);
+      if (!snapshot) throw new Error('Could not read characters from your account');
+
+      addMsg({ role: 'system', content: `📸 Visible characters: ${snapshot.count}`, ts: ts() });
+
+      // Read all characters via RLS (user-scoped)
+      const chars = await base44.entities.Character.filter({ owner_email: ownerEmail }, 'created_date', 300);
+      const live = chars.filter(c => c.is_test_character !== true && c.diagnostic_only !== true && c.status !== 'deleted');
+
+      const rows = live.map(c => {
+        const hasOwnerEmail = !!c.owner_email;
+        const hasOwnerUserId = !!c.owner_user_id;
+        const ownerEmailMatches = c.owner_email === ownerEmail;
+        const ownerUserIdMatches = c.owner_user_id === userId;
+        const hasType = !!c.character_type;
+
+        let ownershipState, repairNeeded, repairBlocker;
+        if (hasOwnerEmail && ownerEmailMatches) {
+          ownershipState = 'CORRECT';
+          repairNeeded = false;
+        } else if (!hasOwnerEmail && hasOwnerUserId && ownerUserIdMatches) {
+          ownershipState = 'LEGACY_MISSING_OWNER_EMAIL';
+          repairNeeded = true;
+          repairBlocker = null;
+        } else if (!hasOwnerEmail && !hasOwnerUserId) {
+          ownershipState = 'LEGACY_NO_PROOF';
+          repairNeeded = true;
+          repairBlocker = 'No owner_user_id to verify against — requires admin review';
+        } else if (hasOwnerEmail && !ownerEmailMatches) {
+          ownershipState = 'CROSS_ACCOUNT_BLOCKED';
+          repairNeeded = false;
+          repairBlocker = 'owner_email points to a different account — permanently blocked';
+        } else {
+          ownershipState = 'UNKNOWN';
+          repairNeeded = false;
+          repairBlocker = 'Unexpected state — requires investigation';
+        }
+
+        return { id: c.id, name: c.name || '(unnamed)', character_type: c.character_type || '(missing)', status: c.status || 'active', ownershipState, repairNeeded, repairBlocker, hasType };
+      });
+
+      const correct = rows.filter(r => r.ownershipState === 'CORRECT');
+      const legacyRepairable = rows.filter(r => r.ownershipState === 'LEGACY_MISSING_OWNER_EMAIL');
+      const legacyNoProof = rows.filter(r => r.ownershipState === 'LEGACY_NO_PROOF');
+      const crossAccount = rows.filter(r => r.ownershipState === 'CROSS_ACCOUNT_BLOCKED');
+      const missingType = rows.filter(r => !r.hasType);
+
+      let report = `**Read-Only Ownership Diagnostic** *(no changes made)*\n\n`;
+      report += `**Visible characters scanned:** ${live.length}\n\n`;
+
+      if (correct.length > 0) report += `✅ **Correct ownership:** ${correct.length} character(s) — \`owner_email\` matches your account\n\n`;
+
+      if (legacyRepairable.length > 0) {
+        report += `⚠️ **Repairable (${legacyRepairable.length})** — missing \`owner_email\` but \`owner_user_id\` matches your account:\n`;
+        report += legacyRepairable.map(r => `- **${r.name}** (${r.character_type}) — can be repaired with targeted owner repair`).join('\n');
+        report += '\n\n';
+      }
+
+      if (legacyNoProof.length > 0) {
+        report += `⛔ **Needs admin review (${legacyNoProof.length})** — no \`owner_user_id\` to verify against:\n`;
+        report += legacyNoProof.map(r => `- **${r.name}** (${r.character_type}) — ${r.repairBlocker}`).join('\n');
+        report += '\n\n';
+      }
+
+      if (crossAccount.length > 0) {
+        report += `🚫 **Cross-account blocked (${crossAccount.length})** — these cannot be repaired:\n`;
+        report += crossAccount.map(r => `- **${r.name}** — ${r.repairBlocker}`).join('\n');
+        report += '\n\n';
+      }
+
+      if (missingType.length > 0) {
+        report += `ℹ️ **Missing character_type (${missingType.length})** — legacy characters without a type field (visibility protected by fallback logic):\n`;
+        report += missingType.map(r => `- **${r.name}**`).join('\n');
+        report += '\n\n';
+      }
+
+      report += `*This is read-only — no data was changed. To repair repairable records, say "run the owner email backfill" or "my merge is blocked".*`;
+      addMsg({ role: 'ai', content: report, ts: ts() });
+
+      if (legacyRepairable.length > 0) {
+        addMsg({ role: 'ai', content: `I found **${legacyRepairable.length} repairable record(s)**. Would you like me to run the Owner Email Backfill? It only writes \`owner_email\` where \`owner_user_id\` already proves ownership. A visibility snapshot is captured before and after.`, ts: ts() });
+      }
+    } catch (err) {
+      addMsg({ role: 'ai', content: `Ownership diagnostic failed: ${err.message}`, ts: ts() });
     }
   };
 
@@ -762,6 +967,11 @@ export default function SupportAssistant({ user }) {
       return true;
     }
 
+    if (type === 'ownership_diagnostic') {
+      await runOwnershipDiagnostic();
+      return true;
+    }
+
     if (type === 'world_name_save') {
       addMsg({ role: 'system', content: '🔍 Checking UserSettings record…', ts: ts() });
       try {
@@ -919,6 +1129,7 @@ Respond helpfully, name exact records when available, explain the real cause.`;
 
   const CHIPS = [
     { label: 'Run Diagnostic', action: 'run diagnostic' },
+    { label: 'Ownership Diagnostic', action: 'diagnose my ownership (read only)' },
     { label: 'Merge Blocked', action: 'my duplicate merge is blocked' },
     { label: 'Owner Email Backfill', action: 'run the owner email backfill' },
     { label: 'Ghost References', action: 'clean ghost character references' },
