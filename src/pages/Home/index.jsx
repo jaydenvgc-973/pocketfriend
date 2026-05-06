@@ -39,9 +39,13 @@ export default function Home() {
   });
 
   // home_anchor_character_ids: stable IDs of continuity anchor characters (e.g. Ethan, Melody).
-  // The hook uses these to verify the load is authoritative before blessing the cache.
-  // If any anchor is missing, recovery is triggered. Defaults to empty = no anchor check.
-  const anchorCharacterIds = userSettings?.home_anchor_character_ids || [];
+  // CRITICAL: Only pass anchors AFTER settings has finished loading.
+  // Passing [] while settings is still loading causes the bootstrap guard to run its
+  // first recovery pass without anchor knowledge, self-lock recoveryFiredRef, and then
+  // ignore anchors permanently even after settings loads with real IDs.
+  const anchorCharacterIds = (!isSettingsLoading && userSettings?.home_anchor_character_ids?.length)
+    ? userSettings.home_anchor_character_ids
+    : [];
 
   const {
     allCharacters,
@@ -224,10 +228,19 @@ export default function Home() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }),
   });
 
+  // Guard: only run the prompt backfill once per default character ID per session.
+  // Without this, every real-time Character update (dozens/min from automations) changes
+  // the `characters` array reference, re-fires this effect, and triggers an
+  // invalidateQueries → refetch → new reference → effect fires again loop.
+  const promptBackfillDoneRef = useRef(null);
   useEffect(() => {
     const defaultChar = characters.find(c => c.is_default);
     if (!defaultChar) return;
     if (defaultChar.family_history && defaultChar.system_prompt_url) return;
+    // Already attempted for this character ID this session — don't retry
+    if (promptBackfillDoneRef.current === defaultChar.id) return;
+    promptBackfillDoneRef.current = defaultChar.id;
+
     const updated = {
       ...DEFAULT_CHARACTER_DATA,
       name: defaultChar.name,
@@ -241,9 +254,14 @@ export default function Home() {
     }).then(({ file_url }) => {
       return base44.entities.Character.update(defaultChar.id, { ...updated, system_prompt_url: file_url });
     }).then(() => {
-      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      // Surgical cache patch instead of full invalidation — avoids triggering
+      // another 300-record fetch just to update one character's system_prompt_url.
+      queryClient.setQueryData(["characters", currentUser?.email], (prev) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(c => c.id === defaultChar.id ? { ...c, ...updated } : c);
+      });
     }).catch(() => {});
-  }, [characters, currentUser?.email]);
+  }, [characters.find(c => c.is_default)?.id, currentUser?.email]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!isLoading && !currentUser?.email) {

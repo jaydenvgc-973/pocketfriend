@@ -115,10 +115,23 @@ export function useOwnedCharacters(
   const recoveryFiredRef = useRef(false);
 
   // Reset recoveryFiredRef when email changes (account switch / new session)
+  // Also reset when anchors transition from empty → populated: the first pass ran
+  // without anchor knowledge (settings still loading), so it must re-evaluate now
+  // that real anchor IDs are available.
   const prevEmailRef = useRef(null);
+  const prevAnchorKeyRef = useRef('[]');
+  const anchorKey = JSON.stringify((anchorCharacterIds || []).filter(Boolean).sort());
+
   if (prevEmailRef.current !== email) {
     prevEmailRef.current = email;
     recoveryFiredRef.current = false;
+    prevAnchorKeyRef.current = '[]';
+  } else if (prevAnchorKeyRef.current === '[]' && anchorKey !== '[]') {
+    // Anchors just became populated — prior recovery ran without them, must re-arm
+    recoveryFiredRef.current = false;
+    prevAnchorKeyRef.current = anchorKey;
+  } else {
+    prevAnchorKeyRef.current = anchorKey;
   }
 
   // ── 1. RLS characters (all types, all statuses, owner_email scoped) ──────────
