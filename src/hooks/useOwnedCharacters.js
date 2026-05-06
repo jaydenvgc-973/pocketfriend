@@ -316,9 +316,20 @@ export function useOwnedCharacters(
       return;
     }
 
-    if (isBootstrapCoolingDown(email)) {
+    // ANCHOR ABSENCE overrides cooldown — an anchor missing is always a hard failure.
+    // The cooldown exists to prevent rapid re-fetch storms, but if the anchor characters
+    // (the continuity-critical records) are confirmed absent, we MUST attempt recovery
+    // regardless of when the last fetch ran. Cooldown still applies to all other
+    // partial-load conditions (count drop, default missing, etc.).
+    const cooldownExempt = isAnchorMissing;
+
+    if (!cooldownExempt && isBootstrapCoolingDown(email)) {
       console.log(`[useOwnedCharacters] Partial — cooldown active. merged=${mergedCount} prior=${priorCount ?? 'none'}`);
       return;
+    }
+
+    if (cooldownExempt) {
+      console.warn(`[useOwnedCharacters] Anchor absent — bypassing cooldown to force recovery. merged=${mergedCount}`);
     }
 
     recoveryFiredRef.current = true;
