@@ -79,7 +79,7 @@ function isCachePartial(email, currentCount) {
   return currentCount < meta.lastSuccessfulCount - 1;
 }
 
-export function useOwnedCharacters(currentUser) {
+export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = null) {
   const email = currentUser?.email || null;
   const userId = currentUser?.id || null;
   const queryClient = useQueryClient();
@@ -95,9 +95,14 @@ export function useOwnedCharacters(currentUser) {
     queryKey: ["characters", email],
     queryFn: async () => {
       if (!email) return [];
+      // Sort by OLDEST first (created_date ascending, no minus prefix).
+      // CRITICAL: "-created_date" (newest first) means a partial/rate-limited result
+      // always returns the most recently created character (Shiloh), never the original ones.
+      // Oldest-first ensures partial results contain the account's foundational characters,
+      // not the latest-created one. Shiloh will appear at the end when list is full.
       const chars = await base44.entities.Character.filter(
         { owner_email: email },
-        "-created_date",
+        "created_date",
         300
       );
       return chars.filter(c => !c.is_test_character && !c.diagnostic_only);
@@ -190,7 +195,18 @@ export function useOwnedCharacters(currentUser) {
     const isSuspectFirstFetch = priorCount === null && mergedCount <= MIN_AUTHORITATIVE_COUNT;
     const isEmpty = mergedCount === 0;
 
-    const needsRecovery = isEmpty || isPartialVsPrior || isSuspectFirstFetch;
+    // DEFAULT CHARACTER PRESENCE CHECK:
+    // If the caller knows the expected default character id (from user_settings.default_character_id)
+    // and that character is NOT in the loaded list, the cache is incomplete regardless of count.
+    const isDefaultCharacterMissing = !!expectedDefaultCharacterId &&
+      !allCharacters.some(c => c.id === expectedDefaultCharacterId);
+    if (isDefaultCharacterMissing) {
+      console.warn(
+        `[useOwnedCharacters] Default character id=${expectedDefaultCharacterId} is NOT in loaded list (count=${mergedCount}). Treating as partial.`
+      );
+    }
+
+    const needsRecovery = isEmpty || isPartialVsPrior || isSuspectFirstFetch || isDefaultCharacterMissing;
 
     if (!needsRecovery) {
       // Cache looks complete — record the authoritative merged count
@@ -215,7 +231,7 @@ export function useOwnedCharacters(currentUser) {
       `[useOwnedCharacters] Bootstrap recovery triggered. ` +
       `mergedCount=${mergedCount} | priorCount=${priorCount ?? 'none'} | ` +
       `isEmpty=${isEmpty} | isPartialVsPrior=${isPartialVsPrior} | isSuspectFirstFetch=${isSuspectFirstFetch} | ` +
-      `email=${email}`
+      `isDefaultCharacterMissing=${isDefaultCharacterMissing} | sort=created_date_asc | email=${email}`
     );
 
     // Stamp a cooldown timestamp NOW (before fetch) so rapid re-mounts don't pile up
@@ -230,7 +246,7 @@ export function useOwnedCharacters(currentUser) {
     } catch {}
 
     refetchRls();
-  }, [email, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc, allCharacters.length]);
+  }, [email, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc, allCharacters.length, expectedDefaultCharacterId]);
 
   // ── Derived character lists by type ─────────────────────────────────────────
   const activeCreated = allCharacters.filter(

@@ -43,7 +43,7 @@ export default function Home() {
     rlsCharacters: characters,
     isInitialLoading,
     isInitialLoading: isLoading,
-  } = useOwnedCharacters(currentUser);
+  } = useOwnedCharacters(currentUser, userSettings?.default_character_id || null);
 
   // Fetch locations — staleTime:0 + refetchOnMount:"always" ensures UserCard dropdown
   // never shows an empty list from a stale cache when real locations exist.
