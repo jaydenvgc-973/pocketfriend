@@ -22,7 +22,38 @@ export default function CommunityEventsStrip({ currentUser }) {
     gcTime: 15 * 60 * 1000,
   });
 
-  if (events.length === 0) return null;
+  // Fallback events when no backend events exist
+  const fallbackEvents = [
+    {
+      id: 'fallback-1',
+      name: 'Open Mic Night',
+      event_type: 'entertainment',
+      location_name: 'Downtown Coffee House',
+      start_date: new Date(Date.now() + 3*24*60*60*1000).toISOString(),
+      vibe: 'social',
+      participations_count: 3,
+    },
+    {
+      id: 'fallback-2',
+      name: 'Community Yoga',
+      event_type: 'fitness',
+      location_name: 'Riverside Park',
+      start_date: new Date(Date.now() + 1*24*60*60*1000).toISOString(),
+      vibe: 'quiet',
+      participations_count: 8,
+    },
+    {
+      id: 'fallback-3',
+      name: 'Book Club',
+      event_type: 'educational',
+      location_name: 'Library Community Room',
+      start_date: new Date(Date.now() + 7*24*60*60*1000).toISOString(),
+      vibe: 'social',
+      participations_count: 5,
+    },
+  ];
+
+  const displayEvents = events.length > 0 ? events : fallbackEvents;
 
   return (
     <div className="pt-4 border-t border-border">
@@ -33,7 +64,7 @@ export default function CommunityEventsStrip({ currentUser }) {
         ref={scrollRef}
         className="flex gap-2 overflow-x-auto scrollbar-hide pb-2"
       >
-        {events.slice(0, 8).map((event) => (
+        {displayEvents.slice(0, 8).map((event) => (
           <div
             key={event.id}
             className="flex-shrink-0 w-56 p-3 rounded-lg bg-secondary/50 border border-border hover:border-primary/40 transition-colors cursor-pointer"
