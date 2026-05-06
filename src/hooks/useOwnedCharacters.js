@@ -2,40 +2,40 @@
  * useOwnedCharacters
  *
  * Single shared hook that owns ALL character fetching for this app.
- * Consumed by Home, Travel, and any page that needs the full character universe.
+ * Source of truth: owner_email. created_by is permanently forbidden.
  *
- * Source of truth: owner_email — sole ownership field. created_by is forbidden.
+ * ════════════════════════════════════════════════════════════════════
+ * LAST-KNOWN-GOOD PROTECTION — THREE LAYERS
+ * ════════════════════════════════════════════════════════════════════
  *
- * LAST-KNOWN-GOOD PROTECTION SYSTEM:
+ * LAYER 1 — RLS snapshot (written synchronously inside queryFn)
+ *   The moment the RLS fetch returns > 1 record, we write the ID list
+ *   and count to sessionStorage BEFORE returning from queryFn.
+ *   This ensures the floor exists before any effect cycle runs.
+ *   Subsequent fetches read this snapshot and refuse to return a
+ *   smaller list — instead they merge fresh updates into the baseline.
  *
- * Three layers prevent a partial refresh from collapsing the Home list:
+ * LAYER 2 — Floor guard inside queryFn
+ *   Before returning a fresh result, queryFn reads the stored RLS
+ *   snapshot count. If fresh < snapshot - 1 (beyond 1-deletion
+ *   tolerance), the result is treated as partial and merged into the
+ *   existing cache rather than replacing it.
+ *   No effect cycle needed — this fires synchronously on every fetch.
  *
- * Layer 1 — Merged snapshot (sessionStorage: char_merged_snapshot_<email>)
- *   Written whenever allCharacters stabilizes to a count larger than the prior snapshot.
- *   Stores the full merged ID list. Used by queryFn as the authoritative floor baseline.
- *   Never lowered — only grows.
+ * LAYER 3 — Bootstrap guard (effect, fires after stabilization)
+ *   After both queries finish loading, evaluates the merged universe.
+ *   If the result is partial vs the prior authoritative count, or if
+ *   anchor characters are absent, triggers one controlled recovery.
+ *   ANCHOR RULE: valid if AT LEAST ONE configured anchor is present.
  *
- * Layer 2 — queryFn floor guard
- *   Before returning a fresh RLS result, the queryFn projects the merged count
- *   (fresh RLS + current NPC cache) and compares it to the merged snapshot count.
- *   If the projected count is suspiciously smaller (> 1-char tolerance), the fresh
- *   result is merged into the existing RLS cache instead of replacing it.
- *   Secondary floor: also checks current RLS cache length (handles no-snapshot case).
- *
- * Layer 3 — Bootstrap guard
- *   After both queries stabilize, evaluates the merged universe against the snapshot
- *   and anchor presence. Triggers one controlled recovery fetch if the result is partial.
- *   recoveryFiredRef resets between sessions via the email dependency.
- *
- * ANCHOR VALIDATION RULE (ANY, not ALL):
- *   Load is valid if AT LEAST ONE configured anchor ID is present.
- *   NONE present (when anchors are configured) = incomplete load → recovery.
- *
- * SNAPSHOT WRITER:
- *   Separate effect — writes the merged snapshot whenever allCharacters grows beyond
- *   the current snapshot. Does not wait for the bootstrap guard to pass.
- *   This ensures the floor is established on the FIRST successful load, before any
- *   background invalidation can trigger a partial refetch.
+ * ════════════════════════════════════════════════════════════════════
+ * WHY SYNCHRONOUS SNAPSHOT WRITE IS CRITICAL
+ * ════════════════════════════════════════════════════════════════════
+ * Effects (useEffect) run after React renders the component.
+ * A second fetch can fire and complete between queryFn returning and
+ * the effect running — creating a window where the snapshot doesn't
+ * exist yet and the floor guard passes a partial second result.
+ * Writing inside queryFn closes this window completely.
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -43,11 +43,37 @@ import { useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 
 const BOOTSTRAP_COOLDOWN_MS = 8 * 60 * 1000; // 8 minutes
+const MIN_AUTHORITATIVE_COUNT = 2; // A single record is never authoritative for a multi-char account
 
-// ── sessionStorage helpers ────────────────────────────────────────────────────
-const ssBootstrapKey  = (email) => `char_bootstrap_${email}`;
-const ssMergedKey     = (email) => `char_merged_snapshot_${email}`;
+// ── sessionStorage key helpers ────────────────────────────────────────────────
+const ssBootstrapKey = (email) => `char_bootstrap_${email}`;
+const ssRlsSnapshotKey = (email) => `char_rls_snapshot_${email}`;
 
+// ── RLS snapshot (written synchronously in queryFn) ───────────────────────────
+function readRlsSnapshot(email) {
+  try {
+    const raw = sessionStorage.getItem(ssRlsSnapshotKey(email));
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+/**
+ * Write the RLS snapshot ONLY if it would increase the stored count.
+ * Never lowers the floor — the floor only grows.
+ * Called synchronously inside queryFn, before React renders.
+ */
+function writeRlsSnapshotIfGrows(email, ids, count) {
+  try {
+    if (count < MIN_AUTHORITATIVE_COUNT) return; // too small to establish a floor
+    const existing = readRlsSnapshot(email);
+    if (existing && count <= existing.count - 1) return; // would lower floor — refuse
+    sessionStorage.setItem(ssRlsSnapshotKey(email), JSON.stringify({
+      ids, count, savedAt: Date.now(),
+    }));
+  } catch {}
+}
+
+// ── Bootstrap meta ────────────────────────────────────────────────────────────
 function readBootstrapMeta(email) {
   try {
     const raw = sessionStorage.getItem(ssBootstrapKey(email));
@@ -55,16 +81,13 @@ function readBootstrapMeta(email) {
   } catch { return null; }
 }
 
-const MIN_AUTHORITATIVE_COUNT = 1;
-
 function writeBootstrapMeta(email, count) {
   try {
     const existing = readBootstrapMeta(email);
     const priorCount = existing?.lastSuccessfulCount ?? null;
-    const isSuspect = count <= MIN_AUTHORITATIVE_COUNT &&
-      (priorCount === null || priorCount > MIN_AUTHORITATIVE_COUNT);
-    if (isSuspect) {
-      console.warn(`[useOwnedCharacters] Bootstrap: refusing to bless suspect fetch. count=${count} prior=${priorCount ?? 'none'}`);
+    // Never bless a suspiciously small count as the new authoritative baseline
+    if (count < MIN_AUTHORITATIVE_COUNT && (priorCount === null || priorCount >= MIN_AUTHORITATIVE_COUNT)) {
+      console.warn(`[useOwnedCharacters] Refusing to bless suspect count=${count} (prior=${priorCount ?? 'none'})`);
       return;
     }
     sessionStorage.setItem(ssBootstrapKey(email), JSON.stringify({
@@ -79,32 +102,7 @@ function isBootstrapCoolingDown(email) {
   return (Date.now() - meta.lastFetchAt) < BOOTSTRAP_COOLDOWN_MS;
 }
 
-// ── Merged snapshot ───────────────────────────────────────────────────────────
-function readMergedSnapshot(email) {
-  try {
-    const raw = sessionStorage.getItem(ssMergedKey(email));
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-
-/**
- * Write merged snapshot ONLY if it would grow the stored count (never lower the floor).
- * Called from two places:
- *   1. The dedicated snapshot-writer effect (fires on any allCharacters growth)
- *   2. The bootstrap guard effect (after full validation passes)
- */
-function writeMergedSnapshot(email, ids, count) {
-  try {
-    const existing = readMergedSnapshot(email);
-    if (existing && count <= existing.count - 1) {
-      // Refuse to lower the floor
-      return;
-    }
-    sessionStorage.setItem(ssMergedKey(email), JSON.stringify({
-      ids, count, savedAt: Date.now(),
-    }));
-  } catch {}
-}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function useOwnedCharacters(
   currentUser,
@@ -116,14 +114,14 @@ export function useOwnedCharacters(
   const queryClient = useQueryClient();
   const recoveryFiredRef = useRef(false);
 
-  // Reset recoveryFiredRef when email changes (new session / account switch)
+  // Reset recoveryFiredRef when email changes (account switch / new session)
   const prevEmailRef = useRef(null);
   if (prevEmailRef.current !== email) {
     prevEmailRef.current = email;
     recoveryFiredRef.current = false;
   }
 
-  // ── 1. RLS characters ────────────────────────────────────────────────────────
+  // ── 1. RLS characters (all types, all statuses, owner_email scoped) ──────────
   const {
     data: rlsCharacters = [],
     isLoading: isLoadingRls,
@@ -134,70 +132,78 @@ export function useOwnedCharacters(
     queryFn: async () => {
       if (!email) return [];
 
-      // ── FLOOR GUARD ──────────────────────────────────────────────────────────
-      // Read the merged snapshot (authoritative floor) and the current NPC cache.
-      // We project what the merged universe will look like after this RLS result
-      // is combined with the current NPC cache, before any effect can run.
-      const mergedSnapshot  = readMergedSnapshot(email);
-      const snapshotCount   = mergedSnapshot?.count || 0;
-      const currentNpcs     = queryClient.getQueryData(["npc-characters", userId]) || [];
-      const currentRlsCache = queryClient.getQueryData(["characters", email]) || [];
+      // Read the stored RLS snapshot (written by prior successful fetches).
+      // This is the authoritative floor — never lowered, never cleared mid-session.
+      const snapshot = readRlsSnapshot(email);
+      const snapshotCount = snapshot?.count || 0;
 
-      // Oldest-first: partial/rate-limited results return foundational characters
-      // (Ethan, Melody) rather than the newest-created one (Shiloh).
+      // Read current RLS cache as a secondary fallback floor
+      // (handles the case where a prior fetch populated the cache but snapshot
+      //  wasn't written yet — e.g. snapshot cleared by browser, cache still warm)
+      const cachedRls = queryClient.getQueryData(["characters", email]) || [];
+
+      // OLDEST-FIRST: ensures partial/rate-limited results return foundational
+      // characters (Ethan, Melody) rather than the newest-created one (Shiloh).
       const fresh = await base44.entities.Character.filter(
         { owner_email: email },
-        "created_date",
+        "created_date", // ascending — oldest first
         300
       );
       const freshFiltered = fresh.filter(c => !c.is_test_character && !c.diagnostic_only);
 
-      // Project merged count after combining fresh RLS with current NPC cache
-      const projectedMergedCount = (() => {
-        const seen = new Set(freshFiltered.map(c => c.id));
-        let count = freshFiltered.length;
-        for (const npc of currentNpcs) {
-          if (!seen.has(npc.id)) count++;
-        }
-        return count;
-      })();
+      // ── SNAPSHOT WRITE (synchronous, inside queryFn) ──────────────────────
+      // Write the snapshot NOW if this fetch is authoritative (count grows).
+      // This must happen before we return, so the floor is established before
+      // any subsequent fetch or effect cycle runs.
+      writeRlsSnapshotIfGrows(email, freshFiltered.map(c => c.id), freshFiltered.length);
 
-      // PRIMARY floor: compare projected merged count against the stored snapshot.
-      // SECONDARY floor: compare fresh RLS count against current RLS cache length.
-      // Either floor triggers the merge guard. This handles the no-snapshot case
-      // (first load of session) where snapshotCount may be 0 but the RLS cache
-      // already has a good list from the initial successful fetch.
-      const primaryFloorBreach  = snapshotCount > 0 && projectedMergedCount < snapshotCount - 1;
-      const secondaryFloorBreach = currentRlsCache.length > 1 && freshFiltered.length < currentRlsCache.length - 1;
+      // ── FLOOR GUARD ────────────────────────────────────────────────────────
+      // PRIMARY: compare fresh count against the stored snapshot count.
+      // SECONDARY: compare fresh count against current RLS cache length.
+      // If either floor is breached, merge instead of replace.
+      const primaryBreach   = snapshotCount >= MIN_AUTHORITATIVE_COUNT &&
+                              freshFiltered.length < snapshotCount - 1;
+      const secondaryBreach = cachedRls.length >= MIN_AUTHORITATIVE_COUNT &&
+                              freshFiltered.length < cachedRls.length - 1;
 
-      if (primaryFloorBreach || secondaryFloorBreach) {
-        const reason = primaryFloorBreach
-          ? `projected merged (${projectedMergedCount}) < snapshot (${snapshotCount})`
-          : `fresh RLS (${freshFiltered.length}) < cached RLS (${currentRlsCache.length})`;
+      if (primaryBreach || secondaryBreach) {
+        const reason = primaryBreach
+          ? `fresh(${freshFiltered.length}) < snapshot(${snapshotCount})`
+          : `fresh(${freshFiltered.length}) < cache(${cachedRls.length})`;
 
         console.warn(
-          `[useOwnedCharacters] Floor guard triggered: ${reason}. ` +
-          `Merging fresh updates into existing cache instead of replacing.`
+          `[useOwnedCharacters] Floor guard: ${reason}. ` +
+          `Merging fresh updates into baseline instead of replacing.`
         );
 
-        // Merge: keep all cached RLS records, patch with fresh data where available,
-        // add genuinely new records. This preserves Ethan/Melody even if the fresh
-        // result returned only Shiloh.
+        // Use whichever baseline is larger (snapshot IDs if available, else cache)
+        const baseline = (snapshotCount >= cachedRls.length) ? (snapshot?.ids || []).map(id => {
+          // Try to get fresh data for this id; fall back to cached
+          const freshMatch = freshFiltered.find(c => c.id === id);
+          const cacheMatch = cachedRls.find(c => c.id === id);
+          return freshMatch || cacheMatch || null;
+        }).filter(Boolean) : cachedRls;
+
         const freshById = new Map(freshFiltered.map(c => [c.id, c]));
         const seen = new Set();
         const merged = [];
 
-        for (const cached of currentRlsCache) {
-          if (seen.has(cached.id)) continue;
-          seen.add(cached.id);
-          merged.push(freshById.get(cached.id) || cached);
+        // Patch baseline records with fresh data where available
+        for (const record of baseline) {
+          if (!record?.id || seen.has(record.id)) continue;
+          seen.add(record.id);
+          merged.push(freshById.get(record.id) || record);
         }
+        // Add any genuinely new records not in baseline
         for (const c of freshFiltered) {
           if (!seen.has(c.id)) {
             seen.add(c.id);
             merged.push(c);
           }
         }
+
+        // Update snapshot with the merged (larger) result
+        writeRlsSnapshotIfGrows(email, merged.map(c => c.id), merged.length);
         return merged;
       }
 
@@ -243,7 +249,7 @@ export function useOwnedCharacters(
     placeholderData: (prev) => prev,
   });
 
-  // ── Merge + dedupe ────────────────────────────────────────────────────────────
+  // ── Merge + dedupe by id ─────────────────────────────────────────────────────
   const allCharacters = (() => {
     const seen = new Set();
     return [...rlsCharacters, ...backendNpcs].filter(c => {
@@ -253,28 +259,12 @@ export function useOwnedCharacters(
     });
   })();
 
-  // ── SNAPSHOT WRITER ───────────────────────────────────────────────────────────
-  // Runs whenever allCharacters grows. Does NOT wait for the bootstrap guard.
-  // This establishes the floor on the very first successful load so that any
-  // subsequent background invalidation is blocked by the queryFn floor guard.
-  // Skipped while either query is still loading or fetching (unstable state).
-  useEffect(() => {
-    if (!email) return;
-    if (isLoadingRls || isLoadingNpc || isFetchingRls || isFetchingNpc) return;
-    const count = allCharacters.length;
-    if (count <= MIN_AUTHORITATIVE_COUNT) return; // too small to be authoritative
-    const existing = readMergedSnapshot(email);
-    if (!existing || count > existing.count) {
-      writeMergedSnapshot(email, allCharacters.map(c => c.id), count);
-      console.log(`[useOwnedCharacters] Snapshot updated: count=${count} email=${email}`);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [email, allCharacters.length, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc]);
-
   // ── BOOTSTRAP GUARD ───────────────────────────────────────────────────────────
-  // Evaluates the full merged universe after both queries stabilize.
-  // Triggers one controlled recovery fetch if the result is partial/suspect.
-  // ANCHOR RULE: valid if AT LEAST ONE configured anchor is present.
+  // Runs after both queries stabilize. Checks the merged universe against:
+  //   A) Prior authoritative count (bootstrap meta)
+  //   B) Anchor presence (ANY anchor present = valid; NONE = incomplete)
+  //   C) Default character presence
+  // Triggers one controlled recovery fetch if the result is partial.
   useEffect(() => {
     if (!email) return;
     if (isLoadingRls || isLoadingNpc) return;
@@ -286,41 +276,35 @@ export function useOwnedCharacters(
     const priorCount  = meta?.lastSuccessfulCount ?? null;
 
     const isPartialVsPrior    = priorCount !== null && mergedCount < priorCount - 1;
-    const isSuspectFirstFetch = priorCount === null && mergedCount <= MIN_AUTHORITATIVE_COUNT;
+    const isSuspectFirstFetch = priorCount === null && mergedCount < MIN_AUTHORITATIVE_COUNT;
     const isEmpty             = mergedCount === 0;
 
-    const isDefaultCharacterMissing = !!expectedDefaultCharacterId &&
+    const isDefaultMissing = !!expectedDefaultCharacterId &&
       !allCharacters.some(c => c.id === expectedDefaultCharacterId);
 
-    // ANY anchor present = valid load. NONE present = incomplete.
-    const validAnchors     = (anchorCharacterIds || []).filter(id => !!id);
+    // ANCHOR RULE: ANY present = valid. NONE present (when configured) = incomplete.
+    const validAnchors    = (anchorCharacterIds || []).filter(id => !!id);
     const anyAnchorPresent = validAnchors.length === 0 ||
       validAnchors.some(id => allCharacters.some(c => c.id === id));
-    const isAnchorMissing  = validAnchors.length > 0 && !anyAnchorPresent;
+    const isAnchorMissing = validAnchors.length > 0 && !anyAnchorPresent;
 
     if (isAnchorMissing) {
       console.warn(
-        `[useOwnedCharacters] NO anchor present. ` +
-        `anchors=${validAnchors.join(',')} | mergedCount=${mergedCount}`
-      );
-    }
-    if (isDefaultCharacterMissing) {
-      console.warn(
-        `[useOwnedCharacters] Default character ${expectedDefaultCharacterId} missing. count=${mergedCount}`
+        `[useOwnedCharacters] NO anchor in merged list. ` +
+        `anchors=[${validAnchors.join(',')}] | mergedCount=${mergedCount}`
       );
     }
 
     const needsRecovery = isEmpty || isPartialVsPrior || isSuspectFirstFetch ||
-      isDefaultCharacterMissing || isAnchorMissing;
+      isDefaultMissing || isAnchorMissing;
 
     if (!needsRecovery) {
       writeBootstrapMeta(email, mergedCount);
-      // Snapshot is also written by the snapshot-writer effect above — no duplication.
       return;
     }
 
     if (isBootstrapCoolingDown(email)) {
-      console.log(`[useOwnedCharacters] Partial cache — cooldown active. merged=${mergedCount} prior=${priorCount ?? 'none'}`);
+      console.log(`[useOwnedCharacters] Partial — cooldown active. merged=${mergedCount} prior=${priorCount ?? 'none'}`);
       return;
     }
 
@@ -330,8 +314,7 @@ export function useOwnedCharacters(
       `[useOwnedCharacters] Recovery triggered. ` +
       `merged=${mergedCount} | prior=${priorCount ?? 'none'} | ` +
       `isEmpty=${isEmpty} | partial=${isPartialVsPrior} | suspectFirst=${isSuspectFirstFetch} | ` +
-      `defaultMissing=${isDefaultCharacterMissing} | anchorMissing=${isAnchorMissing} | ` +
-      `anchorsConfigured=${validAnchors.length} | anyAnchorPresent=${anyAnchorPresent}`
+      `defaultMissing=${isDefaultMissing} | anchorMissing=${isAnchorMissing}`
     );
 
     // Stamp cooldown before firing so rapid re-mounts don't stack
@@ -348,12 +331,10 @@ export function useOwnedCharacters(
       expectedDefaultCharacterId, JSON.stringify(anchorCharacterIds)]);
 
   // ── Derived slices ────────────────────────────────────────────────────────────
-  const activeCreated = allCharacters.filter(
-    c => c.character_type === "active_created_character" && c.status !== "deleted"
-  );
-  const npcFictitious   = allCharacters.filter(c => c.character_type === "npc_fictitious");
+  const activeCreated    = allCharacters.filter(c => c.character_type === "active_created_character" && c.status !== "deleted");
+  const npcFictitious    = allCharacters.filter(c => c.character_type === "npc_fictitious");
   const npcFamilyMembers = allCharacters.filter(c => c.character_type === "npc_family_member");
-  const npcRegular      = allCharacters.filter(c => c.character_type === "npc_regular");
+  const npcRegular       = allCharacters.filter(c => c.character_type === "npc_regular");
   const travelCompanions = [...activeCreated, ...npcFictitious, ...npcFamilyMembers];
 
   const isInitialLoading = (isLoadingRls && !rlsCharacters.length) || (isLoadingNpc && !backendNpcs.length);
