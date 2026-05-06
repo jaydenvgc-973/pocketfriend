@@ -108,19 +108,24 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
 function App() {
   const [holidaysEnabled, setHolidaysEnabled] = useState(false);
 
-  // Check if holidays are enabled in user settings
+  // Check if holidays are enabled — session-gated to prevent 429 on every mount
   useEffect(() => {
+    const sessionKey = 'holiday_setting_checked';
+    if (sessionStorage.getItem(sessionKey)) return;
+
     const checkHolidaysSetting = async () => {
       try {
         const me = await base44.auth.me().catch(() => null);
         if (!me?.email) return;
-        // owner_email is the sole ownership source of truth — created_by is permanently forbidden
         const settingsList = await base44.entities.UserSettings.filter({ owner_email: me.email });
         if (settingsList[0]) {
           setHolidaysEnabled(settingsList[0].holiday_observation_enabled !== false);
         }
+        sessionStorage.setItem(sessionKey, '1');
       } catch (error) {
-        console.error('Failed to check holiday setting:', error);
+        const is429 = error?.message?.includes('429') || error?.status === 429;
+        if (!is429) console.warn('Failed to check holiday setting:', error?.message);
+        // Don't set session key on failure — allow retry next navigation
       }
     };
     checkHolidaysSetting();

@@ -15,18 +15,20 @@ export default function OnboardingGuard({ children }) {
     queryKey: ["userSettings", currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return null;
-      const list = await base44.entities.UserSettings.filter({ created_by: currentUser.email });
+      const list = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
       return list[0] || null;
     },
     enabled: !!currentUser?.email,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
-
-
 
   const { data: characters, isLoading: isLoadingChars } = useQuery({
     queryKey: ["characters", currentUser?.email],
-    queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date", 1),
+    queryFn: () => base44.entities.Character.filter({ owner_email: currentUser.email, status: "active" }, "-created_date", 1),
     enabled: !!currentUser?.email,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   const isLoading = isLoadingSettings || isLoadingUser || isLoadingChars;

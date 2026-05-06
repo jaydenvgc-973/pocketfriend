@@ -23,10 +23,12 @@ export default function Onboarding() {
     queryKey: ['userSettings', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return null;
-      const settings = await base44.entities.UserSettings.filter({ created_by: currentUser.email });
+      const settings = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
       return settings[0] || null;
     },
     enabled: !!currentUser?.email,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   // Redirect away from onboarding if already completed
