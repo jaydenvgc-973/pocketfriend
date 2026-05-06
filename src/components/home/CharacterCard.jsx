@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
 // Note: Sparkles is reused for prayer icon
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
+import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
@@ -287,6 +288,12 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 const hasValidHome = !!(character.current_home_location_id || character.home_location_id || character.temporary_housing_location_id);
                 const shouldShowHome = presence.status === 'home' && hasValidHome;
 
+                // SLEEP DISPLAY OVERRIDE: derive sleep purely from ET time + stored schedule.
+                // Do NOT wait for backend enforcement — this is read-only, zero writes.
+                // Priority 1: sleeping overrides At home / Idle / Available / current location.
+                const derivedAsleep = isCharacterAsleep(character);
+                const isNapping = character.resolved_presence_status === 'napping';
+
                 // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {
                   return (
@@ -301,10 +308,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 let color = 'text-muted-foreground';
                 let label = presence.label;
 
-                if (presence.isSleeping) {
+                if (derivedAsleep || isNapping || presence.isSleeping) {
                   IconComponent = Moon;
                   color = 'text-blue-300';
-                  label = presence.status === 'napping' ? 'napping' : 'sleeping';
+                  label = isNapping ? 'napping' : 'sleeping';
                 } else if (presence.status === 'at_work') {
                   IconComponent = Briefcase;
                   color = 'text-blue-400';
