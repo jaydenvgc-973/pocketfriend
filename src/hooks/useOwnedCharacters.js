@@ -38,10 +38,10 @@ export function useOwnedCharacters(currentUser) {
       return chars.filter(c => !c.is_test_character && !c.diagnostic_only);
     },
     enabled: !!email,
-    staleTime: 5 * 60 * 1000,    // 5 min — reduce refetch frequency; realtime subscribe invalidates on mutations
+    staleTime: 0,                 // always refetch on mount — ensures repairs are immediately visible
     gcTime: 15 * 60 * 1000,
     refetchOnMount: true,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     // Retry up to 3 times with exponential backoff, including on 429s
     retry: (failureCount, error) => {
       if (failureCount >= 3) return false;
