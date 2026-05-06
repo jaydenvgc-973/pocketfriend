@@ -86,32 +86,50 @@ Deno.serve(async (req) => {
     
     const log = [];
 
-    // PRE-FLIGHT: Fix NPCs with missing locations — assign to VGC Towers home
+    // PRE-FLIGHT: Identify NPCs with missing resolved locations.
+    // RULE: Missing location does NOT mean "lives at VGC Towers".
+    // Only NPCs explicitly assigned to VGC Towers (current_home_location_id === VGC_ID)
+    // are eligible for the distribution system. NPCs missing a home are flagged
+    // for repair but are NOT relocated here.
     const npcsMissingLocation = allCharacters.filter(c =>
       NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
       !c.protected_active &&
       c.owner_email === user.email &&
       (!c.resolved_current_location_id || c.resolved_current_location_id.length === 0) &&
-      (!c.current_home_location_id || c.current_home_location_id !== VGC_ID)
+      c.current_home_location_id === VGC_ID  // Only VGC-assigned residents
     );
-    
+
     const preflightFixes = [];
+    const preflightSkipped = [];  // NPCs missing location that are NOT VGC residents — not touched
     for (const npc of npcsMissingLocation) {
+      // NPC is a confirmed VGC resident with no resolved location — return them home.
       preflightFixes.push(
         base44.entities.Character.update(npc.id, {
-          current_home_location_id: VGC_ID,
           resolved_current_location_id: VGC_ID,
           resolved_current_location_name: 'VGC Towers',
           resolved_presence_status: 'home',
           resolved_location_type: 'home',
-          resolved_source_reason: 'preflight_fix',
+          resolved_source_reason: 'preflight_fix_vgc_resident',
           presence_state: 'home',
           source_of_move: 'system',
           valid_from: now.toISOString(),
         })
       );
-      log.push(`${npc.name} → PREFLIGHT_FIX: assigned to VGC Towers`);
+      log.push(`${npc.name} → PREFLIGHT_FIX: VGC resident returned home (was missing resolved location)`);
     }
+
+    // Log NPCs with missing locations that are NOT VGC residents — do not touch them
+    allCharacters.filter(c =>
+      NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
+      !c.protected_active &&
+      c.owner_email === user.email &&
+      (!c.resolved_current_location_id || c.resolved_current_location_id.length === 0) &&
+      c.current_home_location_id !== VGC_ID
+    ).forEach(npc => {
+      preflightSkipped.push(npc.name);
+      log.push(`${npc.name} → PREFLIGHT_SKIP: missing location but not a VGC resident — needs housing repair, not VGC assignment`);
+    });
+
     if (preflightFixes.length > 0) await Promise.all(preflightFixes);
     
     const vgcResidents = allCharacters.filter(c =>
@@ -293,21 +311,29 @@ Deno.serve(async (req) => {
       const hasLocation = fresh.resolved_current_location_id && fresh.resolved_current_location_id.length > 0;
       
       // SELF-HEAL #1: No location assigned
+      // Only self-heal to VGC Towers if this NPC is a confirmed VGC resident.
+      // An NPC without a resolved location that is NOT a VGC resident needs housing
+      // repair — NOT relocation to VGC Towers.
       if (!hasLocation) {
-        selfHealUpdates.push(base44.entities.Character.update(npc.id, {
-          resolved_current_location_id: VGC_ID,
-          resolved_current_location_name: 'VGC Towers',
-          resolved_presence_status: 'home',
-          resolved_location_type: 'home',
-          resolved_source_reason: 'self_heal_no_location',
-          presence_state: 'home',
-          source_of_move: 'system',
-          valid_from: now.toISOString(),
-          vgc_travel_day_active: false,
-          current_travel_block: null,
-        }));
-        log.push(`${npc.name} → SELF-HEAL #1: No location, returned to VGC Towers`);
-        finalNPCStates.push({ name: npc.name, location: 'VGC Towers (self-healed)', presence_state: 'home', flag: 'SELF_HEAL_NO_LOCATION' });
+        if (fresh.current_home_location_id === VGC_ID) {
+          selfHealUpdates.push(base44.entities.Character.update(npc.id, {
+            resolved_current_location_id: VGC_ID,
+            resolved_current_location_name: 'VGC Towers',
+            resolved_presence_status: 'home',
+            resolved_location_type: 'home',
+            resolved_source_reason: 'self_heal_vgc_resident',
+            presence_state: 'home',
+            source_of_move: 'system',
+            valid_from: now.toISOString(),
+            vgc_travel_day_active: false,
+            current_travel_block: null,
+          }));
+          log.push(`${npc.name} → SELF-HEAL #1: VGC resident missing location, returned home`);
+          finalNPCStates.push({ name: npc.name, location: 'VGC Towers (self-healed)', presence_state: 'home', flag: 'SELF_HEAL_VGC_RESIDENT' });
+        } else {
+          log.push(`${npc.name} → SELF-HEAL #1 SKIPPED: no location but not a VGC resident — needs housing repair`);
+          finalNPCStates.push({ name: npc.name, location: 'UNRESOLVED', presence_state: 'location_unresolved', flag: 'NEEDS_HOUSING_REPAIR' });
+        }
         continue;
       }
       
@@ -339,6 +365,7 @@ Deno.serve(async (req) => {
       hoursET: hour,
       currentBlock,
       preflightFixed: preflightFixes.length,
+      preflightSkipped: preflightSkipped.length,
       totalVGCResidents: vgcResidents.length,
       eligible: eligible.length,
       ineligible,

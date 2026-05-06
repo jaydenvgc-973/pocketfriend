@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
     // ── PROCESS EACH ACCOUNT'S VGC TOWERS INDEPENDENTLY ──
     for (const vgcTowers of vgcTowersList) {
       const VGC_ID = vgcTowers.id;
-      const ownerEmail = vgcTowers.created_by || vgcTowers.owner_email;
+      const ownerEmail = vgcTowers.owner_email; // owner_email is the sole source of truth — created_by is forbidden
 
       // Residents of THIS VGC Towers only (account-isolated)
       const vgcResidents = allCharacters.filter(c =>
@@ -82,11 +82,13 @@ Deno.serve(async (req) => {
 
       if (vgcResidents.length === 0) continue;
 
-      // ── LOCKDOWN: Return anyone still out back home, skip all movement ──
+      // ── LOCKDOWN: Return confirmed VGC residents still out back home ──
+      // RULE: vgcResidents is already filtered to current_home_location_id === VGC_ID.
+      // Only characters explicitly homed at VGC Towers are returned here.
       if (isLockdown) {
         const away = vgcResidents.filter(npc => npc.resolved_current_location_id !== VGC_ID);
         for (const npc of away) {
-          globalLog.push(`[${ownerEmail}] ${npc.name} → VGC Towers (lockdown rest)`);
+          globalLog.push(`[${ownerEmail}] ${npc.name} → VGC Towers (lockdown rest — confirmed VGC resident)`);
           await base44.asServiceRole.entities.Character.update(npc.id, {
             resolved_current_location_id: VGC_ID,
             resolved_current_location_name: 'VGC Towers',
@@ -118,7 +120,7 @@ Deno.serve(async (req) => {
         if (loc.id === VGC_ID) return false;
         if (loc.category === 'home' || loc.category === 'generic') return false;
         if (loc.scope === 'character_specific') return false;
-        const isAccountOwned = loc.created_by === ownerEmail;
+        const isAccountOwned = loc.owner_email === ownerEmail;
         const isShared = loc.scope === 'shared';
         if (!isAccountOwned && !isShared) return false;
         if (isLocationClosed(loc, nowET)) return false;
@@ -191,7 +193,8 @@ Deno.serve(async (req) => {
         const finalPool = differentPool.length > 0 ? differentPool : pool;
 
         if (finalPool.length === 0) {
-          // No valid destination — send home
+          // No valid destination — return to their confirmed home (VGC Towers).
+          // This is safe: npc is already confirmed as a VGC resident (current_home_location_id === VGC_ID).
           updates.push({
             id: npc.id,
             data: {
@@ -199,7 +202,7 @@ Deno.serve(async (req) => {
               resolved_current_location_name: 'VGC Towers',
               resolved_presence_status: 'home',
               resolved_location_type: 'home',
-              resolved_source_reason: 'no_valid_destinations',
+              resolved_source_reason: 'no_valid_destinations_return_home',
               presence_state: 'home',
               source_of_move: 'system',
               valid_from: now.toISOString(),
