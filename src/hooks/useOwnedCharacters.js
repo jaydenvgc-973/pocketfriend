@@ -38,10 +38,10 @@ export function useOwnedCharacters(currentUser) {
       return chars.filter(c => !c.is_test_character && !c.diagnostic_only);
     },
     enabled: !!email,
-    staleTime: 0,
+    staleTime: 2 * 60 * 1000,    // 2 min — realtime subscribe in Home invalidates on changes
     gcTime: 10 * 60 * 1000,
     refetchOnMount: true,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,  // Prevents re-fetch storm on every tab switch
     // Keep previous data while refetching — prevents [] flash
     placeholderData: (prev) => prev,
   });
@@ -60,10 +60,10 @@ export function useOwnedCharacters(currentUser) {
       return res?.data?.npcs || [];
     },
     enabled: !!userId,
-    staleTime: 0,
+    staleTime: 2 * 60 * 1000,    // 2 min — stable within a session; explicit invalidate on mutations
     gcTime: 10 * 60 * 1000,
     refetchOnMount: true,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,  // Prevents re-fetch storm on every tab switch
     placeholderData: (prev) => prev,
   });
 

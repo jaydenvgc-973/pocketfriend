@@ -161,10 +161,15 @@ export default function Travel() {
     };
   }, [selectedLocation]);
 
-  // Auto-distribute VGC NPCs on page load so UI shows their real locations
+  // Auto-distribute VGC NPCs on page load so UI shows their real locations.
+  // Session-gated: distributeVGCTowersNPCs is expensive — run at most once per session.
   useEffect(() => {
-    if (!currentUser?.email || hasRunDistribution) return;
+    if (!currentUser?.email) return;
+    const sessionKey = `vgc_distributed_${currentUser.email}`;
+    if (sessionStorage.getItem(sessionKey)) return;
+    if (hasRunDistribution) return;
     setHasRunDistribution(true);
+    sessionStorage.setItem(sessionKey, '1');
     base44.functions.invoke('distributeVGCTowersNPCs', {})
       .then(() => new Promise(r => setTimeout(r, 1000)))
       .then(() => {
