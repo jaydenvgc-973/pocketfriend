@@ -38,11 +38,18 @@ export function useOwnedCharacters(currentUser) {
       return chars.filter(c => !c.is_test_character && !c.diagnostic_only);
     },
     enabled: !!email,
-    staleTime: 2 * 60 * 1000,    // 2 min — realtime subscribe in Home invalidates on changes
-    gcTime: 10 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,    // 5 min — reduce refetch frequency; realtime subscribe invalidates on mutations
+    gcTime: 15 * 60 * 1000,
     refetchOnMount: true,
-    refetchOnWindowFocus: false,  // Prevents re-fetch storm on every tab switch
-    // Keep previous data while refetching — prevents [] flash
+    refetchOnWindowFocus: false,
+    // Retry up to 3 times with exponential backoff, including on 429s
+    retry: (failureCount, error) => {
+      if (failureCount >= 3) return false;
+      const is429 = error?.message?.includes('429') || error?.status === 429 || error?.response?.status === 429;
+      return is429 || failureCount < 2;
+    },
+    retryDelay: (attemptIndex) => Math.min(3000 * 2 ** attemptIndex, 30000),
+    // Keep previous data while refetching — prevents [] flash on background refetch
     placeholderData: (prev) => prev,
   });
 
@@ -60,10 +67,16 @@ export function useOwnedCharacters(currentUser) {
       return res?.data?.npcs || [];
     },
     enabled: !!userId,
-    staleTime: 2 * 60 * 1000,    // 2 min — stable within a session; explicit invalidate on mutations
-    gcTime: 10 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
     refetchOnMount: true,
-    refetchOnWindowFocus: false,  // Prevents re-fetch storm on every tab switch
+    refetchOnWindowFocus: false,
+    retry: (failureCount, error) => {
+      if (failureCount >= 3) return false;
+      const is429 = error?.message?.includes('429') || error?.status === 429 || error?.response?.status === 429;
+      return is429 || failureCount < 2;
+    },
+    retryDelay: (attemptIndex) => Math.min(3000 * 2 ** attemptIndex, 30000),
     placeholderData: (prev) => prev,
   });
 

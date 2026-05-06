@@ -114,15 +114,30 @@ export default function Home() {
       .catch(() => {});
   }, [currentUser?.email]);
 
-  // Real-time: immediately reflect any character create/update/delete
+  // Real-time: reflect character create/update/delete with a 10-second debounce.
+  // Automation writes fire dozens of update events per minute — without debounce,
+  // every write triggers a re-fetch that competes with ongoing 429 quota pressure.
+  // 10s debounce means one consolidated re-fetch per burst, not one per write.
+  const charInvalidateTimerRef = useRef(null);
   useEffect(() => {
     if (!currentUser?.email) return;
     const unsubscribe = base44.entities.Character.subscribe((event) => {
-      if (event.type === "create" || event.type === "update" || event.type === "delete") {
+      if (event.type !== "create" && event.type !== "update" && event.type !== "delete") return;
+      // For creates and deletes, invalidate promptly (5s). For updates, debounce longer (15s).
+      const delay = event.type === "update" ? 15000 : 5000;
+      if (charInvalidateTimerRef.current) clearTimeout(charInvalidateTimerRef.current);
+      charInvalidateTimerRef.current = setTimeout(() => {
+        charInvalidateTimerRef.current = null;
         queryClient.invalidateQueries({ queryKey: ["characters", currentUser.email] });
-      }
+      }, delay);
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (charInvalidateTimerRef.current) {
+        clearTimeout(charInvalidateTimerRef.current);
+        charInvalidateTimerRef.current = null;
+      }
+    };
   }, [currentUser?.email, queryClient]);
 
   const deleteMutation = useMutation({
