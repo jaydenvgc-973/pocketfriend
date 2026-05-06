@@ -20,15 +20,12 @@ const sessionCooldowns = {};
 const inFlight = {};
 // Per-character message count for emoji gating
 const emojiMsgCount = {};
-// Global rate-limit flag — set on any 429, cleared after 60s
-let globalRateLimited = false;
-let rateLimitClearTimer = null;
-
+// Global rate-limit flag — shared via window.__chatRateLimited so all Chat hooks read the same value.
+// Set on any 429 from any governed call; cleared after 60s.
 function setRateLimited() {
-  globalRateLimited = true;
-  if (rateLimitClearTimer) clearTimeout(rateLimitClearTimer);
-  rateLimitClearTimer = setTimeout(() => { globalRateLimited = false; }, 60000);
+  window.__chatRateLimited = true;
   console.warn("[Governor] Rate limit detected — all background tasks suspended for 60s");
+  setTimeout(() => { window.__chatRateLimited = false; }, 60000);
 }
 
 function isOnCooldown(characterId, taskName, cooldownMs) {
@@ -50,7 +47,7 @@ function setInFlight(characterId, taskName, val) {
 }
 
 async function safeInvoke(fnName, payload, characterId, taskName) {
-  if (globalRateLimited) {
+  if (window.__chatRateLimited) {
     console.log(`[Governor] SKIP ${taskName} — global rate limit active`);
     return null;
   }
@@ -120,7 +117,7 @@ export function useChatBackgroundTasks({
 
     // ── TIER 2 — 2s: approval check + conversation classification (60s cooldown) ──
     setTimeout(() => {
-      if (globalRateLimited) return;
+      if (window.__chatRateLimited) return;
 
       // Approval check dispatched as CustomEvent — no extra API call
       if (responseText && character) {
@@ -140,7 +137,7 @@ export function useChatBackgroundTasks({
 
     // ── TIER 3 — 4s: memory extraction + world phone sync (90s cooldown each) ──
     setTimeout(() => {
-      if (globalRateLimited) return;
+      if (window.__chatRateLimited) return;
 
       if (!isOnCooldown(characterId, 'memoryExtract', 90000)) {
         safeInvoke('extractMemoriesFromTurn', {
@@ -164,7 +161,7 @@ export function useChatBackgroundTasks({
 
     // ── TIER 4 — 7s: relationship levels + achievements + income (120s / 120s / 60s cooldown) ──
     setTimeout(() => {
-      if (globalRateLimited) return;
+      if (window.__chatRateLimited) return;
 
       if (!isOnCooldown(characterId, 'relationships', 120000)) {
         safeInvoke('updateRelationshipLevels', {
@@ -189,7 +186,7 @@ export function useChatBackgroundTasks({
 
     // ── TIER 5 — 10s: emoji reaction (nonessential, once per 5 messages, 50% chance) ──
     setTimeout(() => {
-      if (globalRateLimited) return;
+      if (window.__chatRateLimited) return;
       if (!responseText?.trim()) return;
 
       // Only run emoji if foreground is fully done (isTyping should be false by now)

@@ -63,7 +63,16 @@ export function useChatPostLoadEffects({
                   if (!isMounted || snapshotCharacterId !== characterId) return;
                   if (r?.data?.success && r?.data?.catchupText) setCatchupNarrativeText(r.data.catchupText);
                 })
-                .catch(() => {});
+                .catch(err => {
+                  const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
+                  if (is429) {
+                    console.warn('[PostLoadEffects] 429 on generateCatchupNarrative — setting rate-limit flag');
+                    window.__chatRateLimited = true;
+                    setTimeout(() => { window.__chatRateLimited = false; }, 60000);
+                  } else {
+                    console.warn('[PostLoadEffects] generateCatchupNarrative failed:', err?.message);
+                  }
+                });
             }, 3000);
           }
         }

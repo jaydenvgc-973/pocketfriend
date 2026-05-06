@@ -599,9 +599,24 @@ export default function Chat() {
         }
       }
 
+      // performWebLookup — deferred 5s so it does not compete with the main LLM response.
+      // Rate-limit gated. Failure is logged visibly, not swallowed.
       if (lookupMatch && lookupMatch[1]) {
         const query = lookupMatch[1].trim();
-        base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
+        setTimeout(() => {
+          if (window.__chatRateLimited) {
+            console.log('[Chat] SKIP performWebLookup — rate limit active');
+            return;
+          }
+          base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(err => {
+            const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
+            if (is429) {
+              window.__chatRateLimited = true;
+              setTimeout(() => { window.__chatRateLimited = false; }, 60000);
+            }
+            console.warn('[Chat] performWebLookup failed:', err?.message);
+          });
+        }, 5000);
       }
 
       // Fetch locations for BOTH spatial awareness AND employment schedule resolution.

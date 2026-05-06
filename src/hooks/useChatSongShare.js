@@ -49,37 +49,43 @@ export function useChatSongShare({
         });
         queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
 
+        // Media research chain — deferred 8s, runs once per share, gated by rate-limit flag.
+        // Three sequential backend calls are intentional (each depends on the prior result).
+        // Staggered start ensures it does not compete with any active chat response.
         if (msgData.songs_heard?.length > 0) {
-          msgData.songs_heard.forEach(song => {
-            base44.functions.invoke('analyzeMediaUnderstanding', {
-              mediaObject: song,
-              sources: {},
-            }).then(res1 => {
-              const understanding = res1?.data?.understanding;
-              base44.functions.invoke('deepMediaResearch', {
-                mediaObject: song,
-                tracks: song.tracks || [],
-              }).then(res2 => {
+          setTimeout(async () => {
+            if (window.__chatRateLimited) {
+              console.log('[SongShare] SKIP media research chain — rate limit active');
+              return;
+            }
+            for (const song of msgData.songs_heard) {
+              try {
+                const res1 = await base44.functions.invoke('analyzeMediaUnderstanding', { mediaObject: song, sources: {} });
+                const understanding = res1?.data?.understanding;
+                const res2 = await base44.functions.invoke('deepMediaResearch', { mediaObject: song, tracks: song.tracks || [] });
                 const deepResearch = res2?.data?.deepResearch;
-                base44.functions.invoke('buildCharacterMediaKnowledge', {
-                  character,
-                  mediaObject: song,
-                  understanding,
-                  deepResearch,
-                }).then(res3 => {
-                  const knowledge = res3?.data?.knowledge;
-                  base44.entities.Message.update(newMsg.id, {
-                    songs_heard: msgData.songs_heard.map(s =>
-                      s.spotify_id === song.spotify_id
-                        ? { ...s, _understanding: understanding, _deepResearch: deepResearch, _characterKnowledge: knowledge }
-                        : s
-                    ),
-                  }).catch(() => {});
-                  console.log(`[Media Research] Complete for "${song.title}": ${knowledge?.knowledgeLevel?.level || 'unknown'}`);
-                }).catch(err => console.error('[buildKnowledge] Failed:', err.message));
-              }).catch(err => console.error('[deepResearch] Failed:', err.message));
-            }).catch(err => console.error('[analyzeMedia] Failed:', err.message));
-          });
+                const res3 = await base44.functions.invoke('buildCharacterMediaKnowledge', { character, mediaObject: song, understanding, deepResearch });
+                const knowledge = res3?.data?.knowledge;
+                await base44.entities.Message.update(newMsg.id, {
+                  songs_heard: msgData.songs_heard.map(s =>
+                    s.spotify_id === song.spotify_id
+                      ? { ...s, _understanding: understanding, _deepResearch: deepResearch, _characterKnowledge: knowledge }
+                      : s
+                  ),
+                }).catch(() => {});
+                console.log(`[Media Research] Complete for "${song.title}": ${knowledge?.knowledgeLevel?.level || 'unknown'}`);
+              } catch (err) {
+                const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
+                if (is429) {
+                  console.warn('[SongShare] 429 during media research chain — aborting remaining songs');
+                  window.__chatRateLimited = true;
+                  setTimeout(() => { window.__chatRateLimited = false; }, 60000);
+                  break;
+                }
+                console.warn(`[SongShare] Media research failed for "${song.title}":`, err?.message);
+              }
+            }
+          }, 8000);
         }
 
         queryClient.invalidateQueries({ queryKey: ["character", characterId] });

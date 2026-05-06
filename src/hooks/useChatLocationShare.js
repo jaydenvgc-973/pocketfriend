@@ -93,12 +93,28 @@ export function useChatLocationShare({
     if (isMountedRef.current) setIsTyping(false);
 
     // ── Generate a short natural text reply ───────────────────────────────
-    const locationReplyRes = await base44.integrations.Core.InvokeLLM({
-      prompt: `You are ${character.name}. ${character.personality_summary || ""} The user just asked you to share your location. Write a very short, casual 1-sentence text message acknowledging you're sharing it. Be natural — like a real text. No quotes, no labels.`,
-    }).catch(() => null);
-    const locationReplyText =
-      (typeof locationReplyRes === "string" ? locationReplyRes.trim() : "") ||
-      "Here's where I'm at 📍";
+    // Rate-limit check before firing LLM — location share reply is nonessential.
+    let locationReplyText = "Here's where I'm at 📍";
+    if (!window.__chatRateLimited) {
+      try {
+        const locationReplyRes = await base44.integrations.Core.InvokeLLM({
+          prompt: `You are ${character.name}. ${character.personality_summary || ""} The user just asked you to share your location. Write a very short, casual 1-sentence text message acknowledging you're sharing it. Be natural — like a real text. No quotes, no labels.`,
+        });
+        locationReplyText = (typeof locationReplyRes === "string" ? locationReplyRes.trim() : "") || "Here's where I'm at 📍";
+      } catch (err) {
+        const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
+        if (is429) {
+          console.warn('[LocationShare] 429 on reply LLM — using fallback text');
+          window.__chatRateLimited = true;
+          setTimeout(() => { window.__chatRateLimited = false; }, 60000);
+        } else {
+          console.warn('[LocationShare] Reply LLM failed:', err?.message);
+        }
+        // locationReplyText stays as fallback — do not block the location card
+      }
+    } else {
+      console.log('[LocationShare] SKIP reply LLM — rate limit active, using fallback text');
+    }
 
     // ── Save text reply ────────────────────────────────────────────────────
     const textMsg = await base44.entities.Message.create({

@@ -1,5 +1,14 @@
 import { base44 } from "@/api/base44Client";
 
+// Per-session guard for reaction LLM calls — keyed by characterId
+const reactionInFlight = {};
+const reactionCooldowns = {};
+const REACTION_COOLDOWN_MS = 60000; // 1 reaction reply per character per minute max
+
+function isReactionRateLimited() {
+  return !!(window.__chatRateLimited);
+}
+
 export function useChatReactionActions({
   messages,
   setMessages,
@@ -26,19 +35,48 @@ export function useChatReactionActions({
     await base44.entities.Message.update(messageId, { reactions: updatedReactions });
 
     if (msg.sender_type === "character" && !isSameEmoji && character) {
-      base44.functions.invoke("updateRelationshipLevels", {
-        characterId,
-        emojiReaction: emoji,
-        emojiMeaning: { "❤️": "love/care/appreciation", "👍": "acknowledgment/approval", "😢": "sadness/empathy", "😡": "anger/disapproval", "😲": "shock/surprise", "😂": "humor/laughter" }[emoji] || "general reaction",
-        reactedMessageContent: msg.content || "(image)",
-        reactedMessageSenderType: msg.sender_type,
-        recentMessages: messages.slice(-10),
-      }).then(res => {
-        if (res?.data?.reason) setLastChangeReason(res.data.reason);
-        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-      }).catch(() => {});
+      // ── Relationship update — gated by rate-limit flag ────────────────────
+      if (!isReactionRateLimited()) {
+        base44.functions.invoke("updateRelationshipLevels", {
+          characterId,
+          emojiReaction: emoji,
+          emojiMeaning: { "❤️": "love/care/appreciation", "👍": "acknowledgment/approval", "😢": "sadness/empathy", "😡": "anger/disapproval", "😲": "shock/surprise", "😂": "humor/laughter" }[emoji] || "general reaction",
+          reactedMessageContent: msg.content || "(image)",
+          reactedMessageSenderType: msg.sender_type,
+          recentMessages: messages.slice(-10),
+        }).then(res => {
+          if (res?.data?.reason) setLastChangeReason(res.data.reason);
+          queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        }).catch(err => {
+          const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
+          if (is429) {
+            console.warn('[ReactionActions] 429 on updateRelationshipLevels — setting rate-limit flag');
+            window.__chatRateLimited = true;
+            setTimeout(() => { window.__chatRateLimited = false; }, 60000);
+          }
+        });
+      } else {
+        console.log('[ReactionActions] SKIP updateRelationshipLevels — rate limit active');
+      }
 
-      if (["❤️", "👍", "😂", "😢"].includes(emoji) && Math.random() < 0.45 && conversationId) {
+      // ── Emoji reaction reply — nonessential, heavily gated ───────────────
+      // Conditions: specific positive emojis only, 45% chance, 1-per-character cooldown,
+      // not in-flight, not rate-limited, deferred 6s (well after any active message response)
+      const cooldownKey = `reaction:${characterId}`;
+      const lastFired = reactionCooldowns[cooldownKey] || 0;
+      const onCooldown = (Date.now() - lastFired) < REACTION_COOLDOWN_MS;
+
+      if (
+        ["❤️", "👍", "😂", "😢"].includes(emoji) &&
+        Math.random() < 0.45 &&
+        conversationId &&
+        !onCooldown &&
+        !reactionInFlight[characterId] &&
+        !isReactionRateLimited()
+      ) {
+        reactionInFlight[characterId] = true;
+        reactionCooldowns[cooldownKey] = Date.now();
+
         setTimeout(async () => {
           try {
             const emojiMeanings = { "❤️": "a ❤️ (love/appreciation)", "👍": "a 👍 (thumbs up/approval)", "😂": "a 😂 (laughing reaction)", "😢": "a 😢 (sad/touched reaction)" };
@@ -58,8 +96,21 @@ export function useChatReactionActions({
                 is_read: true,
               });
             }
-          } catch { /* silent */ }
-        }, 1500 + Math.random() * 2000);
+          } catch (err) {
+            const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
+            if (is429) {
+              console.warn('[ReactionActions] 429 on reaction LLM reply — setting rate-limit flag');
+              window.__chatRateLimited = true;
+              setTimeout(() => { window.__chatRateLimited = false; }, 60000);
+            } else {
+              console.warn('[ReactionActions] Reaction reply failed:', err?.message);
+            }
+          } finally {
+            reactionInFlight[characterId] = false;
+          }
+        }, 6000);
+      } else if (onCooldown || reactionInFlight[characterId] || isReactionRateLimited()) {
+        console.log(`[ReactionActions] SKIP reaction reply — cooldown=${onCooldown} inFlight=${!!reactionInFlight[characterId]} rateLimited=${isReactionRateLimited()}`);
       }
     }
   };
