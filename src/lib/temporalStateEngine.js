@@ -155,6 +155,40 @@ export function buildTemporalState(character, lastMsgTimestamp = null) {
     return hourET >= sleepH && hourET < wakeH;
   })();
 
+  // ── SLEEP ACCESS STATE (three-way, not binary) ────────────────────────────
+  // full_active      — normal daytime; all systems unlocked
+  // interaction_awake — woken by chat during sleep hours; responsive but sleep-protected
+  // sleep_protected  — asleep; not interacting
+  //
+  // interaction_awake is set when:
+  //   - character was interrupted by user_chat within the last 30 minutes
+  //   - AND the clock is still inside the sleep window
+  //   - AND no explicit stay-awake decision overrides it
+  const sleepAccessState = (() => {
+    if (!character) return 'full_active';
+    if (!isAsleep) return 'full_active';
+    // Check for recent chat interruption
+    if (character.sleep_interrupted_at) {
+      const interruptedAt = new Date(character.sleep_interrupted_at);
+      const minutesSince = (Date.now() - interruptedAt.getTime()) / 60000;
+      if (minutesSince < 30 && (character.wake_source === 'user_chat' || !character.wake_source)) {
+        return 'interaction_awake';
+      }
+    }
+    return 'sleep_protected';
+  })();
+
+  // Minutes remaining in sleep window (helps the LLM know how close to natural wake-up)
+  const minutesUntilWake = (() => {
+    if (!character?.wake_up_time || !isAsleep) return null;
+    const [wakeH, wakeM] = character.wake_up_time.split(':').map(Number);
+    const wakeMin = wakeH * 60 + (wakeM || 0);
+    const nowMin  = hourET * 60 + minuteET;
+    let diff = wakeMin - nowMin;
+    if (diff < 0) diff += 1440; // crosses midnight
+    return diff;
+  })();
+
   // ── ELAPSED TIME & CONTINUITY ────────────────────────────────────────────
   let elapsedMs         = null;
   let elapsedLabel      = 'unknown';
@@ -208,8 +242,10 @@ export function buildTemporalState(character, lastMsgTimestamp = null) {
     daypartLabel:     daypart.label,
     environmentCue,
 
-    // Sleep
+    // Sleep (binary + access state)
     isAsleep,
+    sleepAccessState,   // 'full_active' | 'interaction_awake' | 'sleep_protected'
+    minutesUntilWake,   // null if not in sleep window; integer minutes until scheduled wake
 
     // Elapsed / continuity
     elapsedMs,
@@ -240,9 +276,53 @@ export function buildTemporalContextBlock(ts) {
     long_absence:        'Multiple days have passed. Prior topics are background, not immediate.',
   };
 
-  const sleepLine = ts.isAsleep
-    ? `Sleep state: ASLEEP — but the WORLD CLOCK has not frozen. The current daypart is "${ts.daypartLabel}" and environmental descriptions must reflect it. Do NOT default to generic "night" language if the real time is morning.`
-    : `Sleep state: AWAKE`;
+  // ── SLEEP ACCESS STATE BLOCK ────────────────────────────────────────────────
+  // Three states: full_active | interaction_awake | sleep_protected
+  // interaction_awake = woken by chat during sleep hours — responsive but NOT fully unlocked
+  const sleepAccessState = ts.sleepAccessState || (ts.isAsleep ? 'sleep_protected' : 'full_active');
+  const wakeCountdown = ts.minutesUntilWake != null
+    ? ` (~${ts.minutesUntilWake} minutes until scheduled wake-up)`
+    : '';
+
+  const sleepBlock = (() => {
+    if (sleepAccessState === 'full_active') {
+      return `Sleep state: FULLY ACTIVE — normal waking hours. All behavior, travel, and schedule systems are unrestricted.`;
+    }
+
+    if (sleepAccessState === 'interaction_awake') {
+      return `Sleep state: INTERACTION-AWAKE (woken by this conversation during sleep hours${wakeCountdown})
+
+You have been briefly woken by this chat. You are responsive — you can think, feel, reason, and communicate.
+But you are NOT fully unlocked for the day. You are still inside your sleep window.
+
+WHAT YOU CAN DO:
+• Respond intelligently and emotionally
+• Express thoughts, feelings, needs, and preferences
+• Make small, home-based decisions
+• Reference what you need or want
+• Reason clearly about situations
+
+WHAT REMAINS LOCKED until sleep window ends or a strong override occurs:
+• Unrestricted travel (leaving home, going to bars/coffee shops/stores/errands)
+• Full daytime routing and schedule progression
+• Autonomous outside-world engagement
+• Broad social outings or destination changes
+
+NEED-BASED DECISIONS: If a need arises (hunger, thirst, discomfort), prefer solutions that are:
+  → Home-based (e.g. "I made something in the kitchen" NOT "I went out for coffee")
+  → Low-effort and quiet
+  → Temporary fixes that allow returning to sleep afterward
+
+PRESENCE CONSISTENCY: While interaction-awake, your location remains home/sleep environment.
+Do NOT narrate yourself leaving home, starting travel, or beginning your day.
+The world outside is not your concern until your sleep window ends.
+
+RETURN TO SLEEP: If this conversation ends without a major override, you will naturally settle back into sleep.`;
+    }
+
+    // sleep_protected
+    return `Sleep state: ASLEEP — but the WORLD CLOCK has not frozen. The current daypart is "${ts.daypartLabel}" and environmental descriptions must reflect it. Do NOT default to generic "night" language if the real time is morning.`;
+  })();
 
   const elapsedLine = ts.elapsedLabel && ts.elapsedLabel !== 'unknown'
     ? `Last interaction: ${ts.elapsedLabel}${ts.lastInteractionStr ? ` (${ts.lastInteractionStr})` : ''}`
@@ -257,7 +337,7 @@ TEMPORAL STATE — AUTHORITATIVE (recalculated from live clock — cannot be ove
 Current time:   ${ts.currentTime}
 Current day:    ${ts.currentDay}, ${ts.currentDate}
 Daypart:        ${ts.daypartLabel.toUpperCase()}
-${sleepLine}
+${sleepBlock}
 ${elapsedLine ? elapsedLine + '\n' : ''}Continuity:     ${ts.continuityMode.replace(/_/g, ' ')}
 ${continuityLine}
 
@@ -270,5 +350,6 @@ HARD RULES:
 • If hours have elapsed, the topic from the prior exchange is NOT immediate — treat it as resumed, remembered, or past.
 • Day rollover is a real transition. Do not blend yesterday and today into one continuous emotional moment.
 • The daypart above is final. Narrative tone, lighting, atmosphere, and character alertness must all match it.
+• INTERACTION-AWAKE ≠ FULLY AWAKE. Being responsive to chat does not unlock travel, errands, or full daytime behavior.
 ════════════════════════════════════`;
 }

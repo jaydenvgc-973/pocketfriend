@@ -539,6 +539,23 @@ export default function Chat() {
       }
     }
 
+    // ── SLEEP INTERRUPTION WRITE (direct/chat mode only) ──────────────────────
+    // Write sleep_interrupted_at + sleep_debt to the Character record so that
+    // buildTemporalState knows this character is in interaction_awake state on
+    // subsequent message turns. This is the data that feeds the three-way state:
+    //   sleep_protected → interaction_awake (responsive but travel/activity locked)
+    // Only fires once per interruption window (field expires after 30 min per getSleepState).
+    if (!isPhone && getCharacterStatus(character) === 'asleep') {
+      const alreadyInterrupted = character.sleep_interrupted_at &&
+        (Date.now() - new Date(character.sleep_interrupted_at).getTime()) < 30 * 60 * 1000;
+      if (!alreadyInterrupted) {
+        import('@/lib/sleepUtils').then(({ buildSleepInterruptionUpdate }) => {
+          const update = buildSleepInterruptionUpdate(character);
+          base44.entities.Character.update(characterId, update).catch(() => {});
+        }).catch(() => {});
+      }
+    }
+
     if (isMountedRef.current) setIsTyping(true);
 
     // callLLMWithRetry is imported from lib/llmUtils.js
