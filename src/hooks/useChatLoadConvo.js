@@ -107,16 +107,18 @@ export function useChatLoadConvo({
       try {
         // ── STEP 1: Find the conversation for this character ─────────────────
         console.log(`[CHAT_LOAD] Conversation.filter START t=${Date.now()}`);
-        let allConvos;
+        // Scope query to this specific character + type — avoids fetching all 200 conversations
+        // on every character open. Server filters, not client-side.
+        let convos;
         try {
-          allConvos = await retryAfter3s(() =>
+          convos = await retryAfter3s(() =>
             base44.entities.Conversation.filter(
-              { owner_email: currentUser.email },
+              { owner_email: currentUser.email, type: chatType, character_ids: characterId },
               "-last_message_date",
-              200
+              20
             )
           );
-          console.log(`[CHAT_LOAD] Conversation.filter DONE count=${allConvos.length} t=${Date.now()}`);
+          console.log(`[CHAT_LOAD] Conversation.filter DONE count=${convos.length} t=${Date.now()}`);
         } catch (err) {
           // If Conversation.filter fully fails (both attempts) and we have NO messages yet,
           // show the rate-limit screen. If we somehow have cached state, preserve it.
@@ -132,13 +134,6 @@ export function useChatLoadConvo({
           }
           throw err;
         }
-
-        const convos = allConvos.filter(c =>
-          c.type === chatType &&
-          c.character_ids &&
-          Array.isArray(c.character_ids) &&
-          c.character_ids.includes(characterId)
-        );
 
         let convoId = null;
 

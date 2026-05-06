@@ -14,6 +14,7 @@ export function useCatchUpNarrative(conversationId, characterId, character) {
         const res = await base44.functions.invoke('generateCatchUpNarrative', {
           characterId,
           conversationId,
+          lastUserMessageTime: character?.last_interaction_at || null,
         });
         
         if (res?.data?.success && res.data.catchUpText) {
@@ -31,6 +32,18 @@ export function useCatchUpNarrative(conversationId, characterId, character) {
     // Only generate catch-up if we haven't already done it this session
     const catchUpProcessed = sessionStorage.getItem(`catchup_${conversationId}`);
     if (!catchUpProcessed) {
+      // Elapsed-time guard: only run if last interaction was 30+ minutes ago.
+      // Without this guard, this fires on every convo open even for recent chats,
+      // duplicating the call already gated in useChatPostLoadEffects.
+      const lastInteraction = character?.last_interaction_at;
+      if (lastInteraction) {
+        const minutesElapsed = (Date.now() - new Date(lastInteraction).getTime()) / 60000;
+        if (minutesElapsed < 30) {
+          // Not enough time has passed — skip silently (mark as processed so we don't retry)
+          sessionStorage.setItem(`catchup_${conversationId}`, 'processed');
+          return;
+        }
+      }
       // Delay slightly to let messages load first
       const timer = setTimeout(generateCatchUp, 1000);
       return () => clearTimeout(timer);
