@@ -6,24 +6,26 @@
  *
  * Source of truth: owner_email — sole ownership field. created_by is forbidden.
  *
+ * LAST-KNOWN-GOOD MERGED SNAPSHOT (sessionStorage):
+ * - When allCharacters (RLS + NPC merged) is stable and authoritative, we write its
+ *   full ID list to sessionStorage as the "last known good merged snapshot".
+ * - The queryFn for RLS characters reads this snapshot — NOT the RLS cache slice —
+ *   to decide whether a fresh server result is a downgrade. The merged snapshot is the
+ *   only correct floor baseline because NPCs may be in backendNpcs, not in rlsCharacters.
+ * - If fresh RLS result + current NPC list < snapshot count - 1, the fresh result is
+ *   treated as partial and the cached RLS records are preserved via merge.
+ *
+ * ANCHOR VALIDATION RULE:
+ * - Anchors are the continuity anchor characters (e.g. Ethan = primary, Melody = fallback).
+ * - Load is valid if AT LEAST ONE anchor is present in the merged universe.
+ * - If NONE of the configured anchor IDs appear, the load is treated as incomplete
+ *   and recovery is triggered. This replaces the previous ALL-required rule.
+ *
  * BOOTSTRAP GUARD:
  * - On session start, if the in-memory cache is empty or partial, one controlled
  *   recovery fetch fires automatically (max once per BOOTSTRAP_COOLDOWN_MS).
- * - "Partial" = cache has fewer characters than the last known successful count
- *   stored in sessionStorage for this owner_email.
- * - A partial cache is NEVER treated as authoritative. It is kept visible while
- *   recovery runs, but the smaller list never replaces the last known good count.
  * - refetchOnMount/refetchOnWindowFocus remain false — aggressive refetch is the
  *   root cause of rate-limit storms and must stay disabled.
- *
- * LAST-KNOWN-GOOD FLOOR GUARD:
- * - The queryFn for RLS characters merges the fresh server result with the currently
- *   cached list. If the server returns fewer records than the cache (beyond 1-char
- *   deletion tolerance), the cache records are preserved and the fresh result is
- *   treated as partial. This prevents invalidateQueries-triggered refetches from
- *   collapsing the visible list to Shiloh-only when the server returns a partial response.
- * - Only confirmed-deleted records (absent from both the fresh result AND the cache,
- *   or explicitly deleted via the subscription handler) are removed.
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -33,30 +35,26 @@ import { base44 } from "@/api/base44Client";
 // Bootstrap cooldown — max one recovery fetch per owner_email per this window
 const BOOTSTRAP_COOLDOWN_MS = 8 * 60 * 1000; // 8 minutes
 
-// sessionStorage keys
-const ssKey = (email) => `char_bootstrap_${email}`;
+// ── sessionStorage key helpers ───────────────────────────────────────────────
+const ssBootstrapKey = (email) => `char_bootstrap_${email}`;
+// Separate key for the merged snapshot — stores the full merged ID list + count
+const ssMergedKey = (email) => `char_merged_snapshot_${email}`;
 
+// ── Bootstrap meta (count + cooldown) ────────────────────────────────────────
 function readBootstrapMeta(email) {
   try {
-    const raw = sessionStorage.getItem(ssKey(email));
+    const raw = sessionStorage.getItem(ssBootstrapKey(email));
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 }
 
-// MIN_AUTHORITATIVE_COUNT: a fetch that returns <= this value is treated as suspect
-// unless there is an existing known-good record that also shows <= this value.
-// This prevents a partial/poisoned fetch from becoming the new baseline.
 const MIN_AUTHORITATIVE_COUNT = 1;
 
 function writeBootstrapMeta(email, count) {
   try {
     const existing = readBootstrapMeta(email);
-    // COMPLETENESS GUARD: only update the count if this fetch looks authoritative.
-    // A fetch of <= MIN_AUTHORITATIVE_COUNT is suspect unless:
-    //   (a) a prior known-good count also shows <= MIN_AUTHORITATIVE_COUNT (account truly tiny), OR
-    //   (b) count > MIN_AUTHORITATIVE_COUNT (clearly not a partial result)
     const priorCount = existing?.lastSuccessfulCount ?? null;
     const isSuspect = count <= MIN_AUTHORITATIVE_COUNT && (priorCount === null || priorCount > MIN_AUTHORITATIVE_COUNT);
     if (isSuspect) {
@@ -64,9 +62,9 @@ function writeBootstrapMeta(email, count) {
         `[useOwnedCharacters] Bootstrap: refusing to bless suspect fetch. ` +
         `fetchedCount=${count} priorCount=${priorCount ?? 'none'} — recovery stays eligible.`
       );
-      return; // do NOT write — keep prior metadata intact
+      return;
     }
-    sessionStorage.setItem(ssKey(email), JSON.stringify({
+    sessionStorage.setItem(ssBootstrapKey(email), JSON.stringify({
       lastFetchAt: Date.now(),
       lastSuccessfulCount: count,
       email,
@@ -80,22 +78,44 @@ function isBootstrapCoolingDown(email) {
   return (Date.now() - meta.lastFetchAt) < BOOTSTRAP_COOLDOWN_MS;
 }
 
-function isCachePartial(email, currentCount) {
-  const meta = readBootstrapMeta(email);
-  if (!meta) return false; // no prior record — can't call it partial
-  // Partial: current count is suspiciously less than last known good count
-  // Allow a tolerance of 1 (user may have deleted a character)
-  return currentCount < meta.lastSuccessfulCount - 1;
+// ── Merged snapshot (last known good merged universe) ────────────────────────
+// Written when allCharacters (RLS + NPC merged) is authoritative.
+// Used by queryFn as the floor baseline for partial-fetch detection.
+function readMergedSnapshot(email) {
+  try {
+    const raw = sessionStorage.getItem(ssMergedKey(email));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeMergedSnapshot(email, ids, count) {
+  try {
+    // Never write a snapshot smaller than the existing one — that would lower the floor.
+    const existing = readMergedSnapshot(email);
+    if (existing && count <= existing.count - 1) {
+      console.warn(
+        `[useOwnedCharacters] writeMergedSnapshot: refusing to lower floor. ` +
+        `newCount=${count} existingCount=${existing.count}`
+      );
+      return;
+    }
+    sessionStorage.setItem(ssMergedKey(email), JSON.stringify({
+      ids,
+      count,
+      savedAt: Date.now(),
+    }));
+  } catch {}
 }
 
 /**
- * anchorCharacterIds: optional array of stable character IDs (e.g. [ethanId, melodyId])
- * that MUST be present in the loaded universe before the cache is blessed as authoritative.
- * If ANY anchor is missing from the merged list, recovery is triggered regardless of count.
- * These represent continuity anchor characters — their absence means the load is incomplete.
+ * anchorCharacterIds: ordered array of stable IDs for continuity anchor characters.
+ * [0] = primary anchor (e.g. Ethan), [1] = fallback anchor (e.g. Melody).
  *
- * expectedDefaultCharacterId: the user's `default_character_id` from UserSettings.
- * Kept for backwards compatibility alongside anchorCharacterIds.
+ * VALIDATION RULE: load is valid if AT LEAST ONE anchor is present in the merged universe.
+ * ALL-required was too strict — if one anchor was recently moved/updated it could block
+ * an otherwise valid load. ANY = valid. NONE = incomplete.
  */
 export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = null, anchorCharacterIds = []) {
   const email = currentUser?.email || null;
@@ -114,15 +134,20 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
     queryFn: async () => {
       if (!email) return [];
 
-      // Read the currently cached list BEFORE the fetch so we can apply the floor guard.
-      // queryClient is available via closure from the hook scope.
-      const cachedList = queryClient.getQueryData(["characters", email]) || [];
+      // ── FLOOR GUARD: read the MERGED snapshot (not the RLS cache slice) ──────
+      // The RLS cache is only one half of allCharacters (NPCs come from backendNpcs).
+      // Using the RLS cache as the floor would allow partial NPC-less results to pass.
+      // The merged snapshot is the only correct baseline.
+      const mergedSnapshot = readMergedSnapshot(email);
+      const snapshotIds = new Set(mergedSnapshot?.ids || []);
+      const snapshotCount = mergedSnapshot?.count || 0;
 
-      // Sort by OLDEST first (created_date ascending, no minus prefix).
-      // CRITICAL: "-created_date" (newest first) means a partial/rate-limited result
-      // always returns the most recently created character (Shiloh), never the original ones.
-      // Oldest-first ensures partial results contain the account's foundational characters,
-      // not the latest-created one. Shiloh will appear at the end when list is full.
+      // Also read current NPC cache so we can project what merged will look like
+      // after this RLS result is combined, without waiting for an effect cycle.
+      const currentNpcs = queryClient.getQueryData(["npc-characters", userId]) || [];
+
+      // Sort oldest-first: partial/rate-limited results return foundational characters
+      // (Ethan, Melody) rather than the newest-created (Shiloh).
       const fresh = await base44.entities.Character.filter(
         { owner_email: email },
         "created_date",
@@ -130,40 +155,61 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
       );
       const freshFiltered = fresh.filter(c => !c.is_test_character && !c.diagnostic_only);
 
-      // ── LAST-KNOWN-GOOD FLOOR GUARD ──────────────────────────────────────────
-      // If the fresh result is suspiciously smaller than the cached list, it is partial.
-      // Tolerance: allow up to 1 fewer record (user may have deleted one character).
-      // Beyond that tolerance, merge: keep all cached records, patch with fresh updates.
-      // Only records confirmed absent from both the cache AND fresh (deleted) are dropped.
-      // This prevents invalidateQueries-triggered refetches from collapsing the list.
-      if (cachedList.length > 0 && freshFiltered.length < cachedList.length - 1) {
-        console.warn(
-          `[useOwnedCharacters] Floor guard: fresh fetch (${freshFiltered.length}) is smaller than cache (${cachedList.length}). ` +
-          `Treating as partial. Merging fresh updates into cached list instead of replacing.`
-        );
-        // Build a map of fresh records by id for O(1) lookup
-        const freshById = new Map(freshFiltered.map(c => [c.id, c]));
-        // Merge: for each cached record, use the fresh version if available, else keep cached
-        const merged = cachedList.map(cached => freshById.get(cached.id) || cached);
-        // Add any truly new records (ids not in cache) from the fresh result
-        const cachedIds = new Set(cachedList.map(c => c.id));
-        for (const c of freshFiltered) {
-          if (!cachedIds.has(c.id)) merged.push(c);
+      // Project what the merged universe will look like after this RLS result + current NPCs
+      const projectedMergedCount = (() => {
+        const seen = new Set(freshFiltered.map(c => c.id));
+        let count = freshFiltered.length;
+        for (const npc of currentNpcs) {
+          if (!seen.has(npc.id)) count++;
         }
-        return merged;
+        return count;
+      })();
+
+      // ── PARTIAL DETECTION ─────────────────────────────────────────────────────
+      // A fresh result is suspicious if the projected merged count would be smaller
+      // than the last known good merged snapshot count (beyond 1-char tolerance).
+      if (snapshotCount > 0 && projectedMergedCount < snapshotCount - 1) {
+        console.warn(
+          `[useOwnedCharacters] Floor guard triggered: ` +
+          `projectedMerged=${projectedMergedCount} < snapshotCount=${snapshotCount}. ` +
+          `Treating fresh RLS result as partial. Merging into snapshot baseline.`
+        );
+
+        // Read current RLS cache to use as base for the merge
+        const cachedRls = queryClient.getQueryData(["characters", email]) || [];
+
+        // Merge strategy: keep all snapshot IDs that are in the cached RLS list,
+        // patch with fresh updates by id, add genuinely new records.
+        const freshById = new Map(freshFiltered.map(c => [c.id, c]));
+        const cachedById = new Map(cachedRls.map(c => [c.id, c]));
+
+        // Start with all IDs that were in the last known good snapshot AND are in RLS scope
+        // (snapshot may include NPCs which are not in the RLS result — skip those here,
+        // they will be merged in allCharacters from backendNpcs as normal).
+        const mergedRls = [];
+        const seen = new Set();
+
+        // 1. All cached RLS records, patched with fresh data if available
+        for (const cached of cachedRls) {
+          if (seen.has(cached.id)) continue;
+          seen.add(cached.id);
+          mergedRls.push(freshById.get(cached.id) || cached);
+        }
+        // 2. Any truly new records in fresh that weren't in cache
+        for (const c of freshFiltered) {
+          if (!seen.has(c.id)) {
+            seen.add(c.id);
+            mergedRls.push(c);
+          }
+        }
+        return mergedRls;
       }
 
       return freshFiltered;
-      // NOTE: writeBootstrapMeta is intentionally NOT called here.
-      // It is called in the bootstrap useEffect after allCharacters (merged) is evaluated,
-      // so the stored count reflects the full universe (RLS + backendNpcs), not just this slice.
     },
     enabled: !!email,
-    // 5 min stale time — real-time subscription patches records surgically.
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
-    // Disabled — aggressive refetch is the root cause of rate-limit storms.
-    // Recovery is handled by the bootstrap guard below instead.
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     retry: (failureCount, error) => {
@@ -172,7 +218,6 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
       return is429 || failureCount < 2;
     },
     retryDelay: (attemptIndex) => Math.min(3000 * 2 ** attemptIndex, 30000),
-    // Keep previous data while refetching — prevents [] flash on background refetch
     placeholderData: (prev) => prev,
   });
 
@@ -203,7 +248,6 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
   });
 
   // ── Merge + dedupe by id ─────────────────────────────────────────────────────
-  // MUST be declared before the bootstrap useEffect so allCharacters.length is available.
   const allCharacters = (() => {
     const seen = new Set();
     return [...rlsCharacters, ...backendNpcs].filter(c => {
@@ -213,81 +257,73 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
     });
   })();
 
-  // ── BOOTSTRAP GUARD ──────────────────────────────────────────────────────────
-  // Evaluates the MERGED allCharacters count (RLS + backendNpcs) — not just the RLS slice —
-  // so NPCs are counted correctly and a partial RLS result combined with NPCs can still pass.
+  // ── BOOTSTRAP GUARD + MERGED SNAPSHOT WRITER ─────────────────────────────────
+  // Runs after both queries stabilize. Evaluates the MERGED universe.
+  // On authoritative result: writes merged snapshot + bootstrap meta.
+  // On suspect result: does NOT bless — recovery fires if cooldown allows.
   //
-  // Triggers recovery if:
-  //   A) Merged list is empty after loading completes
-  //   B) Merged count is suspiciously smaller than the last known-good count
-  //   C) Merged count is <= MIN_AUTHORITATIVE_COUNT and no prior baseline exists (suspect first fetch)
-  //
-  // On good result: writes the merged count as the new authoritative baseline.
-  // On suspect result: does NOT write — keeps recovery eligible for the next mount.
+  // ANCHOR RULE (revised): load is valid if AT LEAST ONE configured anchor is present.
+  // ALL-required was too strict. ANY anchor present = account is loading real characters.
+  // NONE present (when anchors are configured) = partial/poisoned result.
   useEffect(() => {
     if (!email) return;
-    // Wait for both queries to finish their initial load before evaluating
     if (isLoadingRls || isLoadingNpc) return;
-    // Don't evaluate while a refetch is in-flight — wait for stable data
     if (isFetchingRls || isFetchingNpc) return;
-
     if (recoveryFiredRef.current) return;
 
-    // Use the fully merged count — this is the actual visible universe
     const mergedCount = allCharacters.length;
     const meta = readBootstrapMeta(email);
     const priorCount = meta?.lastSuccessfulCount ?? null;
 
-    // Determine if this looks like a partial/poisoned cache
     const isPartialVsPrior = priorCount !== null && mergedCount < priorCount - 1;
     const isSuspectFirstFetch = priorCount === null && mergedCount <= MIN_AUTHORITATIVE_COUNT;
     const isEmpty = mergedCount === 0;
 
-    // DEFAULT CHARACTER PRESENCE CHECK:
-    // If the caller knows the expected default character id (from user_settings.default_character_id)
-    // and that character is NOT in the loaded list, the cache is incomplete regardless of count.
+    // Default character check
     const isDefaultCharacterMissing = !!expectedDefaultCharacterId &&
       !allCharacters.some(c => c.id === expectedDefaultCharacterId);
     if (isDefaultCharacterMissing) {
       console.warn(
-        `[useOwnedCharacters] Default character id=${expectedDefaultCharacterId} is NOT in loaded list (count=${mergedCount}). Treating as partial.`
+        `[useOwnedCharacters] Default character id=${expectedDefaultCharacterId} NOT in list (count=${mergedCount}).`
       );
     }
 
-    // ANCHOR CHARACTER PRESENCE CHECK:
-    // home_anchor_character_ids stores the continuity anchor characters (e.g. Ethan, Melody).
-    // If ANY anchor ID is absent from the merged list, the load is incomplete — regardless of count.
-    // A result that contains only Shiloh (newest-created, low-priority) must never be blessed.
-    const missingAnchors = (anchorCharacterIds || []).filter(
-      id => !!id && !allCharacters.some(c => c.id === id)
-    );
-    const isAnchorMissing = missingAnchors.length > 0;
+    // ANCHOR CHECK — ANY present = valid. NONE present (when anchors configured) = incomplete.
+    const validAnchors = (anchorCharacterIds || []).filter(id => !!id);
+    const anyAnchorPresent = validAnchors.length === 0 ||
+      validAnchors.some(id => allCharacters.some(c => c.id === id));
+    const isAnchorMissing = validAnchors.length > 0 && !anyAnchorPresent;
+
     if (isAnchorMissing) {
+      const presentIds = allCharacters.map(c => c.id);
       console.warn(
-        `[useOwnedCharacters] ANCHOR MISSING — continuity anchor characters not in loaded list. ` +
-        `missingIds=${missingAnchors.join(',')} | mergedCount=${mergedCount} | Treating load as incomplete.`
+        `[useOwnedCharacters] NO anchor present in merged list. ` +
+        `anchorIds=${validAnchors.join(',')} | mergedCount=${mergedCount} | ` +
+        `presentIds=${presentIds.slice(0, 5).join(',')}${presentIds.length > 5 ? '…' : ''} | Treating as incomplete.`
       );
     }
 
     const needsRecovery = isEmpty || isPartialVsPrior || isSuspectFirstFetch || isDefaultCharacterMissing || isAnchorMissing;
 
     if (!needsRecovery) {
-      // Cache looks complete — record the authoritative merged count
-      // writeBootstrapMeta's internal guard will refuse if the count is still suspect
+      // Authoritative — write both the bootstrap meta and the merged snapshot
       writeBootstrapMeta(email, mergedCount);
+      writeMergedSnapshot(
+        email,
+        allCharacters.map(c => c.id),
+        mergedCount
+      );
       return;
     }
 
-    // Cache is partial or suspect — trigger one controlled recovery fetch if not cooling down
     if (isBootstrapCoolingDown(email)) {
       console.log(
-        `[useOwnedCharacters] Bootstrap: partial cache detected but cooldown active. ` +
+        `[useOwnedCharacters] Partial cache — cooldown active. ` +
         `mergedCount=${mergedCount} priorCount=${priorCount ?? 'none'}`
       );
       return;
     }
 
-    // Mark as fired — prevents double-fire on StrictMode double-invoke
     recoveryFiredRef.current = true;
 
     console.warn(
@@ -295,22 +331,19 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
       `mergedCount=${mergedCount} | priorCount=${priorCount ?? 'none'} | ` +
       `isEmpty=${isEmpty} | isPartialVsPrior=${isPartialVsPrior} | isSuspectFirstFetch=${isSuspectFirstFetch} | ` +
       `isDefaultCharacterMissing=${isDefaultCharacterMissing} | isAnchorMissing=${isAnchorMissing} | ` +
-      `missingAnchors=${missingAnchors.join(',') || 'none'} | sort=created_date_asc | email=${email}`
+      `anchorsConfigured=${validAnchors.length} | anyAnchorPresent=${anyAnchorPresent} | email=${email}`
     );
 
-    // Stamp a cooldown timestamp NOW (before fetch) so rapid re-mounts don't pile up
     try {
       const existing = readBootstrapMeta(email);
-      sessionStorage.setItem(ssKey(email), JSON.stringify({
+      sessionStorage.setItem(ssBootstrapKey(email), JSON.stringify({
         ...(existing || {}),
         lastFetchAt: Date.now(),
         email,
-        // Deliberately do NOT update lastSuccessfulCount here — the fetch hasn't run yet
       }));
     } catch {}
 
     refetchRls();
-  // anchorCharacterIds is an array — stringify for stable dep comparison
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [email, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc, allCharacters.length, expectedDefaultCharacterId, JSON.stringify(anchorCharacterIds)]);
 
@@ -328,26 +361,20 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
     c => c.character_type === "npc_regular"
   );
 
-  // Travel "companions" — everything except npc_regular (which can't travel with user)
   const travelCompanions = [...activeCreated, ...npcFictitious, ...npcFamilyMembers];
 
   const isInitialLoading = (isLoadingRls && !rlsCharacters.length) || (isLoadingNpc && !backendNpcs.length);
   const isRefreshing = (isFetchingRls || isFetchingNpc) && !isInitialLoading;
 
   return {
-    // Full merged universe
     allCharacters,
-    // Typed slices
     activeCreated,
     npcFictitious,
     npcFamilyMembers,
     npcRegular,
-    // Travel convenience
     travelCompanions,
-    // Loading states
     isInitialLoading,
     isRefreshing,
-    // Raw for legacy callers that need the unfiltered RLS set
     rlsCharacters,
     backendNpcs,
   };
