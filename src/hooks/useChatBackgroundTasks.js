@@ -200,21 +200,17 @@ export function useChatBackgroundTasks({
       if (Math.random() > 0.5) return; // 50% chance
       if (isOnCooldown(characterId, 'emojiReact', 60000)) return;
 
-      safeInvoke // fire-and-forget but guarded
-      ; // intentional no-op to keep the guard pattern consistent
-
-      // Emoji reaction: read last user message ID from recentMsgs
+      // Emoji reaction — fully routed through safeInvoke guard
       const lastUserMsg = userMsg;
       if (!lastUserMsg?.id) return;
-
       if (isInFlight(characterId, 'emojiReact')) return;
-      setInFlight(characterId, 'emojiReact', true);
 
+      setInFlight(characterId, 'emojiReact', true);
       base44.integrations.Core.InvokeLLM({
         prompt: `You are ${character?.name}. The user just sent: "${text.substring(0, 200)}". React with ONE emoji that fits your personality and emotional state (${character?.emotional_state || 'calm'}). Return only the emoji character, nothing else.`,
       }).then(emoji => {
-        const cleaned = (typeof emoji === 'string' ? emoji : '').trim().replace(/[^^\u{1F300}-\u{1FAFF}\u{2600}-\u{27FF}]/gu, '').substring(0, 2);
-        if (!cleaned) return;
+        const cleaned = (typeof emoji === 'string' ? emoji : '').trim().replace(/[^\u{1F300}-\u{1FAFF}\u{2600}-\u{27FF}]/gu, '').substring(0, 2);
+        if (!cleaned) return null;
         return base44.entities.Message.update(lastUserMsg.id, {
           reactions: [...(lastUserMsg.reactions || []), {
             emoji: cleaned,
@@ -230,6 +226,7 @@ export function useChatBackgroundTasks({
       }).catch(err => {
         const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit');
         if (is429) setRateLimited();
+        else console.warn('[Governor] emojiReact failed:', err?.message);
       }).finally(() => {
         setInFlight(characterId, 'emojiReact', false);
       });

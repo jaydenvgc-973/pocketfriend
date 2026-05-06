@@ -581,18 +581,21 @@ export default function Chat() {
         const fullText = (text + " " + (recentMsgs.slice(-3).map(m => m.content).join(" "))).toLowerCase();
         const mentionedPlace = frequentedPlaces.find(p => fullText.includes(p.toLowerCase()));
         if (mentionedPlace) {
-          setTimeout(() => {
-            base44.integrations.Core.InvokeLLM({
-              prompt: `A character named ${character.name} (personality: ${character.personality_summary || "unknown"}) is currently at or talking about "${mentionedPlace}", one of their frequented places. Based on their personality and the context, what emotional state best fits them right now? Choose ONE from this list: calm, irritated, defensive, reflective, closed-off, flirtatious, bored, burnt out, joyful, anxious, sad, excited, overwhelmed, content, frustrated. Return ONLY the single word.`,
-            }).then(async (newState) => {
+          // Emotional state update from frequented place mention — deferred 8s so it
+          // does NOT compete with the main LLM response. No retry on failure.
+          setTimeout(async () => {
+            try {
+              const newState = await base44.integrations.Core.InvokeLLM({
+                prompt: `A character named ${character.name} (personality: ${character.personality_summary || "unknown"}) is currently at or talking about "${mentionedPlace}", one of their frequented places. Based on their personality and the context, what emotional state best fits them right now? Choose ONE from this list: calm, irritated, defensive, reflective, closed-off, flirtatious, bored, burnt out, joyful, anxious, sad, excited, overwhelmed, content, frustrated. Return ONLY the single word.`,
+              });
               const cleaned = newState?.trim().toLowerCase().replace(/[^a-z\s-]/g, "");
               const validStates = ["calm","irritated","defensive","reflective","closed-off","flirtatious","bored","burnt out","joyful","anxious","sad","excited","overwhelmed","content","frustrated"];
               if (validStates.includes(cleaned)) {
                 await base44.entities.Character.update(characterId, { emotional_state: cleaned });
                 queryClient.invalidateQueries({ queryKey: ["character", characterId] });
               }
-            }).catch(() => {});
-          }, 0);
+            } catch { /* nonessential — do not throw */ }
+          }, 8000);
         }
       }
 
