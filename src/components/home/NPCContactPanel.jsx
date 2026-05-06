@@ -37,11 +37,10 @@ export default function NPCContactPanel() {
     placeholderData: (prev) => prev,
   });
 
-  // Show both npc_fictitious AND npc_family_member in the contact panel.
-  // Legacy visibility rule: any non-deleted NPC type belonging to this user must be shown.
+  // Show ONLY npc_fictitious characters in the contact panel dropdown.
+  // This is the NPC Contact list - designed specifically for npc_fictitious types only.
   const npcCharacters = npcBackendResult.filter(
-    c => (c.character_type === 'npc_fictitious' || c.character_type === 'npc_family_member') &&
-         c.status !== 'deleted'
+    c => c.character_type === 'npc_fictitious' && c.status !== 'deleted'
   );
 
   // Sort by name
