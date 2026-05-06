@@ -19,27 +19,45 @@ export default function NPCContactPanel() {
   // Use ONLY the service-role backend fetch — it uses owner_email with service role,
   // which catches ALL npc_fictitious records including those created by service role
   // that may lack owner_email on the record itself (RLS-scoped queries would miss them).
+  // Fetch from both sources (like Settings does) to catch ALL npc_fictitious
+  const { data: regularNPCs = [] } = useQuery({
+    queryKey: ['characters', currentUser?.email],
+    queryFn: async () => {
+      if (!currentUser?.email) return [];
+      return base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date", 300);
+    },
+    enabled: !!currentUser?.email,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+  });
+
   const { data: npcBackendResult = [] } = useQuery({
     queryKey: ['npc-characters', currentUser?.id],
     queryFn: async () => {
       if (!currentUser?.id) return [];
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      const npcs = res?.data?.npcs || [];
-      // If we got an empty result but had a prior non-empty cache, preserve the cached value
-      // by throwing so React Query keeps the placeholderData. Only accept empty if truly no NPCs.
-      return npcs;
+      return res?.data?.npcs || [];
     },
     enabled: !!currentUser?.id,
-    staleTime: 2 * 60 * 1000,
-    gcTime: 15 * 60 * 1000,
-    retry: 3,
-    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    retry: 5,
+    retryDelay: (attempt) => Math.min(1000 * Math.pow(2, attempt), 16000),
     placeholderData: (prev) => prev,
   });
 
-  // Show ONLY npc_fictitious characters in the contact panel dropdown.
-  // This is the NPC Contact list - designed specifically for npc_fictitious types only.
-  const npcCharacters = npcBackendResult.filter(
+  // Merge and deduplicate
+  const allNPCs = (() => {
+    const seen = new Set();
+    return [...regularNPCs, ...npcBackendResult].filter(c => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return !['active_created_character', 'deleted', 'soft_deleted'].includes(c.status);
+    });
+  })();
+
+  // Show ONLY npc_fictitious characters in the contact panel dropdown
+  const npcCharacters = allNPCs.filter(
     c => c.character_type === 'npc_fictitious' && c.status !== 'deleted'
   );
 
