@@ -41,6 +41,7 @@ export default function Home() {
   const {
     allCharacters,
     rlsCharacters: characters,
+    isInitialLoading,
     isInitialLoading: isLoading,
   } = useOwnedCharacters(currentUser);
 
@@ -115,28 +116,51 @@ export default function Home() {
       .catch(() => {});
   }, [currentUser?.email]);
 
-  // Real-time: reflect character create/update/delete with a 10-second debounce.
-  // Automation writes fire dozens of update events per minute — without debounce,
-  // every write triggers a re-fetch that competes with ongoing 429 quota pressure.
-  // 10s debounce means one consolidated re-fetch per burst, not one per write.
-  const charInvalidateTimerRef = useRef(null);
+  // Real-time: patch individual character records in the cache without re-fetching the whole list.
+  // CRITICAL: Never call invalidateQueries for character updates — it triggers a full 300-record
+  // re-fetch on every automation write (dozens per minute), causing card flicker + 429 pressure.
+  // Instead: surgically update the existing cache entry by id (create/update) or filter it out (delete).
+  // For creates: invalidate once with a 10s debounce (new character must be fetched, can't patch from event alone).
+  const charCreateTimerRef = useRef(null);
   useEffect(() => {
     if (!currentUser?.email) return;
+    const email = currentUser.email;
     const unsubscribe = base44.entities.Character.subscribe((event) => {
-      if (event.type !== "create" && event.type !== "update" && event.type !== "delete") return;
-      // For creates and deletes, invalidate promptly (5s). For updates, debounce longer (15s).
-      const delay = event.type === "update" ? 15000 : 5000;
-      if (charInvalidateTimerRef.current) clearTimeout(charInvalidateTimerRef.current);
-      charInvalidateTimerRef.current = setTimeout(() => {
-        charInvalidateTimerRef.current = null;
-        queryClient.invalidateQueries({ queryKey: ["characters", currentUser.email] });
-      }, delay);
+      if (!event.data) return;
+
+      if (event.type === "update") {
+        // Surgical patch: update only the changed character in the existing cache, no re-fetch.
+        queryClient.setQueryData(["characters", email], (prev) => {
+          if (!Array.isArray(prev)) return prev;
+          const idx = prev.findIndex(c => c.id === event.data.id);
+          if (idx === -1) return prev; // not in list — skip (e.g. another user's character)
+          const next = [...prev];
+          next[idx] = { ...prev[idx], ...event.data };
+          return next;
+        });
+
+      } else if (event.type === "delete") {
+        // Surgical remove: filter out the deleted character without re-fetching.
+        queryClient.setQueryData(["characters", email], (prev) => {
+          if (!Array.isArray(prev)) return prev;
+          return prev.filter(c => c.id !== event.data.id);
+        });
+
+      } else if (event.type === "create") {
+        // New character: can't patch from event alone (may be missing fields).
+        // Debounce a single full invalidation — 10s to absorb rapid sequential creates.
+        if (charCreateTimerRef.current) clearTimeout(charCreateTimerRef.current);
+        charCreateTimerRef.current = setTimeout(() => {
+          charCreateTimerRef.current = null;
+          queryClient.invalidateQueries({ queryKey: ["characters", email] });
+        }, 10000);
+      }
     });
     return () => {
       unsubscribe();
-      if (charInvalidateTimerRef.current) {
-        clearTimeout(charInvalidateTimerRef.current);
-        charInvalidateTimerRef.current = null;
+      if (charCreateTimerRef.current) {
+        clearTimeout(charCreateTimerRef.current);
+        charCreateTimerRef.current = null;
       }
     };
   }, [currentUser?.email, queryClient]);
@@ -281,13 +305,13 @@ export default function Home() {
         </div>
       </div>
 
-      {!isLocationMapReady && (
+      {isInitialLoading && (
         <div className="max-w-lg mx-auto px-6 py-6 flex items-center justify-center min-h-[200px]">
           <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
         </div>
       )}
 
-      {isLocationMapReady && (
+      {!isInitialLoading && (
         <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
           {showThomasAndersonFix && (
             <ThomasAndersonFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />

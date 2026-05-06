@@ -38,11 +38,16 @@ export function useOwnedCharacters(currentUser) {
       return chars.filter(c => !c.is_test_character && !c.diagnostic_only);
     },
     enabled: !!email,
-    staleTime: 0,                 // always refetch on mount — ensures repairs are immediately visible
-    gcTime: 15 * 60 * 1000,
-    refetchOnMount: true,
-    refetchOnWindowFocus: true,
-    // Retry up to 3 times with exponential backoff, including on 429s
+    // 5 min stale time — the real-time subscription patches individual records surgically.
+    // staleTime:0 was causing a full re-fetch on every mount/navigation which cleared the
+    // visible list temporarily and contributed heavily to 429 pressure.
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    // refetchOnMount: false — cache is kept fresh by subscription + targeted invalidation.
+    // Turning this on fires a full re-fetch on EVERY page navigation, including Home ↔ Chat.
+    refetchOnMount: false,
+    // refetchOnWindowFocus: false — same reason. Tab switches should not re-fetch 300 records.
+    refetchOnWindowFocus: false,
     retry: (failureCount, error) => {
       if (failureCount >= 3) return false;
       const is429 = error?.message?.includes('429') || error?.status === 429 || error?.response?.status === 429;
@@ -67,9 +72,11 @@ export function useOwnedCharacters(currentUser) {
       return res?.data?.npcs || [];
     },
     enabled: !!userId,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 15 * 60 * 1000,
-    refetchOnMount: true,
+    // 10 min stale time — NPCs change rarely and are expensive to fetch via backend function.
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    // refetchOnMount: false — NPC list is stable within a session. Only re-fetch when explicitly invalidated.
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     retry: (failureCount, error) => {
       if (failureCount >= 3) return false;
