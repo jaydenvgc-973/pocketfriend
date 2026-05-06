@@ -37,8 +37,17 @@ export function useChatPostLoadEffects({
       if (hasUnread) {
         try {
           await base44.functions.invoke('markThreadRead', { conversationId, characterId: snapshotCharacterId });
-        } catch {
-          // Silent — inline read marks already applied by useChatLoadConvo
+        } catch (err) {
+          // markThreadRead failure is non-fatal — inline is_read marks were already applied by useChatLoadConvo.
+          // Log visibly so 429s are detectable during debugging.
+          const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
+          if (is429) {
+            console.warn('[PostLoadEffects] 429 on markThreadRead — inline marks already applied, continuing');
+            window.__chatRateLimited = true;
+            setTimeout(() => { window.__chatRateLimited = false; }, 60000);
+          } else {
+            console.warn('[PostLoadEffects] markThreadRead failed (non-fatal):', err?.message);
+          }
         }
         if (!isMounted || snapshotCharacterId !== characterId) return;
         queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId] });

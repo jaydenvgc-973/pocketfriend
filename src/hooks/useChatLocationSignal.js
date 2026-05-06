@@ -43,7 +43,16 @@ export function useChatLocationSignal({
           characterName: character?.name,
         });
       }
-    } catch { /* silent */ }
+    } catch (err) {
+      const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
+      if (is429) {
+        console.warn('[LocationSignal] 429 — rate limit hit');
+        window.__chatRateLimited = true;
+        setTimeout(() => { window.__chatRateLimited = false; }, 60000);
+      } else {
+        console.warn('[LocationSignal] handleLocationSignal failed:', err?.message);
+      }
+    }
   };
 
   return { handleLocationSignal };

@@ -72,7 +72,7 @@ export function useChatSongShare({
                       ? { ...s, _understanding: understanding, _deepResearch: deepResearch, _characterKnowledge: knowledge }
                       : s
                   ),
-                }).catch(() => {});
+                }).catch(err => console.warn(`[SongShare] Message.update for media knowledge failed:`, err?.message));
                 console.log(`[Media Research] Complete for "${song.title}": ${knowledge?.knowledgeLevel?.level || 'unknown'}`);
               } catch (err) {
                 const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');

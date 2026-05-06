@@ -23,7 +23,7 @@ export function useChatDeleteActions({
     setMessages(prev => prev.filter(m => m.id !== msg.id));
     await base44.entities.Message.update(msg.id, {
       archived_date: new Date().toISOString(),
-    }).catch(() => {});
+    }).catch(err => console.warn('[DeleteActions] handleDeleteRemember archive failed:', err?.message));
   };
 
   const handleDeleteForget = async () => {
@@ -32,7 +32,7 @@ export function useChatDeleteActions({
     if (!msg) return;
     console.log(`[DELETE] messageId=${msg.id} | threadId=${conversationId} | pageType=${isPhone ? "text" : "chat"} | action=forget | removed_from_view=yes | retained_in_memory=no | memory_excluded=yes`);
     setMessages(prev => prev.filter(m => m.id !== msg.id));
-    await base44.entities.Message.delete(msg.id).catch(() => {});
+    await base44.entities.Message.delete(msg.id).catch(err => console.warn('[DeleteActions] handleDeleteForget delete failed:', err?.message));
     if (msg.content?.trim() && msg.sender_type === "character" && characterId) {
       base44.entities.Memory.create({
         character_id: characterId,
@@ -41,18 +41,15 @@ export function useChatDeleteActions({
         emotional_impact: "forgotten",
         timestamp: new Date().toISOString(),
         source_context: `forgotten_message_${msg.id}`,
-      }).catch(() => {});
+      }).catch(err => console.warn('[DeleteActions] Forgotten memory marker failed:', err?.message));
       console.log(`[DELETE] Forgotten memory marker created for characterId=${characterId}`);
     }
   };
 
   const handleDeleteImage = async (messageId) => {
     setMessages(prev => prev.map(msg => msg.id === messageId ? { ...msg, image_url: null } : msg));
-    try {
-      await base44.entities.Message.update(messageId, { image_url: null });
-    } catch {
-      // Update failed, UI will stay in sync with subscription
-    }
+    await base44.entities.Message.update(messageId, { image_url: null })
+      .catch(err => console.warn('[DeleteActions] handleDeleteImage update failed:', err?.message));
   };
 
   return { handleDeleteMessage, handleDeleteRemember, handleDeleteForget, handleDeleteImage };

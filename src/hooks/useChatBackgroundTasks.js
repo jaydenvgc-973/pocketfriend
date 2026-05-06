@@ -214,7 +214,7 @@ export function useChatBackgroundTasks({
             reactor_type: 'character',
             reactor_id: characterId,
           }],
-        });
+        }).catch(err => { console.warn('[Governor] emojiReact Message.update failed:', err?.message); return null; });
       }).then(updated => {
         if (updated?.id) {
           setMessages(prev => prev.map(m => m.id === updated.id ? { ...m, reactions: updated.reactions } : m));

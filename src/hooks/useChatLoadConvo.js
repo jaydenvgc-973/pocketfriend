@@ -206,7 +206,7 @@ export function useChatLoadConvo({
             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
             if (unread.length > 0) {
               unread.forEach(m => {
-                base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
+                base44.entities.Message.update(m.id, { is_read: true }).catch(err => console.warn('[LoadConvo] inline is_read update failed for msg', m.id, err?.message));
               });
               queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
             }
