@@ -282,9 +282,17 @@ export default function Home() {
   // then remaining characters alphabetically.
   // ANCHOR PRIORITY: Ethan (index 0) and Melody (index 1) must always appear before Shiloh or any
   // newer/lower-continuity character, regardless of created_date or name sort order.
-  // STRICT TYPE GUARD: only active_created_character may appear as character cards on the homepage
+  // LEGACY COMPATIBILITY: character_type may be absent on older records — these are resolved to
+  // 'active_created_character' by the legacy fallback in useOwnedCharacters. Accept both the
+  // resolved type (via _resolvedType) and the raw field to cover both paths.
+  const isActiveCreated = (c) =>
+    c.character_type === "active_created_character" ||
+    c._resolvedType === "active_created_character" ||
+    // Legacy: character_type absent entirely — trust it passed RLS and has profile data
+    (!c.character_type && (c.personality_summary || c.personality_traits?.length > 0 || c.backstory));
+
   const activeCustomChars = activeCharacters
-    .filter(c => (c.status === "active" || !c.status) && c.name !== "Leo Parker" && c.character_type === "active_created_character")
+    .filter(c => (c.status === "active" || !c.status) && c.name !== "Leo Parker" && isActiveCreated(c))
     .sort((a, b) => {
       const aAnchorIdx = anchorCharacterIds.indexOf(a.id);
       const bAnchorIdx = anchorCharacterIds.indexOf(b.id);

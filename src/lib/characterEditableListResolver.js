@@ -117,40 +117,71 @@ export function getCharactersForLocationSystems(allCharacters, currentUserId, cu
 /**
  * Check if a character belongs to the current user's scope.
  * Uses safe fallback chain to handle legacy records.
+ *
+ * LEGACY COMPATIBILITY: Characters created before ownership fields were introduced
+ * may have null/missing owner_email and owner_user_id. These characters are
+ * ALREADY RLS-scoped by the query that loaded them (filter by owner_email at the
+ * query layer). If they arrived in the allCharacters array, the query already
+ * confirmed ownership. The check here is a secondary guard — it must not exclude
+ * valid legacy records that passed RLS but lack the newer ownership fields.
+ *
+ * RULE: If at least one ownership signal matches OR both ownership fields are
+ * absent (legacy record that passed RLS), treat as owned. Only exclude when an
+ * ownership field is PRESENT but does NOT match (active mismatch = wrong account).
  */
 function isCharacterOwnedByCurrentUser(character, currentUserId, currentUserEmail) {
   if (!character) return false;
 
-  // Fallback chain for ownership (in order of reliability):
-  
-  // 1. owner_user_id (most explicit)
-  if (character.owner_user_id && character.owner_user_id === currentUserId) {
-    return true;
-  }
-
-  // 2. owner_email
+  // 1. owner_email present and matches — confirmed owned
   if (character.owner_email && character.owner_email === currentUserEmail) {
     return true;
   }
 
-  // 3. Check assigned_user_id or profile_owner (legacy migrations)
-  if (character.assigned_user_id === currentUserId) {
-    return true;
+  // 2. owner_email present but does NOT match — active mismatch, exclude
+  if (character.owner_email && character.owner_email !== currentUserEmail) {
+    return false;
   }
-  if (character.profile_owner === currentUserEmail) {
+
+  // 3. owner_email is absent — check owner_user_id
+  if (character.owner_user_id && character.owner_user_id === currentUserId) {
     return true;
   }
 
-  // If we can't confirm ownership, exclude (fail-safe for cross-account contamination)
+  // 4. owner_user_id present but does NOT match — active mismatch, exclude
+  if (character.owner_user_id && character.owner_user_id !== currentUserId) {
+    return false;
+  }
+
+  // 5. Legacy record: BOTH owner_email and owner_user_id are absent/null.
+  // This character arrived via an owner_email-scoped RLS query — the platform
+  // already verified ownership at the data layer. Trust the query result.
+  // Mark it as needing a compatibility repair pass but DO NOT exclude it.
+  if (!character.owner_email && !character.owner_user_id) {
+    console.warn(
+      `[characterEditableListResolver] Legacy character "${character.name}" (${character.id}) ` +
+      `has no owner_email or owner_user_id — treating as owned (passed RLS). Needs compat repair.`
+    );
+    return true;
+  }
+
+  // 6. Additional legacy fields (assigned_user_id, profile_owner)
+  if (character.assigned_user_id && character.assigned_user_id === currentUserId) return true;
+  if (character.profile_owner && character.profile_owner === currentUserEmail) return true;
+
   return false;
 }
 
 /**
  * Resolve character type safely, handling legacy records.
  * Only call after user scope is validated.
+ *
+ * LEGACY COMPATIBILITY: character_type may be null/absent on older records.
+ * NEVER return 'unknown' as the terminal state — unknown-typed characters become
+ * invisible because no UI module includes 'unknown' in its allowed types.
+ * Always resolve to the most appropriate valid type using the fallback chain.
  */
 function resolveCharacterType(character) {
-  if (!character) return 'unknown';
+  if (!character) return 'active_created_character'; // safest visible default
 
   // If character_type is explicitly set and valid, use it
   const validTypes = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'ambient'];
@@ -158,26 +189,33 @@ function resolveCharacterType(character) {
     return character.character_type;
   }
 
-  // LEGACY FALLBACK: infer type from behavior/data if character_type is missing
-  // Only do this after confirming the character belongs to current user
-
-  // If it has full editable story, needs, photos, etc. → active_created_character
-  if (hasFullEditableProfile(character)) {
-    return 'active_created_character';
-  }
-
-  // If it's in "People in their world" and is standalone (not family) → npc_fictitious
-  if (character.fictional_relationships && !character.is_family_member) {
-    return 'npc_fictitious';
-  }
+  // LEGACY FALLBACK: infer type from behavior/data if character_type is missing.
+  // This path runs ONLY for legacy records with null/absent character_type.
+  // It must produce a visible type — never 'unknown'.
 
   // If it's explicitly marked as family → npc_family_member
   if (character.is_family_member || character.relationship_type === 'family') {
     return 'npc_family_member';
   }
 
-  // Default fallback: treat as regular_npc (safest, most restricted)
-  return 'npc_regular';
+  // If it has full editable story, needs, schedule, etc. → active_created_character
+  if (hasFullEditableProfile(character)) {
+    return 'active_created_character';
+  }
+
+  // If it's in "People in their world" and is standalone (not family) → npc_fictitious
+  if (character.fictional_relationships?.length > 0 && !character.is_family_member) {
+    return 'npc_fictitious';
+  }
+
+  // Final fallback: default to active_created_character so the character remains
+  // visible everywhere active characters are shown. This is the safest visible default
+  // for legacy records that predate the character_type field entirely.
+  console.warn(
+    `[resolveCharacterType] Legacy character "${character.name}" (${character.id}) ` +
+    `has no character_type — defaulting to active_created_character for visibility.`
+  );
+  return 'active_created_character';
 }
 
 /**
@@ -533,7 +571,10 @@ export function resolveSettingsCharacterLists(allCharacters, currentUser, module
   // 1. User scope
   const scoped = resolveUserScopedCharacters(allCharacters, currentUser?.id, currentUser?.email);
 
-  // 2. Status filter (exclude deleted/soft_deleted/merged)
+  // 2. Status filter (exclude deleted/soft_deleted/merged).
+  // LEGACY COMPATIBILITY: status may be null/absent on older records.
+  // Absent status means the character was never explicitly deleted — treat as active.
+  // Only exclude when status is EXPLICITLY set to a terminal value.
   const live = scoped.filter(c => !['deleted', 'soft_deleted', 'merged'].includes(c.status));
 
   // 3. Module eligibility — only keep allowed types

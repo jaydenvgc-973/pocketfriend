@@ -5,6 +5,24 @@
  * Source of truth: owner_email. created_by is permanently forbidden.
  *
  * ════════════════════════════════════════════════════════════════════
+ * LEGACY BACKWARD COMPATIBILITY — PERMANENT PROTECTION
+ * ════════════════════════════════════════════════════════════════════
+ * Legacy characters (created before newer schema fields were introduced)
+ * MUST remain visible at all times. A missing field is never grounds
+ * for exclusion. Rules:
+ *
+ * - Missing character_type → safe fallback to 'active_created_character'
+ *   if profile data is present, else 'npc_fictitious'. NEVER exclude.
+ * - Missing is_test_character → treat as false (keep character visible)
+ * - Missing diagnostic_only  → treat as false (keep character visible)
+ * - Missing owner_user_id    → acceptable; owner_email is the source of truth
+ * - Missing newer metadata   → apply fallback; mark as needing compat repair
+ *
+ * If a character was previously visible, it must remain visible across:
+ * refreshes, schema changes, migrations, cache resets, optimization
+ * passes, diagnostic runs, anchor logic, and partial queries.
+ *
+ * ════════════════════════════════════════════════════════════════════
  * LAST-KNOWN-GOOD PROTECTION — THREE LAYERS
  * ════════════════════════════════════════════════════════════════════
  *
@@ -162,7 +180,10 @@ export function useOwnedCharacters(
         "created_date", // ascending — oldest first
         300
       );
-      const freshFiltered = fresh.filter(c => !c.is_test_character && !c.diagnostic_only);
+      // LEGACY COMPATIBILITY: is_test_character and diagnostic_only may be absent on
+      // older records — treat undefined as false. Never exclude a character because
+      // a newer metadata field is missing. Explicit true is required to exclude.
+      const freshFiltered = fresh.filter(c => c.is_test_character !== true && c.diagnostic_only !== true);
 
       // ── SNAPSHOT WRITE (synchronous, inside queryFn) ──────────────────────
       // Write the snapshot NOW if this fetch is authoritative (count grows).
@@ -355,10 +376,28 @@ export function useOwnedCharacters(
       expectedDefaultCharacterId, JSON.stringify(anchorCharacterIds)]);
 
   // ── Derived slices ────────────────────────────────────────────────────────────
-  const activeCreated    = allCharacters.filter(c => c.character_type === "active_created_character" && c.status !== "deleted");
-  const npcFictitious    = allCharacters.filter(c => c.character_type === "npc_fictitious");
-  const npcFamilyMembers = allCharacters.filter(c => c.character_type === "npc_family_member");
-  const npcRegular       = allCharacters.filter(c => c.character_type === "npc_regular");
+  // LEGACY COMPATIBILITY: character_type may be null/missing on older records.
+  // A character without character_type that has profile data must not be excluded.
+  // Legacy resolution: if character_type is missing, infer from profile completeness.
+  // NEVER exclude a character solely because character_type is absent.
+  const resolveTypeLegacy = (c) => {
+    if (c.character_type) return c.character_type;
+    // Legacy fallback: character with personality/schedule/needs data = active_created_character
+    const hasProfile = c.backstory || c.personality_summary || c.personality_traits?.length > 0;
+    const hasSchedule = c.wake_up_time || c.sleep_start_time;
+    const hasNeeds = c.hunger_value !== undefined;
+    if (hasProfile && (hasSchedule || hasNeeds)) return 'active_created_character';
+    if (c.fictional_relationships?.length > 0 && !c.is_family_member) return 'npc_fictitious';
+    if (c.is_family_member) return 'npc_family_member';
+    // If we still cannot determine type, default to active_created_character for user-visible characters.
+    // This preserves legacy characters that predate the character_type field.
+    return 'active_created_character';
+  };
+
+  const activeCreated    = allCharacters.filter(c => resolveTypeLegacy(c) === "active_created_character" && c.status !== "deleted");
+  const npcFictitious    = allCharacters.filter(c => resolveTypeLegacy(c) === "npc_fictitious");
+  const npcFamilyMembers = allCharacters.filter(c => resolveTypeLegacy(c) === "npc_family_member");
+  const npcRegular       = allCharacters.filter(c => resolveTypeLegacy(c) === "npc_regular");
   const travelCompanions = [...activeCreated, ...npcFictitious, ...npcFamilyMembers];
 
   const isInitialLoading = (isLoadingRls && !rlsCharacters.length) || (isLoadingNpc && !backendNpcs.length);
