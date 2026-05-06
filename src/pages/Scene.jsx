@@ -39,6 +39,7 @@ import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote } from "@/lib/sceneImagePromptBuilder";
 import { VENUE_NPCS, DEFAULT_VENUE_NPC } from "@/lib/sceneVenueNPCs";
+import { usePageContext } from "@/hooks/usePageContext";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -635,6 +636,9 @@ export default function Scene() {
       }).catch(() => {});
     });
   }, [location?.id, broughtCharacters.length]);
+
+  // Register page context so simulationGate knows scene is active for this location
+  usePageContext({ page: 'scene', locationId: locationId || null });
 
   // Shared helper: build the exit memory args (same for both exit paths)
   const _exitMemoryArgs = (outcome) => ({

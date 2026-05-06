@@ -20,6 +20,7 @@ import NPCContactPanel from "@/components/home/NPCContactPanel";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
+import { usePageContext } from "@/hooks/usePageContext";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -214,6 +215,9 @@ export default function Home() {
       navigate("/");
     }
   }, [isLoading, currentUser?.email, navigate]);
+
+  // Register page context so simulationGate knows home is active (no specific character/location)
+  usePageContext({ page: 'home' });
 
   const defaultChar = allCharacters.find(c => c.is_default);
   const customChars = allCharacters.filter(c => !c.is_default && c.status !== "deleted");

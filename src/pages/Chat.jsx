@@ -62,6 +62,8 @@ import { useChatPostLoadEffects } from "@/hooks/useChatPostLoadEffects";
 import { useChatScrollTracking } from "@/hooks/useChatScrollTracking";
 import { useChatLocationShare } from "@/hooks/useChatLocationShare";
 import { useChatBackgroundTasks } from "@/hooks/useChatBackgroundTasks.js";
+import { usePageContext } from "@/hooks/usePageContext";
+import { isGloballyRateLimited, reportRateLimit } from "@/lib/simulationGate";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -317,6 +319,9 @@ export default function Chat() {
   const { dispatchPostSend, clearCharacterCooldowns } = useChatBackgroundTasks({
     queryClient, setNewPeopleDetected, setPendingAliasResolution, setLastChangeReason, setMessages,
   });
+
+  // Register page context so simulationGate knows chat is active for this character
+  usePageContext({ page: 'chat', characterId });
 
   // Clear per-character cooldowns on character switch so stale state doesn't bleed
   useEffect(() => {
@@ -604,16 +609,13 @@ export default function Chat() {
       if (lookupMatch && lookupMatch[1]) {
         const query = lookupMatch[1].trim();
         setTimeout(() => {
-          if (window.__chatRateLimited) {
+          if (isGloballyRateLimited()) {
             console.log('[Chat] SKIP performWebLookup — rate limit active');
             return;
           }
           base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(err => {
             const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
-            if (is429) {
-              window.__chatRateLimited = true;
-              setTimeout(() => { window.__chatRateLimited = false; }, 60000);
-            }
+            if (is429) reportRateLimit(60000);
             console.warn('[Chat] performWebLookup failed:', err?.message);
           });
         }, 5000);
