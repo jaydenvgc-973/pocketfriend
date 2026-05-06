@@ -15,6 +15,15 @@
  *   recovery runs, but the smaller list never replaces the last known good count.
  * - refetchOnMount/refetchOnWindowFocus remain false — aggressive refetch is the
  *   root cause of rate-limit storms and must stay disabled.
+ *
+ * LAST-KNOWN-GOOD FLOOR GUARD:
+ * - The queryFn for RLS characters merges the fresh server result with the currently
+ *   cached list. If the server returns fewer records than the cache (beyond 1-char
+ *   deletion tolerance), the cache records are preserved and the fresh result is
+ *   treated as partial. This prevents invalidateQueries-triggered refetches from
+ *   collapsing the visible list to Shiloh-only when the server returns a partial response.
+ * - Only confirmed-deleted records (absent from both the fresh result AND the cache,
+ *   or explicitly deleted via the subscription handler) are removed.
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -104,17 +113,47 @@ export function useOwnedCharacters(currentUser, expectedDefaultCharacterId = nul
     queryKey: ["characters", email],
     queryFn: async () => {
       if (!email) return [];
+
+      // Read the currently cached list BEFORE the fetch so we can apply the floor guard.
+      // queryClient is available via closure from the hook scope.
+      const cachedList = queryClient.getQueryData(["characters", email]) || [];
+
       // Sort by OLDEST first (created_date ascending, no minus prefix).
       // CRITICAL: "-created_date" (newest first) means a partial/rate-limited result
       // always returns the most recently created character (Shiloh), never the original ones.
       // Oldest-first ensures partial results contain the account's foundational characters,
       // not the latest-created one. Shiloh will appear at the end when list is full.
-      const chars = await base44.entities.Character.filter(
+      const fresh = await base44.entities.Character.filter(
         { owner_email: email },
         "created_date",
         300
       );
-      return chars.filter(c => !c.is_test_character && !c.diagnostic_only);
+      const freshFiltered = fresh.filter(c => !c.is_test_character && !c.diagnostic_only);
+
+      // ── LAST-KNOWN-GOOD FLOOR GUARD ──────────────────────────────────────────
+      // If the fresh result is suspiciously smaller than the cached list, it is partial.
+      // Tolerance: allow up to 1 fewer record (user may have deleted one character).
+      // Beyond that tolerance, merge: keep all cached records, patch with fresh updates.
+      // Only records confirmed absent from both the cache AND fresh (deleted) are dropped.
+      // This prevents invalidateQueries-triggered refetches from collapsing the list.
+      if (cachedList.length > 0 && freshFiltered.length < cachedList.length - 1) {
+        console.warn(
+          `[useOwnedCharacters] Floor guard: fresh fetch (${freshFiltered.length}) is smaller than cache (${cachedList.length}). ` +
+          `Treating as partial. Merging fresh updates into cached list instead of replacing.`
+        );
+        // Build a map of fresh records by id for O(1) lookup
+        const freshById = new Map(freshFiltered.map(c => [c.id, c]));
+        // Merge: for each cached record, use the fresh version if available, else keep cached
+        const merged = cachedList.map(cached => freshById.get(cached.id) || cached);
+        // Add any truly new records (ids not in cache) from the fresh result
+        const cachedIds = new Set(cachedList.map(c => c.id));
+        for (const c of freshFiltered) {
+          if (!cachedIds.has(c.id)) merged.push(c);
+        }
+        return merged;
+      }
+
+      return freshFiltered;
       // NOTE: writeBootstrapMeta is intentionally NOT called here.
       // It is called in the bootstrap useEffect after allCharacters (merged) is evaluated,
       // so the stored count reflects the full universe (RLS + backendNpcs), not just this slice.
