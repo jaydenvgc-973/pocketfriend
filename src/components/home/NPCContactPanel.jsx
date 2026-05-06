@@ -24,17 +24,24 @@ export default function NPCContactPanel() {
     queryFn: async () => {
       if (!currentUser?.id) return [];
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      return res?.data?.npcs || [];
+      const npcs = res?.data?.npcs || [];
+      // If we got an empty result but had a prior non-empty cache, preserve the cached value
+      // by throwing so React Query keeps the placeholderData. Only accept empty if truly no NPCs.
+      return npcs;
     },
     enabled: !!currentUser?.id,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+    placeholderData: (prev) => prev,
   });
 
-  // Filter to npc_fictitious only — no housing/location check, visibility only requires
-  // valid type + non-deleted status (per legacy visibility protection rules)
+  // Show both npc_fictitious AND npc_family_member in the contact panel.
+  // Legacy visibility rule: any non-deleted NPC type belonging to this user must be shown.
   const npcCharacters = npcBackendResult.filter(
-    c => c.character_type === 'npc_fictitious' && c.status !== 'deleted'
+    c => (c.character_type === 'npc_fictitious' || c.character_type === 'npc_family_member') &&
+         c.status !== 'deleted'
   );
 
   // Sort by name
@@ -103,7 +110,7 @@ export default function NPCContactPanel() {
         className="w-full flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 transition-colors relative"
       >
         <Users className="w-4 h-4" />
-        Contact NPC: {sortedNpcCharacters.length} shown
+        Contacts: {sortedNpcCharacters.length} NPCs
         {globalUnreadCount > 0 && (
           <motion.div
             initial={{ scale: 0 }}

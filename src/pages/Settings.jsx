@@ -64,7 +64,8 @@ export default function Settings() {
     enabled: !!user?.email,
   });
 
-  // Fetch NPC fictitious characters via service-role backend function (bypasses RLS)
+  // Fetch NPC characters via service-role backend function (bypasses RLS)
+  // Includes npc_fictitious, npc_family_member, npc_regular
   const { data: npcFictitiousFromBackend = [] } = useQuery({
     queryKey: ["npc-characters", user?.id],
     queryFn: async () => {
@@ -73,6 +74,11 @@ export default function Settings() {
       return res?.data?.npcs || [];
     },
     enabled: !!user?.id,
+    staleTime: 2 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+    placeholderData: (prev) => prev,
   });
 
   // Merge: regular characters + npc_fictitious from backend, deduplicated
@@ -383,7 +389,8 @@ export default function Settings() {
 
           {/* NPC Family */}
           {(() => {
-            const familyChars = characters.filter(c => c.character_type === "family_npc" && c.status === "active");
+            // "npc_family_member" is the canonical type — "family_npc" was an old alias, never written to DB
+            const familyChars = characters.filter(c => c.character_type === "npc_family_member" && c.status === "active");
             return familyChars.length > 0 ? (
               <div className="space-y-3 pb-4 border-b border-border">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">NPC Family ({familyChars.length})</p>

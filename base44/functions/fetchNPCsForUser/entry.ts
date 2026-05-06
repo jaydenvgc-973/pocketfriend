@@ -8,21 +8,34 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Fetch ALL NPC characters for this user using ONLY owner_email (source of truth)
-    // owner_email is the canonical ownership field — created_by is permanently forbidden
-    const all = await base44.asServiceRole.entities.Character.filter(
-      { owner_email: user.email },
-      '-created_date',
-      300
-    ).then(chars => 
-      chars.filter(c => {
-        // Exclude hard-deleted
-        if (c.status === 'deleted') return false;
-        // Only return NPC types (not active_created_character)
-        if (c.character_type === 'active_created_character') return false;
-        return true;
-      })
-    );
+    // Fetch ALL NPC characters for this user using ONLY owner_email (source of truth).
+    // Retry up to 3 times on rate-limit or transient errors to prevent flaky empty returns.
+    let rawChars = [];
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        rawChars = await base44.asServiceRole.entities.Character.filter(
+          { owner_email: user.email },
+          '-created_date',
+          300
+        );
+        if (rawChars.length > 0) break; // got a real result
+        // Got empty — might be transient. If last attempt, keep it.
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+        }
+      } catch (err) {
+        lastError = err;
+        if (attempt < 2) await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+      }
+    }
+    if (lastError && rawChars.length === 0) throw lastError;
+
+    const all = rawChars.filter(c => {
+      if (c.status === 'deleted') return false;
+      if (c.character_type === 'active_created_character') return false;
+      return true;
+    });
 
     const fictitiousNames = all.filter(c => c.character_type === 'npc_fictitious').map(c => c.name);
     const summary = {
