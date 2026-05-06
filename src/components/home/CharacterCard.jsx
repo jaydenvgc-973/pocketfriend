@@ -78,10 +78,23 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const queryClient = useQueryClient();
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
 
+  // Mount-delay gate: stagger queries so N cards don't fire simultaneously on Home mount.
+  // Each card waits 600ms after mounting before enabling its queries.
+  const [queryReady, setQueryReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setQueryReady(true), 600);
+    return () => clearTimeout(t);
+  }, []);
+
   const { data: financialRecords = [] } = useQuery({
     queryKey: ['characterFinancial', character.id],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id }),
-    staleTime: 60000,
+    // Financial balance changes infrequently — 10 min stale time prevents re-fetch storms
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    enabled: !!character.id && queryReady,
   });
   const balance = financialRecords[0]?.current_balance;
 
@@ -101,8 +114,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         character_ids: [character.id],
       });
     },
-    staleTime: 30000,
-    enabled: !!character.id && !!character.owner_email,
+    staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    enabled: !!character.id && !!character.owner_email && queryReady,
   });
 
 
@@ -156,8 +171,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     return () => window.removeEventListener('focus', handleFocus);
   }, [conversations, character.id, character.owner_email, queryClient]);
 
-  // Real-time: recount when a relevant message changes for this character
+  // Real-time: recount when a relevant message changes for this character.
+  // Only subscribe after queryReady — prevents firing before conversations are loaded.
   useEffect(() => {
+    if (!queryReady) return;
     const unsubscribe = base44.entities.Message.subscribe((event) => {
       const isForThisChar = event.data?.character_id === character.id;
       if (isForThisChar && (event.type === "create" || event.type === "update")) {
@@ -165,7 +182,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       }
     });
     return () => unsubscribe();
-  }, [character.id, countUnread]);
+  }, [character.id, countUnread, queryReady]);
 
 
 
