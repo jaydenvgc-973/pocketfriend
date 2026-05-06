@@ -1,0 +1,92 @@
+{
+  "name": "EventParticipation",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "ID of the CommunityEvent"
+    },
+    "event_name": {
+      "type": "string",
+      "description": "Display name of event"
+    },
+    "character_id": {
+      "type": "string",
+      "description": "ID of character who participated"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of character"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "User account (for RLS scoping)"
+    },
+    "participation_type": {
+      "type": "string",
+      "enum": [
+        "attended",
+        "volunteered",
+        "performed",
+        "lurked",
+        "brief_visit",
+        "heard_about"
+      ],
+      "default": "attended",
+      "description": "How the character participated"
+    },
+    "saw_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Other character IDs seen at this event"
+    },
+    "emotional_tone": {
+      "type": "string",
+      "enum": [
+        "enjoyed",
+        "neutral",
+        "uncomfortable",
+        "energized",
+        "drained",
+        "bored"
+      ],
+      "default": "neutral",
+      "description": "How character felt about event"
+    },
+    "social_energy_effect": {
+      "type": "integer",
+      "minimum": -20,
+      "maximum": 20,
+      "default": 0,
+      "description": "Social meter impact from attending"
+    },
+    "participation_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When they participated"
+    },
+    "memory_strength": {
+      "type": "string",
+      "enum": [
+        "faint",
+        "moderate",
+        "strong"
+      ],
+      "default": "moderate",
+      "description": "How memorable this was for the character"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Lightweight context (e.g., 'ran into Maya', 'gave a speech')"
+    }
+  },
+  "required": [
+    "event_id",
+    "character_id",
+    "owner_email",
+    "participation_date"
+  ]
+}

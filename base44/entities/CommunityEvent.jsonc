@@ -1,0 +1,112 @@
+{
+  "name": "CommunityEvent",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Event name (e.g., 'Open Mic Night', 'Community Cookout')"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "social",
+        "cultural",
+        "fitness",
+        "educational",
+        "support",
+        "celebration",
+        "health_awareness",
+        "resource_fair",
+        "entertainment",
+        "other"
+      ],
+      "default": "social",
+      "description": "Category of event"
+    },
+    "location_id": {
+      "type": "string",
+      "description": "ID of the location where event is held"
+    },
+    "location_name": {
+      "type": "string",
+      "description": "Display name of location"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When event starts"
+    },
+    "end_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When event ends (optional)"
+    },
+    "is_recurring": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this is a recurring event (weekly, monthly, etc.)"
+    },
+    "recurrence_pattern": {
+      "type": "string",
+      "enum": [
+        "weekly",
+        "biweekly",
+        "monthly",
+        "none"
+      ],
+      "default": "none",
+      "description": "How often it recurs"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this event is currently active/visible"
+    },
+    "description": {
+      "type": "string",
+      "description": "Short description of the event"
+    },
+    "expected_attendee_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Types of people who typically attend (e.g., 'LGBTQ+', 'families', 'artists')"
+    },
+    "vibe": {
+      "type": "string",
+      "enum": [
+        "quiet",
+        "social",
+        "energetic",
+        "mixed"
+      ],
+      "default": "social",
+      "description": "General atmosphere/energy level"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "User account that created/manages this event"
+    },
+    "created_by": {
+      "type": "string",
+      "description": "Email of creator"
+    },
+    "participations_count": {
+      "type": "integer",
+      "default": 0,
+      "description": "Cached count of characters who attended"
+    },
+    "last_occurrence_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this event last occurred (for recurring events)"
+    }
+  },
+  "required": [
+    "name",
+    "location_id",
+    "start_date"
+  ]
+}
