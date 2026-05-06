@@ -12,6 +12,7 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { useRoutePreservation } from '@/lib/useRoutePreservation';
 
 import Onboarding from './pages/Onboarding';
+import CommunityEventsDemo from './pages/CommunityEventsDemo';
 import OnboardingGuard from './components/OnboardingGuard';
 import Home from './pages/Home';
 import Chat from './pages/Chat';
@@ -78,6 +79,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/" element={<OnboardingGuard><Home /></OnboardingGuard>} />
       <Route path="/home" element={<OnboardingGuard><Home /></OnboardingGuard>} />
       <Route path="/onboarding" element={<Onboarding />} />
+      <Route path="/community-events-demo" element={<CommunityEventsDemo />} />
       <Route path="/chat/:characterId" element={<Chat />} />
       <Route path="/groups" element={<Groups />} />
       <Route path="/group-chat" element={<GroupChat />} />
