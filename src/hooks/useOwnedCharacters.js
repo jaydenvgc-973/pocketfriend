@@ -36,8 +36,27 @@ function readBootstrapMeta(email) {
   }
 }
 
+// MIN_AUTHORITATIVE_COUNT: a fetch that returns <= this value is treated as suspect
+// unless there is an existing known-good record that also shows <= this value.
+// This prevents a partial/poisoned fetch from becoming the new baseline.
+const MIN_AUTHORITATIVE_COUNT = 1;
+
 function writeBootstrapMeta(email, count) {
   try {
+    const existing = readBootstrapMeta(email);
+    // COMPLETENESS GUARD: only update the count if this fetch looks authoritative.
+    // A fetch of <= MIN_AUTHORITATIVE_COUNT is suspect unless:
+    //   (a) a prior known-good count also shows <= MIN_AUTHORITATIVE_COUNT (account truly tiny), OR
+    //   (b) count > MIN_AUTHORITATIVE_COUNT (clearly not a partial result)
+    const priorCount = existing?.lastSuccessfulCount ?? null;
+    const isSuspect = count <= MIN_AUTHORITATIVE_COUNT && (priorCount === null || priorCount > MIN_AUTHORITATIVE_COUNT);
+    if (isSuspect) {
+      console.warn(
+        `[useOwnedCharacters] Bootstrap: refusing to bless suspect fetch. ` +
+        `fetchedCount=${count} priorCount=${priorCount ?? 'none'} — recovery stays eligible.`
+      );
+      return; // do NOT write — keep prior metadata intact
+    }
     sessionStorage.setItem(ssKey(email), JSON.stringify({
       lastFetchAt: Date.now(),
       lastSuccessfulCount: count,
@@ -81,10 +100,10 @@ export function useOwnedCharacters(currentUser) {
         "-created_date",
         300
       );
-      const filtered = chars.filter(c => !c.is_test_character && !c.diagnostic_only);
-      // Record this successful fetch count — used by bootstrap guard on next session
-      writeBootstrapMeta(email, filtered.length);
-      return filtered;
+      return chars.filter(c => !c.is_test_character && !c.diagnostic_only);
+      // NOTE: writeBootstrapMeta is intentionally NOT called here.
+      // It is called in the bootstrap useEffect after allCharacters (merged) is evaluated,
+      // so the stored count reflects the full universe (RLS + backendNpcs), not just this slice.
     },
     enabled: !!email,
     // 5 min stale time — real-time subscription patches records surgically.
@@ -130,53 +149,8 @@ export function useOwnedCharacters(currentUser) {
     placeholderData: (prev) => prev,
   });
 
-  // ── BOOTSTRAP GUARD ──────────────────────────────────────────────────────────
-  // Fires once per session per owner_email when the cache looks empty or partial.
-  //
-  // Triggers if:
-  //   A) RLS query is done loading but returned 0 records (empty cache, first session load)
-  //   B) Current count is less than last known successful count (partial/poisoned cache)
-  //
-  // Never fires if:
-  //   - Still loading
-  //   - Cooldown is active (within BOOTSTRAP_COOLDOWN_MS of last fetch)
-  //   - Already fired this render cycle
-  //   - No email (unauthenticated)
-  useEffect(() => {
-    if (!email || isLoadingRls || isFetchingRls) return;
-    if (recoveryFiredRef.current) return;
-    if (isBootstrapCoolingDown(email)) return;
-
-    const currentCount = rlsCharacters.length;
-    const needsBootstrap = currentCount === 0 || isCachePartial(email, currentCount);
-
-    if (!needsBootstrap) {
-      // Cache looks good — update the known-good count if we have data and no prior record
-      const meta = readBootstrapMeta(email);
-      if (!meta && currentCount > 0) {
-        writeBootstrapMeta(email, currentCount);
-      }
-      return;
-    }
-
-    // Mark as fired before the async call — prevents double-fire on StrictMode double-invoke
-    recoveryFiredRef.current = true;
-
-    console.log(
-      `[useOwnedCharacters] Bootstrap recovery triggered. ` +
-      `currentCount=${currentCount} | ` +
-      `lastKnown=${readBootstrapMeta(email)?.lastSuccessfulCount ?? 'none'} | ` +
-      `email=${email}`
-    );
-
-    // One controlled recovery fetch — result writes back through queryFn which updates
-    // writeBootstrapMeta with the new authoritative count.
-    refetchRls();
-  }, [email, isLoadingRls, isFetchingRls, rlsCharacters.length]);
-
   // ── Merge + dedupe by id ─────────────────────────────────────────────────────
-  // rlsCharacters is the primary source. backendNpcs fills in service-role NPCs
-  // that may not be visible through RLS.
+  // MUST be declared before the bootstrap useEffect so allCharacters.length is available.
   const allCharacters = (() => {
     const seen = new Set();
     return [...rlsCharacters, ...backendNpcs].filter(c => {
@@ -185,6 +159,78 @@ export function useOwnedCharacters(currentUser) {
       return true;
     });
   })();
+
+  // ── BOOTSTRAP GUARD ──────────────────────────────────────────────────────────
+  // Evaluates the MERGED allCharacters count (RLS + backendNpcs) — not just the RLS slice —
+  // so NPCs are counted correctly and a partial RLS result combined with NPCs can still pass.
+  //
+  // Triggers recovery if:
+  //   A) Merged list is empty after loading completes
+  //   B) Merged count is suspiciously smaller than the last known-good count
+  //   C) Merged count is <= MIN_AUTHORITATIVE_COUNT and no prior baseline exists (suspect first fetch)
+  //
+  // On good result: writes the merged count as the new authoritative baseline.
+  // On suspect result: does NOT write — keeps recovery eligible for the next mount.
+  useEffect(() => {
+    if (!email) return;
+    // Wait for both queries to finish their initial load before evaluating
+    if (isLoadingRls || isLoadingNpc) return;
+    // Don't evaluate while a refetch is in-flight — wait for stable data
+    if (isFetchingRls || isFetchingNpc) return;
+
+    if (recoveryFiredRef.current) return;
+
+    // Use the fully merged count — this is the actual visible universe
+    const mergedCount = allCharacters.length;
+    const meta = readBootstrapMeta(email);
+    const priorCount = meta?.lastSuccessfulCount ?? null;
+
+    // Determine if this looks like a partial/poisoned cache
+    const isPartialVsPrior = priorCount !== null && mergedCount < priorCount - 1;
+    const isSuspectFirstFetch = priorCount === null && mergedCount <= MIN_AUTHORITATIVE_COUNT;
+    const isEmpty = mergedCount === 0;
+
+    const needsRecovery = isEmpty || isPartialVsPrior || isSuspectFirstFetch;
+
+    if (!needsRecovery) {
+      // Cache looks complete — record the authoritative merged count
+      // writeBootstrapMeta's internal guard will refuse if the count is still suspect
+      writeBootstrapMeta(email, mergedCount);
+      return;
+    }
+
+    // Cache is partial or suspect — trigger one controlled recovery fetch if not cooling down
+    if (isBootstrapCoolingDown(email)) {
+      console.log(
+        `[useOwnedCharacters] Bootstrap: partial cache detected but cooldown active. ` +
+        `mergedCount=${mergedCount} priorCount=${priorCount ?? 'none'}`
+      );
+      return;
+    }
+
+    // Mark as fired — prevents double-fire on StrictMode double-invoke
+    recoveryFiredRef.current = true;
+
+    console.warn(
+      `[useOwnedCharacters] Bootstrap recovery triggered. ` +
+      `mergedCount=${mergedCount} | priorCount=${priorCount ?? 'none'} | ` +
+      `isEmpty=${isEmpty} | isPartialVsPrior=${isPartialVsPrior} | isSuspectFirstFetch=${isSuspectFirstFetch} | ` +
+      `email=${email}`
+    );
+
+    // Stamp a cooldown timestamp NOW (before fetch) so rapid re-mounts don't pile up
+    try {
+      const existing = readBootstrapMeta(email);
+      sessionStorage.setItem(ssKey(email), JSON.stringify({
+        ...(existing || {}),
+        lastFetchAt: Date.now(),
+        email,
+        // Deliberately do NOT update lastSuccessfulCount here — the fetch hasn't run yet
+      }));
+    } catch {}
+
+    refetchRls();
+  }, [email, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc, allCharacters.length]);
 
   // ── Derived character lists by type ─────────────────────────────────────────
   const activeCreated = allCharacters.filter(
