@@ -16,24 +16,13 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  // Fetch RLS-scoped characters (owner_email) — reuses Home's cached query
-  const { data: regularCharacters = [] } = useQuery({
-    queryKey: ['characters', currentUser?.email],
-    queryFn: async () => {
-      if (!currentUser?.email) return [];
-      return base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date');
-    },
-    enabled: !!currentUser?.email,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  // Safety net: some service-created npc_fictitious records may lack owner_email
-  // and therefore won't appear in the RLS-scoped query. fetchNPCsForUser uses
-  // service role and finds them by account association. Dedupe prevents duplicates.
-  const { data: npcBackendResult = null } = useQuery({
+  // Use ONLY the service-role backend fetch — it uses owner_email with service role,
+  // which catches ALL npc_fictitious records including those created by service role
+  // that may lack owner_email on the record itself (RLS-scoped queries would miss them).
+  const { data: npcBackendResult = [] } = useQuery({
     queryKey: ['npc-characters', currentUser?.id],
     queryFn: async () => {
-      if (!currentUser?.id) return null;
+      if (!currentUser?.id) return [];
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
       return res?.data?.npcs || [];
     },
@@ -41,20 +30,10 @@ export default function NPCContactPanel() {
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
   });
-  const npcFictitiousFromBackend = npcBackendResult || [];
 
-  // Merge both sources and dedupe by ID — owner_email records take precedence
-  const mergedCharacters = (() => {
-    const seen = new Set();
-    return [...regularCharacters, ...npcFictitiousFromBackend].filter(c => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
-      return true;
-    });
-  })();
-
-  // Filter to npc_fictitious only (exact Settings filter)
-  const npcCharacters = mergedCharacters.filter(
+  // Filter to npc_fictitious only — no housing/location check, visibility only requires
+  // valid type + non-deleted status (per legacy visibility protection rules)
+  const npcCharacters = npcBackendResult.filter(
     c => c.character_type === 'npc_fictitious' && c.status !== 'deleted'
   );
 
