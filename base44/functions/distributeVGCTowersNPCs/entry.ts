@@ -119,16 +119,15 @@ Deno.serve(async (req) => {
     }
 
     // Log NPCs with missing locations that are NOT VGC residents — do not touch them
-    allCharacters.filter(c =>
-      NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
-      !c.protected_active &&
-      c.owner_email === user.email &&
-      (!c.resolved_current_location_id || c.resolved_current_location_id.length === 0) &&
-      c.current_home_location_id !== VGC_ID
-    ).forEach(npc => {
+    for (const npc of allCharacters) {
+      if (!NPC_ELIGIBLE_TYPES.includes(npc.character_type)) continue;
+      if (npc.protected_active) continue;
+      if (npc.owner_email !== user.email) continue;
+      if (npc.resolved_current_location_id && npc.resolved_current_location_id.length > 0) continue;
+      if (npc.current_home_location_id === VGC_ID) continue; // already handled above
       preflightSkipped.push(npc.name);
-      log.push(`${npc.name} → PREFLIGHT_SKIP: missing location but not a VGC resident — needs housing repair, not VGC assignment`);
-    });
+      log.push(`${npc.name} → PREFLIGHT_SKIP: missing location but not a VGC resident — needs housing repair`);
+    }
 
     if (preflightFixes.length > 0) await Promise.all(preflightFixes);
     
