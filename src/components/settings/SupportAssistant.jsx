@@ -461,26 +461,39 @@ export default function SupportAssistant({ user }) {
     addMsg({ role: 'ai', content: 'Cancelled — no changes were made.', ts: ts() });
   };
 
-  // ── Targeted single-record owner_email repair via repairCharacterOwnerEmail ──
+  // ── Targeted single-record owner_email repair ─────────────────────────────
+  // Routes through userAccountDiagnostic's repair_character_owner path which correctly
+  // bypasses the user-scoped RLS pre-check for legacy records (they have no owner_email
+  // so RLS can't find them — repairCharacterOwnerEmail uses service role to locate them).
   const runTargetedOwnerRepair = async (characterId, characterName) => {
     setIsRepairing(true);
     addMsg({ role: 'system', content: `⚙️ Repairing owner_email for "${characterName}"…`, ts: ts() });
     try {
-      const res = await base44.functions.invoke('repairCharacterOwnerEmail', { characterId });
-      const d = res?.data;
+      const res = await base44.functions.invoke('userAccountDiagnostic', {
+        categories: 'none',
+        repair_action: 'repair_character_owner',
+        repair_character_id: characterId,
+      });
+      // unwrap: result is nested under repair.result
+      const outer = res?.data?.repair;
+      const d = outer?.result || outer;
       if (!d) throw new Error('No response from repair function');
-      if (d.repaired) {
+      const repaired = d.repaired === true;
+      const reason = d.reason || '';
+      if (repaired) {
         addMsg({ role: 'ai', content: `✅ **Repaired** — \`owner_email\` set on **${characterName}**.\n\nProof used: \`owner_user_id\` matched your account ID.\n\nYou can now retry the merge from Settings → Suggested Duplicates.`, ts: ts() });
-      } else if (d.reason === 'CROSS_ACCOUNT') {
+      } else if (reason === 'CROSS_ACCOUNT_BLOCKED') {
         addMsg({ role: 'ai', content: `🚫 **Blocked** — "${characterName}" belongs to a different account. Cross-account repair is permanently blocked.\n\nA support ticket has been filed if this is unexpected.`, ts: ts() });
         base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: `CROSS_ACCOUNT_BLOCKED: ${characterName}`, description: `Character ${characterId} has owner_email belonging to a different account. Repair blocked.`, status: 'escalated', findings: [] }).catch(() => {});
-      } else if (d.reason === 'ALREADY_SET') {
+      } else if (reason === 'ALREADY_SET' || reason === 'ALREADY_VALID') {
         addMsg({ role: 'ai', content: `ℹ️ **Already correct** — "${characterName}" already has a valid \`owner_email\`. No changes needed.\n\nIf the merge is still blocked, there may be a different blocker — run a full diagnostic.`, ts: ts() });
-      } else if (d.reason === 'NO_EVIDENCE') {
+      } else if (reason === 'INSUFFICIENT_EVIDENCE' || reason === 'NO_EVIDENCE') {
         addMsg({ role: 'ai', content: `⚠️ **Cannot repair** — "${characterName}" has no \`owner_user_id\` to verify against. Cannot confirm ownership without evidence.\n\nA support ticket has been filed for admin review.`, ts: ts() });
         base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'ownership_mismatch', title: `NO_EVIDENCE for owner repair: ${characterName}`, description: `Character ${characterId} has no owner_user_id — ownership cannot be confirmed without admin review.`, status: 'repair_pending', findings: [] }).catch(() => {});
+      } else if (reason === 'RECORD_NOT_FOUND') {
+        addMsg({ role: 'ai', content: `⚠️ **Record not found** — "${characterName}" no longer exists in the database. It may have already been deleted or merged.\n\nIf it still appears in the merge panel, run **Ghost Reference Cleanup** to remove the stale reference.`, ts: ts() });
       } else {
-        addMsg({ role: 'ai', content: `Repair returned: ${d.reason || d.message || 'Unknown result'}. No changes confirmed.`, ts: ts() });
+        addMsg({ role: 'ai', content: `Repair returned: ${reason || d.message || 'Unknown result'}. No changes confirmed.`, ts: ts() });
       }
     } catch (err) {
       addMsg({ role: 'ai', content: `Targeted repair failed: ${err.message}. No changes were made.`, ts: ts() });
@@ -560,6 +573,26 @@ export default function SupportAssistant({ user }) {
 
         // Step 2: For each duplicate group that has a missing-owner record, inspect via previewCharacterMerge
         // to get the exact unsafe_records with their ownership_state
+        // rlsInvisibleLegacy: records linked via owner_user_id but invisible to RLS (no owner_email).
+        // These are the most common merge blockers — they appear in duplicate scans but RLS can't read them.
+        const rlsInvisibleLegacy = diagData.findings?.characters?.rlsInvisibleLegacy || [];
+
+        if (rlsInvisibleLegacy.length > 0) {
+          // Surface these directly — they are the clearest repair case
+          const first = rlsInvisibleLegacy[0];
+          addMsg({ role: 'ai', content: `**Found ${rlsInvisibleLegacy.length} record(s) that are linked to your account via \`owner_user_id\` but are missing \`owner_email\`:**\n${rlsInvisibleLegacy.map(r => `- **${r.name}** (ID: \`${r.id?.substring(0, 10)}…\`)`).join('\n')}\n\nThese records are RLS-invisible — they show up in duplicate scans and block merges, but cannot be read by normal ownership queries. I can repair each one using your account ID as proof.`, ts: ts() });
+          const confirmId = addMsg({
+            role: 'confirm',
+            content: `Run targeted owner_email repair for "${first.name}"? Proof used: owner_user_id matches your account ID. If proof is missing on any record, it will be flagged — not modified.`,
+            actionKey: 'targeted_owner_repair',
+            actionPayload: { character_id: first.id, character_name: first.name, remaining: rlsInvisibleLegacy.slice(1) },
+            ts: ts(),
+          });
+          setPendingConfirm({ actionKey: 'targeted_owner_repair', actionPayload: { character_id: first.id, character_name: first.name, remaining: rlsInvisibleLegacy.slice(1) }, confirmMsgId: confirmId });
+          addMsg({ role: 'diagnostic', diagData, ts: ts() });
+          return true;
+        }
+
         if (missingOwner.length > 0 || dupGroups.length > 0) {
           // Find the intersection — duplicate groups where at least one record is missing owner_email
           const missingOwnerIds = new Set(missingOwner.map(r => r.id));

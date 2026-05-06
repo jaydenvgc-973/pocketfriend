@@ -61,6 +61,10 @@ const CHARACTER_REPAIR_PATHS = {
   troubleshoot_home: 'troubleshootHome',
   troubleshoot_profile: 'troubleshootCharacterProfile',
   enforce_work_schedule: 'enforceCharacterWorkSchedule',
+  // repair_character_owner: routes to repairCharacterOwnerEmail — handles legacy records
+  // that are RLS-invisible (no owner_email) but have a matching owner_user_id.
+  // The service-role fetch inside repairCharacterOwnerEmail is the only way to reach them.
+  repair_character_owner: 'repairCharacterOwnerEmail',
 };
 
 Deno.serve(async (req) => {
@@ -102,16 +106,27 @@ Deno.serve(async (req) => {
           repair: { action: repair_action, blocked: true, reason: 'character_id required for this repair path' }
         });
       }
-      // Verify the character belongs to this user before passing to the function
-      const chars = await base44.entities.Character.filter({ owner_email: ownerEmail, id: repair_character_id });
-      if (!chars || chars.length === 0) {
-        return Response.json({
-          repair: { action: repair_action, blocked: true, reason: 'Character not found in your account scope — repair blocked to prevent cross-account access.' }
-        });
+
+      // repair_character_owner is a special case: the record may be RLS-invisible (missing owner_email).
+      // Do NOT block on a user-scoped RLS pre-check — repairCharacterOwnerEmail does the
+      // ownership verification internally via service-role (matching owner_user_id to user.id).
+      // All other repair paths require the character to be RLS-visible first.
+      if (repair_action !== 'repair_character_owner') {
+        const chars = await base44.entities.Character.filter({ owner_email: ownerEmail, id: repair_character_id });
+        if (!chars || chars.length === 0) {
+          return Response.json({
+            repair: { action: repair_action, blocked: true, reason: 'Character not found in your account scope — repair blocked to prevent cross-account access.' }
+          });
+        }
       }
+
       try {
         const fnName = CHARACTER_REPAIR_PATHS[repair_action];
-        const res = await base44.functions.invoke(fnName, { character_id: repair_character_id, owner_email: ownerEmail });
+        // repair_character_owner expects characterId; others expect character_id
+        const payload = repair_action === 'repair_character_owner'
+          ? { characterId: repair_character_id }
+          : { character_id: repair_character_id, owner_email: ownerEmail };
+        const res = await base44.functions.invoke(fnName, payload);
         return Response.json({ repair: { action: repair_action, result: res?.data || 'completed', ok: true } });
       } catch (e) {
         return Response.json({ repair: { action: repair_action, error: e.message, ok: false } });
@@ -177,6 +192,25 @@ Deno.serve(async (req) => {
       // Missing owner_email on any fetched record (should never happen but verify)
       const missingOwner = allChars.filter(c => !c.owner_email).map(c => ({ id: c.id, name: c.name }));
 
+      // ── RLS-INVISIBLE LEGACY RECORDS ──────────────────────────────────────
+      // Records that lack owner_email are invisible to user-scoped RLS and won't appear
+      // in the allChars fetch above. However, they may still be linked to this user via
+      // owner_user_id. Use a service-role probe scoped to owner_user_id to surface them.
+      // This is read-only — we only report, not modify, and scope strictly to user.id.
+      let rlsInvisibleLegacy = [];
+      try {
+        if (user.id) {
+          const serviceRoleMatches = await base44.asServiceRole.entities.Character.filter(
+            { owner_user_id: user.id, owner_email: null }, null, 50
+          ).catch(() => []);
+          // Only include records that are NOT already in our allChars list (truly invisible to RLS)
+          const knownIds = new Set(allChars.map(c => c.id));
+          rlsInvisibleLegacy = (serviceRoleMatches || [])
+            .filter(c => !knownIds.has(c.id) && !c.owner_email)
+            .map(c => ({ id: c.id, name: c.name || '(unnamed)', owner_user_id: c.owner_user_id }));
+        }
+      } catch (_) { /* service role probe is non-fatal */ }
+
       // Active characters with no home (not homeless, not an NPC)
       const noHome = liveChars.filter(c =>
         c.character_type === 'active_created_character' &&
@@ -208,6 +242,7 @@ Deno.serve(async (req) => {
         duplicateGroupCount: duplicateGroups.length,
         missingType,
         missingOwner,
+        rlsInvisibleLegacy, // records linked via owner_user_id but invisible to RLS (no owner_email)
         noHome,
         staleResolved,
         ghostMerged,
@@ -215,6 +250,7 @@ Deno.serve(async (req) => {
           { check: 'Duplicate names', status: duplicateGroups.length > 0 ? 'warning' : 'passed', detail: duplicateGroups.length > 0 ? `${duplicateGroups.length} group(s): ${duplicateGroups.map(d => d.name).join(', ')}` : 'None found' },
           { check: 'Missing character_type', status: missingType.length > 0 ? 'failed' : 'passed', detail: missingType.length > 0 ? `${missingType.length} record(s) missing type: ${missingType.map(c => c.name).join(', ')}` : 'All typed' },
           { check: 'Missing owner_email', status: missingOwner.length > 0 ? 'failed' : 'passed', detail: missingOwner.length > 0 ? `${missingOwner.length} record(s) missing owner` : 'All owned' },
+          { check: 'RLS-invisible legacy records (owner_user_id match, no owner_email)', status: rlsInvisibleLegacy.length > 0 ? 'failed' : 'passed', detail: rlsInvisibleLegacy.length > 0 ? `${rlsInvisibleLegacy.length} record(s) linked via owner_user_id but missing owner_email — use "Repair owner_email" to fix: ${rlsInvisibleLegacy.map(c => c.name).join(', ')}` : 'None' },
           { check: 'Active characters without home', status: noHome.length > 0 ? 'warning' : 'passed', detail: noHome.length > 0 ? `${noHome.length}: ${noHome.map(c => c.name).join(', ')}` : 'All homed or homeless by design' },
           { check: 'Stale resolved location (ID with no name)', status: staleResolved.length > 0 ? 'warning' : 'passed', detail: staleResolved.length > 0 ? `${staleResolved.length} character(s) — fix with "Sync Locations"` : 'None' },
           { check: 'Ghost merged records', status: ghostMerged.length > 0 ? 'warning' : 'passed', detail: ghostMerged.length > 0 ? `${ghostMerged.length} record(s) have merged_into set but status is not merged` : 'None' },
