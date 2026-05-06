@@ -636,42 +636,47 @@ export default function Scene() {
     });
   }, [location?.id, broughtCharacters.length]);
 
+  // Shared helper: build the exit memory args (same for both exit paths)
+  const _exitMemoryArgs = (outcome) => ({
+    broughtCharacters,
+    alreadyPresentChars: selectedNpcs,
+    allSceneChars: sceneCharacters,
+    location,
+    messages,
+    userDisplayName: displayName,
+    ownerEmail: currentUser?.email,
+    outcome,
+  });
+
   const handleLeaveWithCharacters = async () => {
     setShowLeaveModal(false);
-    // Characters leave with user → reset to home and clear any stay lock.
     const homeNow = new Date().toISOString();
-    await Promise.all(
-      broughtCharacters.map(char => {
-        const homeId = char.current_home_location_id || char.home_location_id || null;
-        return base44.entities.Character.update(char.id, {
-          resolved_current_location_id: homeId,
-          resolved_current_location_name: homeId ? (char.resolved_current_location_name || 'Home') : null,
+    await Promise.all([
+      ...broughtCharacters.map(char =>
+        base44.entities.Character.update(char.id, {
+          resolved_current_location_id: char.current_home_location_id || char.home_location_id || null,
+          resolved_current_location_name: (char.current_home_location_id || char.home_location_id) ? (char.resolved_current_location_name || 'Home') : null,
           resolved_location_type: 'home',
           resolved_presence_status: 'home',
           resolved_source_reason: 'returned_home_with_user',
           resolved_last_updated_at: homeNow,
-          // Clear the stay lock — they left
           presence_stay_lock: false,
           presence_stay_lock_location_id: null,
           presence_stay_lock_set_at: null,
           travel_status: 'not_traveling',
           travel_destination_location_id: null,
-        }).catch(() => {});
-      })
-    );
+        }).catch(() => {})
+      ),
+      writeSceneExitMemories(_exitMemoryArgs('left_together')),
+    ]);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     navigate("/travel");
   };
 
   const handleLeaveCharactersBehind = async () => {
     setShowLeaveModal(false);
-    // STAY DECISION: Characters remain at this location.
-    // Write presence_stay_lock so automations know this is a deliberate user decision.
-    // Automations must not override presence_stay_lock until the next scheduled VGC travel move
-    // or until the lock is cleared by a future user travel action.
     const now = new Date().toISOString();
     await Promise.all([
-      // Presence lock updates
       ...broughtCharacters.map(char =>
         base44.entities.Character.update(char.id, {
           resolved_current_location_id: location.id,
@@ -686,15 +691,7 @@ export default function Scene() {
           travel_destination_location_id: null,
         }).catch(() => {})
       ),
-      // Scene exit memory — written for every real brought character
-      writeSceneExitMemories({
-        broughtCharacters,
-        location,
-        messages,
-        userDisplayName: displayName,
-        ownerEmail: currentUser?.email,
-        outcome: 'stayed_behind',
-      }),
+      writeSceneExitMemories(_exitMemoryArgs('stayed_behind')),
     ]);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     navigate("/travel");
