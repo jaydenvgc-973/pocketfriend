@@ -304,6 +304,10 @@ Deno.serve(async (req) => {
       byUser[c.owner_email].push(c);
     }
 
+    // RATE LIMIT GOVERNOR: cap total writes per run to 8 across all users.
+    // This prevents burst storms when many characters all need movement simultaneously.
+    // The 30-minute interval ensures all characters cycle through within 2-3 runs.
+    const MAX_MOVES_PER_RUN = 8;
     let totalMoved = 0;
     const moveLog = [];
     const blockedLog = [];
@@ -314,7 +318,12 @@ Deno.serve(async (req) => {
       let userLocations = [];
       try {
         userLocations = await base44.entities.LocationReference.filter({ owner_email: userEmail });
-      } catch {
+      } catch (locErr) {
+        const is429 = locErr?.message?.includes('429') || locErr?.message?.includes('Rate limit');
+        if (is429) {
+          console.warn(`[autonomousMovement] 429 on location load for ${userEmail} — stopping run to avoid storm`);
+          break; // Stop entire automation run — do not process further users
+        }
         try {
           userLocations = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: userEmail });
         } catch (e2) {
@@ -932,7 +941,17 @@ Deno.serve(async (req) => {
           const msg = `${char.name} → ${finalLocation.name} ${mandatory} needs: ${urgentList}`;
           moveLog.push(msg);
           console.log(`[autonomousMovement] ✓ ${msg}`);
+          // RATE LIMIT CAP: stop processing once max moves reached for this run
+          if (totalMoved >= MAX_MOVES_PER_RUN) {
+            console.log(`[autonomousMovement] MAX_MOVES_PER_RUN (${MAX_MOVES_PER_RUN}) reached — stopping run`);
+            return Response.json({ success: true, users_processed: Object.keys(byUser).length, characters_moved: totalMoved, moves: moveLog, blocked_with_reason: blockedLog, skipped: skippedLog.length, capped: true, timestamp: new Date().toISOString() });
+          }
         } catch (e) {
+          const is429 = e?.message?.includes('429') || e?.message?.includes('Rate limit');
+          if (is429) {
+            console.warn(`[autonomousMovement] 429 on write — stopping run immediately`);
+            return Response.json({ success: true, users_processed: Object.keys(byUser).length, characters_moved: totalMoved, moves: moveLog, blocked_with_reason: blockedLog, skipped: skippedLog.length, rate_limited: true, timestamp: new Date().toISOString() });
+          }
           console.error(`[autonomousMovement] Move FAILED for ${char.name}:`, e.message);
           blockedLog.push(`${char.name}: write failed — ${e.message}`);
         }
