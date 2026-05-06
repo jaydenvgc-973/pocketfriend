@@ -21,6 +21,7 @@ import ConversationTypeSelector from "@/components/scene/ConversationTypeSelecto
 import InviteToSceneModal from "@/components/scene/InviteToSceneModal";
 import WhosHereDropdown from "@/components/scene/WhosHereDropdown";
 import { buildSceneSystemPrompt, maybeInjectMemoryCallback, buildNPCIntroContext } from "@/lib/sceneMemoryInjection";
+import { writeSceneExitMemories } from "@/lib/sceneExitMemory";
 import ResidenceOptionsDropdown from "@/components/scene/ResidenceOptionsDropdown";
 import RealtorTourModal from "@/components/scene/RealtorTourModal";
 import MoveInPopup from "@/components/travel/MoveInPopup";
@@ -669,24 +670,32 @@ export default function Scene() {
     // Automations must not override presence_stay_lock until the next scheduled VGC travel move
     // or until the lock is cleared by a future user travel action.
     const now = new Date().toISOString();
-    await Promise.all(
-      broughtCharacters.map(char =>
+    await Promise.all([
+      // Presence lock updates
+      ...broughtCharacters.map(char =>
         base44.entities.Character.update(char.id, {
-          // Lock their presence at this exact location
           resolved_current_location_id: location.id,
           resolved_current_location_name: location.name,
           resolved_presence_status: location.category === 'home' ? 'home' : 'visiting',
           resolved_source_reason: 'user_stay_decision',
           resolved_last_updated_at: now,
-          // Stay lock — automations must respect this
           presence_stay_lock: true,
           presence_stay_lock_location_id: location.id,
           presence_stay_lock_set_at: now,
           travel_status: 'not_traveling',
           travel_destination_location_id: null,
         }).catch(() => {})
-      )
-    );
+      ),
+      // Scene exit memory — written for every real brought character
+      writeSceneExitMemories({
+        broughtCharacters,
+        location,
+        messages,
+        userDisplayName: displayName,
+        ownerEmail: currentUser?.email,
+        outcome: 'stayed_behind',
+      }),
+    ]);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     navigate("/travel");
   };

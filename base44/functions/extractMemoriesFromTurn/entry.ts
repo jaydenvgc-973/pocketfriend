@@ -6,12 +6,14 @@ Deno.serve(async (req) => {
     const base44 = createClientFromRequest(req);
     let { characterId, conversationId, userMessage, characterReply, playingAsCharacterId } = await req.json();
 
-    if (!characterId || !conversationId) {
-      return Response.json({ error: 'Missing required fields' }, { status: 400 });
+    if (!characterId) {
+      return Response.json({ error: 'characterId required' }, { status: 400 });
     }
+    // conversationId is optional — Scene page calls this without a conversationId
+    // When absent, we skip the DB message lookup for playingAsCharacterId and use scene context only
 
-    // If playingAsCharacterId not provided, check the last user message for it
-    if (!playingAsCharacterId) {
+    // If playingAsCharacterId not provided and conversationId exists, check the last user message for it
+    if (!playingAsCharacterId && conversationId) {
       const lastUserMsg = await base44.entities.Message.filter(
         { conversation_id: conversationId, sender_type: 'user' },
         '-created_date',
@@ -70,7 +72,9 @@ Extract any NEW people names mentioned (not yet in your world) from the exchange
         description: targetMemDesc,
         emotional_impact: 'neutral',
         timestamp: new Date().toISOString(),
-        source_context: playingAsChar ? `play_as_${conversationId}_sender_${playingAsCharacterId}` : `conversation_${conversationId}`,
+        source_context: conversationId
+          ? (playingAsChar ? `play_as_${conversationId}_sender_${playingAsCharacterId}` : `conversation_${conversationId}`)
+          : 'scene_interaction',
       });
 
       // If being addressed by a known active character, update the target's last_interaction_summary for that relationship
@@ -182,7 +186,7 @@ Return JSON.`,
             description: memoryDescription,
             emotional_impact: extraction.relational_takeaway ? 'meaningful' : 'neutral',
             timestamp: new Date().toISOString(),
-            source_context: `play_as_${conversationId}_with_${characterId}`,
+            source_context: conversationId ? `play_as_${conversationId}_with_${characterId}` : `scene_play_as_with_${characterId}`,
           });
         }
 
