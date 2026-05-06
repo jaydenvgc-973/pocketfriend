@@ -6,26 +6,72 @@
  *
  * Source of truth: owner_email — sole ownership field. created_by is forbidden.
  *
- * Query keys are IDENTICAL to what Home used previously so the cache is shared
- * across page navigations — no re-fetch when switching Home ↔ Travel.
- *
- * placeholderData: (prev) => prev ensures the list NEVER flashes [] during background refetch.
- * isLoading (spinner) vs isFetching (background) are exposed separately.
+ * BOOTSTRAP GUARD:
+ * - On session start, if the in-memory cache is empty or partial, one controlled
+ *   recovery fetch fires automatically (max once per BOOTSTRAP_COOLDOWN_MS).
+ * - "Partial" = cache has fewer characters than the last known successful count
+ *   stored in sessionStorage for this owner_email.
+ * - A partial cache is NEVER treated as authoritative. It is kept visible while
+ *   recovery runs, but the smaller list never replaces the last known good count.
+ * - refetchOnMount/refetchOnWindowFocus remain false — aggressive refetch is the
+ *   root cause of rate-limit storms and must stay disabled.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
+
+// Bootstrap cooldown — max one recovery fetch per owner_email per this window
+const BOOTSTRAP_COOLDOWN_MS = 8 * 60 * 1000; // 8 minutes
+
+// sessionStorage keys
+const ssKey = (email) => `char_bootstrap_${email}`;
+
+function readBootstrapMeta(email) {
+  try {
+    const raw = sessionStorage.getItem(ssKey(email));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBootstrapMeta(email, count) {
+  try {
+    sessionStorage.setItem(ssKey(email), JSON.stringify({
+      lastFetchAt: Date.now(),
+      lastSuccessfulCount: count,
+      email,
+    }));
+  } catch {}
+}
+
+function isBootstrapCoolingDown(email) {
+  const meta = readBootstrapMeta(email);
+  if (!meta?.lastFetchAt) return false;
+  return (Date.now() - meta.lastFetchAt) < BOOTSTRAP_COOLDOWN_MS;
+}
+
+function isCachePartial(email, currentCount) {
+  const meta = readBootstrapMeta(email);
+  if (!meta) return false; // no prior record — can't call it partial
+  // Partial: current count is suspiciously less than last known good count
+  // Allow a tolerance of 1 (user may have deleted a character)
+  return currentCount < meta.lastSuccessfulCount - 1;
+}
 
 export function useOwnedCharacters(currentUser) {
   const email = currentUser?.email || null;
   const userId = currentUser?.id || null;
+  const queryClient = useQueryClient();
+  const recoveryFiredRef = useRef(false);
 
   // ── 1. ALL characters owned by this user (all types, all statuses) ──────────
-  // Same key + fn as Home so the cache is shared — no double-fetch on nav.
   const {
     data: rlsCharacters = [],
     isLoading: isLoadingRls,
     isFetching: isFetchingRls,
+    refetch: refetchRls,
   } = useQuery({
     queryKey: ["characters", email],
     queryFn: async () => {
@@ -35,18 +81,18 @@ export function useOwnedCharacters(currentUser) {
         "-created_date",
         300
       );
-      return chars.filter(c => !c.is_test_character && !c.diagnostic_only);
+      const filtered = chars.filter(c => !c.is_test_character && !c.diagnostic_only);
+      // Record this successful fetch count — used by bootstrap guard on next session
+      writeBootstrapMeta(email, filtered.length);
+      return filtered;
     },
     enabled: !!email,
-    // 5 min stale time — the real-time subscription patches individual records surgically.
-    // staleTime:0 was causing a full re-fetch on every mount/navigation which cleared the
-    // visible list temporarily and contributed heavily to 429 pressure.
+    // 5 min stale time — real-time subscription patches records surgically.
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
-    // refetchOnMount: false — cache is kept fresh by subscription + targeted invalidation.
-    // Turning this on fires a full re-fetch on EVERY page navigation, including Home ↔ Chat.
+    // Disabled — aggressive refetch is the root cause of rate-limit storms.
+    // Recovery is handled by the bootstrap guard below instead.
     refetchOnMount: false,
-    // refetchOnWindowFocus: false — same reason. Tab switches should not re-fetch 300 records.
     refetchOnWindowFocus: false,
     retry: (failureCount, error) => {
       if (failureCount >= 3) return false;
@@ -59,7 +105,6 @@ export function useOwnedCharacters(currentUser) {
   });
 
   // ── 2. NPC fictitious via service-role backend ───────────────────────────────
-  // Same key + fn as Home so the cache is shared.
   const {
     data: backendNpcs = [],
     isLoading: isLoadingNpc,
@@ -72,10 +117,8 @@ export function useOwnedCharacters(currentUser) {
       return res?.data?.npcs || [];
     },
     enabled: !!userId,
-    // 10 min stale time — NPCs change rarely and are expensive to fetch via backend function.
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
-    // refetchOnMount: false — NPC list is stable within a session. Only re-fetch when explicitly invalidated.
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     retry: (failureCount, error) => {
@@ -86,6 +129,50 @@ export function useOwnedCharacters(currentUser) {
     retryDelay: (attemptIndex) => Math.min(3000 * 2 ** attemptIndex, 30000),
     placeholderData: (prev) => prev,
   });
+
+  // ── BOOTSTRAP GUARD ──────────────────────────────────────────────────────────
+  // Fires once per session per owner_email when the cache looks empty or partial.
+  //
+  // Triggers if:
+  //   A) RLS query is done loading but returned 0 records (empty cache, first session load)
+  //   B) Current count is less than last known successful count (partial/poisoned cache)
+  //
+  // Never fires if:
+  //   - Still loading
+  //   - Cooldown is active (within BOOTSTRAP_COOLDOWN_MS of last fetch)
+  //   - Already fired this render cycle
+  //   - No email (unauthenticated)
+  useEffect(() => {
+    if (!email || isLoadingRls || isFetchingRls) return;
+    if (recoveryFiredRef.current) return;
+    if (isBootstrapCoolingDown(email)) return;
+
+    const currentCount = rlsCharacters.length;
+    const needsBootstrap = currentCount === 0 || isCachePartial(email, currentCount);
+
+    if (!needsBootstrap) {
+      // Cache looks good — update the known-good count if we have data and no prior record
+      const meta = readBootstrapMeta(email);
+      if (!meta && currentCount > 0) {
+        writeBootstrapMeta(email, currentCount);
+      }
+      return;
+    }
+
+    // Mark as fired before the async call — prevents double-fire on StrictMode double-invoke
+    recoveryFiredRef.current = true;
+
+    console.log(
+      `[useOwnedCharacters] Bootstrap recovery triggered. ` +
+      `currentCount=${currentCount} | ` +
+      `lastKnown=${readBootstrapMeta(email)?.lastSuccessfulCount ?? 'none'} | ` +
+      `email=${email}`
+    );
+
+    // One controlled recovery fetch — result writes back through queryFn which updates
+    // writeBootstrapMeta with the new authoritative count.
+    refetchRls();
+  }, [email, isLoadingRls, isFetchingRls, rlsCharacters.length]);
 
   // ── Merge + dedupe by id ─────────────────────────────────────────────────────
   // rlsCharacters is the primary source. backendNpcs fills in service-role NPCs

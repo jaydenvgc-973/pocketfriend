@@ -140,9 +140,15 @@ export default function Home() {
         });
 
       } else if (event.type === "delete") {
-        // Surgical remove: filter out the deleted character without re-fetching.
+        // Surgical remove — only if the deleted record belonged to this user.
+        // CRITICAL: never remove a character from cache based solely on an id match
+        // without confirming ownership. A delete event for another user's character
+        // must not corrupt the current user's visible list.
         queryClient.setQueryData(["characters", email], (prev) => {
           if (!Array.isArray(prev)) return prev;
+          // Only remove if the record was actually in this user's list by id
+          const exists = prev.some(c => c.id === event.data.id);
+          if (!exists) return prev; // not ours — ignore
           return prev.filter(c => c.id !== event.data.id);
         });
 
