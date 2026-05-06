@@ -6,8 +6,8 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const characters = await base44.entities.Character.filter({ created_by: user.email });
-    const locations = await base44.entities.LocationReference.list();
+    const characters = await base44.entities.Character.filter({ owner_email: user.email });
+    const locations = await base44.entities.LocationReference.filter({ owner_email: user.email });
     
     const backfilled = [];
     const skipped = [];

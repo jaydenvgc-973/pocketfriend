@@ -6,8 +6,8 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const characters = await base44.entities.Character.filter({ created_by: user.email });
-    const locations = await base44.entities.LocationReference.list();
+    const characters = await base44.entities.Character.filter({ owner_email: user.email });
+    const locations = await base44.entities.LocationReference.filter({ owner_email: user.email });
 
     // Get or create a default home for homeless characters
     let defaultHome = locations.find(l => l.is_default_generic && l.generic_type === 'home');
@@ -30,6 +30,14 @@ Deno.serve(async (req) => {
     const alreadySet = [];
 
     for (const char of characters) {
+      // RULE: Never assign active_created_character to a generic default home.
+      // active_created_character records require individualized housing — missing home is a valid
+      // unresolved state, not a reason to mass-assign them to a shared generic location.
+      if (char.character_type === 'active_created_character') {
+        alreadySet.push(char.name + ' (active_created_character — skipped, requires individual home assignment)');
+        continue;
+      }
+
       // If character already has both home and current location, skip
       if (char.current_home_location_id && char.current_location_id) {
         alreadySet.push(char.name);
