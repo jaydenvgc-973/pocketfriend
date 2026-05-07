@@ -14,7 +14,7 @@ export default function ChatApprovals({ pendingApproval, approveEvent, dismissAp
 
   return (
     <>
-      {pendingApproval.type === 'move_in' && pendingApproval.data.householdAnalysis && (
+      {(pendingApproval.type === 'move_in' || pendingApproval.type === 'move_out') && pendingApproval.data.householdAnalysis && (
         <HouseholdChangeApprovalPopup
           analysis={pendingApproval.data.householdAnalysis}
           character={pendingApproval.data.character}
