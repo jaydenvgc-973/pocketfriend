@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Home, Check, ChevronRight, ChevronLeft, MapPin, Users, Clock, Moon, AlertTriangle } from "lucide-react";
+import { X, Home, Check, ChevronRight, ChevronLeft, MapPin, Users, Clock, Moon, AlertTriangle, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { base44 } from "@/api/base44Client";
 
@@ -53,35 +53,44 @@ const CATEGORY_EMOJIS = {
   community: "🤝", generic: "📍",
 };
 
+// Special sentinel values
+const SPECIAL_LOCS = [
+  { value: "__none__",     name: "No Location / None",          category: "generic",  emoji: "🚫", desc: "Clear home fields, set no_fixed_residence", isSpecial: true },
+  { value: "__homeless__", name: "Homeless / No fixed residence", category: "public", emoji: "🏕️", desc: "is_homeless = true, no home assigned",        isSpecial: true },
+  { value: "__unknown__",  name: "Unknown",                      category: "generic",  emoji: "❓", desc: "Housing unknown / rabbit hole",              isSpecial: true },
+];
+
 function deriveHousingStatus(loc) {
   if (!loc) return "unknown";
+  if (loc.value === "__none__")     return "no_fixed_residence";
   if (loc.value === "__homeless__") return "homeless";
-  if (loc.value === "__unknown__") return "unknown";
+  if (loc.value === "__unknown__")  return "unknown";
   const cat = loc.category;
   if (cat === "shelter") return "sheltered";
-  if (cat === "hotel") return "hotel_placement";
-  if (cat === "home") return "stable_home";
+  if (cat === "hotel")   return "hotel_placement";
+  if (cat === "home")    return "stable_home";
   return "housed";
 }
 
 function deriveHousingContext(loc) {
   if (!loc) return null;
+  if (loc.value === "__none__")     return "no_fixed_residence";
   if (loc.value === "__homeless__") return "homeless_unsheltered";
-  if (loc.value === "__unknown__") return null;
+  if (loc.value === "__unknown__")  return "unknown_housing";
   const cat = loc.category;
   if (cat === "shelter") return "temporary_shelter";
-  if (cat === "hotel") return "temporary_shelter";
+  if (cat === "hotel")   return "temporary_shelter";
   return "stable_home";
 }
 
 export default function LogHousingChangeModal({ character, currentUser, onClose, onSaved, queryClient }) {
-  const [step, setStep] = useState(1); // 1=location, 2=reason, 3=who_else, 4=timing, 5=confirm
+  const [step, setStep] = useState(1);
   const [locations, setLocations] = useState([]);
   const [loadingLocations, setLoadingLocations] = useState(true);
   const [allCharacters, setAllCharacters] = useState([]);
   const [loadingCharacters, setLoadingCharacters] = useState(true);
+  const [locationSearch, setLocationSearch] = useState("");
 
-  // Form state
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [reasonForMove, setReasonForMove] = useState("");
   const [otherReason, setOtherReason] = useState("");
@@ -90,28 +99,21 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
   const [sleepHandling, setSleepHandling] = useState("relocate_on_wake");
   const [applyRelationshipImpact, setApplyRelationshipImpact] = useState(false);
   const [notes, setNotes] = useState("");
-
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
   const ownerEmail = currentUser?.email || character?.owner_email;
 
-  // Load locations and characters on mount
   useEffect(() => {
     const load = async () => {
-      setLoadingLocations(true);
-      setLoadingCharacters(true);
       try {
         const [locRes, charRes] = await Promise.all([
           base44.functions.invoke("fetchAllLocationsForUser", {}),
           base44.entities.Character.filter({ owner_email: ownerEmail, status: "active" }),
         ]);
-        const locs = locRes?.data?.locations || [];
-        setLocations(locs);
-        // Exclude primary character from "who else" list
+        setLocations(locRes?.data?.locations || []);
         setAllCharacters((charRes || []).filter(c => c.id !== character.id));
-      } catch (e) {
-        // fail visible in UI
+      } catch {
         setLocations([]);
         setAllCharacters([]);
       } finally {
@@ -122,57 +124,58 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
     load();
   }, [ownerEmail, character.id]);
 
-  const isCharacterAsleep = (char) => {
-    const status = char?.resolved_presence_status;
-    return status === "sleeping" || status === "napping";
+  const isCharacterAsleep = (c) => {
+    const s = c?.resolved_presence_status;
+    return s === "sleeping" || s === "napping";
   };
 
   const anySelectedAsleep = [character, ...allCharacters.filter(c => movingCharacterIds.includes(c.id))]
-    .some(c => isCharacterAsleep(c));
+    .some(isCharacterAsleep);
 
   const showSleepOptions = anySelectedAsleep && presenceTiming === "immediate";
   const showRelationshipOption = RELATIONSHIP_IMPACT_REASONS.has(reasonForMove);
 
-  // Special location entries
-  const specialLocations = [
-    { value: "__homeless__", name: "Homeless / No fixed residence", category: "public", isSpecial: true },
-    { value: "__unknown__", name: "Unknown", category: "generic", isSpecial: true },
-  ];
+  // Sort: residential first, then rest; filter by search
+  const searchLower = locationSearch.toLowerCase();
+  const residentialCats = new Set(["home", "hotel", "shelter"]);
+  const filteredLocations = locations
+    .filter(loc => !searchLower || loc.name.toLowerCase().includes(searchLower) || (loc.category || "").includes(searchLower))
+    .sort((a, b) => {
+      const ar = residentialCats.has(a.category) ? 0 : 1;
+      const br = residentialCats.has(b.category) ? 0 : 1;
+      return ar - br;
+    });
 
-  // Residential-priority sort
-  const residentialCategories = new Set(["home", "hotel", "shelter"]);
-  const sortedLocations = [...locations].sort((a, b) => {
-    const aRes = residentialCategories.has(a.category) ? 0 : 1;
-    const bRes = residentialCategories.has(b.category) ? 0 : 1;
-    return aRes - bRes;
-  });
+  const toggleMovingChar = (id) =>
+    setMovingCharacterIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
-  const allLocationOptions = [...specialLocations, ...sortedLocations];
-
-  const toggleMovingChar = (id) => {
-    setMovingCharacterIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
+  const canAdvance = () => {
+    if (step === 1) return !!selectedLocation;
+    if (step === 2) return !!reasonForMove && (reasonForMove !== "other" || otherReason.trim().length > 0);
+    return true;
   };
 
   const handleSave = async () => {
-    if (!selectedLocation) { setSaveError("Please select a destination."); return; }
-    if (!reasonForMove) { setSaveError("Please select a reason for the move."); return; }
-
     setIsSaving(true);
     setSaveError(null);
 
-    const isHomeless = selectedLocation.value === "__homeless__";
-    const isUnknown = selectedLocation.value === "__unknown__";
+    const isNone     = selectedLocation?.value === "__none__";
+    const isHomeless = selectedLocation?.value === "__homeless__";
+    const isUnknown  = selectedLocation?.value === "__unknown__";
+    const realLocId  = (isNone || isHomeless || isUnknown) ? null : selectedLocation?.value;
+    const realLocName = isNone ? null : isHomeless ? "No fixed residence" : isUnknown ? null : selectedLocation?.name;
 
     const payload = {
       primaryCharacterId: character.id,
       movingCharacterIds: [character.id, ...movingCharacterIds],
-      moveToLocationId: isHomeless || isUnknown ? null : selectedLocation.value,
-      moveToLocationName: isHomeless ? "No fixed residence" : isUnknown ? null : selectedLocation.name,
-      moveToLocationType: selectedLocation.category || null,
+      moveToLocationId: realLocId,
+      moveToLocationName: realLocName,
+      moveToLocationType: (isNone || isHomeless || isUnknown) ? null : selectedLocation?.category || null,
       housingStatus: deriveHousingStatus(selectedLocation),
       housingContext: deriveHousingContext(selectedLocation),
+      isHomeless,
+      isUnknown,
+      isNoLocation: isNone,
       reasonForMove,
       otherReasonNote: reasonForMove === "other" ? otherReason.trim() : null,
       presenceTransitionTiming: presenceTiming,
@@ -182,15 +185,12 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
       previousHomeLocationId: character.current_home_location_id || null,
       previousHomeLocationName: character.resolved_current_location_name || null,
       previousHousingStatus: character.housing_context || null,
-      isHomeless,
-      isUnknown,
       ownerEmail,
       notes: notes.trim() || null,
     };
 
     try {
       await base44.functions.invoke("logHousingChange", payload);
-      // Broad invalidation
       if (queryClient) {
         queryClient.invalidateQueries({ queryKey: ["character", character.id] });
         queryClient.invalidateQueries({ queryKey: ["characters"] });
@@ -202,6 +202,7 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
         queryClient.invalidateQueries({ queryKey: ["allLocationsForUser"] });
         queryClient.invalidateQueries({ queryKey: ["lifeEvents"] });
         queryClient.invalidateQueries({ queryKey: ["memories"] });
+        queryClient.invalidateQueries({ queryKey: ["relationships"] });
       }
       onSaved?.();
     } catch (err) {
@@ -209,12 +210,6 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const canAdvance = () => {
-    if (step === 1) return !!selectedLocation;
-    if (step === 2) return !!reasonForMove && (reasonForMove !== "other" || otherReason.trim().length > 0);
-    return true;
   };
 
   const stepTitles = ["Move To", "Reason", "Who Else", "Timing", "Confirm"];
@@ -259,27 +254,73 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
           </div>
 
           {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
 
-            {/* STEP 1: Move To Location */}
+            {/* ── STEP 1: Move To Location ── */}
             {step === 1 && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <MapPin className="w-4 h-4 text-blue-400" />
-                  <p className="text-sm font-semibold text-foreground">Where are they moving?</p>
+                  <p className="text-sm font-semibold text-foreground">Where are they moving? <span className="text-muted-foreground font-normal">(select one)</span></p>
                 </div>
+
+                {/* Special options — always shown at top, no search filter */}
+                <div className="space-y-1.5">
+                  {SPECIAL_LOCS.map((loc) => {
+                    const isSelected = selectedLocation?.value === loc.value;
+                    return (
+                      <button
+                        key={loc.value}
+                        onClick={() => setSelectedLocation({ value: loc.value, name: loc.name, category: loc.category })}
+                        className={`w-full text-left px-3 py-2.5 rounded-xl text-sm border transition-colors flex items-center gap-2.5 ${
+                          isSelected
+                            ? "bg-primary/10 border-primary/40 text-foreground"
+                            : "bg-secondary/60 border-dashed border-border text-muted-foreground hover:text-foreground hover:border-border"
+                        }`}
+                      >
+                        <span className="text-base">{loc.emoji}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium">{loc.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{loc.desc}</p>
+                        </div>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center gap-2 text-muted-foreground/50">
+                  <div className="flex-1 h-px bg-border" />
+                  <span className="text-[10px]">or choose a saved location</span>
+                  <div className="flex-1 h-px bg-border" />
+                </div>
+
+                {/* Search */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <input
+                    value={locationSearch}
+                    onChange={(e) => setLocationSearch(e.target.value)}
+                    placeholder="Search locations..."
+                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </div>
+
                 {loadingLocations ? (
-                  <div className="flex items-center justify-center py-8">
+                  <div className="flex items-center justify-center py-6">
                     <div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
                   </div>
                 ) : (
-                  <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
-                    {allLocationOptions.map((loc) => {
-                      const isSelected = selectedLocation?.value === loc.value;
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    {filteredLocations.length === 0 && (
+                      <p className="text-xs text-muted-foreground text-center py-3 italic">No locations found.</p>
+                    )}
+                    {filteredLocations.map((loc) => {
+                      const isSelected = selectedLocation?.value === (loc.id || loc.value);
                       return (
                         <button
-                          key={loc.value || loc.id}
-                          onClick={() => setSelectedLocation({ value: loc.value || loc.id, name: loc.name, category: loc.category })}
+                          key={loc.id || loc.value}
+                          onClick={() => setSelectedLocation({ value: loc.id || loc.value, name: loc.name, category: loc.category })}
                           className={`w-full text-left px-3 py-2.5 rounded-xl text-sm border transition-colors flex items-center gap-2.5 ${
                             isSelected
                               ? "bg-primary/10 border-primary/30 text-foreground"
@@ -289,7 +330,7 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
                           <span className="text-base">{CATEGORY_EMOJIS[loc.category] || "📍"}</span>
                           <div className="flex-1 min-w-0">
                             <p className="font-medium truncate">{loc.name}</p>
-                            {loc.category && !loc.isSpecial && (
+                            {loc.category && (
                               <p className="text-[10px] text-muted-foreground capitalize">{loc.category.replace(/_/g, " ")}</p>
                             )}
                           </div>
@@ -299,10 +340,17 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
                     })}
                   </div>
                 )}
+
+                {selectedLocation && (
+                  <p className="text-xs text-primary font-medium">
+                    Selected: {selectedLocation.name}
+                    <span className="text-muted-foreground font-normal ml-1">→ {deriveHousingStatus(selectedLocation)}</span>
+                  </p>
+                )}
               </div>
             )}
 
-            {/* STEP 2: Reason */}
+            {/* ── STEP 2: Reason ── */}
             {step === 2 && (
               <div className="space-y-3">
                 <p className="text-sm font-semibold text-foreground">Why are they moving?</p>
@@ -341,21 +389,21 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
                     }`}
                   >
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-                    <span>Apply relationship impact (trust, respect, bond changes)</span>
-                    {applyRelationshipImpact && <Check className="w-3.5 h-3.5 text-amber-400 ml-auto" />}
+                    <span className="flex-1">Apply relationship impact (trust, respect, bond changes)</span>
+                    {applyRelationshipImpact && <Check className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />}
                   </button>
                 )}
               </div>
             )}
 
-            {/* STEP 3: Who Else */}
+            {/* ── STEP 3: Who Else ── */}
             {step === 3 && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-blue-400" />
                   <p className="text-sm font-semibold text-foreground">Who else is moving with them?</p>
                 </div>
-                <p className="text-xs text-muted-foreground">Select any characters moving to the same location. Leave empty if they're moving alone.</p>
+                <p className="text-xs text-muted-foreground">Leave empty if moving alone. Each selected character receives the same housing update.</p>
                 {loadingCharacters ? (
                   <div className="flex items-center justify-center py-6">
                     <div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
@@ -404,7 +452,7 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
               </div>
             )}
 
-            {/* STEP 4: Timing */}
+            {/* ── STEP 4: Timing ── */}
             {step === 4 && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
@@ -428,9 +476,8 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
                   ))}
                 </div>
 
-                {/* Sleep state handling */}
                 {showSleepOptions && (
-                  <div className="mt-3 space-y-2 border-t border-border pt-3">
+                  <div className="space-y-2 border-t border-border pt-3">
                     <div className="flex items-center gap-1.5">
                       <Moon className="w-3.5 h-3.5 text-indigo-400" />
                       <p className="text-xs font-semibold text-indigo-400">One or more characters is sleeping</p>
@@ -453,13 +500,12 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
                   </div>
                 )}
 
-                {/* Notes */}
-                <div className="mt-3 border-t border-border pt-3">
+                <div className="border-t border-border pt-3">
                   <p className="text-xs text-muted-foreground mb-1.5">Notes (optional)</p>
                   <textarea
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Add context about this housing change..."
+                    placeholder="Add context..."
                     rows={2}
                     className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none"
                   />
@@ -467,7 +513,7 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
               </div>
             )}
 
-            {/* STEP 5: Confirm */}
+            {/* ── STEP 5: Confirm ── */}
             {step === 5 && (
               <div className="space-y-3">
                 <p className="text-sm font-semibold text-foreground">Confirm housing change</p>
@@ -475,6 +521,7 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
                   <Row label="Primary character" value={character.name} />
                   <Row label="Moving to" value={selectedLocation?.name || "—"} />
                   <Row label="Housing status" value={deriveHousingStatus(selectedLocation)} />
+                  <Row label="Housing context" value={deriveHousingContext(selectedLocation) || "—"} />
                   <Row label="Reason" value={REASON_OPTIONS.find(r => r.value === reasonForMove)?.label || reasonForMove} />
                   {reasonForMove === "other" && otherReason && <Row label="Note" value={otherReason} />}
                   <Row label="Also moving" value={movingCharacterIds.length > 0 ? `${movingCharacterIds.length} other character(s)` : "No one else"} />
@@ -492,7 +539,7 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
             )}
           </div>
 
-          {/* Footer nav */}
+          {/* Footer */}
           <div className="px-5 pb-5 pt-3 border-t border-border flex gap-2 flex-shrink-0">
             {step > 1 ? (
               <Button variant="outline" size="sm" onClick={() => setStep(s => s - 1)} className="rounded-xl gap-1 text-xs">

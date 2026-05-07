@@ -9,22 +9,22 @@ Deno.serve(async (req) => {
     const {
       primaryCharacterId,
       movingCharacterIds,
-      moveToLocationId,
-      moveToLocationName,
-      moveToLocationType,
-      housingStatus,
-      housingContext,
+      moveToLocationId,      // null for homeless/unknown/none
+      moveToLocationName,    // display name or null
+      moveToLocationType,    // category string or null
+      housingStatus,         // homeless | unknown | no_location | sheltered | hotel_placement | stable_home | housed
+      housingContext,        // homeless_unsheltered | unknown_housing | no_fixed_residence | temporary_shelter | stable_home | null
+      isHomeless,            // boolean — explicitly homeless/no fixed residence
+      isUnknown,             // boolean — rabbit hole / housing unknown
+      isNoLocation,          // boolean — "No Location / None" selected
       reasonForMove,
       otherReasonNote,
-      presenceTransitionTiming,
-      sleepStateHandling,
-      updateLivePresenceNow,
+      presenceTransitionTiming, // immediate | next_travel_cycle | on_wake | housing_only
+      sleepStateHandling,       // wake_and_relocate | relocate_on_wake | housing_only
       applyRelationshipImpact,
       previousHomeLocationId,
       previousHomeLocationName,
       previousHousingStatus,
-      isHomeless,
-      isUnknown,
       ownerEmail,
       notes,
     } = await req.json();
@@ -35,8 +35,10 @@ Deno.serve(async (req) => {
     }
 
     const userEmail = user.email;
+    const moveTimestamp = new Date().toISOString();
+    const reasonLabel = reasonForMove === 'other' ? (otherReasonNote || 'Other') : (reasonForMove || 'unknown');
 
-    // Resolve location record if provided (for residents array update)
+    // Fetch the destination location record once (for resident array updates)
     let locationRecord = null;
     if (moveToLocationId) {
       try {
@@ -45,12 +47,15 @@ Deno.serve(async (req) => {
       } catch { /* non-fatal */ }
     }
 
-    const moveTimestamp = new Date().toISOString();
-    const reasonLabel = reasonForMove === 'other' ? (otherReasonNote || 'Other') : (reasonForMove || 'unknown');
+    // Determine whether this destination category supports permanent residency
+    const RESIDENTIAL_CATS = new Set(['home', 'hotel', 'shelter']);
+    const destinationIsResidential = moveToLocationType && RESIDENTIAL_CATS.has(moveToLocationType);
+    const destinationIsTemporary = moveToLocationType === 'hotel' || moveToLocationType === 'shelter';
+
     const results = [];
 
     for (const charId of movingCharacterIds) {
-      // Verify ownership by owner_email ONLY — no created_by fallback per system rules
+      // Ownership check: owner_email only — no created_by fallback
       const chars = await base44.asServiceRole.entities.Character.filter({ id: charId, owner_email: userEmail });
       const character = chars?.[0];
       if (!character) {
@@ -62,136 +67,163 @@ Deno.serve(async (req) => {
       const isAsleep = character.resolved_presence_status === 'sleeping' ||
                        character.resolved_presence_status === 'napping';
 
-      // Build the character update payload
+      // ── FULL BACKFILL: All housing-related fields ──────────────────────────────
       const update = {
+        // Core homeless/housing flags
         is_homeless: isHomeless || false,
         housing_context: housingContext || null,
+
+        // Always clear stale pending relocation fields before potentially setting new ones
+        pending_relocation: false,
+        pending_relocation_location_id: null,
+        pending_relocation_location_name: null,
+        pending_relocation_trigger: null,
+        pending_relocation_created_at: null,
+
+        // Timestamps
+        last_housing_change_at: moveTimestamp,
+        resolved_source_reason: reasonLabel,
       };
 
-      // Set home/residence fields
-      if (isHomeless || isUnknown) {
+      // ── HOME / RESIDENCE FIELD BACKFILL ──────────────────────────────────────
+      if (isHomeless || isUnknown || isNoLocation) {
+        // Clear ALL home/residence fields — no stale data left behind
         update.current_home_location_id = null;
         update.temporary_housing_location_id = null;
+        // no_fixed_residence: true only for explicit homeless/no-location
+        update.no_fixed_residence = isHomeless || isNoLocation ? true : false;
       } else if (moveToLocationId) {
-        const locCat = moveToLocationType;
-        if (locCat === 'hotel' || locCat === 'shelter') {
+        if (destinationIsTemporary) {
+          // Temporary: write to temporary_housing, clear permanent home
           update.temporary_housing_location_id = moveToLocationId;
+          // Do NOT clear current_home_location_id here — they still have a home, just staying elsewhere
         } else {
+          // Permanent: write to home, clear temporary
           update.current_home_location_id = moveToLocationId;
           update.temporary_housing_location_id = null;
+          update.no_fixed_residence = false;
         }
       }
 
-      // Determine live presence update
+      // ── LIVE PRESENCE: Determine whether to move now ──────────────────────────
       let shouldMoveLivePresenceNow = false;
 
       if (presenceTransitionTiming === 'immediate') {
         if (isAsleep) {
-          // Respect sleep handling
           if (sleepStateHandling === 'wake_and_relocate') {
             shouldMoveLivePresenceNow = true;
-            // Clear sleep state
-            update.last_sleep_start = null;
+            update.last_sleep_start = null; // clear sleep state
           } else if (sleepStateHandling === 'relocate_on_wake') {
-            // Queue for wake event - set pending fields, don't move now
+            // Queue it — housing truth written now, presence moves on wake
+            update.pending_relocation = true;
             update.pending_relocation_location_id = moveToLocationId || null;
             update.pending_relocation_location_name = moveToLocationName || null;
             update.pending_relocation_trigger = 'on_wake';
-            shouldMoveLivePresenceNow = false;
-          } else {
-            // housing_only — no presence change
+            update.pending_relocation_created_at = moveTimestamp;
             shouldMoveLivePresenceNow = false;
           }
+          // else housing_only: no presence change
         } else {
           shouldMoveLivePresenceNow = true;
         }
       } else if (presenceTransitionTiming === 'on_wake') {
+        update.pending_relocation = true;
         update.pending_relocation_location_id = moveToLocationId || null;
         update.pending_relocation_location_name = moveToLocationName || null;
         update.pending_relocation_trigger = 'on_wake';
+        update.pending_relocation_created_at = moveTimestamp;
       } else if (presenceTransitionTiming === 'next_travel_cycle') {
+        update.pending_relocation = true;
         update.pending_relocation_location_id = moveToLocationId || null;
         update.pending_relocation_location_name = moveToLocationName || null;
         update.pending_relocation_trigger = 'next_travel_cycle';
+        update.pending_relocation_created_at = moveTimestamp;
       }
-      // housing_only: no presence change, no pending fields
+      // housing_only: no presence fields changed
 
       if (shouldMoveLivePresenceNow) {
-        if (isHomeless || isUnknown) {
+        if (isHomeless || isNoLocation) {
+          // CRITICAL: homeless presence is NOT 'home'
           update.resolved_current_location_id = null;
           update.resolved_current_location_name = isHomeless ? 'No fixed residence' : null;
-          update.resolved_presence_status = isHomeless ? 'home' : null;
-          update.resolved_location_type = isHomeless ? 'home' : null;
+          update.resolved_presence_status = 'home'; // 'home' only if they have a location — homeless gets null
+          update.resolved_location_type = null;
+          // Override: homeless must NOT have presence_status = home
+          update.resolved_presence_status = null;
+          update.resolved_location_type = isHomeless ? 'temporary_housing' : null;
+        } else if (isUnknown) {
+          // Unknown: clear resolved location, no fake presence
+          update.resolved_current_location_id = null;
+          update.resolved_current_location_name = null;
+          update.resolved_presence_status = null;
+          update.resolved_location_type = 'rabbit_hole';
         } else if (moveToLocationId) {
           update.resolved_current_location_id = moveToLocationId;
           update.resolved_current_location_name = moveToLocationName || null;
           update.resolved_presence_status = 'home';
-          update.resolved_location_type = moveToLocationType === 'hotel' || moveToLocationType === 'shelter'
-            ? 'temporary_housing' : 'home';
+          update.resolved_location_type = destinationIsTemporary ? 'temporary_housing' : 'home';
         }
         update.resolved_last_updated_at = moveTimestamp;
       }
 
       await base44.asServiceRole.entities.Character.update(charId, update);
 
-      // Update location's residents array if moving to a real location
-      if (moveToLocationId && locationRecord) {
+      // ── LOCATION RESIDENT ARRAYS ──────────────────────────────────────────────
+      // Remove from old home residents
+      const prevHomeId = character.current_home_location_id || previousHomeLocationId;
+      if (prevHomeId && prevHomeId !== moveToLocationId) {
         try {
-          const existingResidents = locationRecord.residents || [];
-          const alreadyResident = existingResidents.some(r => r.character_id === charId);
-          if (!alreadyResident) {
-            const newResidents = [
-              ...existingResidents,
+          const prevLocs = await base44.asServiceRole.entities.LocationReference.filter({ id: prevHomeId });
+          const prevLoc = prevLocs?.[0];
+          if (prevLoc && Array.isArray(prevLoc.residents)) {
+            const updated = prevLoc.residents.filter(r => r.character_id !== charId);
+            await base44.asServiceRole.entities.LocationReference.update(prevHomeId, { residents: updated });
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      // Add to new location residents only if it supports residency (not public/outdoor/community)
+      if (moveToLocationId && locationRecord && destinationIsResidential) {
+        try {
+          const existing = locationRecord.residents || [];
+          const alreadyIn = existing.some(r => r.character_id === charId);
+          if (!alreadyIn) {
+            const updated = [
+              ...existing,
               {
                 character_id: charId,
                 character_name: character.name,
                 avatar_url: character.avatar_url || null,
                 moved_in_date: moveTimestamp,
-              }
+              },
             ];
-            await base44.asServiceRole.entities.LocationReference.update(moveToLocationId, {
-              residents: newResidents,
-            });
+            await base44.asServiceRole.entities.LocationReference.update(moveToLocationId, { residents: updated });
           }
         } catch { /* non-fatal */ }
       }
 
-      // Remove from previous home location residents if applicable
-      if (previousHomeLocationId && previousHomeLocationId !== moveToLocationId) {
-        try {
-          const prevLocs = await base44.asServiceRole.entities.LocationReference.filter({ id: previousHomeLocationId });
-          const prevLoc = prevLocs?.[0];
-          if (prevLoc && Array.isArray(prevLoc.residents)) {
-            const updatedResidents = prevLoc.residents.filter(r => r.character_id !== charId);
-            await base44.asServiceRole.entities.LocationReference.update(previousHomeLocationId, {
-              residents: updatedResidents,
-            });
-          }
-        } catch { /* non-fatal */ }
-      }
-
-      // Build life event description
+      // ── LIFE EVENT ────────────────────────────────────────────────────────────
       let eventTitle, eventDesc, valence, severity;
-      if (isHomeless) {
-        eventTitle = `${character.name} became homeless`;
-        eventDesc = `${character.name} lost their housing and currently has no fixed residence. Reason: ${reasonLabel}.`;
+      if (isHomeless || isNoLocation) {
+        eventTitle = `${character.name} has no fixed residence`;
+        eventDesc = `${character.name} no longer has a fixed home. Reason: ${reasonLabel}.`;
         valence = 'negative';
         severity = 'significant';
+      } else if (isUnknown) {
+        eventTitle = `${character.name}'s housing situation is unknown`;
+        eventDesc = `${character.name}'s current housing status is unconfirmed. Reason: ${reasonLabel}.`;
+        valence = 'neutral';
+        severity = 'minor';
       } else if (moveToLocationType === 'shelter') {
         eventTitle = `${character.name} moved into a shelter`;
         eventDesc = `${character.name} is now staying at ${moveToLocationName || 'an emergency shelter'}. Reason: ${reasonLabel}.`;
         valence = 'negative';
         severity = 'significant';
       } else if (moveToLocationType === 'hotel') {
-        eventTitle = `${character.name} moved into a hotel`;
+        eventTitle = `${character.name} moved into temporary lodging`;
         eventDesc = `${character.name} is temporarily staying at ${moveToLocationName || 'a hotel'}. Reason: ${reasonLabel}.`;
         valence = 'neutral';
         severity = 'moderate';
-      } else if (isUnknown) {
-        eventTitle = `${character.name}'s housing situation is unknown`;
-        eventDesc = `${character.name}'s current housing status is unconfirmed. Reason: ${reasonLabel}.`;
-        valence = 'neutral';
-        severity = 'minor';
       } else {
         eventTitle = `${character.name} moved to a new home`;
         eventDesc = `${character.name} moved to ${moveToLocationName || 'a new location'}. Reason: ${reasonLabel}.${notes ? ' ' + notes : ''}`;
@@ -199,14 +231,12 @@ Deno.serve(async (req) => {
         severity = 'moderate';
       }
 
-      // Previous home context
       if (previousHomeLocationName) {
-        eventDesc += ` Previously lived at: ${previousHomeLocationName}.`;
+        eventDesc += ` Previously: ${previousHomeLocationName}.`;
       }
-
-      // Group move note
       if (movingCharacterIds.length > 1 && !isPrimary) {
-        eventDesc += ` Moved together with ${character.name}.`;
+        const primaryChar = movingCharacterIds[0];
+        eventDesc += ` Part of a group move.`;
       }
 
       await base44.asServiceRole.entities.LifeEvent.create({
@@ -217,7 +247,7 @@ Deno.serve(async (req) => {
         severity,
         title: eventTitle,
         description: eventDesc,
-        emotional_impact: isHomeless
+        emotional_impact: (isHomeless || isNoLocation)
           ? 'Significant disruption to stability and sense of security.'
           : 'A change in living situation affects daily routine and social connections.',
         triggered_by: 'manual',
@@ -225,39 +255,38 @@ Deno.serve(async (req) => {
         systems_updated: ['memory', 'location'],
         context_tags: [
           reasonForMove,
-          moveToLocationType || 'home',
+          moveToLocationType || (isHomeless ? 'homeless' : isUnknown ? 'unknown' : 'none'),
           movingCharacterIds.length > 1 ? 'group_move' : 'solo_move',
         ].filter(Boolean),
       });
 
-      // Create a memory entry for this housing change
+      // Memory entry
       await base44.asServiceRole.entities.Memory.create({
         character_id: charId,
         title: eventTitle,
         description: eventDesc,
         category: 'life_event',
-        emotional_weight: isHomeless ? 'high' : 'medium',
+        emotional_weight: (isHomeless || isNoLocation) ? 'high' : 'medium',
         timestamp: moveTimestamp,
         owner_email: userEmail,
-      }).catch(() => {/* non-fatal if Memory entity not available */});
+      }).catch(() => {});
 
       results.push({ charId, characterName: character.name, status: 'updated' });
     }
 
-    // Apply relationship impact if selected and reason is emotionally driven
+    // ── RELATIONSHIP IMPACT (non-fatal async) ─────────────────────────────────
     if (applyRelationshipImpact) {
-      const relationshipImpactReasons = new Set([
+      const RELATIONSHIP_REASONS = new Set([
         'relationship_change', 'family_conflict', 'safety_concern',
         'moving_in_with_someone', 'moving_out_from_someone', 'breakup_separation',
       ]);
-      if (relationshipImpactReasons.has(reasonForMove)) {
-        // Fire relationship impact asynchronously for primary character
+      if (RELATIONSHIP_REASONS.has(reasonForMove)) {
         base44.asServiceRole.functions.invoke('progressRelationship', {
           characterId: primaryCharacterId,
           eventType: 'housing_conflict',
           reasonForMove,
           intensity: 'moderate',
-        }).catch(() => {/* non-fatal */});
+        }).catch(() => {});
       }
     }
 
