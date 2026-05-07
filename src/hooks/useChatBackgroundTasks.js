@@ -151,11 +151,12 @@ export function useChatBackgroundTasks({
         });
       }
 
-      if (!isPhone && !isOnCooldown(characterId, 'worldPhoneSync', 90000)) {
-        safeInvoke('syncWorldPhoneMemory', {
-          characterId, conversationId: convoId, recentMessages: (recentMsgs || []).slice(-6),
-        }, characterId, 'worldPhoneSync');
-      }
+      // syncWorldPhoneMemory requires senderCharacterId + receiverCharacterId + messageContent.
+      // In regular Chat, the user is the sender and the character is the receiver — but this
+      // bilateral sync is only meaningful when a character contacts ANOTHER character (not the user).
+      // The extractMemoriesFromTurn above already handles the target character's memory.
+      // This slot is intentionally left as a no-op to avoid the broken wrong-payload call.
+      // Bilateral character↔character memory is handled by WorldContactsPopup and simulateCharacterInteraction.
     }, 4000);
 
     // ── TIER 4 — 7s: relationship levels + achievements + income (120s / 120s / 60s cooldown) ──

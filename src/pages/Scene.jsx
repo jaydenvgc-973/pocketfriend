@@ -1258,12 +1258,12 @@ Return JSON:
         };
         setMessages(prev => [...prev, msg]);
 
-        // Fire-and-forget: persist to group conversation if character exists
         if (char) {
+          const realBrought = broughtCharacters.filter(c => !c.isNpc && c.id !== char.id);
           base44.functions.invoke("extractMemoriesFromTurn", {
-            characterId: char.id,
-            userMessage: text,
-            characterReply: resp.content,
+            characterId: char.id, userMessage: text, characterReply: resp.content,
+            playingAsCharacterId: realBrought[0]?.id || null,
+            witnessCharacterIds: realBrought.slice(1).map(c => c.id),
           }).catch(() => {});
         }
 

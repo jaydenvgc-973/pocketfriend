@@ -4,7 +4,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    let { characterId, conversationId, userMessage, characterReply, playingAsCharacterId } = await req.json();
+    let { characterId, conversationId, userMessage, characterReply, playingAsCharacterId, witnessCharacterIds } = await req.json();
 
     if (!characterId) {
       return Response.json({ error: 'characterId required' }, { status: 400 });
@@ -239,6 +239,23 @@ Return JSON.`,
           }
         }
       }
+    }
+
+    // ── WITNESS CHARACTERS: others present in a scene who saw/heard the exchange ─
+    // These are characters who were physically present but not the primary responder.
+    // They get a lightweight factual memory so they can recall the scene later in Chat/Text.
+    if (witnessCharacterIds?.length > 0 && characterReply && targetChar) {
+      const witnessWrites = witnessCharacterIds.map(wid =>
+        base44.entities.Memory.create({
+          character_id: wid,
+          title: `Scene exchange — ${targetChar.name}`,
+          description: `${targetChar.name} said: "${characterReply.substring(0, 200)}" in response to: "${(userMessage || '').substring(0, 150)}"`,
+          emotional_impact: 'neutral',
+          timestamp: new Date().toISOString(),
+          source_context: conversationId ? `scene_witness_${conversationId}` : 'scene_witness',
+        }).catch(() => {})
+      );
+      await Promise.all(witnessWrites);
     }
 
     return Response.json({ success: true, newPeopleDetected });
