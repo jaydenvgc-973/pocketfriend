@@ -1026,22 +1026,22 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                       <div className="grid grid-cols-2 gap-2 pt-1 border-t border-border">
                         <div className="flex flex-col gap-1">
                           <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift Start</label>
-                          <Input type="time" value={form.worker_shifts?.[workerId]?.start || ''} onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], start: e.target.value } })} className="h-8 text-xs" />
+                          <Input type="time" value={form.worker_shifts?.[workerId]?.start || '09:00'} onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], start: e.target.value } })} className="h-8 text-xs" />
                         </div>
                         <div className="flex flex-col gap-1">
                           <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift End</label>
-                          <Input type="time" value={form.worker_shifts?.[workerId]?.end || ''} onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], end: e.target.value } })} className="h-8 text-xs" />
+                          <Input type="time" value={form.worker_shifts?.[workerId]?.end || '17:00'} onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], end: e.target.value } })} className="h-8 text-xs" />
                         </div>
                       </div>
                       <div className="pt-1 border-t border-border">
                         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Work Days</label>
                         <div className="flex gap-1 flex-wrap">
                           {['Su','Mo','Tu','We','Th','Fr','Sa'].map((d, i) => {
-                            const shiftDays = form.worker_shifts?.[workerId]?.days || [];
+                            const shiftDays = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
                             const active = shiftDays.includes(i);
                             return (
                               <button key={i} type="button" onClick={() => {
-                                const cur = form.worker_shifts?.[workerId]?.days || [];
+                                const cur = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
                                 const newDays = active ? cur.filter(x => x !== i) : [...cur, i].sort();
                                 update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], days: newDays } });
                               }}
@@ -1399,17 +1399,17 @@ export default function Locations() {
       created_by_role: isAdmin ? 'admin' : (currentUser?.role || 'user'),
     };
 
-    // ── PRESERVE ONLY REAL USER-ENTERED SCHEDULES ───────────────────────────
-    // Only persist worker_shifts entries that the user actually set (have real start/end values).
-    // Do NOT invent or default schedules for workers with no stored shift — that creates phantom
-    // 9–5 data that contradicts what other pages show.
+    // ── PRESERVE UI SCHEDULE TRUTH ──────────────────────────────────────────
+    // The Locations page shows 09:00–17:00 Mon-Fri as the starting defaults for new workers.
+    // These are the user-facing values — persist them as the real stored schedule.
     const guaranteedShifts = { ...(formData.worker_shifts || {}) };
-    // Remove any shift entries that are completely empty (no start AND no end AND no days).
-    // This prevents blank-slate workers from getting a fake default written.
     (formData.worker_character_ids || []).forEach(workerId => {
-      const s = guaranteedShifts[workerId];
-      if (!s || (!s.start && !s.end && (!s.days || s.days.length === 0))) {
-        delete guaranteedShifts[workerId];
+      if (!guaranteedShifts[workerId] || !guaranteedShifts[workerId].start || !guaranteedShifts[workerId].end) {
+        guaranteedShifts[workerId] = {
+          start: guaranteedShifts[workerId]?.start || '09:00',
+          end: guaranteedShifts[workerId]?.end || '17:00',
+          days: guaranteedShifts[workerId]?.days || [1, 2, 3, 4, 5],
+        };
       }
     });
     const saveData = { ...formData, worker_shifts: guaranteedShifts };
