@@ -14,6 +14,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import VoiceSettings from "@/components/character/VoiceSettings";
 import OccupationLocationPicker from "@/components/character/OccupationLocationPicker";
+import JobBlock from "@/components/character/JobBlock";
 import { filterOutTemporaryNPCs } from "@/lib/temporaryNPCUtils";
 import { RELATIONSHIP_TYPES, RELATIONSHIP_CATEGORIES, getInverseRelationType, isBilateralRelationship, isPairedRelationship } from "@/lib/relationshipTypeDefinitions";
 
@@ -49,6 +50,8 @@ export default function EditCharacterProfile() {
   const [occupationLink, setOccupationLink] = useState({ locationId: null, locationName: null, title: '' });
   const [occupationLink2, setOccupationLink2] = useState({ locationId: null, locationName: null, title: '' });
   const [educationLink, setEducationLink] = useState({ locationId: null, locationName: null, title: '' });
+  // Second job schedule — loaded from LocationReference.worker_shifts[charId] when a workplace is linked
+  const [job2Schedule, setJob2Schedule] = useState({ work_days: [], work_start_time: '', work_end_time: '' });
   const [educationEntries, setEducationEntries] = useState([]);
   const [jobTrainingEntries, setJobTrainingEntries] = useState([]);
 
@@ -66,13 +69,30 @@ export default function EditCharacterProfile() {
 
   const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
 
-  const handleSelect = (char) => {
+  const handleSelect = async (char) => {
     setSelectedChar(char);
     setActiveTab("Occupation");
     setOccupationLink({ locationId: char.occupation_location_id || null, locationName: char.occupation_location_name || null, title: char.work_details?.job_title || '' });
     const secondJob = char.additional_occupation_locations?.[0] || {};
     setOccupationLink2({ locationId: secondJob.location_id || null, locationName: secondJob.location_name || null, title: secondJob.job_title || '' });
     setEducationLink({ locationId: char.education_location_id || null, locationName: char.education_location_name || null, title: char.education_details?.course_name || '' });
+
+    // Load second job schedule from LocationReference.worker_shifts if a workplace is linked
+    let loadedJob2Schedule = { work_days: [], work_start_time: '', work_end_time: '' };
+    if (secondJob.location_id) {
+      const locArr = await base44.entities.LocationReference.filter({ id: secondJob.location_id }).catch(() => []);
+      const loc = locArr?.[0];
+      if (loc?.worker_shifts?.[char.id]) {
+        const shift = loc.worker_shifts[char.id];
+        loadedJob2Schedule = {
+          work_days: shift.days || [],
+          work_start_time: shift.start || '',
+          work_end_time: shift.end || '',
+        };
+      }
+    }
+    setJob2Schedule(loadedJob2Schedule);
+
     setForm({
       // Occupation
       job_title: char.work_details?.job_title || "",
@@ -259,7 +279,7 @@ export default function EditCharacterProfile() {
       }).catch(() => {});
     }
 
-    // If second occupation location was linked, sync it too
+    // If second occupation location was linked, sync it and save its schedule to worker_shifts
     if (occupationLink2.locationId) {
       base44.functions.invoke('linkOccupationToLocation', {
         characterId: selectedChar.id,
@@ -268,6 +288,28 @@ export default function EditCharacterProfile() {
         title: occupationLink2.title || form.job2_title,
         removeLocationId: null,
       }).catch(() => {});
+
+      // Save second job schedule to LocationReference.worker_shifts[charId]
+      // Only write if the user has actually set schedule data — never overwrite with blanks
+      if (job2Schedule.work_start_time || job2Schedule.work_end_time || job2Schedule.work_days?.length > 0) {
+        base44.entities.LocationReference.filter({ id: occupationLink2.locationId })
+          .then(locArr => {
+            const loc = locArr?.[0];
+            if (!loc) return;
+            const existingShifts = loc.worker_shifts || {};
+            const updatedShifts = {
+              ...existingShifts,
+              [selectedChar.id]: {
+                ...(existingShifts[selectedChar.id] || {}),
+                start: job2Schedule.work_start_time || existingShifts[selectedChar.id]?.start || '',
+                end: job2Schedule.work_end_time || existingShifts[selectedChar.id]?.end || '',
+                days: job2Schedule.work_days?.length > 0 ? job2Schedule.work_days : (existingShifts[selectedChar.id]?.days || []),
+              }
+            };
+            return base44.entities.LocationReference.update(loc.id, { worker_shifts: updatedShifts });
+          })
+          .catch(() => {});
+      }
     }
 
     // If education location was linked, add character to that location as student
@@ -380,113 +422,54 @@ export default function EditCharacterProfile() {
             {/* OCCUPATION TAB */}
             {activeTab === "Occupation" && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Job Details</label>
+                {/* Auto-generate */}
+                <div className="flex justify-end">
                   <button onClick={generateOccupation} disabled={isGeneratingOccupation} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-50">
-                    <Sparkles className="w-3 h-3" />{isGeneratingOccupation ? "Generating..." : "Auto-generate"}
+                    <Sparkles className="w-3 h-3" />{isGeneratingOccupation ? "Generating..." : "Auto-generate primary job"}
                   </button>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-muted-foreground">Job Type</label>
-                  <Select value={form.workplace_type} onValueChange={v => setForm(p => ({ ...p, workplace_type: v }))}>
-                    <SelectTrigger className="rounded-xl"><SelectValue placeholder="Select job type" /></SelectTrigger>
-                    <SelectContent>
-                      {JOB_TYPES.map(j => <SelectItem key={j} value={j}>{j}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-muted-foreground">Job Title</label>
-                  <Input value={form.job_title} onChange={e => setForm(p => ({ ...p, job_title: e.target.value }))} placeholder="e.g. Nurse, Barista, Software Engineer" className="rounded-xl text-sm" />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-muted-foreground">Work Environment Description</label>
-                  <Textarea value={form.work_environment} onChange={e => setForm(p => ({ ...p, work_environment: e.target.value }))} placeholder="Describe their day-to-day work environment..." className="rounded-xl min-h-[80px] text-sm resize-none" />
-                </div>
-                {/* Location link for occupation */}
-                <div className="pt-2 border-t border-border">
-                  <OccupationLocationPicker
-                    characterId={selectedChar?.id}
-                    linkType="occupation"
-                    currentLocationId={occupationLink.locationId}
-                    currentTitle={occupationLink.title}
-                    onLinkChange={setOccupationLink}
-                    placeholder="e.g. Barista, Nurse, Designer"
-                  />
-                </div>
+
+                {/* PRIMARY JOB */}
+                <JobBlock
+                  label="Primary Job"
+                  characterId={selectedChar?.id}
+                  jobType={form.workplace_type}
+                  onJobTypeChange={v => setForm(p => ({ ...p, workplace_type: v }))}
+                  jobTitle={form.job_title}
+                  onJobTitleChange={v => setForm(p => ({ ...p, job_title: v }))}
+                  workEnvironment={form.work_environment}
+                  onWorkEnvironmentChange={v => setForm(p => ({ ...p, work_environment: v }))}
+                  workDays={form.work_days}
+                  onWorkDaysChange={v => setForm(p => ({ ...p, work_days: v }))}
+                  workStartTime={form.work_start_time}
+                  onWorkStartTimeChange={v => setForm(p => ({ ...p, work_start_time: v }))}
+                  workEndTime={form.work_end_time}
+                  onWorkEndTimeChange={v => setForm(p => ({ ...p, work_end_time: v }))}
+                  locationLink={occupationLink}
+                  onLocationLinkChange={setOccupationLink}
+                />
 
                 {/* SECOND JOB */}
-                <div className="pt-2 border-t border-border space-y-3">
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Second Job (optional)</label>
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">Job Type</label>
-                    <Select value={form.job2_workplace_type} onValueChange={v => setForm(p => ({ ...p, job2_workplace_type: v }))}>
-                      <SelectTrigger className="rounded-xl"><SelectValue placeholder="Select job type" /></SelectTrigger>
-                      <SelectContent>
-                        {JOB_TYPES.map(j => <SelectItem key={j} value={j}>{j}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">Job Title</label>
-                    <Input value={form.job2_title} onChange={e => setForm(p => ({ ...p, job2_title: e.target.value }))} placeholder="e.g. Freelance Photographer" className="rounded-xl text-sm" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">Work Environment Description</label>
-                    <Textarea value={form.job2_work_environment} onChange={e => setForm(p => ({ ...p, job2_work_environment: e.target.value }))} placeholder="Describe their second job environment..." className="rounded-xl min-h-[80px] text-sm resize-none" />
-                  </div>
-                  <OccupationLocationPicker
-                    characterId={selectedChar?.id}
-                    linkType="occupation"
-                    currentLocationId={occupationLink2.locationId}
-                    currentTitle={occupationLink2.title}
-                    onLinkChange={setOccupationLink2}
-                    placeholder="e.g. Studio, Store name"
-                  />
-                </div>
+                <JobBlock
+                  label="Second Job"
+                  characterId={selectedChar?.id}
+                  jobType={form.job2_workplace_type}
+                  onJobTypeChange={v => setForm(p => ({ ...p, job2_workplace_type: v }))}
+                  jobTitle={form.job2_title}
+                  onJobTitleChange={v => setForm(p => ({ ...p, job2_title: v }))}
+                  workEnvironment={form.job2_work_environment}
+                  onWorkEnvironmentChange={v => setForm(p => ({ ...p, job2_work_environment: v }))}
+                  workDays={job2Schedule.work_days}
+                  onWorkDaysChange={v => setJob2Schedule(p => ({ ...p, work_days: v }))}
+                  workStartTime={job2Schedule.work_start_time}
+                  onWorkStartTimeChange={v => setJob2Schedule(p => ({ ...p, work_start_time: v }))}
+                  workEndTime={job2Schedule.work_end_time}
+                  onWorkEndTimeChange={v => setJob2Schedule(p => ({ ...p, work_end_time: v }))}
+                  locationLink={occupationLink2}
+                  onLocationLinkChange={setOccupationLink2}
+                />
 
-                {/* Work Schedule */}
-                <div className="pt-2 border-t border-border space-y-3">
-                  <div className="flex items-start justify-between">
-                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Work Schedule</label>
-                  </div>
-                  {/* Warning: show live values stored on character so user knows what they're overwriting */}
-                  {(selectedChar?.work_start_time || selectedChar?.work_end_time || selectedChar?.work_days?.length > 0) && (
-                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400/90 space-y-1">
-                      <p className="font-semibold">Current saved schedule (live source of truth):</p>
-                      <p>Days: {selectedChar.work_days?.length > 0 ? selectedChar.work_days.map(d => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d]).join(", ") : "not set"}</p>
-                      <p>Hours: {selectedChar.work_start_time || "?"} – {selectedChar.work_end_time || "?"}</p>
-                      <p className="text-amber-400/60 italic">Editing and saving here will overwrite the schedule above.</p>
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">Work Days</label>
-                    <div className="flex gap-1 flex-wrap">
-                      {[["Sun",0],["Mon",1],["Tue",2],["Wed",3],["Thu",4],["Fri",5],["Sat",6]].map(([label, day]) => (
-                        <button key={day} type="button"
-                          onClick={() => setForm(p => ({
-                            ...p,
-                            work_days: (p.work_days || []).includes(day)
-                              ? (p.work_days || []).filter(d => d !== day)
-                              : [...(p.work_days || []), day]
-                          }))}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${(form.work_days || []).includes(day) ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
-                        >{label}</button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex gap-3">
-                    <div className="flex-1 space-y-1">
-                      <label className="text-xs text-muted-foreground">Start Time</label>
-                      <Input type="time" value={form.work_start_time} onChange={e => setForm(p => ({ ...p, work_start_time: e.target.value }))} className="rounded-xl text-sm" />
-                    </div>
-                    <div className="flex-1 space-y-1">
-                      <label className="text-xs text-muted-foreground">End Time</label>
-                      <Input type="time" value={form.work_end_time} onChange={e => setForm(p => ({ ...p, work_end_time: e.target.value }))} className="rounded-xl text-sm" />
-                    </div>
-                  </div>
-                </div>
-
+                {/* Criminal Record */}
                 <div className="space-y-2 pt-2 border-t border-border">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Criminal Record</label>
