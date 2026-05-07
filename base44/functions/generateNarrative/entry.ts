@@ -823,6 +823,24 @@ ENVIRONMENT: ${envMode}
 RULE: Show emotion through physical behavior above. Do NOT state it directly. Do NOT reuse the same gesture twice in one scene.
 ════════════════════════════════════`;
 
+    // ── CANONICAL CONTEXT: inject identity/personality from shared truth service ──
+    // This ensures generateNarrative uses the same character identity as Chat/Text/Scene.
+    let narrativeCanonicalBlock = '';
+    try {
+      const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
+        characterId,
+        interactionContext: 'narrative',
+        topKMemories: 8,
+      });
+      const ctxData = ctxRes?.data || ctxRes;
+      if (ctxData?.hardFacts) {
+        narrativeCanonicalBlock = `\n${ctxData.hardFacts}\n`;
+        console.log(`[generateNarrative] ✓ Canonical hard facts injected for ${char.name || characterId}`);
+      }
+    } catch (ctxErr) {
+      console.warn(`[generateNarrative] Canonical context unavailable (non-blocking): ${ctxErr.message}`);
+    }
+
     // ── BUILD PROMPT WITH GROUNDED CONTEXT ───────────────────────────────────
     const prompt = `You are a narrator for a realistic life simulation. Your output is a single cohesive narrative passage that continues the character's living timeline. It must feel like a live scene — grounded, specific, and earned.
 
@@ -833,7 +851,7 @@ The narrative MUST reflect all of them exactly.
 Do NOT contradict or ignore any of these facts.
 ════════════════════════════════════
 Character: ${characterName}
-${narrativeAgeBlock ? narrativeAgeBlock + '\n' : ''}${locationContext}
+${narrativeAgeBlock ? narrativeAgeBlock + '\n' : ''}${narrativeCanonicalBlock}${locationContext}
 ${sleepContext}
 ${presenceContext ? presenceContext + '\n' : ''}${activityContext ? activityContext + '\n' : ''}Current time: ${timeStr} (${timeOfDayDesc})
 ════════════════════════════════════

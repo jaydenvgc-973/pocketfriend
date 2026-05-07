@@ -269,6 +269,25 @@ Deno.serve(async (req) => {
       console.log(`[generateAutomaticNarrative] Reconciliation skipped (non-blocking):`, recErr.message);
     }
 
+    // ── CANONICAL CONTEXT: inject identity/hard facts from shared truth service ──
+    // This ensures automatic narratives use the same character truth as Chat/Text/Scene.
+    // Failure is non-blocking — narratives continue with inline character data if unavailable.
+    let canonicalIdentityBlock = '';
+    try {
+      const ctxRes = await base44.asServiceRole.functions.invoke('buildCanonicalCharacterContext', {
+        characterId,
+        interactionContext: 'automatic_narrative',
+        topKMemories: 6,
+      });
+      const ctxData = ctxRes?.data || ctxRes;
+      if (ctxData?.hardFacts) {
+        canonicalIdentityBlock = `\n${ctxData.hardFacts}\n`;
+        console.log(`[generateAutomaticNarrative] ✓ Canonical hard facts injected for ${character.name}`);
+      }
+    } catch (ctxErr) {
+      console.warn(`[generateAutomaticNarrative] Canonical context unavailable (non-blocking): ${ctxErr.message}`);
+    }
+
     // ── BUILD STATE-ACCURATE PROMPT ───────────────────────────────────────
     const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     const dayName = nowET.toLocaleDateString('en-US', { weekday: 'long' });
@@ -321,7 +340,7 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
 
 TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
 
-${situationBlock}
+${canonicalIdentityBlock}${situationBlock}
 
 CHARACTER:
 - Name: ${character.name}

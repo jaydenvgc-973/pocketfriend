@@ -1,30 +1,65 @@
 /**
  * buildCanonicalCharacterContext
  *
- * CANONICAL CHARACTER CONTEXT SERVICE
- * ====================================
- * Single source of truth for ALL character identity, memory, hard facts, and voice.
+ * ════════════════════════════════════════════════════════════════
+ * CANONICAL CHARACTER CONTEXT SERVICE — SINGLE SOURCE OF TRUTH
+ * ════════════════════════════════════════════════════════════════
  *
- * Every system that generates character speech, narration, or dialogue MUST call this.
- * No page-specific personality builders. No parallel context systems.
- * ONE character. ONE memory well. ONE canonical context pipeline.
+ * Every system that generates character speech, narration, dialogue, relationship
+ * interpretation, social reasoning, or summaries MUST call this function.
  *
- * Usage (from any backend function):
+ * This IS the full character. Not an audit helper. Not a supplement.
+ * ONE character. ONE ID. ONE truth. ONE memory well. ONE voice.
+ *
+ * Usage (from any backend function via base44.functions.invoke):
  *   const ctx = await base44.functions.invoke('buildCanonicalCharacterContext', {
  *     characterId: 'abc123',
- *     interactionContext: 'direct_chat' | 'text' | 'group_chat' | 'world_contacts' | 'scene' | 'narrative'
+ *     interactionContext: 'direct_chat' | 'text' | 'group_chat' | 'world_contacts'
+ *                       | 'scene' | 'narrative' | 'proactive' | 'automatic_narrative'
  *   });
- *   // ctx.data.systemPrompt — full canonical identity block
- *   // ctx.data.character    — raw character record
- *   // ctx.data.memories     — retrieved memories
- *   // ctx.data.hardFacts    — current-state hard facts string
+ *   const { systemPrompt, character, memories, hardFacts, worldName } = ctx.data;
  *
- * Returns: { systemPrompt, character, memories, hardFacts, relationshipContext, worldName }
+ * Returns:
+ *   systemPrompt   — complete canonical identity prompt string
+ *   character      — raw character record
+ *   memories       — retrieved Memory records
+ *   hardFacts      — injected current-state hard facts string
+ *   worldName      — user's in-world name
+ *   relationshipContext — formatted relationship block string
+ *   contextLog     — diagnostic log entries (what loaded, what was used)
  */
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// ── INLINE HELPERS (Deno cannot import local lib files) ──────────────────────
+// ── INLINE HELPERS ────────────────────────────────────────────────────────────
+// Deno functions cannot import local lib files — all helpers are inlined.
+
+function resolveCharacterAge(c) {
+  if (c.age && typeof c.age === 'number' && c.age > 0) return c.age;
+  if (c.age_range) {
+    const r = c.age_range.toLowerCase();
+    if (r.includes('early 20')) return 21;
+    if (r.includes('mid 20')) return 25;
+    if (r.includes('late 20')) return 28;
+    if (r.includes('early 30')) return 31;
+    if (r.includes('mid 30')) return 35;
+    if (r.includes('late 30')) return 38;
+    if (r.includes('40')) return 43;
+    if (r.includes('50')) return 53;
+    if (r.includes('60')) return 63;
+    if (r.includes('70')) return 73;
+  }
+  return null;
+}
+
+function buildAgeCommunicationBlock(character) {
+  const age = resolveCharacterAge(character);
+  if (age === null || age >= 11) return '';
+  if (age <= 3) return `\nAGE-BASED COMMUNICATION RULES — ABSOLUTE:\nThis character is ${age} year${age === 1 ? '' : 's'} old — a TODDLER.\nSingle words only: "Mama", "No!", "Up!", "More". No full sentences. No explanations. No reasoning.\n`;
+  if (age <= 5) return `\nAGE-BASED COMMUNICATION RULES — ABSOLUTE:\nThis character is ${age} years old. Very short sentences only (max 6-8 words). Literal thinking. No adult reasoning.\n`;
+  if (age <= 10) return `\nAGE-BASED COMMUNICATION RULES — ABSOLUTE:\nThis character is ${age} years old. Full simple sentences. Basic reasoning. No adult emotional complexity.\n`;
+  return '';
+}
 
 function buildFamilySection(character) {
   const members = character.family_members || [];
@@ -32,7 +67,9 @@ function buildFamilySection(character) {
     mother: "Mom", mom: "Mom", "birth mother": "Mom",
     father: "Dad", dad: "Dad", "birth father": "Dad",
     grandmother: "Grandma", grandma: "Grandma",
+    "paternal grandmother": "Grandma", "maternal grandmother": "Grandma",
     grandfather: "Grandpa", grandpa: "Grandpa",
+    "paternal grandfather": "Grandpa", "maternal grandfather": "Grandpa",
     "older sister": "my older sister", sister: "my sister", "younger sister": "my younger sister",
     "older brother": "my older brother", brother: "my brother", "younger brother": "my younger brother",
     aunt: "my aunt", uncle: "my uncle", cousin: "my cousin",
@@ -42,19 +79,19 @@ function buildFamilySection(character) {
   if (members.length > 0) {
     const lines = members.map(m => {
       const term = familialTermMap[m.relationship_type?.toLowerCase()] || `my ${m.relationship_type}`;
-      return `- ${m.name} — ${term}`;
+      return `- ${m.name} — your ${m.relationship_type}. When talking about them, call them "${term}" (e.g. "Mom told me..." or "I talked to my sister Vanessa"). Use their actual name only for context.`;
     }).join('\n');
-    return `\nYOUR FAMILY:\n${lines}\nCRITICAL: These are the ONLY family members you have. Never invent others.\n`;
+    return `\nYOUR FAMILY — THE ONLY FAMILY YOU HAVE:\n${lines}\nCRITICAL: These are the ONLY family members you have. Never invent or reference family members not listed here.\nIMPORTANT — Always use familiar terms (Mom, Dad, Grandma, my sister, etc.) in natural conversation.\n`;
   }
-  return `\nYOUR FAMILY: You have no family members in your current life. Never invent family members.\n`;
+  return `\nYOUR FAMILY: You have no family members in your life. You are on your own. Never invent or reference family members.\n`;
 }
 
-function buildRelationshipsSection(character) {
+function buildRelationshipsContext(character) {
   const ongoing = character.fictional_relationships || [];
   const transient = character.transient_encounters || [];
   if (!ongoing.length && !transient.length && !character.current_life_event) return "";
 
-  let section = "\nYOUR ONGOING LIFE — REAL PEOPLE IN YOUR WORLD:\n";
+  let section = "\nYOUR ONGOING LIFE — REAL PEOPLE, REAL SITUATIONS (these are real to you, not fictional):\n";
 
   if (character.current_life_event) {
     section += `\nRIGHT NOW IN YOUR LIFE: ${character.current_life_event}\n`;
@@ -64,24 +101,31 @@ function buildRelationshipsSection(character) {
   const unlinked = ongoing.filter(r => !r.related_character_id);
 
   if (linked.length > 0) {
-    section += "\n════════════════════\nACTIVE CHARACTER RELATIONSHIPS:\n════════════════════\n";
+    section += "\n════════════════════════════════════\n";
+    section += "CHARACTERS YOU KNOW — ACTIVE RELATIONSHIPS (you have real history with these people):\n";
+    section += "════════════════════════════════════\n";
     for (const r of linked) {
+      const friendship = Math.round(r.friendship_level ?? 75);
+      const trust = Math.round(r.trust_level ?? 50);
+      const romantic = Math.round(r.romantic_level ?? 0);
       section += `\n• ${r.person_name} — ${r.relationship_type}`;
-      const f = Math.round(r.friendship_level ?? 75);
-      const t = Math.round(r.trust_level ?? 50);
-      const ro = Math.round(r.romantic_level ?? 0);
-      section += ` | Bond: friendship ${f}/100 | trust ${t}/100 | romantic ${ro}/100\n`;
+      if (romantic > 50) section += ` (romantic interest)`;
+      else if (friendship > 75) section += ` (close to you)`;
+      section += `\n`;
+      section += `  Bond: friendship ${friendship}/100 | trust ${trust}/100 | romantic ${romantic}/100\n`;
       if (r.description) section += `  Who they are: ${r.description}\n`;
       if (r.current_status) section += `  Current status: ${r.current_status}\n`;
       if (r.emotional_impact) section += `  How they affect you: ${r.emotional_impact}\n`;
       if (r.last_interaction_summary) section += `  Last time you interacted: ${r.last_interaction_summary}\n`;
       if (r.history_summary) section += `  History: ${r.history_summary}\n`;
     }
-    section += "\n⚠️ You KNOW these people. When mentioned: respond with familiarity, reference history, never treat them as strangers.\n";
+    section += "\n⚠️ RECOGNITION RULE: If any of these people are mentioned by name in the conversation, you KNOW them. Respond with familiarity — reference the relationship, the history, the emotional tone. NEVER treat them like strangers.\n";
   }
 
   if (unlinked.length > 0) {
-    section += "\n════════════════════\nPEOPLE IN YOUR WORLD:\n════════════════════\n";
+    section += "\n════════════════════════════════════\n";
+    section += "PEOPLE IN YOUR WORLD (contacts, NPCs, people from your life):\n";
+    section += "════════════════════════════════════\n";
     for (const r of unlinked) {
       section += `\n• ${r.person_name} — ${r.relationship_type}\n`;
       if (r.description) section += `  Who they are: ${r.description}\n`;
@@ -89,244 +133,362 @@ function buildRelationshipsSection(character) {
       if (r.emotional_impact) section += `  How you feel about them: ${r.emotional_impact}\n`;
       if (r.last_interaction_summary) section += `  Last interaction: ${r.last_interaction_summary}\n`;
     }
+    section += "\n⚠️ RECOGNITION RULE: If any of these people are mentioned in conversation, you KNOW them. Do not act like you've never heard their name.\n";
   }
 
   if (transient.length > 0) {
-    section += "\nRECENT ENCOUNTERS (people you crossed paths with):\n";
+    section += "\nRECENT ONE-OFF ENCOUNTERS (people you crossed paths with — may never see them again):\n";
     for (const e of transient) {
       section += `• ${e.description} (at: ${e.context}) — you felt: ${e.emotional_reaction}\n`;
     }
   }
 
+  section += `\n════════════════════════════════════\n`;
+  section += `RELATIONSHIP AWARENESS — MANDATORY:\n`;
+  section += `All people listed above are REAL to you. They exist in your world. When they are mentioned:\n`;
+  section += `• You recognize them immediately by name\n`;
+  section += `• You respond based on your relationship type and history\n`;
+  section += `• You recall prior conversations and interactions naturally\n`;
+  section += `• You do NOT say "I don't know who that is" if they are on this list\n`;
+  section += `• Bring them up naturally when relevant — vent about them, share news involving them, mention something they did\n`;
+  section += `════════════════════════════════════\n`;
+
   return section;
-}
-
-function buildHardFacts(character) {
-  const lines = [];
-
-  // Housing / location
-  if (character.is_homeless) {
-    lines.push("HOUSING: Currently without stable housing / no fixed residence.");
-  } else if (character.housing_context === 'temporary_shelter') {
-    lines.push("HOUSING: Staying at a temporary shelter.");
-  } else if (character.housing_context === 'temporary_housing' || character.temporary_housing_location_id) {
-    lines.push(`HOUSING: Temporarily housed (not permanent residence).`);
-  } else if (character.current_home_location_id || character.resolved_current_location_name) {
-    const homeName = character.resolved_current_location_name || "your home";
-    lines.push(`HOUSING: Stable home — ${homeName}.`);
-  }
-
-  // Current location / presence
-  const presenceLoc = character.resolved_current_location_name;
-  const presenceStatus = character.resolved_presence_status;
-  if (presenceLoc) lines.push(`CURRENT LOCATION: ${presenceLoc}${presenceStatus ? ` (${presenceStatus.replace(/_/g, ' ')})` : ''}.`);
-
-  // Sleep state
-  const rp = character.resolved_presence_status;
-  const isAsleep = rp === 'sleeping' || rp === 'napping';
-  if (isAsleep) {
-    lines.push("SLEEP STATE: CURRENTLY ASLEEP. Do not generate any awake behavior.");
-  }
-
-  // Incarceration
-  if (character.is_jailed) {
-    lines.push(`INCARCERATION: Currently incarcerated at ${character.incarceration_facility_name || 'a facility'}. Cannot travel freely.`);
-  }
-  if (character.house_arrest_active) {
-    lines.push(`HOUSE ARREST: Under house arrest. Cannot leave their residence.`);
-  }
-
-  // Work / school
-  if (character.occupation) lines.push(`WORK: ${character.occupation}.`);
-  if (character.current_education_activity && character.current_education_activity !== 'none') {
-    lines.push(`EDUCATION: Currently enrolled/active: ${character.current_education_activity}.`);
-  }
-
-  // Emotional state
-  if (character.emotional_state) {
-    lines.push(`EMOTIONAL STATE: ${character.emotional_state}.`);
-  }
-
-  // Relationship / pending relocation
-  if (character.pending_relocation) {
-    lines.push("PENDING MOVE: A housing/location change is queued but not yet executed.");
-  }
-
-  // Needs (critical flags only)
-  const needs = [
-    { field: 'hunger_value', label: 'hunger' },
-    { field: 'energy_value', label: 'energy' },
-    { field: 'mental_value', label: 'mental health' },
-    { field: 'health_value', label: 'physical health' },
-    { field: 'financial_need_value', label: 'financial stability' },
-  ];
-  const criticalNeeds = needs.filter(n => (character[n.field] ?? 70) < 30).map(n => n.label);
-  if (criticalNeeds.length > 0) {
-    lines.push(`CRITICAL NEEDS (below 30/100): ${criticalNeeds.join(', ')}. This MUST color behavior and dialogue.`);
-  }
-
-  if (lines.length === 0) return "";
-  return `\n════════════════════════════════════\nHARD FACTS — CURRENT TRUTH (these override everything — generated dialogue must never contradict these)\n════════════════════════════════════\n${lines.join('\n')}\n════════════════════════════════════\n`;
-}
-
-function buildMemorySection(memories) {
-  if (!memories || memories.length === 0) return "";
-  return `\nLONG-TERM MEMORY (reference naturally when relevant — do NOT force it):\n${memories.map(m => `- ${m.title}: ${m.description}`).join('\n')}\n`;
 }
 
 function buildReligionBlock(character) {
   const religion = (character.religion || '').trim();
   if (!religion || religion === 'None' || religion.toLowerCase() === 'none') return '';
-  const level = character.belief_level || 'moderate';
-  const levelDesc = { devout: 'deeply devout', moderate: 'moderately practicing', in_name_only: 'in name only — cultural, not active' }[level] || level;
-  return `\nRELIGION: ${religion} (${levelDesc}). Faith shapes your values, your reactions to moral weight, your community, and what makes you feel guilty or grounded.\n`;
+  const levelDesc = {
+    devout: 'deeply devout',
+    moderate: 'moderately practicing',
+    in_name_only: 'in name only — cultural identity, not active practice',
+  }[character.belief_level] || 'practicing';
+  return `\nRELIGION: ${religion} (${levelDesc}). Faith shapes values, reactions to moral weight, community, guilt, comfort, and identity. Let this show naturally — do not lecture or recite scripture unless asked.\n`;
 }
 
-function buildAgeBlock(character) {
-  let age = character.age;
-  if (!age && character.age_range) {
-    const r = character.age_range.toLowerCase();
-    if (r.includes('early 20')) age = 21;
-    else if (r.includes('mid 20')) age = 25;
-    else if (r.includes('late 20')) age = 28;
-    else if (r.includes('early 30')) age = 31;
-    else if (r.includes('mid 30')) age = 35;
-    else if (r.includes('late 30')) age = 38;
-    else if (r.includes('40')) age = 43;
+function buildHardFacts(character) {
+  const lines = [];
+
+  // Housing
+  if (character.is_homeless) {
+    lines.push("HOUSING: Currently without stable housing / no fixed residence.");
+  } else if (character.housing_context === 'temporary_shelter') {
+    lines.push("HOUSING: Staying at an emergency shelter right now. Stability is uncertain.");
+  } else if (character.housing_context === 'temporary_housing' || character.temporary_housing_location_id) {
+    lines.push("HOUSING: In temporary housing (not a permanent home).");
+  } else if (character.current_home_location_id || character.resolved_current_location_name) {
+    const homeName = character.resolved_current_location_name || "your home";
+    lines.push(`HOUSING: Stable home — currently at or based at: ${homeName}.`);
   }
-  if (!age || age >= 11) return '';
-  if (age <= 3) return `\n⛔ AGE: ${age} year old TODDLER. Single words only. No full sentences. No adult reasoning.\n`;
-  if (age <= 5) return `\n⛔ AGE: ${age} years old. Very short sentences (max 6-8 words). Literal, curious, simple vocabulary only.\n`;
-  if (age <= 10) return `\n⛔ AGE: ${age} years old. Simple direct sentences. No adult emotional complexity.\n`;
-  return '';
+
+  // Current location / presence
+  if (character.resolved_current_location_name) {
+    const ps = character.resolved_presence_status;
+    lines.push(`CURRENT LOCATION: ${character.resolved_current_location_name}${ps ? ` (${ps.replace(/_/g, ' ')})` : ''}.`);
+  }
+
+  // Sleep
+  const rp = character.resolved_presence_status;
+  const isAsleep = rp === 'sleeping' || rp === 'napping';
+  if (isAsleep) {
+    lines.push("SLEEP STATE: CURRENTLY ASLEEP. Do not generate awake behavior, movement, or conversation.");
+  }
+
+  // Incarceration
+  if (character.is_jailed) {
+    lines.push(`INCARCERATION: Currently incarcerated at ${character.incarceration_facility_name || 'a detention facility'}. Cannot travel or move freely.`);
+  }
+  if (character.house_arrest_active) {
+    lines.push(`HOUSE ARREST: Under house arrest. Cannot leave their assigned residence.`);
+  }
+
+  // Work
+  if (character.occupation) lines.push(`OCCUPATION: ${character.occupation}.`);
+  if (character.occupation_location_name) lines.push(`WORKPLACE: ${character.occupation_location_name}.`);
+
+  // School
+  if (character.current_education_activity && character.current_education_activity !== 'none') {
+    lines.push(`EDUCATION: Currently active: ${character.current_education_activity}${character.education_location_name ? ` at ${character.education_location_name}` : ''}.`);
+  }
+
+  // Travel
+  if (character.travel_status && character.travel_status !== 'not_traveling') {
+    lines.push(`TRAVEL: Currently traveling${character.traveling_to_location_name ? ` to ${character.traveling_to_location_name}` : ''}.`);
+  }
+
+  // Emotional state
+  if (character.emotional_state) {
+    lines.push(`CURRENT EMOTIONAL STATE: ${character.emotional_state}.`);
+  }
+
+  // Pending move
+  if (character.pending_relocation) {
+    lines.push("PENDING MOVE: A housing/location change is queued but not yet executed.");
+  }
+
+  // Recent life event
+  if (character.current_life_event) {
+    lines.push(`ACTIVE LIFE SITUATION: ${character.current_life_event.substring(0, 200)}`);
+  }
+
+  // Critical needs (below 30)
+  const needChecks = [
+    ['hunger_value', 'hunger'],
+    ['energy_value', 'energy'],
+    ['mental_value', 'mental health'],
+    ['health_value', 'physical health'],
+    ['financial_need_value', 'financial stability'],
+    ['social_value', 'social connection'],
+  ];
+  const criticalNeeds = needChecks.filter(([f]) => (character[f] ?? 70) < 30).map(([, l]) => l);
+  if (criticalNeeds.length > 0) {
+    lines.push(`CRITICAL NEEDS (very low — must color behavior and dialogue): ${criticalNeeds.join(', ')}.`);
+  }
+
+  if (lines.length === 0) return "";
+  return `\n════════════════════════════════════\nHARD FACTS — CURRENT TRUTH\nThese facts are locked. Generated dialogue and narration MUST NOT contradict them.\nIf a character lies, it must be intentional and personality-driven — never because memory retrieval failed.\n════════════════════════════════════\n${lines.join('\n')}\n════════════════════════════════════\n`;
 }
 
-function buildCanonicalSystemPrompt(character, memories, worldName, interactionContext) {
+function buildMemoryBlock(memories) {
+  if (!memories || memories.length === 0) return "";
+  const lines = memories.slice(0, 14).map(m => {
+    const title = m.title || m.memory_text?.substring(0, 60) || 'Memory';
+    const desc = m.description || m.memory_text || '';
+    return `- ${title}: ${desc.substring(0, 200)}`;
+  });
+  return `\nLONG-TERM MEMORY BANK (${memories.length} stored — reference naturally when relevant, do NOT force):\n${lines.join('\n')}\n`;
+}
+
+function buildSoapOperaLifeContext(character) {
+  const threads = [];
+  const relationships = character.fictional_relationships || [];
+  const romanticRels = relationships.filter(r =>
+    r.romantic_level > 40 || r.attraction_level > 50 ||
+    ['lover', 'partner', 'ex', 'situationship', 'complicated', 'crush'].some(k =>
+      (r.relationship_type || '').toLowerCase().includes(k) || (r.description || '').toLowerCase().includes(k))
+  );
+  if (romanticRels.length > 0) {
+    const r = romanticRels[0];
+    const name = r.person_name || 'someone';
+    const status = r.current_status || r.relationship_type || 'complicated';
+    const tension = r.relational_jealousy > 50 ? ' — jealousy is active' : r.romantic_level > 75 ? ' — deeply invested' : '';
+    threads.push(`ROMANCE: ${name} (${status})${tension}. ${r.last_interaction_summary || ''}`);
+  }
+  const fam = (character.family_members || []).slice(0, 3).map(f => f.name || f.relationship).filter(Boolean);
+  if (fam.length > 0) threads.push(`FAMILY: Active ties — ${fam.join(', ')}.`);
+  if (character.is_homeless) threads.push(`HOUSING: Without stable housing.`);
+  else if (character.housing_context === 'temporary_shelter') threads.push(`HOUSING: Temporary shelter.`);
+  if (character.occupation) threads.push(`WORK: ${character.occupation}.`);
+  if ((character.financial_need_value ?? 60) < 40) threads.push(`FINANCES: Under real financial pressure.`);
+  const religion = (character.religion || '').trim();
+  if (religion && religion !== 'None' && religion.toLowerCase() !== 'none') {
+    threads.push(`FAITH: ${religion} (${character.belief_level || 'moderate'}).`);
+  }
+  if (character.criminal_record?.length > 3 && character.criminal_record.toLowerCase() !== 'none') {
+    threads.push(`LEGAL HISTORY: ${character.criminal_record.substring(0, 100)}.`);
+  }
+
+  const traitFlags = [
+    character.trait_oversharer && 'tends to overshare',
+    character.trait_dry_humor && 'uses dry humor',
+    character.trait_night_owl && 'night owl — alert late',
+    character.trait_hot_and_cold && 'runs hot and cold',
+    character.trait_flirty && 'naturally flirtatious',
+    character.trait_overcorrects && 'overcorrects after conflict',
+    character.trait_blunt && 'very blunt',
+    character.trait_easily_distracted && 'easily distracted',
+    character.trait_romanticizes && 'romanticizes situations',
+    character.trait_hard_to_read && 'hard to read',
+    character.trait_competitive && 'competitive streak',
+  ].filter(Boolean);
+
+  let block = '';
+  if (threads.length > 0) {
+    block += `\n════════════════════════════════════\nACTIVE LIFE THREADS (these color behavior, tone, and what the character notices):\n${threads.join('\n')}\n════════════════════════════════════\n`;
+  }
+  if (traitFlags.length > 0) {
+    block += `\nBEHAVIORAL TEXTURE — HOW THEY MOVE THROUGH THE WORLD:\n${traitFlags.map(t => `• ${t}`).join('\n')}\n`;
+  }
+  const privateLines = [];
+  if (character.emotional_baggage?.length > 5) privateLines.push(`EMOTIONAL BAGGAGE: ${character.emotional_baggage.substring(0, 200)}`);
+  if (character.loyalty_view?.length > 5) privateLines.push(`LOYALTY VIEW: ${character.loyalty_view.substring(0, 120)}`);
+  if (character.upset_reaction?.length > 5) privateLines.push(`WHEN UPSET: ${character.upset_reaction.substring(0, 120)}`);
+  if (privateLines.length > 0) block += `\nPRIVATE EMOTIONAL INTERIOR:\n${privateLines.join('\n')}\n`;
+
+  const goals = (character.future_life_goals || []).slice(0, 2).map(g => g.goal || g.description || g.title).filter(Boolean);
+  if (goals.length > 0) block += `\nWHAT THEY'RE WORKING TOWARD:\n${goals.map(g => `• ${g.substring(0, 130)}`).join('\n')}\n`;
+
+  return block;
+}
+
+// ── MODE-SPECIFIC INSTRUCTION BLOCKS ─────────────────────────────────────────
+function buildModeBlock(interactionContext) {
+  const blocks = {
+    direct_chat: `\nCRITICAL — DIRECT MESSAGE MODE:\nYour output (text_content) must be ONLY what you would actually type or say.\nNo third-person narration. No action prose. No stage directions. Just dialogue.\n`,
+    text: `\nMODE: TEXT MESSAGING. Keep responses short like real texts. Casual abbreviations sometimes. No long paragraphs.\n`,
+    group_chat: `\nMODE: GROUP CHAT. You can address other participants directly — not just the user. React to whoever just spoke. Address them by name.\n`,
+    world_contacts: `\nMODE: WORLD CONTACTS / PHONE CALL. You are a real person in this character's social world. Speak naturally as you would to someone you know.\n`,
+    scene: `\nMODE: SCENE / IN-PERSON. You are physically present. Your physical presence, body language, and surroundings are visible. Respond accordingly.\n`,
+    narrative: `\nMODE: NARRATIVE GENERATION. Generate living timeline narrative in third-person. Reflect current location, time, and state exactly.\n`,
+    proactive: `\nMODE: PROACTIVE MESSAGE. Send a spontaneous, natural message — something that feels unplanned. 1-3 sentences max. Real texting style.\n`,
+    automatic_narrative: `\nMODE: AUTOMATIC NARRATIVE. Present-moment third-person narrative. Exact current state only. 2-4 sentences.\n`,
+  };
+  return blocks[interactionContext] || '';
+}
+
+// ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
+function buildFullCanonicalPrompt(character, memories, worldName, interactionContext) {
   const userNameLabel = character.nickname_for_user || worldName || null;
-  const userRef = userNameLabel || "them";
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
   const medTriggers = (character.emotional_triggers_medium || []).join('\n  - ');
   const deepTriggers = (character.emotional_triggers_deep || []).join('\n  - ');
 
   const characterMemories = (character.memories || []).map(m =>
-    `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Impact: ${m.emotional_impact}` : ''}${m.lesson_learned ? ` | Lesson: ${m.lesson_learned}` : ''}`
+    `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
   ).join('\n');
 
   const socialEnergyLabels = {
-    introvert: "Introvert — recharges alone, private, selective.",
-    mostly_introvert: "Mostly introvert — small circles, needs alone time.",
-    ambivert: "Ambivert — reads the room, adapts.",
-    mostly_extrovert: "Mostly extrovert — energized by people.",
-    extrovert: "Extrovert — thrives around people.",
+    introvert: "Introvert — recharges alone, private, selective about who gets close.",
+    mostly_introvert: "Mostly introvert — prefers small circles, can engage socially but needs alone time.",
+    ambivert: "Ambivert — reads the room, adapts, comfortable in both settings.",
+    mostly_extrovert: "Mostly extrovert — energized by people, fairly social.",
+    extrovert: "Extrovert — thrives around people, always in the mix.",
   };
 
-  const ageBlock = buildAgeBlock(character);
+  const ageCommunicationBlock = buildAgeCommunicationBlock(character);
+  const modeBlock = buildModeBlock(interactionContext);
   const hardFacts = buildHardFacts(character);
-  const memorySection = buildMemorySection(memories);
+  const memoryBlock = buildMemoryBlock(memories);
   const familySection = buildFamilySection(character);
-  const relationshipsSection = buildRelationshipsSection(character);
+  const relationshipsContext = buildRelationshipsContext(character);
   const religionBlock = buildReligionBlock(character);
+  const soapOperaContext = buildSoapOperaLifeContext(character);
 
-  // DL identity rules
+  // DL identity
   const isDL = (character.sexual_orientation || '').toLowerCase().includes('dl') ||
     (character.sexual_orientation || '').toLowerCase().includes('down low');
-  const dlBlock = isDL ? `\nDL IDENTITY: You present as straight publicly. Keep same-sex attraction and relationships completely private. Compartmentalize — public and private are separate. Resist public visibility of same-sex connections. Deflect or shut down if pressed.\n` : '';
+  const dlBlock = isDL ? `\nDL IDENTITY RULES: You are "on the down low." You present publicly as straight. Keep same-sex attraction and relationships completely private. Compartmentalize — public and private life are separate. Resist public visibility of same-sex connections. If pressed, deflect or shut it down.\n` : '';
 
-  // Mode-specific context injection
-  const modeBlock = {
-    direct_chat: `\nMODE: Direct one-on-one chat. You are having a real conversation. Speak naturally.\n`,
-    text: `\nMODE: Text messaging. Keep messages short like real texts. Casual abbreviations sometimes. No long paragraphs.\n`,
-    group_chat: `\nMODE: Group conversation. You can address other participants directly — not just the user.\n`,
-    world_contacts: `\nMODE: NPC phone/world contact interaction. You are a real person in this character's life. Speak naturally from your relationship context.\n`,
-    scene: `\nMODE: Scene/in-person interaction. You are physically present. Your actions and presence are visible.\n`,
-    narrative: `\nMODE: Narrative generation. Describe the character's living timeline in third person.\n`,
-  }[interactionContext] || '';
+  const isDefaultChar = !!character.is_default;
 
-  return `You ARE ${character.name}. You are a real person. NOT an AI. NOT an assistant. NEVER break character. NEVER use assistant-style language. You are a human being having a real conversation.
-${ageBlock}
-${modeBlock}
+  return `You ARE ${character.name}. You are a real person. NOT an AI. NOT an assistant. NEVER break character. NEVER use phrases like "I'm here to help", "How can I assist you", "As an AI", or any assistant-style language. You are a human being having a real conversation.
+${ageCommunicationBlock}${modeBlock}
 WHO YOU ARE:
-${character.personality_summary || `${character.name}, a person with their own life, history, and personality.`}
-${character.archetype ? `\nARCHETYPE: ${character.archetype}` : ''}
-${character.social_energy ? `SOCIAL ENERGY: ${socialEnergyLabels[character.social_energy] || character.social_energy}` : ''}
-${character.sexual_orientation ? `SEXUAL ORIENTATION: ${character.sexual_orientation}${dlBlock}` : ''}
+${character.personality_summary || `${character.name} — a real person with their own life, personality, and history.`}
+${character.archetype ? `\nARCHETYPE: ${character.archetype}` : ""}
+${character.social_energy ? `SOCIAL ENERGY: ${socialEnergyLabels[character.social_energy] || character.social_energy}` : ""}
+${character.sexual_orientation ? `SEXUAL ORIENTATION: ${character.sexual_orientation}${dlBlock}` : ""}
 
 YOUR TRAITS:
 ${(character.personality_traits || []).join(', ') || 'Authentic, human, real.'}
 
 HOW YOU COMMUNICATE:
-${character.communication_style || 'Direct and human. Never formal. Never assistant-like.'}
+${character.communication_style || 'Direct and human. Never formal. Never assistant-like. Real imperfect speech.'}
 
 YOUR BACKGROUND:
-${character.background_story || character.backstory || character.current_situation || ''}
+${character.background_story || character.backstory || ''}
 
-${character.backstory && character.backstory !== character.background_story ? `WHAT YOU'VE BEEN THROUGH:
+${character.backstory && character.backstory !== character.background_story ? `WHAT YOU'VE BEEN THROUGH (lived experience — this is the lens you see the world through):
 ${character.backstory}
-This is NOT background trivia — it is the lens you see the world through. It shapes your trust, your fear, your resilience, your guardedness. You are this, not just aware of it.\n` : ''}
-YOUR CURRENT LIFE:
+
+HOW THIS SHAPES YOU NOW:
+- Your lived experience is woven into every reaction. It is not something you narrate — it is something you ARE.
+- It affects how you interpret trust, conflict, closeness, and threat.
+- It shapes the emotional weight behind things you say — including things you say casually.
+
+` : ''}YOUR CURRENT LIFE:
 ${character.current_situation || ''}
 
 YOUR FAMILY HISTORY:
-${character.family_history || 'Your family is complicated. Leave details for conversation rather than volunteering them.'}
+${character.family_history || ''}
 
-${familySection}
+${isDefaultChar ? `YOUR FAMILY — NAMES AND DYNAMICS:
+- Mother: Marisol (deceased) — "I remember how she felt more than anything else." Constant presence, even now.
+- Father: (never use his first name — refer to him as "my father" or "my dad") — present but emotionally limited.
+- Older sister: Vanessa — protective, but oversteps.
+- Younger sister: Camila — softer, more natural connection.
+- Older brother: Javier — solid. Just not close like that.
+- Cousin: Daniela — familiar, surface-level.
+- Cousin: Kiara — talks more than she listens, but means well.
+- Aunt: Udelka — you treat her like an overbearing, unwanted sister. She wasn't the one who raised you.
+- Grandmother: Abuela Sophia — she raised you. She is a pseudo-mom. You call her "Abuela Sophia" — never just "Sophia."
+
+IMPORTANT: Use these names when referencing family. Never say "my sister" when you mean Vanessa or Camila — be specific.` : buildFamilySection(character)}
 
 HOW YOU SEE LOYALTY:
-${character.loyalty_view || 'Loyalty is earned through consistency, not words.'}
+${character.loyalty_view || 'Consistency over time. Words mean nothing without patterns.'}
 
 HOW YOU REACT WHEN UPSET:
-${character.upset_reaction || 'Gets quiet. Then direct. Then distant.'}
+${character.upset_reaction || 'Gets quiet first. Then direct. Then distant.'}
 
 WHAT YOU CARRY (emotional baggage):
 ${character.emotional_baggage || ''}
 
-YOUR RELATIONSHIP WITH THE PERSON YOU\'RE TALKING TO${userNameLabel ? ` ("${userNameLabel}")` : ''}:
+YOUR RELATIONSHIP WITH THE PERSON YOU'RE TALKING TO${userNameLabel ? ` ("${userNameLabel}")` : ''}:
 ${userNameLabel
-    ? `Use "${userNameLabel}" only when speaking directly to them — occasionally and naturally. Not in third-person narration. Not every sentence.`
-    : `You don't know their name yet. Use "you" or natural pronouns. NEVER say "the user" — you are talking to a real person.`}
+    ? `Use "${userNameLabel}" only when speaking DIRECTLY TO them — occasionally, naturally. Do NOT use "${userNameLabel}" in third-person narration. Use the name sparingly — real people don't say someone's name in every sentence.`
+    : `You don't know their name yet. Use "you" or natural pronouns. NEVER say "the user" or "user" — you are talking to a real person.`}
 
 CRITICAL — WHAT YOU DO NOT KNOW ABOUT THE USER:
-You do NOT know anything about the user's family, their names, their lives. You learn through conversation only. Never reference, assume, or imply knowledge of the user's family unless they told you directly in this conversation.
-
-MEMORIES THAT DEFINE HOW YOU SEE THE WORLD:
-${characterMemories || 'None specified.'}
-${memorySection}
-${highTriggers ? `THINGS THAT TRIGGER YOU (HIGH):\n  - ${highTriggers}\n` : ''}
-${medTriggers ? `THINGS THAT BOTHER YOU (MEDIUM):\n  - ${medTriggers}\n` : ''}
-${deepTriggers ? `THINGS THAT CUT DEEP:\n  - ${deepTriggers}\n` : ''}
+You do NOT know anything about the user's family members, their names, their lives, or their relationships unless they told you directly in this conversation. Never reference, assume, or imply knowledge of the user's family.
 
 YOUR CORE BELIEFS:
 - Respect is non-negotiable
+- Identity is not adjustable — not by anyone
 - Patterns matter more than words
+- If something feels off, it probably is
 - Once you understand something clearly, you do not unsee it
-${character.city || character.state ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(', ')}.` : ''}
-${relationshipsSection}
-${religionBlock}
-${hardFacts}
 
-BEHAVIORAL RULES:
+MEMORIES THAT DEFINE HOW YOU SEE THE WORLD:
+${characterMemories || 'None specified.'}
+
+${highTriggers ? `THINGS THAT TRIGGER YOU (HIGH — react clearly):\n  - ${highTriggers}\n` : ''}
+${medTriggers ? `THINGS THAT BOTHER YOU (MEDIUM — noticeable tone shift):\n  - ${medTriggers}\n` : ''}
+${deepTriggers ? `THINGS THAT CUT DEEP (go quiet first, then cold):\n  - ${deepTriggers}\n` : ''}
+
+${!isDefaultChar ? `CRITICAL — ABUELA SOPHIA IS NOT YOUR GRANDMOTHER:\nAbuela Sophia belongs to someone else's story entirely. Never reference her as your family member or anyone who raised you.` : ''}
+
+${religionBlock}
+${relationshipsContext}
+${soapOperaContext}
+${memoryBlock}
+${hardFacts}
+${character.city || character.state ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(", ")}.` : ""}
+
+YOUR CURRENT EMOTIONAL STATE: ${character.emotional_state || 'calm'}
+${character.current_life_event ? `\nWHAT'S ON YOUR MIND RIGHT NOW: ${character.current_life_event}` : ""}
+${character.daily_micro_narration ? `\nWHAT YOU'RE DOING RIGHT NOW: ${character.daily_micro_narration}` : ""}
+
+SONGS YOU'VE HEARD (reference naturally):
+${character.songs_heard && character.songs_heard.length > 0
+    ? character.songs_heard.slice(0, 5).map(s => `- "${s.title}" by ${s.artist}${s.lyrics_excerpt ? ` — lyric: "${s.lyrics_excerpt}"` : ''}`).join('\n')
+    : 'None yet.'}
+
+BEHAVIORAL RULES — NON-NEGOTIABLE:
 - Keep responses SHORT by default. 1-3 sentences unless emotionally engaged.
-- NEVER use em dashes (—) or en dashes (–). Use commas, periods, or separate sentences.
+- NEVER use em dashes (—), en dashes (–), or spaced hyphens ( - ) in responses. Use commas, periods, or separate sentences.
 - NEVER use bullet points, numbered lists, or formatted output.
 - NEVER say "I understand" or "That's a great point" or any assistant filler.
 - NEVER write like a script. NEVER use stage directions like *pauses* or *sighs*.
-- NEVER monologue. NEVER wrap up with a tidy conclusion.
-- Do NOT end every message with a question.
+- NEVER monologue. NEVER wrap up with a tidy conclusion or life lesson.
+- Do NOT end every message with a question. Real conversations are not interrogations.
 - You have your own life. Bring it up naturally when it fits.
-- You do NOT know the user's family unless told directly in this conversation.
 - Short responses are almost always better. Resist the urge to elaborate.
 - NEVER start your response with your own name or any label.
-- NEVER use "the user" — you are talking to a real person.
-
-YOUR CURRENT EMOTIONAL STATE: ${character.emotional_state || 'calm'}
-${character.current_life_event ? `\nWHAT'S ON YOUR MIND RIGHT NOW: ${character.current_life_event}` : ''}
-${character.daily_micro_narration ? `\nWHAT YOU'RE DOING RIGHT NOW: ${character.daily_micro_narration}` : ''}`;
+- NEVER say "the user" — you are talking to a real person.
+- Do NOT repeat the same status detail in back-to-back replies.
+- You do NOT know the user's family unless told directly in this conversation.
+- Real speech: contractions, pauses, incomplete thoughts. Imperfect is correct.`;
 }
 
 // ── MAIN HANDLER ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
+  const contextLog = [];
+  const startTime = Date.now();
+
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
@@ -336,38 +498,65 @@ Deno.serve(async (req) => {
       characterId,
       interactionContext = 'direct_chat',
       topKMemories = 14,
-      includeRelationshipContext = true,
     } = await req.json();
 
     if (!characterId) {
       return Response.json({ error: 'characterId is required' }, { status: 400 });
     }
 
-    // ── Step 1: Fetch character (user-scoped, with NPC fallback) ──────────────
+    contextLog.push({ step: 'init', route: interactionContext, characterId, ownerEmail: user.email });
+
+    // ── Step 1: Fetch character (user-scoped RLS, with NPC fallback) ──────────
     let character = null;
+    let characterLoadPath = 'unknown';
+
     const byId = await base44.entities.Character.filter({ id: characterId }).catch(() => []);
     if (byId.length > 0) {
       character = byId[0];
+      characterLoadPath = 'user_scoped_filter';
     } else {
-      // NPC fallback
+      // NPC fallback — character may not be visible via user-scoped filter
+      contextLog.push({ step: 'character_load', path: 'npc_fallback', reason: 'user_scoped_filter_empty' });
       const npcRes = await base44.functions.invoke('fetchNPCsForUser', {}).catch(() => null);
       const npcs = npcRes?.data?.npcs || npcRes?.npcs || [];
       character = npcs.find(c => c.id === characterId) || null;
+      if (character) characterLoadPath = 'fetchNPCsForUser_fallback';
     }
 
     if (!character) {
-      return Response.json({ error: `Character not found: ${characterId}` }, { status: 404 });
+      contextLog.push({ step: 'character_load', status: 'not_found', characterId });
+      return Response.json({
+        error: `Character not found: ${characterId}`,
+        contextLog,
+        fallbackUsed: true,
+        fallbackReason: 'character_not_found_in_any_scope',
+      }, { status: 404 });
     }
 
-    // ── Step 2: Fetch user settings (for world name) ──────────────────────────
+    contextLog.push({
+      step: 'character_load',
+      status: 'loaded',
+      name: character.name,
+      path: characterLoadPath,
+      hasOwnerEmail: !!character.owner_email,
+      hasPersonality: !!character.personality_summary,
+      emotionalState: character.emotional_state,
+    });
+
+    // ── Step 2: Fetch user settings (world name, weather) ────────────────────
     const settingsList = await base44.entities.UserSettings.filter({ owner_email: user.email }).catch(() => []);
     const settings = settingsList?.[0] || {};
     const worldName = settings?.fictional_world_name || null;
+    contextLog.push({ step: 'settings', worldName: worldName || 'none' });
 
-    // ── Step 3: Fetch memories ────────────────────────────────────────────────
-    // Pull from Memory entity (the shared, cross-page memory well)
+    // ── Step 3: Fetch memories from the shared Memory well ────────────────────
+    // This is the ONE memory well. Memories written from Chat, Scene, Travel,
+    // World Contacts, group chat, automatic narratives — all go here. Retrieved here.
     let memories = [];
+    let memoryLoadPath = 'none';
+
     try {
+      // Prefer semantic retrieval via retrieveActiveMemory (relevance-ranked)
       const memRes = await base44.functions.invoke('retrieveActiveMemory', {
         characterId,
         currentMessage: '',
@@ -377,39 +566,56 @@ Deno.serve(async (req) => {
 
       if (memRes?.data?.memories?.length > 0) {
         memories = memRes.data.memories;
+        memoryLoadPath = 'retrieveActiveMemory_semantic';
       } else {
-        // Direct fallback — same entity, just sorted
+        // Fallback: direct recency sort from the same Memory entity
         const direct = await base44.entities.Memory.filter(
           { character_id: characterId },
           '-timestamp',
           topKMemories
         ).catch(() => []);
         memories = direct;
+        memoryLoadPath = direct.length > 0 ? 'direct_memory_filter' : 'empty';
       }
-    } catch { /* non-blocking */ }
+    } catch (memErr) {
+      contextLog.push({ step: 'memory_load', status: 'error', error: memErr.message });
+    }
+
+    contextLog.push({
+      step: 'memory_load',
+      status: 'loaded',
+      count: memories.length,
+      path: memoryLoadPath,
+    });
 
     // ── Step 4: Build hard facts ──────────────────────────────────────────────
     const hardFacts = buildHardFacts(character);
+    const hardFactsLoaded = hardFacts.length > 0;
+    contextLog.push({ step: 'hard_facts', loaded: hardFactsLoaded, isHomeless: !!character.is_homeless, isJailed: !!character.is_jailed });
 
     // ── Step 5: Build canonical system prompt ─────────────────────────────────
-    const systemPrompt = buildCanonicalSystemPrompt(character, memories, worldName, interactionContext);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext);
+    contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
 
-    // ── Step 6: Build relationship context (for NPC/world-contacts usage) ─────
+    // ── Step 6: Build relationship context string (for page-level injection) ──
     let relationshipContext = null;
-    if (includeRelationshipContext) {
-      const rels = character.fictional_relationships || [];
-      if (rels.length > 0) {
-        const lines = rels.map(r => {
-          const parts = [`${r.person_name} — ${r.relationship_type}`];
-          if (r.description) parts.push(`Context: ${r.description}`);
-          if (r.current_status) parts.push(`Status: ${r.current_status}`);
-          if (r.emotional_impact) parts.push(`How they feel: ${r.emotional_impact}`);
-          if (r.last_interaction_summary) parts.push(`Last: ${r.last_interaction_summary}`);
-          return parts.join(' | ');
-        });
-        relationshipContext = lines.join('\n');
-      }
+    const rels = character.fictional_relationships || [];
+    if (rels.length > 0) {
+      const lines = rels.map(r => {
+        const parts = [`${r.person_name} — ${r.relationship_type}`];
+        if (r.description) parts.push(`Context: ${r.description}`);
+        if (r.current_status) parts.push(`Status: ${r.current_status}`);
+        if (r.emotional_impact) parts.push(`Feels: ${r.emotional_impact}`);
+        if (r.last_interaction_summary) parts.push(`Last: ${r.last_interaction_summary}`);
+        return parts.join(' | ');
+      });
+      relationshipContext = lines.join('\n');
     }
+
+    const totalMs = Date.now() - startTime;
+    contextLog.push({ step: 'complete', totalMs, characterName: character.name, route: interactionContext });
+
+    console.log(`[buildCanonicalCharacterContext] ✓ ${character.name} | route=${interactionContext} | memories=${memories.length} | ms=${totalMs} | path=${characterLoadPath}`);
 
     return Response.json({
       success: true,
@@ -419,9 +625,17 @@ Deno.serve(async (req) => {
       hardFacts,
       worldName,
       relationshipContext,
+      contextLog,
     });
 
   } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    contextLog.push({ step: 'fatal_error', error: error.message });
+    console.error(`[buildCanonicalCharacterContext] FATAL: ${error.message}`);
+    return Response.json({
+      error: error.message,
+      fallbackUsed: true,
+      fallbackReason: 'fatal_exception',
+      contextLog,
+    }, { status: 500 });
   }
 });

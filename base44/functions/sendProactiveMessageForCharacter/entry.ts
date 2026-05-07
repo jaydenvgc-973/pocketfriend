@@ -149,19 +149,43 @@ Deno.serve(async (req) => {
     else if (hour >= 18 && hour < 20) timeContext = 'evening';
     else if (hour >= 21 && hour < 23) timeContext = 'late night (good night message)';
 
-    const systemPrompt = `You are ${char.name}. Generate a natural, spontaneous proactive message to the user right now (1-3 sentences).
-${recentContext ? `Recent conversation context: "${recentContext}". Follow up on what you were discussing or reference it naturally.` : 'Start a new topic about what you are doing or feeling.'}
+    // ── CANONICAL CONTEXT: pull from shared truth service ─────────────────
+    let canonicalSystemPrompt = null;
+    try {
+      const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
+        characterId: char.id,
+        interactionContext: 'proactive',
+        topKMemories: 8,
+      });
+      const ctxData = ctxRes?.data || ctxRes;
+      if (ctxData?.systemPrompt) canonicalSystemPrompt = ctxData.systemPrompt;
+    } catch { /* non-blocking — fall through */ }
+
+    // Fallback only if canonical context service fails — log visibly
+    if (!canonicalSystemPrompt) {
+      console.warn(`[sendProactiveMessageForCharacter] FALLBACK: canonical context unavailable for ${char.name} (${char.id}) — using shallow prompt. This is degraded behavior.`);
+      canonicalSystemPrompt = `You are ${char.name}. ${char.personality_summary || 'A real person with your own life and personality.'}`;
+    }
+
+    const proactivePrompt = `${canonicalSystemPrompt}
+
+━━━━━━━━━━━━━━━━━━━━
+PROACTIVE MESSAGE TASK
+━━━━━━━━━━━━━━━━━━━━
+Generate a natural, spontaneous proactive message RIGHT NOW (1-3 sentences max).
+${recentContext ? `Recent conversation context: "${recentContext}". Follow up on what you were discussing or reference it naturally.` : 'Start a new topic about what you are doing or feeling right now.'}
 Time context: ${timeContext}
-Personality: ${char.personality_summary || 'friendly and thoughtful'}
-Friendship level: ${relationshipLevel}/100 - adjust tone accordingly (higher = more casual/frequent, lower = more respectful).
-WRITING STYLE — NON-NEGOTIABLE:
-- Write like a real person texting. No theatrical or literary language.
-- NEVER use em dashes (—), en dashes (–), or spaced hyphens ( - ). Use commas or periods instead.
-- Keep it short, direct, and human.
-Be authentic, not overly cheerful.`;
+Friendship level with user: ${relationshipLevel}/100 — adjust tone accordingly (higher = more casual, lower = more respectful).
+
+RULES:
+- Write like a real person texting. Short. Human. Imperfect.
+- NEVER use em dashes (—), en dashes (–), or spaced hyphens ( - ).
+- Be authentic. Not overly cheerful. Not assistant-like.
+- Do NOT start with your own name or a label.
+- Max 2-3 sentences. Often 1 is better.`;
 
     const messageContent = await base44.integrations.Core.InvokeLLM({
-      prompt: systemPrompt,
+      prompt: proactivePrompt,
     });
 
     // Find or create conversation — owner_email required on both filter and create

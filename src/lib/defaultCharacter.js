@@ -310,6 +310,21 @@ Any adult-level emotional complexity is a generation failure.`;
   return '';
 }
 
+/**
+ * buildSystemPrompt — FRONTEND CANONICAL IDENTITY BUILDER
+ *
+ * This is the frontend equivalent of buildCanonicalCharacterContext (backend).
+ * Both must stay in sync. Any identity logic added here must be mirrored in
+ * buildCanonicalCharacterContext.js and vice versa.
+ *
+ * DO NOT create additional full-prompt builders. This and buildCanonicalCharacterContext
+ * are the only two canonical sources (frontend vs backend). All other routes must
+ * call one of these — never build a parallel character identity inline.
+ *
+ * Frontend: Chat, Text page → use this function directly.
+ * Backend: generateNarrative, generateGroupChatResponse, generateAutomaticNarrative,
+ *          sendProactiveMessageForCharacter, WorldContactsPopup → call buildCanonicalCharacterContext.
+ */
 export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null, options = {}, memories = []) {
   const { allowNarration = false, outfitHint = null } = options; // outfitHint: optional string from resolveOutfitContext
   // World name is the authoritative in-world identity. NEVER fall back to "the user" if a world name exists.
