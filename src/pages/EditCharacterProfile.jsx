@@ -367,10 +367,6 @@ export default function EditCharacterProfile() {
     await Promise.all((form.char_relationships || []).map(async (rel) => {
       if (!rel.related_character_id) return;
 
-      // Skip if the related character no longer exists in our loaded list (deleted/merged)
-      const relatedCharExists = characters.some(c => c.id === rel.related_character_id);
-      if (!relatedCharExists) return;
-
       const relTypeKey = Object.keys(RELATIONSHIP_TYPES).find(k => RELATIONSHIP_TYPES[k].label === rel.relationship_type) || rel.relationship_type;
 
       const relationshipEntry = {
@@ -385,11 +381,12 @@ export default function EditCharacterProfile() {
         chosen_family_level: rel.chosen_family_level ?? 0,
       };
 
+      // Use .catch so a single stale/deleted relationship reference doesn't abort the entire save
       await base44.functions.invoke("syncRelatedCharacterRelationship", {
         characterId: selectedChar.id,
         relatedCharacterId: rel.related_character_id,
         relationshipEntry,
-      });
+      }).catch(() => {});
     }));
 
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
