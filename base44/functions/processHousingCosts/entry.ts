@@ -30,8 +30,9 @@ Deno.serve(async (req) => {
       if (!financials[0]) continue;
       const financial = financials[0];
 
-      // Get home location
-      if (!char.occupation_location_id || char.occupation_location_id === char.occupation_location_id) {
+      // Get home location — only process if a real rent_or_housing_cost is configured.
+      // Never fabricate rent for characters without a formal mapped home.
+      {
         const homeLocations = await base44.entities.LocationReference.filter({
           resident_character_ids: char.id
         });
@@ -39,7 +40,11 @@ Deno.serve(async (req) => {
         if (homeLocations.length === 0) continue;
         const home = homeLocations[0];
 
-        let rentCost = home.rent_or_housing_cost || 1200;
+        // Only charge rent if the location has an explicit configured cost.
+        // NEVER default to a fabricated $1200 or any other arbitrary amount.
+        if (!home.rent_or_housing_cost || home.rent_or_housing_cost <= 0) continue;
+
+        let rentCost = home.rent_or_housing_cost;
         let utilityCost = 0;
 
         // Calculate utilities

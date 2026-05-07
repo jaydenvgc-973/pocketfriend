@@ -208,18 +208,19 @@ function computeResolvedLocation(character, locationMap, etTime) {
         resolved_presence_status: 'sleeping',
         resolved_source_reason: 'adaptive_sleep_location_lock',
         resolved_zone: null,
-        home_resolution_failed: !sleepHomeLoc
+        home_resolution_failed: false
       };
     }
-    // No valid home — unresolved sleep state. Never rabbit_hole while sleeping.
+    // No valid mapped home — this is a VALID state (rabbit hole, shelter, transitional housing, etc.)
+    // Do NOT mark as error. Character is sleeping wherever they are.
     return {
-      resolved_current_location_id: null,
-      resolved_current_location_name: 'Unresolved',
-      resolved_location_type: 'sleep_unresolved',
+      resolved_current_location_id: character.resolved_current_location_id || null,
+      resolved_current_location_name: character.resolved_current_location_name || 'Off-screen',
+      resolved_location_type: character.resolved_location_type || 'rabbit_hole',
       resolved_presence_status: 'sleeping',
-      resolved_source_reason: 'no_valid_sleep_location',
+      resolved_source_reason: 'sleeping_no_mapped_home',
       resolved_zone: null,
-      home_resolution_failed: true
+      home_resolution_failed: false
     };
   }
 
@@ -413,15 +414,18 @@ function computeResolvedLocation(character, locationMap, etTime) {
     };
   }
 
-  // LAYER 8: No home found — active_created_character must never use rabbit_hole
+  // LAYER 8: No mapped home found — this is a VALID state.
+  // Characters may have rabbit hole, implied, transitional, or no formal home.
+  // Preserve whatever resolved location they currently have, or mark as off-screen.
+  // NEVER treat this as an error.
   return {
-    resolved_current_location_id: null,
-    resolved_current_location_name: 'Unresolved',
-    resolved_location_type: 'location_unresolved',
-    resolved_presence_status: 'location_unresolved',
-    resolved_source_reason: 'no_valid_home_or_temporary_location',
+    resolved_current_location_id: character.resolved_current_location_id || null,
+    resolved_current_location_name: character.resolved_current_location_name || 'Off-screen',
+    resolved_location_type: character.resolved_location_type || 'rabbit_hole',
+    resolved_presence_status: character.resolved_presence_status || 'away',
+    resolved_source_reason: 'no_mapped_home_valid_state',
     resolved_zone: null,
-    home_resolution_failed: true
+    home_resolution_failed: false
   };
 }
 

@@ -90,77 +90,28 @@ Deno.serve(async (req) => {
       }
 
       // ─────────────────────────────────────────────────────────────
-      // STEP 3: CHECK ELIGIBILITY CONDITIONS
+      // STEP 3: DESIGN RULE — no mandatory housing enforcement
+      // A character with no mapped home is a VALID state.
+      // This function now only REPORTS housing status; it does NOT
+      // auto-assign temporary housing to characters without a home.
+      // Housing assignment must be user-initiated or explicitly configured.
       // ─────────────────────────────────────────────────────────────
 
-      const isEligible =
-        housing_location_id === null &&
-        may_assign_temporary_housing === true &&
-        home_resolution_failed === false &&
-        character.is_temporarily_housed !== true;
-
-      if (!isEligible) {
+      if (may_assign_temporary_housing) {
+        // Valid: character has no mapped home. This is intentional and supported.
+        // Log for observability but do NOT auto-assign or treat as error.
         report.skipped++;
         report.details.push({
           character_id: character.id,
           character_name: character.name,
-          reason: 'not_eligible',
-          housing_location_id,
-          home_resolution_failed,
-          may_assign_temporary_housing,
-          already_temporarily_housed: character.is_temporarily_housed === true,
+          reason: 'no_mapped_home_valid_state',
+          note: 'Character may have rabbit hole, implied, or transitional housing. No action taken.',
+          housing_location_id: null,
         });
         continue;
       }
 
       report.eligible++;
-
-      // ─────────────────────────────────────────────────────────────
-      // STEP 4: INVOKE PHASE 3C
-      // ─────────────────────────────────────────────────────────────
-
-      try {
-        const result = await base44.functions.invoke('assignTemporaryHousing', {
-          character_id: character.id,
-          owner_email,
-        });
-
-        if (result?.data?.success === true) {
-          report.assigned++;
-          report.details.push({
-            character_id: character.id,
-            character_name: character.name,
-            reason: 'assigned',
-            type: result.data.type,
-            location_id: result.data.location_id,
-            location_name: result.data.location_name,
-            charged: result.data.charged,
-          });
-        } else if (result?.data?.skipped === true) {
-          report.skipped++;
-          report.details.push({
-            character_id: character.id,
-            character_name: character.name,
-            reason: result.data.reason || 'skipped_by_phase_3c',
-          });
-        } else {
-          report.failed++;
-          report.details.push({
-            character_id: character.id,
-            character_name: character.name,
-            reason: 'assignment_failed',
-            error: result?.data?.reason || 'unknown_error',
-          });
-        }
-      } catch (error) {
-        report.failed++;
-        report.details.push({
-          character_id: character.id,
-          character_name: character.name,
-          reason: 'invocation_error',
-          error: error.message,
-        });
-      }
     }
 
     // ─────────────────────────────────────────────────────────────
