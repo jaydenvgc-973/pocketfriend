@@ -70,12 +70,10 @@ Deno.serve(async (req) => {
           // SCENARIO 4: Found home via resident scan
           housing_location_id = homeLocs[0].id;
         } else {
-          // SCENARIOS 5-7: True null home — check temporary housing eligibility
-          const balance = financial.current_balance ?? 0;
-          if (balance >= 150 || balance < 150) {
-            // Truly homeless — eligible for temporary housing
-            may_assign_temporary_housing = true;
-          }
+          // SCENARIOS 5-7: True null home — eligible for temporary housing assignment.
+          // This function must only be invoked explicitly (user-initiated or narrative-triggered).
+          // It is NOT auto-invoked for every character without a home — that is a valid state.
+          may_assign_temporary_housing = true;
         }
       }
     }

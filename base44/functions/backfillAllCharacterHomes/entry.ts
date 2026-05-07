@@ -22,93 +22,43 @@ Deno.serve(async (req) => {
     );
     results.totalCharacters = allChars.length;
 
+    // DESIGN RULE: Characters are NOT required to have a formal mapped Home Location.
+    // This function is now DIAGNOSTIC ONLY — it reports housing status without creating anything.
+    // Auto-creating homes and fabricating $1,200 rent for all characters was false enforcement.
+    // Housing assignment must be user-initiated, not automated.
+
+    const withHome = [];
+    const withoutHome = [];
+
     for (const char of allChars) {
-      try {
-        // Check if character already has a financial record (home)
-        const existingFinancial = await base44.asServiceRole.entities.CharacterFinancial.filter({
-          character_id: char.id,
+      const hasHome = !!(char.current_home_location_id || char.home_location_id);
+      const existingFinancial = await base44.asServiceRole.entities.CharacterFinancial.filter({
+        character_id: char.id,
+      });
+      const hasFinancial = existingFinancial.length > 0;
+
+      if (hasHome || hasFinancial) {
+        results.skipped++;
+        withHome.push({ id: char.id, name: char.name, hasHome, hasFinancial });
+      } else {
+        withoutHome.push({
+          id: char.id,
+          name: char.name,
+          note: 'No mapped home — valid state. No action taken.',
         });
-
-        if (existingFinancial.length > 0) {
-          results.skipped++;
-          continue;
-        }
-
-        // Create per-character generic home
-        const homeLocation = await base44.asServiceRole.entities.LocationReference.create({
-          name: `Home - ${char.name}`,
-          location_type: 'global',
-          category: 'home',
-          description: `Residential home for ${char.name}`,
-          is_default_generic: true,
-          generic_type: 'apartment',
-          resident_character_ids: [char.id],
-          resident_character_names: [char.name],
-          zones: [
-            { zone_name: 'Living Room', image_urls: [] },
-            { zone_name: 'Bedroom', image_urls: [] },
-            { zone_name: 'Kitchen', image_urls: [] },
-            { zone_name: 'Bathroom', image_urls: [] },
-          ],
-          rent_or_housing_cost: 1200,
-          utility_costs: {
-            electricity: 80,
-            water: 40,
-            gas: 50,
-            internet: 60,
-            other: 0,
-          },
-        });
-
-        // Create financial record
-        const financial = await base44.asServiceRole.entities.CharacterFinancial.create({
-          character_id: char.id,
-          character_name: char.name,
-          home_location_id: homeLocation.id,
-          home_location_name: homeLocation.name,
-          is_homeless: false,
-          total_income: 0,
-          total_expenses: 0,
-          current_balance: 0,
-          income_sources: [],
-          expense_sources: [
-            {
-              location_id: homeLocation.id,
-              location_name: homeLocation.name,
-              expense_type: 'rent',
-              total_paid: 0,
-              monthly_cost: 1200,
-              last_payment_date: null,
-            },
-            {
-              location_id: homeLocation.id,
-              location_name: homeLocation.name,
-              expense_type: 'utilities',
-              total_paid: 0,
-              monthly_cost: 230,
-              last_payment_date: null,
-            },
-          ],
-          last_updated: new Date().toISOString(),
-        });
-
-        results.homesCreated++;
-        results.financialRecordsCreated++;
-
-        console.log(`[BACKFILL] Created home for ${char.name}`);
-      } catch (err) {
-        results.errors.push({
-          characterId: char.id,
-          characterName: char.name,
-          error: err.message,
-        });
-        console.error(`[BACKFILL] Error for ${char.name}:`, err.message);
       }
     }
 
     return Response.json({
       success: true,
-      results,
+      mode: 'diagnostic_only',
+      note: 'This function no longer auto-creates homes or financial records. No home = valid state.',
+      results: {
+        ...results,
+        withHome: withHome.length,
+        withoutHome: withoutHome.length,
+        withoutHomeDetails: withoutHome,
+      },
     });
   } catch (error) {
     console.error('[backfillAllCharacterHomes]', error);
