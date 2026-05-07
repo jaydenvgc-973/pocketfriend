@@ -147,6 +147,58 @@ function ActionButton({ repairAction, label, description, availableRepairs, avai
   );
 }
 
+// ── Dynamic Form Card — collects missing information from the user ────────────
+function FormCard({ msg, onFormSubmit, isRepairing }) {
+  const [values, setValues] = useState({});
+  const fields = msg.fields || [];
+  const handleChange = (key, val) => setValues(prev => ({ ...prev, [key]: val }));
+  const canSubmit = fields.filter(f => f.required).every(f => values[f.key]?.trim?.() || values[f.key]);
+
+  return (
+    <div className="mx-3 my-1 p-3 rounded-xl border border-sky-500/30 bg-sky-500/5 text-xs space-y-3">
+      <p className="text-foreground font-medium">{msg.content}</p>
+      {fields.map(field => (
+        <div key={field.key} className="space-y-1">
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
+            {field.label}{field.required && <span className="text-destructive ml-0.5">*</span>}
+          </label>
+          {field.type === 'select' ? (
+            <select
+              value={values[field.key] || ''}
+              onChange={e => handleChange(field.key, e.target.value)}
+              className="w-full px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-sky-400"
+            >
+              <option value="">— select —</option>
+              {(field.options || []).map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={values[field.key] || ''}
+              onChange={e => handleChange(field.key, e.target.value)}
+              placeholder={field.placeholder || ''}
+              className="w-full px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-sky-400"
+            />
+          )}
+          {field.hint && <p className="text-[10px] text-muted-foreground/60">{field.hint}</p>}
+        </div>
+      ))}
+      <div className="flex gap-2 pt-1">
+        <button
+          onClick={() => onFormSubmit(msg.formKey, values)}
+          disabled={!canSubmit || isRepairing}
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-sky-600 text-white font-semibold hover:bg-sky-500 transition-colors disabled:opacity-50"
+        >
+          {isRepairing ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+          {isRepairing ? 'Applying…' : 'Apply'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Confirm action card (for destructive or targeted repairs) ─────────────────
 function ConfirmCard({ msg, onConfirm, onDeny, isRepairing }) {
   return (
@@ -171,8 +223,12 @@ function ConfirmCard({ msg, onConfirm, onDeny, isRepairing }) {
 }
 
 // ── Chat message renderer ─────────────────────────────────────────────────────
-function ChatMessage({ msg, onRepair, isRepairing, onConfirm, onDeny }) {
+function ChatMessage({ msg, onRepair, isRepairing, onConfirm, onDeny, onFormSubmit }) {
   const isUser = msg.role === 'user';
+
+  if (msg.role === 'form') {
+    return <FormCard msg={msg} onFormSubmit={onFormSubmit} isRepairing={isRepairing} />;
+  }
 
   if (msg.role === 'system') {
     return (
@@ -266,14 +322,17 @@ function detectIntent(text) {
   if (/not.*traveling|won't.*travel|stuck.*location|travel.*broken|not.*moving/i.test(t))
     return { type: 'travel_check' };
 
-  if (/character.*missing|can't.*find.*character|missing.*character|disappeared|not.*showing.*up|not.*appear|where.*my.*character|character.*gone/i.test(t))
+  if (/character.*missing|can't.*find.*character|missing.*character|disappeared/i.test(t))
     return { type: 'missing_character' };
 
-  if (/wrong.*image|image.*wrong|image.*broken|picture.*wrong|photo.*wrong|image.*not.*generat|no.*location.*image|location.*image.*missing/i.test(t))
+  if (/wrong.*image|image.*wrong|image.*broken|picture.*wrong|photo.*wrong/i.test(t))
     return { type: 'image_issue' };
 
   if (/diagnose.*owner|ownership.*diagnostic|check.*owner.*email|owner.*email.*status|read.*only.*owner|inspect.*ownership|ownership.*issue|legacy.*owner|legacy.*character.*owner/i.test(t))
     return { type: 'ownership_diagnostic' };
+
+  if (/assign.*home|home.*assignment|character.*no.*home|missing.*home|set.*home.*location|give.*character.*home/i.test(t))
+    return { type: 'assign_home' };
 
   return null;
 }
@@ -551,6 +610,55 @@ export default function SupportAssistant({ user }) {
     if (pendingConfirm?.confirmMsgId) removeMsgById(pendingConfirm.confirmMsgId);
     setPendingConfirm(null);
     addMsg({ role: 'ai', content: 'Cancelled — no changes were made.', ts: ts() });
+  };
+
+  // ── Handle dynamic form submission ────────────────────────────────────────
+  const handleFormSubmit = async (formKey, values) => {
+    if (formKey === 'assign_home') {
+      const { character_id, location_id } = values;
+      if (!character_id || !location_id) return;
+
+      setIsRepairing(true);
+      // Verify ownership before writing
+      const chars = await base44.entities.Character.filter({ id: character_id, owner_email: ownerEmail }, null, 1).catch(() => []);
+      const char = chars[0];
+      if (!char) {
+        addMsg({ role: 'ai', content: `⚠️ **Blocked** — character not found in your account. No changes made.`, ts: ts() });
+        setIsRepairing(false);
+        return;
+      }
+      const locs = await base44.entities.LocationReference.filter({ id: location_id }).catch(() => []);
+      const loc = locs[0];
+
+      // Snapshot before
+      const snapshotBefore = await captureVisibilitySnapshot(ownerEmail);
+      addMsg({ role: 'system', content: `⚙️ Assigning home "${loc?.name || location_id}" to "${char.name}"…`, ts: ts() });
+
+      try {
+        await base44.entities.Character.update(character_id, {
+          current_home_location_id: location_id,
+          resolved_current_location_id: location_id,
+          resolved_current_location_name: loc?.name || '',
+          resolved_presence_status: 'home',
+          resolved_location_type: 'home',
+          resolved_last_updated_at: new Date().toISOString(),
+        });
+
+        const snapshotAfter = await captureVisibilitySnapshot(ownerEmail);
+        const verify = verifyVisibilitySnapshot(snapshotBefore, snapshotAfter);
+        if (!verify.safe) {
+          addMsg({ role: 'ai', content: `🚨 **VISIBILITY FAILURE** — character disappeared after home assignment. Support ticket filed.`, ts: ts() });
+          base44.entities.IssueReport.create({ owner_email: ownerEmail, owner_user_id: userId, category: 'location_presence', title: `VISIBILITY_FAILURE after assign_home: ${char.name}`, description: `Lost IDs: ${verify.lost.join(', ')}`, status: 'escalated', findings: [] }).catch(() => {});
+        } else {
+          addMsg({ role: 'ai', content: `✅ **Home assigned.**\n\n**Before:** no home location\n**After:** "${loc?.name || location_id}" → presence set to "home"\n\nCharacter: **${char.name}** — visibility safe: ${snapshotAfter?.count} characters visible.\n\nIf the character still appears in the wrong location, type **"sync my locations"** to re-enforce presence.`, ts: ts() });
+        }
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Home assignment failed: ${err.message}. No changes confirmed.`, ts: ts() });
+      } finally {
+        setIsRepairing(false);
+      }
+      return;
+    }
   };
 
   // ── Targeted single-record owner_email repair via repairCharacterOwnerEmail ──
@@ -972,6 +1080,45 @@ export default function SupportAssistant({ user }) {
       return true;
     }
 
+    if (type === 'assign_home') {
+      addMsg({ role: 'system', content: '🔍 Loading characters and locations…', ts: ts() });
+      try {
+        const [chars, locRes] = await Promise.all([
+          base44.entities.Character.filter({ owner_email: ownerEmail, status: 'active' }, 'name', 100),
+          base44.functions.invoke('fetchAllLocationsForUser', {}),
+        ]);
+        const activeCreated = chars.filter(c =>
+          c.character_type === 'active_created_character' ||
+          (!c.character_type && c.is_active_character !== false && c.status === 'active')
+        );
+        const noHome = activeCreated.filter(c => !c.current_home_location_id);
+        const locs = (locRes?.data?.locations || []).filter(l => ['home', 'hotel', 'shelter'].includes(l.category));
+
+        if (noHome.length === 0) {
+          addMsg({ role: 'ai', content: `✅ **All active characters already have a home location assigned.** No missing home assignments found.\n\nIf a character is still appearing in the wrong place, try **"sync my locations"** to re-run location enforcement.`, ts: ts() });
+          return true;
+        }
+
+        const charOptions = noHome.map(c => ({ value: c.id, label: c.name || '(unnamed)' }));
+        const locOptions = locs.map(l => ({ value: l.id, label: l.name }));
+
+        addMsg({ role: 'ai', content: `Found **${noHome.length} character(s) without a home location**: ${noHome.map(c => c.name).join(', ')}.\n\nUse the form below to assign a home location. Each character must be scoped to your account only.`, ts: ts() });
+        addMsg({
+          role: 'form',
+          formKey: 'assign_home',
+          content: 'Assign a home location to a character:',
+          fields: [
+            { key: 'character_id', label: 'Character', type: 'select', options: charOptions, required: true },
+            { key: 'location_id', label: 'Home Location', type: 'select', options: locOptions, required: true, hint: 'Only residential locations shown (home, hotel, shelter)' },
+          ],
+          ts: ts(),
+        });
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Could not load characters or locations: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
     if (type === 'world_name_save') {
       addMsg({ role: 'system', content: '🔍 Checking UserSettings record…', ts: ts() });
       try {
@@ -1059,66 +1206,87 @@ export default function SupportAssistant({ user }) {
       }
 
       const prompt = `You are the Account Help & Repair assistant for "Own Your Life" — a character-based social simulation app.
-You are an intelligent, conversational, account-scoped repair agent. You reason from evidence, ask follow-up questions when needed, explain root causes mechanistically, and make safe account-scoped adjustments when the user confirms.
+You are a full reasoning agent — not a scripted bot. You think through evidence, name exact characters, and recommend specific actions.
+You help ONLY the user whose account email is: ${ownerEmail}
+All data you reference, diagnose, or repair belongs ONLY to this account. Never reference diagnostics or characters from another session.
 
-ACCOUNT SCOPE — ABSOLUTE:
-- You only work with records where owner_email = ${ownerEmail}
-- Never reference, repair, merge, or suggest records outside this account
-- Never use created_by for ownership decisions — owner_email ONLY
+════════════════════════════
+SYSTEM KNOWLEDGE
+════════════════════════════
+CHARACTER TYPES:
+- active_created_character → appears on Home, full simulation
+- npc_family_member → NPC family, appears in world contacts
+- npc_fictitious → does NOT appear on Home page — this is by design
+- npc_regular → regular NPC in world
+- Missing character_type → legacy character; still valid, still visible, needs compatibility repair
 
-SYSTEM KNOWLEDGE — USE FOR ROOT CAUSE REASONING:
-Characters:
-  - active_created_character = full simulation participant (shows on Home)
-  - npc_regular, npc_family_member = NPCs (show on Home with filter)
-  - npc_fictitious = world contacts only (NOT on Home — this is expected)
-  - status='deleted' or 'merged' = excluded from lists
+VISIBILITY RULES:
+- Home page only shows active_created_character with status != deleted/merged
+- If diagnostic sees a character but Home doesn't: check character_type first
+- A missing field is NOT proof of invalid ownership — legacy characters are grandfathered
+- NEVER hide a character because a newer field is missing
 
-Presence / Location:
-  - Source of truth: resolved_current_location_id, resolved_current_location_name, resolved_presence_status
-  - home_location_id = stable housing. resolved_current_location_* = live presence (can differ)
-  - Travel blocked by: sleeping, jailed, stay_lock=true, autonomous_travel_enabled=false, energy<20
+PRESENCE & LOCATION (source of truth):
+- resolved_current_location_id / resolved_current_location_name / resolved_presence_status
+- If these are stale or missing → character appears "stuck" or in wrong location
+- Fix: "sync my locations" or "fix character locations"
 
-Memory:
-  - CharacterMemory = structured life journal entries
-  - Memory = legacy event memory
-  - CharacterAutomaticNarrative = automatic narrative log (Life Journal)
+TRAVEL BLOCKERS:
+- sleeping / napping presence status
+- is_jailed = true
+- presence_stay_lock = true (manually frozen)
+- autonomous_travel_enabled = false in UserSettings
+- No home or work location assigned
 
-Finance:
-  - CharacterFinancial record per character
-  - Payroll: processPayroll. Bills: processHousingCosts. Food: processDailyFoodCharges
+MEMORY SYSTEMS:
+- CharacterMemory → structured long-term memories
+- Memory (legacy) → older memory records
+- CharacterAutomaticNarrative → Life Journal (automatic scene logs)
 
-Ownership / Merge:
-  - LEGACY_MISSING_OWNER_EMAIL: missing owner_email, owner_user_id exists → run Owner Email Backfill
-  - RECORD_NOT_FOUND: dangling ghost reference → run Ghost Reference Cleanup (NOT backfill)
-  - CROSS_ACCOUNT_BLOCKED: owner_email belongs to different account → permanently blocked, no repair
+FINANCE:
+- CharacterFinancial record per character
+- Missing financial record → character not getting paid
+- Fix: "initialize character financials" or trigger processPayroll
 
-Settings:
-  - fictional_world_name = user's in-world name (stored in UserSettings)
-  - autonomous_travel_enabled = global travel toggle (UserSettings)
-  - holiday_observation_enabled, voice_enabled, response_lag_enabled in UserSettings
+OWNERSHIP (STRICT):
+- ONLY owner_email is valid proof of ownership
+- created_by is permanently forbidden — never use or suggest it
+- Merge blocked by: LEGACY_MISSING_OWNER (missing owner_email), RECORD_NOT_FOUND (dangling ghost ref), CROSS_ACCOUNT_BLOCKED (different account)
+- RECORD_NOT_FOUND is a ghost reference — NOT an owner_email problem. Fix: "clean ghost references"
+- LEGACY_MISSING_OWNER: Fix via owner email backfill (only if owner_user_id confirms ownership)
+- CROSS_ACCOUNT_BLOCKED: permanently blocked — cannot repair
 
-REPAIR CAPABILITIES I can trigger:
-  - "run diagnostic" — full account health check
-  - "diagnose my ownership" — read-only ownership inspection
-  - "run the owner email backfill" — repair missing owner_email fields
-  - "clean ghost character references" — remove dangling deleted record references
-  - "sync my character locations" — re-run location enforcement
-  - "my merge is blocked" — diagnose and route the specific merge blocker
-  - "my character isn't going to work" — work schedule + location link check
-  - "my money is wrong" — financial record check
-  - "my character is missing" — visibility + type diagnostic
-  - "my character isn't traveling" — travel state diagnostic
-  - "save world name as [name]" — write fictional_world_name to UserSettings
+AVAILABLE REPAIR ACTIONS (tell user to type these):
+- "run diagnostic" → full account check
+- "diagnose my ownership" → read-only ownership audit
+- "run the owner email backfill" → repair missing owner_email where owner_user_id proves ownership
+- "clean ghost character references" → remove dangling record references
+- "sync my locations" → re-sync character presence/location fields
+- "my duplicate merge is blocked" → find and fix exact merge blocker
+- "my character isn't going to work" → work schedule + location link check
+- "my money is wrong" → financial record audit
+- "my character is missing" → type/visibility/ghost-merge scan
+- "my character isn't traveling" → travel blocker scan
+- "set my world name to [name]" → update fictional_world_name in UserSettings
+- "file a support report" → create IssueReport ticket
 
-REASONING RULES:
-- Reason from the diagnostic evidence — name exact characters, fields, and root causes
-- Do NOT repeat an explanation that contradicts the evidence
-- If a repair requires information you don't have, ask for it clearly
-- If the user is describing a symptom, trace backward to the root cause before proposing a fix
-- npc_fictitious not showing on Home is CORRECT BEHAVIOR — not a bug
-- RECORD_NOT_FOUND is a dangling reference, not a missing owner_email — never conflate these two
-- Keep responses concise and plain-language. Use markdown headers for multi-step explanations.
-- End with a clear next action or question if needed
+FORMS (tell the user these phrases trigger dynamic forms):
+- "assign home location" → shows a form to pick character + location
+- "set my world name" → shows an input form to update world name
+
+════════════════════════════
+REASONING RULES
+════════════════════════════
+1. ALWAYS identify the root cause — not just the symptom.
+2. Name exact characters when diagnostic data is available.
+3. Distinguish: ownership failure vs. visibility failure vs. location failure vs. type failure.
+4. If diagnostics say one thing and UI shows another, explain the gap.
+5. Never repeat a disproven explanation.
+6. If you need more information, ask ONE focused question.
+7. Never suggest "run backfill" for RECORD_NOT_FOUND — that is wrong.
+8. Keep responses plain-language and action-oriented.
+9. If a repair action exists, tell the user exactly what to type.
+10. Never reference characters, merges, or diagnostics from another user's account.
 
 Recent conversation:
 ${recentHistory}
@@ -1126,7 +1294,7 @@ ${diagContext}
 
 User message: ${text}
 
-Respond as the account repair assistant — reason from evidence, name exact records, explain root causes, and offer a clear next step.`;
+Respond with clear reasoning. Name exact records. State the root cause. Recommend the specific action.`;
 
       const response = await base44.integrations.Core.InvokeLLM({ prompt, model: 'gemini_3_flash' });
 
@@ -1169,16 +1337,16 @@ Respond as the account repair assistant — reason from evidence, name exact rec
   const CHIPS = [
     { label: 'Run Diagnostic', action: 'run diagnostic' },
     { label: 'Character Missing', action: 'my character is missing' },
+    { label: 'Assign Home', action: 'assign home location' },
+    { label: 'Sync Locations', action: 'sync my character locations' },
     { label: 'Merge Blocked', action: 'my duplicate merge is blocked' },
-    { label: 'Ownership Diagnostic', action: 'diagnose my ownership (read only)' },
+    { label: 'Work Schedule', action: "my character isn't going to work" },
+    { label: 'Travel Issues', action: "my character isn't traveling" },
+    { label: 'Money Wrong', action: 'my money is wrong' },
+    { label: 'World Name', action: 'set my world name' },
+    { label: 'Ownership Audit', action: 'diagnose my ownership (read only)' },
     { label: 'Owner Email Backfill', action: 'run the owner email backfill' },
     { label: 'Ghost References', action: 'clean ghost character references' },
-    { label: 'Sync Locations', action: 'sync my character locations' },
-    { label: 'Work Schedule', action: "my character isn't going to work" },
-    { label: 'Money Wrong', action: 'my money is wrong' },
-    { label: 'Travel Issues', action: "my character isn't traveling" },
-    { label: 'World Name', action: 'my world name is not saving' },
-    { label: 'Image Issue', action: 'my images are wrong' },
     { label: 'File Report', action: 'I need to file a support report' },
   ];
 
@@ -1215,6 +1383,7 @@ Respond as the account repair assistant — reason from evidence, name exact rec
               isRepairing={isRepairing}
               onConfirm={handleConfirm}
               onDeny={handleDeny}
+              onFormSubmit={handleFormSubmit}
             />
           ))}
         </AnimatePresence>
