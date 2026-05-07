@@ -266,10 +266,10 @@ function detectIntent(text) {
   if (/not.*traveling|won't.*travel|stuck.*location|travel.*broken|not.*moving/i.test(t))
     return { type: 'travel_check' };
 
-  if (/character.*missing|can't.*find.*character|missing.*character|disappeared/i.test(t))
+  if (/character.*missing|can't.*find.*character|missing.*character|disappeared|not.*showing.*up|not.*appear|where.*my.*character|character.*gone/i.test(t))
     return { type: 'missing_character' };
 
-  if (/wrong.*image|image.*wrong|image.*broken|picture.*wrong|photo.*wrong/i.test(t))
+  if (/wrong.*image|image.*wrong|image.*broken|picture.*wrong|photo.*wrong|image.*not.*generat|no.*location.*image|location.*image.*missing/i.test(t))
     return { type: 'image_issue' };
 
   if (/diagnose.*owner|ownership.*diagnostic|check.*owner.*email|owner.*email.*status|read.*only.*owner|inspect.*ownership|ownership.*issue|legacy.*owner|legacy.*character.*owner/i.test(t))
@@ -1059,27 +1059,66 @@ export default function SupportAssistant({ user }) {
       }
 
       const prompt = `You are the Account Help & Repair assistant for "Own Your Life" — a character-based social simulation app.
-You help the user whose account email is: ${ownerEmail}
+You are an intelligent, conversational, account-scoped repair agent. You reason from evidence, ask follow-up questions when needed, explain root causes mechanistically, and make safe account-scoped adjustments when the user confirms.
 
-SYSTEM KNOWLEDGE (use this to explain root causes):
-- Characters: active_created_character (full sim), npc_family_member, npc_fictitious (no Home page), npc_regular
-- Presence source of truth: resolved_current_location_id, resolved_current_location_name, resolved_presence_status
-- Travel priority: schedule → needs (hunger<20, energy<20, social<20) → autonomous → VGC Towers
-- Travel blocked when: sleeping, jailed, stay_lock=true, autonomous_travel_enabled=false
-- Memory: CharacterMemory (structured), Memory (legacy), CharacterAutomaticNarrative (Life Journal)
-- Finance: CharacterFinancial record per character. Payroll via processPayroll. Bills via processHousingCosts.
-- Ownership: owner_email ONLY. created_by is forbidden entirely.
-- Merge blocked by: missing owner_email (LEGACY_MISSING_OWNER), RECORD_NOT_FOUND (dangling ref — NOT an owner issue), CROSS_ACCOUNT_BLOCKED
-- RECORD_NOT_FOUND = ghost reference. Fix via "Clean Ghost Character References", NOT backfill.
-- LEGACY_MISSING_OWNER = missing owner_email. Fix via "Run Owner Email Backfill".
+ACCOUNT SCOPE — ABSOLUTE:
+- You only work with records where owner_email = ${ownerEmail}
+- Never reference, repair, merge, or suggest records outside this account
+- Never use created_by for ownership decisions — owner_email ONLY
 
-RULES:
-- Explain root causes mechanistically — what field, what function, what chain caused this.
-- Name exact characters when diagnostic data is available.
-- Never say "run backfill" for RECORD_NOT_FOUND — that is a dangling reference, not an ownership problem.
-- Never suggest created_by.
-- Keep responses concise and plain-language. No technical jargon unless explaining a mechanism.
-- If a direct action can help, say clearly what the user should type (e.g. "type 'sync my locations'").
+SYSTEM KNOWLEDGE — USE FOR ROOT CAUSE REASONING:
+Characters:
+  - active_created_character = full simulation participant (shows on Home)
+  - npc_regular, npc_family_member = NPCs (show on Home with filter)
+  - npc_fictitious = world contacts only (NOT on Home — this is expected)
+  - status='deleted' or 'merged' = excluded from lists
+
+Presence / Location:
+  - Source of truth: resolved_current_location_id, resolved_current_location_name, resolved_presence_status
+  - home_location_id = stable housing. resolved_current_location_* = live presence (can differ)
+  - Travel blocked by: sleeping, jailed, stay_lock=true, autonomous_travel_enabled=false, energy<20
+
+Memory:
+  - CharacterMemory = structured life journal entries
+  - Memory = legacy event memory
+  - CharacterAutomaticNarrative = automatic narrative log (Life Journal)
+
+Finance:
+  - CharacterFinancial record per character
+  - Payroll: processPayroll. Bills: processHousingCosts. Food: processDailyFoodCharges
+
+Ownership / Merge:
+  - LEGACY_MISSING_OWNER_EMAIL: missing owner_email, owner_user_id exists → run Owner Email Backfill
+  - RECORD_NOT_FOUND: dangling ghost reference → run Ghost Reference Cleanup (NOT backfill)
+  - CROSS_ACCOUNT_BLOCKED: owner_email belongs to different account → permanently blocked, no repair
+
+Settings:
+  - fictional_world_name = user's in-world name (stored in UserSettings)
+  - autonomous_travel_enabled = global travel toggle (UserSettings)
+  - holiday_observation_enabled, voice_enabled, response_lag_enabled in UserSettings
+
+REPAIR CAPABILITIES I can trigger:
+  - "run diagnostic" — full account health check
+  - "diagnose my ownership" — read-only ownership inspection
+  - "run the owner email backfill" — repair missing owner_email fields
+  - "clean ghost character references" — remove dangling deleted record references
+  - "sync my character locations" — re-run location enforcement
+  - "my merge is blocked" — diagnose and route the specific merge blocker
+  - "my character isn't going to work" — work schedule + location link check
+  - "my money is wrong" — financial record check
+  - "my character is missing" — visibility + type diagnostic
+  - "my character isn't traveling" — travel state diagnostic
+  - "save world name as [name]" — write fictional_world_name to UserSettings
+
+REASONING RULES:
+- Reason from the diagnostic evidence — name exact characters, fields, and root causes
+- Do NOT repeat an explanation that contradicts the evidence
+- If a repair requires information you don't have, ask for it clearly
+- If the user is describing a symptom, trace backward to the root cause before proposing a fix
+- npc_fictitious not showing on Home is CORRECT BEHAVIOR — not a bug
+- RECORD_NOT_FOUND is a dangling reference, not a missing owner_email — never conflate these two
+- Keep responses concise and plain-language. Use markdown headers for multi-step explanations.
+- End with a clear next action or question if needed
 
 Recent conversation:
 ${recentHistory}
@@ -1087,7 +1126,7 @@ ${diagContext}
 
 User message: ${text}
 
-Respond helpfully, name exact records when available, explain the real cause.`;
+Respond as the account repair assistant — reason from evidence, name exact records, explain root causes, and offer a clear next step.`;
 
       const response = await base44.integrations.Core.InvokeLLM({ prompt, model: 'gemini_3_flash' });
 
@@ -1129,20 +1168,22 @@ Respond helpfully, name exact records when available, explain the real cause.`;
 
   const CHIPS = [
     { label: 'Run Diagnostic', action: 'run diagnostic' },
-    { label: 'Ownership Diagnostic', action: 'diagnose my ownership (read only)' },
+    { label: 'Character Missing', action: 'my character is missing' },
     { label: 'Merge Blocked', action: 'my duplicate merge is blocked' },
+    { label: 'Ownership Diagnostic', action: 'diagnose my ownership (read only)' },
     { label: 'Owner Email Backfill', action: 'run the owner email backfill' },
     { label: 'Ghost References', action: 'clean ghost character references' },
     { label: 'Sync Locations', action: 'sync my character locations' },
     { label: 'Work Schedule', action: "my character isn't going to work" },
     { label: 'Money Wrong', action: 'my money is wrong' },
-    { label: 'Character Missing', action: 'my character is missing' },
     { label: 'Travel Issues', action: "my character isn't traveling" },
+    { label: 'World Name', action: 'my world name is not saving' },
+    { label: 'Image Issue', action: 'my images are wrong' },
     { label: 'File Report', action: 'I need to file a support report' },
   ];
 
   return (
-    <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col" style={{ height: 560 }}>
+    <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col" style={{ height: 680 }}>
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border bg-card/80 flex-shrink-0">
         <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
