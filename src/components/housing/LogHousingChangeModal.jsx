@@ -94,6 +94,7 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [reasonForMove, setReasonForMove] = useState("");
   const [otherReason, setOtherReason] = useState("");
+  const [breakupCharacterId, setBreakupCharacterId] = useState(null);
   const [movingCharacterIds, setMovingCharacterIds] = useState([]);
   const [presenceTiming, setPresenceTiming] = useState("housing_only");
   const [sleepHandling, setSleepHandling] = useState("relocate_on_wake");
@@ -178,6 +179,10 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
       isNoLocation: isNone,
       reasonForMove,
       otherReasonNote: reasonForMove === "other" ? otherReason.trim() : null,
+      breakupCharacterId: reasonForMove === "breakup_separation" ? (breakupCharacterId || null) : null,
+      breakupCharacterName: reasonForMove === "breakup_separation" && breakupCharacterId
+        ? (allCharacters.find(c => c.id === breakupCharacterId)?.name || null)
+        : null,
       presenceTransitionTiming: presenceTiming,
       sleepStateHandling: showSleepOptions ? sleepHandling : null,
       updateLivePresenceNow: presenceTiming === "immediate",
@@ -379,6 +384,45 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
                     className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                   />
                 )}
+                {reasonForMove === "breakup_separation" && (
+                  <div className="space-y-2 border-t border-border pt-3">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Who did they break up with?</p>
+                    <p className="text-[11px] text-muted-foreground">Select the person this separation is from (optional).</p>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                      <button
+                        onClick={() => setBreakupCharacterId(null)}
+                        className={`w-full text-left px-3 py-2.5 rounded-xl text-sm border transition-colors ${
+                          breakupCharacterId === null
+                            ? "bg-primary/10 border-primary/30 text-foreground"
+                            : "bg-secondary border-transparent text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        Not specified / Unknown
+                      </button>
+                      {allCharacters.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => setBreakupCharacterId(prev => prev === c.id ? null : c.id)}
+                          className={`w-full text-left px-3 py-2.5 rounded-xl text-sm border transition-colors flex items-center gap-2.5 ${
+                            breakupCharacterId === c.id
+                              ? "bg-rose-500/10 border-rose-500/30 text-foreground"
+                              : "bg-secondary border-transparent text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {c.avatar_url ? (
+                            <img src={c.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full bg-secondary border border-border flex items-center justify-center text-xs flex-shrink-0">
+                              {c.name?.[0] || "?"}
+                            </div>
+                          )}
+                          <span className="flex-1 font-medium truncate">{c.name}</span>
+                          {breakupCharacterId === c.id && <Check className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {showRelationshipOption && (
                   <button
                     onClick={() => setApplyRelationshipImpact(v => !v)}
@@ -524,6 +568,9 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
                   <Row label="Housing context" value={deriveHousingContext(selectedLocation) || "—"} />
                   <Row label="Reason" value={REASON_OPTIONS.find(r => r.value === reasonForMove)?.label || reasonForMove} />
                   {reasonForMove === "other" && otherReason && <Row label="Note" value={otherReason} />}
+                  {reasonForMove === "breakup_separation" && breakupCharacterId && (
+                    <Row label="Broke up with" value={allCharacters.find(c => c.id === breakupCharacterId)?.name || "Unknown"} highlight />
+                  )}
                   <Row label="Also moving" value={movingCharacterIds.length > 0 ? `${movingCharacterIds.length} other character(s)` : "No one else"} />
                   <Row label="Presence timing" value={TIMING_OPTIONS.find(t => t.value === presenceTiming)?.label || presenceTiming} />
                   {showSleepOptions && <Row label="Sleep handling" value={SLEEP_OPTIONS.find(s => s.value === sleepHandling)?.label || sleepHandling} />}

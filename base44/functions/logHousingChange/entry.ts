@@ -22,6 +22,8 @@ Deno.serve(async (req) => {
       presenceTransitionTiming, // immediate | next_travel_cycle | on_wake | housing_only
       sleepStateHandling,       // wake_and_relocate | relocate_on_wake | housing_only
       applyRelationshipImpact,
+      breakupCharacterId,
+      breakupCharacterName,
       previousHomeLocationId,
       previousHomeLocationName,
       previousHousingStatus,
@@ -206,7 +208,10 @@ Deno.serve(async (req) => {
       let eventTitle, eventDesc, valence, severity;
       if (isHomeless || isNoLocation) {
         eventTitle = `${character.name} has no fixed residence`;
-        eventDesc = `${character.name} no longer has a fixed home. Reason: ${reasonLabel}.`;
+        const breakupSuffix = reasonForMove === 'breakup_separation' && breakupCharacterName
+          ? ` (separation from ${breakupCharacterName})`
+          : '';
+        eventDesc = `${character.name} no longer has a fixed home. Reason: ${reasonLabel}${breakupSuffix}.`;
         valence = 'negative';
         severity = 'significant';
       } else if (isUnknown) {
@@ -226,7 +231,10 @@ Deno.serve(async (req) => {
         severity = 'moderate';
       } else {
         eventTitle = `${character.name} moved to a new home`;
-        eventDesc = `${character.name} moved to ${moveToLocationName || 'a new location'}. Reason: ${reasonLabel}.${notes ? ' ' + notes : ''}`;
+        const breakupNote = reasonForMove === 'breakup_separation' && breakupCharacterName
+          ? ` (separation from ${breakupCharacterName})`
+          : '';
+        eventDesc = `${character.name} moved to ${moveToLocationName || 'a new location'}. Reason: ${reasonLabel}${breakupNote}.${notes ? ' ' + notes : ''}`;
         valence = 'positive';
         severity = 'moderate';
       }
