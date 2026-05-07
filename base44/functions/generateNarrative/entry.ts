@@ -1,4 +1,26 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+// ── CANONICAL-FIRST ARCHITECTURE ──────────────────────────────────────────────
+// This file NO LONGER builds character identity, personality, memory, family,
+// relationships, or soap opera context inline. All of that is owned by
+// buildCanonicalCharacterContext (backend single source of truth).
+//
+// This file ONLY adds:
+//   - temporal state (live clock, daypart, sleep/wake, continuity)
+//   - live needs block
+//   - beat progression engine (lexical variation, repetition guard)
+//   - scene reaction engine (body language, pacing, positioning)
+//   - interaction libraries (flirt, comfort, reassure, etc.)
+//   - sleep gate (pre-generation hard block + post-generation validator)
+//
+// Migration complete: 2026-05-07
+// All 5 output routes now use canonical context:
+//   Chat/Text → buildSystemPrompt (frontend equivalent)
+//   generateNarrative → buildCanonicalCharacterContext ✓
+//   generateGroupChatResponse → buildCanonicalCharacterContext ✓
+//   generateAutomaticNarrative → buildCanonicalCharacterContext ✓
+//   sendProactiveMessageForCharacter → buildCanonicalCharacterContext ✓
+//   WorldContactsPopup → buildCanonicalCharacterContext ✓
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * generateNarrative

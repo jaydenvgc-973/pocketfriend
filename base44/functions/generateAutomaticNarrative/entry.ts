@@ -1,77 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// ── INLINE SOAP OPERA LIFE CONTEXT BUILDER ───────────────────────────────────
-function buildSoapOperaLifeContextInline(character, recentMemories = []) {
-  const lines = [];
-  const threads = [];
-  const relationships = character.fictional_relationships || [];
-  const romanticRels = relationships.filter(r =>
-    r.romantic_level > 40 || r.attraction_level > 50 ||
-    ['lover','partner','ex','situationship','complicated','crush'].some(k =>
-      (r.relationship_type||'').toLowerCase().includes(k)||(r.description||'').toLowerCase().includes(k))
-  );
-  if (romanticRels.length > 0) {
-    const r = romanticRels[0];
-    const name = r.person_name || r.display_name || 'someone';
-    const status = r.current_status || r.relationship_type || 'complicated';
-    const tension = r.relational_jealousy > 50 ? ' — jealousy is active' : r.romantic_level > 75 ? ' — deeply invested' : '';
-    threads.push(`ROMANCE THREAD: ${name} (${status})${tension}. ${r.last_interaction_summary || ''}`);
-  }
-  const fam = (character.family_members||[]).slice(0,3).map(f=>f.name||f.relationship).filter(Boolean);
-  if (fam.length > 0) threads.push(`FAMILY THREAD: Active family ties — ${fam.join(', ')}.`);
-  if (character.is_homeless) threads.push(`HOUSING THREAD: Without stable housing — affects daily planning, emotional security, and social interactions.`);
-  else if (character.housing_context === 'temporary_shelter') threads.push(`HOUSING THREAD: Temporary shelter. Stability is not guaranteed.`);
-  if (character.health_status?.length > 5) threads.push(`HEALTH THREAD: ${character.health_status.substring(0,150)}.`);
-  if (character.occupation) threads.push(`WORK THREAD: ${character.occupation}. Workplace dynamics, pressures, and career concerns are present.`);
-  if ((character.financial_need_value??60) < 40) threads.push(`FINANCIAL THREAD: Under real financial pressure — affects decisions and mood.`);
-  const religion = (character.religion||'').trim();
-  if (religion && religion !== 'None' && religion.toLowerCase() !== 'none') {
-    const devout = character.belief_level === 'devout' ? ' — devout' : character.belief_level === 'moderate' ? ' — moderately practicing' : '';
-    threads.push(`FAITH THREAD: ${religion}${devout}. Community, ritual, guilt, comfort, and identity surface through this.`);
-  }
-  if (character.criminal_record?.length > 3 && character.criminal_record.toLowerCase() !== 'none') {
-    threads.push(`LEGAL HISTORY: ${character.criminal_record.substring(0,120)}.`);
-  }
-  if (character.current_situation?.length > 10) threads.push(`CURRENT SITUATION: ${character.current_situation.substring(0,200)}`);
-  if (character.current_life_event?.length > 5) threads.push(`ACTIVE LIFE EVENT: ${character.current_life_event.substring(0,200)}`);
-  const biz = (character.businesses||[])[0];
-  if (biz) threads.push(`BUSINESS THREAD: Owns or runs "${biz.name||'a business'}" — ongoing concerns around staff, finances, reputation.`);
-
-  if (threads.length > 0) {
-    lines.push(`ACTIVE LIFE THREADS (soap opera context — these color behavior and tone):\n${threads.join('\n')}`);
-  }
-  const privateLines = [];
-  if (character.emotional_baggage?.length > 5) privateLines.push(`EMOTIONAL BAGGAGE: ${character.emotional_baggage.substring(0,200)}`);
-  if (character.loyalty_view?.length > 5) privateLines.push(`LOYALTY/TRUST: ${character.loyalty_view.substring(0,120)}`);
-  if (character.upset_reaction?.length > 5) privateLines.push(`WHEN UPSET: ${character.upset_reaction.substring(0,120)}`);
-  if (privateLines.length > 0) lines.push(`PRIVATE EMOTIONAL INTERIOR:\n${privateLines.join('\n')}`);
-  const traitFlags = [
-    character.trait_oversharer && 'tends to overshare',
-    character.trait_dry_humor && 'uses dry humor as deflection',
-    character.trait_night_owl && 'naturally alert at night',
-    character.trait_hot_and_cold && 'runs hot and cold emotionally',
-    character.trait_flirty && 'naturally flirtatious',
-    character.trait_overcorrects && 'overcorrects after conflict',
-    character.trait_blunt && 'says what they think without filtering',
-    character.trait_romanticizes && 'romanticizes situations',
-    character.trait_hard_to_read && 'intentionally hard to read',
-    character.trait_competitive && 'has a competitive streak',
-  ].filter(Boolean);
-  const quirks = (character.quirks||[]).filter(q=>q.description||q.name).slice(0,3).map(q=>q.description||q.name);
-  const allTexture = [...traitFlags, ...quirks];
-  if (allTexture.length > 0) {
-    lines.push(`BEHAVIORAL TEXTURE:\n${allTexture.map(t=>`• ${t}`).join('\n')}`);
-  }
-  const mems = recentMemories.filter(m=>m.importance_score>=5).slice(0,3);
-  if (mems.length > 0) {
-    lines.push(`OFF-SCREEN LIFE (recent memories — let these color the moment):\n${mems.map(m=>`• ${m.memory_text.substring(0,160)}`).join('\n')}`);
-  }
-  const goals = (character.future_life_goals||[]).slice(0,2).map(g=>g.goal||g.description||g.title).filter(Boolean);
-  if (goals.length > 0) lines.push(`WHAT THEY'RE WORKING TOWARD:\n${goals.map(g=>`• ${g.substring(0,130)}`).join('\n')}`);
-  lines.push(`WORLD TONE: Soap opera / telenovela depth. Balance is required. Not every moment is dramatic. Characters carry joy AND pain. Off-screen life shapes what they bring to this moment. Romance (when established): mature implication, never explicit.`);
-  return lines.length > 0 ? '\n\n' + lines.join('\n\n') : '';
-}
-
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -245,15 +173,6 @@ Deno.serve(async (req) => {
       comfort: character.comfort_value ?? 70,
     };
 
-    // ── FETCH RECENT MEMORIES FOR SOAP OPERA CONTEXT ─────────────────────────
-    let soapMemories = [];
-    try {
-      const memsFetched = await base44.asServiceRole.entities.CharacterMemory.filter(
-        { character_id: characterId }, '-created_date', 8
-      ).catch(() => []);
-      soapMemories = memsFetched.filter(m => m.importance_score >= 5);
-    } catch { /* non-blocking */ }
-
     // ── TIME RECONCILIATION: Check for expired actions ──────────────────────
     // Resolve any actions completed since last narrative
     let reconciliationUpdates = {};
@@ -362,58 +281,24 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
     const objectPronoun = charGender === 'male' ? 'him' : charGender === 'female' ? 'her' : 'them';
     const possessivePronoun = charGender === 'male' ? 'his' : charGender === 'female' ? 'her' : 'their';
 
-    const narrativePrompt = `Generate a vivid, present-moment narrative (2-4 sentences) describing exactly what ${character.name} is experiencing RIGHT NOW.
+    const narrativePrompt = `${canonicalSystemPrompt}
+
+════════════════════════════════════
+AUTOMATIC NARRATIVE TASK — PRESENT MOMENT
+════════════════════════════════════
+Generate a vivid, present-moment narrative (2-4 sentences) describing exactly what ${character.name} is experiencing RIGHT NOW.
 
 TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
 
-${canonicalIdentityBlock}${situationBlock}
-
-CHARACTER:
-- Name: ${character.name}
-- Personality: ${character.personality_summary || 'not defined'}
-- Emotional state: ${character.emotional_state || 'calm'}
-- Current activity context: ${character.current_activity || 'none noted'}
+${situationBlock}
 ${needsLine}
 
-════════════════════════════════════
-IDENTITY AND PRONOUN LOCK — ABSOLUTE
-════════════════════════════════════
-Character gender: ${charGender || 'unknown — use they/them'}
-Pronouns: ${charPronouns}
-Subject: ${subjectPronoun} | Object: ${objectPronoun} | Possessive: ${possessivePronoun}
-
-RULES — NON-NEGOTIABLE:
-• Use ONLY the pronouns above throughout the entire narrative
-• No pronoun switching mid-narrative under any condition
-• Do NOT infer gender from the character's name or appearance
-• If gender is unknown: use they/them exclusively
+IDENTITY AND PRONOUN LOCK — ABSOLUTE:
+Gender: ${charGender || 'unknown — use they/them'}
+Pronouns: ${charPronouns} | Subject: ${subjectPronoun} | Object: ${objectPronoun} | Possessive: ${possessivePronoun}
+• Use ONLY the pronouns above — no switching mid-narrative
 • No heteronormative defaults — do NOT assume opposite-gender attraction
-• All interaction patterns (flirtatious, comfortable, romantic) apply equally regardless of gender combination
-════════════════════════════════════
-
-MANDATORY NARRATIVE ENGINE — EXECUTE BEFORE WRITING:
-Before generating any text, complete these steps in order:
-
-STEP 1 — IDENTIFY INTERACTION TYPE: FLIRT | COMFORT | REASSURE | REDIRECT | ENCOURAGE | DISTANCE | REVEAL | NEUTRAL
-STEP 2 — SELECT ONE BEHAVIOR PATTERN from the matching library:
-  FLIRT patterns: close without touching / playful challenge / accidental contact / low voice moment / testing the line / shared recognition / inside language / confidence shift / energy matching / subtle claim
-  COMFORT patterns: quiet presence / soft redirect / protective energy / validation without fixing / physical reassurance / seen without explaining / identity affirmation / after a long day / protective check-in / rebuilding after hurt
-  REASSURE: emotional validation + physical grounding + reframing fear + slow pacing + safety through presence
-  ENCOURAGE: affirm capability + reference past strengths + future-oriented language + small push + no pressure
-  DISTANCE: controlled withdrawal + calm boundary + reduced closeness + shortened responses + no escalation
-  REVEAL: personal truth + tone shift + emotional risk + backstory drop + relationship dynamic change
-  NEUTRAL: environment interaction + micro-behaviors + time awareness + silent actions
-STEP 3 — APPLY AT LEAST ONE VARIATION HOOK (required — scene is invalid without one):
-  For FLIRT: interruption / hesitation / uneven awareness / escalation then pullback / misread signal / external pressure / timing mismatch
-  For COMFORT: resistance before accepting / delayed opening / silence held / mid-scene shift / humor deflection / unexpected vulnerability
-  For any type: timing mismatch / emotional misread / expectation vs reality / memory callback / environment pressure
-STEP 4 — EMBED AT LEAST ONE ROOT THEME (weave naturally — never state directly):
-  unspoken tension / timing mismatch / power shift / memory callback / environment pressure / internal vs external conflict / expectation vs reality / control vs vulnerability / attachment vs independence / safety vs expression / guardedness giving way / micro-validation / chosen family energy / public vs private identity
-STEP 5 — GENERATE. Only after steps 1–4 are resolved.
-
-LGBTQ+ MANDATORY: All patterns apply identically across all gender/identity combinations. No simplification. No heteronormative defaults. Attraction is never assumed.
-
-${buildSoapOperaLifeContextInline(character, soapMemories)}
+• No pronoun inference from name or appearance
 
 CRITICAL RULES:
 1. NEVER contradict the situation block above — it is the ground truth.

@@ -321,9 +321,15 @@ Any adult-level emotional complexity is a generation failure.`;
  * are the only two canonical sources (frontend vs backend). All other routes must
  * call one of these — never build a parallel character identity inline.
  *
- * Frontend: Chat, Text page → use this function directly.
- * Backend: generateNarrative, generateGroupChatResponse, generateAutomaticNarrative,
- *          sendProactiveMessageForCharacter, WorldContactsPopup → call buildCanonicalCharacterContext.
+ * OWNERSHIP SPLIT:
+ *   FRONTEND (Chat, Text page) → buildSystemPrompt (this function) is the owner.
+ *   BACKEND (generateNarrative, generateGroupChatResponse, generateAutomaticNarrative,
+ *            sendProactiveMessageForCharacter, WorldContactsPopup, scene routes) →
+ *            buildCanonicalCharacterContext is the owner. These must NOT build identity inline.
+ *
+ * SYNC CONTRACT:
+ *   Any personality/identity logic added here MUST be mirrored in buildCanonicalCharacterContext,
+ *   and vice versa. Divergence creates split-memory and split-voice.
  */
 export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null, options = {}, memories = []) {
   const { allowNarration = false, outfitHint = null } = options; // outfitHint: optional string from resolveOutfitContext
