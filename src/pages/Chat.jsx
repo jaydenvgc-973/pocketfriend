@@ -26,6 +26,7 @@ import GameLauncher from "@/components/games/GameLauncher";
 import ShoppingApp from "@/components/chat/ShoppingApp";
 import { dispatchImageGeneration } from "@/components/chat/ChatImageDispatch";
 import ChatApprovals from "@/components/chat/ChatApprovals";
+import LogHousingChangeModal from "@/components/housing/LogHousingChangeModal";
 import { callLLMWithRetry } from "@/lib/llmUtils";
 import { buildEducationContext, buildSongsContext, buildDynamicContexts, buildImageRule, validateLocationInResponse } from "@/lib/promptContextBuilders";
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
@@ -90,6 +91,7 @@ export default function Chat() {
   const [showGameLauncher, setShowGameLauncher] = useState(false);
   const [showNarrativeAction, setShowNarrativeAction] = useState(false);
   const [showShopping, setShowShopping] = useState(false);
+  const [showHousingModal, setShowHousingModal] = useState(false);
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
   const [catchupNarrativeText, setCatchupNarrativeText] = useState(null);
   const [isLoadingConvo, setIsLoadingConvo] = useState(false);
@@ -1253,7 +1255,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         onSendMoneyToggle={() => setShowSendMoney(true)}
         onShoppingToggle={() => setShowShopping(true)}
         onTroubleshootingToggle={() => setShowTroubleshooting(true)}
-        onHousingChangeToggle={() => triggerHousingChangePopup(character)}
+        onHousingChangeToggle={() => setShowHousingModal(true)}
       />
       {character && showMediaGallery && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
       {character && conversationId && (
@@ -1380,6 +1382,16 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       />
 
       {character && <PendingLifeEventApproval characterId={characterId} character={character} />}
+      {showHousingModal && character && (
+        <LogHousingChangeModal
+          character={character}
+          onClose={() => setShowHousingModal(false)}
+          onSaved={() => {
+            setShowHousingModal(false);
+            queryClient.invalidateQueries({ queryKey: ['character', characterId] });
+          }}
+        />
+      )}
       {pendingAliasResolution && (
         <LocationAliasResolutionPopup
           phrase={pendingAliasResolution.phrase}
