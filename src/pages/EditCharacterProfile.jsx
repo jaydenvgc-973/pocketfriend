@@ -83,6 +83,7 @@ export default function EditCharacterProfile() {
       work_days: char.work_days || [],
       // Second job
       job2_title: secondJob.job_title || "",
+      job2_workplace_type: secondJob.workplace_type || "",
       job2_work_environment: secondJob.work_environment || "",
       criminal_record: char.criminal_record || "",
       // Education
@@ -187,9 +188,10 @@ export default function EditCharacterProfile() {
       location_id: occupationLink2.locationId || null,
       location_name: occupationLink2.locationName || null,
       job_title: form.job2_title || "",
+      workplace_type: form.job2_workplace_type || "",
       work_environment: form.job2_work_environment || "",
     };
-    const hasSecondJobData = form.job2_title || form.job2_work_environment || occupationLink2.locationId;
+    const hasSecondJobData = form.job2_title || form.job2_work_environment || form.job2_workplace_type || occupationLink2.locationId;
     // If user cleared all second job fields, remove index 0; otherwise update it. Always keep entries beyond index 0.
     const secondJobEntry = [
       ...(hasSecondJobData ? [updatedSecondJob] : existingAdditional[0] ? [] : []),
@@ -417,6 +419,15 @@ export default function EditCharacterProfile() {
                 <div className="pt-2 border-t border-border space-y-3">
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Second Job (optional)</label>
                   <div className="space-y-2">
+                    <label className="text-xs text-muted-foreground">Job Type</label>
+                    <Select value={form.job2_workplace_type} onValueChange={v => setForm(p => ({ ...p, job2_workplace_type: v }))}>
+                      <SelectTrigger className="rounded-xl"><SelectValue placeholder="Select job type" /></SelectTrigger>
+                      <SelectContent>
+                        {JOB_TYPES.map(j => <SelectItem key={j} value={j}>{j}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
                     <label className="text-xs text-muted-foreground">Job Title</label>
                     <Input value={form.job2_title} onChange={e => setForm(p => ({ ...p, job2_title: e.target.value }))} placeholder="e.g. Freelance Photographer" className="rounded-xl text-sm" />
                   </div>
@@ -436,7 +447,18 @@ export default function EditCharacterProfile() {
 
                 {/* Work Schedule */}
                 <div className="pt-2 border-t border-border space-y-3">
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Work Schedule</label>
+                  <div className="flex items-start justify-between">
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Work Schedule</label>
+                  </div>
+                  {/* Warning: show live values stored on character so user knows what they're overwriting */}
+                  {(selectedChar?.work_start_time || selectedChar?.work_end_time || selectedChar?.work_days?.length > 0) && (
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400/90 space-y-1">
+                      <p className="font-semibold">Current saved schedule (live source of truth):</p>
+                      <p>Days: {selectedChar.work_days?.length > 0 ? selectedChar.work_days.map(d => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d]).join(", ") : "not set"}</p>
+                      <p>Hours: {selectedChar.work_start_time || "?"} – {selectedChar.work_end_time || "?"}</p>
+                      <p className="text-amber-400/60 italic">Editing and saving here will overwrite the schedule above.</p>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <label className="text-xs text-muted-foreground">Work Days</label>
                     <div className="flex gap-1 flex-wrap">
