@@ -1,5 +1,6 @@
 import ApprovalPopup from "@/components/approvals/ApprovalPopup";
 import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
+import HouseholdChangeApprovalPopup from "@/components/approvals/HouseholdChangeApprovalPopup";
 
 /**
  * ChatApprovals
@@ -13,18 +14,13 @@ export default function ChatApprovals({ pendingApproval, approveEvent, dismissAp
 
   return (
     <>
-      {pendingApproval.type === 'move_in' && (
-        <ApprovalPopup
-          type="move_in"
-          title="Moving In Together?"
-          description={`It looks like ${pendingApproval.data.character?.name} may be moving in${pendingApproval.data.otherCharName ? ` with ${pendingApproval.data.otherCharName}` : ' with someone'}. Approve this household change?`}
-          details={pendingApproval.data}
+      {pendingApproval.type === 'move_in' && pendingApproval.data.householdAnalysis && (
+        <HouseholdChangeApprovalPopup
+          analysis={pendingApproval.data.householdAnalysis}
+          character={pendingApproval.data.character}
           onApprove={approveEvent}
           onDeny={dismissApproval}
-        >
-          <p><span className="text-muted-foreground">Character:</span> {pendingApproval.data.character?.name}</p>
-          {pendingApproval.data.otherCharName && <p><span className="text-muted-foreground">Moving in with:</span> {pendingApproval.data.otherCharName}</p>}
-        </ApprovalPopup>
+        />
       )}
 
       {pendingApproval.type === 'marriage' && (

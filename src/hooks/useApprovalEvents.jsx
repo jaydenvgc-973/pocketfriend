@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 
 /**
@@ -212,6 +212,7 @@ const BIRTH_PATTERNS = [
 export function useApprovalEvents() {
   const [pendingApproval, setPendingApproval] = useState(null); // { type, data }
   const [dismissed, setDismissed] = useState(new Set()); // track dismissed events to avoid re-prompting
+  const analysisInFlight = useRef(false);
 
   const checkForApprovalEvents = useCallback((characterReply, character, allCharacters = [], userMessage = '') => {
     if (!characterReply || !character) return;
@@ -222,13 +223,83 @@ export function useApprovalEvents() {
     const eventKey_marriage = `marriage_${character.id}`;
     const eventKey_birth = `birth_${character.id}`;
 
-    // Don't re-prompt for recently dismissed events
+    // ── HOUSEHOLD CHANGE DETECTION: LLM-powered full context analysis ──────────
+    // Regex only gates whether to run the LLM — the LLM determines all actual content.
     if (!dismissed.has(eventKey_moveIn) && MOVE_IN_PATTERNS.some(p => p.test(combinedLower))) {
-      const otherCharName = allCharacters.find(c => c.id !== character.id && combinedLower.includes(c.name.toLowerCase()))?.name;
-      setPendingApproval({
-        type: 'move_in',
-        data: { character, otherCharName: otherCharName || null, eventKey: eventKey_moveIn }
-      });
+      if (!analysisInFlight.current) {
+        analysisInFlight.current = true;
+
+        // Build known characters list for context
+        const knownNames = allCharacters.map(c => c.name).join(', ');
+        const charResidence = character.resolved_current_location_name || character.occupation_location_name || null;
+
+        base44.integrations.Core.InvokeLLM({
+          prompt: `You are analyzing a conversation between a user and a character named "${character.name}" for household/housing changes.
+
+Character context:
+- Name: ${character.name}
+- Current known residence: ${charResidence || 'unknown'}
+- Age/occupation: ${character.age || 'unknown'} / ${character.occupation || 'unknown'}
+
+All known characters: ${knownNames || 'none listed'}
+
+User said: "${userMessage}"
+Character replied: "${characterReply}"
+
+Analyze ONLY the text above. Determine if a household/housing change is actually being described.
+
+Key distinction:
+- If the character is EVICTING or REMOVING someone else, the mover is that other person, NOT the character.
+- If the character is moving themselves, they are the mover.
+- If it's just a hypothetical or vague discussion, set confidence to "low".
+- If the character is simply referencing living arrangements without an active change, return is_housing_event: false.
+
+Return JSON:`,
+          response_json_schema: {
+            type: "object",
+            properties: {
+              is_housing_event: { type: "boolean" },
+              move_type: { type: "string", enum: ["move_in", "move_out", "eviction", "roommate_removal", "household_merge", "temporary_stay", "cohabitation_proposal", "unknown"] },
+              moving_character_name: { type: "string" },
+              moving_character_is_subject: { type: "boolean" },
+              current_residence: { type: "string" },
+              destination_residence: { type: "string" },
+              other_people_moving_with: { type: "array", items: { type: "string" } },
+              people_remaining: { type: "array", items: { type: "string" } },
+              people_being_removed: { type: "array", items: { type: "string" } },
+              reason_summary: { type: "string" },
+              triggering_sentence: { type: "string" },
+              confidence: { type: "string", enum: ["high", "medium", "low"] },
+            }
+          }
+        }).then(result => {
+          analysisInFlight.current = false;
+          if (!result?.is_housing_event) return;
+
+          setPendingApproval({
+            type: 'move_in',
+            data: {
+              character,
+              eventKey: eventKey_moveIn,
+              householdAnalysis: {
+                movingCharacterName: result.moving_character_name || character.name,
+                movingCharacterIsSubject: result.moving_character_is_subject !== false,
+                moveType: result.move_type || 'unknown',
+                currentResidence: result.current_residence || charResidence || null,
+                destinationResidence: result.destination_residence || null,
+                otherPeopleMovingWith: result.other_people_moving_with || [],
+                peopleRemaining: result.people_remaining || [],
+                peopleBeingRemoved: result.people_being_removed || [],
+                reasonSummary: result.reason_summary || null,
+                triggeringSentence: result.triggering_sentence || null,
+                confidence: result.confidence || 'low',
+              }
+            }
+          });
+        }).catch(() => {
+          analysisInFlight.current = false;
+        });
+      }
       return;
     }
 
@@ -300,16 +371,29 @@ export function useApprovalEvents() {
     const { type, data } = pendingApproval;
 
     if (type === 'move_in' && data.character) {
-      // Log life event for move-in — actual household update would need more data
+      const ha = data.householdAnalysis || {};
+      const mover = ha.movingCharacterName || data.character.name;
+      const moveTypeLabel = {
+        move_in: 'moved in', move_out: 'moved out', eviction: 'was evicted',
+        roommate_removal: 'removed a roommate', household_merge: 'merged households',
+        temporary_stay: 'started a temporary stay', cohabitation_proposal: 'proposed living together',
+      }[ha.moveType] || 'had a housing change';
+      const desc = [
+        `${mover} ${moveTypeLabel}`,
+        ha.destinationResidence ? `— destination: ${ha.destinationResidence}` : '',
+        ha.otherPeopleMovingWith?.length ? `with: ${ha.otherPeopleMovingWith.join(', ')}` : '',
+        ha.reasonSummary ? `Context: ${ha.reasonSummary}` : '',
+      ].filter(Boolean).join('. ');
+
       await base44.entities.LifeEvent.create({
         character_id: data.character.id,
         character_name: data.character.name,
         event_type: 'life_milestone_event',
         valence: 'positive',
         severity: 'significant',
-        title: 'Moved in together',
-        description: `${data.character.name} is moving in${data.otherCharName ? ` with ${data.otherCharName}` : ''}.`,
-        emotional_impact: 'A significant life change — sharing a home.',
+        title: `Housing change: ${mover} ${moveTypeLabel}`,
+        description: desc,
+        emotional_impact: 'A significant household change.',
         triggered_by: 'user_message',
         timestamp: new Date().toISOString(),
         systems_updated: ['memory'],
