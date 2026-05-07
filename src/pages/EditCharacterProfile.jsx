@@ -77,6 +77,22 @@ export default function EditCharacterProfile() {
     setOccupationLink2({ locationId: secondJob.location_id || null, locationName: secondJob.location_name || null, title: secondJob.job_title || '' });
     setEducationLink({ locationId: char.education_location_id || null, locationName: char.education_location_name || null, title: char.education_details?.course_name || '' });
 
+    // Load primary job schedule from LocationReference.worker_shifts (authoritative source)
+    // Falls back to Character entity fields only if no location shift data exists.
+    let primaryWorkDays = char.work_days || [];
+    let primaryWorkStart = char.work_start_time || '';
+    let primaryWorkEnd = char.work_end_time || '';
+    if (char.occupation_location_id) {
+      const locArr = await base44.entities.LocationReference.filter({ id: char.occupation_location_id }).catch(() => []);
+      const loc = locArr?.[0];
+      if (loc?.worker_shifts?.[char.id]) {
+        const shift = loc.worker_shifts[char.id];
+        primaryWorkDays = shift.days || primaryWorkDays;
+        primaryWorkStart = shift.start || primaryWorkStart;
+        primaryWorkEnd = shift.end || primaryWorkEnd;
+      }
+    }
+
     // Load second job schedule from LocationReference.worker_shifts if a workplace is linked
     let loadedJob2Schedule = { work_days: [], work_start_time: '', work_end_time: '' };
     if (secondJob.location_id) {
@@ -94,13 +110,13 @@ export default function EditCharacterProfile() {
     setJob2Schedule(loadedJob2Schedule);
 
     setForm({
-      // Occupation
+      // Occupation — schedule loaded from LocationReference.worker_shifts above (authoritative)
       job_title: char.work_details?.job_title || "",
       workplace_type: char.work_details?.workplace_type || "",
       work_environment: char.work_details?.work_environment || "",
-      work_start_time: char.work_start_time || "",
-      work_end_time: char.work_end_time || "",
-      work_days: char.work_days || [],
+      work_start_time: primaryWorkStart,
+      work_end_time: primaryWorkEnd,
+      work_days: primaryWorkDays,
       // Second job
       job2_title: secondJob.job_title || "",
       job2_workplace_type: secondJob.workplace_type || "",
@@ -269,6 +285,7 @@ export default function EditCharacterProfile() {
     });
 
     // If occupation location was linked, add character to that location as worker
+    // AND sync the primary job schedule back to LocationReference.worker_shifts (authoritative source)
     if (occupationLink.locationId) {
       base44.functions.invoke('linkOccupationToLocation', {
         characterId: selectedChar.id,
@@ -277,6 +294,27 @@ export default function EditCharacterProfile() {
         title: occupationLink.title || form.job_title,
         removeLocationId: selectedChar.occupation_location_id !== occupationLink.locationId ? selectedChar.occupation_location_id : null,
       }).catch(() => {});
+
+      // Write primary job schedule to LocationReference.worker_shifts so Location page stays in sync
+      if (form.work_start_time || form.work_end_time || form.work_days?.length > 0) {
+        base44.entities.LocationReference.filter({ id: occupationLink.locationId })
+          .then(locArr => {
+            const loc = locArr?.[0];
+            if (!loc) return;
+            const existingShifts = loc.worker_shifts || {};
+            const updatedShifts = {
+              ...existingShifts,
+              [selectedChar.id]: {
+                ...(existingShifts[selectedChar.id] || {}),
+                start: form.work_start_time || existingShifts[selectedChar.id]?.start || '',
+                end: form.work_end_time || existingShifts[selectedChar.id]?.end || '',
+                days: form.work_days?.length > 0 ? form.work_days : (existingShifts[selectedChar.id]?.days || []),
+              }
+            };
+            return base44.entities.LocationReference.update(loc.id, { worker_shifts: updatedShifts });
+          })
+          .catch(() => {});
+      }
     }
 
     // If second occupation location was linked, sync it and save its schedule to worker_shifts
