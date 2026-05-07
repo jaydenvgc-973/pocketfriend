@@ -389,7 +389,10 @@
         "traveling",
         "supervision_home",
         "recovery_nap",
-        "temporary_housing"
+        "temporary_housing",
+        "incarcerated",
+        "house_arrest",
+        "halfway_house"
       ]
     },
     "resolved_presence_status": {
@@ -403,7 +406,10 @@
         "under_supervision",
         "sleeping",
         "napping",
-        "temporary_housing"
+        "temporary_housing",
+        "incarcerated",
+        "house_arrest",
+        "confined"
       ]
     },
     "resolved_source_reason": {
@@ -902,19 +908,96 @@
     },
     "is_jailed": {
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "True when character is currently incarcerated. Blocks all autonomous movement and civilian routing."
     },
     "jail_release_date": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "description": "When incarceration ends (if known)."
     },
     "jail_sentence_days": {
       "type": "number",
-      "default": 7
+      "default": 7,
+      "description": "Length of sentence in days."
     },
     "jailed_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "description": "When incarceration began."
+    },
+    "incarceration_facility_id": {
+      "type": "string",
+      "description": "ID of the LocationReference for the jail/prison/facility. May be null if rabbit hole confinement."
+    },
+    "incarceration_facility_name": {
+      "type": "string",
+      "description": "Display name of the confinement facility (used when facility_id is null/rabbit hole)."
+    },
+    "incarceration_status": {
+      "type": "string",
+      "enum": [
+        "pretrial",
+        "sentenced",
+        "serving",
+        "work_release",
+        "solitary",
+        "transferred",
+        "released",
+        "paroled",
+        "probation_only"
+      ],
+      "description": "Current status within the criminal justice system."
+    },
+    "parole_status": {
+      "type": "string",
+      "enum": [
+        "none",
+        "eligible",
+        "on_parole",
+        "parole_revoked",
+        "completed"
+      ],
+      "default": "none",
+      "description": "Parole status after or during incarceration."
+    },
+    "probation_status": {
+      "type": "string",
+      "enum": [
+        "none",
+        "on_probation",
+        "probation_violated",
+        "completed"
+      ],
+      "default": "none",
+      "description": "Probation status."
+    },
+    "house_arrest_active": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when character is under house arrest. Restricts movement to assigned residence."
+    },
+    "house_arrest_location_id": {
+      "type": "string",
+      "description": "The residence location ID where house arrest is served."
+    },
+    "house_arrest_end_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When house arrest ends."
+    },
+    "pending_charges": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "List of pending criminal charges."
+    },
+    "court_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Next scheduled court date."
     },
     "owner_user_id_legacy": {
       "type": "string"

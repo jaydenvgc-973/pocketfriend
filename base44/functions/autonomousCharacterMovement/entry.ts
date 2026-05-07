@@ -350,9 +350,24 @@ Deno.serve(async (req) => {
         const vals = needValues(char);
         const energyUrgency = urgencyLevel(vals.energy);
 
-        // ── TIER 0: EMERGENCY / HOSPITALIZED — hard stop, nothing overrides ──
-        if (status === 'hospitalized' || char.is_jailed) {
-          console.log(`[autonomousMovement] ${char.name}: EMERGENCY BLOCK (${status})`);
+        // ── TIER 0: INCARCERATION / HOUSE ARREST / HOSPITALIZED — absolute hard stop ──
+        // Incarcerated characters are CONFINED. They cannot autonomously travel, roam, visit,
+        // go shopping, work (unless work-release is active), or relocate.
+        // This is a valid life state — do NOT attempt to correct it, reroute, or "fix" it.
+        if (char.is_jailed === true) {
+          console.log(`[autonomousMovement] ${char.name}: CONFINEMENT BLOCK — incarcerated (${char.incarceration_facility_name || 'facility'})`);
+          continue;
+        }
+        if (char.house_arrest_active === true) {
+          console.log(`[autonomousMovement] ${char.name}: CONFINEMENT BLOCK — house arrest`);
+          continue;
+        }
+        if (status === 'incarcerated' || status === 'confined' || status === 'house_arrest') {
+          console.log(`[autonomousMovement] ${char.name}: CONFINEMENT BLOCK — status=${status}`);
+          continue;
+        }
+        if (status === 'hospitalized') {
+          console.log(`[autonomousMovement] ${char.name}: EMERGENCY BLOCK — hospitalized`);
           continue;
         }
 

@@ -140,9 +140,60 @@
         "business",
         "school",
         "community",
-        "generic"
+        "generic",
+        "jail",
+        "prison",
+        "detention_center",
+        "correctional_facility",
+        "juvenile_detention",
+        "halfway_house",
+        "holding_cell"
       ],
       "default": "generic"
+    },
+    "is_confinement_facility": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this location is a jail, prison, detention center, or any correctional/confinement facility. Confinement facilities block autonomous civilian movement."
+    },
+    "confinement_type": {
+      "type": "string",
+      "enum": [
+        "jail",
+        "prison",
+        "detention_center",
+        "correctional_facility",
+        "juvenile_detention",
+        "halfway_house",
+        "holding_cell",
+        "house_arrest_residence"
+      ],
+      "description": "Specific type of confinement facility. Only set when is_confinement_facility is true."
+    },
+    "correctional_attire": {
+      "type": "object",
+      "description": "Mandatory institutional attire for this confinement facility. Overrides character wardrobe when is_jailed is true.",
+      "properties": {
+        "uniform_description": {
+          "type": "string",
+          "description": "Text description of the inmate uniform (e.g. 'orange jumpsuit, white undershirt')"
+        },
+        "uniform_image_url": {
+          "type": "string",
+          "description": "Reference image URL for the uniform"
+        },
+        "uniform_color": {
+          "type": "string",
+          "description": "Primary color of the uniform (e.g. 'orange', 'gray', 'blue')"
+        },
+        "classification_variants": {
+          "type": "object",
+          "description": "Optional per-classification attire overrides (e.g. minimum_security, maximum_security, medical_unit)",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
     },
     "subtype": {
       "type": "array",

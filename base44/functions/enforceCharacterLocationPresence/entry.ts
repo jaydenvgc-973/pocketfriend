@@ -135,7 +135,19 @@ function isInPreSleepWindow(character, etTime) {
   return now >= windowStart && now < sleepStartMin;
 }
 
-const VALID_SLEEP_CATEGORIES = new Set(['home', 'hotel', 'shelter', 'generic']);
+// Confinement categories — treated as valid sleep/residence locations for routing purposes.
+// Note: autonomous movement is still fully blocked for incarcerated characters regardless.
+const CONFINEMENT_CATEGORIES = new Set([
+  'jail', 'prison', 'detention_center', 'correctional_facility',
+  'juvenile_detention', 'halfway_house', 'holding_cell'
+]);
+
+const VALID_SLEEP_CATEGORIES = new Set([
+  'home', 'hotel', 'shelter', 'generic',
+  // Confinement facilities are valid sleep/residence locations
+  'jail', 'prison', 'detention_center', 'correctional_facility',
+  'juvenile_detention', 'halfway_house', 'holding_cell'
+]);
 
 function isValidSleepLocation(location) {
   if (!location) return false;
@@ -188,9 +200,49 @@ function hasUnpaidSleepDebt(character) {
 }
 
 // MINIMAL INLINE RESOLVER: Compute ONE resolved location object
-// PRIORITY: Sleep lock > nap > pre-sleep return > work > school > travel > visit > home fallback
+// PRIORITY: Incarceration lock > house arrest > sleep lock > nap > pre-sleep return > work > school > travel > visit > home fallback
 function computeResolvedLocation(character, locationMap, etTime) {
   const todayET = etTime.toISOString().slice(0, 10);
+
+  // ── LAYER -1: INCARCERATION HARD LOCK (ABSOLUTE HIGHEST PRIORITY) ────────
+  // If character is jailed/incarcerated, they are CONFINED.
+  // ALL civilian routing is bypassed — sleep, work, school, travel, autonomous movement.
+  // The confinement facility IS their location truth.
+  // This is not an error state. It is a valid life state.
+  if (character.is_jailed === true) {
+    const facilityId   = character.incarceration_facility_id || null;
+    const facilityLoc  = facilityId ? locationMap[facilityId] : null;
+    const facilityName = facilityLoc?.name || character.incarceration_facility_name || 'Correctional Facility';
+
+    return {
+      resolved_current_location_id:   facilityId || character.resolved_current_location_id || null,
+      resolved_current_location_name: facilityName,
+      resolved_location_type:         'incarcerated',
+      resolved_presence_status:       'incarcerated',
+      resolved_source_reason:         'incarceration_confinement_lock',
+      resolved_zone:                  null,
+      home_resolution_failed:         false
+    };
+  }
+
+  // ── LAYER -0.5: HOUSE ARREST LOCK ────────────────────────────────────────
+  // Character is confined to their assigned house arrest residence.
+  // They may not autonomously travel elsewhere.
+  if (character.house_arrest_active === true) {
+    const haLocId  = character.house_arrest_location_id || character.current_home_location_id || null;
+    const haLoc    = haLocId ? locationMap[haLocId] : null;
+    const haName   = haLoc?.name || 'Residence (House Arrest)';
+
+    return {
+      resolved_current_location_id:   haLocId || character.resolved_current_location_id || null,
+      resolved_current_location_name: haName,
+      resolved_location_type:         'house_arrest',
+      resolved_presence_status:       'house_arrest',
+      resolved_source_reason:         'house_arrest_confinement_lock',
+      resolved_zone:                  null,
+      home_resolution_failed:         false
+    };
+  }
 
   // ── LAYER 0: SLEEP HARD LOCK (HIGHEST PRIORITY — runs before everything) ───
   // active_created_character inside their sleep window must be locked to their
