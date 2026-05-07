@@ -1385,11 +1385,10 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       {showHousingModal && character && (
         <LogHousingChangeModal
           character={character}
+          currentUser={currentUser}
+          queryClient={queryClient}
           onClose={() => setShowHousingModal(false)}
-          onSaved={() => {
-            setShowHousingModal(false);
-            queryClient.invalidateQueries({ queryKey: ['character', characterId] });
-          }}
+          onSaved={() => setShowHousingModal(false)}
         />
       )}
       {pendingAliasResolution && (
