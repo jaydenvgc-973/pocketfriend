@@ -367,6 +367,10 @@ export default function EditCharacterProfile() {
     await Promise.all((form.char_relationships || []).map(async (rel) => {
       if (!rel.related_character_id) return;
 
+      // Skip if the related character no longer exists in our loaded list (deleted/merged)
+      const relatedCharExists = characters.some(c => c.id === rel.related_character_id);
+      if (!relatedCharExists) return;
+
       const relTypeKey = Object.keys(RELATIONSHIP_TYPES).find(k => RELATIONSHIP_TYPES[k].label === rel.relationship_type) || rel.relationship_type;
 
       const relationshipEntry = {
