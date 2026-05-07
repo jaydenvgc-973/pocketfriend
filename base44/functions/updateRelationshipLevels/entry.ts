@@ -276,10 +276,18 @@ Deno.serve(async (req) => {
     if (!userMessage && !emojiReaction) return Response.json({ error: 'Missing required fields' }, { status: 400 });
 
     // CRITICAL VALIDATION: Character must exist and belong to current user
-    const chars = await base44.asServiceRole.entities.Character.filter({
+    // owner_email is the authoritative ownership field — created_by is legacy-only fallback
+    let chars = await base44.asServiceRole.entities.Character.filter({
       id: characterId,
-      created_by: user.email
+      owner_email: user.email
     });
+    // Legacy fallback: older characters may have owner_email missing — try created_by
+    if (!chars || chars.length === 0) {
+      chars = await base44.asServiceRole.entities.Character.filter({
+        id: characterId,
+        created_by: user.email
+      });
+    }
     const character = chars?.[0];
     if (!character) {
       console.warn(`[updateRelationshipLevels] Character ${characterId} not found or not owned by ${user.email}`);
@@ -295,10 +303,11 @@ Deno.serve(async (req) => {
     let charRelEntry = null;
     if (playingAsCharacterId) {
       // VALIDATION: playingAsCharacter must belong to current user
-      const playingChars = await base44.asServiceRole.entities.Character.filter({
-        id: playingAsCharacterId,
-        created_by: user.email
-      });
+      // owner_email is authoritative; legacy fallback to created_by
+      let playingChars = await base44.asServiceRole.entities.Character.filter({ id: playingAsCharacterId, owner_email: user.email });
+      if (!playingChars || playingChars.length === 0) {
+        playingChars = await base44.asServiceRole.entities.Character.filter({ id: playingAsCharacterId, created_by: user.email });
+      }
       playingAsCharacter = playingChars?.[0] || null;
       if (playingAsCharacter) {
         charRelEntry = (character.fictional_relationships || []).find(r => r.related_character_id === playingAsCharacterId) || null;
@@ -408,6 +417,37 @@ NON-PHYSICAL ATTRACTION TRAIT DETECTION:
       ? `INTERACTING PARTY: ${playingAsCharacter.name} (another character — ${playingAsCharacter.age_range || ''} ${playingAsCharacter.gender || ''}, personality: ${playingAsCharacter.personality_summary || ''}, archetype: ${playingAsCharacter.archetype || ''}, orientation: ${playingAsCharacter.sexual_orientation || ''})`
       : `INTERACTING PARTY: The user (unknown gender)`;
 
+    // ── DYNAMIC LABEL RESOLUTION (score-driven visible label) ────────────────
+    // Derives what the relationship actually IS right now from scores,
+    // not from static tags — prevents stale contradictions in LLM context.
+    function resolveDynamicLabel(scores, existingTag) {
+      const { friendship_level: f = 50, trust_level: t = 50, romantic_level: r = 0, attraction_level: a = 0, chosen_family_level: cf = 0, user_respect_level: resp = 50 } = scores || {};
+      const tag = (existingTag || '').toLowerCase().trim();
+      const bloodTags = new Set(['mother','father','son','daughter','sister','brother','grandmother','grandfather','aunt','uncle','niece','nephew','cousin','half-sister','half-brother','step-mother','step-father']);
+      if (bloodTags.has(tag) || tag.includes('mother') || tag.includes('father') || tag.includes('sister') || tag.includes('brother')) return { label: existingTag, naturalSpeech: existingTag };
+      if (t <= 10 && resp <= 15) return { label: 'Enemy', naturalSpeech: 'someone I want nothing to do with' };
+      if (t <= 15 && f <= 15) return { label: 'Estranged', naturalSpeech: 'someone I used to know — we\'re not talking' };
+      if (t <= 25 && resp <= 20 && f <= 25) return { label: 'Distrustful', naturalSpeech: 'someone I keep at a distance' };
+      if (r >= 80 && t >= 70) { if (tag.includes('spouse') || tag.includes('married')) return { label: 'Spouse', naturalSpeech: 'my husband / my wife / my spouse' }; return { label: 'Partner', naturalSpeech: 'my partner / my boyfriend / my girlfriend / my person' }; }
+      if (r >= 60 && t >= 55 && a >= 40) return { label: 'Dating', naturalSpeech: 'someone I\'m seeing / we\'re together / my boyfriend / my girlfriend' };
+      if (r >= 40 && a >= 30) return { label: f >= 60 ? 'Situationship' : 'Romantic Interest', naturalSpeech: f >= 60 ? 'we\'re talking / it\'s complicated / we\'re seeing each other' : 'someone I have feelings for' };
+      if (tag.includes('ex') && r <= 5) return { label: 'Ex', naturalSpeech: 'my ex / someone I used to be with' };
+      if (cf >= 75 && f >= 65 && t >= 60) return { label: 'Chosen Family', naturalSpeech: 'basically family / someone I\'d do anything for' };
+      if (f >= 90 && t >= 75) return { label: 'Best Friend', naturalSpeech: 'my best friend / my day one / my ride or die' };
+      if (f >= 75 && t >= 60) return { label: 'Close Friend', naturalSpeech: 'a close friend / one of my good friends' };
+      if (f >= 60 && t >= 45) return { label: 'Friend', naturalSpeech: 'a friend' };
+      if (f >= 40) return { label: 'Friendly', naturalSpeech: 'someone I\'m cool with' };
+      return { label: 'Acquaintance', naturalSpeech: 'someone I know' };
+    }
+    const dynamicLabel = resolveDynamicLabel(current, charRelEntry?.relationship_type || null);
+    const naturalSpeechNote = `
+RELATIONSHIP LANGUAGE ENFORCEMENT:
+- Internal stored tag: "${charRelEntry?.relationship_type || 'none'}" (NEVER use this literal string in dialogue)
+- Dynamic resolved label: "${dynamicLabel.label}" (use for reasoning — not for speech)
+- Natural speech: use phrases like "${dynamicLabel.naturalSpeech}"
+- NEVER say "my romantic interest", "situationship", or any internal tag key in character dialogue.
+- Speak as a real human would, not a system report.`;
+
     const prompt = `You are a relationship dynamics engine. Output ONLY updated numeric values for all relationship dimensions.
 
 CHARACTER: ${character.name}
@@ -424,6 +464,7 @@ LOYALTY VIEW: ${character.loyalty_view || 'not specified'}
 ${interactingPartyDesc}
 
 ${bandContext}
+${naturalSpeechNote}
 
 RECENT CONVERSATION:
 ${conversationSummary || 'No prior context.'}
@@ -694,10 +735,11 @@ Respond with ONLY valid JSON:
     }
 
     // VALIDATION: Ensure character still exists before updating
-    const validateChar = await base44.asServiceRole.entities.Character.filter({
-      id: characterId,
-      created_by: user.email
-    });
+    // owner_email is authoritative; fall back to created_by for legacy characters
+    let validateChar = await base44.asServiceRole.entities.Character.filter({ id: characterId, owner_email: user.email });
+    if (!validateChar || validateChar.length === 0) {
+      validateChar = await base44.asServiceRole.entities.Character.filter({ id: characterId, created_by: user.email });
+    }
     if (!validateChar || validateChar.length === 0) {
       console.error(`[updateRelationshipLevels] Character ${characterId} disappeared during processing (owned by ${user.email})`);
       return Response.json({ error: 'Character became unavailable during processing' }, { status: 410 });
@@ -721,6 +763,12 @@ Respond with ONLY valid JSON:
       }));
     }
     if (memPromises.length > 0) await Promise.all(memPromises);
+
+    // ── DYNAMIC LABEL SHIFT DETECTION ────────────────────────────────────────
+    // Check if the resolved label changed from pre-update to post-update scores
+    const labelBefore = resolveDynamicLabel(current, charRelEntry?.relationship_type || null);
+    const labelAfter  = resolveDynamicLabel(updated,  charRelEntry?.relationship_type || null);
+    const dynamicLabelShifted = labelBefore.label !== labelAfter.label;
 
     // ── RELATIONSHIP TITLE CHANGE CHECK ──────────────────────────────────────
     const CHANGEABLE_TITLES = ['spouse','partner','friend','best friend','romantic interest','girlfriend','boyfriend','lover','acquaintance','coworker'];
@@ -749,6 +797,9 @@ Respond with ONLY valid JSON:
       detected_traits: result.detected_traits || [],
       milestone_messages: milestoneMessages,
       relationship_change_request: relationshipChangeRequest,
+      dynamic_label: labelAfter.label,
+      dynamic_label_shifted: dynamicLabelShifted,
+      dynamic_label_before: dynamicLabelShifted ? labelBefore.label : undefined,
     });
 
   } catch (error) {
