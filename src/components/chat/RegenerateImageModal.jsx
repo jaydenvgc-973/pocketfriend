@@ -76,23 +76,25 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   }, [originalPrompt, promptMode, isOpen]);
 
   const handleSelect = (id) => {
-    if (id === "wrong_location") {
-      setShowLocationPicker(true);
-      setLoadingLocations(true);
-      const tryFetch = () => base44.functions.invoke('fetchAllLocationsForUser', {}).then(res => {
-        const locs = res?.data?.locations || [];
-        setLocations(locs);
-      });
-      tryFetch().catch(err => {
-        const is429 = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
-        if (is429) {
-          // Retry once after 3s — same transient rate-limit pattern as chat load
-          return new Promise(r => setTimeout(r, 3000)).then(tryFetch).catch(() => setLocations([]));
-        }
-        setLocations([]);
-      }).finally(() => setLoadingLocations(false));
-      return;
-    }
+   if (id === "wrong_location") {
+     setShowLocationPicker(true);
+     setLoadingLocations(true);
+     const tryFetch = () => base44.functions.invoke('fetchAllLocationsForUser', {}).then(res => {
+       const locs = res?.data?.locations || res?.locations || [];
+       console.log(`[RegenerateModal] Fetched ${locs.length} locations`);
+       setLocations(locs);
+     });
+     tryFetch().catch(err => {
+       console.error(`[RegenerateModal] fetchAllLocationsForUser error:`, err?.message);
+       const is429 = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
+       if (is429) {
+         // Retry once after 3s — same transient rate-limit pattern as chat load
+         return new Promise(r => setTimeout(r, 3000)).then(tryFetch).catch(() => setLocations([]));
+       }
+       setLocations([]);
+     }).finally(() => setLoadingLocations(false));
+     return;
+   }
     if (id === "dont_like") {
       setPromptMode("dont_like");
       setEditPrompt(originalPrompt || "");
@@ -192,7 +194,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                           {loc.zones?.length > 0 && <p className="text-[10px] text-muted-foreground">{loc.zones.length} zone{loc.zones.length > 1 ? 's' : ''}</p>}
                         </button>
                       ))}
-                      {locations.length === 0 && <p className="text-xs text-muted-foreground italic text-center py-3">No locations with images found</p>}
+                      {locations.length === 0 && <p className="text-xs text-muted-foreground italic text-center py-3">No locations found</p>}
                     </div>
                   )}
                   <button onClick={() => setShowLocationPicker(false)} className="text-xs text-muted-foreground hover:text-foreground">← Back</button>
