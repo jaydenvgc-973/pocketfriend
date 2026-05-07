@@ -148,6 +148,8 @@ Deno.serve(async (req) => {
 
       // ── CANONICAL CONTEXT: pull from shared truth service ─────────────────
       let canonicalSystemPrompt = '';
+      let canonicalLoaded = false;
+      let canonicalFallbackUsed = false;
       try {
         const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
           characterId: character.id,
@@ -157,11 +159,31 @@ Deno.serve(async (req) => {
         const ctxData = ctxRes?.data || ctxRes;
         if (ctxData?.systemPrompt) {
           canonicalSystemPrompt = ctxData.systemPrompt;
+          canonicalLoaded = true;
+          console.log(
+            `[generateGroupChatResponse] ✓ route=group_chat` +
+            ` | character=${character.name} (${character.id})` +
+            ` | canonical_loaded=true` +
+            ` | hard_facts_loaded=${!!ctxData.hardFacts}` +
+            ` | memory_count=${ctxData.memories?.length ?? 0}` +
+            ` | relationship_context_loaded=${!!ctxData.relationshipContext}` +
+            ` | fallback_used=false`
+          );
         }
-      } catch { /* non-blocking — fall through to legacy fallback */ }
+      } catch (ctxErr) {
+        canonicalFallbackUsed = true;
+        console.warn(`[generateGroupChatResponse] Canonical context unavailable for ${character.name} (${character.id}): ${ctxErr.message}`);
+      }
 
-      // Fallback only if canonical context service fails
+      // Fallback only if canonical context service fails — log visibly
       if (!canonicalSystemPrompt) {
+        canonicalFallbackUsed = true;
+        console.warn(
+          `[generateGroupChatResponse] DEGRADED | route=group_chat` +
+          ` | character=${character.name} (${character.id})` +
+          ` | canonical_loaded=false` +
+          ` | fallback_used=true`
+        );
         canonicalSystemPrompt = character.system_prompt || `You are ${character.name}, a ${character.age_range || 'person'} year old ${character.gender || 'person'}. ${character.personality_summary || ''} ${character.background_story || ''}`;
       }
 

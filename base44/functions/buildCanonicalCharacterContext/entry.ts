@@ -170,16 +170,31 @@ function buildReligionBlock(character) {
 function buildHardFacts(character) {
   const lines = [];
 
-  // Housing
+  // ── HOUSING TRUTH ─────────────────────────────────────────────────────────
+  // Source: home/residence fields ONLY.
+  // resolved_current_location_* is LIVE PRESENCE — not housing.
+  // A character can be at a store, park, work, shelter, or street.
+  // Do NOT infer stable home from resolved_current_location_name.
   if (character.is_homeless) {
     lines.push("HOUSING: Currently without stable housing / no fixed residence.");
-  } else if (character.housing_context === 'temporary_shelter') {
-    lines.push("HOUSING: Staying at an emergency shelter right now. Stability is uncertain.");
-  } else if (character.housing_context === 'temporary_housing' || character.temporary_housing_location_id) {
-    lines.push("HOUSING: In temporary housing (not a permanent home).");
-  } else if (character.current_home_location_id || character.resolved_current_location_name) {
-    const homeName = character.resolved_current_location_name || "your home";
-    lines.push(`HOUSING: Stable home — currently at or based at: ${homeName}.`);
+  } else if (character.housing_context === 'homeless_unsheltered') {
+    lines.push("HOUSING: Homeless and unsheltered.");
+  } else if (character.housing_context === 'temporary_shelter' || character.temporary_housing_location_id) {
+    const tempName = character.temporary_housing_location_id
+      ? (character.resolved_current_location_name && character.resolved_current_location_id === character.temporary_housing_location_id
+          ? character.resolved_current_location_name : "a temporary shelter")
+      : "an emergency shelter";
+    lines.push(`HOUSING: Staying at ${tempName}. Temporary — stability is not guaranteed.`);
+  } else if (character.current_home_location_id) {
+    // Has a real home ID — this is the housing truth field
+    // We can display a home name only if we have it explicitly stored
+    const homeName = character.resolved_current_location_name && character.resolved_current_location_id === character.current_home_location_id
+      ? character.resolved_current_location_name
+      : null;
+    lines.push(`HOUSING: Has a stable home${homeName ? ` (${homeName})` : ''}.`);
+  } else if (!character.current_home_location_id && !character.temporary_housing_location_id && !character.is_homeless) {
+    // No home ID on record — legacy record or unset
+    lines.push("HOUSING: Home not yet confirmed in system records.");
   }
 
   // Current location / presence
@@ -338,7 +353,7 @@ function buildModeBlock(interactionContext) {
 }
 
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
-function buildFullCanonicalPrompt(character, memories, worldName, interactionContext) {
+function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '') {
   const userNameLabel = character.nickname_for_user || worldName || null;
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
@@ -454,6 +469,8 @@ ${religionBlock}
 ${relationshipsContext}
 ${soapOperaContext}
 ${memoryBlock}
+${lifeJournalBlock}
+${recentMessageBlock}
 ${hardFacts}
 ${character.city || character.state ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(", ")}.` : ""}
 
@@ -525,6 +542,14 @@ Deno.serve(async (req) => {
 
     if (!character) {
       contextLog.push({ step: 'character_load', status: 'not_found', characterId });
+      console.warn(
+        `[buildCanonicalCharacterContext] NOT FOUND | route=${interactionContext}` +
+        ` | characterId=${characterId}` +
+        ` | owner=${user.email}` +
+        ` | canonical_loaded=false` +
+        ` | fallback_used=true` +
+        ` | fallback_reason=character_not_found_in_any_scope`
+      );
       return Response.json({
         error: `Character not found: ${characterId}`,
         contextLog,
@@ -550,13 +575,12 @@ Deno.serve(async (req) => {
     contextLog.push({ step: 'settings', worldName: worldName || 'none' });
 
     // ── Step 3: Fetch memories from the shared Memory well ────────────────────
-    // This is the ONE memory well. Memories written from Chat, Scene, Travel,
-    // World Contacts, group chat, automatic narratives — all go here. Retrieved here.
+    // This is the ONE memory well. All routes read from here — Chat, Scene, Travel,
+    // World Contacts, Group Chat, Narrative, Automatic Narrative, Proactive.
     let memories = [];
     let memoryLoadPath = 'none';
 
     try {
-      // Prefer semantic retrieval via retrieveActiveMemory (relevance-ranked)
       const memRes = await base44.functions.invoke('retrieveActiveMemory', {
         characterId,
         currentMessage: '',
@@ -568,7 +592,6 @@ Deno.serve(async (req) => {
         memories = memRes.data.memories;
         memoryLoadPath = 'retrieveActiveMemory_semantic';
       } else {
-        // Fallback: direct recency sort from the same Memory entity
         const direct = await base44.entities.Memory.filter(
           { character_id: characterId },
           '-timestamp',
@@ -583,45 +606,180 @@ Deno.serve(async (req) => {
 
     contextLog.push({
       step: 'memory_load',
-      status: 'loaded',
       count: memories.length,
       path: memoryLoadPath,
     });
 
-    // ── Step 4: Build hard facts ──────────────────────────────────────────────
+    // ── Step 4: Fetch Life Journal (CharacterMemory) ──────────────────────────
+    // Life Journal is the character's longitudinal narrative record — distinct from
+    // the Memory entity. It contains higher-level life events, emotional arc entries,
+    // and continuity checkpoints. Prioritize entries with importance_score >= 5.
+    let lifeJournalEntries = [];
+    let lifeJournalCount = 0;
+    try {
+      const journalRaw = await base44.entities.CharacterMemory.filter(
+        { character_id: characterId },
+        '-created_date',
+        20
+      ).catch(() => []);
+      lifeJournalEntries = journalRaw.filter(e => (e.importance_score ?? 0) >= 4);
+      lifeJournalCount = lifeJournalEntries.length;
+    } catch (journalErr) {
+      contextLog.push({ step: 'life_journal_load', status: 'error', error: journalErr.message });
+    }
+
+    contextLog.push({
+      step: 'life_journal_load',
+      count: lifeJournalCount,
+      totalFetched: lifeJournalCount,
+    });
+
+    // ── Step 5: Fetch recent Message records for this character ───────────────
+    // Supplement Memory records with actual recent message history (cross-page).
+    // This captures context from Chat, Text, Scene, Group Chat, and World Contacts
+    // that may not yet have been extracted into Memory records.
+    let recentMessages = [];
+    try {
+      // Find conversations this character participated in
+      const convos = await base44.entities.Conversation.filter(
+        { character_ids: [characterId] },
+        '-updated_date',
+        3
+      ).catch(() => []);
+
+      if (convos.length > 0) {
+        const recentMsgResults = await Promise.all(
+          convos.slice(0, 2).map(c =>
+            base44.entities.Message.filter(
+              { conversation_id: c.id, character_id: characterId },
+              '-timestamp',
+              8
+            ).catch(() => [])
+          )
+        );
+        recentMessages = recentMsgResults.flat()
+          .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date))
+          .slice(0, 12);
+      }
+    } catch (msgErr) {
+      contextLog.push({ step: 'recent_messages_load', status: 'error', error: msgErr.message });
+    }
+
+    contextLog.push({
+      step: 'recent_messages_load',
+      count: recentMessages.length,
+    });
+
+    // ── Step 6: Build hard facts ──────────────────────────────────────────────
     const hardFacts = buildHardFacts(character);
     const hardFactsLoaded = hardFacts.length > 0;
-    contextLog.push({ step: 'hard_facts', loaded: hardFactsLoaded, isHomeless: !!character.is_homeless, isJailed: !!character.is_jailed });
+    contextLog.push({
+      step: 'hard_facts',
+      loaded: hardFactsLoaded,
+      isHomeless: !!character.is_homeless,
+      isJailed: !!character.is_jailed,
+      hasHomeId: !!character.current_home_location_id,
+      hasTempHousingId: !!character.temporary_housing_location_id,
+      resolvedPresence: character.resolved_presence_status || null,
+    });
 
-    // ── Step 5: Build canonical system prompt ─────────────────────────────────
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext);
-    contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
-
-    // ── Step 6: Build relationship context string (for page-level injection) ──
-    let relationshipContext = null;
+    // ── Step 7: Build relationship context ───────────────────────────────────
+    // Relationships prioritize related_character_id (stable ID) over person_name.
+    // Name is display-only fallback when ID is not present.
     const rels = character.fictional_relationships || [];
+    let relationshipContext = null;
+    let relationshipLoaded = false;
+
     if (rels.length > 0) {
-      const lines = rels.map(r => {
-        const parts = [`${r.person_name} — ${r.relationship_type}`];
+      relationshipLoaded = true;
+      const relLines = rels.map(r => {
+        // ID is the canonical key; name is display fallback
+        const keyRef = r.related_character_id
+          ? `id:${r.related_character_id} (${r.person_name || 'unknown'})`
+          : `name:${r.person_name || 'unknown'}`;
+        const parts = [`${r.person_name || keyRef} — ${r.relationship_type || 'acquaintance'}`];
+        if (r.related_character_id) parts.push(`[linked_id:${r.related_character_id}]`);
         if (r.description) parts.push(`Context: ${r.description}`);
         if (r.current_status) parts.push(`Status: ${r.current_status}`);
         if (r.emotional_impact) parts.push(`Feels: ${r.emotional_impact}`);
         if (r.last_interaction_summary) parts.push(`Last: ${r.last_interaction_summary}`);
         return parts.join(' | ');
       });
-      relationshipContext = lines.join('\n');
+      relationshipContext = relLines.join('\n');
     }
 
-    const totalMs = Date.now() - startTime;
-    contextLog.push({ step: 'complete', totalMs, characterName: character.name, route: interactionContext });
+    contextLog.push({
+      step: 'relationship_context',
+      loaded: relationshipLoaded,
+      total: rels.length,
+      linked: rels.filter(r => !!r.related_character_id).length,
+      unlinked: rels.filter(r => !r.related_character_id).length,
+    });
 
-    console.log(`[buildCanonicalCharacterContext] ✓ ${character.name} | route=${interactionContext} | memories=${memories.length} | ms=${totalMs} | path=${characterLoadPath}`);
+    // ── Step 8: Build Life Journal block for prompt injection ─────────────────
+    let lifeJournalBlock = '';
+    if (lifeJournalEntries.length > 0) {
+      const lines = lifeJournalEntries.slice(0, 8).map(e => {
+        const text = e.memory_text || e.description || e.title || '';
+        const score = e.importance_score ? ` [importance: ${e.importance_score}]` : '';
+        return `- ${text.substring(0, 200)}${score}`;
+      });
+      lifeJournalBlock = `\nLIFE JOURNAL — LONGITUDINAL NARRATIVE RECORD (${lifeJournalEntries.length} significant entries):\n${lines.join('\n')}\n`;
+    }
+
+    // ── Step 9: Build recent message context block ────────────────────────────
+    let recentMessageBlock = '';
+    if (recentMessages.length > 0) {
+      const lines = recentMessages.slice(0, 8).map(m => {
+        const speaker = m.sender_type === 'character' ? (m.character_name || character.name) : 'User';
+        return `${speaker}: ${(m.content || '').substring(0, 150)}`;
+      });
+      recentMessageBlock = `\nRECENT CONVERSATION HISTORY (cross-page, most recent first):\n${lines.join('\n')}\n`;
+    }
+
+    // ── Step 10: Build canonical system prompt ────────────────────────────────
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, recentMessageBlock);
+    contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
+
+    const totalMs = Date.now() - startTime;
+
+    // ── FULL DIAGNOSTIC LOG LINE ──────────────────────────────────────────────
+    console.log(
+      `[buildCanonicalCharacterContext] ✓ route=${interactionContext}` +
+      ` | character=${character.name} (${characterId})` +
+      ` | owner=${user.email}` +
+      ` | canonical_loaded=true` +
+      ` | hard_facts_loaded=${hardFactsLoaded}` +
+      ` | life_journal_count=${lifeJournalCount}` +
+      ` | memory_count=${memories.length}` +
+      ` | relationship_context_loaded=${relationshipLoaded}` +
+      ` | recent_messages=${recentMessages.length}` +
+      ` | fallback_used=false` +
+      ` | load_path=${characterLoadPath}` +
+      ` | ms=${totalMs}`
+    );
+
+    contextLog.push({
+      step: 'complete',
+      totalMs,
+      characterName: character.name,
+      characterId,
+      ownerEmail: user.email,
+      route: interactionContext,
+      canonical_loaded: true,
+      hard_facts_loaded: hardFactsLoaded,
+      life_journal_count: lifeJournalCount,
+      memory_count: memories.length,
+      relationship_context_loaded: relationshipLoaded,
+      fallback_used: false,
+    });
 
     return Response.json({
       success: true,
       systemPrompt,
       character,
       memories,
+      lifeJournalEntries,
       hardFacts,
       worldName,
       relationshipContext,
@@ -630,7 +788,10 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     contextLog.push({ step: 'fatal_error', error: error.message });
-    console.error(`[buildCanonicalCharacterContext] FATAL: ${error.message}`);
+    console.error(
+      `[buildCanonicalCharacterContext] FATAL | error=${error.message}` +
+      ` | canonical_loaded=false | fallback_used=true | fallback_reason=fatal_exception`
+    );
     return Response.json({
       error: error.message,
       fallbackUsed: true,

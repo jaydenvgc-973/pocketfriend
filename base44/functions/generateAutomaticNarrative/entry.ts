@@ -269,10 +269,15 @@ Deno.serve(async (req) => {
       console.log(`[generateAutomaticNarrative] Reconciliation skipped (non-blocking):`, recErr.message);
     }
 
-    // ── CANONICAL CONTEXT: inject identity/hard facts from shared truth service ──
-    // This ensures automatic narratives use the same character truth as Chat/Text/Scene.
-    // Failure is non-blocking — narratives continue with inline character data if unavailable.
-    let canonicalIdentityBlock = '';
+    // ── CANONICAL CONTEXT: full identity from shared truth service ───────────
+    // Replaces inline personality/soap opera/memory building.
+    // Failure here is non-blocking — we still generate with minimal inline context,
+    // but we log visibly so it's diagnosable.
+    let canonicalSystemPrompt = null;
+    let canonicalHardFacts = '';
+    let canonicalLoaded = false;
+    let canonicalFallbackUsed = false;
+
     try {
       const ctxRes = await base44.asServiceRole.functions.invoke('buildCanonicalCharacterContext', {
         characterId,
@@ -280,13 +285,34 @@ Deno.serve(async (req) => {
         topKMemories: 6,
       });
       const ctxData = ctxRes?.data || ctxRes;
-      if (ctxData?.hardFacts) {
-        canonicalIdentityBlock = `\n${ctxData.hardFacts}\n`;
-        console.log(`[generateAutomaticNarrative] ✓ Canonical hard facts injected for ${character.name}`);
+      if (ctxData?.systemPrompt && ctxData?.character) {
+        canonicalSystemPrompt = ctxData.systemPrompt;
+        canonicalHardFacts = ctxData.hardFacts || '';
+        canonicalLoaded = true;
+      } else {
+        canonicalFallbackUsed = true;
+        console.warn(`[generateAutomaticNarrative] Canonical context returned no systemPrompt for ${character.name} (${characterId}) — falling back to minimal inline context`);
       }
     } catch (ctxErr) {
-      console.warn(`[generateAutomaticNarrative] Canonical context unavailable (non-blocking): ${ctxErr.message}`);
+      canonicalFallbackUsed = true;
+      console.warn(`[generateAutomaticNarrative] Canonical context unavailable for ${character.name} (${characterId}): ${ctxErr.message} — falling back to minimal inline context`);
     }
+
+    // Fallback: minimal inline identity — only if canonical service fails
+    if (!canonicalLoaded) {
+      canonicalSystemPrompt = `You are ${character.name}. ${character.personality_summary || 'A real person with their own life and personality.'}\nEmotional state: ${character.emotional_state || 'calm'}.`;
+    }
+
+    // ── FULL DIAGNOSTIC LOG ───────────────────────────────────────────────────
+    console.log(
+      `[generateAutomaticNarrative] route=automatic_narrative` +
+      ` | character=${character.name} (${characterId})` +
+      ` | owner=${ownerEmail}` +
+      ` | canonical_loaded=${canonicalLoaded}` +
+      ` | hard_facts_loaded=${canonicalHardFacts.length > 0}` +
+      ` | fallback_used=${canonicalFallbackUsed}` +
+      ` | trigger=${trigger}`
+    );
 
     // ── BUILD STATE-ACCURATE PROMPT ───────────────────────────────────────
     const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;

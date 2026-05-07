@@ -151,6 +151,10 @@ Deno.serve(async (req) => {
 
     // ── CANONICAL CONTEXT: pull from shared truth service ─────────────────
     let canonicalSystemPrompt = null;
+    let canonicalLoaded = false;
+    let canonicalHardFacts = '';
+    let memoryCount = 0;
+    let relationshipLoaded = false;
     try {
       const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
         characterId: char.id,
@@ -158,12 +162,39 @@ Deno.serve(async (req) => {
         topKMemories: 8,
       });
       const ctxData = ctxRes?.data || ctxRes;
-      if (ctxData?.systemPrompt) canonicalSystemPrompt = ctxData.systemPrompt;
-    } catch { /* non-blocking — fall through */ }
+      if (ctxData?.systemPrompt) {
+        canonicalSystemPrompt = ctxData.systemPrompt;
+        canonicalLoaded = true;
+        canonicalHardFacts = ctxData.hardFacts || '';
+        memoryCount = ctxData.memories?.length ?? 0;
+        relationshipLoaded = !!ctxData.relationshipContext;
+        console.log(
+          `[sendProactiveMessageForCharacter] ✓ route=proactive` +
+          ` | character=${char.name} (${char.id})` +
+          ` | owner=${char.owner_email}` +
+          ` | canonical_loaded=true` +
+          ` | hard_facts_loaded=${!!canonicalHardFacts}` +
+          ` | memory_count=${memoryCount}` +
+          ` | relationship_context_loaded=${relationshipLoaded}` +
+          ` | fallback_used=false`
+        );
+      }
+    } catch (ctxErr) {
+      console.warn(`[sendProactiveMessageForCharacter] Canonical context service error: ${ctxErr.message}`);
+    }
 
-    // Fallback only if canonical context service fails — log visibly
+    // Fallback only if canonical context service fails — log visibly with all diagnostic fields
     if (!canonicalSystemPrompt) {
-      console.warn(`[sendProactiveMessageForCharacter] FALLBACK: canonical context unavailable for ${char.name} (${char.id}) — using shallow prompt. This is degraded behavior.`);
+      console.warn(
+        `[sendProactiveMessageForCharacter] DEGRADED | route=proactive` +
+        ` | character=${char.name} (${char.id})` +
+        ` | owner=${char.owner_email}` +
+        ` | canonical_loaded=false` +
+        ` | hard_facts_loaded=false` +
+        ` | memory_count=0` +
+        ` | relationship_context_loaded=false` +
+        ` | fallback_used=true`
+      );
       canonicalSystemPrompt = `You are ${char.name}. ${char.personality_summary || 'A real person with your own life and personality.'}`;
     }
 
