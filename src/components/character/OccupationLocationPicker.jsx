@@ -28,6 +28,7 @@ export default function OccupationLocationPicker({
   currentTitle = '',
   onLinkChange,
   placeholder = 'e.g. Job title or role',
+  hideTitle = false,
 }) {
   const [showPicker, setShowPicker] = useState(false);
   const [title, setTitle] = useState(currentTitle);
@@ -74,21 +75,23 @@ export default function OccupationLocationPicker({
 
   return (
     <div className="space-y-2">
-      {/* Title input */}
-      <div className="space-y-1">
-        <label className="text-xs text-muted-foreground">
-          {linkType === 'occupation' ? 'Job Title' : 'Course / Program'}
-        </label>
-        <Input
-          value={title}
-          onChange={e => {
-            setTitle(e.target.value);
-            onLinkChange({ locationId: currentLocationId, locationName: selectedLocation?.name || null, title: e.target.value });
-          }}
-          placeholder={placeholder}
-          className="rounded-xl text-sm h-10"
-        />
-      </div>
+      {/* Title input — hidden when parent already provides a Job Title field */}
+      {!hideTitle && (
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">
+            {linkType === 'occupation' ? 'Job Title' : 'Course / Program'}
+          </label>
+          <Input
+            value={title}
+            onChange={e => {
+              setTitle(e.target.value);
+              onLinkChange({ locationId: currentLocationId, locationName: selectedLocation?.name || null, title: e.target.value });
+            }}
+            placeholder={placeholder}
+            className="rounded-xl text-sm h-10"
+          />
+        </div>
+      )}
 
       {/* Location link */}
       <div className="space-y-1">

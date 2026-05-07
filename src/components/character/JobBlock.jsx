@@ -84,6 +84,7 @@ export default function JobBlock({
           currentTitle={locationLink?.title}
           onLinkChange={onLocationLinkChange}
           placeholder="e.g. Hospital, Coffee Shop, Studio"
+          hideTitle
         />
       </div>
 
