@@ -117,7 +117,7 @@ export default function Chat() {
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
-  const { pendingApproval, checkForApprovalEvents, approveEvent, dismissApproval } = useApprovalEvents();
+  const { pendingApproval, checkForApprovalEvents, approveEvent, dismissApproval, triggerHousingChangePopup } = useApprovalEvents();
   const queryClient = useQueryClient();
   const conversationIdRef = useRef(null);
   const unsubscribeRef = useRef(null);
@@ -1253,6 +1253,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         onSendMoneyToggle={() => setShowSendMoney(true)}
         onShoppingToggle={() => setShowShopping(true)}
         onTroubleshootingToggle={() => setShowTroubleshooting(true)}
+        onHousingChangeToggle={() => triggerHousingChangePopup(character)}
       />
       {character && showMediaGallery && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
       {character && conversationId && (

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MoreVertical, Image, Gamepad2, Sparkles, Wrench, Globe, BookOpen, DollarSign, Grid3x3, ShoppingBag, X, Radio, PersonStanding } from "lucide-react";
+import { MoreVertical, Image, Gamepad2, Sparkles, Wrench, Globe, BookOpen, DollarSign, Grid3x3, ShoppingBag, X, Radio, PersonStanding, Home } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
 const topLevelItems = [
@@ -13,10 +13,11 @@ const topLevelItems = [
 ];
 
 const appsDrawerItems = [
-  { id: "media",     icon: Image,       label: "Media Gallery" },
-  { id: "money",     icon: DollarSign,  label: "Send Money" },
-  { id: "contacts",  icon: Globe,       label: "World Contacts" },
-  { id: "shopping",  icon: ShoppingBag, label: "Shopping" },
+  { id: "media",          icon: Image,       label: "Media Gallery" },
+  { id: "money",          icon: DollarSign,  label: "Send Money" },
+  { id: "contacts",       icon: Globe,       label: "World Contacts" },
+  { id: "shopping",       icon: ShoppingBag, label: "Shopping" },
+  { id: "housing_change", icon: Home,        label: "Log Housing Change" },
 ];
 
 export default function ChatActionsMenu({ visible = {}, onSelect }) {

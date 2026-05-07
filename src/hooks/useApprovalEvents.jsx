@@ -478,5 +478,30 @@ Return JSON:`,
     dismissApproval();
   }, [pendingApproval, dismissApproval]);
 
-  return { pendingApproval, checkForApprovalEvents, approveEvent, dismissApproval };
+  // Manual trigger — called from the app drawer "Log Housing Change" button
+  const triggerHousingChangePopup = useCallback((character) => {
+    if (!character) return;
+    setPendingApproval({
+      type: 'move_out',
+      data: {
+        character,
+        eventKey: `household_${character.id}_manual`,
+        householdAnalysis: {
+          movingCharacterName: character.name,
+          movingCharacterIsSubject: true,
+          moveType: 'unknown',
+          currentResidence: character.resolved_current_location_name || null,
+          destinationResidence: null,
+          otherPeopleMovingWith: [],
+          peopleRemaining: [],
+          peopleBeingRemoved: [],
+          reasonSummary: null,
+          triggeringSentence: null,
+          confidence: 'low',
+        }
+      }
+    });
+  }, []);
+
+  return { pendingApproval, checkForApprovalEvents, approveEvent, dismissApproval, triggerHousingChangePopup };
 }

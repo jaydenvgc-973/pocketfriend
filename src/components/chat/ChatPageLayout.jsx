@@ -15,8 +15,7 @@ import TroubleshootingPanel from "./TroubleshootingPanel";
 import DeleteMemoryChoiceModal from "./DeleteMemoryChoiceModal";
 import ForwardMessageModal from "./ForwardMessageModal";
 import BottomNav from "@/components/BottomNav";
-import ApprovalPopup from "@/components/approvals/ApprovalPopup";
-import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
+import ChatApprovals from "@/components/chat/ChatApprovals";
 import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
 import NewPersonDetectedModal from "./NewPersonDetectedModal";
@@ -66,6 +65,7 @@ export default function ChatPageLayout({
   userSettings,
   queryClient,
   activeCharacter,
+  onHousingChangeToggle,
   pendingApproval,
   approveEvent,
   dismissApproval,
@@ -95,6 +95,7 @@ export default function ChatPageLayout({
         onSendMoneyToggle={() => setShowSendMoney(true)}
         onShoppingToggle={() => setShowShopping(true)}
         onTroubleshootingToggle={() => setShowTroubleshooting(true)}
+        onHousingChangeToggle={onHousingChangeToggle}
         setMessages={setMessages}
       />
 
@@ -222,35 +223,12 @@ export default function ChatPageLayout({
       )}
       <BottomNav />
 
-      {pendingApproval?.type === 'move_in' && (
-        <ApprovalPopup type="move_in" title="Moving In Together?" description={`It looks like ${pendingApproval.data.character?.name} may be moving in${pendingApproval.data.otherCharName ? ` with ${pendingApproval.data.otherCharName}` : ' with someone'}. Approve this household change?`} details={pendingApproval.data} onApprove={approveEvent} onDeny={dismissApproval}>
-          <p><span className="text-muted-foreground">Character:</span> {pendingApproval.data.character?.name}</p>
-          {pendingApproval.data.otherCharName && <p><span className="text-muted-foreground">Moving in with:</span> {pendingApproval.data.otherCharName}</p>}
-        </ApprovalPopup>
-      )}
-
-      {pendingApproval?.type === 'marriage' && (
-        <ApprovalPopup
-          type="marriage"
-          title="Marriage Event Detected"
-          description={`It looks like ${pendingApproval.data.character?.name} may be getting married${pendingApproval.data.otherCharName ? ` to ${pendingApproval.data.otherCharName}` : ''}. Approve this?`}
-          details={pendingApproval.data}
-          onApprove={approveEvent}
-          onDeny={dismissApproval}
-        >
-          <p><span className="text-muted-foreground">Character:</span> {pendingApproval.data.character?.name}</p>
-          {pendingApproval.data.otherCharName && <p><span className="text-muted-foreground">Partner:</span> {pendingApproval.data.otherCharName}</p>}
-        </ApprovalPopup>
-      )}
-
-      {pendingApproval?.type === 'birth' && (
-        <BirthApprovalPopup
-          parentCharacter={pendingApproval.data.character}
-          otherParentName={pendingApproval.data.otherParentName}
-          onApprove={approveEvent}
-          onDeny={dismissApproval}
-        />
-      )}
+      <ChatApprovals
+        pendingApproval={pendingApproval}
+        approveEvent={approveEvent}
+        dismissApproval={dismissApproval}
+        character={character}
+      />
 
       {character && <PendingLifeEventApproval characterId={characterId} character={character} />}
       {pendingAliasResolution && (
