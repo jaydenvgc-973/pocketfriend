@@ -24,9 +24,11 @@ export default function LogHousingChangeModal({ character, onClose, onSaved }) {
   const [timing, setTiming] = useState("immediate");
   const [notes, setNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
   const handleSave = async () => {
     setIsSaving(true);
+    setSaveError(null);
     try {
       await base44.functions.invoke("logHousingChange", {
         characterId: character.id,
@@ -36,6 +38,8 @@ export default function LogHousingChangeModal({ character, onClose, onSaved }) {
         notes: notes.trim() || null,
       });
       onSaved?.();
+    } catch (err) {
+      setSaveError(err?.response?.data?.error || err?.message || "Failed to save housing change.");
     } finally {
       setIsSaving(false);
     }
@@ -124,6 +128,11 @@ export default function LogHousingChangeModal({ character, onClose, onSaved }) {
             </div>
           </div>
 
+          {saveError && (
+            <div className="mx-5 mb-3 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20 text-xs text-destructive">
+              {saveError}
+            </div>
+          )}
           {/* Actions */}
           <div className="px-5 pb-5 flex gap-2">
             <Button variant="outline" size="sm" onClick={onClose} className="flex-1 rounded-xl text-xs">
