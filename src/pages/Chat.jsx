@@ -107,10 +107,15 @@ export default function Chat() {
     setConversationId(null);
     setIsTyping(false);
     setConvoLoadError(null);
-    setUserScrolledAway(false); // Reset scroll position tracking on character switch
-    setCatchupNarrativeText(null); // Don't carry over catchup from previous character
-    // Clear location session cache on character switch — different character may have different job context
+    setUserScrolledAway(false);
+    setCatchupNarrativeText(null);
+    // Clear session caches on character switch — different character = different context
     locationsSessionCacheRef.current = { data: null, fetchedForCharacterId: null };
+    // Clear canonical context cache — new character needs fresh canonical fetch
+    // (Only clear this character's entry, not others)
+    if (characterId) {
+      delete systemPromptCacheRef.current[`canonical::${characterId}`];
+    }
   }, [characterId]);
 
   const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
@@ -725,11 +730,62 @@ export default function Chat() {
 
       const userDisplayName = userSettings.fictional_world_name || null;
       const outfitHint = buildOutfitNarrativeHint(resolveCharacterOutfit(character, {}), character);
+
+      // ── CANONICAL CONTEXT — single identity source of truth ───────────────
+      // Fetch canonical prompt from backend service. This owns: identity, hard facts,
+      // memory, Life Journal, relationships, soap opera threads.
+      // buildSystemPrompt then wraps it with frontend-only layers (image rules, narration, etc.)
+      let canonicalPrompt = null;
+      let canonicalContextLoaded = false;
+      let canonicalMemoryCount = 0;
+      let canonicalLifeJournalCount = 0;
+      let canonicalFallbackUsed = false;
+      const canonicalCacheKey = `canonical::${characterId}`;
+      if (systemPromptCacheRef.current[canonicalCacheKey]) {
+        const cached = systemPromptCacheRef.current[canonicalCacheKey];
+        canonicalPrompt = cached.systemPrompt;
+        canonicalContextLoaded = true;
+        canonicalMemoryCount = cached.memoryCount || 0;
+        canonicalLifeJournalCount = cached.lifeJournalCount || 0;
+      } else {
+        try {
+          const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
+            characterId,
+            interactionContext: 'direct_chat',
+            topKMemories: 14,
+          });
+          const ctxData = ctxRes?.data || ctxRes;
+          if (ctxData?.systemPrompt) {
+            canonicalPrompt = ctxData.systemPrompt;
+            canonicalContextLoaded = true;
+            canonicalMemoryCount = ctxData.memories?.length ?? 0;
+            canonicalLifeJournalCount = ctxData.lifeJournalEntries?.length ?? 0;
+            // Cache for this session — canonical context is stable per character
+            systemPromptCacheRef.current[canonicalCacheKey] = {
+              systemPrompt: canonicalPrompt,
+              memoryCount: canonicalMemoryCount,
+              lifeJournalCount: canonicalLifeJournalCount,
+            };
+          } else {
+            canonicalFallbackUsed = true;
+          }
+        } catch (ctxErr) {
+          canonicalFallbackUsed = true;
+          console.warn(`[Chat] Canonical context unavailable for ${character.name}: ${ctxErr.message} — using legacy inline fallback`);
+        }
+      }
+
+      console.log(
+        `[Chat] route=direct_chat | character=${character.name} (${characterId})` +
+        ` | canonical_loaded=${canonicalContextLoaded}` +
+        ` | memory_count=${canonicalMemoryCount}` +
+        ` | life_journal_count=${canonicalLifeJournalCount}` +
+        ` | fallback_used=${canonicalFallbackUsed}`
+      );
+
       let systemPrompt = "";
       if (character.system_prompt_url) {
-        // Use session cache to avoid re-fetching on every message send.
-        // Key includes both characterId and url to prevent cross-character prompt leakage.
-        const cacheKey = `${characterId}::${character.system_prompt_url}`;
+        const cacheKey = `url::${characterId}::${character.system_prompt_url}`;
         if (systemPromptCacheRef.current[cacheKey]) {
           systemPrompt = systemPromptCacheRef.current[cacheKey];
         } else {
@@ -737,12 +793,13 @@ export default function Chat() {
             const promptResponse = await fetch(character.system_prompt_url);
             systemPrompt = await promptResponse.text();
             systemPromptCacheRef.current[cacheKey] = systemPrompt;
-          } catch (err) {
-            systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false, outfitHint }, memData?.memories || []);
+          } catch {
+            systemPrompt = buildSystemPrompt(canonicalPrompt, character, { allowNarration: false, outfitHint, worldName: userDisplayName });
           }
         }
       } else {
-        systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false, outfitHint }, memData?.memories || []);
+        // Pass canonical prompt as the identity base; buildSystemPrompt adds frontend-only layers
+        systemPrompt = buildSystemPrompt(canonicalPrompt, character, { allowNarration: false, outfitHint, worldName: userDisplayName });
       }
       const userNameForPrompts = userDisplayName || null;
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
