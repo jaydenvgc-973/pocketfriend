@@ -146,7 +146,24 @@ Deno.serve(async (req) => {
       const charGender = character.gender || '';
       const charPronouns = charGender === 'male' ? 'he/him' : charGender === 'female' ? 'she/her' : 'they/them';
 
-      const systemPrompt = character.system_prompt || `You are ${character.name}, a ${character.age_range || 'person'} year old ${character.gender || 'person'}. ${character.personality_summary || ''} ${character.background_story || ''}`;
+      // ── CANONICAL CONTEXT: pull from shared truth service ─────────────────
+      let canonicalSystemPrompt = '';
+      try {
+        const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
+          characterId: character.id,
+          interactionContext: 'group_chat',
+          topKMemories: 10,
+        });
+        const ctxData = ctxRes?.data || ctxRes;
+        if (ctxData?.systemPrompt) {
+          canonicalSystemPrompt = ctxData.systemPrompt;
+        }
+      } catch { /* non-blocking — fall through to legacy fallback */ }
+
+      // Fallback only if canonical context service fails
+      if (!canonicalSystemPrompt) {
+        canonicalSystemPrompt = character.system_prompt || `You are ${character.name}, a ${character.age_range || 'person'} year old ${character.gender || 'person'}. ${character.personality_summary || ''} ${character.background_story || ''}`;
+      }
 
       // Build relationship awareness for participants in this group chat
       const participantRels = (character.fictional_relationships || [])
@@ -168,7 +185,7 @@ Deno.serve(async (req) => {
         relationshipBlock += '\n⚠️ You KNOW these people. Respond to them with the familiarity your relationship history warrants. Do NOT treat them as strangers.\n';
       }
 
-      const fullPrompt = `${systemPrompt}
+      const fullPrompt = `${canonicalSystemPrompt}
 ${crossPageMemoryBlock}
 ${relationshipBlock}
 

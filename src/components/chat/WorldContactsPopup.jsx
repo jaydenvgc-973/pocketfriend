@@ -125,6 +125,29 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       .map(m => `${m.role === "user" ? "User" : selectedContact.person_name}: ${m.content}`)
       .join("\n");
 
+    // ── Fetch canonical hard facts for the owner character so the NPC has
+    //    accurate current truth (housing, location, status, emotional state).
+    //    This ensures the NPC reflects the same reality as Chat/Text/Scene.
+    let characterHardFacts = "";
+    let characterMemoryContext = "";
+    try {
+      const ctxRes = await base44.functions.invoke("buildCanonicalCharacterContext", {
+        characterId: character.id,
+        interactionContext: "world_contacts",
+        topKMemories: 8,
+      });
+      const ctxData = ctxRes?.data || ctxRes;
+      if (ctxData?.hardFacts) characterHardFacts = ctxData.hardFacts;
+      if (ctxData?.memories?.length > 0) {
+        const relevantMems = ctxData.memories
+          .filter(m => m.description?.toLowerCase().includes(selectedContact.person_name?.toLowerCase()))
+          .slice(0, 4);
+        if (relevantMems.length > 0) {
+          characterMemoryContext = `\nYOUR SHARED HISTORY WITH ${character.name} (from their memory):\n${relevantMems.map(m => `- ${m.title}: ${m.description}`).join("\n")}\n`;
+        }
+      }
+    } catch { /* non-blocking */ }
+
     const prompt = `You are ${selectedContact.person_name}, a real person in ${character.name}'s life.
 
 ABOUT YOU (${selectedContact.person_name}):
@@ -134,10 +157,12 @@ ABOUT YOU (${selectedContact.person_name}):
 - How you feel about ${character.name}: ${selectedContact.emotional_impact || ""}
 - Your history with ${character.name}: ${selectedContact.history_summary || "You have shared history."}
 - Last interaction: ${selectedContact.last_interaction_summary || ""}
+${characterMemoryContext}
+WHAT YOU KNOW ABOUT ${character.name}'s CURRENT SITUATION:
+${characterHardFacts || `${character.name} is doing what they normally do. You know them well.`}
 
 You are NOT an AI. You are a real person. Speak naturally in short conversational texts. Do NOT use bullet points or formal language. Do NOT start with your name.
-
-The user is speaking with you directly. Remember everything said in this conversation.
+Do NOT contradict any facts listed above about ${character.name}'s current situation. Your knowledge of them is accurate and current.
 
 Conversation so far:
 ${historyStr}
