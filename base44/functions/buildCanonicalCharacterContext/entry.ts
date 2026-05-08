@@ -774,7 +774,8 @@ Deno.serve(async (req) => {
 
       const allOverrides = [...charOverrides, ...userOverrides];
 
-      // Determine if location IDs are present
+      // EARLY EXIT: if either location ID is missing, skip all co-presence resolution.
+      // This avoids a 40-record Character query when there is nothing to match against.
       const presenceMissing = !charLocationId && !userCurrentLocationId;
 
       // Co-presence: user is present if location IDs match AND no blocking overrides
@@ -782,13 +783,16 @@ Deno.serve(async (req) => {
       const userPresentHere = locationIdsMatch && charOverrides.length === 0 && userPresenceStatus !== 'away';
 
       // Find other characters at the same location (owner-scoped only, no cross-account)
+      // SHORT-CIRCUIT: if character has no resolved location, skip this query entirely —
+      // no point fetching 80 characters when there's no location to match against.
+      // CAP: limit to 40 to avoid 429 rate limit storms when called from multiple routes simultaneously.
       let charactersPresentHere = [];
       if (charLocationId && !character.is_jailed) {
         try {
           const otherChars = await base44.entities.Character.filter(
             { owner_email: user.email, status: 'active' },
             null,
-            80
+            40
           ).catch(() => []);
 
           charactersPresentHere = otherChars
