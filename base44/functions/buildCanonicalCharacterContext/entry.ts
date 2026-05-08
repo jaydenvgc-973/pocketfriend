@@ -800,11 +800,11 @@ Deno.serve(async (req) => {
       const userPresentHere = locationIdsMatch && charOverrides.length === 0 && userPresenceStatus !== 'away';
 
       // Find other characters at the same location (owner-scoped only, no cross-account)
-      // SHORT-CIRCUIT: if character has no resolved location, skip this query entirely —
-      // no point fetching 80 characters when there's no location to match against.
-      // CAP: limit to 40 to avoid 429 rate limit storms when called from multiple routes simultaneously.
+      // SHORT-CIRCUIT: if character has no resolved location, OR user is away, skip this query entirely.
+      // This was the primary source of 429 storms — firing a 40-record query on every single chat message.
+      // Only run if both the character and user have a verified location AND they could potentially match.
       let charactersPresentHere = [];
-      if (charLocationId && !character.is_jailed) {
+      if (charLocationId && !character.is_jailed && userPresentHere) {
         try {
           const otherChars = await base44.entities.Character.filter(
             { owner_email: user.email, status: 'active' },

@@ -33,10 +33,12 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Only process on day 1 of each month (ET-aware)
+    // Only process on day 1 of each month (ET-aware) — unless catchUp=true is passed
+    const body = await req.json().catch(() => ({}));
+    const catchUp = body.catchUp === true;
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const dayOfMonth = nowET.getDate();
-    if (dayOfMonth !== 1) {
+    if (dayOfMonth !== 1 && !catchUp) {
       return Response.json({ success: true, processedCount: 0, skipped: true, reason: 'Not the 1st of the month' });
     }
 
