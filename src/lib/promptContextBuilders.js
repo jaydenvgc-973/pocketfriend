@@ -7,6 +7,7 @@
  */
 
 import { callLLMWithRetry } from "@/lib/llmUtils";
+import { isGloballyRateLimited } from "@/lib/simulationGate";
 
 // ── EDUCATION & TRAINING CONTEXT ─────────────────────────────────────────────
 
@@ -112,6 +113,13 @@ export async function buildDynamicContexts(text, character, recentMsgs) {
   let recentEventsContext = "";
   let culturalContext = "";
 
+  // RATE LIMIT GUARD: skip all optional internet-fetch LLM calls when globally rate limited.
+  // These are non-essential context enrichers — the response must proceed without them.
+  if (isGloballyRateLimited()) {
+    console.log('[buildDynamicContexts] SKIP all dynamic contexts — global rate limit active');
+    return { weatherContext, recentEventsContext, culturalContext };
+  }
+
   const userMentionsWeather = weatherKeywordsRe.test(text) || outdoorPlanKeywordsRe.test(text);
 
   if (userMentionsWeather && (character.city || character.state)) {
@@ -123,25 +131,25 @@ export async function buildDynamicContexts(text, character, recentMsgs) {
         weatherContext = `\n\nCURRENT WEATHER (for ${[character.city, character.state].filter(Boolean).join(", ")}): ${character.weather_summary}. You are aware of this. ONLY reference it if the user directly asked about weather or is making outdoor plans — do NOT volunteer it into unrelated topics.`;
       } else if (weatherKeywordsRe.test(text)) {
         try {
-          const weatherRes = await callLLMWithRetry(`What is the current weather right now in ${[character.city, character.state].filter(Boolean).join(", ")}? Include temperature and conditions briefly.`, 'gemini_3_flash', 3, true);
+          const weatherRes = await callLLMWithRetry(`What is the current weather right now in ${[character.city, character.state].filter(Boolean).join(", ")}? Include temperature and conditions briefly.`, 'gemini_3_flash', 1, true);
           weatherContext = `\n\nCURRENT WEATHER: ${weatherRes}. Reference this ONLY because the user asked about it.`;
-        } catch { /* silent */ }
+        } catch { /* silent — non-blocking */ }
       }
     }
   }
 
   if (newsKeywordsRe.test(text)) {
     try {
-      const eventsRes = await callLLMWithRetry(`What are the top 2-3 most relevant recent news events, cultural moments, or trending topics happening right now (current date: ${new Date().toLocaleDateString()})? Focus on general interest stories that a typical person might naturally bring up in casual conversation. Include brief details about each.`, 'gemini_3_flash', 3, true);
+      const eventsRes = await callLLMWithRetry(`What are the top 2-3 most relevant recent news events, cultural moments, or trending topics happening right now (current date: ${new Date().toLocaleDateString()})? Focus on general interest stories that a typical person might naturally bring up in casual conversation. Include brief details about each.`, 'gemini_3_flash', 1, true);
       recentEventsContext = `\n\nRECENT EVENTS: Here are current events happening now: ${eventsRes}. You can naturally reference these if they fit the conversation, but don't force it. Only mention them if they genuinely relate to what you're discussing.`;
-    } catch { /* silent */ }
+    } catch { /* silent — non-blocking */ }
   }
 
   if (culturalKeywordsRe.test(text) || culturalKeywordsRe.test(recentMsgs.slice(-3).map(m => m.content).join(" "))) {
     try {
-      const culturalRes = await callLLMWithRetry(`What are currently trending in entertainment and culture right now (current date: ${new Date().toLocaleDateString()})? Include: popular TV shows, streaming content, music releases or artists, celebrities making headlines, viral trends. Keep it to what a socially aware person would naturally know. Be concise.`, 'gemini_3_flash', 3, true);
+      const culturalRes = await callLLMWithRetry(`What are currently trending in entertainment and culture right now (current date: ${new Date().toLocaleDateString()})? Include: popular TV shows, streaming content, music releases or artists, celebrities making headlines, viral trends. Keep it to what a socially aware person would naturally know. Be concise.`, 'gemini_3_flash', 1, true);
       culturalContext = `\n\nCULTURAL AWARENESS: Current entertainment & culture trends: ${culturalRes}. You're aware of these topics and can discuss them naturally if they come up. Recognize references to celebrities, shows, and music without confusion.`;
-    } catch { /* silent */ }
+    } catch { /* silent — non-blocking */ }
   }
 
   return { weatherContext, recentEventsContext, culturalContext };

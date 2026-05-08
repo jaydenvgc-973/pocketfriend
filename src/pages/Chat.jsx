@@ -683,20 +683,40 @@ export default function Chat() {
         return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
       };
 
-      const [memoryResult, progressionResult, pastLookupsResult, spatialResult] = await Promise.all([
+      // Use Promise.allSettled so any single optional context failure cannot
+      // kill the entire response pipeline. Each result is individually extracted.
+      const [memorySettled, progressionSettled, pastLookupsSettled, spatialSettled] = await Promise.allSettled([
         base44.functions.invoke('retrieveActiveMemory', {
           characterId,
           currentMessage: text,
           recentMessages: recentMsgs.slice(-6),
           topK: 14,
-        }).catch(async () => {
-          const mems = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 12).catch(() => []);
-          return { data: { memories: mems, total: mems.length, _fallback: true } };
         }),
-        base44.functions.invoke('buildProgressionFilteredContext', { characterId, currentMessage: text }).catch(() => null),
-        base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10).catch(() => []),
-        getLocationsForContext().catch(() => null),
+        base44.functions.invoke('buildProgressionFilteredContext', { characterId, currentMessage: text }),
+        base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10),
+        getLocationsForContext(),
       ]);
+
+      // Extract settled values with safe fallbacks
+      let memoryResult = null;
+      if (memorySettled.status === 'fulfilled') {
+        memoryResult = memorySettled.value;
+      } else {
+        console.warn('[sendMessage] retrieveActiveMemory failed (non-blocking):', memorySettled.reason?.message);
+        // Lightweight fallback: read Memory entity directly
+        try {
+          const mems = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 12);
+          memoryResult = { data: { memories: mems, total: mems.length, _fallback: true } };
+        } catch {
+          memoryResult = { data: { memories: [], total: 0, _fallback: true } };
+        }
+      }
+      const progressionResult = progressionSettled.status === 'fulfilled' ? progressionSettled.value : null;
+      if (progressionSettled.status === 'rejected') console.warn('[sendMessage] buildProgressionFilteredContext failed (non-blocking):', progressionSettled.reason?.message);
+      const pastLookupsResult = pastLookupsSettled.status === 'fulfilled' ? pastLookupsSettled.value : [];
+      if (pastLookupsSettled.status === 'rejected') console.warn('[sendMessage] WebLookup.filter failed (non-blocking):', pastLookupsSettled.reason?.message);
+      const spatialResult = spatialSettled.status === 'fulfilled' ? spatialSettled.value : null;
+      if (spatialSettled.status === 'rejected') console.warn('[sendMessage] getLocationsForContext failed (non-blocking):', spatialSettled.reason?.message);
 
       let memoryContext = "";
       const memData = memoryResult?.data;

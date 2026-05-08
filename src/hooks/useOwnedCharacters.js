@@ -379,13 +379,15 @@ export function useOwnedCharacters(
     // 2-second stabilization delay prevents the recovery from firing during the
     // normal settings-load window, while still catching genuine anchor absences.
     //
-    // ANCHOR ALREADY IN NPC LIST CHECK: if the "missing" anchor is actually present
-    // in backendNpcs (the NPC fetch), the RLS refetch won't help — the anchor is an
-    // NPC, not an RLS character. In this case skip the RLS refetch entirely to
-    // avoid a redundant 429-contributing query.
-    const anchorInNpcList = validAnchors.some(id => backendNpcs.some(c => c.id === id));
-    if (isAnchorMissing && anchorInNpcList) {
-      console.log(`[useOwnedCharacters] Anchor found in NPC list — skipping RLS refetch. Anchor present via backendNpcs.`);
+    // ANCHOR ALREADY IN MERGED LIST CHECK: anchors may be NPCs returned via
+    // backendNpcs (not visible via owner_email RLS filter). In that case,
+    // "anchor missing from RLS" is a false alarm — the anchor IS present in the
+    // merged allCharacters list. Re-evaluate against the full merged list, not
+    // just the RLS slice. If any anchor is in allCharacters (regardless of which
+    // query returned it), treat as valid and skip the recovery refetch.
+    const anyAnchorInMerged = validAnchors.some(id => allCharacters.some(c => c.id === id));
+    if (isAnchorMissing && anyAnchorInMerged) {
+      console.log(`[useOwnedCharacters] Anchor found in merged list (via NPC or RLS) — skipping recovery refetch.`);
       writeBootstrapMeta(email, mergedCount);
       return;
     }
