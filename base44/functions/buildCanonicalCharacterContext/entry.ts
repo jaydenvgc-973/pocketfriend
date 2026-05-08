@@ -337,6 +337,62 @@ function buildSoapOperaLifeContext(character) {
   return block;
 }
 
+// ── CO-PRESENCE BLOCK BUILDER ─────────────────────────────────────────────────
+// Receives already-resolved co-presence data and builds the prompt block.
+// This is pure formatting — all resolution happens in the main handler.
+function buildCoPresenceBlock(coPresence) {
+  if (!coPresence) return '';
+
+  const {
+    userPresentHere,
+    userLocationName,
+    speakingCharacterLocationName,
+    locationMatchResult,
+    charactersPresentHere = [],
+    overridesApplied = [],
+    presenceMissing = false,
+    source,
+    checkedAt,
+  } = coPresence;
+
+  // If both location IDs are missing, fail visibly rather than silently
+  if (presenceMissing) {
+    return `\n════════════════════════════════════\nCO-PRESENCE CONTEXT\n════════════════════════════════════\n⚠️ CO-PRESENCE CONTEXT MISSING — presence resolver could not determine verified location for user or character. Do NOT invent who is nearby. Do NOT assume the user is present. Treat this as unknown.\n════════════════════════════════════\n`;
+  }
+
+  let block = `\n════════════════════════════════════\nVERIFIED CURRENT CO-PRESENCE — AUTHORITATIVE\nSource: ${source || 'live_presence_resolver'} | Checked: ${checkedAt || 'now'}\n════════════════════════════════════\n`;
+
+  block += `Your current location: ${speakingCharacterLocationName || 'unknown'}\n`;
+
+  if (userPresentHere) {
+    block += `USER IS HERE WITH YOU: YES\n`;
+    block += `The user is physically present at your current location (${userLocationName || speakingCharacterLocationName}).\n`;
+    block += `MANDATORY: You must recognize the user as physically present. Do NOT act as if you are alone. Do NOT say "unless you're standing on my porch" or suggest the user isn't there — they ARE there.\n`;
+  } else {
+    block += `USER IS HERE WITH YOU: NO\n`;
+    block += `The user is NOT at your current location. Do NOT imply they are nearby. Do NOT invent shared presence.\n`;
+  }
+
+  if (charactersPresentHere.length > 0) {
+    block += `\nOTHER VERIFIED CHARACTERS PRESENT HERE:\n`;
+    for (const c of charactersPresentHere) {
+      block += `• ${c.name} (presence: ${c.presenceStatus || 'at_location'}) — source: ${c.source || 'resolved_current_location_id'}\n`;
+    }
+    block += `You must recognize these characters as physically present with you.\n`;
+  } else {
+    block += `\nOTHER CHARACTERS PRESENT HERE: None verified.\n`;
+    block += `Do NOT mention or imply any other character is physically nearby unless listed above.\n`;
+  }
+
+  if (overridesApplied.length > 0) {
+    block += `\nPRESENCE OVERRIDES ACTIVE: ${overridesApplied.join(', ')}\n`;
+  }
+
+  block += `\nRULE — Co-presence is based on system truth ONLY. Do not guess who is present.\n`;
+  block += `════════════════════════════════════\n`;
+  return block;
+}
+
 // ── MODE-SPECIFIC INSTRUCTION BLOCKS ─────────────────────────────────────────
 function buildModeBlock(interactionContext) {
   const blocks = {
@@ -353,7 +409,7 @@ function buildModeBlock(interactionContext) {
 }
 
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
-function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '') {
+function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null) {
   const userNameLabel = character.nickname_for_user || worldName || null;
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
@@ -375,6 +431,7 @@ function buildFullCanonicalPrompt(character, memories, worldName, interactionCon
   const ageCommunicationBlock = buildAgeCommunicationBlock(character);
   const modeBlock = buildModeBlock(interactionContext);
   const hardFacts = buildHardFacts(character);
+  const coPresenceBlock = buildCoPresenceBlock(coPresence);
   const memoryBlock = buildMemoryBlock(memories);
   const familySection = buildFamilySection(character);
   const relationshipsContext = buildRelationshipsContext(character);
@@ -471,7 +528,7 @@ ${soapOperaContext}
 ${memoryBlock}
 ${lifeJournalBlock}
 ${recentMessageBlock}
-${hardFacts}
+${coPresenceBlock}${hardFacts}
 ${character.city || character.state ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(", ")}.` : ""}
 
 YOUR CURRENT EMOTIONAL STATE: ${character.emotional_state || 'calm'}
@@ -515,6 +572,7 @@ Deno.serve(async (req) => {
       characterId,
       interactionContext = 'direct_chat',
       topKMemories = 14,
+      ownerEmailHint = null,   // optional hint from caller — always verified against user.email
     } = await req.json();
 
     if (!characterId) {
@@ -568,11 +626,17 @@ Deno.serve(async (req) => {
       emotionalState: character.emotional_state,
     });
 
-    // ── Step 2: Fetch user settings (world name, weather) ────────────────────
+    // ── Step 2: Fetch user settings (world name, weather, USER PRESENCE) ────────
     const settingsList = await base44.entities.UserSettings.filter({ owner_email: user.email }).catch(() => []);
     const settings = settingsList?.[0] || {};
     const worldName = settings?.fictional_world_name || null;
-    contextLog.push({ step: 'settings', worldName: worldName || 'none' });
+
+    // User presence — source of truth fields
+    const userCurrentLocationId   = settings?.user_current_location_id   || null;
+    const userCurrentLocationName = settings?.user_current_location_name  || null;
+    const userPresenceStatus      = settings?.user_presence_status        || 'away';
+
+    contextLog.push({ step: 'settings', worldName: worldName || 'none', userPresenceStatus, userCurrentLocationId });
 
     // ── Step 3: Fetch memories from the shared Memory well ────────────────────
     // This is the ONE memory well. All routes read from here — Chat, Scene, Travel,
@@ -683,6 +747,113 @@ Deno.serve(async (req) => {
       resolvedPresence: character.resolved_presence_status || null,
     });
 
+    // ── Step 6a: CO-PRESENCE RESOLVER ────────────────────────────────────────
+    // Compares user's current location (from UserSettings) to character's resolved
+    // current location (from Character record) and finds other characters at the
+    // same verified location. Injects hard verified truth into the prompt.
+    // Source of truth:
+    //   User   → UserSettings.user_current_location_id / user_presence_status
+    //   Char   → Character.resolved_current_location_id / resolved_presence_status
+    //   Others → Character.resolved_current_location_id (owner-scoped only)
+
+    let coPresence = null;
+    try {
+      const charLocationId = character.resolved_current_location_id || null;
+      const charLocationName = character.resolved_current_location_name || null;
+      const charPresenceStatus = character.resolved_presence_status || null;
+
+      // Overrides that block co-presence even if location IDs match
+      const charOverrides = [];
+      if (charPresenceStatus === 'sleeping' || charPresenceStatus === 'napping') charOverrides.push('character_sleeping');
+      if (character.is_jailed) charOverrides.push('character_incarcerated');
+      if (character.house_arrest_active) charOverrides.push('character_house_arrest');
+      if (character.travel_status && character.travel_status !== 'not_traveling') charOverrides.push('character_traveling');
+
+      const userOverrides = [];
+      if (userPresenceStatus === 'away') userOverrides.push('user_away');
+
+      const allOverrides = [...charOverrides, ...userOverrides];
+
+      // Determine if location IDs are present
+      const presenceMissing = !charLocationId && !userCurrentLocationId;
+
+      // Co-presence: user is present if location IDs match AND no blocking overrides
+      const locationIdsMatch = !!(charLocationId && userCurrentLocationId && charLocationId === userCurrentLocationId);
+      const userPresentHere = locationIdsMatch && charOverrides.length === 0 && userPresenceStatus !== 'away';
+
+      // Find other characters at the same location (owner-scoped only, no cross-account)
+      let charactersPresentHere = [];
+      if (charLocationId && !character.is_jailed) {
+        try {
+          const otherChars = await base44.entities.Character.filter(
+            { owner_email: user.email, status: 'active' },
+            null,
+            80
+          ).catch(() => []);
+
+          charactersPresentHere = otherChars
+            .filter(c => {
+              if (c.id === characterId) return false; // skip self
+              if (!c.resolved_current_location_id) return false;
+              if (c.resolved_current_location_id !== charLocationId) return false;
+              // Exclude sleeping, traveling, incarcerated characters
+              const ps = c.resolved_presence_status;
+              if (ps === 'sleeping' || ps === 'napping') return false;
+              if (c.is_jailed) return false;
+              if (c.travel_status && c.travel_status !== 'not_traveling') return false;
+              return true;
+            })
+            .map(c => ({
+              id: c.id,
+              name: c.name || '(unnamed)',
+              presenceStatus: c.resolved_presence_status || 'at_location',
+              source: 'resolved_current_location_id',
+            }));
+        } catch (coPresenceErr) {
+          contextLog.push({ step: 'co_presence_others', status: 'error', error: coPresenceErr.message });
+        }
+      }
+
+      coPresence = {
+        userPresentHere,
+        userLocationId: userCurrentLocationId,
+        userLocationName: userCurrentLocationName,
+        speakingCharacterLocationId: charLocationId,
+        speakingCharacterLocationName: charLocationName,
+        locationMatchResult: locationIdsMatch,
+        charactersPresentHere,
+        overridesApplied: allOverrides,
+        presenceMissing,
+        source: 'live_presence_resolver',
+        checkedAt: new Date().toISOString(),
+      };
+
+      contextLog.push({
+        step: 'co_presence',
+        userPresentHere,
+        locationIdsMatch,
+        userLocationId: userCurrentLocationId,
+        charLocationId,
+        charactersPresentHereCount: charactersPresentHere.length,
+        overridesApplied: allOverrides,
+        presenceMissing,
+      });
+
+      console.log(
+        `[buildCanonicalCharacterContext] co_presence` +
+        ` | character=${character.name}` +
+        ` | charLocation=${charLocationId || 'none'}` +
+        ` | userLocation=${userCurrentLocationId || 'none'}` +
+        ` | match=${locationIdsMatch}` +
+        ` | userPresentHere=${userPresentHere}` +
+        ` | otherCharsPresent=${charactersPresentHere.length}` +
+        ` | overrides=${allOverrides.join(',') || 'none'}`
+      );
+    } catch (coPresenceErr) {
+      contextLog.push({ step: 'co_presence', status: 'error', error: coPresenceErr.message });
+      console.warn(`[buildCanonicalCharacterContext] co_presence resolver failed (non-blocking): ${coPresenceErr.message}`);
+    }
+
     // ── Step 7: Build relationship context ───────────────────────────────────
     // Relationships prioritize related_character_id (stable ID) over person_name.
     // Name is display-only fallback when ID is not present.
@@ -738,7 +909,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Step 10: Build canonical system prompt ────────────────────────────────
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, recentMessageBlock);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, recentMessageBlock, coPresence);
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
 
     const totalMs = Date.now() - startTime;
@@ -754,6 +925,9 @@ Deno.serve(async (req) => {
       ` | memory_count=${memories.length}` +
       ` | relationship_context_loaded=${relationshipLoaded}` +
       ` | recent_messages=${recentMessages.length}` +
+      ` | co_presence_injected=${!!coPresence}` +
+      ` | user_present_here=${coPresence?.userPresentHere ?? 'unresolved'}` +
+      ` | others_present=${coPresence?.charactersPresentHere?.length ?? 0}` +
       ` | fallback_used=false` +
       ` | load_path=${characterLoadPath}` +
       ` | ms=${totalMs}`
@@ -783,6 +957,7 @@ Deno.serve(async (req) => {
       hardFacts,
       worldName,
       relationshipContext,
+      coPresence,
       contextLog,
     });
 

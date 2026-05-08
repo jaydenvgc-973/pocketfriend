@@ -334,6 +334,9 @@ function detectIntent(text) {
   if (/assign.*home|home.*assignment|character.*no.*home|missing.*home|set.*home.*location|give.*character.*home/i.test(t))
     return { type: 'assign_home' };
 
+  if (/co.?presence|not.*aware.*present|character.*not.*aware|same.*location.*not|aware.*same.*location|presence.*diagnostic|who.*here|who.*present|character.*don't.*know.*here/i.test(t))
+    return { type: 'copresence_diagnostic' };
+
   return null;
 }
 
@@ -1156,6 +1159,85 @@ export default function SupportAssistant({ user }) {
       return true;
     }
 
+    if (type === 'copresence_diagnostic') {
+      addMsg({ role: 'system', content: '🔍 Running co-presence pipeline diagnostic…', ts: ts() });
+      try {
+        // Read UserSettings for user presence
+        const settingsList = await base44.entities.UserSettings.filter({ owner_email: ownerEmail });
+        const settings = settingsList[0] || {};
+        const userLocId   = settings.user_current_location_id   || null;
+        const userLocName = settings.user_current_location_name || null;
+        const userStatus  = settings.user_presence_status       || 'away';
+
+        // Read active characters
+        const chars = await base44.entities.Character.filter({ owner_email: ownerEmail, status: 'active' }, null, 100).catch(() => []);
+        const active = chars.filter(c => c.character_type === 'active_created_character' || !c.character_type);
+
+        let report = `**Co-Presence Pipeline Diagnostic** *(read-only)*\n\n`;
+        report += `**User presence:**\n`;
+        report += `- Location: **${userLocName || '(none)'}** (ID: \`${userLocId ? userLocId.substring(0,12) + '…' : 'not set'}\`)\n`;
+        report += `- Status: **${userStatus}**\n\n`;
+
+        if (!userLocId || userStatus === 'away') {
+          report += `⚠️ **User is not currently set as "present" at any location.**\n`;
+          report += `Go to the **Travel** page and tap a location to set yourself as present there. Until \`user_current_location_id\` is set, characters cannot detect you as co-present.\n\n`;
+        }
+
+        const copresentChars = active.filter(c =>
+          c.resolved_current_location_id &&
+          userLocId &&
+          c.resolved_current_location_id === userLocId &&
+          c.resolved_presence_status !== 'sleeping' &&
+          c.resolved_presence_status !== 'napping' &&
+          !c.is_jailed &&
+          (!c.travel_status || c.travel_status === 'not_traveling')
+        );
+
+        const notPresentChars = active.filter(c =>
+          !c.resolved_current_location_id ||
+          !userLocId ||
+          c.resolved_current_location_id !== userLocId
+        );
+
+        if (copresentChars.length > 0) {
+          report += `✅ **Characters verified at your location (${userLocName || '(same location)'}):**\n`;
+          for (const c of copresentChars) {
+            report += `- **${c.name}** — presence: \`${c.resolved_presence_status || 'at_location'}\` | location_id match: ✓\n`;
+          }
+          report += `\nThese characters **will have co-presence injected** into their context on the next response call (Chat, Scene, World Contacts, Group Chat, Narrative).\n\n`;
+        } else if (userLocId) {
+          report += `ℹ️ **No active characters found at your current location.**\n`;
+          report += `Characters must have \`resolved_current_location_id\` matching your \`user_current_location_id\` to be detected as co-present.\n\n`;
+        }
+
+        if (notPresentChars.length > 0) {
+          report += `**Characters at different locations (not co-present):**\n`;
+          for (const c of notPresentChars.slice(0, 6)) {
+            report += `- **${c.name}** — \`${c.resolved_current_location_name || 'no location'}\` (${c.resolved_presence_status || 'unknown'})\n`;
+          }
+          if (notPresentChars.length > 6) report += `- … and ${notPresentChars.length - 6} more\n`;
+          report += '\n';
+        }
+
+        report += `**How co-presence injection works:**\n`;
+        report += `- \`buildCanonicalCharacterContext\` runs a live resolver before every response\n`;
+        report += `- It compares \`UserSettings.user_current_location_id\` to \`Character.resolved_current_location_id\`\n`;
+        report += `- If they match and no override exists (sleep, travel, jail), it injects a **VERIFIED CURRENT CO-PRESENCE** block into the character's system prompt\n`;
+        report += `- That block contains hard facts: "USER IS HERE WITH YOU: YES" or "NO"\n`;
+        report += `- The character must respond accordingly — this is not a suggestion, it is a locked fact\n\n`;
+
+        report += `**If a character still doesn't recognize you after this:**\n`;
+        report += `- Run **"sync my locations"** to ensure \`resolved_current_location_id\` is current\n`;
+        report += `- Check that the character's location matches yours (see character list above)\n`;
+        report += `- Confirm you've set yourself as "present" via the Travel page\n`;
+
+        addMsg({ role: 'ai', content: report, ts: ts() });
+      } catch (err) {
+        addMsg({ role: 'ai', content: `Co-presence diagnostic failed: ${err.message}`, ts: ts() });
+      }
+      return true;
+    }
+
     return false; // No direct intent matched — fall through to LLM
   };
 
@@ -1270,6 +1352,15 @@ AVAILABLE REPAIR ACTIONS (tell user to type these):
 - "set my world name to [name]" → update fictional_world_name in UserSettings
 - "file a support report" → create IssueReport ticket
 
+CO-PRESENCE SYSTEM:
+- Co-presence is resolved in buildCanonicalCharacterContext before EVERY character response
+- Source of truth: UserSettings.user_current_location_id vs Character.resolved_current_location_id
+- If they match and no override (sleep/travel/jail), a "VERIFIED CURRENT CO-PRESENCE" block is injected into the character's system prompt with hard facts
+- The block states: "USER IS HERE WITH YOU: YES/NO" and lists other verified characters present
+- If user_current_location_id is not set (user is "away"), co-presence is never true
+- User must be set as "present" via the Travel page for co-presence to activate
+- Run "co-presence diagnostic" to see current truth state
+
 FORMS (tell the user these phrases trigger dynamic forms):
 - "assign home location" → shows a form to pick character + location
 - "set my world name" → shows an input form to update world name
@@ -1337,6 +1428,7 @@ Respond with clear reasoning. Name exact records. State the root cause. Recommen
   const CHIPS = [
     { label: 'Run Diagnostic', action: 'run diagnostic' },
     { label: 'Character Missing', action: 'my character is missing' },
+    { label: 'Co-Presence', action: 'run co-presence diagnostic' },
     { label: 'Assign Home', action: 'assign home location' },
     { label: 'Sync Locations', action: 'sync my character locations' },
     { label: 'Merge Blocked', action: 'my duplicate merge is blocked' },
