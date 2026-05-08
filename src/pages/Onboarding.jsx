@@ -6,9 +6,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
-const BG_IMAGE = "https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/446700c07_file_0000000004ec71fba3cba6d9c3795537.png";
+const BG_IMAGE = "https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/162a4b6d0_file_00000000e46471fb9edd54ccd1916ae3.png";
 
 export default function Onboarding() {
   const navigate = useNavigate();
@@ -196,6 +196,24 @@ Return JSON matching this schema exactly:
     navigate("/home");
   };
 
+  // ── Rotating atmospheric loading phrases ─────────────────────────────────
+  const loadingPhrases = [
+    "Getting your world ready…",
+    "Preparing your characters…",
+    "Loading your world…",
+    "Syncing conversations…",
+    "Almost ready…",
+  ];
+  const [phraseIndex, setPhraseIndex] = useState(0);
+
+  useEffect(() => {
+    if (!isCheckingCharacters) return;
+    const interval = setInterval(() => {
+      setPhraseIndex(i => (i + 1) % loadingPhrases.length);
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [isCheckingCharacters]);
+
   // ── Derive button state ───────────────────────────────────────────────────
   const isLoading = isCheckingCharacters || !currentUser;
 
@@ -237,7 +255,16 @@ Return JSON matching this schema exactly:
                 <div className="flex flex-col items-center gap-3">
                   <div className="w-full h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center gap-2">
                     <Loader2 className="w-4 h-4 text-white/60 animate-spin" />
-                    <span className="text-white/60 text-sm">Loading your world…</span>
+                    <motion.span
+                      key={phraseIndex}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.6 }}
+                      className="text-white/60 text-sm"
+                    >
+                      {loadingPhrases[phraseIndex]}
+                    </motion.span>
                   </div>
                   <Link to="/home" className="text-xs text-white/40 hover:text-white/70 transition-colors">
                     Or go to home
@@ -246,18 +273,13 @@ Return JSON matching this schema exactly:
               )}
 
               {!isLoading && characterCheckError && (
-                <div className="space-y-3">
-                  <div className="w-full px-4 py-3 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
-                    <span className="text-red-300 text-xs text-left">
-                      Could not verify account — your characters are safe. Please go to home.
-                    </span>
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-full h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 text-white/50 animate-spin" />
+                    <span className="text-white/60 text-sm">Almost ready…</span>
                   </div>
-                  <Link
-                    to="/home"
-                    className="block w-full h-12 rounded-xl bg-white/10 border border-white/20 text-white text-sm font-medium flex items-center justify-center hover:bg-white/20 transition-colors"
-                  >
-                    Go to home
+                  <Link to="/home" className="text-xs text-white/40 hover:text-white/70 transition-colors">
+                    Or go to home
                   </Link>
                 </div>
               )}
