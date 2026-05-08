@@ -68,7 +68,32 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   const targetLocationId = body.locationId || null; // optional: only check a specific home
 
-  // 1. Fetch all characters owned by this user
+  // ── FAST-EXIT GUARD: Check for children before running expensive queries ──
+  // Fetch only name + age + age_range fields to detect if any children exist.
+  // If no children are found on this account, skip all expensive queries entirely.
+  // This prevents 200-char + 100-location queries on accounts with no children.
+  const quickChildCheck = await base44.entities.Character.filter(
+    { owner_email: user.email, status: 'active' },
+    '-created_date',
+    50
+  ).catch(() => []);
+
+  const hasAnyChildren = quickChildCheck.some(c => {
+    if (c.age && typeof c.age === 'number' && c.age > 0 && c.age < SAFE_ALONE_AGE) return true;
+    if (c.age_range) {
+      const r = c.age_range.toLowerCase();
+      // Only flag actual child age ranges
+      if (r.includes('toddler') || r.includes('infant') || r.includes('child')) return true;
+    }
+    return false;
+  });
+
+  if (!hasAnyChildren) {
+    // No children on this account — nothing to supervise. Exit without further queries.
+    return Response.json({ success: true, results: [], skipped: 'no_children_on_account' });
+  }
+
+  // 1. Fetch all characters owned by this user (only runs if children were found above)
   const allChars = await base44.entities.Character.filter(
     { owner_email: user.email },
     '-created_date',
