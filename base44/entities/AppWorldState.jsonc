@@ -2,6 +2,14 @@
   "name": "AppWorldState",
   "type": "object",
   "properties": {
+    "key": {
+      "type": "string",
+      "description": "Unique key for this world state entry (e.g. 'chat_safe_mode_active', 'main')"
+    },
+    "value": {
+      "type": "string",
+      "description": "Value for key-value world state entries"
+    },
     "current_date": {
       "type": "string",
       "format": "date",
@@ -141,7 +149,5 @@
       "description": "When this world state was last updated"
     }
   },
-  "required": [
-    "current_date"
-  ]
+  "required": []
 }

@@ -9,7 +9,7 @@
  */
 
 import { useEffect } from 'react';
-import { setActiveContext, clearActiveContext } from '@/lib/simulationGate';
+import { setActiveContext, clearActiveContext, activateChatSafeMode } from '@/lib/simulationGate';
 
 /**
  * @param {object} opts
@@ -21,6 +21,14 @@ export function usePageContext({ page, characterId = null, locationId = null }) 
   useEffect(() => {
     if (!page) return;
     setActiveContext({ page, characterId, locationId });
+
+    // When Chat opens, proactively activate safe mode for 60s so any running
+    // scheduled automations (autonomousCharacterMovement, returnActiveCharactersHome, etc.)
+    // detect the flag and skip their next run cycle, keeping quota free for Chat.
+    if (page === 'chat') {
+      activateChatSafeMode(60000);
+    }
+
     return () => {
       clearActiveContext(page);
     };

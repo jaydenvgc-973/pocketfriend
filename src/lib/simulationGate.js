@@ -63,9 +63,35 @@ export function activateChatSafeMode(durationMs = 45000) {
   window.__chatSafeMode = true;
   window.__chatSafeModeUntil = Date.now() + durationMs;
   console.warn(`[SimGate] CHAT-SAFE MODE ON — nonessential background work paused for ${durationMs / 1000}s`);
+
+  // Also write the backend AppWorldState flag so scheduled server-side automations
+  // (autonomousCharacterMovement, returnActiveCharactersHome, scheduleAutomaticNarratives,
+  //  distributeVGCTowersNPCs, organicCharacterInteractions) see the signal and skip their
+  // runs while Chat is trying to recover from a rate-limit event.
+  // Fire-and-forget — never blocks the frontend.
+  import('@/api/base44Client').then(({ base44 }) => {
+    base44.entities.AppWorldState.filter({ key: 'chat_safe_mode_active' }, null, 1)
+      .then(records => {
+        if (records.length > 0) {
+          return base44.entities.AppWorldState.update(records[0].id, { value: 'true' });
+        }
+        return base44.entities.AppWorldState.create({ key: 'chat_safe_mode_active', value: 'true' });
+      })
+      .catch(() => {}); // non-blocking — never fails the chat flow
+  }).catch(() => {});
+
   setTimeout(() => {
     window.__chatSafeMode = false;
     console.log('[SimGate] Chat-safe mode expired — background systems resuming');
+    // Clear the backend flag after expiry
+    import('@/api/base44Client').then(({ base44 }) => {
+      base44.entities.AppWorldState.filter({ key: 'chat_safe_mode_active' }, null, 1)
+        .then(records => {
+          if (records.length > 0) {
+            base44.entities.AppWorldState.update(records[0].id, { value: 'false' }).catch(() => {});
+          }
+        }).catch(() => {});
+    }).catch(() => {});
   }, durationMs);
 }
 
