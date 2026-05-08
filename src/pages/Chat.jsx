@@ -51,6 +51,7 @@ import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalSta
 import { buildEmploymentPromptBlock } from "@/lib/employmentResolver.js";
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
+import { getLocations } from "@/lib/locationSessionCache";
 import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
 import ChatMessageList from "@/components/chat/ChatMessageList";
 import { useChatScroll } from "@/hooks/useChatScroll";
@@ -109,9 +110,9 @@ export default function Chat() {
     setConvoLoadError(null);
     setUserScrolledAway(false);
     setCatchupNarrativeText(null);
-    // Clear session caches on character switch — different character = different context
-    locationsSessionCacheRef.current = { data: null, fetchedForCharacterId: null };
     // Clear canonical context cache — new character needs fresh canonical fetch
+    // NOTE: location cache (locationSessionCache.js) is module-level and NOT cleared here —
+    // location data is shared across characters and stable for the session.
     // (Only clear this character's entry, not others)
     if (characterId) {
       delete systemPromptCacheRef.current[`canonical::${characterId}`];
@@ -133,10 +134,6 @@ export default function Chat() {
   // Session cache for system_prompt_url content — prevents re-fetching on every message send.
   // Keyed as "characterId::url" so prompt leakage between characters is impossible.
   const systemPromptCacheRef = useRef({});
-  // Session cache for locations — fetchAllLocationsForUser is expensive and stable within a session.
-  // Cleared when characterId changes (new character may have different job location context).
-  // This prevents a full location fetch on EVERY message send for characters with occupation_location_id.
-  const locationsSessionCacheRef = useRef({ data: null, fetchedForCharacterId: null });
   const [convoLoadError, setConvoLoadError] = useState(null);
 
   useEffect(() => {
@@ -660,21 +657,14 @@ export default function Chat() {
 
       const getLocationsForContext = async () => {
         if (!needsLocationFetch) return null;
-        // Use cached data if available for this character (stable within a session)
-        const cache = locationsSessionCacheRef.current;
-        if (cache.data && cache.fetchedForCharacterId === characterId) {
-          allLocationsForContext = cache.data;
-          const allActiveChars = queryClient.getQueryData(["characters", currentUser.email]) || [];
-          const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
-          const occupancyMap = buildSpatialOccupancyMap(allActiveChars, cache.data);
-          return buildSpatialContextString(characterId, occupancyMap, cache.data) || null;
-        }
-        // Cache miss — fetch once and store
-        const allLocRes = await base44.functions.invoke('fetchAllLocationsForUser', {});
-        const allLocs = allLocRes?.data?.locations || [];
-        locationsSessionCacheRef.current = { data: allLocs, fetchedForCharacterId: characterId };
+        // Use module-level singleton cache (persists across character switches and re-renders).
+        // Prevents fetchAllLocationsForUser from firing multiple times per second.
+        const allLocs = await getLocations(async () => {
+          const allLocRes = await base44.functions.invoke('fetchAllLocationsForUser', {});
+          return allLocRes?.data?.locations || [];
+        });
         allLocationsForContext = allLocs;
-        const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser.email, status: 'active' });
+        const allActiveChars = queryClient.getQueryData(["characters", currentUser.email]) || [];
         const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
         const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
         return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;

@@ -90,14 +90,16 @@ export function useChatLoadConvo({
         err?.message?.includes('Rate limit') ||
         err?.message?.includes('rate limit');
 
-      // Helper: retry once after 3s on 429
-      const retryAfter3s = async (fn) => {
+      // Helper: retry once after 8s on 429.
+      // 3s was too short — the quota is still saturated at 3s, making it worse.
+      // 8s gives the rate limiter time to release capacity before retrying.
+      const retryAfter8s = async (fn, label = '') => {
         try {
           return await fn();
         } catch (err) {
           if (is429(err)) {
-            console.warn(`[CHAT_LOAD] 429 — retrying once in 3s t=${Date.now()}`);
-            await new Promise(r => setTimeout(r, 3000));
+            console.warn(`[CHAT_LOAD] 429${label ? ' (' + label + ')' : ''} — retrying once in 8s t=${Date.now()}`);
+            await new Promise(r => setTimeout(r, 8000));
             return await fn(); // throws if still failing
           }
           throw err;
@@ -111,13 +113,13 @@ export function useChatLoadConvo({
         // on every character open. Server filters, not client-side.
         let convos;
         try {
-          convos = await retryAfter3s(() =>
+          convos = await retryAfter8s(() =>
             base44.entities.Conversation.filter(
               { owner_email: currentUser.email, type: chatType, character_ids: characterId },
               "-last_message_date",
               20
             )
-          );
+          , 'Conversation.filter');
           console.log(`[CHAT_LOAD] Conversation.filter DONE count=${convos.length} t=${Date.now()}`);
         } catch (err) {
           // If Conversation.filter fully fails (both attempts) and we have NO messages yet,
@@ -150,13 +152,13 @@ export function useChatLoadConvo({
           console.log(`[CHAT_LOAD] Message.filter START convoId=${convoId} window=${MSG_WINDOW} t=${Date.now()}`);
           let loadedMsgs;
           try {
-            loadedMsgs = await retryAfter3s(() =>
+            loadedMsgs = await retryAfter8s(() =>
               base44.entities.Message.filter(
                 { conversation_id: convoId },
                 "-created_date",
                 MSG_WINDOW
               )
-            );
+            , 'Message.filter');
             console.log(`[CHAT_LOAD] Message.filter DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
           } catch (err) {
             if (is429(err)) {
@@ -233,10 +235,10 @@ export function useChatLoadConvo({
         console.log(`[CHAT_LOAD] PendingMessage.filter START t=${Date.now()}`);
         let pending = [];
         try {
-          pending = await retryAfter3s(() =>
-            base44.entities.PendingMessage.filter(
-              { character_id: characterId, delivered: false }
-            )
+          // PendingMessage is non-essential on load — skip retry entirely on 429.
+          // Attempting a retry here just burns more quota that Conversation/Message need.
+          pending = await base44.entities.PendingMessage.filter(
+            { character_id: characterId, delivered: false }
           );
           console.log(`[CHAT_LOAD] PendingMessage.filter DONE count=${pending?.length ?? 0} t=${Date.now()}`);
         } catch (err) {
