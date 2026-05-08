@@ -170,20 +170,22 @@ Deno.serve(async (req) => {
       batches: [],
     };
 
-    // Load characters
+    // Load characters — cap at 100 (was 500) to reduce query load.
+    // Characters are sorted by most-recently-updated so the most active ones
+    // (those most likely to need movement) are processed first.
     let characters = [];
     try {
       if (useServiceRole) {
         characters = await base44.asServiceRole.entities.Character.filter(
           { character_type: 'active_created_character', status: 'active' },
           '-updated_date',
-          500
+          100
         );
       } else {
         characters = await base44.entities.Character.filter(
           { character_type: 'active_created_character', status: 'active' },
           '-updated_date',
-          500
+          100
         );
       }
     } catch (e) {
@@ -193,6 +195,12 @@ Deno.serve(async (req) => {
     // Filter to user scope if authenticated
     if (user) {
       characters = characters.filter(c => c.owner_email === user.email);
+    }
+
+    // ── FAST EXIT: if no characters have home assignments, skip location fetch entirely ──
+    const charsWithHome = characters.filter(c => c.current_home_location_id);
+    if (charsWithHome.length === 0) {
+      return Response.json({ ...results, skipped: 'no_characters_with_home_assignment' });
     }
 
     // Load locations (user-scoped)

@@ -272,15 +272,27 @@ Deno.serve(async (req) => {
     const base44 = createClientFromRequest(req);
     try { await base44.auth.me(); } catch { /* scheduled — no session */ }
 
-    // ── LOAD ALL active_created_character ────────────────────────────────────
-    // Use session user if available, fall back to service role for scheduled runs
+    // ── LOAD active_created_character — FILTERED, not full list ──────────────
+    // Cap at 100 (was 500 via unfiltered .list()). Sorted by most-recently-updated
+    // so the most active characters are processed first within the MAX_MOVES_PER_RUN cap.
+    // Using a filter instead of .list() avoids loading ALL character types unnecessarily.
     let characters = [];
     try {
-      const allChars = await base44.entities.Character.list('-updated_date', 500);
-      characters = allChars.filter(c => c.character_type === 'active_created_character');
+      characters = await base44.entities.Character.filter(
+        { character_type: 'active_created_character', status: 'active' },
+        '-updated_date',
+        100
+      );
     } catch {
-      const allChars = await base44.asServiceRole.entities.Character.list('-updated_date', 500);
-      characters = allChars.filter(c => c.character_type === 'active_created_character');
+      try {
+        characters = await base44.asServiceRole.entities.Character.filter(
+          { character_type: 'active_created_character', status: 'active' },
+          '-updated_date',
+          100
+        );
+      } catch (e2) {
+        return Response.json({ error: `Character load failed: ${e2.message}` }, { status: 500 });
+      }
     }
 
     const eligible = characters.filter(c =>

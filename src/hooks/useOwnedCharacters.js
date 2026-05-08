@@ -258,6 +258,9 @@ export function useOwnedCharacters(
   });
 
   // ── 2. NPC fictitious via service-role backend ───────────────────────────────
+  // RATE LIMIT PROTECTION: staleTime is 15 minutes (up from 10) to reduce
+  // re-fetch frequency. refetchOnMount=false prevents duplicate invocations
+  // when the component remounts during anchor-missing recovery cycles.
   const {
     data: backendNpcs = [],
     isLoading: isLoadingNpc,
@@ -270,16 +273,16 @@ export function useOwnedCharacters(
       return res?.data?.npcs || [];
     },
     enabled: !!userId,
-    staleTime: 10 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
+    staleTime: 15 * 60 * 1000,  // 15 min — NPCs don't change frequently
+    gcTime: 60 * 60 * 1000,     // 1 hour cache — prevents re-fetch on every recovery
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     retry: (failureCount, error) => {
-      if (failureCount >= 3) return false;
+      if (failureCount >= 2) return false; // Reduced from 3 to 2 — fail faster on 429
       const is429 = error?.message?.includes('429') || error?.status === 429 || error?.response?.status === 429;
-      return is429 || failureCount < 2;
+      return is429 || failureCount < 1;
     },
-    retryDelay: (attemptIndex) => Math.min(3000 * 2 ** attemptIndex, 30000),
+    retryDelay: (attemptIndex) => Math.min(5000 * 2 ** attemptIndex, 30000), // Longer backoff
     placeholderData: (prev) => prev,
   });
 
@@ -370,10 +373,31 @@ export function useOwnedCharacters(
       }));
     } catch {}
 
-    refetchRls();
+    // RATE LIMIT PROTECTION: Anchor-missing recovery bypasses the cooldown, which
+    // is correct behavior — but it fires immediately on first load because anchors
+    // come from UserSettings (which loads slightly after characters). Adding a
+    // 2-second stabilization delay prevents the recovery from firing during the
+    // normal settings-load window, while still catching genuine anchor absences.
+    //
+    // ANCHOR ALREADY IN NPC LIST CHECK: if the "missing" anchor is actually present
+    // in backendNpcs (the NPC fetch), the RLS refetch won't help — the anchor is an
+    // NPC, not an RLS character. In this case skip the RLS refetch entirely to
+    // avoid a redundant 429-contributing query.
+    const anchorInNpcList = validAnchors.some(id => backendNpcs.some(c => c.id === id));
+    if (isAnchorMissing && anchorInNpcList) {
+      console.log(`[useOwnedCharacters] Anchor found in NPC list — skipping RLS refetch. Anchor present via backendNpcs.`);
+      writeBootstrapMeta(email, mergedCount);
+      return;
+    }
+
+    // Only anchor-missing gets the 2s delay — isEmpty fires immediately.
+    const recoveryDelay = (isAnchorMissing && !isEmpty) ? 2000 : 0;
+    setTimeout(() => {
+      refetchRls();
+    }, recoveryDelay);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [email, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc, allCharacters.length,
-      expectedDefaultCharacterId, JSON.stringify(anchorCharacterIds)]);
+      expectedDefaultCharacterId, JSON.stringify(anchorCharacterIds), backendNpcs.length]);
 
   // ── Derived slices ────────────────────────────────────────────────────────────
   // LEGACY COMPATIBILITY: character_type may be null/missing on older records.
