@@ -975,21 +975,8 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       // validateLocationInResponse is imported from lib/promptContextBuilders.js
 
-      try {
-        response = await callLLMWithRetry(fullPrompt);
-        responseObj = parseCharacterResponse(response);
-      } catch (llmErr) {
-        console.error('[sendMessage] LLM error:', llmErr.message);
-        if (llmErr?.message?.includes('Network') || llmErr?.message?.includes('timeout') || llmErr?.message?.includes('429')) {
-          responseObj = {
-            message_type: "text_only",
-            text_content: `[Connection issue — I'll respond when the connection is back]`,
-            image_generation_prompts: []
-          };
-        } else {
-          throw llmErr;
-        }
-      }
+      response = await callLLMWithRetry(fullPrompt);
+      responseObj = parseCharacterResponse(response);
 
       msgType = responseObj.message_type || "text_only";
       if (isPhotogenic && explicitImageRequest && msgType === "text_only") {
@@ -1073,10 +1060,18 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     } catch (err) {
       if (isMountedRef.current) {
         setIsTyping(false);
-        const isRateLimit = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit') || err?.status === 429;
-        setSendError(isRateLimit
-          ? "Too many requests right now — please wait a few seconds and try again."
-          : "Couldn't get a response. Try again.");
+        const msg = err?.message || '';
+        const isRateLimit = msg.includes('429') || msg.includes('Rate limit') || msg.includes('rate limit') || err?.status === 429;
+        const isNetwork = msg.includes('Network') || msg.includes('network') || msg.includes('timeout') || msg.includes('fetch');
+        if (isRateLimit) {
+          setSendError("App is busy — wait a few seconds and send again.");
+        } else if (isNetwork) {
+          setSendError("Connection issue — check your signal and try again.");
+        } else {
+          // Log the real error so it's visible, then surface a clear message
+          console.error('[sendMessage] Unhandled error:', msg);
+          setSendError("Response failed — tap here to retry.");
+        }
       }
       return;
     }

@@ -26,10 +26,16 @@ export const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetr
         model,
       });
     } catch (err) {
-      const isRetryable = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('Network') || err?.message?.includes('network') || err?.message?.includes('timeout');
+      const msg = err?.message || '';
+      const isRateLimit = msg.includes('rate') || msg.includes('429') || msg.includes('Rate limit');
+      const isNetwork = msg.includes('Network') || msg.includes('network') || msg.includes('timeout');
+      const isRetryable = isRateLimit || isNetwork;
       if (!isRetryable || retryCount === maxRetries) throw err;
-      const delayMs = Math.pow(2, retryCount + 1) * 1000;
-      console.warn(`[RATE_LIMIT] Retry ${retryCount + 1}/${maxRetries} after ${delayMs}ms`);
+      // Rate limits get a longer backoff (10s, 20s, 30s) — network errors use shorter (2s, 4s, 8s)
+      const delayMs = isRateLimit
+        ? (retryCount + 1) * 10000
+        : Math.pow(2, retryCount + 1) * 1000;
+      console.warn(`[LLM_RETRY] ${isRateLimit ? 'rate-limit' : 'network'} | attempt ${retryCount + 1}/${maxRetries} | waiting ${delayMs / 1000}s`);
       await new Promise(r => setTimeout(r, delayMs));
       retryCount++;
     }
