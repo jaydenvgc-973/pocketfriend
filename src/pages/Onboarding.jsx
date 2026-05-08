@@ -5,14 +5,22 @@ import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import BottomNav from "@/components/BottomNav";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
+import { Loader2, AlertTriangle } from "lucide-react";
+
+const BG_IMAGE = "https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/446700c07_file_0000000004ec71fba3cba6d9c3795537.png";
 
 export default function Onboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [characterName, setCharacterName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // ── Loading gate state ────────────────────────────────────────────────────
+  const [isCheckingCharacters, setIsCheckingCharacters] = useState(true);
+  const [hasUsableCharacters, setHasUsableCharacters] = useState(false);
+  const [characterCheckError, setCharacterCheckError] = useState(false);
+  const [isTrulyEmptyAccount, setIsTrulyEmptyAccount] = useState(false);
 
   const { data: currentUser } = useQuery({
     queryKey: ['user'],
@@ -31,18 +39,49 @@ export default function Onboarding() {
     refetchOnWindowFocus: false,
   });
 
-  // Redirect away from onboarding if already completed
+  // ── Character existence check — scoped strictly to owner_email ───────────
   useEffect(() => {
-    if (userSettings?.has_completed_onboarding) {
-      navigate("/home", { replace: true });
-    }
-  }, [userSettings, navigate]);
+    if (!currentUser?.email) return;
+
+    const checkCharacters = async () => {
+      setIsCheckingCharacters(true);
+      setCharacterCheckError(false);
+      try {
+        const chars = await base44.entities.Character.filter(
+          { owner_email: currentUser.email },
+          null,
+          50
+        );
+        const qualifying = (chars || []).filter(c =>
+          c.character_type === "active_created_character" ||
+          c.character_type === "npc_fictitious" ||
+          c.character_type === "NPC_fictitious"
+        );
+        if (qualifying.length > 0) {
+          setHasUsableCharacters(true);
+          setIsTrulyEmptyAccount(false);
+        } else {
+          setHasUsableCharacters(false);
+          setIsTrulyEmptyAccount(true);
+        }
+      } catch (err) {
+        console.error("[Onboarding] Character check failed:", err?.message);
+        // NEVER treat a failed query as an empty account
+        setCharacterCheckError(true);
+        setHasUsableCharacters(false);
+        setIsTrulyEmptyAccount(false);
+      } finally {
+        setIsCheckingCharacters(false);
+      }
+    };
+
+    checkCharacters();
+  }, [currentUser?.email]);
 
   const handleCreate = async () => {
     if (!characterName.trim()) return;
     setIsSubmitting(true);
 
-    // Generate a unique character profile for this user based on the name they chose
     const generated = await base44.integrations.Core.InvokeLLM({
       prompt: `Create a fully realized fictional character named "${characterName.trim()}" for a social simulation app. This character will text and chat with the user — they must feel like a real human being.
 
@@ -127,16 +166,16 @@ Return JSON matching this schema exactly:
       is_default: true,
       is_finalized: true,
       status: "active",
-      character_type: "active",
+      character_type: "active_created_character",
       emotional_state: "calm",
       user_respect_level: 50,
       friendship_level: 75,
       romantic_level: 0,
       attraction_level: 0,
       chosen_family_level: 100,
+      owner_email: currentUser?.email,
     };
 
-    // Upload system prompt as file instead of writing directly to field
     const promptText = buildSystemPrompt(data);
     const { file_url } = await base44.integrations.Core.UploadFile({
       file: new File([promptText], "system_prompt.txt", { type: "text/plain" })
@@ -145,70 +184,158 @@ Return JSON matching this schema exactly:
 
     await base44.entities.Character.create(data);
 
-    // Mark onboarding as complete — upsert UserSettings
     const existingSettingsId = userSettings?.id;
     if (existingSettingsId) {
       await base44.entities.UserSettings.update(existingSettingsId, { has_completed_onboarding: true });
     } else {
-      await base44.entities.UserSettings.create({ has_completed_onboarding: true });
+      await base44.entities.UserSettings.create({
+        has_completed_onboarding: true,
+        owner_email: currentUser?.email,
+      });
     }
     navigate("/home");
   };
 
+  // ── Derive button state ───────────────────────────────────────────────────
+  const isLoading = isCheckingCharacters || !currentUser;
+
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center px-6">
-      <div className="max-w-sm w-full">
+    <div
+      className="min-h-screen flex items-end justify-center relative overflow-hidden"
+      style={{
+        backgroundImage: `url(${BG_IMAGE})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center top",
+        backgroundRepeat: "no-repeat",
+      }}
+    >
+      {/* Dark gradient overlay at bottom for legibility */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent pointer-events-none" />
+
+      {/* Content panel pinned to bottom */}
+      <div className="relative z-10 w-full max-w-sm px-6 pb-16 pt-8">
         <AnimatePresence mode="wait">
           {step === 0 && (
             <motion.div
               key="intro"
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="text-center space-y-6"
+              transition={{ duration: 0.4 }}
+              className="text-center space-y-5"
             >
-              <div className="w-16 h-16 rounded-2xl bg-primary/20 flex items-center justify-center mx-auto">
-                <span className="text-3xl">👤</span>
+              {/* Logo / brand */}
+              <div className="space-y-2">
+                <h1 className="text-3xl font-bold text-white tracking-tight">Pocketfriend</h1>
+                <p className="text-white/70 text-sm leading-relaxed">
+                  A character that feels real.<br />Built to push back, not just agree.
+                </p>
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-foreground">Pocketfriend</h1>
-                <p className="text-muted-foreground mt-2 text-sm">A character that feels real. Built to push back, not just agree.</p>
-              </div>
-              <Button onClick={() => setStep(1)} className="w-full h-12 rounded-xl">Get started</Button>
-              <Link to="/home" className="block text-center text-xs text-muted-foreground hover:text-foreground transition-colors mt-2">Or go to home</Link>
+
+              {/* ── Loading gate button area ── */}
+              {isLoading && (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-full h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 text-white/60 animate-spin" />
+                    <span className="text-white/60 text-sm">Loading your world…</span>
+                  </div>
+                  <Link to="/home" className="text-xs text-white/40 hover:text-white/70 transition-colors">
+                    Or go to home
+                  </Link>
+                </div>
+              )}
+
+              {!isLoading && characterCheckError && (
+                <div className="space-y-3">
+                  <div className="w-full px-4 py-3 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                    <span className="text-red-300 text-xs text-left">
+                      Could not verify account — your characters are safe. Please go to home.
+                    </span>
+                  </div>
+                  <Link
+                    to="/home"
+                    className="block w-full h-12 rounded-xl bg-white/10 border border-white/20 text-white text-sm font-medium flex items-center justify-center hover:bg-white/20 transition-colors"
+                  >
+                    Go to home
+                  </Link>
+                </div>
+              )}
+
+              {!isLoading && !characterCheckError && hasUsableCharacters && (
+                <div className="space-y-3">
+                  <div className="w-full h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center">
+                    <span className="text-white/70 text-sm">Click below</span>
+                  </div>
+                  <Link
+                    to="/home"
+                    className="block text-center text-sm text-white font-medium hover:text-white/80 transition-colors"
+                  >
+                    Or go to home →
+                  </Link>
+                </div>
+              )}
+
+              {!isLoading && !characterCheckError && isTrulyEmptyAccount && (
+                <div className="space-y-3">
+                  <Button
+                    onClick={() => setStep(1)}
+                    className="w-full h-12 rounded-xl bg-primary hover:bg-primary/90 text-white font-semibold text-base shadow-lg shadow-primary/30"
+                  >
+                    Get started
+                  </Button>
+                  <Link to="/home" className="block text-center text-xs text-white/40 hover:text-white/70 transition-colors">
+                    Or go to home
+                  </Link>
+                </div>
+              )}
             </motion.div>
           )}
+
           {step === 1 && (
             <motion.div
               key="name"
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="space-y-6"
+              transition={{ duration: 0.4 }}
+              className="space-y-5"
             >
               <div>
-                <h2 className="text-xl font-bold text-foreground">Name your character</h2>
-                <p className="text-muted-foreground text-sm mt-1">What do you want to call them?</p>
+                <h2 className="text-xl font-bold text-white">Name your character</h2>
+                <p className="text-white/60 text-sm mt-1">What do you want to call them?</p>
               </div>
               <Input
                 value={characterName}
                 onChange={e => setCharacterName(e.target.value)}
                 placeholder="e.g. Kelvin"
-                className="h-12 rounded-xl text-base"
+                className="h-12 rounded-xl text-base bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-primary"
                 onKeyDown={e => e.key === "Enter" && characterName.trim() && handleCreate()}
               />
               <Button
                 onClick={handleCreate}
                 disabled={!characterName.trim() || isSubmitting}
-                className="w-full h-12 rounded-xl"
+                className="w-full h-12 rounded-xl bg-primary hover:bg-primary/90 text-white font-semibold shadow-lg shadow-primary/30"
               >
-                {isSubmitting ? "Building your character..." : "Create character"}
+                {isSubmitting ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Building your character…
+                  </span>
+                ) : (
+                  "Create character"
+                )}
               </Button>
+              <button
+                onClick={() => setStep(0)}
+                className="w-full text-center text-xs text-white/40 hover:text-white/70 transition-colors"
+              >
+                ← Back
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-      <BottomNav />
     </div>
   );
 }
