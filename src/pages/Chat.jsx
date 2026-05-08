@@ -327,6 +327,16 @@ export default function Chat() {
   // Register page context so simulationGate knows chat is active for this character
   usePageContext({ page: 'chat', characterId });
 
+  // Invalidate userSettings on character open so co-presence reads fresh location data.
+  // UserSettings contains user_current_location_id which determines if the user is
+  // co-present with the character. Without this, a 5-min stale cache can make a character
+  // respond as if the user is away even after the user moved to the character's location.
+  useEffect(() => {
+    if (characterId && currentUser?.email) {
+      queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser.email] });
+    }
+  }, [characterId, currentUser?.email]); // eslint-disable-line
+
   // Clear per-character cooldowns on character switch so stale state doesn't bleed
   useEffect(() => {
     if (characterId) clearCharacterCooldowns(characterId);
@@ -725,6 +735,11 @@ export default function Chat() {
       // Fetch canonical prompt from backend service. This owns: identity, hard facts,
       // memory, Life Journal, relationships, soap opera threads.
       // buildSystemPrompt then wraps it with frontend-only layers (image rules, narration, etc.)
+      //
+      // CACHING RULE: Only identity/memory/relationship data is cached.
+      // Co-presence is LIVE STATE — it must NOT be cached. It is injected separately below
+      // via the frontend authoritative co-presence override block, which reads fresh
+      // UserSettings on every message send.
       let canonicalPrompt = null;
       let canonicalContextLoaded = false;
       let canonicalMemoryCount = 0;
@@ -750,7 +765,7 @@ export default function Chat() {
             canonicalContextLoaded = true;
             canonicalMemoryCount = ctxData.memories?.length ?? 0;
             canonicalLifeJournalCount = ctxData.lifeJournalEntries?.length ?? 0;
-            // Cache for this session — canonical context is stable per character
+            // Cache identity/memory/relationship only — co-presence is NOT cached (it is live state)
             systemPromptCacheRef.current[canonicalCacheKey] = {
               systemPrompt: canonicalPrompt,
               memoryCount: canonicalMemoryCount,
@@ -763,6 +778,59 @@ export default function Chat() {
           canonicalFallbackUsed = true;
           console.warn(`[Chat] Canonical context unavailable for ${character.name}: ${ctxErr.message} — using legacy inline fallback`);
         }
+      }
+
+      // ── AUTHORITATIVE FRONTEND CO-PRESENCE OVERRIDE ───────────────────────
+      // This runs on EVERY message send — never cached. Source of truth:
+      //   User location  → userSettings (fresh React Query data, updated when user moves)
+      //   Char location  → character (React Query data for this character)
+      // Both are already loaded in the sendMessage scope — no extra API call needed.
+      // This block is injected into the prompt AFTER the canonical prompt, overriding
+      // any stale co-presence the cached canonical prompt may contain.
+      let frontendCoPresenceBlock = "";
+      try {
+        const userLocId   = userSettings?.user_current_location_id   || null;
+        const userLocName = userSettings?.user_current_location_name  || null;
+        const userPresence = userSettings?.user_presence_status       || 'away';
+        const charLocId   = character.resolved_current_location_id    || null;
+        const charLocName = character.resolved_current_location_name  || null;
+        const charPresenceStatus = character.resolved_presence_status || null;
+
+        // Blocking overrides — character cannot register user presence in these states
+        const charBlocked = charPresenceStatus === 'sleeping' || charPresenceStatus === 'napping'
+          || character.is_jailed || character.house_arrest_active
+          || (character.travel_status && character.travel_status !== 'not_traveling');
+
+        const locationMatch = !!(userLocId && charLocId && userLocId === charLocId);
+        const userPresentHere = locationMatch && userPresence !== 'away' && !charBlocked;
+
+        console.log(
+          `[CoPresence] char=${character.name}` +
+          ` | charLocId=${charLocId || 'none'}` +
+          ` | userLocId=${userLocId || 'none'}` +
+          ` | match=${locationMatch}` +
+          ` | userPresence=${userPresence}` +
+          ` | charBlocked=${charBlocked}` +
+          ` | userPresentHere=${userPresentHere}`
+        );
+
+        if (!charLocId && !userLocId) {
+          frontendCoPresenceBlock = `\n\n════════════════════════════════════\nCO-PRESENCE TRUTH (authoritative, per-message)\n════════════════════════════════════\n⚠️ Neither your location nor the user's location is currently set in the system. Do NOT assume the user is present or absent. Treat location as unknown.\n════════════════════════════════════\n`;
+        } else if (userPresentHere) {
+          frontendCoPresenceBlock = `\n\n════════════════════════════════════\nCO-PRESENCE TRUTH (authoritative, per-message — OVERRIDES any prior context)\n════════════════════════════════════\nYOUR CURRENT LOCATION: ${charLocName || 'your location'}\nUSER IS PHYSICALLY HERE WITH YOU: YES\nThe user (${userDisplayName || 'the user'}) is confirmed present at your current location (${userLocName || charLocName || 'shared location'}).\nTHIS IS VERIFIED SYSTEM TRUTH — NOT a guess. Do NOT say you are unsure where the user is. Do NOT speculate. The user is HERE, with you, right now.\nRespond with full awareness that you are in the same physical space.\n════════════════════════════════════\n`;
+        } else {
+          const userAwayReason = userPresence === 'away'
+            ? 'User is currently Away (not present in any location)'
+            : locationMatch === false
+              ? `User is at a different location (${userLocName || 'elsewhere'})`
+              : charBlocked
+                ? `Your current state (${charPresenceStatus || 'blocked'}) prevents registering presence`
+                : 'User location does not match your location';
+          frontendCoPresenceBlock = `\n\n════════════════════════════════════\nCO-PRESENCE TRUTH (authoritative, per-message — OVERRIDES any prior context)\n════════════════════════════════════\nYOUR CURRENT LOCATION: ${charLocName || 'your location'}\nUSER IS PHYSICALLY HERE WITH YOU: NO\nReason: ${userAwayReason}\nDo NOT imply the user is present. Do NOT invite them to a location they may already be at. Respond naturally without assuming shared physical space.\n════════════════════════════════════\n`;
+        }
+      } catch (cpErr) {
+        console.warn(`[CoPresence] Frontend co-presence override failed (non-blocking): ${cpErr.message}`);
+        frontendCoPresenceBlock = "";
       }
 
       console.log(
@@ -924,7 +992,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // Build location share context for the prompt
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
+      const fullPrompt = `${systemPrompt}${frontendCoPresenceBlock}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
   "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
 
 
