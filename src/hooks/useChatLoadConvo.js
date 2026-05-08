@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
+import { activateChatSafeMode } from "@/lib/simulationGate";
 
 /**
  * useChatLoadConvo
@@ -91,14 +92,15 @@ export function useChatLoadConvo({
         err?.message?.includes('rate limit');
 
       // Helper: retry once after 8s on 429.
-      // 3s was too short — the quota is still saturated at 3s, making it worse.
-      // 8s gives the rate limiter time to release capacity before retrying.
+      // On first 429 detection: immediately activate chat-safe mode (45s) to pause
+      // nonessential background work before the retry attempt.
       const retryAfter8s = async (fn, label = '') => {
         try {
           return await fn();
         } catch (err) {
           if (is429(err)) {
-            console.warn(`[CHAT_LOAD] 429${label ? ' (' + label + ')' : ''} — retrying once in 8s t=${Date.now()}`);
+            console.warn(`[CHAT_LOAD] 429${label ? ' (' + label + ')' : ''} — activating chat-safe mode + retrying in 8s t=${Date.now()}`);
+            activateChatSafeMode(45000); // pause background work immediately
             await new Promise(r => setTimeout(r, 8000));
             return await fn(); // throws if still failing
           }

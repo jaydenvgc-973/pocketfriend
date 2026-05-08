@@ -55,6 +55,29 @@ export function reportRateLimit(durationMs = 60000) {
   _setGlobalRateLimit(durationMs);
 }
 
+// ── Chat-Safe Mode ────────────────────────────────────────────────────────
+// Activated by Retry — temporarily pauses ALL nonessential background work
+// so the active chat page gets exclusive API quota.
+// Cleared automatically after `durationMs`, or manually via clearChatSafeMode().
+export function activateChatSafeMode(durationMs = 45000) {
+  window.__chatSafeMode = true;
+  window.__chatSafeModeUntil = Date.now() + durationMs;
+  console.warn(`[SimGate] CHAT-SAFE MODE ON — nonessential background work paused for ${durationMs / 1000}s`);
+  setTimeout(() => {
+    window.__chatSafeMode = false;
+    console.log('[SimGate] Chat-safe mode expired — background systems resuming');
+  }, durationMs);
+}
+
+export function isChatSafeModeActive() {
+  return !!window.__chatSafeMode && Date.now() < (window.__chatSafeModeUntil || 0);
+}
+
+export function clearChatSafeMode() {
+  window.__chatSafeMode = false;
+  console.log('[SimGate] Chat-safe mode manually cleared');
+}
+
 // ── Context registration (called by page hooks on mount/unmount) ──────────
 
 export function setActiveContext(updates) {
@@ -136,6 +159,15 @@ export function gate(characterId, fnName, opts = {}) {
   if (window.__simRateLimited) {
     console.log(`[SimGate] BLOCKED ${fnName}(${characterId}) — global rate limit`);
     return false;
+  }
+
+  // 1b. Chat-safe mode — blocks all passive/idle background work
+  if (window.__chatSafeMode && Date.now() < (window.__chatSafeModeUntil || 0)) {
+    const allowed = opts.allowInSafeMode === true || hardTransition === true;
+    if (!allowed) {
+      console.log(`[SimGate] BLOCKED ${fnName}(${characterId}) — chat-safe mode active`);
+      return false;
+    }
   }
 
   // 2. Hard transitions always bypass page checks

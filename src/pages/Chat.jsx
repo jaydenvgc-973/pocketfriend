@@ -65,7 +65,7 @@ import { useChatScrollTracking } from "@/hooks/useChatScrollTracking";
 import { useChatLocationShare } from "@/hooks/useChatLocationShare";
 import { useChatBackgroundTasks } from "@/hooks/useChatBackgroundTasks.js";
 import { usePageContext } from "@/hooks/usePageContext";
-import { isGloballyRateLimited, reportRateLimit } from "@/lib/simulationGate";
+import { isGloballyRateLimited, reportRateLimit, activateChatSafeMode, isChatSafeModeActive } from "@/lib/simulationGate";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -1362,9 +1362,36 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         />
       )}
       {convoLoadError ? (
-        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-3">
-          <p className="text-sm font-medium text-foreground">{convoLoadError === 'rate_limited' ? 'Chat is temporarily rate limited. Please try again shortly.' : 'Failed to load chat. Check connection and retry.'}</p>
-          <button onClick={() => { setConvoLoadError(null); setRetryKey(k => k + 1); }} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">Retry</button>
+        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-foreground">
+              {convoLoadError === 'rate_limited' ? 'Too many requests — app is recovering' : 'Chat failed to load'}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {convoLoadError === 'rate_limited'
+                ? 'Background systems are being paused so this chat can load.'
+                : 'Check your connection and try again.'}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              // SAFEGUARD RECOVERY: Retry is not passive. It activates Chat-Safe Mode
+              // which pauses all nonessential background work for 45s, then retries the page load.
+              console.warn('[Chat] RETRY pressed — activating chat-safe mode and running safeguard recovery');
+              activateChatSafeMode(45000);
+              // Brief delay to let in-flight background tasks drain before retrying
+              setTimeout(() => {
+                setConvoLoadError(null);
+                setRetryKey(k => k + 1);
+              }, 800);
+            }}
+            className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
+          >
+            Recover &amp; Retry
+          </button>
+          {convoLoadError === 'rate_limited' && (
+            <p className="text-[10px] text-muted-foreground/50">Background tasks paused for 45s to prioritize chat</p>
+          )}
         </div>
       ) : isLoadingConvo ? (
         <div className="flex-1 flex items-center justify-center">

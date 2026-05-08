@@ -13,7 +13,7 @@
 
 import { useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
-import { reportRateLimit, isGloballyRateLimited } from "@/lib/simulationGate";
+import { reportRateLimit, isGloballyRateLimited, isChatSafeModeActive } from "@/lib/simulationGate";
 
 // Per-session cooldown state — keyed by `${characterId}:${taskName}`
 const sessionCooldowns = {};
@@ -48,6 +48,10 @@ function setInFlight(characterId, taskName, val) {
 async function safeInvoke(fnName, payload, characterId, taskName) {
   if (isGloballyRateLimited()) {
     console.log(`[Governor] SKIP ${taskName} — global rate limit active`);
+    return null;
+  }
+  if (isChatSafeModeActive()) {
+    console.log(`[Governor] SKIP ${taskName} — chat-safe mode active (page recovery in progress)`);
     return null;
   }
   if (isInFlight(characterId, taskName)) {
