@@ -590,8 +590,25 @@ Deno.serve(async (req) => {
       character = byId[0];
       characterLoadPath = 'user_scoped_filter';
     } else {
-      // NPC fallback — character may not be visible via user-scoped filter
-      contextLog.push({ step: 'character_load', path: 'npc_fallback', reason: 'user_scoped_filter_empty' });
+      // Fallback 1: service role lookup by ID — covers legacy characters whose owner_email
+      // has an RLS gap (e.g. created before owner_email was required, or ownership metadata
+      // was not fully backfilled). This is read-only and does NOT alter any data.
+      contextLog.push({ step: 'character_load', path: 'service_role_fallback', reason: 'user_scoped_filter_empty' });
+      try {
+        const srById = await base44.asServiceRole.entities.Character.filter({ id: characterId }).catch(() => []);
+        if (srById.length > 0) {
+          character = srById[0];
+          characterLoadPath = 'service_role_id_fallback';
+          contextLog.push({ step: 'character_load', path: characterLoadPath, name: character.name });
+        }
+      } catch (srErr) {
+        contextLog.push({ step: 'character_load', path: 'service_role_fallback', status: 'error', error: srErr.message });
+      }
+    }
+
+    // Fallback 2: NPC route — for NPC characters not visible via either direct filter
+    if (!character) {
+      contextLog.push({ step: 'character_load', path: 'npc_fallback', reason: 'service_role_filter_also_empty' });
       const npcRes = await base44.functions.invoke('fetchNPCsForUser', {}).catch(() => null);
       const npcs = npcRes?.data?.npcs || npcRes?.npcs || [];
       character = npcs.find(c => c.id === characterId) || null;

@@ -41,8 +41,8 @@ Deno.serve(async (req) => {
     const character = chars[0];
     if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
 
-    // ACCOUNT-SCOPED: filter by created_by so we never read another user's settings
-    const userSettingsList = await base44.entities.UserSettings.filter({ created_by: user.email });
+    // ACCOUNT-SCOPED: filter by owner_email (created_by is permanently forbidden)
+    const userSettingsList = await base44.entities.UserSettings.filter({ owner_email: user.email });
     const userDisplayName = userSettingsList?.[0]?.fictional_world_name || "you";
     const nickname = character.nickname_for_user || userDisplayName;
 

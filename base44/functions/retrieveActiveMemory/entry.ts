@@ -26,11 +26,13 @@ Deno.serve(async (req) => {
       backfilledNarratives = [];
     }
 
-    // ── 2. FETCH ALL EXPLICIT MEMORIES (up to 500 — full long-term store) ──────────
+    // ── 2. FETCH ALL EXPLICIT MEMORIES (capped at 50 — was 500, caused 429 storms) ──────────
+    // 500 records per sendMessage was the single largest quota consumer.
+    // topK is at most 14, so 50 candidates is more than sufficient for scoring.
     const allMemories = await base44.entities.Memory.filter(
       { character_id: characterId },
       '-timestamp',
-      500
+      50
     );
 
     // ── 3. COMBINE: backfilled narratives + explicit memories ──────────────────────
