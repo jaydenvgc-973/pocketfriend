@@ -66,6 +66,8 @@ import { useChatLocationShare } from "@/hooks/useChatLocationShare";
 import { useChatBackgroundTasks } from "@/hooks/useChatBackgroundTasks.js";
 import { usePageContext } from "@/hooks/usePageContext";
 import { isGloballyRateLimited, reportRateLimit, activateChatSafeMode, isChatSafeModeActive } from "@/lib/simulationGate";
+import { resolveCoPresence } from "@/lib/coPresenceResolver";
+import LocationShareTool from "@/components/chat/LocationShareTool";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -93,6 +95,7 @@ export default function Chat() {
   const [showNarrativeAction, setShowNarrativeAction] = useState(false);
   const [showShopping, setShowShopping] = useState(false);
   const [showHousingModal, setShowHousingModal] = useState(false);
+  const [showLocationShare, setShowLocationShare] = useState(false);
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
   const [catchupNarrativeText, setCatchupNarrativeText] = useState(null);
   const [isLoadingConvo, setIsLoadingConvo] = useState(false);
@@ -780,58 +783,11 @@ export default function Chat() {
         }
       }
 
-      // ── AUTHORITATIVE FRONTEND CO-PRESENCE OVERRIDE ───────────────────────
-      // This runs on EVERY message send — never cached. Source of truth:
-      //   User location  → userSettings (fresh React Query data, updated when user moves)
-      //   Char location  → character (React Query data for this character)
-      // Both are already loaded in the sendMessage scope — no extra API call needed.
-      // This block is injected into the prompt AFTER the canonical prompt, overriding
-      // any stale co-presence the cached canonical prompt may contain.
-      let frontendCoPresenceBlock = "";
-      try {
-        const userLocId   = userSettings?.user_current_location_id   || null;
-        const userLocName = userSettings?.user_current_location_name  || null;
-        const userPresence = userSettings?.user_presence_status       || 'away';
-        const charLocId   = character.resolved_current_location_id    || null;
-        const charLocName = character.resolved_current_location_name  || null;
-        const charPresenceStatus = character.resolved_presence_status || null;
-
-        // Blocking overrides — character cannot register user presence in these states
-        const charBlocked = charPresenceStatus === 'sleeping' || charPresenceStatus === 'napping'
-          || character.is_jailed || character.house_arrest_active
-          || (character.travel_status && character.travel_status !== 'not_traveling');
-
-        const locationMatch = !!(userLocId && charLocId && userLocId === charLocId);
-        const userPresentHere = locationMatch && userPresence !== 'away' && !charBlocked;
-
-        console.log(
-          `[CoPresence] char=${character.name}` +
-          ` | charLocId=${charLocId || 'none'}` +
-          ` | userLocId=${userLocId || 'none'}` +
-          ` | match=${locationMatch}` +
-          ` | userPresence=${userPresence}` +
-          ` | charBlocked=${charBlocked}` +
-          ` | userPresentHere=${userPresentHere}`
-        );
-
-        if (!charLocId && !userLocId) {
-          frontendCoPresenceBlock = `\n\n════════════════════════════════════\nCO-PRESENCE TRUTH (authoritative, per-message)\n════════════════════════════════════\n⚠️ Neither your location nor the user's location is currently set in the system. Do NOT assume the user is present or absent. Treat location as unknown.\n════════════════════════════════════\n`;
-        } else if (userPresentHere) {
-          frontendCoPresenceBlock = `\n\n════════════════════════════════════\nCO-PRESENCE TRUTH (authoritative, per-message — OVERRIDES any prior context)\n════════════════════════════════════\nYOUR CURRENT LOCATION: ${charLocName || 'your location'}\nUSER IS PHYSICALLY HERE WITH YOU: YES\nThe user (${userDisplayName || 'the user'}) is confirmed present at your current location (${userLocName || charLocName || 'shared location'}).\nTHIS IS VERIFIED SYSTEM TRUTH — NOT a guess. Do NOT say you are unsure where the user is. Do NOT speculate. The user is HERE, with you, right now.\nRespond with full awareness that you are in the same physical space.\n════════════════════════════════════\n`;
-        } else {
-          const userAwayReason = userPresence === 'away'
-            ? 'User is currently Away (not present in any location)'
-            : locationMatch === false
-              ? `User is at a different location (${userLocName || 'elsewhere'})`
-              : charBlocked
-                ? `Your current state (${charPresenceStatus || 'blocked'}) prevents registering presence`
-                : 'User location does not match your location';
-          frontendCoPresenceBlock = `\n\n════════════════════════════════════\nCO-PRESENCE TRUTH (authoritative, per-message — OVERRIDES any prior context)\n════════════════════════════════════\nYOUR CURRENT LOCATION: ${charLocName || 'your location'}\nUSER IS PHYSICALLY HERE WITH YOU: NO\nReason: ${userAwayReason}\nDo NOT imply the user is present. Do NOT invite them to a location they may already be at. Respond naturally without assuming shared physical space.\n════════════════════════════════════\n`;
-        }
-      } catch (cpErr) {
-        console.warn(`[CoPresence] Frontend co-presence override failed (non-blocking): ${cpErr.message}`);
-        frontendCoPresenceBlock = "";
-      }
+      // ── AUTHORITATIVE CO-PRESENCE BLOCK — shared resolver, never cached ─────
+      // resolveCoPresence reads live userSettings + character data on every send.
+      // No API call. No cache. Overrides any stale co-presence in the canonical prompt.
+      const coPresenceResult = resolveCoPresence(character, userSettings, userDisplayName);
+      const frontendCoPresenceBlock = coPresenceResult.promptBlock;
 
       console.log(
         `[Chat] route=direct_chat | character=${character.name} (${characterId})` +
@@ -1371,6 +1327,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         onShoppingToggle={() => setShowShopping(true)}
         onTroubleshootingToggle={() => setShowTroubleshooting(true)}
         onHousingChangeToggle={() => setShowHousingModal(true)}
+        onLocationShareToggle={() => setShowLocationShare(true)}
       />
       {character && showMediaGallery && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
       {character && conversationId && (
@@ -1523,6 +1480,18 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         character={character}
       />
 
+      {showLocationShare && character && conversationId && (
+        <LocationShareTool
+          isOpen={showLocationShare}
+          onClose={() => setShowLocationShare(false)}
+          character={character}
+          characterId={characterId}
+          conversationId={conversationId}
+          userSettings={userSettings}
+          currentUser={currentUser}
+          onMessageCreated={(msg) => setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg])}
+        />
+      )}
       {character && <PendingLifeEventApproval characterId={characterId} character={character} />}
       {showHousingModal && character && (
         <LogHousingChangeModal

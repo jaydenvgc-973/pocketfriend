@@ -24,6 +24,7 @@ export default function ChatHeader({
   onTroubleshootingToggle,
   onShoppingToggle,
   onHousingChangeToggle,
+  onLocationShareToggle,
 }) {
   const [isGeneratingRightNow, setIsGeneratingRightNow] = useState(false);
 
@@ -102,6 +103,7 @@ export default function ChatHeader({
           troubleshoot: !!character && !!conversationId,
           right_now: !!character && !!conversationId,
           housing_change: !!character,
+          location_share: !!character && !!conversationId,
         }}
         onSelect={(id) => {
           if (id === "media") onMediaGalleryToggle();
@@ -113,6 +115,7 @@ export default function ChatHeader({
           if (id === "shopping") onShoppingToggle();
           if (id === "troubleshoot") onTroubleshootingToggle();
           if (id === "housing_change") onHousingChangeToggle?.();
+          if (id === "location_share") onLocationShareToggle?.();
           if (id === "right_now") handleRightNow();
           if (id === "action_narration") triggerActionNarration();
         }}
