@@ -39,29 +39,6 @@ const QUIRK_CATALOG = [
   { quirk_id: "workaholic", label: "Workaholic", category: "work", emoji: "💼", description: "Prioritizes work over everything. Higher income but burnout risk." },
   { quirk_id: "entrepreneurial", label: "Entrepreneurial", category: "work", emoji: "🚀", description: "Builds side businesses. Variable income, reinvestment mindset." },
   { quirk_id: "unmotivated", label: "Unmotivated", category: "work", emoji: "😴", description: "Avoids responsibility. Leads to financial instability over time." },
-  // Personality & Social Traits
-  { quirk_id: "trait_stubborn", label: "Stubborn", category: "personality", emoji: "🪨", description: "Holds firm on opinions and decisions even under pressure. Resists being told what to do or what to think." },
-  { quirk_id: "trait_self_absorbed", label: "Self Absorbed", category: "personality", emoji: "🪞", description: "Conversations and decisions frequently circle back to themselves, intentionally or not." },
-  { quirk_id: "trait_loud", label: "Loud", category: "personality", emoji: "📢", description: "Naturally expressive and attention-grabbing. Dominates conversations, reacts dramatically, brings strong energy." },
-  { quirk_id: "trait_two_faced", label: "Two-Faced", category: "personality", emoji: "🎭", description: "Behaves differently depending on who is watching. May flatter people to their face while undermining them privately." },
-  { quirk_id: "trait_loyal", label: "Loyal", category: "personality", emoji: "🤝", description: "Deeply committed to the people they care about. Stands by others during hardship and values consistency." },
-  { quirk_id: "trait_wishy_washy", label: "Wishy-Washy", category: "personality", emoji: "🌊", description: "Struggles to commit. Easily influenced, emotionally inconsistent, prone to changing direction frequently." },
-  { quirk_id: "trait_compassionate", label: "Compassionate", category: "personality", emoji: "💞", description: "Emotionally sensitive to others' struggles. Often nurturing, forgiving, and motivated to help." },
-  { quirk_id: "trait_parental", label: "Parental", category: "personality", emoji: "🧡", description: "Naturally protective and guiding. Checks in on others, gives advice, worries about safety." },
-  { quirk_id: "trait_goody_two_shoes", label: "Goody Two Shoes", category: "personality", emoji: "😇", description: "Strong desire to do the right thing. Follows rules, values approval, may judge reckless behavior." },
-  { quirk_id: "trait_lawbreaker", label: "Lawbreaker", category: "personality", emoji: "🚨", description: "Comfortable violating laws when it benefits them or aligns with their beliefs. Normalizes risky behavior." },
-  { quirk_id: "trait_rule_breaker", label: "Rule Breaker", category: "personality", emoji: "⛓️‍💥", description: "Dislikes authority and restrictions. Prioritizes personal freedom over compliance." },
-  { quirk_id: "trait_criminal_mastermind", label: "Criminal Mastermind", category: "personality", emoji: "🕵️", description: "Strategic and calculated. Plans ahead, covers tracks, operates through manipulation rather than impulse." },
-  { quirk_id: "trait_law_abiding", label: "Law Abiding", category: "personality", emoji: "⚖️", description: "Strong respect for rules, order, and legality. Prefers safe and predictable behavior." },
-  { quirk_id: "trait_follower", label: "Follower", category: "personality", emoji: "👣", description: "More comfortable taking direction. Adapts to stronger personalities and dominant social groups." },
-  { quirk_id: "trait_leader", label: "Leader", category: "personality", emoji: "🦁", description: "Takes initiative, organizes others, assumes responsibility, and influences group direction naturally." },
-  { quirk_id: "trait_adaptable", label: "Adaptable", category: "personality", emoji: "🌀", description: "Adjusts quickly to changing environments, people, stress, or unexpected situations." },
-  { quirk_id: "trait_masculine", label: "Masculine Energy", category: "personality", emoji: "🔷", description: "Presents with masculine energy in posture, speech, style, confidence, and social dynamics." },
-  { quirk_id: "trait_feminine", label: "Feminine Energy", category: "personality", emoji: "🔶", description: "Presents with feminine energy in emotional expression, aesthetics, tone, and interaction style." },
-  { quirk_id: "trait_toxic", label: "Toxic", category: "personality", emoji: "☠️", description: "Habitually unhealthy in relationships. May manipulate, gaslight, drain others emotionally, or create instability." },
-  { quirk_id: "trait_bougie", label: "Bougie", category: "personality", emoji: "✨", description: "Drawn to luxury, status, and exclusivity. Cares strongly about image, quality, and appearing refined." },
-  { quirk_id: "trait_risk_taker", label: "Risk Taker", category: "personality", emoji: "🎯", description: "Comfortable with uncertainty and high-stakes situations. Prioritizes excitement over safety." },
-  { quirk_id: "trait_morning_person", label: "Morning Person", category: "personality", emoji: "🌅", description: "Naturally more energized and functional earlier in the day. Wakes willingly, structures routines around mornings." },
 ];
 
 const CATEGORY_LABELS = {
@@ -70,7 +47,6 @@ const CATEGORY_LABELS = {
   lifestyle: { label: "Lifestyle", color: "text-green-400", bg: "bg-green-400/10 border-green-400/20" },
   emotional: { label: "Emotional", color: "text-blue-400", bg: "bg-blue-400/10 border-blue-400/20" },
   work: { label: "Work & Identity", color: "text-purple-400", bg: "bg-purple-400/10 border-purple-400/20" },
-  personality: { label: "Personality & Social", color: "text-pink-400", bg: "bg-pink-400/10 border-pink-400/20" },
 };
 
 const INTENSITY_OPTIONS = ["mild", "moderate", "strong"];
@@ -89,13 +65,6 @@ export default function CharacterQuirksPanel({ character }) {
     setSaving(false);
   };
 
-  // Sync personality trait quirks to their boolean Character fields
-  const syncTraitField = async (quirk_id, active) => {
-    if (!quirk_id.startsWith('trait_')) return;
-    const fieldName = quirk_id; // e.g. "trait_stubborn" → character.trait_stubborn
-    await base44.entities.Character.update(character.id, { [fieldName]: active });
-  };
-
   const addQuirk = async (catalog) => {
     const already = quirks.find(q => q.quirk_id === catalog.quirk_id);
     if (already) return;
@@ -108,19 +77,14 @@ export default function CharacterQuirksPanel({ character }) {
       trigger_count: 0,
     };
     await saveQuirks([...quirks, newQuirk]);
-    await syncTraitField(catalog.quirk_id, true);
   };
 
   const removeQuirk = async (quirk_id) => {
     await saveQuirks(quirks.filter(q => q.quirk_id !== quirk_id));
-    await syncTraitField(quirk_id, false);
   };
 
   const toggleActive = async (quirk_id) => {
-    const newQuirks = quirks.map(q => q.quirk_id === quirk_id ? { ...q, active: !q.active } : q);
-    await saveQuirks(newQuirks);
-    const updated = newQuirks.find(q => q.quirk_id === quirk_id);
-    if (updated) await syncTraitField(quirk_id, updated.active);
+    await saveQuirks(quirks.map(q => q.quirk_id === quirk_id ? { ...q, active: !q.active } : q));
   };
 
   const updateIntensity = async (quirk_id, intensity) => {
