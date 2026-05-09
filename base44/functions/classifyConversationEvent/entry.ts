@@ -214,7 +214,7 @@ If nothing meaningful happened, return: { "events": [] }`;
 
     // Pre-fetch data needed for all events
     const [existingAchievements, character] = await Promise.all([
-      base44.entities.UserAchievement.filter({ created_by: user.email }),
+      base44.entities.UserAchievement.filter({ owner_email: user.email }),
       base44.asServiceRole.entities.Character.filter({ id: characterId }).then(r => r[0]),
     ]);
     const existingAchievementIds = new Set(existingAchievements.map(a => a.achievement_id));
@@ -254,6 +254,22 @@ If nothing meaningful happened, return: { "events": [] }`;
           source_context: conversationId ? `conversation:${conversationId}` : `life_event:${lifeEvent.id}`,
         });
         audit.systems.push('memory');
+
+        // Also write to CharacterMemory (Life Journal entity) so the canonical prompt
+        // Life Journal block is populated. buildCanonicalCharacterContext reads CharacterMemory,
+        // not Memory — without this write, the Life Journal block is always empty in chat.
+        const importanceScore = event.severity === 'major' ? 9 : event.severity === 'significant' ? 7 : 5;
+        await base44.asServiceRole.entities.CharacterMemory.create({
+          character_id: characterId,
+          memory_type: 'event',
+          memory_text: `${event.title}: ${event.description}`,
+          memory_summary: event.title,
+          importance_score: importanceScore,
+          confidence_score: 0.85,
+          permanence: event.severity === 'major' ? 'protected' : 'long_term',
+          validation_status: 'confirmed',
+        }).catch(() => {}); // non-fatal
+        audit.systems.push('life_journal');
       }
 
       // ── 3. Mood ───────────────────────────────────────────────────────

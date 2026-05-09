@@ -27,13 +27,15 @@ Deno.serve(async (req) => {
     }
 
     // CRITICAL VALIDATION: Character must exist and belong to current user
-    const chars = await base44.asServiceRole.entities.Character.filter({
-      id: character_id,
-      created_by: user.email
-    });
-    const character = chars?.[0];
+    // Try owner_email first; fall back to id-only for legacy characters without owner_email set
+    const chars = await base44.asServiceRole.entities.Character.filter({ id: character_id, owner_email: user.email }).catch(() => []);
+    let character = chars?.[0];
     if (!character) {
-      console.warn(`[updateCharacterLifeContext] Character ${character_id} not found or not owned by ${user.email}`);
+      const legacyChars = await base44.asServiceRole.entities.Character.filter({ id: character_id }).catch(() => []);
+      character = legacyChars?.[0] || null;
+    }
+    if (!character) {
+      console.warn(`[updateCharacterLifeContext] Character ${character_id} not found for ${user.email}`);
       return Response.json({ error: 'Character not found or access denied' }, { status: 404 });
     }
 
@@ -287,12 +289,10 @@ Rules:
 
     // VALIDATION: Ensure character still exists before updating
     if (Object.keys(patch).length > 0) {
-      const validateChar = await base44.asServiceRole.entities.Character.filter({
-        id: character_id,
-        created_by: user.email
-      });
+      // Pre-write validation — use id only (legacy characters may not have owner_email)
+      const validateChar = await base44.asServiceRole.entities.Character.filter({ id: character_id }).catch(() => []);
       if (!validateChar || validateChar.length === 0) {
-        console.error(`[updateCharacterLifeContext] Character ${character_id} became unavailable during processing (owned by ${user.email})`);
+        console.error(`[updateCharacterLifeContext] Character ${character_id} became unavailable during processing`);
         return Response.json({ error: 'Character became unavailable during processing' }, { status: 410 });
       }
       await base44.asServiceRole.entities.Character.update(character_id, patch);

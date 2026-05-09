@@ -131,9 +131,21 @@ export function useChatBackgroundTasks({
       }
 
       if (!isOnCooldown(characterId, 'classifyConvo', 60000)) {
+        // Pass characterState so the classifier can see known people (fictional_relationships)
+        // Without this, knownPeopleStr is always 'none listed' and social events are missed
         safeInvoke('classifyConversationEvent', {
-          characterId, conversationId: convoId,
-          userMessage: text, characterResponse: responseText,
+          characterId,
+          characterName: character?.name,
+          conversationId: convoId,
+          userMessage: text,
+          characterReply: responseText,
+          characterState: character ? {
+            emotional_state: character.emotional_state,
+            health_status: character.health_status,
+            current_activity: character.current_activity,
+            personality_summary: character.personality_summary,
+            fictional_relationships: character.fictional_relationships || [],
+          } : {},
         }, characterId, 'classifyConvo');
       }
     }, 2000);
@@ -149,8 +161,10 @@ export function useChatBackgroundTasks({
           recentMessages: (recentMsgs || []).slice(-10),
           playAsCharacterId: activeCharacter?.id || null,
         }, characterId, 'memoryExtract').then(res => {
-          if (res?.data?.new_people?.length > 0) {
-            setNewPeopleDetected(res.data.new_people);
+          // Backend returns `newPeopleDetected` (not `new_people`) — must match exactly
+          const newPeople = res?.data?.newPeopleDetected || res?.data?.new_people || [];
+          if (newPeople.length > 0) {
+            setNewPeopleDetected(newPeople);
           }
         });
       }
