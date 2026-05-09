@@ -26,16 +26,11 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'character_id and event_description required' }, { status: 400 });
     }
 
-    // CRITICAL VALIDATION: Character must exist and belong to current user
-    // Try owner_email first; fall back to id-only for legacy characters without owner_email set
-    const chars = await base44.asServiceRole.entities.Character.filter({ id: character_id, owner_email: user.email }).catch(() => []);
-    let character = chars?.[0];
+    // CRITICAL VALIDATION: Character must exist and belong to current user (owner_email scoped — no id-only fallback)
+    const chars = await base44.asServiceRole.entities.Character.filter({ id: character_id, owner_email: user.email });
+    const character = chars?.[0];
     if (!character) {
-      const legacyChars = await base44.asServiceRole.entities.Character.filter({ id: character_id }).catch(() => []);
-      character = legacyChars?.[0] || null;
-    }
-    if (!character) {
-      console.warn(`[updateCharacterLifeContext] Character ${character_id} not found for ${user.email}`);
+      console.warn(`[updateCharacterLifeContext] Character ${character_id} not found or not owned by ${user.email}`);
       return Response.json({ error: 'Character not found or access denied' }, { status: 404 });
     }
 
@@ -289,10 +284,10 @@ Rules:
 
     // VALIDATION: Ensure character still exists before updating
     if (Object.keys(patch).length > 0) {
-      // Pre-write validation — use id only (legacy characters may not have owner_email)
-      const validateChar = await base44.asServiceRole.entities.Character.filter({ id: character_id }).catch(() => []);
+      // Pre-write validation — owner_email scoped, same rule as initial lookup
+      const validateChar = await base44.asServiceRole.entities.Character.filter({ id: character_id, owner_email: user.email });
       if (!validateChar || validateChar.length === 0) {
-        console.error(`[updateCharacterLifeContext] Character ${character_id} became unavailable during processing`);
+        console.error(`[updateCharacterLifeContext] Character ${character_id} not owned by ${user.email} at write time`);
         return Response.json({ error: 'Character became unavailable during processing' }, { status: 410 });
       }
       await base44.asServiceRole.entities.Character.update(character_id, patch);
