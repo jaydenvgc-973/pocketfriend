@@ -2,7 +2,8 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   HelpCircle, Send, Loader2, User, Brain, RefreshCw,
-  CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Wrench, Play, Shield
+  CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Wrench, Play, Shield,
+  Paperclip, X as XIcon, Image as ImageIcon
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import ReactMarkdown from "react-markdown";
@@ -261,11 +262,17 @@ function ChatMessage({ msg, onRepair, isRepairing, onConfirm, onDeny, onFormSubm
         </div>
       )}
       <div className={`max-w-[88%] flex flex-col ${isUser ? 'items-end' : 'items-start'} space-y-1`}>
+        {/* Attached image preview in conversation */}
+        {isUser && msg.imageUrl && (
+          <div className="rounded-xl overflow-hidden border border-border max-w-[220px]">
+            <img src={msg.imageUrl} alt="Attached screenshot" className="w-full h-auto object-cover" />
+          </div>
+        )}
         <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
           isUser ? 'bg-primary text-primary-foreground rounded-tr-sm' : 'bg-secondary text-foreground rounded-tl-sm'
         }`}>
           {isUser ? (
-            <p className="whitespace-pre-wrap">{msg.content}</p>
+            <p className="whitespace-pre-wrap">{msg.content || (msg.imageUrl ? '(screenshot attached)' : '')}</p>
           ) : (
             <ReactMarkdown
               className="prose prose-sm prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&>p]:my-1 [&>ul]:my-1 [&>code]:text-xs"
@@ -404,6 +411,10 @@ export default function SupportAssistant({ user }) {
   const [lastDiagData, setLastDiagData] = useState(null);
   // pending confirm: { actionKey, actionPayload, confirmMsgId }
   const [pendingConfirm, setPendingConfirm] = useState(null);
+  // Image attachment state
+  const [attachedImage, setAttachedImage] = useState(null); // { url, file }
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const fileInputRef = useRef(null);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -417,6 +428,26 @@ export default function SupportAssistant({ user }) {
   };
 
   const removeMsgById = (id) => setMessages(prev => prev.filter(m => m.id !== id));
+
+  // ── Image attachment upload ────────────────────────────────────────────────
+  const handleImageSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setIsUploadingImage(true);
+    try {
+      const res = await base44.integrations.Core.UploadFile({ file });
+      if (res?.file_url) {
+        setAttachedImage({ url: res.file_url, name: file.name });
+      }
+    } catch (err) {
+      console.error('[SupportAssistant] Image upload failed:', err.message);
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const clearAttachment = () => setAttachedImage(null);
 
   // ── Full account diagnostic ───────────────────────────────────────────────
   const runFullDiagnostic = async () => {
@@ -1244,9 +1275,12 @@ export default function SupportAssistant({ user }) {
   // ── Handle user submit ────────────────────────────────────────────────────
   const handleSubmit = async () => {
     const text = input.trim();
-    if (!text || isProcessing || isRepairing || !ownerEmail) return;
+    if ((!text && !attachedImage) || isProcessing || isRepairing || !ownerEmail) return;
     setInput("");
-    addMsg({ role: 'user', content: text, ts: ts() });
+    const imageUrl = attachedImage?.url || null;
+    const imageName = attachedImage?.name || null;
+    setAttachedImage(null);
+    addMsg({ role: 'user', content: text, imageUrl, ts: ts() });
     setIsProcessing(true);
 
     const thinkingId = `thinking_${Date.now()}`;
@@ -1286,6 +1320,10 @@ export default function SupportAssistant({ user }) {
           ? `\n\n${label} DIAGNOSTIC for ${ownerEmail}:\n${issues.map(c => `- [${c.status.toUpperCase()}] ${c.check}: ${c.detail}`).join('\n')}\n\nConfirmed repair paths: ${(activeDiag.available_repairs || []).join(', ')}`
           : `\n\n${label} DIAGNOSTIC: All checks passed for ${ownerEmail}.`;
       }
+
+      const imageAnalysisBlock = imageUrl
+        ? `\n\n════════════════════════════\nUSER-ATTACHED SCREENSHOT / IMAGE\n════════════════════════════\nThe user has attached a screenshot or photo as visual evidence.\nFile: ${imageName || 'screenshot'}\nURL: ${imageUrl}\n\nYou MUST analyze this image carefully and use it as primary evidence.\nDescribe exactly what you see in the image — UI elements, error states, character cards, missing buttons, broken layouts, wrong data, failed images, or anything that stands out.\nConnect what you see visually to the user's written description.\nTreat the image as the ground truth for what the user is experiencing.\nDo not describe what you cannot confirm. If something is unclear, say so.\n════════════════════════════\n`
+        : '';
 
       const prompt = `You are the Account Help & Repair assistant for "Own Your Life" — a character-based social simulation app.
 You are a full reasoning agent — not a scripted bot. You think through evidence, name exact characters, and recommend specific actions.
@@ -1383,11 +1421,15 @@ Recent conversation:
 ${recentHistory}
 ${diagContext}
 
-User message: ${text}
+User message: ${text || '(no text — see attached screenshot)'}
+${imageAnalysisBlock}
+Respond with clear reasoning. Name exact records. State the root cause. Recommend the specific action. If a screenshot was attached, lead with your visual analysis of what you see before giving recommendations.`;
 
-Respond with clear reasoning. Name exact records. State the root cause. Recommend the specific action.`;
-
-      const response = await base44.integrations.Core.InvokeLLM({ prompt, model: 'gemini_3_flash' });
+      const response = await base44.integrations.Core.InvokeLLM({
+        prompt,
+        model: 'gemini_3_flash',
+        ...(imageUrl ? { file_urls: [imageUrl] } : {}),
+      });
 
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
       addMsg({ role: 'ai', content: response || 'Unable to generate a response. Please try again.', ts: ts() });
@@ -1493,24 +1535,52 @@ Respond with clear reasoning. Name exact records. State the root cause. Recommen
       </div>
 
       {/* Input */}
-      <div className="flex-shrink-0 border-t border-border px-3 py-3">
+      <div className="flex-shrink-0 border-t border-border px-3 py-3 space-y-2">
+        {/* Attached image preview */}
+        {attachedImage && (
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-sky-500/10 border border-sky-500/20">
+            <ImageIcon className="w-3.5 h-3.5 text-sky-400 flex-shrink-0" />
+            <img src={attachedImage.url} alt="Attachment preview" className="h-8 w-8 rounded object-cover flex-shrink-0" />
+            <span className="text-[10px] text-sky-300 truncate flex-1">{attachedImage.name || 'screenshot attached'}</span>
+            <button onClick={clearAttachment} className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0">
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
         <div className="flex items-end gap-2">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleImageSelect}
+          />
+          {/* Attach button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isProcessing || isRepairing || isUploadingImage}
+            title="Attach screenshot"
+            className="h-10 w-10 rounded-xl bg-secondary border border-border flex items-center justify-center flex-shrink-0 hover:border-sky-400/40 hover:text-sky-400 text-muted-foreground transition-colors disabled:opacity-40"
+          >
+            {isUploadingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+          </button>
           <textarea
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Describe a problem — I'll run the right tool automatically…"
+            placeholder="Describe a problem or attach a screenshot…"
             rows={2}
             disabled={isProcessing || isRepairing}
             className="flex-1 bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-sky-400 disabled:opacity-50"
           />
-          <button onClick={handleSubmit} disabled={!input.trim() || isProcessing || isRepairing}
+          <button onClick={handleSubmit} disabled={(!input.trim() && !attachedImage) || isProcessing || isRepairing}
             className="h-10 w-10 rounded-xl bg-sky-600 flex items-center justify-center flex-shrink-0 hover:bg-sky-500 transition-colors disabled:opacity-40">
             <Send className="w-4 h-4 text-white" />
           </button>
         </div>
-        <p className="text-[9px] text-muted-foreground/30 mt-1.5 text-center">
-          Runs real tools · Scoped to your account only · Enter to send
+        <p className="text-[9px] text-muted-foreground/30 mt-0.5 text-center">
+          Runs real tools · Attach screenshots · Scoped to your account only · Enter to send
         </p>
       </div>
     </div>
