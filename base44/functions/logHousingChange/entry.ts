@@ -283,7 +283,7 @@ Deno.serve(async (req) => {
       // in "What They've Been Through" on the profile page.
       // Displacement/eviction events are categorized as 'challenges'.
       const DISPLACEMENT_REASONS = new Set([
-        'eviction', 'could_not_afford', 'safety_concern', 'lost_housing',
+        'eviction', 'kicked_out', 'could_not_afford', 'safety_concern', 'lost_housing',
         'temporary_displacement', 'entered_homelessness', 'breakup_separation',
         'family_conflict', 'moving_out_from_someone',
       ]);
@@ -295,9 +295,11 @@ Deno.serve(async (req) => {
         : (moveToLocationType === 'hotel' ? 'challenges' : null);
 
       if (memoryCategory) {
+        const oldLocationId = character.current_home_location_id || previousHomeLocationId || null;
         const memoryEntry = {
           title: isHomeless ? 'Lost housing unexpectedly'
             : reasonForMove === 'eviction' ? 'Was evicted from their home'
+            : reasonForMove === 'kicked_out' ? 'Was kicked out of their home'
             : reasonForMove === 'could_not_afford' ? 'Could not afford housing'
             : reasonForMove === 'safety_concern' ? 'Had to leave for safety reasons'
             : reasonForMove === 'breakup_separation' ? 'Lost their home after a breakup'
@@ -306,12 +308,21 @@ Deno.serve(async (req) => {
           description: eventDesc,
           emotional_impact: 'Significant disruption to stability, security, and daily life.',
           category: memoryCategory,
+          // Source metadata for precise deduplication — do NOT dedupe by title alone
+          source_event_type: 'housing_displacement',
+          source_event_at: moveTimestamp,
+          source_location_id: oldLocationId,
+          source_reason: reasonForMove || null,
         };
-        const currentChar = await base44.asServiceRole.entities.Character.filter({ id: charId }).then(r => r?.[0]).catch(() => null);
+        // Owner-scoped read — no unscoped character reads even with service role
+        const currentChar = await base44.asServiceRole.entities.Character.filter({ id: charId, owner_email: userEmail }).then(r => r?.[0]).catch(() => null);
         if (currentChar) {
           const existing = Array.isArray(currentChar.memories) ? currentChar.memories : [];
-          // Avoid duplicate entries for same event
-          const alreadyExists = existing.some(m => m.title === memoryEntry.title);
+          // Dedupe by source_event_type + source_event_at (specific event key, not title)
+          const alreadyExists = existing.some(m =>
+            m.source_event_type === 'housing_displacement' &&
+            m.source_event_at === moveTimestamp
+          );
           if (!alreadyExists) {
             await base44.asServiceRole.entities.Character.update(charId, {
               memories: [...existing, memoryEntry],

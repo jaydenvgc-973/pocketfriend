@@ -267,7 +267,7 @@ Return JSON matching this schema exactly:
                     </motion.span>
                   </div>
                   <Link to="/home" className="text-xs text-white/40 hover:text-white/70 transition-colors">
-                    Or go to home
+                    Go to homepage →
                   </Link>
                 </div>
               )}
@@ -279,7 +279,7 @@ Return JSON matching this schema exactly:
                     <span className="text-white/60 text-sm">Almost ready…</span>
                   </div>
                   <Link to="/home" className="text-xs text-white/40 hover:text-white/70 transition-colors">
-                    Or go to home
+                    Go to homepage →
                   </Link>
                 </div>
               )}
@@ -293,7 +293,7 @@ Return JSON matching this schema exactly:
                     to="/home"
                     className="block text-center text-sm text-white font-medium hover:text-white/80 transition-colors"
                   >
-                    Or go to home →
+                    Go to homepage → →
                   </Link>
                 </div>
               )}
@@ -307,7 +307,7 @@ Return JSON matching this schema exactly:
                     Get started
                   </Button>
                   <Link to="/home" className="block text-center text-xs text-white/40 hover:text-white/70 transition-colors">
-                    Or go to home
+                    Go to homepage →
                   </Link>
                 </div>
               )}
