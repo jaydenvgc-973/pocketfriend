@@ -851,6 +851,99 @@
       "type": "boolean",
       "default": false
     },
+    "trait_stubborn": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_self_absorbed": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_loud": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_two_faced": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_loyal": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_wishy_washy": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_compassionate": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_parental": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_goody_two_shoes": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_lawbreaker": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_rule_breaker": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_criminal_mastermind": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_law_abiding": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_follower": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_leader": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_adaptable": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_masculine": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_feminine": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_androgynous": {
+      "type": "boolean",
+      "default": false,
+      "description": "Character presents with a blend of masculine and feminine energy, expression, or communication style."
+    },
+    "trait_toxic": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_bougie": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_risk_taker": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_morning_person": {
+      "type": "boolean",
+      "default": false
+    },
     "merged_into_character_id": {
       "type": "string"
     },
