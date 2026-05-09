@@ -9,6 +9,11 @@ Deno.serve(async (req) => {
     if (!characterId) {
       return Response.json({ error: 'characterId required' }, { status: 400 });
     }
+
+    // Auth FIRST — before any DB access
+    const user = await base44.auth.me();
+    if (!user?.email) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
     // conversationId is optional — Scene page calls this without a conversationId
     // When absent, we skip the DB message lookup for playingAsCharacterId and use scene context only
 
@@ -23,9 +28,6 @@ Deno.serve(async (req) => {
         playingAsCharacterId = lastUserMsg.played_as_character_id;
       }
     }
-
-    const user = await base44.auth.me();
-    if (!user?.email) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const [targetChar, playingAsChar] = await Promise.all([
       base44.entities.Character.filter({ id: characterId, owner_email: user.email }).then(r => r[0]),
