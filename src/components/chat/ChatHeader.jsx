@@ -6,6 +6,7 @@ import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import BackfillNarrativesWrapper from "@/components/chat/BackfillNarrativesWrapper";
 import { base44 } from "@/api/base44Client";
 import { useActionNarrationMode } from "@/hooks/useActionNarrationMode";
+import AlarmTool from "@/components/chat/AlarmTool";
 
 export default function ChatHeader({
   character,
@@ -27,6 +28,7 @@ export default function ChatHeader({
   onLocationShareToggle,
 }) {
   const [isGeneratingRightNow, setIsGeneratingRightNow] = useState(false);
+  const [showAlarm, setShowAlarm] = useState(false);
 
   const { triggerActionNarration, isGenerating: isGeneratingActionNarration } = useActionNarrationMode({
     character, characterId, conversationId, messages: messages || [], setMessages, userSettings,
@@ -92,6 +94,7 @@ export default function ChatHeader({
       </div>
       <ChatActionsMenu
         visible={{
+          alarm: !!character,
           media: !!character,
           game: !!character && !isPhone,
           narrative: !!character && !!conversationId,
@@ -116,9 +119,17 @@ export default function ChatHeader({
           if (id === "troubleshoot") onTroubleshootingToggle();
           if (id === "housing_change") onHousingChangeToggle?.();
           if (id === "location_share") onLocationShareToggle?.();
+          if (id === "alarm") setShowAlarm(true);
           if (id === "right_now") handleRightNow();
           if (id === "action_narration") triggerActionNarration();
         }}
+      />
+      <AlarmTool
+        isOpen={showAlarm}
+        onClose={() => setShowAlarm(false)}
+        character={character}
+        characterId={characterId}
+        currentUser={userSettings}
       />
       </div>
     </>

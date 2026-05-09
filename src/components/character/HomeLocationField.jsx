@@ -143,7 +143,7 @@ export default function HomeLocationField({ character, currentUser }) {
 
         {/* Show current resolved home if no conflict */}
         {!selectedLocationId && !locationPageHome && (
-          <p className="text-xs text-red-500">No home assigned. Character may disappear on return-home.</p>
+          <p className="text-xs text-muted-foreground">No permanent app home assigned. Character will use fallback sleep/location logic.</p>
         )}
         {!selectedLocationId && locationPageHome && !showRepair && (
           <p className="text-xs text-blue-500">Home found on Locations page: {locationPageHome.name}</p>
