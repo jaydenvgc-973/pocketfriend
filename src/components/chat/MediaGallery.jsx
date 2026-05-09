@@ -478,44 +478,24 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       {/* Character picker dropdown */}
                       {showCharacterPicker && allCharacters.length > 0 && (
                         <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
-                          {/* User first, then all characters (sorted by active) */}
+                          {/* Grouped by type, alphabetical within each group:
+                              1. User  2. active_created_character  3. npc_fictitious
+                              4. npc_family_member  5. npc_regular  6. everything else */}
                           {(() => {
-                            const seenIds = new Set();
-                            const sorted = [];
-                            
-                            // 1. Add user first
-                            const userChar = allCharacters.find(c => c.is_user);
-                            if (userChar) {
-                              sorted.push(userChar);
-                              seenIds.add(userChar.id);
-                            }
-                            
-                            // 2. Add current character if not already added
-                            if (character?.id && !seenIds.has(character.id)) {
-                              const curr = allCharacters.find(c => c.id === character.id);
-                              if (curr) {
-                                sorted.push(curr);
-                                seenIds.add(character.id);
-                              }
-                            }
-                            
-                            // 3. Add all remaining active characters
-                            allCharacters.forEach(c => {
-                              if (!seenIds.has(c.id) && c.is_active_character && !c.is_user) {
-                                sorted.push(c);
-                                seenIds.add(c.id);
-                              }
+                            const TYPE_ORDER = {
+                              _user: 0,
+                              active_created_character: 1,
+                              npc_fictitious: 2,
+                              npc_family_member: 3,
+                              npc_regular: 4,
+                            };
+                            const typeKey = c => c.is_user ? '_user' : (c.character_type || 'zzz');
+                            const typeRank = c => TYPE_ORDER[typeKey(c)] ?? 99;
+                            const alpha = (a, b) => (a.name || '').localeCompare(b.name || '');
+                            return [...allCharacters].sort((a, b) => {
+                              const rankDiff = typeRank(a) - typeRank(b);
+                              return rankDiff !== 0 ? rankDiff : alpha(a, b);
                             });
-                            
-                            // 4. Add all remaining characters
-                            allCharacters.forEach(c => {
-                              if (!seenIds.has(c.id)) {
-                                sorted.push(c);
-                                seenIds.add(c.id);
-                              }
-                            });
-                            
-                            return sorted;
                           })().map(char => (
                             <button
                               key={char.id}

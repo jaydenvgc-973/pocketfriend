@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Trash2, Check, Link, AlertTriangle } from "lucide-react";
+import { X, Plus, Trash2, Check, Link, AlertTriangle, Cake } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditableTextField, EditableSelectField, EditableEthnicityField } from "@/components/character/ProfileFieldEditor";
+import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
 
 const NEEDS_DEF = [
   { label: "Hunger",    key: "hunger_value",        dbKey: "hunger",    emoji: "🍽️" },
@@ -610,6 +611,111 @@ function CharacterPickerDropdown({ characters, onSelect }) {
   );
 }
 
+// ── Birthday + Zodiac Editor (profile only) ───────────────────────────────────
+const ZODIAC_SIGNS = ["aries","taurus","gemini","cancer","leo","virgo","libra","scorpio","sagittarius","capricorn","aquarius","pisces"];
+const ZODIAC_EMOJI = { aries:"♈", taurus:"♉", gemini:"♊", cancer:"♋", leo:"♌", virgo:"♍", libra:"♎", scorpio:"♏", sagittarius:"♐", capricorn:"♑", aquarius:"♒", pisces:"♓" };
+
+function BirthdayZodiacEditor({ character }) {
+  const queryClient = useQueryClient();
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const currentBirthday = character.birthday || '';
+  const currentZodiac = character.zodiac_sign || '';
+
+  const handleBirthdayChange = async (e) => {
+    const val = e.target.value;
+    setIsSaving(true);
+    try {
+      await base44.entities.Character.update(character.id, { birthday: val || null });
+      queryClient.invalidateQueries({ queryKey: ['character', character.id] });
+      setSaved(true); setTimeout(() => setSaved(false), 2000);
+    } finally { setIsSaving(false); }
+  };
+
+  const handleZodiacSelect = async (sign) => {
+    setIsSaving(true);
+    try {
+      const birthdate = calculateBirthdateFromZodiac(sign, character.age_range);
+      const update = { zodiac_sign: sign };
+      if (birthdate && !currentBirthday) update.birthday = birthdate;
+      await base44.entities.Character.update(character.id, update);
+      queryClient.invalidateQueries({ queryKey: ['character', character.id] });
+      setSaved(true); setTimeout(() => setSaved(false), 2000);
+    } finally { setIsSaving(false); }
+  };
+
+  const handleAutoGenerate = async () => {
+    if (!currentZodiac && !character.age_range) return;
+    const sign = currentZodiac || 'leo';
+    const birthdate = calculateBirthdateFromZodiac(sign, character.age_range);
+    if (!birthdate) return;
+    setIsSaving(true);
+    try {
+      await base44.entities.Character.update(character.id, { birthday: birthdate });
+      queryClient.invalidateQueries({ queryKey: ['character', character.id] });
+      setSaved(true); setTimeout(() => setSaved(false), 2000);
+    } finally { setIsSaving(false); }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+          <Cake className="w-3 h-3" /> Birthday & Zodiac
+        </p>
+        {saved && <span className="text-[10px] text-green-400">Saved</span>}
+        {isSaving && !saved && <span className="text-[10px] text-muted-foreground">Saving…</span>}
+      </div>
+      <div className="space-y-2">
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1">Birthday</p>
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={currentBirthday}
+              onChange={handleBirthdayChange}
+              className="flex-1 h-9 px-3 rounded-lg bg-secondary border border-border text-foreground text-sm outline-none focus:border-primary/50"
+            />
+            {!currentBirthday && character.age_range && (
+              <button
+                onClick={handleAutoGenerate}
+                disabled={isSaving}
+                className="px-2 py-1 rounded-lg bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
+              >
+                Auto
+              </button>
+            )}
+          </div>
+        </div>
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1.5">Zodiac Sign</p>
+          <div className="grid grid-cols-6 gap-1">
+            {ZODIAC_SIGNS.map(sign => (
+              <button
+                key={sign}
+                onClick={() => handleZodiacSelect(sign)}
+                disabled={isSaving}
+                title={sign}
+                className={`flex flex-col items-center py-1.5 rounded-lg transition-colors disabled:opacity-50 text-[10px] ${
+                  currentZodiac === sign
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-secondary text-muted-foreground hover:bg-secondary/80 hover:text-foreground'
+                }`}
+              >
+                <span className="text-base leading-none">{ZODIAC_EMOJI[sign]}</span>
+              </button>
+            ))}
+          </div>
+          {currentZodiac && (
+            <p className="text-[10px] text-muted-foreground mt-1 capitalize">{currentZodiac}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const LEARNING_MODES = [
   { value: 'on_demand', label: 'Online / On-Demand', desc: 'Anytime, anywhere' },
   { value: 'remote_scheduled', label: 'Remote Scheduled', desc: 'Fixed schedule, no travel' },
@@ -945,6 +1051,7 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
                 <EditableEthnicityField character={character} />
                 <EditableTextField character={character} field="city" label="City" placeholder="City" />
                 <EditableTextField character={character} field="state" label="State" placeholder="State" />
+                <BirthdayZodiacEditor character={character} />
               </section>
 
               {/* Personality */}

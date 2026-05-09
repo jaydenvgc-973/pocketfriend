@@ -61,6 +61,26 @@ function buildAgeCommunicationBlock(character) {
   return '';
 }
 
+// ── INTERNAL NPC FAMILY TRUTH BLOCK ─────────────────────────────────────────
+// NPC family members stored on the character record are canonical hard facts —
+// NOT memories to be retrieved, NOT deducible information.
+// If an age field exists, the character KNOWS their family member's age.
+// DOB is NOT required. Age alone is sufficient.
+function buildInternalFamilyTruth(character) {
+  const members = character.family_members || [];
+  if (members.length === 0) return '';
+  const lines = members
+    .filter(m => m.age != null || m.name)
+    .map(m => {
+      let line = `- ${m.name || 'unnamed'} (${m.relationship_type || 'family member'})`;
+      if (m.age != null) line += `: currently ${m.age} years old`;
+      if (m.isNPC === false || m.is_user_relative) line += ' — lives in your household';
+      return line;
+    });
+  if (lines.length === 0) return '';
+  return `\n════════════════════════════════════\nINTERNAL FAMILY HARD FACTS — ABSOLUTE TRUTH\nThese facts are embedded in your own family records. You KNOW this information without being told.\nDo NOT estimate, guess, or act uncertain about these facts.\n════════════════════════════════════\n${lines.join('\n')}\nCRITICAL: These are FACTS you already know. Never say "I'm not sure how old they are" or invent ages that contradict this list.\n════════════════════════════════════\n`;
+}
+
 function buildFamilySection(character) {
   const members = character.family_members || [];
   const familialTermMap = {
@@ -316,6 +336,29 @@ function buildSoapOperaLifeContext(character) {
     character.trait_romanticizes && 'romanticizes situations',
     character.trait_hard_to_read && 'hard to read',
     character.trait_competitive && 'competitive streak',
+    // Extended traits
+    character.trait_stubborn && 'stubborn — holds firm on opinions and decisions even under pressure, resists being told what to do',
+    character.trait_self_absorbed && 'self-absorbed — conversations and decisions frequently circle back to themselves',
+    character.trait_loud && 'loud and expressive — attention-grabbing, reacts dramatically, dominates conversations',
+    character.trait_two_faced && 'two-faced — behaves differently depending on who is watching, may flatter then undermine',
+    character.trait_loyal && 'deeply loyal — protects relationships, stands by people during hardship, values consistency',
+    character.trait_wishy_washy && 'wishy-washy — struggles to commit, easily influenced, changes direction frequently',
+    character.trait_compassionate && 'compassionate — emotionally sensitive, nurturing, motivated to help and comfort',
+    character.trait_parental && 'parental — naturally protective and guiding, worries about others, assumes caretaker role',
+    character.trait_goody_two_shoes && 'goody two shoes — strong desire to follow rules, values approval, may judge reckless behavior',
+    character.trait_lawbreaker && 'lawbreaker — comfortable violating laws when it benefits them, normalizes risky or illegal behavior',
+    character.trait_rule_breaker && 'rule breaker — dislikes authority, bends rules, prioritizes personal freedom over compliance',
+    character.trait_criminal_mastermind && 'criminal mastermind — strategic and calculated, plans ahead, covers tracks, operates through manipulation not impulse',
+    character.trait_law_abiding && 'law abiding — strong respect for rules, order, and legality; avoids risky or rule-bending situations',
+    character.trait_follower && 'follower — more comfortable taking direction, adapts to stronger personalities and dominant social groups',
+    character.trait_leader && 'leader — takes initiative, organizes others, assumes responsibility, influences group direction naturally',
+    character.trait_adaptable && 'adaptable — adjusts quickly to changing environments, people, stress, or unexpected situations',
+    character.trait_masculine && 'masculine expression — presents with masculine energy in posture, speech, style, and social dynamics',
+    character.trait_feminine && 'feminine expression — presents with feminine energy in emotional expression, aesthetics, tone, and interaction style',
+    character.trait_toxic && 'toxic — habitually unhealthy in relationships: may manipulate, gaslight, drain others, or create unstable dynamics',
+    character.trait_bougie && 'bougie — drawn to luxury, status, exclusivity; cares strongly about image, quality, and appearing refined',
+    character.trait_risk_taker && 'risk taker — comfortable with uncertainty and high-stakes situations, prioritizes excitement and opportunity over safety',
+    character.trait_morning_person && 'morning person — more energized and functional earlier in the day, wakes willingly, structures routines around mornings',
   ].filter(Boolean);
 
   let block = '';
@@ -434,6 +477,7 @@ function buildFullCanonicalPrompt(character, memories, worldName, interactionCon
   const coPresenceBlock = buildCoPresenceBlock(coPresence);
   const memoryBlock = buildMemoryBlock(memories);
   const familySection = buildFamilySection(character);
+  const internalFamilyTruth = buildInternalFamilyTruth(character);
   const relationshipsContext = buildRelationshipsContext(character);
   const religionBlock = buildReligionBlock(character);
   const soapOperaContext = buildSoapOperaLifeContext(character);
@@ -523,6 +567,7 @@ ${deepTriggers ? `THINGS THAT CUT DEEP (go quiet first, then cold):\n  - ${deepT
 ${!isDefaultChar ? `CRITICAL — ABUELA SOPHIA IS NOT YOUR GRANDMOTHER:\nAbuela Sophia belongs to someone else's story entirely. Never reference her as your family member or anyone who raised you.` : ''}
 
 ${religionBlock}
+${internalFamilyTruth}
 ${relationshipsContext}
 ${soapOperaContext}
 ${memoryBlock}

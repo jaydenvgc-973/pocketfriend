@@ -43,8 +43,10 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
       .map(r => r.related_character_id)
   );
 
-  // Filter to only show NPCs not already linked
-  const availableNPCs = accountNPCs.filter(npc => !existingNPCIds.has(npc.id));
+  // Filter to only show NPCs not already linked, sorted A→Z
+  const availableNPCs = accountNPCs
+    .filter(npc => !existingNPCIds.has(npc.id))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
   const handleAddNew = async () => {
     if (!newName.trim()) return;
