@@ -758,7 +758,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'messageId and prompt are required' }, { status: 400 });
     }
 
-    console.log(`[generateImageAsync] ▶ messageId=${messageId} | char=${characterId || 'none'} | subjectType=${subjectType}`);
+    console.log(`[generateImageAsync] ▶ messageId=${messageId} | char=${characterId || 'none'} | subjectType=${subjectType}${subjectType === 'known_character' ? ' (saved character, not sender)' : ''}`);
 
     // ── 1. VERIFY MESSAGE ─────────────────────────────────────────────────────
     const msgList = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
@@ -889,7 +889,8 @@ Deno.serve(async (req) => {
     let charRefs = [];
     let charDesc = '';
 
-    if (characterId && (subjectType === 'character' || subjectType === 'joint')) {
+    // known_character = subject is a saved character (not necessarily the sender)
+    if (characterId && (subjectType === 'character' || subjectType === 'joint' || subjectType === 'known_character')) {
       // Try user-scoped first, then service role with ownership check
       const charListUser = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
       charRecord = charListUser?.[0] || null;
