@@ -13,6 +13,13 @@ export const CHARACTER_TRAITS = [
     desc: "Says exactly what they think, even when it would've been fine to keep it in.",
   },
   {
+    key: "trait_cynical",
+    label: "Cynical",
+    emoji: "🌑",
+    category: "Social / Communication",
+    desc: "Tends to believe people are motivated mostly by selfishness or personal gain. Often skeptical of sincerity or good intentions.",
+  },
+  {
     key: "trait_dry_humor",
     label: "Dry Humor",
     emoji: "😐",
@@ -48,6 +55,20 @@ export const CHARACTER_TRAITS = [
     desc: "Tells you more than you asked for. Texts walls. Can't help it.",
   },
   {
+    key: "trait_polite",
+    label: "Polite",
+    emoji: "🤐",
+    category: "Social / Communication",
+    desc: "Uses manners, shows basic respect, and usually speaks with consideration. May soften criticism or avoid being unnecessarily harsh.",
+  },
+  {
+    key: "trait_rude",
+    label: "Rude",
+    emoji: "😤",
+    category: "Social / Communication",
+    desc: "Often blunt, dismissive, or careless with how they speak. May offend people without caring or realizing the impact.",
+  },
+  {
     key: "trait_two_faced",
     label: "Two-Faced",
     emoji: "🎭",
@@ -71,6 +92,20 @@ export const CHARACTER_TRAITS = [
     desc: "Emotionally sensitive to others' struggles. Often nurturing, forgiving, and motivated to help.",
   },
   {
+    key: "trait_conscientious",
+    label: "Conscientious",
+    emoji: "📋",
+    category: "Emotional / Personality",
+    desc: "Careful, responsible, organized, and thorough. Tries to do things properly and pays attention to details, obligations, and consequences.",
+  },
+  {
+    key: "trait_creep",
+    label: "Creep",
+    emoji: "👁️",
+    category: "Emotional / Personality",
+    desc: "Makes others uncomfortable through poor boundaries, inappropriate intensity, unwanted attention, or socially unsettling behavior.",
+  },
+  {
     key: "trait_easily_distracted",
     label: "Easily Distracted",
     emoji: "🌀",
@@ -78,11 +113,25 @@ export const CHARACTER_TRAITS = [
     desc: "Mid-conversation pivots. Random tangents. Their mind runs faster than the chat.",
   },
   {
+    key: "trait_empathetic",
+    label: "Empathetic",
+    emoji: "🫂",
+    category: "Emotional / Personality",
+    desc: "Able to deeply understand and connect with the feelings of others. Sensitive to emotional shifts, pain, and interpersonal dynamics.",
+  },
+  {
     key: "trait_hot_and_cold",
     label: "Hot & Cold",
     emoji: "🌡️",
     category: "Emotional / Personality",
     desc: "Warm and open one day, distant the next. Not manipulative — just internal.",
+  },
+  {
+    key: "trait_insatiable",
+    label: "Insatiable",
+    emoji: "🔥",
+    category: "Emotional / Personality",
+    desc: "Always wants more — attention, affection, excitement, validation, success. Rarely feels fully satisfied for long.",
   },
   {
     key: "trait_overcorrects",
@@ -97,6 +146,13 @@ export const CHARACTER_TRAITS = [
     emoji: "🌹",
     category: "Emotional / Personality",
     desc: "Finds meaning in small things. Treats casual moments like they matter — because to them, they do.",
+  },
+  {
+    key: "trait_satyriasis",
+    label: "Satyriasis",
+    emoji: "💋",
+    category: "Emotional / Personality",
+    desc: "Has an unusually intense appetite for attention, affection, and romantic pursuit. Affects fidelity, temptation, impulse control, and relationship stability.",
   },
   {
     key: "trait_self_absorbed",
@@ -120,6 +176,20 @@ export const CHARACTER_TRAITS = [
     desc: "Habitually unhealthy in relationships. May manipulate, gaslight, drain others emotionally, or create instability.",
   },
   {
+    key: "trait_uninhibited",
+    label: "Uninhibited",
+    emoji: "🎪",
+    category: "Emotional / Personality",
+    desc: "Less restrained by social expectations. Says or does what they feel in the moment — bold, impulsive, or unusually open.",
+  },
+  {
+    key: "trait_volatile",
+    label: "Volatile",
+    emoji: "💥",
+    category: "Emotional / Personality",
+    desc: "Likely to change emotions or behaviors suddenly and intensely. Can become reactive, explosive, or emotionally unstable under stress.",
+  },
+  {
     key: "trait_wishy_washy",
     label: "Wishy-Washy",
     emoji: "🌊",
@@ -134,6 +204,20 @@ export const CHARACTER_TRAITS = [
     emoji: "👣",
     category: "Social Dynamics",
     desc: "More comfortable taking direction. Adapts to stronger personalities and dominant social groups.",
+  },
+  {
+    key: "trait_generous",
+    label: "Generous",
+    emoji: "🎁",
+    category: "Social Dynamics",
+    desc: "Naturally giving with time, money, energy, affection, or support. Often enjoys helping others and sharing what they have.",
+  },
+  {
+    key: "trait_goon",
+    label: "Goon",
+    emoji: "🦾",
+    category: "Social Dynamics",
+    desc: "Often acts as muscle, backup, or enforcer for stronger personalities. May follow dominant influences into reckless or harmful situations.",
   },
   {
     key: "trait_leader",
@@ -155,6 +239,20 @@ export const CHARACTER_TRAITS = [
     emoji: "🧡",
     category: "Social Dynamics",
     desc: "Naturally protective and guiding. Checks in on others, gives advice, worries about safety.",
+  },
+  {
+    key: "trait_philanderer",
+    label: "Philanderer",
+    emoji: "💔",
+    category: "Social Dynamics",
+    desc: "Habitually pursues romantic or flirtatious attention from multiple people, often creating jealousy, distrust, or relationship drama.",
+  },
+  {
+    key: "trait_ruffian",
+    label: "Ruffian",
+    emoji: "🥊",
+    category: "Social Dynamics",
+    desc: "Rough around the edges, rowdy, or prone to aggressive social behavior. May come across as crude, scrappy, or trouble-oriented.",
   },
 
   // ── MORAL / ETHICAL ──────────────────────────────────────────────────────
@@ -192,6 +290,13 @@ export const CHARACTER_TRAITS = [
     emoji: "⛓️",
     category: "Moral / Ethical",
     desc: "Dislikes authority and restrictions. Prioritizes personal freedom over compliance.",
+  },
+  {
+    key: "trait_thief",
+    label: "Thief",
+    emoji: "🖐️",
+    category: "Moral / Ethical",
+    desc: "Comfortable stealing, taking things that don't belong to them, or justifying dishonest acquisition when it benefits them.",
   },
 
   // ── LIFESTYLE / HABITS ───────────────────────────────────────────────────

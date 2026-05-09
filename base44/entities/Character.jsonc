@@ -944,6 +944,66 @@
       "type": "boolean",
       "default": false
     },
+    "trait_conscientious": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_creep": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_cynical": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_empathetic": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_generous": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_goon": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_insatiable": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_philanderer": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_polite": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_rude": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_ruffian": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_satyriasis": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_thief": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_uninhibited": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_volatile": {
+      "type": "boolean",
+      "default": false
+    },
     "merged_into_character_id": {
       "type": "string"
     },
