@@ -1223,7 +1223,10 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         userSettings,
         currentUser,
         subjectType: resolvedSubjectType,
-        characterId: resolvedCharacterId || characterId,
+        // CRITICAL: For described third parties with no saved character record,
+        // pass null explicitly — NOT the sender's characterId.
+        // The backend's isThirdPartyPhoto guard uses this to hard-block sender identity.
+        characterId: resolvedCharacterId, // null for described strangers — intentional
         isMountedRef,
         setMessages,
         convoId,

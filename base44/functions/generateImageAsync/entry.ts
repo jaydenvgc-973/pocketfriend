@@ -744,7 +744,8 @@ Deno.serve(async (req) => {
       messageId,
       prompt,
       subjectType,        // "character" | "user" | "joint"
-      characterId,
+      characterId,        // SUBJECT character ID (may differ from sender for third-party photos)
+      senderCharacterId,  // SENDER character ID (always the message author)
       characterName,
       characterReferenceImages,   // UI-provided fallback refs
       userReferenceImages,
@@ -758,7 +759,34 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'messageId and prompt are required' }, { status: 400 });
     }
 
-    console.log(`[generateImageAsync] ▶ messageId=${messageId} | char=${characterId || 'none'} | subjectType=${subjectType}${subjectType === 'known_character' ? ' (saved character, not sender)' : ''}`);
+    // ── HARD SUBJECT LOCK DETECTION ───────────────────────────────────────────
+    // Detect whether this is a third-party photo (sender ≠ subject).
+    // Three signals any of which triggers hard block of sender identity injection:
+    //   1. characterId !== senderCharacterId (frontend already resolved a different subject)
+    //   2. Prompt starts with [PHOTO SUBJECT — NOT THE SENDER] prefix
+    //   3. subjectType === 'known_character' with a different characterId
+
+    const isThirdPartyPhoto = (
+      // Signal 1: different subject character ID from sender
+      (senderCharacterId && characterId && characterId !== senderCharacterId) ||
+      // Signal 2: explicit override prefix injected by photoSubjectResolver
+      /^\[PHOTO SUBJECT[^\]]*NOT THE SENDER\]/i.test(prompt.trim()) ||
+      // Signal 3: no characterId at all (described stranger — no saved record)
+      (!characterId && senderCharacterId)
+    );
+
+    // ── DEBUG LOG — subject pipeline audit ─────────────────────────────────────
+    console.log(`[generateImageAsync] ▶ messageId=${messageId}`);
+    console.log(`[generateImageAsync]   sender_character_id:              ${senderCharacterId || 'not provided'}`);
+    console.log(`[generateImageAsync]   resolved_characterId (subject):   ${characterId || 'none'}`);
+    console.log(`[generateImageAsync]   subjectType:                      ${subjectType}`);
+    console.log(`[generateImageAsync]   is_third_party_photo:             ${isThirdPartyPhoto}`);
+    console.log(`[generateImageAsync]   sender_avatar_injection_enabled:  ${!isThirdPartyPhoto}`);
+    console.log(`[generateImageAsync]   sender_identity_lock_enabled:     ${!isThirdPartyPhoto}`);
+    console.log(`[generateImageAsync]   final_subject_source:             ${isThirdPartyPhoto ? 'prompt description only — sender completely excluded' : (characterId ? `character record ${characterId}` : 'sender character')}`);
+    if (isThirdPartyPhoto) {
+      console.log(`[generateImageAsync]   ⛔ HARD SUBJECT LOCK ACTIVE — sender refs, appearance lock, avatar, and identity will NOT be injected`);
+    }
 
     // ── 1. VERIFY MESSAGE ─────────────────────────────────────────────────────
     const msgList = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
@@ -889,8 +917,20 @@ Deno.serve(async (req) => {
     let charRefs = [];
     let charDesc = '';
 
-    // known_character = subject is a saved character (not necessarily the sender)
-    if (characterId && (subjectType === 'character' || subjectType === 'joint' || subjectType === 'known_character')) {
+    // ── THIRD-PARTY HARD BLOCK ─────────────────────────────────────────────────
+    // When isThirdPartyPhoto is true AND there is no separate subject characterId,
+    // the described person is a stranger. We must NOT load ANY character record for identity.
+    // charRecord, charRefs, and charDesc all stay empty.
+    // The prompt description IS the identity source — nothing else.
+    //
+    // When isThirdPartyPhoto is true BUT characterId is set (a known saved character is the subject),
+    // we DO load that character's identity — but ONLY if characterId !== senderCharacterId.
+    // In that case the subject IS a real character, just not the sender.
+
+    if (isThirdPartyPhoto && !characterId) {
+      // Pure described stranger — skip all character identity resolution entirely
+      console.log(`[generateImageAsync] ⛔ Third-party hard block — no characterId, skipping all sender identity injection. Image generated from prompt description only.`);
+    } else if (characterId && (subjectType === 'character' || subjectType === 'joint' || subjectType === 'known_character')) {
       // Try user-scoped first, then service role with ownership check
       const charListUser = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
       charRecord = charListUser?.[0] || null;
@@ -967,6 +1007,19 @@ Deno.serve(async (req) => {
       if (charRefs.length === 0) {
         console.log(`[generateImageAsync] ℹ️ No reference images for "${characterName || characterId}" — will generate from text description only (no avatar fallback to prevent scene contamination)`);
         // charRefs stays empty — buildPrompt will omit identity ref block, charDesc carries the description
+      }
+    } // end else-if (characterId && subjectType in character/joint/known_character)
+
+    // ── THIRD-PARTY IDENTITY GUARD — final enforcement ─────────────────────────
+    // Even if the if-block above ran because characterId happened to equal senderCharacterId
+    // due to a frontend fallback, we must zero out charRefs when this is a third-party photo
+    // with no separate resolved subject characterId. This is the final safety net.
+    if (isThirdPartyPhoto && (!characterId || characterId === senderCharacterId)) {
+      if (charRefs.length > 0 || charDesc) {
+        console.warn(`[generateImageAsync] ⛔ HARD SUBJECT LOCK — forcibly clearing ${charRefs.length} charRefs and charDesc for third-party photo. Sender identity removed from pipeline.`);
+        charRefs = [];
+        charDesc = '';
+        charRecord = null;
       }
     }
 
@@ -1136,11 +1189,38 @@ Deno.serve(async (req) => {
     // If you change the sanitizer here, you MUST update regenerateImageWithReason too.
     // Any drift between the two sanitizers is a bug.
 
+    // ── THIRD-PARTY PROMPT PREAMBLE ──────────────────────────────────────────
+    // When this is a third-party photo (sender ≠ subject), prepend an explicit hard-block
+    // instruction so the model never defaults to the sender's facial identity.
+    let thirdPartyPreamble = '';
+    if (isThirdPartyPhoto && !characterId) {
+      // Strip any routing prefix from the sanitized prompt to get the raw scene description
+      const rawSceneDesc = sanitizedPrompt.replace(/^\[PHOTO SUBJECT[^\]]*\]\s*:?\s*/i, '').replace(/^\[CHARACTER\]\s*/i, '').trim();
+      thirdPartyPreamble = `════════════════════════════════════════════════════════════
+⛔ THIRD-PARTY PHOTO — SENDER IS NOT THE SUBJECT
+════════════════════════════════════════════════════════════
+This photo was SENT by a character but does NOT show that character.
+The person who sent this photo is NOT in the image.
+Do NOT use any sender identity, face, appearance lock, hair, skin tone, body type, or ethnicity from any reference photos.
+
+THE SUBJECT OF THIS PHOTO IS:
+${rawSceneDesc}
+
+Generate ONLY the person/subject/scene described above.
+All reference images (if any) are environment/location refs only — do NOT treat any reference as a face identity source.
+
+⛔ HARD FAIL: Sender's face or appearance appears in the image
+✅ CORRECT: Only the described third-party subject appears
+════════════════════════════════════════════════════════════
+
+`;
+    }
+
     const serverTime = new Date();
-    const finalPrompt = buildPrompt({
+    const finalPrompt = thirdPartyPreamble + buildPrompt({
       prompt: sanitizedPrompt,
-      charName: charRecord?.name || characterName || 'the character',
-      charDesc,
+      charName: isThirdPartyPhoto && !characterId ? 'the described person' : (charRecord?.name || characterName || 'the character'),
+      charDesc: isThirdPartyPhoto && !characterId ? '' : charDesc,
       locationName: resolvedLocationName,
       zoneName: resolvedZoneName,
       envRefCount: ENV_SLOTS,

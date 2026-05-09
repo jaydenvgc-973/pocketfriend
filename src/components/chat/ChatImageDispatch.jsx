@@ -87,6 +87,9 @@ export async function dispatchImageGeneration({
       characterName: character.name,
       userWorldName: userSettings.fictional_world_name || currentUser.full_name || null,
       subjectType,
+      // senderCharacterId is ALWAYS the character who sent the message — separate from the subject
+      senderCharacterId: character.id,
+      // characterId is the SUBJECT character — may differ from sender for third-party photos
       characterId,
       characterEmotionalState: character.emotional_state || 'calm',
       // NO manualLocationId — backend resolves from character file + LocationReference records
