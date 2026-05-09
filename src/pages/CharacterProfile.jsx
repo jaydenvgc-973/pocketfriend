@@ -371,11 +371,7 @@ export default function CharacterProfile() {
           <div className="text-center">
             <h1 className="text-2xl font-semibold text-foreground">{character.name}</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {character.is_default
-                ? "He grew up developing a keen instinct for authenticity from varied environments, now works in NYC retail, and builds his life on intention and control."
-                : character.id === "69c05643cad0c019b157815c"
-                ? "Currently in-between jobs and holding various certifications, he recently completed a draining shift at the community center."
-                : character.personality_summary?.split(".")[0]}
+              {character.personality_summary?.split(".")[0] || character.current_situation?.split(".")[0] || null}
             </p>
           </div>
         </div>
@@ -808,14 +804,15 @@ export default function CharacterProfile() {
         <ManualNeedsEditor character={character} />
 
         {/* Key Life Events & Memories — grouped by category when available */}
-        {character.memories?.length > 0 && (() => {
+        {(() => {
+          const memories = character.memories || [];
           const categoryMeta = {
             challenges: { label: "Challenges", color: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/20" },
             positive: { label: "Positive Experiences", color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
             growth: { label: "Growth & Resilience", color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
           };
           const categorized = { challenges: [], positive: [], growth: [], uncategorized: [] };
-          character.memories.forEach(m => {
+          memories.forEach(m => {
             const cat = m.category && categorized[m.category] !== undefined ? m.category : 'uncategorized';
             categorized[cat].push(m);
           });
@@ -824,6 +821,12 @@ export default function CharacterProfile() {
           return (
             <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">What They've Been Through</p>
+
+              {memories.length === 0 && (
+                <p className="text-xs text-muted-foreground italic">
+                  No experiences recorded yet. Experiences are added through the Edit Emotions &amp; Experiences page or as major life events occur.
+                </p>
+              )}
 
               {/* Categorized preset memories — expandable chips showing full details */}
               {hasAnyCategory && (
@@ -888,6 +891,7 @@ export default function CharacterProfile() {
         })()}
 
         {/* Family Members */}
+
         <FamilyEditor character={character} readOnly={character.is_default} allCharacters={allCharacters} currentUser={currentUser} userSettings={userSettings[0]} />
 
         {/* Family History */}

@@ -268,7 +268,7 @@ Deno.serve(async (req) => {
         ].filter(Boolean),
       });
 
-      // Memory entry
+      // Memory entity entry (for retrieval by Chat/Profile/Continuity systems)
       await base44.asServiceRole.entities.Memory.create({
         character_id: charId,
         title: eventTitle,
@@ -278,6 +278,47 @@ Deno.serve(async (req) => {
         timestamp: moveTimestamp,
         owner_email: userEmail,
       }).catch(() => {});
+
+      // Write a categorized entry into character.memories array so it appears
+      // in "What They've Been Through" on the profile page.
+      // Displacement/eviction events are categorized as 'challenges'.
+      const DISPLACEMENT_REASONS = new Set([
+        'eviction', 'could_not_afford', 'safety_concern', 'lost_housing',
+        'temporary_displacement', 'entered_homelessness', 'breakup_separation',
+        'family_conflict', 'moving_out_from_someone',
+      ]);
+      const isDisplacement = isHomeless || isNoLocation ||
+        DISPLACEMENT_REASONS.has(reasonForMove) ||
+        moveToLocationType === 'shelter';
+
+      const memoryCategory = isDisplacement ? 'challenges'
+        : (moveToLocationType === 'hotel' ? 'challenges' : null);
+
+      if (memoryCategory) {
+        const memoryEntry = {
+          title: isHomeless ? 'Lost housing unexpectedly'
+            : reasonForMove === 'eviction' ? 'Was evicted from their home'
+            : reasonForMove === 'could_not_afford' ? 'Could not afford housing'
+            : reasonForMove === 'safety_concern' ? 'Had to leave for safety reasons'
+            : reasonForMove === 'breakup_separation' ? 'Lost their home after a breakup'
+            : reasonForMove === 'family_conflict' ? 'Housing disrupted by family conflict'
+            : 'Experienced housing instability',
+          description: eventDesc,
+          emotional_impact: 'Significant disruption to stability, security, and daily life.',
+          category: memoryCategory,
+        };
+        const currentChar = await base44.asServiceRole.entities.Character.filter({ id: charId }).then(r => r?.[0]).catch(() => null);
+        if (currentChar) {
+          const existing = Array.isArray(currentChar.memories) ? currentChar.memories : [];
+          // Avoid duplicate entries for same event
+          const alreadyExists = existing.some(m => m.title === memoryEntry.title);
+          if (!alreadyExists) {
+            await base44.asServiceRole.entities.Character.update(charId, {
+              memories: [...existing, memoryEntry],
+            }).catch(() => {});
+          }
+        }
+      }
 
       results.push({ charId, characterName: character.name, status: 'updated' });
     }
