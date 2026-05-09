@@ -261,6 +261,7 @@ If nothing meaningful happened, return: { "events": [] }`;
         const importanceScore = event.severity === 'major' ? 9 : event.severity === 'significant' ? 7 : 5;
         await base44.asServiceRole.entities.CharacterMemory.create({
           character_id: characterId,
+          owner_email: user.email,
           memory_type: 'event',
           memory_text: `${event.title}: ${event.description}`,
           memory_summary: event.title,

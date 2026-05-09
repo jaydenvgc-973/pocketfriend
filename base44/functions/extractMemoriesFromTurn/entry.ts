@@ -24,10 +24,13 @@ Deno.serve(async (req) => {
       }
     }
 
+    const user = await base44.auth.me();
+    if (!user?.email) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
     const [targetChar, playingAsChar] = await Promise.all([
-      base44.entities.Character.filter({ id: characterId }).then(r => r[0]),
+      base44.entities.Character.filter({ id: characterId, owner_email: user.email }).then(r => r[0]),
       playingAsCharacterId
-        ? base44.entities.Character.filter({ id: playingAsCharacterId }).then(r => r[0])
+        ? base44.entities.Character.filter({ id: playingAsCharacterId, owner_email: user.email }).then(r => r[0])
         : Promise.resolve(null),
     ]);
 
@@ -256,6 +259,27 @@ Return JSON.`,
         }).catch(() => {})
       );
       await Promise.all(witnessWrites);
+    }
+
+    // Persist new people as unresolved CharacterMemory records before returning.
+    // This ensures detection survives modal dismissal — the modal is a review UI, not the source of truth.
+    // validation_status='unresolved_identity' marks them for future resolution without blocking retrieval.
+    if (newPeopleDetected.length > 0 && targetChar) {
+      for (const person of newPeopleDetected) {
+        if (!person.name) continue;
+        base44.asServiceRole.entities.CharacterMemory.create({
+          character_id: characterId,
+          owner_email: user.email,
+          memory_type: 'relationship',
+          memory_text: `${targetChar.name} knows someone named ${person.name} (${person.relationship_type || 'unknown relationship'}). Context: ${person.context || 'mentioned in conversation'}`,
+          memory_summary: `Knows ${person.name}`,
+          importance_score: 4,
+          confidence_score: 0.6,
+          permanence: 'long_term',
+          validation_status: 'unresolved_identity',
+          original_raw_reference: person.name,
+        }).catch(() => {}); // non-fatal
+      }
     }
 
     return Response.json({ success: true, newPeopleDetected });
