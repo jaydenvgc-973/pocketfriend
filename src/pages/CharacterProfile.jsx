@@ -154,11 +154,12 @@ export default function CharacterProfile() {
   });
 
   const { data: userSettings = [] } = useQuery({
-    queryKey: ["userSettings"],
+    queryKey: ["userSettings", currentUser?.email || ""],
     queryFn: async () => {
-      await new Promise(r => setTimeout(r, 800));
-      return base44.entities.UserSettings.list();
+      if (!currentUser?.email) return [];
+      return base44.entities.UserSettings.filter({ owner_email: currentUser.email });
     },
+    enabled: !!currentUser?.email,
     staleTime: 60000,
   });
 
