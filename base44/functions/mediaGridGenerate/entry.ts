@@ -57,25 +57,59 @@ Deno.serve(async (req) => {
 
     console.log(`[mediaGridGenerate] ▶ messageId=${messageId} | multiPerson=${!!multiPersonSelection}`);
 
-    // ── NON-EXPLICIT LANGUAGE CONTROL ──────────────────────────────────────
+    // ── CLASSIFICATION-FIRST SANITIZER — synced with generateImageAsync ────
+    // SYNC NOTE: This logic must stay identical to generateImageAsync's classifySceneContext
+    // + sanitizePrompt. Multi-person mode uses this directly (not delegated). Single-character
+    // mode delegates to generateImageAsync which has its own copy.
+    function classifySceneContext(p) {
+      const lower = p.toLowerCase();
+      const explicitSignals = [
+        /\bsex(ual)?\b/, /\bporn\b/, /\berotic\b/, /\bgenitals?\b/, /\bpenis\b/, /\bvagina\b/,
+        /\bnipples?\b/, /\bsexually\b/, /\barouse[d]?\b/, /\borgasm\b/, /\bintercourse\b/,
+        /\bprivate parts?\b/, /\bexplicit(ly)?\b/, /\bsuggestive pose\b/, /\bseductive\b/,
+        /\bsex act\b/, /\bsexualize[d]?\b/,
+      ];
+      const isExplicit = explicitSignals.some(r => r.test(lower));
+      const isSleepContext = /\b(sleep(ing)?|asleep|woke up|waking up|bed|bedroom|lying|laid down|resting|nap(ping)?|pillow|duvet|blanket|sheets?)\b/.test(lower);
+      const isComfortContext = /\b(comfort(ing)?|support(ing|ive)?|emotional|vulnerable|safe|holding|hugging|close|beside|next to|shoulder|arms? around|snuggle|cuddle|warm|peaceful|quiet moment|calming|soothing|affection(ate)?|tender(ness)?|intimate|love)\b/.test(lower);
+      const isLifestyleContext = /\b(beach|gym|workout|fitness|pool|vacation|home|apartment|mirror|selfie|casual|morning|routine|everyday|relaxing|chill(ing)?|hanging out)\b/.test(lower);
+      const isNonSexualBodyContext = /\b(no shirt|without (a )?shirt|shirtless|without (a )?top|no top)\b/.test(lower) && !isExplicit;
+      if (isExplicit) return 'explicit';
+      if (isSleepContext && isComfortContext) return 'emotional_comfort';
+      if (isSleepContext) return 'sleep_lifestyle';
+      if (isComfortContext) return 'comfort';
+      if (isLifestyleContext) return 'lifestyle';
+      if (isNonSexualBodyContext) return 'casual_body';
+      return 'neutral';
+    }
+
     function sanitizeImagePrompt(p) {
       if (!p) return p;
       let s = p;
+      const sceneClass = classifySceneContext(s);
+      const isSafeScene = ['emotional_comfort', 'sleep_lifestyle', 'comfort', 'lifestyle', 'casual_body', 'neutral'].includes(sceneClass);
+      if (isSafeScene) {
+        s = s.replace(/\bnaked\b/gi, 'not fully dressed');
+        s = s.replace(/\bnude\b/gi, 'not fully dressed');
+        s = s.replace(/\bfully nude\b/gi, 'not fully dressed');
+        s = s.replace(/\bfully naked\b/gi, 'not fully dressed');
+        s = s.replace(/\bin lingerie\b/gi, 'in comfortable sleepwear');
+        s = s.replace(/\blingerie\b/gi, 'sleepwear');
+        s = s.replace(/\bin a bra( and panties)?\b/gi, 'getting dressed at home');
+        s = s.replace(/\bpanties\b/gi, 'underwear');
+        s = s.replace(/\bthong\b/gi, 'underwear');
+        return s.trim();
+      }
+      // Explicit scenes: full sanitization
       s = s.replace(/\bshirtless\b/gi, 'with no shirt on');
       s = s.replace(/\btopless\b/gi, 'with no shirt on');
       s = s.replace(/\bbarechested\b/gi, 'with no shirt on');
       s = s.replace(/\bbare[- ]?chest(ed)?\b/gi, 'with no shirt on');
-      s = s.replace(/\bin (his|her|their) underwear\b/gi, 'in comfortable shorts');
-      s = s.replace(/\bin underwear\b/gi, 'in comfortable shorts');
-      s = s.replace(/\bin boxers\b/gi, 'in comfortable shorts');
-      s = s.replace(/\bin briefs\b/gi, 'in comfortable shorts');
-      s = s.replace(/\bonly in (his|her|their) underwear\b/gi, 'in comfortable shorts at home');
-      s = s.replace(/\bunderwear\b/gi, 'shorts');
       s = s.replace(/\bin lingerie\b/gi, 'in comfortable sleepwear');
       s = s.replace(/\blingerie\b/gi, 'sleepwear');
       s = s.replace(/\bin a bra( and panties)?\b/gi, 'getting dressed at home');
-      s = s.replace(/\bpanties\b/gi, 'shorts');
-      s = s.replace(/\bthong\b/gi, 'shorts');
+      s = s.replace(/\bpanties\b/gi, 'underwear');
+      s = s.replace(/\bthong\b/gi, 'underwear');
       s = s.replace(/\bexposed (chest|abs|torso|stomach|midriff)\b/gi, 'no shirt on');
       s = s.replace(/\b(his|her|their) (bare )?(chest|abs|torso)\b/gi, '$1 relaxed build');
       s = s.replace(/\bnaked\b/gi, 'not fully dressed');
