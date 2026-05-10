@@ -75,6 +75,84 @@ function selectCameraPosition(prompt = '') {
    return 'from a closer standing position';
  }
 
+// ── OUTFIT RESOLVER — inlined (Deno cannot import local lib files) ────────────
+// Source of truth: lib/outfitRotationEngine.js. Keep in sync with generateImageAsync.
+
+function buildOutfitTextRegen(outfit) {
+  if (!outfit) return null;
+  const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories].filter(Boolean);
+  if (parts.length > 0) return parts.join(', ');
+  if (outfit.full_description) {
+    return outfit.full_description
+      .replace(/^in [^,.]+(,|\.) ?/i, '')
+      .replace(/^a (man|woman|person)[^,.]*(,|\.) ?/i, '')
+      .replace(/^[^,.]+(stands|sits|lounges|poses)[^,.]*(,|\.) ?/i, '')
+      .trim() || outfit.full_description;
+  }
+  return null;
+}
+
+const OUTFIT_FALLBACK_CHAINS_REGEN = {
+  bath:         ['bath', 'sleepwear', 'lounge'],
+  sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
+  swimwear:     ['swimwear', 'gym', 'daily_casual'],
+  gym:          ['gym', 'outdoor', 'daily_casual'],
+  work:         ['work', 'formal', 'daily_casual'],
+  formal:       ['formal', 'work', 'daily_casual'],
+  church:       ['church', 'formal', 'daily_casual'],
+  nightlife:    ['nightlife', 'date_night', 'daily_casual'],
+  date_night:   ['date_night', 'nightlife', 'formal', 'daily_casual'],
+  school:       ['school', 'daily_casual'],
+  lounge:       ['lounge', 'daily_casual'],
+  outdoor:      ['outdoor', 'daily_casual'],
+  travel:       ['travel', 'outdoor', 'daily_casual'],
+  medical:      ['medical', 'daily_casual'],
+  special:      ['special', 'formal', 'daily_casual'],
+  cold_weather: ['cold_weather', 'outdoor', 'daily_casual'],
+  hot_weather:  ['hot_weather', 'outdoor', 'daily_casual'],
+  daily_casual: ['daily_casual', 'outdoor', 'lounge'],
+};
+
+function resolveOutfitCategoryRegen(character) {
+  const presence = character?.resolved_presence_status || character?.location_status || '';
+  const activity = (character?.current_activity || '').toLowerCase();
+  if (/bath|shower|grooming/.test(activity)) return 'bath';
+  if (presence === 'sleeping' || presence === 'napping' || /\b(sleep|nap|asleep|bedtime)\b/.test(activity)) return 'sleepwear';
+  if (/\b(swim|pool|beach|ocean|water park)\b/.test(activity)) return 'swimwear';
+  if (/\b(gym|workout|exercise|lifting|cardio|yoga|jogging|running|training)\b/.test(activity)) return 'gym';
+  if (presence === 'at_work') return 'work';
+  if (/\b(church|worship|mass|prayer|service)\b/.test(activity)) return 'church';
+  if (/\b(wedding|funeral|gala|graduation|ceremony|formal)\b/.test(activity)) return 'formal';
+  if (/\b(club|nightclub|party|night out)\b/.test(activity)) return 'nightlife';
+  if (/\b(date|date night|romantic dinner|anniversary)\b/.test(activity)) return 'date_night';
+  if (/\b(school|class|campus|lecture|college|university)\b/.test(activity)) return 'school';
+  if (/\b(airport|train|travel|hotel check-in|vacation departure)\b/.test(activity)) return 'travel';
+  if (presence === 'home') return 'lounge';
+  return 'daily_casual';
+}
+
+function resolveOutfitTextFromCharacterRegen(character) {
+  if (!character) return null;
+  const closet = character.character_closet || [];
+  const outfits = closet.filter(item => item.outfit_id);
+  if (outfits.length === 0) return buildOutfitTextRegen(character.current_outfit) || null;
+  const targetCategory = resolveOutfitCategoryRegen(character);
+  const chain = OUTFIT_FALLBACK_CHAINS_REGEN[targetCategory] || ['daily_casual', 'lounge'];
+  const currentOutfitId = character.current_outfit?.outfit_id || null;
+  for (const cat of chain) {
+    const pool = outfits.filter(o => o.category === cat);
+    if (pool.length === 0) continue;
+    if (pool.length === 1) return buildOutfitTextRegen(pool[0]);
+    const now = new Date();
+    const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+    const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+    let idx = (dayOfYear + idHash) % pool.length;
+    if (pool[idx]?.outfit_id === currentOutfitId && pool.length > 1) idx = (idx + 1) % pool.length;
+    return buildOutfitTextRegen(pool[idx]);
+  }
+  return null;
+}
+
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
 function buildRegenPrompt({ scenePrompt, charName, charDesc, locationName, zoneName, envRefs, charRefs, reason }) {
@@ -420,6 +498,24 @@ Deno.serve(async (req) => {
         // Wire charDesc to outer scope so buildRegenPrompt can use it for text-only identity lock
         charDesc = charDescParts.join(', ');
         console.log(`[regenerateImageWithReason] charDesc built: "${charDesc.substring(0, 120)}"`);
+
+        // ── OUTFIT INJECTION — only when prompt doesn't already specify clothing ──
+        // For 'no_avatar' and 'flawed' reasons, the prompt is the stored original.
+        // For 'dont_like' / 'custom_prompt', the user may have described clothing.
+        // Either way: if prompt has explicit clothing description, skip closet.
+        const regenPromptForClothingCheck = reason === 'dont_like' || reason === 'custom_prompt'
+          ? (customPrompt || originalPrompt || '')
+          : (originalPrompt || '');
+        const regenPromptHasClothing = /\b(wearing|dressed|clothed|outfit|shirt|pants|shorts|dress|jacket|coat|sweater|t[- ]?shirt|shoes|hat|cap|snapback|hoodie|jeans|skirt|blouse|suit|tie|scarf|vest)\b/i.test(regenPromptForClothingCheck);
+        if (!regenPromptHasClothing) {
+          const outfitText = resolveOutfitTextFromCharacterRegen(charRecord);
+          if (outfitText) {
+            charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitText}` : `Currently wearing: ${outfitText}`;
+            console.log(`[regenerateImageWithReason] Outfit resolved from closet: "${outfitText.substring(0, 80)}"`);
+          }
+        } else {
+          console.log(`[regenerateImageWithReason] Prompt specifies clothing — closet outfit skipped`);
+        }
       }
 
       // Fallback: use refs stored in generation_context (which should also be reference images only, not avatar)

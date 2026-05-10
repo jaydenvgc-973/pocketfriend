@@ -39,44 +39,88 @@ function cdnFilter(urls) {
 }
 
 // ── OUTFIT RESOLVER ───────────────────────────────────────────────────────────
-// Resolves a character's current outfit from their closet or current_outfit field.
-// Returns a text description string suitable for prompt injection, or null.
-
-function resolveCharacterOutfitForPrompt(character, promptText) {
-  if (!character) return null;
-
-  // CRITICAL: If the prompt explicitly specifies clothing (e.g., "wearing a black snapback and an oversized graphic tee"),
-  // DO NOT override it with character's current outfit or closet.
-  // The prompt's description takes absolute priority — the user is being explicit about what they want to see.
-  // Only use character outfit data as a fallback when the prompt has no clothing description.
-
-  // For now, we assume the prompt is authoritative if it mentions clothing.
-  // The outfit resolution is only for scenes where the user hasn't specified what to wear.
-  // If a prompt says "wearing X", that X is what should be rendered, regardless of time of day or outfit lock.
-
-  // Return null to signal: "No outfit override needed, use prompt's description as-is"
-  return null;
-}
+// Sims-style outfit resolution — inlined since Deno cannot import local lib files.
+// Source of truth: outfitRotationEngine.js (lib). Keep in sync with that file.
 
 function buildOutfitText(outfit) {
   if (!outfit) return null;
-  // CRITICAL: Prefer individual clothing fields over full_description.
-  // full_description often contains scene/pose/lighting metadata
-  // (e.g. "In a relaxed indoor setting, a man stands confidently...")
-  // which contaminates the image prompt with wrong scene directives.
-  // Only individual fields (top, bottom, shoes, etc.) describe clothing only.
+  // CRITICAL: Prefer individual fields over full_description.
+  // full_description often contains scene/pose/lighting preamble that contaminates the image prompt.
   const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories].filter(Boolean);
   if (parts.length > 0) return parts.join(', ');
-  // Only fall back to full_description if no individual fields exist,
-  // and strip any leading scene/setting preamble before the clothing.
   if (outfit.full_description) {
-    // Strip common scene preamble patterns like "In a relaxed indoor setting, a man stands..."
     const stripped = outfit.full_description
       .replace(/^in [^,.]+(,|\.) ?/i, '')
       .replace(/^a (man|woman|person)[^,.]*(,|\.) ?/i, '')
       .replace(/^[^,.]+(stands|sits|lounges|poses)[^,.]*(,|\.) ?/i, '')
       .trim();
     return stripped || outfit.full_description;
+  }
+  return null;
+}
+
+// Fallback chains — per spec
+const OUTFIT_FALLBACK_CHAINS = {
+  bath:         ['bath', 'sleepwear', 'lounge'],
+  sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
+  swimwear:     ['swimwear', 'gym', 'daily_casual'],
+  gym:          ['gym', 'outdoor', 'daily_casual'],
+  work:         ['work', 'formal', 'daily_casual'],
+  formal:       ['formal', 'work', 'daily_casual'],
+  church:       ['church', 'formal', 'daily_casual'],
+  nightlife:    ['nightlife', 'date_night', 'daily_casual'],
+  date_night:   ['date_night', 'nightlife', 'formal', 'daily_casual'],
+  school:       ['school', 'daily_casual'],
+  lounge:       ['lounge', 'daily_casual'],
+  outdoor:      ['outdoor', 'daily_casual'],
+  travel:       ['travel', 'outdoor', 'daily_casual'],
+  medical:      ['medical', 'daily_casual'],
+  special:      ['special', 'formal', 'daily_casual'],
+  cold_weather: ['cold_weather', 'outdoor', 'daily_casual'],
+  hot_weather:  ['hot_weather', 'outdoor', 'daily_casual'],
+  daily_casual: ['daily_casual', 'outdoor', 'lounge'],
+};
+
+function resolveOutfitCategory(character) {
+  const presence = character?.resolved_presence_status || character?.location_status || '';
+  const activity = (character?.current_activity || '').toLowerCase();
+  if (/bath|shower|grooming/.test(activity)) return 'bath';
+  if (presence === 'sleeping' || presence === 'napping' || /\b(sleep|nap|asleep|bedtime)\b/.test(activity)) return 'sleepwear';
+  if (/\b(swim|pool|beach|ocean|water park)\b/.test(activity)) return 'swimwear';
+  if (/\b(gym|workout|exercise|lifting|cardio|yoga|jogging|running|training)\b/.test(activity)) return 'gym';
+  if (presence === 'at_work') return 'work';
+  if (/\b(church|worship|mass|prayer|service)\b/.test(activity)) return 'church';
+  if (/\b(wedding|funeral|gala|graduation|ceremony|formal)\b/.test(activity)) return 'formal';
+  if (/\b(club|nightclub|party|night out)\b/.test(activity)) return 'nightlife';
+  if (/\b(date|date night|romantic dinner|anniversary)\b/.test(activity)) return 'date_night';
+  if (/\b(school|class|campus|lecture|college|university)\b/.test(activity)) return 'school';
+  if (/\b(airport|train|travel|hotel check-in|vacation departure)\b/.test(activity)) return 'travel';
+  if (presence === 'home') return 'lounge';
+  return 'daily_casual';
+}
+
+function resolveCharacterOutfitForPrompt(character) {
+  if (!character) return null;
+  const closet = character.character_closet || [];
+  const outfits = closet.filter(item => item.outfit_id);
+  if (outfits.length === 0) {
+    // No closet — fall back to current_outfit field if set
+    return buildOutfitText(character.current_outfit) || null;
+  }
+  const targetCategory = resolveOutfitCategory(character);
+  const chain = OUTFIT_FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
+  const currentOutfitId = character.current_outfit?.outfit_id || null;
+  for (const cat of chain) {
+    const pool = outfits.filter(o => o.category === cat);
+    if (pool.length === 0) continue;
+    if (pool.length === 1) return buildOutfitText(pool[0]);
+    // Daily rotation: deterministic by day + character ID, avoid repeating current outfit
+    const now = new Date();
+    const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+    const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+    let idx = (dayOfYear + idHash) % pool.length;
+    if (pool[idx]?.outfit_id === currentOutfitId && pool.length > 1) idx = (idx + 1) % pool.length;
+    return buildOutfitText(pool[idx]);
   }
   return null;
 }
@@ -984,13 +1028,16 @@ Deno.serve(async (req) => {
         // We do NOT override it with character's current outfit (e.g., sleepwear, formal, etc.).
         const promptHasClothingDescription = /\b(wearing|dressed|clothed|outfit|shirt|pants|shorts|dress|jacket|coat|sweater|t[- ]?shirt|shoes|hat|cap|snapback|hoodie|jeans|skirt|blouse|suit|tie|scarf|vest)\b/i.test(sanitizedPrompt);
         if (!promptHasClothingDescription) {
-          // Only resolve outfit from character data if prompt doesn't specify clothing
-          const outfitObj = resolveCharacterOutfitForPrompt(charRecord, sanitizedPrompt);
-          if (outfitObj) {
-            charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitObj}` : `Currently wearing: ${outfitObj}`;
+          // Sims-style closet resolution: pick the right outfit for the occasion
+          const outfitText = resolveCharacterOutfitForPrompt(charRecord);
+          if (outfitText) {
+            charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitText}` : `Currently wearing: ${outfitText}`;
+            console.log(`[generateImageAsync] Outfit resolved from closet: "${outfitText.substring(0, 80)}"`);
+          } else {
+            console.log(`[generateImageAsync] No closet outfit resolved — prompt clothing or appearance description will be used`);
           }
         } else {
-          console.log(`[generateImageAsync] Prompt explicitly specifies clothing — skipping outfit override`);
+          console.log(`[generateImageAsync] Prompt explicitly specifies clothing — closet outfit skipped`);
         }
       }
 
