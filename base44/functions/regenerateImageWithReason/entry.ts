@@ -77,7 +77,7 @@ function selectCameraPosition(prompt = '') {
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
-function buildRegenPrompt({ scenePrompt, charName, locationName, zoneName, envRefs, charRefs, reason }) {
+function buildRegenPrompt({ scenePrompt, charName, charDesc, locationName, zoneName, envRefs, charRefs, reason }) {
   // ── IMAGE GENERATION PRIORITY STACK (GOVERNING LAW) ──────────────────────
   // Priority 1: SCENE INTENT — user prompt meaning, emotion, action
   // Priority 2: CHARACTER PRESENCE — who is there and what they are doing
@@ -217,20 +217,35 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
   }
 
   let identityLock = '';
-  if (hasChar) {
-     identityLock = `
+  // Identity lock fires for ALL saved-character images — with OR without reference photos.
+  // charDesc (appearance_lock text) is the fallback identity source when no photos exist.
+  if (hasChar || charDesc) {
+    const refBlock = hasChar
+      ? `Images ${charStart}–${charEnd} are FACE-CROP REFERENCE PHOTOS. Use them for face structure and features ONLY.
+  Match PRECISELY: face bone structure, eyes, skin tone, hair color/length/style, body type.`
+      : `No reference photos available. Generate "${charName}" EXCLUSIVELY from the text description below.
+  The text description is the AUTHORITATIVE identity source — treat every trait as absolute truth.`;
+
+    const descBlock = charDesc
+      ? `\n  TEXT DESCRIPTION (ABSOLUTE IDENTITY — IMMUTABLE):
+  ${charDesc}
+  Every trait above is non-negotiable. Do NOT substitute, approximate, or invent any appearance trait.`
+      : '';
+
+    identityLock = `
 
   CHARACTER IDENTITY — "${charName}":
-  Images ${charStart}–${charEnd} are FACE-CROP REFERENCE PHOTOS. Use them for face structure and features ONLY.
-  Match PRECISELY: face bone structure, eyes, skin tone, hair color/length/style, body type.
+  ${refBlock}${descBlock}
 
   APPEARANCE LOCK (100% ABSOLUTE TRUTH):
-  ✅ Hair: Match the hairstyle, length, texture, and color from reference images exactly
-  ✅ Facial hair: Match the exact facial hair state (clean-shaven, stubble, beard, etc.)
-  ✅ Skin tone: Match the exact skin tone from reference images
-  ✅ Body type: Match the exact body structure and proportions from reference images
+  ✅ Hair: Match hairstyle, length, texture, and color exactly — from photos if available, from text description otherwise
+  ✅ Facial hair: Match exact facial hair state (clean-shaven, stubble, beard, etc.) — non-negotiable
+  ✅ Skin tone: Match exact skin tone — non-negotiable
+  ✅ Body type: Match exact body structure and proportions — non-negotiable
+  ✅ Ethnicity and gender: Match exactly as described — non-negotiable
 
   ⛔ Do NOT generate a generic, approximate, or random person
+  ⛔ Do NOT invent appearance traits not present in photos or description
   ⛔ Do NOT override appearance traits from the character record
   ⛔ THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS
   ⛔ CRITICAL: The character must look PHYSICALLY PRESENT inside the room — integrated with the room's perspective, depth, and lighting. NOT cut out. NOT composited. NOT overlaid on a background. ONE UNIFIED SCENE.
@@ -358,6 +373,7 @@ Deno.serve(async (req) => {
 
     // ── 2. RESOLVE CHARACTER IDENTITY REFS ───────────────────────────────────
     let charRefs = [];
+    let charDesc = '';  // text-based identity fallback — passed to buildRegenPrompt
     let charName = ctx.character_name || 'the character';
 
     if (originalCharId) {
@@ -401,7 +417,9 @@ Deno.serve(async (req) => {
           charRecord.appearance_notes || null,
           charRecord.avatar_description_text || null,
         ].filter(Boolean);
-        // Store locally for prompt building (though buildRegenPrompt doesn't use it, good for future extensions)
+        // Wire charDesc to outer scope so buildRegenPrompt can use it for text-only identity lock
+        charDesc = charDescParts.join(', ');
+        console.log(`[regenerateImageWithReason] charDesc built: "${charDesc.substring(0, 120)}"`);
       }
 
       // Fallback: use refs stored in generation_context (which should also be reference images only, not avatar)
@@ -599,6 +617,7 @@ Deno.serve(async (req) => {
     const finalPrompt = buildRegenPrompt({
       scenePrompt,
       charName,
+      charDesc,   // ← text identity now flows through for characters without reference photos
       locationName: resolvedLocationName,
       zoneName: resolvedZoneName,
       envRefs: envRefs.slice(0, ENV_SLOTS),
