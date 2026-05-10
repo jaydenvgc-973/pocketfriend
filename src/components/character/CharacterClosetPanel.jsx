@@ -3,9 +3,10 @@ import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Shirt, Plus, X, Star, Loader2, Wand2, Upload, Package,
-  Camera, ChevronDown, ChevronUp, Check, Pencil
+  Camera, ChevronDown, ChevronUp, Check, Pencil, ZoomIn
 } from "lucide-react";
 import OutfitEditModal from "@/components/character/OutfitEditModal";
+import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -311,6 +312,7 @@ function AddOutfitForm({ character, onSave, onCancel }) {
   const [uploadedImageUrl, setUploadedImageUrl] = useState("");
   const [generatedImageUrl, setGeneratedImageUrl] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [previewModal, setPreviewModal] = useState(null); // { url, type }
 
   const update = (f, v) => setForm(p => ({ ...p, [f]: v }));
 
@@ -496,9 +498,12 @@ Return JSON:
           {generatingImage ? "Generating outfit preview..." : "Generate Outfit Image"}
         </Button>
         {generatedImageUrl && (
-          <div className="relative">
+          <div className="relative group cursor-pointer" onClick={() => setPreviewModal({ url: generatedImageUrl, type: "generated_preview" })}>
             <img src={generatedImageUrl} alt="Generated outfit" className="w-full h-48 object-cover rounded-xl" />
-            <p className="text-[10px] text-muted-foreground text-center mt-1">AI-generated preview · will be saved with outfit</p>
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 rounded-xl transition-colors flex items-center justify-center">
+              <ZoomIn className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+            <p className="text-[10px] text-muted-foreground text-center mt-1">Tap to preview · will be saved with outfit</p>
           </div>
         )}
       </div>
@@ -512,7 +517,12 @@ Return JSON:
         </label>
         {uploadedImageUrl && (
           <div className="mt-2 space-y-2">
-            <img src={uploadedImageUrl} alt="Outfit reference" className="w-full h-28 object-cover rounded-xl" />
+            <div className="relative group cursor-pointer" onClick={() => setPreviewModal({ url: uploadedImageUrl, type: "uploaded_reference" })}>
+              <img src={uploadedImageUrl} alt="Outfit reference" className="w-full h-28 object-cover rounded-xl" />
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 rounded-xl transition-colors flex items-center justify-center">
+                <ZoomIn className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </div>
             <Button size="sm" onClick={handleAiFillOutfit} disabled={generating} className="w-full rounded-xl gap-1.5">
               {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
               {generating ? "Analyzing outfit..." : "AI Fill from Photo"}
@@ -528,6 +538,25 @@ Return JSON:
           Save Outfit
         </Button>
       </div>
+
+      {previewModal && (
+        <ClosetImagePreviewModal
+          imageUrl={previewModal.url}
+          imageType={previewModal.type}
+          onClose={() => setPreviewModal(null)}
+          onDelete={() => {
+            console.log(`[CharacterCloset] DELETE | type: ${previewModal.type} | url: ${previewModal.url}`);
+            if (previewModal.type === "generated_preview") {
+              setGeneratedImageUrl("");
+              console.log("[CharacterCloset] generatedImageUrl cleared | form preserved");
+            } else {
+              setUploadedImageUrl("");
+              console.log("[CharacterCloset] uploadedImageUrl cleared | form preserved");
+            }
+            setPreviewModal(null);
+          }}
+        />
+      )}
     </div>
   );
 }

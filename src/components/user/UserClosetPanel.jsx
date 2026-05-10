@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
-import { Shirt, Plus, X, Star, Loader2, Wand2, Camera, ChevronDown, ChevronUp, Pencil } from "lucide-react";
+import { Shirt, Plus, X, Star, Loader2, Wand2, Camera, ChevronDown, ChevronUp, Pencil, ZoomIn } from "lucide-react";
 import OutfitEditModal from "@/components/character/OutfitEditModal";
+import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -101,6 +102,7 @@ function AddOutfitForm({ displayName, gender, onSave, onCancel }) {
   const [generatedImageUrl, setGeneratedImageUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadedImageUrl, setUploadedImageUrl] = useState("");
+  const [previewModal, setPreviewModal] = useState(null); // { url, type }
 
   const update = (f, v) => setForm(p => ({ ...p, [f]: v }));
 
@@ -269,7 +271,13 @@ Return JSON:
         {generatingImage ? "Generating preview..." : "Generate Outfit Preview"}
       </Button>
       {generatedImageUrl && (
-        <img src={generatedImageUrl} alt="Generated outfit" className="w-full h-48 object-cover rounded-xl" />
+        <div className="relative group cursor-pointer" onClick={() => setPreviewModal({ url: generatedImageUrl, type: "generated_preview" })}>
+          <img src={generatedImageUrl} alt="Generated outfit" className="w-full h-48 object-cover rounded-xl" />
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 rounded-xl transition-colors flex items-center justify-center">
+            <ZoomIn className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
+          <p className="text-[10px] text-muted-foreground text-center mt-1">Tap to preview · will be saved with outfit</p>
+        </div>
       )}
 
       <label className="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-xl border border-dashed border-border hover:border-primary/40 transition-colors text-xs text-muted-foreground">
@@ -279,7 +287,12 @@ Return JSON:
       </label>
       {uploadedImageUrl && (
         <div className="space-y-2">
-          <img src={uploadedImageUrl} alt="Outfit" className="w-full h-28 object-cover rounded-xl" />
+          <div className="relative group cursor-pointer" onClick={() => setPreviewModal({ url: uploadedImageUrl, type: "uploaded_reference" })}>
+            <img src={uploadedImageUrl} alt="Outfit" className="w-full h-28 object-cover rounded-xl" />
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 rounded-xl transition-colors flex items-center justify-center">
+              <ZoomIn className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+          </div>
           <Button size="sm" onClick={handleAiFill} disabled={generating} className="w-full rounded-xl gap-1.5">
             {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
             {generating ? "Analyzing outfit..." : "AI Fill from Photo"}
@@ -294,6 +307,25 @@ Return JSON:
           Save Outfit
         </Button>
       </div>
+
+      {previewModal && (
+        <ClosetImagePreviewModal
+          imageUrl={previewModal.url}
+          imageType={previewModal.type}
+          onClose={() => setPreviewModal(null)}
+          onDelete={() => {
+            console.log(`[UserCloset] DELETE | type: ${previewModal.type} | url: ${previewModal.url}`);
+            if (previewModal.type === "generated_preview") {
+              setGeneratedImageUrl("");
+              console.log("[UserCloset] generatedImageUrl cleared | form preserved");
+            } else {
+              setUploadedImageUrl("");
+              console.log("[UserCloset] uploadedImageUrl cleared | form preserved");
+            }
+            setPreviewModal(null);
+          }}
+        />
+      )}
     </div>
   );
 }

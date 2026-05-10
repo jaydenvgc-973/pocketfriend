@@ -6,6 +6,7 @@ import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 
 const OUTFIT_CATEGORIES = [
   { value: "daily_casual",  label: "Daily Casual",       emoji: "👕" },
@@ -52,10 +53,11 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
     full_description: outfit.full_description || "",
     is_favorite:      outfit.is_favorite      || false,
   });
-  const [imageUrl, setImageUrl]         = useState(outfit.image_url || "");
-  const [uploading, setUploading]       = useState(false);
+  const [imageUrl, setImageUrl]           = useState(outfit.image_url || "");
+  const [uploading, setUploading]         = useState(false);
   const [generatingImg, setGeneratingImg] = useState(false);
-  const [saving, setSaving]             = useState(false);
+  const [saving, setSaving]               = useState(false);
+  const [previewModal, setPreviewModal]   = useState(false);
 
   const update = (f, v) => setForm(p => ({ ...p, [f]: v }));
 
@@ -152,10 +154,18 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
             </div>
           </div>
 
-          {/* Current image */}
+          {/* Current image — tap to preview/remove */}
           {imageUrl && (
-            <div className="relative">
-              <img src={imageUrl} alt="Outfit" className="w-full h-36 object-cover rounded-xl" />
+            <div>
+              <button
+                type="button"
+                onClick={() => setPreviewModal(true)}
+                className="w-full focus:outline-none"
+                title="Tap to view full image"
+              >
+                <img src={imageUrl} alt="Outfit" className="w-full h-36 object-cover rounded-xl hover:opacity-90 transition-opacity cursor-zoom-in" />
+              </button>
+              <p className="text-[10px] text-muted-foreground text-center mt-1">Tap to view or remove image</p>
             </div>
           )}
 
@@ -181,6 +191,19 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
           </div>
         </motion.div>
       </motion.div>
+
+      {/* Image preview / delete modal */}
+      {previewModal && (
+        <ClosetImagePreviewModal
+          imageUrl={imageUrl}
+          imageType="uploaded_reference"
+          onClose={() => setPreviewModal(false)}
+          onDelete={() => {
+            console.log(`[OutfitEditModal] Image removed | url cleared | form preserved`);
+            setImageUrl("");
+          }}
+        />
+      )}
     </AnimatePresence>,
     document.body
   );
