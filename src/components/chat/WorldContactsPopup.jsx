@@ -688,7 +688,7 @@ Reply as ${selectedContact.person_name}:`;
                   />
                   <motion.button
                     whileTap={{ scale: 0.9 }}
-                    onClick={sendMessage}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); sendMessage(); }}
                     disabled={!inputText.trim() || isTyping}
                     className="h-9 w-9 rounded-full bg-primary flex items-center justify-center disabled:opacity-40 flex-shrink-0"
                   >
