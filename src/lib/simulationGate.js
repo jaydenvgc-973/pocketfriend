@@ -104,6 +104,43 @@ export function clearChatSafeMode() {
   console.log('[SimGate] Chat-safe mode manually cleared');
 }
 
+// ── Escalating Retry State ─────────────────────────────────────────────────
+// Tracks how many times Chat/Text has entered recovery mode this session.
+// Level 0: normal. Level 1: 60s pause. Level 2: 2min. Level 3: 5min + optional systems off.
+const _retryState = { level: 0, pauseUntil: 0 };
+
+export function escalateChatRetry() {
+  _retryState.level = Math.min(_retryState.level + 1, 3);
+  const pauseDurations = [0, 60000, 120000, 300000];
+  const pause = pauseDurations[_retryState.level];
+  _retryState.pauseUntil = Date.now() + pause;
+  activateChatSafeMode(pause);
+  console.warn(`[SimGate] ESCALATE RETRY level=${_retryState.level} | pause=${pause / 1000}s | pauseUntil=${new Date(_retryState.pauseUntil).toLocaleTimeString()}`);
+  if (_retryState.level >= 3) {
+    console.warn(`[SimGate] Level 3 — optional background systems DISABLED until navigation`);
+    window.__chatOptionalSystemsDisabled = true;
+  }
+  return { ..._retryState };
+}
+
+export function resetChatRetry() {
+  _retryState.level = 0;
+  _retryState.pauseUntil = 0;
+  window.__chatOptionalSystemsDisabled = false;
+}
+
+export function getChatRetryState() {
+  return { ..._retryState };
+}
+
+export function isRetryPaused() {
+  return Date.now() < _retryState.pauseUntil;
+}
+
+export function areOptionalSystemsDisabled() {
+  return !!window.__chatOptionalSystemsDisabled;
+}
+
 // ── Context registration (called by page hooks on mount/unmount) ──────────
 
 export function setActiveContext(updates) {

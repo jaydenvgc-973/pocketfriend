@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlarmClock, X, Moon, BatteryLow, Bell, BellOff, Clock, CheckCircle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
+import { getCharacterSleepState } from "@/lib/characterSleepState";
 
 export default function AlarmTool({ isOpen, onClose, character, characterId, currentUser, queryClient: qcProp }) {
   const queryClientInternal = useQueryClient();
@@ -43,8 +44,8 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
 
   if (!isOpen || !character) return null;
 
-  const presenceStatus = character.resolved_presence_status || character.location_status || "";
-  const isAsleep = presenceStatus === "sleeping" || presenceStatus === "napping";
+  const sleepState = getCharacterSleepState(character);
+  const isAsleep = sleepState.isSleeping;
   const firstName = character.name?.split(" ")[0] || "Character";
 
   const invoke = async (action, extra = {}) => {

@@ -7,6 +7,7 @@ import BackfillNarrativesWrapper from "@/components/chat/BackfillNarrativesWrapp
 import { base44 } from "@/api/base44Client";
 import { useActionNarrationMode } from "@/hooks/useActionNarrationMode";
 import AlarmTool from "@/components/chat/AlarmTool";
+import { getCharacterSleepState } from "@/lib/characterSleepState";
 
 export default function ChatHeader({
   character,
@@ -90,7 +91,13 @@ export default function ChatHeader({
       </Link>
       <div className="flex-1 min-w-0">
         <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
-        <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
+        {character ? (() => {
+          const ss = getCharacterSleepState(character);
+          const sub = ss.isSleeping
+            ? (ss.isNapping ? '💤 napping' : '🌙 sleeping')
+            : (isPhone ? 'Texting' : 'Talking');
+          return <p className="text-xs text-muted-foreground">{sub}</p>;
+        })() : <p className="text-xs text-muted-foreground">{isPhone ? 'Texting' : 'Talking'}</p>}
       </div>
       <ChatActionsMenu
         visible={{

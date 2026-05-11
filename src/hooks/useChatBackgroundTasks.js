@@ -13,7 +13,8 @@
 
 import { useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
-import { reportRateLimit, isGloballyRateLimited, isChatSafeModeActive } from "@/lib/simulationGate";
+import { reportRateLimit, isGloballyRateLimited, isChatSafeModeActive, escalateChatRetry, resetChatRetry, getChatRetryState, isRetryPaused, areOptionalSystemsDisabled } from "@/lib/simulationGate";
+import { getCharacterSleepState } from "@/lib/characterSleepState";
 
 // Per-session cooldown state — keyed by `${characterId}:${taskName}`
 const sessionCooldowns = {};
@@ -53,6 +54,18 @@ async function safeInvoke(fnName, payload, characterId, taskName) {
   if (isChatSafeModeActive()) {
     console.log(`[Governor] SKIP ${taskName} — chat-safe mode active (page recovery in progress)`);
     return null;
+  }
+  if (isRetryPaused()) {
+    console.log(`[Governor] SKIP ${taskName} — escalating retry pause active until ${new Date(getChatRetryState().pauseUntil).toLocaleTimeString()}`);
+    return null;
+  }
+  if (areOptionalSystemsDisabled()) {
+    // Only truly essential tasks bypass this — all optional background work is blocked
+    const essentialTasks = new Set(['activityUpdate', 'locationUpdate', 'memoryExtract']);
+    if (!essentialTasks.has(taskName)) {
+      console.log(`[Governor] SKIP ${taskName} — optional systems disabled (level-3 retry active)`);
+      return null;
+    }
   }
   if (isInFlight(characterId, taskName)) {
     console.log(`[Governor] SKIP ${taskName} — already in-flight for char=${characterId}`);
@@ -96,6 +109,29 @@ export function useChatBackgroundTasks({
     userMsg,
   }) => {
     if (!characterId || !convoId) return;
+
+    // ── SLEEPING CHARACTER GUARD ──────────────────────────────────────────────
+    // Sleeping characters skip travel, social, proactive, needs, and location loops.
+    // Only memory extraction and essential tracking are allowed.
+    if (character) {
+      const ss = getCharacterSleepState(character);
+      if (ss.isSleeping) {
+        console.log(`[Governor] SLEEP GUARD active for "${character.name}" (source: ${ss.sleepStateSource}) — skipping travel/social/proactive/needs/location background tasks`);
+        // Only allow memory extraction for sleeping characters — skip everything else
+        setTimeout(() => {
+          if (isGloballyRateLimited() || isRetryPaused()) return;
+          if (!isOnCooldown(characterId, 'memoryExtract', 90000)) {
+            safeInvoke('extractMemoriesFromTurn', {
+              characterId, conversationId: convoId,
+              userMessage: text, characterResponse: responseText,
+              recentMessages: (recentMsgs || []).slice(-10),
+              playAsCharacterId: activeCharacter?.id || null,
+            }, characterId, 'memoryExtract');
+          }
+        }, 4000);
+        return; // skip all other background tiers
+      }
+    }
 
     // ── TIER 1 — 0ms: lightweight location + activity sync (30s cooldown each) ──
     if (!isOnCooldown(characterId, 'activityUpdate', 30000)) {
@@ -306,6 +342,29 @@ Return ONLY valid JSON, nothing else.`,
 
   }, [queryClient, setNewPeopleDetected, setPendingAliasResolution, setLastChangeReason, setMessages]);
 
+  // Log Chat/Text mount diagnostics — call this on Chat page mount
+  const logChatMount = useCallback((characterId, characterName) => {
+    const retryState = getChatRetryState();
+    const safeModeActive = isChatSafeModeActive();
+    const paused = isRetryPaused();
+    const optDisabled = areOptionalSystemsDisabled();
+    console.log(`[ChatMount] ══════════════════════════════════════════`);
+    console.log(`[ChatMount] character_id:      ${characterId}`);
+    console.log(`[ChatMount] character_name:    ${characterName}`);
+    console.log(`[ChatMount] safe_mode_active:  ${safeModeActive}`);
+    console.log(`[ChatMount] retry_level:       ${retryState.level}`);
+    console.log(`[ChatMount] paused:            ${paused}`);
+    console.log(`[ChatMount] pause_until:       ${paused ? new Date(retryState.pauseUntil).toLocaleTimeString() : 'n/a'}`);
+    console.log(`[ChatMount] optional_disabled: ${optDisabled}`);
+    console.log(`[ChatMount] ALLOWED:           load_character, load_conversation, load_messages, retrieve_memory, send_message, receive_message`);
+    if (safeModeActive || paused) {
+      console.log(`[ChatMount] PAUSED:            needs_simulation, travel_logic, location_enforcement, proactive_messages, group_chat, weather, achievements, auto_narratives, relationship_updates, noncritical_presence`);
+    } else {
+      console.log(`[ChatMount] PAUSED:            none (normal operation)`);
+    }
+    console.log(`[ChatMount] ══════════════════════════════════════════`);
+  }, []);
+
   // Clear stale cooldowns for a character when switching (called on characterId change)
   const clearCharacterCooldowns = useCallback((characterId) => {
     Object.keys(sessionCooldowns).forEach(key => {
@@ -316,5 +375,5 @@ Return ONLY valid JSON, nothing else.`,
     });
   }, []);
 
-  return { dispatchPostSend, clearCharacterCooldowns };
+  return { dispatchPostSend, clearCharacterCooldowns, logChatMount };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
-import { activateChatSafeMode } from "@/lib/simulationGate";
+import { activateChatSafeMode, escalateChatRetry, resetChatRetry } from "@/lib/simulationGate";
 
 /**
  * useChatLoadConvo
@@ -98,17 +98,17 @@ export function useChatLoadConvo({
         err?.message?.includes('Rate limit') ||
         err?.message?.includes('rate limit');
 
-      // Helper: retry once after 8s on 429.
-      // On first 429 detection: immediately activate chat-safe mode (45s) to pause
-      // nonessential background work before the retry attempt.
+      // Helper: retry with escalating back-off on 429.
+      // Level 1: 8s pause. Level 2: 15s. Level 3: 30s — each level also escalates background governor.
       const retryAfter8s = async (fn, label = '') => {
         try {
           return await fn();
         } catch (err) {
           if (is429(err)) {
-            console.warn(`[CHAT_LOAD] 429${label ? ' (' + label + ')' : ''} — activating chat-safe mode + retrying in 8s t=${Date.now()}`);
-            activateChatSafeMode(45000); // pause background work immediately
-            await new Promise(r => setTimeout(r, 8000));
+            const retryState = escalateChatRetry(); // increments level, pauses background tasks
+            const pauseMs = retryState.level === 1 ? 8000 : retryState.level === 2 ? 15000 : 30000;
+            console.warn(`[CHAT_LOAD] 429${label ? ' (' + label + ')' : ''} — escalating retry level=${retryState.level} | waiting ${pauseMs / 1000}s t=${Date.now()}`);
+            await new Promise(r => setTimeout(r, pauseMs));
             return await fn(); // throws if still failing
           }
           throw err;
@@ -281,6 +281,7 @@ export function useChatLoadConvo({
           queryClient.invalidateQueries({ queryKey: ['pendingMessages'] });
         }
 
+        resetChatRetry(); // successful load — reset escalation counter
         console.log(`[CHAT_LOAD] loadConvo COMPLETE elapsed=${Date.now() - t0}ms t=${Date.now()}`);
       } catch (err) {
         const rateLimited = is429(err);

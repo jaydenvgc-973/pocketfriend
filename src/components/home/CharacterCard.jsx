@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
 // Note: Sparkles is reused for prayer icon
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
-import { isCharacterAsleep } from "@/lib/sleepUtils";
+import { getCharacterSleepState } from "@/lib/characterSleepState";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
@@ -288,11 +288,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 const hasValidHome = !!(character.current_home_location_id || character.home_location_id || character.temporary_housing_location_id);
                 const shouldShowHome = presence.status === 'home' && hasValidHome;
 
-                // SLEEP DISPLAY OVERRIDE: derive sleep purely from ET time + stored schedule.
-                // Do NOT wait for backend enforcement — this is read-only, zero writes.
+                // SLEEP DISPLAY OVERRIDE: use canonical multi-field resolver.
                 // Priority 1: sleeping overrides At home / Idle / Available / current location.
-                const derivedAsleep = isCharacterAsleep(character);
-                const isNapping = character.resolved_presence_status === 'napping';
+                const sleepState = getCharacterSleepState(character);
+                const derivedAsleep = sleepState.isSleeping;
+                const isNapping = sleepState.isNapping;
 
                 // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {
