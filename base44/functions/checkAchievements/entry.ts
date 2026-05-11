@@ -327,15 +327,22 @@ Deno.serve(async (req) => {
       const isMedium = MEDIUM_WEIGHT_ACHIEVEMENTS.has(achievement_id);
       const label    = achievement_id.replace(/_/g, ' ');
 
+      // Stable cooldown key: achievement_id is stored as a context_tag on LifeEvent
+      // and as the first word of memory_summary on CharacterMemory.
+      // This survives title/label formatting changes.
+      const stableKey = `achievement_revisit::${achievement_id}`;
+      const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
       if (isHigh) {
-        // Backend cooldown: only write LifeEvent if none exists for this achievement + character in last 30 min
-        const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        // Cooldown check: query LifeEvent by character_id + stable context_tag key
+        // LifeEvent.context_tags is an array — filter on character_id then check tags client-side
         const recentLifeEvents = await base44.asServiceRole.entities.LifeEvent.filter({
           character_id: characterId,
-          title: `Moment revisited: ${label}`,
-        }, '-timestamp', 1).catch(() => []);
-        const alreadyWrittenRecently = recentLifeEvents.length > 0 &&
-          new Date(recentLifeEvents[0].timestamp) > new Date(thirtyMinAgo);
+        }, '-timestamp', 20).catch(() => []);
+        const alreadyWrittenRecently = recentLifeEvents.some(ev =>
+          (ev.context_tags || []).includes(stableKey) &&
+          new Date(ev.timestamp) > new Date(thirtyMinAgo)
+        );
 
         if (!alreadyWrittenRecently) {
           base44.asServiceRole.entities.LifeEvent.create({
@@ -350,30 +357,39 @@ Deno.serve(async (req) => {
             triggered_by: 'user_message',
             timestamp: new Date().toISOString(),
             systems_updated: ['memory'],
+            // Stable key stored as context_tag — survives title formatting changes
+            context_tags: [stableKey, `achievement:${achievement_id}`],
           }).catch(() => {});
           revisited.push({ achievement_id, character_id: characterId, character_name: characterName || '', weight: 'high' });
+          console.log(`[checkAchievements] LifeEvent written for high-weight revisit: ${stableKey}`);
+        } else {
+          console.log(`[checkAchievements] Cooldown active — skipping LifeEvent for ${stableKey}`);
         }
-        // If already written recently, skip write AND skip toast (no point signaling what wasn't recorded)
+        // If already written recently, skip write AND skip toast
       } else if (isMedium) {
-        // Backend cooldown for CharacterMemory: check last 30 min
-        const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        // Cooldown check: query CharacterMemory by character_id + stable memory_summary prefix
         const recentMems = await base44.asServiceRole.entities.CharacterMemory.filter({
           character_id: characterId,
-          memory_summary: `Moment revisited: ${label}`,
-        }, '-created_date', 1).catch(() => []);
-        const alreadyWrittenRecently = recentMems.length > 0 &&
-          new Date(recentMems[0].created_date) > new Date(thirtyMinAgo);
+        }, '-created_date', 20).catch(() => []);
+        const alreadyWrittenRecently = recentMems.some(m =>
+          m.memory_summary === stableKey &&
+          new Date(m.created_date) > new Date(thirtyMinAgo)
+        );
 
         if (!alreadyWrittenRecently) {
           base44.asServiceRole.entities.CharacterMemory.create({
             character_id: characterId,
             memory_type: 'event',
             memory_text: `Recurring emotional pattern: "${label}" felt again in conversation.`,
-            memory_summary: `Moment revisited: ${label}`,
+            // Use stableKey as memory_summary — survives label formatting changes
+            memory_summary: stableKey,
             importance_score: 4,
             permanence: 'long_term',
           }).catch(() => {});
           revisited.push({ achievement_id, character_id: characterId, character_name: characterName || '', weight: 'medium' });
+          console.log(`[checkAchievements] CharacterMemory written for medium-weight revisit: ${stableKey}`);
+        } else {
+          console.log(`[checkAchievements] Cooldown active — skipping CharacterMemory for ${stableKey}`);
         }
       }
       // Low-weight revisits (tension, bad_influence, etc.) → silently ignored, no write, no toast

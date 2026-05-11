@@ -44,10 +44,12 @@ export default function Moments() {
     enabled: !!currentUser?.email,
   });
 
+  // Message entity has no owner_email field — scoping is handled by platform RLS on conversation_id.
+  // Do NOT filter by owner_email here (field does not exist on Message, would return 0 records).
   const { data: messages = [] } = useQuery({
     queryKey: ["allMessages", currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Message.filter({ owner_email: currentUser.email }, "-created_date", 500)
+      ? base44.entities.Message.filter({}, "-created_date", 500)
       : [],
     enabled: !!currentUser?.email,
     staleTime: 2 * 60 * 1000,

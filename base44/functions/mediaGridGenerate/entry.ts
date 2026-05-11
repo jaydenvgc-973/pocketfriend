@@ -119,7 +119,20 @@ Deno.serve(async (req) => {
       return s.trim();
     }
 
-    let sanitizedPrompt = prompt;
+    let sanitizedPrompt = sanitizeImagePrompt(prompt);
+
+    // ── TIME-OF-DAY AUTHORITY CHECK ─────────────────────────────────────────
+    // If the prompt explicitly states a time/lighting, that is the scene authority.
+    // Log so we can trace if nighttime prompts are producing daylight images.
+    const promptHasExplicitTime = /nighttime|night time|middle of the night|midnight|late night|daytime|broad daylight|morning|afternoon|evening|golden hour|sunset|sunrise|dusk|dawn|dark room|dim light|low light/i.test(sanitizedPrompt);
+    if (promptHasExplicitTime) {
+      const detectedMatch = sanitizedPrompt.match(/nighttime|night time|middle of the night|midnight|late night|daytime|broad daylight|morning|afternoon|evening|golden hour|sunset|sunrise|dusk|dawn|dark room|dim light|low light/i);
+      console.log(`[mediaGridGenerate] TIME AUTHORITY: prompt explicitly declares time-of-day → "${detectedMatch?.[0]}" — this OVERRIDES all reference image lighting`);
+      console.log(`[mediaGridGenerate] Raw prompt: ${prompt.substring(0, 150)}`);
+      console.log(`[mediaGridGenerate] Sanitized prompt: ${sanitizedPrompt.substring(0, 150)}`);
+    } else {
+      console.log(`[mediaGridGenerate] TIME AUTHORITY: no explicit time in prompt — will use server time-of-day`);
+    }
 
     // ── USER-UPLOADED REFERENCE IMAGE GUIDANCE ─────────────────────────────
     // If the user uploaded a reference image, inject purpose-specific guidance into the prompt.
@@ -368,24 +381,50 @@ DO:
     }
 
     // ── SINGLE-CHARACTER MODE (use shared generateImageAsync) ──────────────────
-    console.log(`[mediaGridGenerate] Single-character mode: delegating to generateImageAsync`);
+    // SUBJECT AUDIT LOG — always log what is being sent to catch leaks early
+    const resolvedSubjectType = subjectType || 'character';
+    const isUserOnly = resolvedSubjectType === 'user';
+    console.log(`[mediaGridGenerate] ── SUBJECT AUDIT ──`);
+    console.log(`[mediaGridGenerate]   subjectType:           ${resolvedSubjectType}`);
+    console.log(`[mediaGridGenerate]   characterId passed:    ${characterId || 'null'}`);
+    console.log(`[mediaGridGenerate]   characterName passed:  ${characterName || 'null'}`);
+    console.log(`[mediaGridGenerate]   charRefImages count:   ${(characterRefImages || []).length}`);
+    console.log(`[mediaGridGenerate]   userRefImages count:   ${(userRefImages || []).length}`);
+    console.log(`[mediaGridGenerate]   user_only_guard:       ${isUserOnly}`);
 
-    // All image generation paths must use generateImageAsync for consistency
-    // This ensures selfie rules, time-of-day lighting, camera flexibility, reference balance,
-    // and zone truth rules are applied uniformly across Media Grid, Chat, Scene, and other paths
+    // BACKEND USER-ONLY GUARD: Even if frontend accidentally passes character data,
+    // we enforce the contract here. User-only images must never include any character identity.
+    if (isUserOnly && (characterId || characterName || (characterRefImages || []).length > 0)) {
+      console.warn(`[mediaGridGenerate] ⛔ USER-ONLY GUARD: character identity fields present but subjectType=user — CLEARED`);
+      console.warn(`[mediaGridGenerate]   cleared characterId: ${characterId}, characterName: ${characterName}, refs: ${(characterRefImages || []).length}`);
+    }
+
+    const effectiveCharacterId     = isUserOnly ? null : characterId;
+    const effectiveCharacterName   = isUserOnly ? null : characterName;
+    const effectiveCharacterRefs   = isUserOnly ? [] : (characterRefImages || []).map(toPublicCDN).filter(isAccessible);
+    const effectiveSenderCharId    = isUserOnly ? null : characterId;
+
+    console.log(`[mediaGridGenerate] Single-character mode: delegating to generateImageAsync`);
+    console.log(`[mediaGridGenerate]   final characterId:     ${effectiveCharacterId || 'null'}`);
+    console.log(`[mediaGridGenerate]   final senderCharId:    ${effectiveSenderCharId || 'null'}`);
+    console.log(`[mediaGridGenerate]   final charRefs count:  ${effectiveCharacterRefs.length}`);
+
+    // User-only images must not include any character identity prompt injection
+    const userOnlyExclusionNote = isUserOnly
+      ? '\n\n⛔ USER-ONLY IMAGE: Do NOT include any app characters, fictional persons, or named individuals in this image unless they are explicitly described in the scene prompt. The person in this image is only the user. No character identity refs were provided.'
+      : '';
+
     const singleCharRes = await base44.asServiceRole.functions.invoke('generateImageAsync', {
       messageId,
-      prompt: sanitizedPrompt,
-      characterId,
-      characterName,
-      // senderCharacterId must equal characterId for single-character Media Grid photos —
-      // the character IS the sender. This prevents the isThirdPartyPhoto guard from
-      // misclassifying the subject as a stranger when characterId is set.
-      senderCharacterId: characterId,
-      characterReferenceImages: (characterRefImages || []).map(toPublicCDN).filter(isAccessible),
+      prompt: sanitizedPrompt + userOnlyExclusionNote,
+      characterId: effectiveCharacterId,
+      characterName: effectiveCharacterName,
+      // senderCharacterId: only set when character IS the subject (not user-only mode)
+      senderCharacterId: effectiveSenderCharId,
+      characterReferenceImages: effectiveCharacterRefs,
       userReferenceImages: userRefImages ? (userRefImages || []).map(toPublicCDN).filter(isAccessible) : [],
       userWorldName: userName || null,
-      subjectType: subjectType || 'character',
+      subjectType: resolvedSubjectType,
       characterEmotionalState: 'calm',
       // User-uploaded reference image for visual guidance
       userUploadedReferenceUrl: hasUserRef ? toPublicCDN(referenceImageUrl) : null,

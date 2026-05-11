@@ -336,14 +336,23 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       });
       if (!newMsg?.id) throw new Error('Failed to create message');
 
+      // STRICT USER-ONLY GUARD: If subjectType is "user", the active chat character
+      // is the conversation context — NOT an image subject. Clear all character identity
+      // fields to prevent subject leak into user-only generated images.
+      const isUserOnlyMode = subjectType === 'user';
+      if (isUserOnlyMode) {
+        console.log(`[MediaGallery] USER-ONLY mode — clearing all character identity from payload (subject leak prevention)`);
+        console.log(`[MediaGallery] active chat character "${character.name}" (${character.id}) is NOT a subject in this image`);
+      }
+
       const genRes = await base44.functions.invoke('mediaGridGenerate', {
         messageId: newMsg.id,
         prompt: promptText,
         subjectType,
-        // Character identity
-        characterId: character.id,
-        characterName: character.name,
-        characterRefImages: charRefImages,
+        // Character identity — explicitly null for user-only images
+        characterId: isUserOnlyMode ? null : character.id,
+        characterName: isUserOnlyMode ? null : character.name,
+        characterRefImages: isUserOnlyMode ? [] : charRefImages,
         // User identity
         userRefImages,
         userName: userSettings?.fictional_world_name || userChar?.world_name || userChar?.name || 'the user',
@@ -730,15 +739,21 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                           />
                           {/* Action buttons at the bottom — only appear on hover, separate from image click */}
                           <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2 flex justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {img.senderType === "character" && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); setRegenTarget(img); }}
-                                className="p-1.5 rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors"
-                                title="Regenerate"
-                              >
-                                <RefreshCw className="w-3.5 h-3.5" />
-                              </button>
-                            )}
+                            {/* Show regenerate for character-sent OR any app-generated image (has generation_context).
+                                User-sent Media Grid images also have generation_context and support regeneration. */}
+                            {(() => {
+                              const srcMsg = messages.find(m => m.id === img.id);
+                              const hasGenCtx = !!srcMsg?.generation_context;
+                              return (img.senderType === "character" || hasGenCtx) ? (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setRegenTarget(img); }}
+                                  className="p-1.5 rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors"
+                                  title="Regenerate"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                </button>
+                              ) : null;
+                            })()}
                             {onDeleteImage && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); onDeleteImage(img.id); }}
@@ -785,14 +800,18 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                   className="max-w-full max-h-[75vh] object-contain rounded-xl"
                 />
                 <div className="flex gap-3">
-                  {selectedImage.senderType === "character" && (
-                    <button
-                      onClick={() => { setRegenTarget(selectedImage); setSelectedImage(null); }}
-                      className="px-4 py-2 rounded-lg bg-secondary border border-border text-foreground hover:border-primary/40 transition-colors flex items-center gap-2 text-sm"
-                    >
-                      <RefreshCw className="w-4 h-4" /> Regenerate
-                    </button>
-                  )}
+                  {(() => {
+                    const srcMsg = messages.find(m => m.id === selectedImage.id);
+                    const hasGenCtx = !!srcMsg?.generation_context;
+                    return (selectedImage.senderType === "character" || hasGenCtx) ? (
+                      <button
+                        onClick={() => { setRegenTarget(selectedImage); setSelectedImage(null); }}
+                        className="px-4 py-2 rounded-lg bg-secondary border border-border text-foreground hover:border-primary/40 transition-colors flex items-center gap-2 text-sm"
+                      >
+                        <RefreshCw className="w-4 h-4" /> Regenerate
+                      </button>
+                    ) : null;
+                  })()}
                   {onDeleteImage && (
                     <button
                       onClick={() => { onDeleteImage(selectedImage.id); setSelectedImage(null); }}
