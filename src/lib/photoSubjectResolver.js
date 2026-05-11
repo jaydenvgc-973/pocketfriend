@@ -89,9 +89,23 @@ export function resolvePhotoSubject({
 }) {
   const combinedText = `${userMessage} ${imageGenPrompt}`.toLowerCase();
 
+  // SENDER ANCHOR GUARD — if the sender's own name appears in the combined text, the photo
+  // is about them (selfie, self-reference). LLM-generated prompts frequently include the
+  // character's name in the scene description (e.g. "Maya sits at her kitchen table").
+  // Without this check, a THIRD_PARTY_PATTERN hit on "she looks..." or "he walks..."
+  // in an autonomous LLM prompt incorrectly classifies the character's own self-photo as
+  // a described_third_party, clearing all identity refs.
+  const senderNameLower = (senderCharacterName || '').toLowerCase();
+  const senderFirstName = senderNameLower.split(' ')[0];
+  const senderNameInPrompt = senderNameLower.length >= 2 && (
+    combinedText.includes(senderNameLower) ||
+    (senderFirstName.length >= 3 && combinedText.includes(senderFirstName))
+  );
+
   // 1. THIRD PARTY CHECK — highest priority flag
   //    If the prompt says someone else is the subject, sender refs must NOT be used.
-  const isThirdParty = THIRD_PARTY_PATTERNS.some(p => p.test(combinedText));
+  //    EXCEPTION: if the sender's own name is in the prompt, they ARE the subject.
+  const isThirdParty = !senderNameInPrompt && THIRD_PARTY_PATTERNS.some(p => p.test(combinedText));
   if (isThirdParty) {
     // Check if the described third party matches a known saved Character
     const knownChar = findKnownCharacterInText(combinedText, allCharacters, senderCharacterId);

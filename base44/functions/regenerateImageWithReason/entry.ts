@@ -442,12 +442,21 @@ Deno.serve(async (req) => {
     const requestingUser = user.email;
     const ctx = message.generation_context || {};
 
+    // CRITICAL: ctx.character_id may be null if the original image was generated via an
+    // autonomous character photo where resolvePhotoSubject incorrectly classified the sender
+    // as a described_third_party, writing null into generation_context.character_id.
+    // The Message entity itself ALWAYS has character_id stamped (set at message creation),
+    // so it is the authoritative identity fallback when the context was corrupted.
     const originalCharId    = ctx.character_id || message.character_id || null;
     const originalPrompt    = ctx.prompt || '';
     const originalLocId     = ctx.location_id || null;
     const originalZoneName  = ctx.zone_name || null;
     const originalLocName   = ctx.location_name || null;
     const originalLocRefs   = ctx.location_reference_images || [];
+
+    if (!ctx.character_id && message.character_id) {
+      console.warn(`[regenerateImageWithReason] ⚠️ generation_context.character_id was null — recovered from message.character_id: ${message.character_id}. This indicates the original generation used a broken autonomous photo subject classification. Regenerating with correct identity.`);
+    }
 
     // ── 2. RESOLVE CHARACTER IDENTITY REFS ───────────────────────────────────
     let charRefs = [];

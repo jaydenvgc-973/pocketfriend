@@ -378,6 +378,10 @@ DO:
       prompt: sanitizedPrompt,
       characterId,
       characterName,
+      // senderCharacterId must equal characterId for single-character Media Grid photos —
+      // the character IS the sender. This prevents the isThirdPartyPhoto guard from
+      // misclassifying the subject as a stranger when characterId is set.
+      senderCharacterId: characterId,
       characterReferenceImages: (characterRefImages || []).map(toPublicCDN).filter(isAccessible),
       userReferenceImages: userRefImages ? (userRefImages || []).map(toPublicCDN).filter(isAccessible) : [],
       userWorldName: userName || null,
