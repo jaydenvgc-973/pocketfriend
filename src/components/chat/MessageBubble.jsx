@@ -469,6 +469,10 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                 characterId={message.character_id}
               />
             )}
+            {/* Money Transfer Card */}
+            {message.money_transfer && (
+              <MoneyTransferCard transfer={message.money_transfer} />
+            )}
             {message.songs_heard && message.songs_heard.length > 0 && (
               <div className="px-4 py-3 space-y-2">
                 {message.songs_heard.map((song, idx) => (
@@ -746,6 +750,28 @@ function LocationSignalButton({ message, onLocationSignal, isImageOnly = false }
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function MoneyTransferCard({ transfer }) {
+  const amountStr = `$${Number(transfer.amount ?? 0).toLocaleString()}`;
+  return (
+    <div className="mx-2 my-2 rounded-2xl overflow-hidden border border-emerald-500/30 bg-card shadow-lg" style={{ minWidth: 200, maxWidth: 260 }}>
+      <div className="h-16 bg-gradient-to-br from-emerald-950 via-green-900 to-teal-900 flex items-center justify-center relative">
+        <div className="absolute inset-0 opacity-10"
+          style={{
+            backgroundImage: "repeating-linear-gradient(45deg, hsl(var(--primary)/0.3) 0, hsl(var(--primary)/0.3) 1px, transparent 0, transparent 50%)",
+            backgroundSize: "10px 10px"
+          }}
+        />
+        <span className="relative z-10 text-3xl font-bold text-emerald-300">{amountStr}</span>
+      </div>
+      <div className="px-3 py-2.5 bg-card">
+        <p className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wide leading-none mb-1">Sent to {transfer.recipient_name}</p>
+        {transfer.reason && <p className="text-xs text-muted-foreground italic mt-0.5 leading-snug">{transfer.reason}</p>}
+        <p className="text-[10px] text-muted-foreground mt-1">{transfer.timestamp ? format(new Date(transfer.timestamp), "h:mm a") : "Now"}</p>
+      </div>
     </div>
   );
 }

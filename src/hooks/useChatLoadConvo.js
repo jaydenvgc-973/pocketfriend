@@ -85,6 +85,13 @@ export function useChatLoadConvo({
       const t0 = Date.now();
       console.log(`[CHAT_LOAD] loadConvo START charId=${characterId} chatType=${chatType} t=${t0}`);
 
+      // PART 3 FIX: Proactively activate chat-safe mode on every chat load.
+      // Background simulations, presence checks, and scheduled tasks fire on a shared
+      // rate-limit budget. A chat open is always user-facing priority — activate safe
+      // mode for 20s to throttle background work and ensure the chat load gets through.
+      // The 20s window is short enough that background tasks resume promptly after load.
+      activateChatSafeMode(20000);
+
       // Helper: check if a 429 error
       const is429 = (err) =>
         err?.message?.includes('429') ||

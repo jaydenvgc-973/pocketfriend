@@ -6,13 +6,13 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, conversationId, amount } = await req.json();
+    const { characterId, conversationId, amount, reason } = await req.json();
     if (!characterId || !amount || amount <= 0) {
       return Response.json({ error: 'Invalid parameters' }, { status: 400 });
     }
 
-    // Load user settings for balance
-    const settingsList = await base44.entities.UserSettings.filter({ created_by: user.email });
+    // Load user settings for balance — owner_email is the source of truth, NOT created_by
+    const settingsList = await base44.entities.UserSettings.filter({ owner_email: user.email });
     const settings = settingsList[0];
     if (!settings) return Response.json({ error: 'User settings not found' }, { status: 404 });
     if ((settings.user_balance ?? 0) < amount) {
@@ -59,13 +59,24 @@ Deno.serve(async (req) => {
       timestamp: now,
     });
 
-    // Post a message in the conversation so the character is aware
+    // Post a visible money-transfer card in the conversation.
+    // FIX: previously this created a plain text message — no card UI appeared in chat.
+    // Now we add a money_transfer field so MessageBubble can render it as a card,
+    // plus keep a text content fallback for the conversation preview.
     if (conversationId) {
       await base44.entities.Message.create({
         conversation_id: conversationId,
         sender_type: 'user',
-        content: `I just sent you $${amount}. 💸`,
+        content: `💸 Sent $${amount.toLocaleString()} to ${character.name}`,
         timestamp: now,
+        money_transfer: {
+          amount,
+          direction: 'sent',
+          recipient_name: character.name,
+          recipient_id: characterId,
+          reason: reason || null,
+          timestamp: now,
+        },
       });
     }
 

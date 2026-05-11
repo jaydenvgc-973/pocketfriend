@@ -124,10 +124,29 @@ export default function CharacterProfile() {
   const { data: character, isLoading, refetch } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
+      // PRIMARY: user-scoped RLS query (works for own characters)
       const chars = await base44.entities.Character.filter({ id: characterId });
       if (chars[0]) {
         const { system_prompt, ...char } = chars[0];
         return char;
+      }
+      // FALLBACK: character may exist in the allCharacters cache (loaded by Home/Chat)
+      // but not pass a fresh RLS filter if ownership fields are still backfilling.
+      // Check the React Query cache directly before showing "not found".
+      // This prevents the Home→Profile "Character not found" regression where the
+      // character IS valid but its owner_email hasn't propagated to RLS yet.
+      // Search all cache entries matching ["characters", *] since it's keyed by email.
+      const allCacheEntries = queryClient.getQueriesData({ queryKey: ["characters"] });
+      const cachedAll = allCacheEntries.find(([, data]) => Array.isArray(data))?.[1] ||
+        queryClient.getQueryData(["characters"]) ||
+        queryClient.getQueryData(["characters", ""]);
+      if (Array.isArray(cachedAll)) {
+        const fromCache = cachedAll.find(c => c.id === characterId);
+        if (fromCache) {
+          console.warn(`[CharacterProfile] RLS filter returned empty for ${characterId} — using allCharacters cache entry as fallback`);
+          const { system_prompt, ...char } = fromCache;
+          return char;
+        }
       }
       return null;
     },

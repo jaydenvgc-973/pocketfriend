@@ -76,7 +76,13 @@ export async function dispatchImageGeneration({
     }
 
     // Convert all ref URLs to public CDN before sending — private/internal URLs are rejected by provider
-    const publicCharRefs = (charRefs || []).map(toPublicCDN).filter(isProviderAccessible);
+    // IDENTITY FALLBACK: If no reference_image_urls exist, include avatar_url as last-resort identity anchor.
+    // Without this, generateImageAsync receives empty refs and falls back to text-only generation,
+    // producing a random unrelated person instead of the sending character.
+    const rawCharRefs = (charRefs || []).length > 0
+      ? (charRefs || [])
+      : (character.avatar_url ? [character.avatar_url] : []);
+    const publicCharRefs = rawCharRefs.map(toPublicCDN).filter(isProviderAccessible);
     const publicUserRefs = (userRefImages || []).map(toPublicCDN).filter(isProviderAccessible);
 
     const res = await base44.functions.invoke('generateImageAsync', {

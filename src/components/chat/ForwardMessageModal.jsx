@@ -47,7 +47,9 @@ export default function ForwardMessageModal({ message, onClose }) {
           ? `Fwd Message from ${senderLabel}:\n${message.content}`
           : `Fwd Message from ${senderLabel}`;
 
-        await base44.entities.Message.create({
+        // CRITICAL: Preserve location_share payload so the receiving chat renders the
+        // same location card UI as the original message — not just generic forwarded text.
+        const forwardedPayload = {
           conversation_id: convoId,
           sender_type: "user",
           content: fwdContent,
@@ -55,7 +57,15 @@ export default function ForwardMessageModal({ message, onClose }) {
           timestamp: new Date().toISOString(),
           is_forwarded: true,
           forwarded_from: senderLabel,
-        });
+        };
+        if (message.location_share) {
+          forwardedPayload.location_share = message.location_share;
+          // Location card has no text content — clear the generic "Fwd Message" text
+          // so the renderer hits the location_share branch, not the text branch.
+          forwardedPayload.content = "";
+        }
+
+        await base44.entities.Message.create(forwardedPayload);
 
         await base44.entities.Conversation.update(convoId, {
           last_message_preview: fwdContent.substring(0, 100),
