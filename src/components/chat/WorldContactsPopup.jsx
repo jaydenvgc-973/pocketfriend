@@ -85,23 +85,24 @@ async function buildMergedContactList(character, ownerEmail) {
     return result;
   }
 
-  // ── AVATAR HYDRATION: batch-fetch Character records for all linked IDs ──────
-  const linkedIds = [...seen.values()]
-    .filter(c => c.related_character_id && !c.avatar_url)
-    .map(c => c.related_character_id);
+  // ── SINGLE BROAD FETCH: one call to get all owner Characters needed for hydration ──
+  // This replaces all individual-per-ID parallel fetches that caused 429 storms.
+  // We fetch all active Characters for this owner once, then resolve everything in-memory.
+  const allOwnerChars = await base44.entities.Character.filter(
+    { owner_email: ownerEmail, status: 'active' },
+    null, 200
+  ).catch(() => []);
 
-  if (linkedIds.length > 0) {
-    const linkedRecords = await Promise.all(
-      linkedIds.slice(0, 30).map(id =>
-        base44.entities.Character.filter({ id, owner_email: ownerEmail }, null, 1)
-          .then(r => r?.[0] || null).catch(() => null)
-      )
-    );
-    for (const rec of linkedRecords.filter(Boolean)) {
-      const entry = seen.get(rec.id);
-      if (entry) {
+  const charById = new Map(allOwnerChars.map(c => [c.id, c]));
+  const charByName = new Map(allOwnerChars.map(c => [c.name?.trim().toLowerCase(), c]));
+
+  // ── AVATAR HYDRATION: resolve linked IDs from in-memory map ──────────────
+  for (const entry of seen.values()) {
+    if (entry.related_character_id && !entry.avatar_url) {
+      const rec = charById.get(entry.related_character_id);
+      if (rec) {
         const av = bestAvatar(rec);
-        if (av && !entry.avatar_url) {
+        if (av) {
           entry.avatar_url = av;
           entry._matched_character_id = rec.id;
           entry._avatar_source = 'linked_character_record';
@@ -111,16 +112,11 @@ async function buildMergedContactList(character, ownerEmail) {
     }
   }
 
-  // 4. Pull npc_family_member records on this account
-  const familyChars = await base44.entities.Character.filter({
-    owner_email: ownerEmail,
-    character_type: 'npc_family_member',
-    status: 'active',
-  }, null, 50).catch(() => []);
+  // 4. Pull npc_family_member records from in-memory map
+  const familyChars = allOwnerChars.filter(c => c.character_type === 'npc_family_member');
 
   for (const fc of familyChars) {
     const av = bestAvatar(fc);
-    // If this character ID is already a key, enrich avatar if missing
     if (seen.has(fc.id)) {
       const entry = seen.get(fc.id);
       if (!entry.avatar_url && av) {
@@ -129,20 +125,16 @@ async function buildMergedContactList(character, ownerEmail) {
         entry._avatar_source = 'npc_family_member_record';
       }
     } else {
-      // Check if a name-only entry exists for this person
-      const nameKey = `name:${fc.name}`;
-      const nameEntry = seen.get(nameKey) || [...seen.values()].find(c =>
+      const nameEntry = seen.get(`name:${fc.name}`) || [...seen.values()].find(c =>
         c.person_name?.trim().toLowerCase() === fc.name?.trim().toLowerCase() && !c.related_character_id
       );
       if (nameEntry) {
-        // Enrich the name-only entry — do NOT create a duplicate
         if (!nameEntry.related_character_id) nameEntry.related_character_id = fc.id;
         if (!nameEntry.avatar_url && av) nameEntry.avatar_url = av;
         nameEntry._matched_character_id = fc.id;
         nameEntry._avatar_source = nameEntry._avatar_source || 'npc_family_member_name_match';
         nameEntry._linkage = 'linked_from_character_record';
       } else {
-        // New contact from family character records
         seen.set(fc.id, {
           person_name: fc.name,
           relationship_type: 'Family',
@@ -164,83 +156,62 @@ async function buildMergedContactList(character, ownerEmail) {
     }
   }
 
-  // 5. Find Character records in existing Conversations with this character
+  // 5. Resolve conversation-linked Character IDs from in-memory map (no extra API calls)
   const existingConvos = await base44.entities.Conversation.filter(
     { character_ids: [character.id], owner_email: ownerEmail },
     '-updated_date', 30
   ).catch(() => []);
 
-  const linkedCharIds = new Set(
+  const convoLinkedIds = new Set(
     existingConvos.flatMap(c => c.character_ids || []).filter(id => id !== character.id)
   );
 
-  if (linkedCharIds.size > 0) {
-    const linkedChars = await Promise.all(
-      [...linkedCharIds].slice(0, 20).map(id =>
-        base44.entities.Character.filter({ id, owner_email: ownerEmail }, null, 1)
-          .then(r => r?.[0] || null).catch(() => null)
-      )
-    );
-    for (const lc of linkedChars.filter(Boolean)) {
-      const av = bestAvatar(lc);
-      if (seen.has(lc.id)) {
-        const entry = seen.get(lc.id);
-        if (!entry.avatar_url && av) {
-          entry.avatar_url = av;
-          entry._matched_character_id = lc.id;
-          entry._avatar_source = 'conversation_linked_record';
-        }
+  for (const id of convoLinkedIds) {
+    const lc = charById.get(id);
+    if (!lc) continue;
+    const av = bestAvatar(lc);
+    if (seen.has(lc.id)) {
+      const entry = seen.get(lc.id);
+      if (!entry.avatar_url && av) {
+        entry.avatar_url = av;
+        entry._matched_character_id = lc.id;
+        entry._avatar_source = 'conversation_linked_record';
+      }
+    } else {
+      const nameEntry = [...seen.values()].find(c =>
+        c.person_name?.trim().toLowerCase() === lc.name?.trim().toLowerCase() && !c.related_character_id
+      );
+      if (nameEntry) {
+        nameEntry.related_character_id = lc.id;
+        if (!nameEntry.avatar_url && av) nameEntry.avatar_url = av;
+        nameEntry._matched_character_id = lc.id;
+        nameEntry._avatar_source = nameEntry._avatar_source || 'conversation_name_match';
+        nameEntry._linkage = 'linked_from_conversation';
       } else {
-        // Try name match on unlinked entries first
-        const nameEntry = [...seen.values()].find(c =>
-          c.person_name?.trim().toLowerCase() === lc.name?.trim().toLowerCase() && !c.related_character_id
-        );
-        if (nameEntry) {
-          nameEntry.related_character_id = lc.id;
-          if (!nameEntry.avatar_url && av) nameEntry.avatar_url = av;
-          nameEntry._matched_character_id = lc.id;
-          nameEntry._avatar_source = nameEntry._avatar_source || 'conversation_name_match';
-          nameEntry._linkage = 'linked_from_conversation';
-        } else {
-          seen.set(lc.id, {
-            person_name: lc.name,
-            relationship_type: lc.character_type === 'npc_fictitious' ? 'Known Contact' : 'Character',
-            description: lc.profile_summary || lc.backstory || '',
-            history_summary: '',
-            last_interaction_summary: '',
-            emotional_impact: '',
-            current_status: lc.current_activity || '',
-            romantic_level: 0,
-            friendship_level: 30,
-            related_character_id: lc.id,
-            avatar_url: av || null,
-            _linkage: 'linked_from_conversation',
-            _source: 'conversation',
-            _matched_character_id: lc.id,
-            _avatar_source: av ? 'conversation_linked_record' : null,
-          });
-        }
+        seen.set(lc.id, {
+          person_name: lc.name,
+          relationship_type: lc.character_type === 'npc_fictitious' ? 'Known Contact' : 'Character',
+          description: lc.profile_summary || lc.backstory || '',
+          history_summary: '',
+          last_interaction_summary: '',
+          emotional_impact: '',
+          current_status: lc.current_activity || '',
+          romantic_level: 0,
+          friendship_level: 30,
+          related_character_id: lc.id,
+          avatar_url: av || null,
+          _linkage: 'linked_from_conversation',
+          _source: 'conversation',
+          _matched_character_id: lc.id,
+          _avatar_source: av ? 'conversation_linked_record' : null,
+        });
       }
     }
   }
 
-  // 6. Final pass: name-match any still-unhydrated contacts against ALL owner_email Characters
-  // This catches family members whose avatars live in active_created_character or npc_fictitious
-  // records that didn't appear in any conversation.
-  const unhydrated = [...seen.values()].filter(c => !c.avatar_url && !c.related_character_id);
-  if (unhydrated.length > 0) {
-    // Fetch all active Characters on this account (broad — scoped to owner_email only)
-    const allChars = await base44.entities.Character.filter(
-      { owner_email: ownerEmail, status: 'active' },
-      null, 200
-    ).catch(() => []);
-
-    const charByName = new Map();
-    for (const ch of allChars) {
-      charByName.set(ch.name?.trim().toLowerCase(), ch);
-    }
-
-    for (const entry of unhydrated) {
+  // 6. Final name-match pass for still-unhydrated name-only contacts — using the same in-memory map
+  for (const entry of seen.values()) {
+    if (!entry.avatar_url && !entry.related_character_id) {
       const match = charByName.get(entry.person_name?.trim().toLowerCase());
       if (match) {
         const av = bestAvatar(match);
@@ -248,11 +219,8 @@ async function buildMergedContactList(character, ownerEmail) {
           entry.avatar_url = av;
           entry._matched_character_id = match.id;
           entry._avatar_source = 'broad_name_match';
-          // Only set related_character_id if it was truly unlinked — do not overwrite
-          if (!entry.related_character_id) {
-            entry.related_character_id = match.id;
-            entry._linkage = 'linked_from_name_match';
-          }
+          entry.related_character_id = match.id;
+          entry._linkage = 'linked_from_name_match';
         }
       }
     }
