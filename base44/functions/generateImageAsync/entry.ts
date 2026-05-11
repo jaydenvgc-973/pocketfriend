@@ -420,53 +420,117 @@ REFERENCE IMAGE INSTRUCTIONS
 `;
 
     if (hasEnv) {
-      preamble += `Images ${envRefStart}–${envEnd}: ZONE SPATIAL DATA — 3D ROOM MODEL, NOT A SCREENSHOT TEMPLATE.
-These photos of "${place}" are a SPATIAL GUIDE. They define the room's identity: architecture, materials, furniture types, layout logic, color palette, wall/window/door placement.
+      preamble += `Images ${envRefStart}–${envEnd}: ENVIRONMENT SPATIAL DATA — REUSABLE 3D PHYSICAL SPACE, NOT A SCREENSHOT TEMPLATE.
+These reference images of "${place}" are a SPATIAL GUIDE ONLY. They define environment identity: architecture, geometry, materials, furniture/object types, layout logic, color palette, spatial orientation.
 
 ════════════════════════════════════════════════════════════
-GLOBAL 3D ZONE RULE — APPLIES TO ALL LOCATIONS AND ROOM TYPES
+GLOBAL 3D ENVIRONMENT RULE — APPLIES TO ALL LOCATIONS WORLDWIDE
 ════════════════════════════════════════════════════════════
-The reference image is NOT the required camera angle.
-The reference image is NOT the required frame.
-The reference image is NOT a checklist where every object must appear.
+This rule applies to: homes, bedrooms, kitchens, offices, bars, clubs, streets, parks,
+beaches, forests, restaurants, hospitals, vehicles, outdoor spaces — ALL ENVIRONMENTS.
 
 The reference image is a SPATIAL GUIDE only.
+The reference image is NOT the required camera angle.
+The reference image is NOT a screenshot to replicate.
+The reference image is NOT a frozen exposure state.
+The reference image is NOT a lighting authority.
+The reference image does NOT lock time of day, brightness, weather, or atmosphere.
 
-From that guide, extract:
-  • The room's layout logic (where walls, doors, windows are placed)
-  • Furniture types and their spatial relationships
-  • Color palette and materials
-  • The zone's overall identity and style
+════════════════════════════════════════════════════════════
+⛔⛔⛔ CRITICAL — LIGHTING AUTHORITY RULE ⛔⛔⛔
+════════════════════════════════════════════════════════════
+REFERENCE IMAGE LIGHTING IS NON-AUTHORITATIVE.
+
+The reference images may have been photographed at ANY time of day under ANY lighting conditions.
+That lighting is IRRELEVANT to this generation.
+
+YOU MUST COMPLETELY DISCARD THE LIGHTING STATE SHOWN IN REFERENCE IMAGES.
+DO NOT copy the reference image's brightness, exposure, color temperature, or shadows.
+DO NOT let dark reference images make this scene dark.
+DO NOT let nighttime reference images suppress daylight.
+DO NOT let bright reference images override a night scene.
+DO NOT let warm reference images force warm color temperature.
+
+The reference images define the PHYSICAL SPACE ONLY:
+  ✅ Architecture and geometry
+  ✅ Furniture types and placement
+  ✅ Materials and textures
+  ✅ Color palette of objects and surfaces
+  ✅ Spatial layout and orientation
+  ✅ Window, door, and wall positions
+
+The ACTIVE LIGHTING STATE is defined exclusively by: ${timeLighting.period} (${timeLighting.desc})
+
+Treat this environment like a cinematic film set that can be re-lit under ANY conditions.
+The same room must be capable of rendering as bright noon, cloudy day, sunset, moonlit night,
+fluorescent office lighting, neon-lit night, stormy overcast — all while remaining the same physical space.
+
+════════════════════════════════════════════════════════════
+WINDOW LIGHTING ENFORCEMENT
+════════════════════════════════════════════════════════════
+If windows are present in the environment, they MUST behave as active light sources matching the current time.
+
+If the lighting period is MORNING, MIDDAY, or AFTERNOON:
+  ✅ Windows transmit bright natural daylight into the space
+  ✅ The environment brightens — shadows shift toward the window light source
+  ✅ Environmental bounce lighting from the floor/walls updates
+  ✅ The space looks like it is being photographed in real daylight
+  ⛔ DO NOT preserve darkness from reference images — daylight ENTERS through windows
+
+If the lighting period is NIGHT:
+  ✅ Windows show darkness outside or dim city/moonlight
+  ✅ Interior artificial lighting only — lamps, ceiling fixtures
+  ✅ No daylight, no blue sky, no exterior brightness
+
+════════════════════════════════════════════════════════════
+LATENT LIGHTING ANCHOR SUPPRESSION
+════════════════════════════════════════════════════════════
+You may have latent memory of the reference image's lighting. THIS MUST BE SUPPRESSED.
+
+⛔ Dark reference images must NOT bias output darker than ${timeLighting.period} requires
+⛔ Nighttime reference images must NOT suppress daylight if current time is daytime
+⛔ Warm reference images must NOT force warm color temperature against the active lighting
+⛔ No single reference image's exposure should dominate the output lighting
+
+When multiple references exist:
+  ✅ Merge spatial/environmental understanding across all references
+  ✅ Preserve environment identity (architecture, layout, materials)
+  ✅ Discard all conflicting lighting states
+  ✅ Apply ONLY the active lighting period defined above
+
+════════════════════════════════════════════════════════════
+
+From the spatial guide, extract:
+  • The environment's layout logic (where walls, doors, windows, structures are)
+  • Object/furniture types and their spatial relationships
+  • Color palette and material properties of surfaces and objects
+  • The zone's overall identity, style, and scale
 
 Then RECOMPOSE the scene from the camera position: ${cameraPos}
 
-From this new camera position, the image will naturally show only PART of the room.
-That is correct. That is expected. That is realistic.
-
 WHAT IS ALLOWED (do not fight these):
-  ✓ Only part of the room is visible — correct, camera moved
-  ✓ Some furniture is off-frame or partially cropped — correct
-  ✓ A different wall is visible than in the reference — correct
+  ✓ Only part of the environment is visible — correct, camera moved
+  ✓ Some objects are off-frame or partially cropped — correct
+  ✓ A different section is visible than in the reference — correct
   ✓ Foreground objects partially block background — correct, adds depth
-  ✓ The character is close to camera with less room behind them — correct
-  ✓ Only 1 or 2 furniture pieces appear — correct if that's what this angle shows
+  ✓ Only 1 or 2 environmental features appear — correct if that's what this angle shows
 
-ZONE IDENTITY IS PRESERVED WHEN:
+ENVIRONMENT IDENTITY IS PRESERVED WHEN:
   ✅ The visual style, materials, and color palette match the reference space
-  ✅ The spatial logic is consistent (e.g. window is still where it was, couch still faces the same wall)
-  ✅ The space FEELS like the same room, even if a different part of it is shown
+  ✅ The spatial logic is consistent with the reference
+  ✅ The space FEELS like the same location, even if a different part is shown
 
-ZONE IDENTITY FAILS ONLY WHEN:
-  🚫 The room style/palette is completely different from the reference
-  🚫 Completely unrelated architecture or furniture is present
-  🚫 The room has zero visual connection to the reference zone
+ENVIRONMENT IDENTITY FAILS ONLY WHEN:
+  🚫 The location style/palette is completely different from the reference
+  🚫 Completely unrelated architecture or setting is present
+  🚫 The location has zero visual connection to the reference
 
 ⛔ Do NOT reproduce the reference photo's camera angle.
 ⛔ Do NOT use the reference photo as a flat background layer.
 ⛔ Do NOT composite the character onto the reference photo.
 ⛔ Do NOT require every object in the reference to appear in every image.
-⛔ Do NOT copy the reference photo's lighting — lighting comes from: ${timeLighting.period} (${timeLighting.desc})
-✅ Use reference photos ONLY to understand the space. Then re-render from the chosen camera position.
+⛔ Do NOT copy the reference photo's lighting — lighting is DEFINED BY: ${timeLighting.period} (${timeLighting.desc})
+✅ Use reference photos ONLY to understand the physical space. Then re-render from the chosen camera position under the active lighting conditions.
 ✅ The character must be physically inside the re-rendered space — same floor, same light, same perspective.
 
 `;
@@ -647,12 +711,15 @@ RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
     envLock = `
 
-  FINAL REMINDER — GLOBAL 3D ZONE RULE: "${place}"
-  The reference images are a spatial guide. The camera is at: ${cameraPos}. Lighting: ${timeLighting.period}.
-  Show only what is naturally visible from that camera position. Partial room views, cropped furniture, and off-frame objects are all correct.
-  Do NOT force every reference object into the frame. Do NOT copy the reference photo's angle or treat it as a background layer.
-  Zone identity means: same style, same palette, same spatial logic — not the same photo reproduced.
-  This rule applies to bedrooms, living rooms, kitchens, bathrooms, offices, businesses, outdoor spaces, and all zones.`;
+  FINAL REMINDER — GLOBAL 3D ENVIRONMENT RULE: "${place}"
+  The reference images define ONLY the physical space — architecture, layout, materials, objects.
+  The camera is at: ${cameraPos}. Active lighting state: ${timeLighting.period} — ${timeLighting.desc}.
+  REFERENCE IMAGE LIGHTING IS NON-AUTHORITATIVE. Do NOT preserve or replicate any lighting visible in references.
+  The environment must be re-lit under ${timeLighting.period} conditions regardless of what lighting appears in the reference photos.
+  Show only what is naturally visible from the camera position. Partial views, cropped objects, and off-frame elements are all correct.
+  Do NOT force every reference object into the frame. Do NOT copy the reference photo's camera angle or treat it as a background layer.
+  Environment identity means: same style, same spatial logic, same materials — NOT the same photo reproduced under the same lighting.
+  This rule applies globally: bedrooms, living rooms, kitchens, bathrooms, offices, bars, clubs, streets, parks, outdoor spaces, and all environments without exception.`;
   }
 
   // When the prompt explicitly declares a time of day, do NOT inject the server-time reference
@@ -662,38 +729,73 @@ RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
   let refImageOverride = promptHasExplicitTime ? `
 
 ════════════════════════════════════════════════════════════
-⛔ REFERENCE IMAGE LIGHTING IS IGNORED — PROMPT TIME IS AUTHORITY ⛔
+⛔ REFERENCE IMAGE LIGHTING IS IGNORED — PROMPT IS AUTHORITY ⛔
 ════════════════════════════════════════════════════════════
-The prompt explicitly specifies a time of day. Reference images may have been taken at a different time.
+The prompt explicitly specifies an environmental state. This is AUTHORITATIVE and MANDATORY.
 
-THIS REFERENCE IMAGE LIGHTING MUST BE COMPLETELY IGNORED.
+REFERENCE IMAGE LIGHTING IS NON-AUTHORITATIVE.
+Reference images define ONLY the physical environment — architecture, layout, materials, objects.
+They do NOT define lighting, time of day, exposure, weather, or atmosphere.
 
-Lighting is ONLY determined by the scene prompt's time declaration.
+THIS REFERENCE IMAGE LIGHTING MUST BE COMPLETELY IGNORED — FOR ALL ENVIRONMENTS.
+This applies to: homes, bedrooms, offices, bars, streets, parks, beaches, clubs, ALL locations.
 
 If reference images show bright daylight but the prompt says nighttime:
 🚫 DO NOT replicate that daylight lighting
 🚫 DO NOT use that color temperature
 🚫 DO NOT copy that brightness level
+🚫 DO NOT let the reference image's exposure bias this output
+
+If reference images are dark but the prompt says bright daylight:
+🚫 DO NOT preserve the reference's darkness
+🚫 DO NOT suppress window daylight
+🚫 DO NOT let latent nighttime memory anchor the output dark
+
+LATENT ANCHORING SUPPRESSION: You may have memorized the reference image's lighting state.
+Actively suppress this. The reference lighting is irrelevant. Generate ONLY from the prompt's declared environmental conditions.
 
 Generate lighting ONLY from what the prompt describes.
-The scene lighting must match the PROMPT, not the reference images.` : `
+The scene lighting must match the PROMPT's declared environmental state, not the reference images.
+Treat the environment as a reusable 3D physical space that can be dynamically re-lit under ANY conditions.` : `
 
 ════════════════════════════════════════════════════════════
-⛔ CRITICAL OVERRIDE: REFERENCE IMAGE LIGHTING IS IGNORED ⛔
+⛔ CRITICAL GLOBAL OVERRIDE: REFERENCE IMAGE LIGHTING IS IGNORED ⛔
 ════════════════════════════════════════════════════════════
-Reference images (identity or location) may contain daylight, bright windows, or morning/afternoon lighting.
+This rule applies to ALL environments without exception:
+homes, bedrooms, kitchens, offices, bars, clubs, streets, parks, beaches, vehicles, ALL locations.
 
-THIS LIGHTING MUST BE COMPLETELY IGNORED.
+REFERENCE IMAGE LIGHTING IS NON-AUTHORITATIVE.
+Reference images define ONLY the physical environment — architecture, layout, materials, spatial identity.
+They do NOT define lighting authority, time of day, exposure, weather, or atmosphere.
 
-Lighting is ONLY determined by server time: ${serverHour}:${String(new Date().getMinutes()).padStart(2, '0')} (${timeLighting.period})
+ACTIVE LIGHTING STATE: ${timeLighting.period} — ${timeLighting.desc}
+Server time: ${serverHour}:${String(new Date().getMinutes()).padStart(2, '0')}
 
-If reference images show bright daylight or bright windows:
-🚫 DO NOT replicate that lighting
-🚫 DO NOT use that color temperature
-🚫 DO NOT copy that brightness level
+THIS REFERENCE IMAGE LIGHTING MUST BE COMPLETELY DISCARDED.
 
-Generate ONLY from the server time lighting rules above.
-The scene lighting must match the actual world time, not the reference images.`;
+If reference images show nighttime/dark environments but current time is daytime:
+✅ The environment MUST be rendered in DAYLIGHT
+✅ Windows must transmit bright natural light into the space
+✅ The room/location must brighten to match ${timeLighting.period} conditions
+🚫 DO NOT preserve the reference's darkness
+🚫 DO NOT suppress daylight entering through windows
+
+If reference images show bright daylight but current time is night:
+✅ The environment MUST be rendered with NIGHT LIGHTING ONLY
+✅ No sunlight, no daylight color temperature, no bright windows
+🚫 DO NOT replicate the reference's brightness
+
+LATENT ANCHORING SUPPRESSION:
+⛔ Dark references must NOT force dark output if current time is daytime
+⛔ Nighttime references must NOT suppress daylight
+⛔ Warm references must NOT force warm color temperature against the active lighting period
+⛔ No single reference image's lighting state should dominate the output
+
+Multi-reference balancing: When multiple environment references exist, merge ONLY their
+spatial/structural understanding. Discard ALL conflicting lighting states. Apply only the active period.
+
+Treat the environment as a reusable 3D physical space that can be dynamically re-lit under any conditions.
+The active lighting period is the ONLY authority: ${timeLighting.period} — ${timeLighting.desc}.`;
 
   // ── APPEARANCE LOCK HELPER ───────────────────────────────────────────────────
   function buildAppearanceLockText(desc) {
@@ -860,26 +962,25 @@ YOUR JOB:
 2. DETERMINE what would be VISIBLE directly behind the subject given the selfie camera angle and body position described in the prompt (e.g. lying in bed → pillows, headboard, wall behind them; seated at desk → wall, shelving, window beside them).
 3. RE-RENDER only the portion of the room that appears in that angle as the background.
 
-RULES — GLOBAL 3D ZONE RULE APPLIES HERE TOO:
-✅ The reference images are a SPATIAL GUIDE — extract layout, materials, colors, and furniture types
-✅ Show only what is naturally visible from this selfie angle and body position — partial room is correct
+RULES — GLOBAL 3D ENVIRONMENT RULE APPLIES HERE TOO:
+✅ The reference images are a SPATIAL GUIDE — extract layout, materials, colors, and object types ONLY
+✅ REFERENCE IMAGE LIGHTING IS NON-AUTHORITATIVE — discard all lighting visible in references
+✅ Show only what is naturally visible from this selfie angle and body position — partial view is correct
 ✅ Background perspective must match the selfie camera angle exactly — close-up = compressed background, overhead = ceiling/bedding visible
-✅ Time-of-day lighting: ${timeLighting.desc} — apply to background too
+✅ Active lighting: ${timeLighting.desc} — apply to background regardless of what references show
 ⛔ Do NOT copy the reference photo's camera angle as the background
+⛔ Do NOT copy the reference photo's lighting, exposure, or brightness
+⛔ Do NOT let dark references suppress daylight if current time is ${timeLighting.period}
 ⛔ Do NOT require every reference object to appear — only what this angle would show
 ⛔ Do NOT invent a generic room — use the spatial identity from images ${envRefStart}–${envEnd}
 ⛔ Do NOT show parts of the room that wouldn't be visible from this selfie angle`;
     }
 
-    let selfieLightingBlock = `
-
-════════════════════════════════════════════════════════════
-LIGHTING — ${promptHasExplicitTime ? 'PROMPT-SPECIFIED TIME' : timeLighting.period}
-════════════════════════════════════════════════════════════
-${promptHasExplicitTime
-  ? 'Apply lighting that matches the time of day described in the prompt.'
-  : `Current time: ${serverHour}:00 → ${timeLighting.period}. Lighting: ${timeLighting.desc}.`}
-Both the subject AND the background must be lit consistently from the same light source.`;
+    const selfieLightingTitle = promptHasExplicitTime ? 'PROMPT-SPECIFIED TIME' : timeLighting.period;
+    const selfieLightingDesc = promptHasExplicitTime
+      ? 'Apply lighting that matches the time of day described in the prompt.'
+      : `Current time: ${serverHour}:00 — ${timeLighting.period}. Lighting: ${timeLighting.desc}.`;
+    let selfieLightingBlock = `\n\nLIGHTING — ${selfieLightingTitle}\n${selfieLightingDesc}\nREFERENCE IMAGE LIGHTING IS NON-AUTHORITATIVE — apply ${selfieLightingTitle} conditions regardless of reference image brightness.\nBoth the subject AND the background must be lit consistently from the same light source.`;
 
     return `${preamble}${selfieEnvBlock}${selfieLightingBlock}
 
