@@ -994,17 +994,23 @@ Deno.serve(async (req) => {
       }
 
       if (charRecord) {
-        // CRITICAL FIX: Never pass avatar as a reference image.
-        // Avatar photos create irreconcilable visual conflicts with scene prompts.
-        // The model cannot generate a new scene when given a fixed avatar pose.
-        // Instead, rely ONLY on text description (appearance_lock + avatar_description_text).
-        // This allows the model to compose the character fresh into the scene.
         const allRefUrls = cdnFilter(charRecord.reference_image_urls || []);
         const refUrls = allRefUrls.filter(url => !url.includes('generated_image'));
-        // CRITICAL: Use maximum 2 reference images. More refs = more background contamination.
-        // The model anchors visual context from ALL ref images — fewer refs = less bleed-through.
+        // Use maximum 2 reference images — more refs = more background contamination
         charRefs = refUrls.slice(0, 2);
-        console.log(`[generateImageAsync] Character "${charRecord.name}" — identity refs: ${charRefs.length} (max 2 to minimize background contamination)`);
+
+        // ── IDENTITY AUDIT LOG — traceable on every real generation ─────────
+        console.log(`[IdentityAudit] ══════════════════════════════════════════════`);
+        console.log(`[IdentityAudit] character_id:             ${charRecord.id}`);
+        console.log(`[IdentityAudit] character_name:           ${charRecord.name}`);
+        console.log(`[IdentityAudit] sender_character_id:      ${senderCharacterId || 'not provided'}`);
+        console.log(`[IdentityAudit] subject_type:             ${subjectType}`);
+        console.log(`[IdentityAudit] is_third_party:           ${isThirdPartyPhoto}`);
+        console.log(`[IdentityAudit] reference_image_urls:     ${(charRecord.reference_image_urls || []).length} raw → ${refUrls.length} valid → ${charRefs.length} used (max 2)`);
+        console.log(`[IdentityAudit] avatar_url_present:       ${!!charRecord.avatar_url}`);
+        console.log(`[IdentityAudit] appearance_lock_fields:   ${Object.keys(charRecord.appearance_lock || {}).join(', ') || 'none'}`);
+        console.log(`[IdentityAudit] avatar_description_text:  ${charRecord.avatar_description_text ? 'present' : 'absent'}`);
+        console.log(`[IdentityAudit] ══════════════════════════════════════════════`);
 
         // Build appearance descriptor — rich text description used when no reference photos exist
         // This is the PRIMARY identity source for characters without reference_image_urls
@@ -1250,6 +1256,12 @@ Deno.serve(async (req) => {
     referenceImages.forEach((url, i) => console.log(`  [${i+1}] ${url}`));
 
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length}`);
+    console.log(`[IdentityAudit] FINAL STATE before generation:`);
+    console.log(`[IdentityAudit]   charRefs_final_count: ${CHAR_SLOTS}`);
+    console.log(`[IdentityAudit]   charDesc_present:     ${!!charDesc} (${charDesc ? charDesc.substring(0,80) : 'EMPTY'})`);
+    console.log(`[IdentityAudit]   avatar_fallback_used: ${charRefs.length > 0 && (charRecord?.reference_image_urls || []).filter(u => !u.includes('generated_image')).length === 0 && !!charRecord?.avatar_url}`);
+    console.log(`[IdentityAudit]   generation_context.character_id will be: ${characterId || 'null'}`);
+    console.log(`[IdentityAudit]   message_id: ${messageId}`);
 
 
     // Mutation logging is already done above immediately after sanitization — no duplicate needed here.

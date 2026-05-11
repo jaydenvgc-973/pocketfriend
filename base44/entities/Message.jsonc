@@ -38,6 +38,23 @@
       "type": "string",
       "description": "Optional image URL attached to the message"
     },
+    "image_description": {
+      "type": "string",
+      "description": "Vision-analyzed description of the attached image. Stored durably. Injected into character prompt context."
+    },
+    "image_analysis_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "complete",
+        "failed"
+      ],
+      "description": "Status of the image visual analysis pipeline"
+    },
+    "image_analysis_error": {
+      "type": "string",
+      "description": "Error message if image analysis failed"
+    },
     "audio_url": {
       "type": "string",
       "description": "Base64 or URL of generated voice audio for this message"

@@ -386,6 +386,68 @@ export default function Chat() {
 
     const lookupMatch = text.match(/(?:look up|search|find out|what.*about|can you.*find|research)[\s:]*(.*?)(?:\?|$)/i);
 
+      // ── IMAGE UNDERSTANDING PIPELINE ──────────────────────────────────────
+      // When a user attaches an image, analyze it with vision before the character responds.
+      // The description is stored durably on the Message record and injected into the prompt.
+      // This prevents character hallucination about unseen image content.
+      let imageAnalysisContext = "";
+      if (userImageUrl) {
+        try {
+          console.log(`[ImageAnalysis] Starting vision analysis for user image`);
+          const analysisResult = await base44.integrations.Core.InvokeLLM({
+            prompt: `Analyze this image and provide a detailed, factual visual description in 2-4 sentences.
+Describe exactly what you see: people (appearance, expressions, clothing, pose), objects, setting/environment, text visible, colors, lighting, and any notable details.
+Do NOT interpret meaning or make assumptions. Only describe what is literally visible.
+If the image is blurry, dark, or unclear, describe that explicitly.
+Return ONLY the description text, nothing else.`,
+            file_urls: [userImageUrl],
+          });
+          const imageDescription = (typeof analysisResult === 'string' ? analysisResult : '').trim();
+          console.log(`[ImageAnalysis] ✓ Description: "${imageDescription.substring(0, 150)}"`);
+
+          if (imageDescription && imageDescription.length > 5) {
+            imageAnalysisContext = `\n\n════════════════════════════════════
+IMAGE SHARED BY USER — VISUAL ANALYSIS
+════════════════════════════════════
+Analysis status: complete
+Visual description: ${imageDescription}
+
+CRITICAL RULES FOR RESPONDING TO THIS IMAGE:
+• You may respond ONLY based on the visual description above
+• Do NOT invent details not present in the description
+• Do NOT pretend to know what is in the image beyond what is described
+• If the user asks about something not visible in the description, say you cannot make it out
+• React naturally to what the description actually shows
+════════════════════════════════════`;
+
+            // Store description durably on the message record — non-blocking
+            if (userMsg?.id) {
+              base44.entities.Message.update(userMsg.id, {
+                image_description: imageDescription,
+                image_analysis_status: 'complete',
+              }).catch(() => {});
+            }
+          } else {
+            imageAnalysisContext = `\n\nIMAGE SHARED BY USER — ANALYSIS FAILED:\nThe user sent an image but it could not be analyzed. You may acknowledge you received an image but cannot make out its contents.`;
+            if (userMsg?.id) {
+              base44.entities.Message.update(userMsg.id, {
+                image_analysis_status: 'failed',
+                image_analysis_error: 'Vision analysis returned empty description',
+              }).catch(() => {});
+            }
+          }
+        } catch (analysisErr) {
+          console.warn(`[ImageAnalysis] Analysis failed: ${analysisErr?.message}`);
+          imageAnalysisContext = `\n\nIMAGE SHARED BY USER — ANALYSIS FAILED:\nThe user sent an image but it could not be analyzed. You may acknowledge you received an image but cannot make out its contents.`;
+          if (userMsg?.id) {
+            base44.entities.Message.update(userMsg.id, {
+              image_analysis_status: 'failed',
+              image_analysis_error: analysisErr?.message || 'Unknown error',
+            }).catch(() => {});
+          }
+        }
+      }
+
       // ── QR CODE DETECTION (when user uploads an image) ────────────────────
       let qrContext = "";
       if (userImageUrl) {
@@ -969,7 +1031,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // Build location share context for the prompt
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";
 
-      const fullPrompt = `${systemPrompt}${frontendCoPresenceBlock}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
+      const fullPrompt = `${systemPrompt}${frontendCoPresenceBlock}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
   "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
 
 
