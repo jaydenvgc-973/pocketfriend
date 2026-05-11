@@ -23,9 +23,24 @@
       },
       "description": "IDs of characters in this conversation"
     },
+    "participant_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Sorted array of both participants in bilateral conversations [A, B]"
+    },
+    "shared_conversation_key": {
+      "type": "string",
+      "description": "Deterministic key for bilateral conversations (bilateral_sortedIds_channel)"
+    },
     "owner_email": {
       "type": "string",
       "description": "Email of the user who owns this conversation. Required for ownership scoping."
+    },
+    "channel": {
+      "type": "string",
+      "description": "Communication channel: world_phone, direct_text, scene, etc."
     },
     "last_message_preview": {
       "type": "string"
@@ -37,6 +52,19 @@
     "emotional_context": {
       "type": "string",
       "description": "Current emotional tone of conversation"
+    },
+    "sync_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "complete",
+        "failed"
+      ],
+      "description": "Bilateral sync status for world phone conversations"
+    },
+    "sync_error": {
+      "type": "string",
+      "description": "Error message if bilateral sync failed"
     }
   },
   "required": [

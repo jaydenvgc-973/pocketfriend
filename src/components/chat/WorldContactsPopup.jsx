@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle } from "lucide-react";
+import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { resolveCharacterContacts } from "@/lib/characterContactsResolver";
@@ -254,7 +254,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     });
 
     // Render on right side (sent) immediately — subscription will also fire, dedup is handled
-    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text };
+    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text, sync_status: "pending" };
     setMessages(prev => prev.some(m => m.id === savedUserMsg.id) ? prev : [...prev, userMsg]);
 
     // ── IMAGE UNDERSTANDING PIPELINE ──────────────────────────────────────
@@ -385,18 +385,19 @@ Reply as ${selectedContact.person_name}:`;
         timestamp: new Date().toISOString(),
       })
         .then(() => {
-          // Mark sync as successful in stored data so retry path can check
-          base44.entities.Message.update(savedUserMsg.id, {
-            sync_status: 'complete',
-          }).catch(() => {});
+          // Mark sync complete in DB and in local UI state
+          base44.entities.Message.update(savedUserMsg.id, { sync_status: 'complete' }).catch(() => {});
+          setMessages(prev => prev.map(m => m.id === savedUserMsg.id ? { ...m, sync_status: 'complete' } : m));
         })
         .catch(err => {
-          // Mark sync as failed in stored data — failure is now visible/retryable
+          // Mark sync failed in DB and in local UI state — failure is visible and retryable
+          const errMsg = err.message || 'Unknown sync error';
           base44.entities.Message.update(savedUserMsg.id, {
             sync_status: 'failed',
-            sync_error: err.message || 'Unknown sync error',
+            sync_error: errMsg,
           }).catch(() => {});
-          console.warn('[WorldContactsPopup] syncBilateral failed:', err.message);
+          setMessages(prev => prev.map(m => m.id === savedUserMsg.id ? { ...m, sync_status: 'failed', sync_error: errMsg } : m));
+          console.warn('[WorldContactsPopup] syncBilateral failed:', errMsg);
         });
     }
     // Sync memories after bilateral sync completes
@@ -404,6 +405,34 @@ Reply as ${selectedContact.person_name}:`;
       conversationId: convoId,
       source: 'world_phone',
     }).catch(() => {});
+  };
+
+  // Retry bilateral sync for a message that previously failed
+  const retrySyncForMessage = (msg) => {
+    if (!selectedContact?.related_character_id || !conversationId) return;
+    setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, sync_status: 'pending' } : m));
+    base44.entities.Message.update(msg.id, { sync_status: 'pending', sync_error: null }).catch(() => {});
+    base44.functions.invoke('syncBilateralCharacterConversation', {
+      sender_character_id: character.id,
+      receiver_character_id: selectedContact.related_character_id,
+      conversation_id: conversationId,
+      message_id: msg.id,
+      message_content: msg.content,
+      channel: 'world_phone',
+      topic: msg.content.substring(0, 100),
+      emotional_tone: 'calm',
+      outcome: 'shared',
+      timestamp: new Date().toISOString(),
+    })
+      .then(() => {
+        base44.entities.Message.update(msg.id, { sync_status: 'complete' }).catch(() => {});
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, sync_status: 'complete' } : m));
+      })
+      .catch(err => {
+        const errMsg = err.message || 'Unknown sync error';
+        base44.entities.Message.update(msg.id, { sync_status: 'failed', sync_error: errMsg }).catch(() => {});
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, sync_status: 'failed', sync_error: errMsg } : m));
+      });
   };
 
   const handleKeyDown = (e) => {
@@ -563,7 +592,7 @@ Reply as ${selectedContact.person_name}:`;
                       key={msg.id}
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className={`flex ${(msg.role === "user" || msg.role === "sent") ? "justify-end" : "justify-start"}`}
+                      className={`flex flex-col ${(msg.role === "user" || msg.role === "sent") ? "items-end" : "items-start"}`}
                     >
                       <div className={`max-w-[78%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
                         (msg.role === "user" || msg.role === "sent")
@@ -572,6 +601,22 @@ Reply as ${selectedContact.person_name}:`;
                       }`}>
                         {msg.content}
                       </div>
+                      {/* Sync failure indicator — visible, retryable, non-destructive */}
+                      {msg.sync_status === 'failed' && (msg.role === "sent" || msg.role === "user") && (
+                        <div className="flex items-center gap-1.5 mt-1 mr-1">
+                          <AlertTriangle className="w-3 h-3 text-amber-400" />
+                          <span className="text-[10px] text-amber-400">Sync failed</span>
+                          <button
+                            onClick={() => retrySyncForMessage(msg)}
+                            className="flex items-center gap-0.5 text-[10px] text-primary hover:text-primary/80 transition-colors"
+                          >
+                            <RefreshCw className="w-3 h-3" /> Retry
+                          </button>
+                        </div>
+                      )}
+                      {msg.sync_status === 'pending' && (msg.role === "sent" || msg.role === "user") && (
+                        <span className="text-[10px] text-muted-foreground mt-1 mr-1">Syncing…</span>
+                      )}
                     </motion.div>
                   ))}
                 </AnimatePresence>
