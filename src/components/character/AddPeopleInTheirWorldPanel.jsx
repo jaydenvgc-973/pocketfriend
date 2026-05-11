@@ -8,6 +8,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
   const [newName, setNewName] = useState('');
   const [selectedNPC, setSelectedNPC] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState(null);
   const queryClient = useQueryClient();
 
   // Get current user for filtering account-associated characters
@@ -56,7 +57,20 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
     }
     setIsLoading(true);
     try {
+      // ── GUARD: Owner context is mandatory ──────────────────────────────────
+      if (!currentUser?.email || !currentUser?.id) {
+        console.error('[AddPeopleInTheirWorldPanel] Missing currentUser context:', {
+          emailPresent: !!currentUser?.email,
+          idPresent: !!currentUser?.id,
+        });
+        setErrorMsg('You must be logged in to add people to this character\'s world.');
+        setIsLoading(false);
+        return;
+      }
+
       // ── PRE-CREATE DIAGNOSTIC LOG ──────────────────────────────────────────
+      // This panel only supports 'friend' relationship type for fictional_relationships
+      const relationshipType = 'friend';
       console.log('[AddPeopleInTheirWorldPanel] handleAddNew PRE-CREATE:', JSON.stringify({
         route: 'Character Profile → Add to People In Their World → New',
         selectedType: 'npc_fictitious',
@@ -65,22 +79,31 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
         owner_user_id_present: !!currentUser?.id,
         character_type: 'npc_fictitious',
         linked_active_character_id: character.id,
-        relationship_type: 'friend',
+        relationship_type: relationshipType,
         family_title: null,
         payloadHasOwnerEmail: true,
         attemptingCharacterCreate: true,
       }));
 
-      // Create new NPC with canonical type npc_fictitious
-      const newNPC = await base44.entities.Character.create({
-        name: newName.trim(),
-        character_type: 'npc_fictitious',
-        owner_email: currentUser.email,
-        created_by_role: currentUser.role || 'user',
-        owner_user_id: currentUser.id,
-        status: 'active',
-        exclude_from_homepage: true,
+      // Import the shared helper
+      const { buildNpcCharacterCreatePayload } = await import('@/lib/npcCharacterCreatePayloadBuilder');
+
+      // Create new NPC with safe shared payload builder
+      const charData = buildNpcCharacterCreatePayload({
+        currentUser: {
+          email: currentUser.email,
+          id: currentUser.id,
+          role: currentUser.role,
+        },
+        name: newName,
+        characterType: 'npc_fictitious',
+        linkedActiveCharacterId: character.id,
+        relationshipType: relationshipType,
+        familyTitle: null,
+        source: 'AddPeopleInTheirWorldPanel.handleAddNew',
       });
+
+      const newNPC = await base44.entities.Character.create(charData);
 
       // Add to fictional_relationships
       const updatedRels = [

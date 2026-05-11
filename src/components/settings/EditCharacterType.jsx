@@ -480,10 +480,23 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     setSaveResult(null);
 
     try {
+      // ── HARD GUARD: Active Creative Characters must use dedicated creation flow ──
+      if (selectedType === 'active_created_character') {
+        console.warn('[EditCharacterType] BLOCKED: Cannot create active_created_character from lightweight create path. Route to dedicated Active Creative Character creation page.');
+        setSaveResult({
+          success: false,
+          message: 'Active Creative Characters must be created from the dedicated character creation page, not from this lightweight panel. Please navigate to the character creation flow.',
+          blockAction: 'active_created_character_lightweight_create_forbidden',
+        });
+        setIsSaving(false);
+        return;
+      }
+
       // ── PRE-CREATE DIAGNOSTIC LOG ──────────────────────────────────────────
       console.log('[EditCharacterType] handleCreateNew PRE-CREATE:', JSON.stringify({
         route: 'Settings → Edit Character Type → Create New',
         selectedType,
+        activeCreatedCharacterGuardPassed: selectedType !== 'active_created_character',
         currentUserEmailPresent: !!lockedActingUserEmail,
         owner_email: lockedActingUserEmail,
         owner_user_id_present: !!lockedActingUserId,
@@ -495,15 +508,22 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         attemptingCharacterCreate: true,
       }));
 
-      const charData = {
-        name: newCharName.trim(),
-        character_type: selectedType,
-        status: "active",
-        owner_email: lockedActingUserEmail,
-        owner_user_id: lockedActingUserId,
-        created_by_role: lockedActingUserRole,
-        exclude_from_homepage: selectedType !== 'active_created_character',
-      };
+      // Import the shared helper at the top of the file
+      const { buildNpcCharacterCreatePayload } = await import('@/lib/npcCharacterCreatePayloadBuilder');
+      
+      const charData = buildNpcCharacterCreatePayload({
+        currentUser: {
+          email: lockedActingUserEmail,
+          id: lockedActingUserId,
+          role: lockedActingUserRole,
+        },
+        name: newCharName,
+        characterType: selectedType,
+        linkedActiveCharacterId: linkedCharId,
+        relationshipType: relationshipType,
+        familyTitle: familyTitle,
+        source: 'EditCharacterType.handleCreateNew',
+      });
 
       const created = await base44.entities.Character.create(charData);
 
