@@ -25,14 +25,58 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const bottomRef = useRef(null);
 
-  // ── LOAD CONTACTS via shared resolver ────────────────────────────────────
+  // ── LOAD CONTACTS via shared resolver + bilateral conversations ──────────────
   useEffect(() => {
     if (!isOpen || !character?.id) return;
     setIsLoadingContacts(true);
+    
     base44.auth.me()
-      .then(me => resolveCharacterContacts(character, me?.email, me))
-      .then(list => {
-        setContacts(list);
+      .then(async me => {
+        // Get contacts from resolver
+        const contactList = await resolveCharacterContacts(character, me?.email, me);
+        
+        // Load conversations where this character is ANY participant
+        const convos = await base44.entities.Conversation.filter(
+          { character_ids: [character.id] },
+          '-updated_date',
+          100
+        ).catch(() => []);
+
+        // Merge conversation-linked contacts that aren't already in the list
+        const conversationContacts = [];
+        for (const convo of convos) {
+          const otherCharIds = (convo.character_ids || []).filter(id => id !== character.id);
+          for (const otherId of otherCharIds) {
+            // Check if this contact is already in the list
+            const alreadyExists = contactList.some(c => c.related_character_id === otherId);
+            if (!alreadyExists) {
+              // Fetch the character to get their name
+              try {
+                const otherChar = await base44.asServiceRole.entities.Character.filter({ id: otherId }).then(chars => chars[0]);
+                if (otherChar) {
+                  conversationContacts.push({
+                    person_name: otherChar.name,
+                    relationship_type: 'contact',
+                    related_character_id: otherId,
+                    avatar_url: otherChar.avatar_url || null,
+                    _source: 'conversation',
+                    _linkage: 'linked',
+                  });
+                }
+              } catch {}
+            }
+          }
+        }
+
+        // Merge and deduplicate
+        const mergedContacts = [...contactList];
+        for (const contact of conversationContacts) {
+          if (!mergedContacts.some(c => c.related_character_id === contact.related_character_id)) {
+            mergedContacts.push(contact);
+          }
+        }
+
+        setContacts(mergedContacts);
         setIsLoadingContacts(false);
       })
       .catch(() => {
@@ -265,16 +309,22 @@ Reply as ${selectedContact.person_name}:`;
       source: 'world_phone',
     }).catch(() => {});
 
-    // FIX: Always fire bilateral memory when both character IDs are known.
-    // This covers the case where related_character_id was enriched from a Character record above.
+    // ── BILATERAL CONVERSATION SYNC ──────────────────────────────────────────────
+    // Sync the conversation so both characters remember it and can access it later.
     if (selectedContact.related_character_id) {
-      base44.functions.invoke('syncWorldPhoneMemory', {
-        senderCharacterId: character.id,
-        receiverCharacterId: selectedContact.related_character_id,
-        messageContent: `${character.name}: ${text}\n${selectedContact.person_name}: ${npcText}`,
-        context: 'world_phone',
-        conversationId: convoId,
-      }).catch(() => {});
+      base44.functions.invoke('syncBilateralCharacterConversation', {
+        sender_character_id: character.id,
+        receiver_character_id: selectedContact.related_character_id,
+        conversation_id: convoId,
+        message_id: userMsg.id,
+        message_content: text,
+        response_content: npcText,
+        channel: 'world_phone',
+        topic: text.substring(0, 100),
+        emotional_tone: character?.emotional_state || 'calm',
+        outcome: 'shared',
+        timestamp: new Date().toISOString(),
+      }).catch(err => console.warn('[WorldContactsPopup] syncBilateralCharacterConversation failed:', err.message));
     }
   };
 
