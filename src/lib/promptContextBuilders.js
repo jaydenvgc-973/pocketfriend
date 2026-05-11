@@ -8,6 +8,7 @@
 
 import { callLLMWithRetry } from "@/lib/llmUtils";
 import { isGloballyRateLimited } from "@/lib/simulationGate";
+import { extractUrlsFromText, analyzeSharedLinkForCharacter, messageContainsLink } from "@/lib/analyzeLinkForCharacterContext";
 
 // ── EDUCATION & TRAINING CONTEXT ─────────────────────────────────────────────
 
@@ -451,6 +452,41 @@ Mature implication without graphic detail.
 ════════════════════════════════════`);
 
   return lines.length > 0 ? '\n\n' + lines.join('\n\n') : '';
+}
+
+// ── LINK / VIDEO CONTEXT BUILDER ─────────────────────────────────────────────
+
+/**
+ * If the user message contains a URL, analyze it and return a context block.
+ * Returns empty string if no link is detected or if rate limited.
+ *
+ * @param {string} text - User message text
+ * @param {string|null} messageId - Message ID to store result on
+ * @param {string|null} conversationId
+ * @param {string|null} characterId
+ * @returns {Promise<string>} - Context block ready for LLM prompt injection
+ */
+export async function buildLinkContext(text, messageId = null, conversationId = null, characterId = null) {
+  if (!text || isGloballyRateLimited()) return '';
+  if (!messageContainsLink(text)) return '';
+
+  const urls = extractUrlsFromText(text);
+  if (urls.length === 0) return '';
+
+  // Analyze the first URL only (most common case is one link per message)
+  const url = urls[0];
+  try {
+    const { linkAnalysisContext } = await analyzeSharedLinkForCharacter({
+      url,
+      messageId,
+      conversationId,
+      characterId,
+    });
+    return linkAnalysisContext || '';
+  } catch (err) {
+    console.warn('[buildLinkContext] Failed:', err?.message);
+    return '';
+  }
 }
 
 // ── LOCATION RESPONSE VALIDATOR ───────────────────────────────────────────────

@@ -29,7 +29,7 @@ import { resolvePhotoSubject } from "@/lib/photoSubjectResolver";
 import ChatApprovals from "@/components/chat/ChatApprovals";
 import LogHousingChangeModal from "@/components/housing/LogHousingChangeModal";
 import { callLLMWithRetry } from "@/lib/llmUtils";
-import { buildEducationContext, buildSongsContext, buildDynamicContexts, buildImageRule, validateLocationInResponse } from "@/lib/promptContextBuilders";
+import { buildEducationContext, buildSongsContext, buildDynamicContexts, buildImageRule, validateLocationInResponse, buildLinkContext } from "@/lib/promptContextBuilders";
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
 import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
 import { useApprovalEvents } from "@/hooks/useApprovalEvents";
@@ -382,11 +382,9 @@ export default function Chat() {
       return;
     }
 
-    const videoLinkMatch = text.match(/https?:\/\/[^\s]*(youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|instagram\.com|twitch\.tv|dailymotion\.com)[^\s]*/i);
-    if (videoLinkMatch) {
-      await handleShareSong(videoLinkMatch[0], true);
-      return;
-    }
+    // NOTE: video links are NO LONGER routed to handleShareSong.
+    // They go through the analyzeSharedLink pipeline below so the character
+    // actually understands the content rather than just showing a card.
 
     const lookupMatch = text.match(/(?:look up|search|find out|what.*about|can you.*find|research)[\s:]*(.*?)(?:\?|$)/i);
 
@@ -438,46 +436,15 @@ export default function Chat() {
         }
       }
 
-      // ── LINK-AWARE CONTEXT EXTRACTION ─────────────────────────────────────
-    // Detect any general URLs (non-music, non-video already handled above)
-    const generalLinkMatch = text.match(/https?:\/\/[^\s]+/gi);
+      // ── LINK / VIDEO UNDERSTANDING PIPELINE ───────────────────────────────
+    // Uses analyzeSharedLink backend function + tiered confidence model.
+    // Handles: YouTube, Instagram, TikTok, Twitter/X, Reddit, Facebook, Dailymotion, articles, images.
+    // Excludes music links (handled by handleShareSong above).
+    // Characters respond based ONLY on verified extracted content — never hallucinate.
+    const isMusicLink = /(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|tidal\.com|soundcloud\.com|bandcamp\.com)/i.test(text);
     let linkContext = "";
-    if (generalLinkMatch && generalLinkMatch.length > 0) {
-      const detectedLinks = generalLinkMatch.filter(url =>
-        !/(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|tidal\.com|soundcloud\.com|bandcamp\.com)/i.test(url) &&
-        !/(youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|instagram\.com|twitch\.tv|dailymotion\.com)/i.test(url)
-      );
-      if (detectedLinks.length > 0) {
-        const linkResults = await Promise.all(detectedLinks.slice(0, 3).map(async (url) => {
-          try {
-            const res = await base44.functions.invoke('performWebLookup', {
-              characterId,
-              searchQuery: url,
-              sourceUrl: url,
-            });
-            const data = res?.data;
-            if (data?.title || data?.summary) {
-              return `URL: ${url}\nTitle: ${data.title || 'Unknown'}\nContent: ${data.summary || data.description || 'No content retrieved'}`;
-            }
-            return `URL: ${url}\n(Content could not be retrieved)`;
-          } catch {
-            return `URL: ${url}\n(Content could not be retrieved)`;
-          }
-        }));
-        linkContext = `\n\n════════════════════════════════════
-    LINK CONTENT — EXACT SOURCE REQUIRED
-    ════════════════════════════════════
-    The user shared the following link(s). You MUST respond ONLY based on the actual content provided below — NOT on general knowledge, artist reputation, title guesses, or assumptions.
-
-    ${linkResults.join('\n\n---\n\n')}
-
-    STRICT RULES:
-    - If content was retrieved: reference SPECIFIC details from it (quotes, facts, topics mentioned)
-    - If content shows "(Content could not be retrieved)": you MUST explicitly tell the user you can see the link but cannot access the actual content. You may mention the URL but must NOT fabricate or guess what it contains.
-    - NEVER pretend to have watched, read, or listened to something you did not receive content for above.
-    - NEVER summarize based on the link title, domain, or your general training knowledge.
-    ════════════════════════════════════`;
-      }
+    if (!isMusicLink) {
+      linkContext = await buildLinkContext(text, userMsg.id, conversationId || null, characterId);
     }
 
     let convoId = conversationIdRef.current || conversationId;
