@@ -305,9 +305,11 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Get all active characters
+    // Get all active characters scoped to the authenticated user only
+    // CRITICAL: must use owner_email — unscoped filter returns characters from all accounts
     const characters = await base44.entities.Character.filter({
       status: 'active',
+      owner_email: user.email,
     });
 
     const results = [];

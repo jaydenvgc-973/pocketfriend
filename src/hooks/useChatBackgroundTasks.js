@@ -118,7 +118,7 @@ export function useChatBackgroundTasks({
       });
     }
 
-    // ── TIER 2 — 2s: approval check + conversation classification (60s cooldown) ──
+    // ── TIER 2 — 2s: approval check + conversation classification + contact intent ──
     setTimeout(() => {
       if (isGloballyRateLimited()) return;
 
@@ -128,6 +128,33 @@ export function useChatBackgroundTasks({
         window.dispatchEvent(new CustomEvent('chat:checkApprovals', {
           detail: { responseText, character, cachedChars, userText: text },
         }));
+      }
+
+      // ── CONTACT INTENT DETECTION ──────────────────────────────────────────
+      // Detect when user instructs Character A to contact Character B.
+      // Triggers a real World Phone thread + bilateral memory — NOT just narrative.
+      // Only fires once per 5 minutes per character to prevent duplicate calls.
+      if (!isOnCooldown(characterId, 'contactIntent', 300000) && text && character) {
+        const contactMatch = text.match(
+          /\b(?:call|text|message|contact|reach out to|hit up|tell|let|check on|check in with|hmu|reach)\b.{0,30}\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i
+        );
+        if (contactMatch) {
+          const rawName = contactMatch[1]?.trim();
+          // Exclude common false positives (user's own world name, pronoun words, etc.)
+          const nonNames = new Set(['me', 'you', 'him', 'her', 'them', 'us', 'it', 'home', 'back', 'out']);
+          if (rawName && rawName.length > 2 && !nonNames.has(rawName.toLowerCase())) {
+            // Only dispatch if the character's response confirms they will do it
+            const responseConfirms = /\b(i'll|i will|i'm going to|gonna|going to|will|okay|sure|yeah|yep)\b.{0,40}\b(call|text|message|contact|reach|hit)\b/i.test(responseText || '');
+            if (responseConfirms) {
+              console.log(`[Governor] Contact intent detected: "${character.name}" → "${rawName}" | response confirms: true`);
+              safeInvoke('triggerCharacterContact', {
+                senderCharacterId: characterId,
+                receiverCharacterName: rawName,
+                topic: text.substring(0, 200),
+              }, characterId, 'contactIntent');
+            }
+          }
+        }
       }
 
       if (!isOnCooldown(characterId, 'classifyConvo', 60000)) {
