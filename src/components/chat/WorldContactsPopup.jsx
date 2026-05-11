@@ -24,6 +24,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [contacts, setContacts] = useState([]);
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const bottomRef = useRef(null);
+  const unsubscribeRef = useRef(null);
 
   // ── LOAD CONTACTS via shared resolver + bilateral conversations ──────────────
   useEffect(() => {
@@ -138,6 +139,24 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         for (const msg of unreadIncoming) {
           await base44.entities.Message.update(msg.id, { is_read: true }).catch(() => {});
         }
+
+        // ── REAL-TIME SUBSCRIPTION: Auto-sync new messages ──────────────────────
+        // When either character adds a message, update the local thread immediately.
+        if (unsubscribeRef.current) unsubscribeRef.current();
+        unsubscribeRef.current = base44.entities.Message.subscribe((event) => {
+          if (event.data?.conversation_id !== found.id) return;
+          if (event.type === "create") {
+            setMessages(prev => {
+              if (prev.some(m => m.id === event.data.id)) return prev;
+              return [...prev, {
+                id: event.data.id,
+                dbId: event.data.id,
+                role: event.data.sender_type === "user" ? "user" : "npc",
+                content: event.data.content,
+              }];
+            });
+          }
+        });
       }
     } catch {
       // Could not load history — start fresh
@@ -148,12 +167,14 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   };
 
   const handleBack = () => {
+    if (unsubscribeRef.current) unsubscribeRef.current();
     setSelectedContact(null);
     setMessages([]);
     setConversationId(null);
   };
 
   const handleClose = () => {
+    if (unsubscribeRef.current) unsubscribeRef.current();
     setSelectedContact(null);
     setMessages([]);
     setConversationId(null);
@@ -320,28 +341,33 @@ Reply as ${selectedContact.person_name}:`;
 
     setIsTyping(false);
 
+    // ── BILATERAL CONVERSATION SYNC (BLOCKING) ──────────────────────────────────
+    // MUST await this before clearing UI state so both characters see the same data.
+    if (selectedContact.related_character_id) {
+      try {
+        await base44.functions.invoke('syncBilateralCharacterConversation', {
+          sender_character_id: character.id,
+          receiver_character_id: selectedContact.related_character_id,
+          conversation_id: convoId,
+          message_id: userMsg.id,
+          message_content: text,
+          response_content: npcText,
+          channel: 'world_phone',
+          topic: text.substring(0, 100),
+          emotional_tone: 'calm',
+          outcome: 'shared',
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.warn('[WorldContactsPopup] syncBilateralCharacterConversation failed:', err.message);
+      }
+    }
+
+    // Sync memories (non-blocking)
     base44.functions.invoke('syncGroupChatMemories', {
       conversationId: convoId,
       source: 'world_phone',
     }).catch(() => {});
-
-    // ── BILATERAL CONVERSATION SYNC ──────────────────────────────────────────────
-    // Sync the conversation so both characters remember it and can access it later.
-    if (selectedContact.related_character_id) {
-      base44.functions.invoke('syncBilateralCharacterConversation', {
-        sender_character_id: character.id,
-        receiver_character_id: selectedContact.related_character_id,
-        conversation_id: convoId,
-        message_id: userMsg.id,
-        message_content: text,
-        response_content: npcText,
-        channel: 'world_phone',
-        topic: text.substring(0, 100),
-        emotional_tone: 'calm',
-        outcome: 'shared',
-        timestamp: new Date().toISOString(),
-      }).catch(err => console.warn('[WorldContactsPopup] syncBilateralCharacterConversation failed:', err.message));
-    }
   };
 
   const handleKeyDown = (e) => {
