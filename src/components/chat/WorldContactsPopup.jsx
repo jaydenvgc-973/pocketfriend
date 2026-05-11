@@ -425,9 +425,18 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       imageAnalysisContext = analysis.imageAnalysisContext;
     }
 
-    // ── MESSAGE SEND SAFETY: Single contact only ──────────────────────────────────
+    // ── MESSAGE SEND SAFETY: Reject if canonical key cannot be computed ──────────
+    // For character-to-character World Phone, a deterministic canonical key is REQUIRED.
+    // If we cannot compute it (no related_character_id), reject the send.
+    // This ensures both directions will always load the same conversation_id.
+    if (!selectedContact?.related_character_id || !canonicalKeyForMsg) {
+      console.warn(`[WorldPhone] REJECTED: Cannot compute canonical key for world phone send. related_id=${selectedContact?.related_character_id} | key=${canonicalKeyForMsg}`);
+      setIsTyping(false);
+      return;
+    }
+
+    // ── CONTACT IDENTITY VERIFICATION ────────────────────────────────────────────
     // Only send to selectedContact — never fan out to all contacts.
-    // Verify selectedContact identity before generating response.
     if (!selectedContact?.person_name) {
       setIsTyping(false);
       return;
