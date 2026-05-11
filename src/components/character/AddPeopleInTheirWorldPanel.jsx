@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, AlertCircle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { buildNpcCharacterCreatePayload } from '@/lib/npcCharacterCreatePayloadBuilder';
 
 export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
   const [mode, setMode] = useState(null); // 'new' | 'existing' | null
@@ -11,84 +12,68 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
   const [errorMsg, setErrorMsg] = useState(null);
   const queryClient = useQueryClient();
 
-  // Get current user for filtering account-associated characters
+  // Get current user
   const { data: currentUser = null } = useQuery({
     queryKey: ['user'],
     queryFn: () => base44.auth.me(),
     staleTime: 60000,
   });
 
-  // Fetch all account characters including active characters and NPCs
+  // Fetch all account characters scoped to owner_email
   const { data: allAccountCharacters = [] } = useQuery({
     queryKey: ['accountCharacters', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      const chars = await base44.entities.Character.filter({
-        owner_email: currentUser.email
-      });
-      // Filter out the current character itself and return all others
+      const chars = await base44.entities.Character.filter({ owner_email: currentUser.email });
       return chars.filter(c => c.id !== character.id);
     },
     enabled: !!currentUser?.email
   });
 
-  // Only show canonical npc_fictitious characters (the valid type for People in Their World)
+  // Only show canonical npc_fictitious characters
   const accountNPCs = allAccountCharacters.filter(c =>
     c.character_type === 'npc_fictitious' && c.id !== character.id
   );
 
-  // Get NPCs already linked to this character
+  // NPCs already linked to this character
   const existingNPCIds = new Set(
     (character.fictional_relationships || [])
       .filter(r => r.related_character_id)
       .map(r => r.related_character_id)
   );
 
-  // Filter to only show NPCs not already linked, sorted A→Z
+  // Available NPCs not yet linked, sorted A→Z
   const availableNPCs = accountNPCs
     .filter(npc => !existingNPCIds.has(npc.id))
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
   const handleAddNew = async () => {
     if (!newName.trim()) return;
-    if (!currentUser?.email) {
-      alert('Error: Unable to determine current user.');
+    setErrorMsg(null);
+
+    // ── GUARD: Owner context is mandatory — fail visibly if missing ───────────
+    if (!currentUser?.email || !currentUser?.id) {
+      setErrorMsg('You must be logged in to add people to this character\'s world. Please refresh and try again.');
+      console.error('[AddPeopleInTheirWorldPanel] BLOCKED — missing currentUser context:', {
+        emailPresent: !!currentUser?.email,
+        idPresent: !!currentUser?.id,
+      });
       return;
     }
+
     setIsLoading(true);
     try {
-      // ── GUARD: Owner context is mandatory ──────────────────────────────────
-      if (!currentUser?.email || !currentUser?.id) {
-        console.error('[AddPeopleInTheirWorldPanel] Missing currentUser context:', {
-          emailPresent: !!currentUser?.email,
-          idPresent: !!currentUser?.id,
-        });
-        setErrorMsg('You must be logged in to add people to this character\'s world.');
-        setIsLoading(false);
-        return;
-      }
-
-      // ── PRE-CREATE DIAGNOSTIC LOG ──────────────────────────────────────────
-      // This panel only supports 'friend' relationship type for fictional_relationships
-      const relationshipType = 'friend';
       console.log('[AddPeopleInTheirWorldPanel] handleAddNew PRE-CREATE:', JSON.stringify({
         route: 'Character Profile → Add to People In Their World → New',
-        selectedType: 'npc_fictitious',
-        currentUserEmailPresent: !!currentUser?.email,
-        owner_email: currentUser.email,
-        owner_user_id_present: !!currentUser?.id,
         character_type: 'npc_fictitious',
+        owner_email: currentUser.email,
+        owner_user_id_present: !!currentUser.id,
         linked_active_character_id: character.id,
-        relationship_type: relationshipType,
-        family_title: null,
+        relationship_type: 'friend',
         payloadHasOwnerEmail: true,
-        attemptingCharacterCreate: true,
       }));
 
-      // Import the shared helper
-      const { buildNpcCharacterCreatePayload } = await import('@/lib/npcCharacterCreatePayloadBuilder');
-
-      // Create new NPC with safe shared payload builder
+      // Build payload via shared helper — sole source of truth for NPC creation
       const charData = buildNpcCharacterCreatePayload({
         currentUser: {
           email: currentUser.email,
@@ -98,23 +83,22 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
         name: newName,
         characterType: 'npc_fictitious',
         linkedActiveCharacterId: character.id,
-        relationshipType: relationshipType,
+        relationshipType: 'friend',
         familyTitle: null,
         source: 'AddPeopleInTheirWorldPanel.handleAddNew',
       });
 
       const newNPC = await base44.entities.Character.create(charData);
 
-      // Add to fictional_relationships
+      // ── RELATIONSHIP UPDATE: attach NPC to parent character's fictional_relationships ──
       const updatedRels = [
         ...(character.fictional_relationships || []),
         {
           person_name: newNPC.name,
           related_character_id: newNPC.id,
-          relationship_type: 'friend'
+          relationship_type: 'friend',
         }
       ];
-
       await base44.entities.Character.update(character.id, {
         fictional_relationships: updatedRels
       });
@@ -124,7 +108,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
       queryClient.invalidateQueries({ queryKey: ['character', character.id] });
       if (onSuccess) onSuccess();
     } catch (error) {
-      alert('Failed to add person: ' + error.message);
+      setErrorMsg('Failed to add person: ' + error.message);
     } finally {
       setIsLoading(false);
     }
@@ -132,6 +116,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
 
   const handleAddExisting = async () => {
     if (!selectedNPC) return;
+    setErrorMsg(null);
     setIsLoading(true);
     try {
       const updatedRels = [
@@ -139,10 +124,9 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
         {
           person_name: selectedNPC.name,
           related_character_id: selectedNPC.id,
-          relationship_type: 'friend'
+          relationship_type: 'friend',
         }
       ];
-
       await base44.entities.Character.update(character.id, {
         fictional_relationships: updatedRels
       });
@@ -152,7 +136,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
       queryClient.invalidateQueries({ queryKey: ['character', character.id] });
       if (onSuccess) onSuccess();
     } catch (error) {
-      alert('Failed to add person: ' + error.message);
+      setErrorMsg('Failed to add person: ' + error.message);
     } finally {
       setIsLoading(false);
     }
@@ -160,17 +144,25 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
 
   return (
     <div className="bg-secondary/30 border border-border rounded-2xl p-4 space-y-3">
+      {/* Visible error banner */}
+      {errorMsg && (
+        <div className="flex items-start gap-2 p-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-xs">
+          <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <p>{errorMsg}</p>
+        </div>
+      )}
+
       {!mode ? (
         <div className="flex gap-2">
           <button
-            onClick={() => setMode('new')}
+            onClick={() => { setMode('new'); setErrorMsg(null); }}
             className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
           >
             <Plus className="w-3 h-3" /> Add New Person
           </button>
           {availableNPCs.length > 0 && (
             <button
-              onClick={() => setMode('existing')}
+              onClick={() => { setMode('existing'); setErrorMsg(null); }}
               className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
             >
               <Plus className="w-3 h-3" /> Add Existing
@@ -197,10 +189,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
               {isLoading ? 'Adding...' : 'Add'}
             </button>
             <button
-              onClick={() => {
-                setNewName('');
-                setMode(null);
-              }}
+              onClick={() => { setNewName(''); setMode(null); setErrorMsg(null); }}
               className="px-3 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground text-xs font-medium transition-colors"
             >
               <X className="w-3 h-3" />
@@ -232,10 +221,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
               {isLoading ? 'Adding...' : 'Add'}
             </button>
             <button
-              onClick={() => {
-                setSelectedNPC(null);
-                setMode(null);
-              }}
+              onClick={() => { setSelectedNPC(null); setMode(null); setErrorMsg(null); }}
               className="px-3 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground text-xs font-medium transition-colors"
             >
               <X className="w-3 h-3" />

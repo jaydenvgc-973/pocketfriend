@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import { motion, AnimatePresence } from "framer-motion";
+import { buildNpcCharacterCreatePayload } from "@/lib/npcCharacterCreatePayloadBuilder";
 
 // Type definitions matching the actual Character entity enum
 const CHARACTER_TYPES = [
@@ -463,40 +464,36 @@ export default function EditCharacterType({ characters = [], currentUser }) {
 
   const handleCreateNew = async () => {
     if (!newCharName.trim() || !selectedType || !canSave()) return;
-    
-    // ══════════════════════════════════════════════════════════════
-    // LOCK ACTING USER CONTEXT AT CREATION START (CRITICAL FIX)
-    // ══════════════════════════════════════════════════════════════
-    if (!currentUser?.email || !currentUser?.id) {
-      setSaveResult({ success: false, message: 'Error: Unable to determine current user.' });
+
+    // ── HARD GUARD (BEFORE ANYTHING ELSE): Active Creative Characters cannot be brand-new from this path ──
+    if (selectedType === 'active_created_character') {
+      console.warn('[EditCharacterType] BLOCKED before create: active_created_character cannot be created from lightweight path.');
+      setSaveResult({
+        success: false,
+        message: 'Active Creative Characters must be created from the dedicated character creation page. Use the "Create" tab to build a new primary character.',
+      });
       return;
     }
-    
+
+    // ── LOCK USER CONTEXT ─────────────────────────────────────────────────────
+    if (!currentUser?.email || !currentUser?.id) {
+      setSaveResult({ success: false, message: 'Error: Unable to determine current user. Please refresh and try again.' });
+      return;
+    }
+
     const lockedActingUserEmail = currentUser.email;
     const lockedActingUserId = currentUser.id;
     const lockedActingUserRole = currentUser.role || "user";
-    
+
     setIsSaving(true);
     setSaveResult(null);
 
     try {
-      // ── HARD GUARD: Active Creative Characters must use dedicated creation flow ──
-      if (selectedType === 'active_created_character') {
-        console.warn('[EditCharacterType] BLOCKED: Cannot create active_created_character from lightweight create path. Route to dedicated Active Creative Character creation page.');
-        setSaveResult({
-          success: false,
-          message: 'Active Creative Characters must be created from the dedicated character creation page, not from this lightweight panel. Please navigate to the character creation flow.',
-          blockAction: 'active_created_character_lightweight_create_forbidden',
-        });
-        setIsSaving(false);
-        return;
-      }
-
       // ── PRE-CREATE DIAGNOSTIC LOG ──────────────────────────────────────────
       console.log('[EditCharacterType] handleCreateNew PRE-CREATE:', JSON.stringify({
         route: 'Settings → Edit Character Type → Create New',
         selectedType,
-        activeCreatedCharacterGuardPassed: selectedType !== 'active_created_character',
+        activeCreatedCharacterGuardPassed: true,
         currentUserEmailPresent: !!lockedActingUserEmail,
         owner_email: lockedActingUserEmail,
         owner_user_id_present: !!lockedActingUserId,
@@ -508,9 +505,6 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         attemptingCharacterCreate: true,
       }));
 
-      // Import the shared helper at the top of the file
-      const { buildNpcCharacterCreatePayload } = await import('@/lib/npcCharacterCreatePayloadBuilder');
-      
       const charData = buildNpcCharacterCreatePayload({
         currentUser: {
           email: lockedActingUserEmail,
