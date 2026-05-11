@@ -1,12 +1,138 @@
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Send, Globe, ArrowLeft, User, Loader2 } from "lucide-react";
+import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
-// Derive a stable conversation key for an NPC chat
-function npcConvoTitle(character, contactName) {
-  return `npc_chat__${character.id}__${contactName}`;
+// ── CONTACT KEY: use stable character_id when available, fall back to name-keyed only for unlinked NPCs ──
+// Format with linked ID:    npc_chat__[ownerCharId]__cid_[contactCharId]
+// Format without linked ID: npc_chat__[ownerCharId]__[contactName]   (legacy / unlinked)
+function npcConvoTitle(ownerCharacterId, contactName, contactCharacterId) {
+  if (contactCharacterId) return `npc_chat__${ownerCharacterId}__cid_${contactCharacterId}`;
+  return `npc_chat__${ownerCharacterId}__${contactName}`;
+}
+
+// ── BUILD MERGED CONTACT LIST from all available sources ──
+// Sources (in priority order — deduped by stable characterId then name):
+//   1. fictional_relationships with related_character_id → linked, highest trust
+//   2. fictional_relationships without related_character_id → name-only (legacy)
+//   3. npc_family_member Character records owned by this character's owner
+//   4. active_created_character / npc_fictitious Character records in existing Conversations
+// A contact with a real Character record gets avatar, stable ID, and bilateral memory.
+async function buildMergedContactList(character, ownerEmail) {
+  const seen = new Map(); // key: related_character_id or person_name → contact object
+
+  // 1 + 2. fictional_relationships (always primary — preserves legacy entries)
+  for (const rel of (character?.fictional_relationships || [])) {
+    if (!rel.person_name) continue;
+    const key = rel.related_character_id || `name:${rel.person_name}`;
+    if (!seen.has(key)) {
+      seen.set(key, {
+        person_name: rel.person_name,
+        relationship_type: rel.relationship_type,
+        description: rel.description,
+        history_summary: rel.history_summary,
+        last_interaction_summary: rel.last_interaction_summary,
+        emotional_impact: rel.emotional_impact,
+        current_status: rel.current_status,
+        romantic_level: rel.romantic_level || 0,
+        friendship_level: rel.friendship_level || 0,
+        related_character_id: rel.related_character_id || null,
+        avatar_url: null, // enriched below if linked
+        // Linkage diagnostics — visible in contact list
+        _linkage: rel.related_character_id ? 'linked' : 'name_only',
+      });
+    }
+  }
+
+  if (!ownerEmail) return [...seen.values()];
+
+  // 3. Pull npc_family_member records on this account — they should be contactable
+  const familyChars = await base44.entities.Character.filter({
+    owner_email: ownerEmail,
+    character_type: 'npc_family_member',
+    status: 'active',
+  }, null, 50).catch(() => []);
+
+  for (const fc of familyChars) {
+    const key = fc.id;
+    if (!seen.has(key)) {
+      seen.set(key, {
+        person_name: fc.name,
+        relationship_type: 'Family',
+        description: fc.profile_summary || fc.backstory || '',
+        history_summary: '',
+        last_interaction_summary: '',
+        emotional_impact: '',
+        current_status: fc.current_activity || '',
+        romantic_level: 0,
+        friendship_level: 50,
+        related_character_id: fc.id,
+        avatar_url: fc.avatar_url || null,
+        _linkage: 'family_character',
+      });
+    } else {
+      // Enrich existing name-only entry with the real character_id and avatar
+      const existing = seen.get(key) || [...seen.values()].find(c =>
+        c.person_name?.trim().toLowerCase() === fc.name?.trim().toLowerCase() && !c.related_character_id
+      );
+      if (existing && !existing.related_character_id) {
+        existing.related_character_id = fc.id;
+        existing.avatar_url = existing.avatar_url || fc.avatar_url || null;
+        existing._linkage = 'linked_from_character_record';
+      }
+    }
+  }
+
+  // 4. Find npc_fictitious records that appear in existing Conversations with this character
+  const existingConvos = await base44.entities.Conversation.filter(
+    { character_ids: [character.id], owner_email: ownerEmail },
+    '-updated_date', 30
+  ).catch(() => []);
+
+  const linkedCharIds = new Set(
+    existingConvos.flatMap(c => c.character_ids || []).filter(id => id !== character.id)
+  );
+
+  if (linkedCharIds.size > 0) {
+    const linkedChars = await Promise.all(
+      [...linkedCharIds].slice(0, 20).map(id =>
+        base44.entities.Character.filter({ id, owner_email: ownerEmail }, null, 1)
+          .then(r => r?.[0] || null).catch(() => null)
+      )
+    );
+    for (const lc of linkedChars.filter(Boolean)) {
+      const key = lc.id;
+      if (!seen.has(key)) {
+        seen.set(key, {
+          person_name: lc.name,
+          relationship_type: lc.character_type === 'npc_fictitious' ? 'Known Contact' : 'Character',
+          description: lc.profile_summary || lc.backstory || '',
+          history_summary: '',
+          last_interaction_summary: '',
+          emotional_impact: '',
+          current_status: lc.current_activity || '',
+          romantic_level: 0,
+          friendship_level: 30,
+          related_character_id: lc.id,
+          avatar_url: lc.avatar_url || null,
+          _linkage: 'linked_from_conversation',
+        });
+      } else {
+        // Enrich name-only entry
+        const existing = [...seen.values()].find(c =>
+          c.person_name?.trim().toLowerCase() === lc.name?.trim().toLowerCase() && !c.related_character_id
+        );
+        if (existing) {
+          existing.related_character_id = lc.id;
+          existing.avatar_url = existing.avatar_url || lc.avatar_url || null;
+          existing._linkage = 'linked_from_conversation';
+        }
+      }
+    }
+  }
+
+  return [...seen.values()];
 }
 
 export default function WorldContactsPopup({ isOpen, onClose, character }) {
@@ -16,9 +142,29 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [contacts, setContacts] = useState([]);
+  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const bottomRef = useRef(null);
 
-  const contacts = (character?.fictional_relationships || []).filter(r => r.person_name);
+  // ── LOAD MERGED CONTACTS when popup opens ─────────────────────────────────
+  useEffect(() => {
+    if (!isOpen || !character?.id) return;
+    setIsLoadingContacts(true);
+    base44.auth.me().then(me => {
+      buildMergedContactList(character, me?.email).then(list => {
+        setContacts(list);
+        setIsLoadingContacts(false);
+      });
+    }).catch(() => {
+      // Fallback: fictional_relationships only — NEVER hide existing contacts
+      const fallback = (character?.fictional_relationships || []).filter(r => r.person_name).map(r => ({
+        ...r,
+        _linkage: r.related_character_id ? 'linked' : 'name_only',
+      }));
+      setContacts(fallback);
+      setIsLoadingContacts(false);
+    });
+  }, [isOpen, character?.id]);
 
   // Load or create a persistent conversation for the selected NPC
   const selectContact = async (contact) => {
@@ -29,14 +175,19 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setIsLoadingHistory(true);
 
     try {
-      const title = npcConvoTitle(character, contact.person_name);
-      // Look for an existing NPC conversation
+      // FIX: Search by BOTH the stable character_id key AND the legacy name-based key.
+      // This prevents creating a new orphan thread when a legacy conversation exists.
       const existing = await base44.entities.Conversation.filter(
         { type: "npc", character_ids: [character.id] },
         "-updated_date",
-        50
+        100
       );
-      const found = existing.find(c => c.title === title);
+
+      const stableTitle = npcConvoTitle(character.id, contact.person_name, contact.related_character_id);
+      const legacyTitle  = npcConvoTitle(character.id, contact.person_name, null); // name-only fallback
+
+      const found = existing.find(c => c.title === stableTitle) ||
+                    existing.find(c => c.title === legacyTitle);
 
       if (found) {
         setConversationId(found.id);
@@ -44,7 +195,6 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           { conversation_id: found.id },
           "created_date"
         );
-        // Normalize to local format
         setMessages(history.map(m => ({
           id: m.id,
           dbId: m.id,
@@ -52,7 +202,6 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           content: m.content,
         })));
 
-        // Mark all unread incoming messages in this conversation as read
         const unreadIncoming = history.filter(m => m.sender_type === "character" && !m.is_read);
         for (const msg of unreadIncoming) {
           await base44.entities.Message.update(msg.id, { is_read: true }).catch(() => {});
@@ -88,13 +237,17 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
 
   const ensureConversation = async () => {
     if (conversationId) return conversationId;
-    const title = npcConvoTitle(character, selectedContact.person_name);
-    // Fetch current user email for ownership stamping
+    // FIX: Use stable character_id key when available so future lookups find this thread
+    const title = npcConvoTitle(character.id, selectedContact.person_name, selectedContact.related_character_id);
     const me = await base44.auth.me().catch(() => null);
+    // Include contact's character_id in character_ids when we have it — enables bilateral memory
+    const charIds = selectedContact.related_character_id
+      ? [character.id, selectedContact.related_character_id]
+      : [character.id];
     const convo = await base44.entities.Conversation.create({
       title,
       type: "npc",
-      character_ids: [character.id],
+      character_ids: charIds,
       owner_email: me?.email || character.owner_email,
     });
     setConversationId(convo.id);
@@ -107,7 +260,6 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setInputText("");
     setIsTyping(true);
 
-    // Persist user message
     const convoId = await ensureConversation();
     const savedUserMsg = await base44.entities.Message.create({
       conversation_id: convoId,
@@ -119,15 +271,11 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "user", content: text };
     setMessages(prev => [...prev, userMsg]);
 
-    // Build history string for LLM (using persisted messages + new one)
     const allMsgs = [...messages, userMsg];
     const historyStr = allMsgs
       .map(m => `${m.role === "user" ? "User" : selectedContact.person_name}: ${m.content}`)
       .join("\n");
 
-    // ── Fetch canonical hard facts for the owner character so the NPC has
-    //    accurate current truth (housing, location, status, emotional state).
-    //    This ensures the NPC reflects the same reality as Chat/Text/Scene.
     let characterHardFacts = "";
     let characterMemoryContext = "";
     try {
@@ -177,11 +325,12 @@ Reply as ${selectedContact.person_name}:`;
       npcText = "...";
     }
 
-    // Persist NPC reply
+    // FIX: Stamp the CONTACT's real character_id on the reply message (not the owner's ID).
+    // This ensures reply messages are correctly attributed and memory queries find them.
     const savedNpcMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",
-      character_id: character.id,
+      character_id: selectedContact.related_character_id || character.id, // ← real contact ID when known
       character_name: selectedContact.person_name,
       content: npcText,
       timestamp: new Date().toISOString(),
@@ -190,7 +339,6 @@ Reply as ${selectedContact.person_name}:`;
     const npcMsg = { id: savedNpcMsg.id, dbId: savedNpcMsg.id, role: "npc", content: npcText };
     setMessages(prev => [...prev, npcMsg]);
 
-    // Update conversation timestamp
     await base44.entities.Conversation.update(convoId, {
       last_message_preview: npcText.substring(0, 100),
       last_message_date: new Date().toISOString(),
@@ -198,14 +346,13 @@ Reply as ${selectedContact.person_name}:`;
 
     setIsTyping(false);
 
-    // Sync to Life Journal for owner character — fire-and-forget
     base44.functions.invoke('syncGroupChatMemories', {
       conversationId: convoId,
       source: 'world_phone',
     }).catch(() => {});
 
-    // Write bi-directional durable memory if the contact has a linked character ID
-    // This ensures the contact remembers this exchange when encountered in Chat/Text/Scene
+    // FIX: Always fire bilateral memory when both character IDs are known.
+    // This covers the case where related_character_id was enriched from a Character record above.
     if (selectedContact.related_character_id) {
       base44.functions.invoke('syncWorldPhoneMemory', {
         senderCharacterId: character.id,
@@ -275,7 +422,11 @@ Reply as ${selectedContact.person_name}:`;
           {!selectedContact ? (
             /* Contact List */
             <div className="flex-1 overflow-y-auto py-2">
-              {contacts.length === 0 ? (
+              {isLoadingContacts ? (
+                <div className="flex items-center justify-center h-16">
+                  <Loader2 className="w-5 h-5 text-muted-foreground animate-spin" />
+                </div>
+              ) : contacts.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center px-6">
                   <Globe className="w-10 h-10 text-muted-foreground mb-3" />
                   <p className="text-sm text-muted-foreground">No known contacts yet.</p>
@@ -286,17 +437,19 @@ Reply as ${selectedContact.person_name}:`;
               ) : (
                 contacts.map((contact, i) => (
                   <motion.button
-                    key={i}
+                    key={contact.related_character_id || `name:${contact.person_name}`}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.04 }}
                     onClick={() => selectContact(contact)}
                     className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/60 transition-colors text-left"
                   >
-                    <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
-                      <span className="text-sm font-semibold text-primary">
-                        {contact.person_name?.[0]?.toUpperCase() || "?"}
-                      </span>
+                    {/* Avatar: real photo if linked, else letter initial */}
+                    <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0 overflow-hidden flex-shrink-0">
+                      {contact.avatar_url
+                        ? <img src={contact.avatar_url} alt={contact.person_name} className="w-full h-full object-cover" />
+                        : <span className="text-sm font-semibold text-primary">{contact.person_name?.[0]?.toUpperCase() || "?"}</span>
+                      }
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-foreground">{contact.person_name}</p>
@@ -305,10 +458,16 @@ Reply as ${selectedContact.person_name}:`;
                         {contact.current_status ? ` · ${contact.current_status}` : ""}
                       </p>
                     </div>
-                    <div className="flex-shrink-0 flex gap-1">
+                    <div className="flex-shrink-0 flex items-center gap-1">
                       {contact.romantic_level > 30 && <span className="text-xs text-pink-400">❤</span>}
                       {contact.friendship_level > 70 && contact.romantic_level <= 30 && (
                         <span className="text-xs text-emerald-400">✦</span>
+                      )}
+                      {/* DIAGNOSTIC: show linkage state — name-only contacts are visibly flagged */}
+                      {!contact.related_character_id && (
+                        <span title="Not linked to a Character record — bilateral memory may be incomplete">
+                          <AlertTriangle className="w-3 h-3 text-amber-400/70" />
+                        </span>
                       )}
                     </div>
                   </motion.button>
@@ -323,6 +482,13 @@ Reply as ${selectedContact.person_name}:`;
                   <p className="text-xs text-muted-foreground line-clamp-2">{selectedContact.description}</p>
                 </div>
               )}
+              {/* Linkage diagnostic banner — visible, non-destructive */}
+              {!selectedContact.related_character_id && (
+                <div className="px-4 py-1.5 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-2 flex-shrink-0">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                  <p className="text-[10px] text-amber-300/80">Not linked to a Character record — memory may not carry over to Chat/Scene</p>
+                </div>
+              )}
 
               {/* Messages */}
               <div className="flex-1 overflow-y-auto py-4 space-y-2 px-4">
@@ -333,8 +499,11 @@ Reply as ${selectedContact.person_name}:`;
                 ) : messages.length === 0 ? (
                   <div className="flex justify-center mt-8">
                     <div className="flex flex-col items-center gap-2 text-center px-4">
-                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                        <User className="w-6 h-6 text-primary" />
+                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+                        {selectedContact.avatar_url
+                          ? <img src={selectedContact.avatar_url} alt={selectedContact.person_name} className="w-full h-full object-cover" />
+                          : <User className="w-6 h-6 text-primary" />
+                        }
                       </div>
                       <p className="text-sm font-medium text-foreground">{selectedContact.person_name}</p>
                       <p className="text-xs text-muted-foreground max-w-xs">

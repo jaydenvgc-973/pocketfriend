@@ -52,15 +52,36 @@ ${charName} must be instantly recognizable as the same person.${appearanceLockBl
  * Ensures each character maintains distinct, consistent identity
  */
 export function buildMultiCharacterIdentityLocks(characters = []) {
-  const validChars = characters.filter(c => c && c.id && c.avatar_url);
+  // CRITICAL FIX: Do NOT exclude characters only because avatar_url is missing.
+  // Characters with reference_image_urls OR appearance_lock data are still valid identity sources.
+  const validChars = characters.filter(c =>
+    c && c.id && (
+      c.avatar_url ||
+      c.image_avatar_url ||
+      (c.reference_image_urls && c.reference_image_urls.length > 0) ||
+      c.appearance_lock ||
+      c.appearance_notes ||
+      c.avatar_description_text
+    )
+  );
   if (validChars.length === 0) return '';
 
   const locks = validChars.map((char, idx) => {
     const avatarUrl = char.avatar_url || char.image_avatar_url || '';
+    const refUrls = (char.reference_image_urls || []).filter(u => u && !u.includes('generated_image'));
+    const appearanceSummary = [
+      char.appearance_lock?.skin_tone ? `skin: ${char.appearance_lock.skin_tone}` : null,
+      char.appearance_lock?.hairstyle ? `hair: ${char.appearance_lock.hairstyle}` : null,
+      char.appearance_lock?.facial_hair ? `facial hair: ${char.appearance_lock.facial_hair}` : null,
+      char.avatar_description_text || null,
+      char.appearance_notes || null,
+    ].filter(Boolean).join(', ');
     return `
 [${idx + 1}] ${char.name}
-Avatar: ${avatarUrl}
-MUST match face exactly — same person every time, no drift`;
+${avatarUrl ? `Avatar: ${avatarUrl}` : '(no avatar — use appearance description below)'}
+${refUrls.length > 0 ? `Reference photos: ${refUrls.slice(0, 2).join(', ')}` : ''}
+${appearanceSummary ? `Appearance: ${appearanceSummary}` : ''}
+MUST match face/identity exactly — same person every time, no drift`;
   }).join('\n');
 
   return `
@@ -157,7 +178,19 @@ export function validateIdentityLockCompliance(prompt = '') {
  * Returns list of characters that can be identity-locked
  */
 export function getIdentityLockableCharacters(characters = []) {
-  return characters.filter(c => c && c.id && (c.avatar_url || c.image_avatar_url));
+  // CRITICAL FIX: Do NOT gate on avatar_url alone.
+  // A character is identity-lockable if they have ANY visual reference (avatar, reference_image_urls)
+  // OR any appearance_lock/text description to anchor identity in the prompt.
+  return characters.filter(c =>
+    c && c.id && (
+      c.avatar_url ||
+      c.image_avatar_url ||
+      (c.reference_image_urls && c.reference_image_urls.length > 0) ||
+      c.appearance_lock ||
+      c.appearance_notes ||
+      c.avatar_description_text
+    )
+  );
 }
 
 /**

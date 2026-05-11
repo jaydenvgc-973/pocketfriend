@@ -296,11 +296,15 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         ].filter(Boolean)
       : [];
 
-    // Build primary character refs from their avatar + reference photos
-    const charRefImages = [
-      character.avatar_url,
-      ...(character.reference_image_urls || []).slice(0, 2),
-    ].filter(Boolean);
+    // FIX: Do NOT use avatar_url as the primary reference image.
+    // Avatar photos contain background, pose, and lighting that contaminate the generated scene.
+    // Use reference_image_urls (real face photos) first. Only fall back to avatar if none exist.
+    const refUrls = (character.reference_image_urls || [])
+      .filter(url => url && !url.includes('generated_image'))
+      .slice(0, 3);
+    const charRefImages = refUrls.length > 0
+      ? refUrls
+      : (character.avatar_url ? [character.avatar_url] : []);
 
     setIsGenerating(true);
     setGenerateError(null);

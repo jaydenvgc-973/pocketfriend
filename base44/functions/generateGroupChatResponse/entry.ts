@@ -11,8 +11,15 @@ const INDEPENDENT_MSG_LIMIT = 3; // strict cap per character per cycle
 function isCharacterAsleepServer(character) {
   const sleepStart = character?.sleep_start_time || "23:00";
   const wakeUp = character?.wake_up_time || "07:00";
+
+  // FIX: sleep_start_time and wake_up_time are LOCAL (Eastern) time strings.
+  // getUTCHours() was comparing them against UTC, blocking characters 5h early for ET users.
+  // Use Eastern local time via toLocaleString for the comparison.
   const now = new Date();
-  const currentMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const etString = now.toLocaleString("en-US", { timeZone: "America/New_York" });
+  const etDate = new Date(etString);
+  const currentMinutes = etDate.getHours() * 60 + etDate.getMinutes();
+
   const [sleepH, sleepM] = sleepStart.split(":").map(Number);
   const [wakeH, wakeM] = wakeUp.split(":").map(Number);
   const sleepMinutes = sleepH * 60 + sleepM;
@@ -72,12 +79,38 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Invalid conversation' }, { status: 400 });
     }
 
-    // Ownership-scoped character load — use conversation's owner context
-    // Fall back to asServiceRole only to match by character_ids (already scoped by IDs from this convo)
+    // FIX: Load characters by stable character_ids from the conversation.
+    // If asServiceRole filter fails, do NOT silently fall back to base44.entities.Character.list()
+    // which may return 0 characters and produce zero responses with no visible error.
+    const characterIds = conversation.character_ids || [];
+    if (characterIds.length === 0) {
+      console.error(`[GROUP-CHAT] conversation ${conversation.id} has no character_ids — cannot respond`);
+      return Response.json({ error: 'No character_ids on conversation', debug: [] }, { status: 422 });
+    }
+
     const characters = await base44.asServiceRole.entities.Character.filter({
-      id: { $in: conversation.character_ids || [] }
-    }).catch(() => base44.entities.Character.list());
-    const convoCharacters = characters.filter(c => conversation.character_ids?.includes(c.id));
+      id: { $in: characterIds }
+    }).catch(async (err) => {
+      // Log the actual error — do not silently fall back to list()
+      console.error(`[GROUP-CHAT] Failed to load characters by ID: ${err.message}`);
+      return [];
+    });
+
+    const convoCharacters = characters.filter(c => characterIds.includes(c.id));
+
+    // FAIL VISIBLY: if we expected characters but got none, surface the failure
+    if (convoCharacters.length === 0) {
+      console.error(
+        `[GROUP-CHAT] FAIL: 0/${characterIds.length} characters loaded for conversation ${conversation.id}.` +
+        ` IDs: ${characterIds.join(', ')}. Characters may have been deleted or are inaccessible.`
+      );
+      return Response.json({
+        error: 'No eligible characters found',
+        detail: `Expected ${characterIds.length} character(s) but loaded 0. Check if character IDs are valid and accessible.`,
+        character_ids_expected: characterIds,
+        debug: [],
+      }, { status: 422 });
+    }
 
     const messages = await base44.entities.Message.filter(
       { conversation_id: conversation.id },

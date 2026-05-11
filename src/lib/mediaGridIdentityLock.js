@@ -12,8 +12,9 @@ export async function resolveUserVisualRefs(base44, userEmail) {
   if (!userEmail) return { refs: [], missing: true };
 
   try {
+    // OWNERSHIP: use owner_email — created_by is permanently forbidden
     const settingsList = await base44.entities.UserSettings.filter(
-      { created_by: userEmail },
+      { owner_email: userEmail },
       null,
       1
     ).catch(() => []);
@@ -31,7 +32,8 @@ export async function resolveUserVisualRefs(base44, userEmail) {
 }
 
 /**
- * Resolve character visual reference images from Character record
+ * Resolve character visual reference images AND appearance text from Character record.
+ * Returns both refs (image URLs) and appearanceText (for prompt identity injection).
  */
 export async function resolveCharacterVisualRefs(base44, characterId, allCharacters = null) {
   let char = null;
@@ -47,28 +49,47 @@ export async function resolveCharacterVisualRefs(base44, characterId, allCharact
       const list = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
       char = list?.[0] || null;
     } catch {
-      return { refs: [], missing: true };
+      return { refs: [], missing: true, appearanceText: null };
     }
   }
 
-  if (!char) return { refs: [], missing: true };
+  if (!char) return { refs: [], missing: true, appearanceText: null };
 
-  // Priority: reference_image_urls ONLY (not avatar, to avoid scene contamination)
-  // Exclude generated_image.png files (AI outputs, not face photos)
+  // Build appearance text for prompt injection — used even when no reference images exist
+  const lock = char.appearance_lock || {};
+  const appearanceParts = [
+    char.age_range ? `${char.age_range} years old` : null,
+    char.gender || null,
+    (char.ethnicities || []).length > 0 ? char.ethnicities.join('/') + ' ethnicity' : null,
+    lock.skin_tone ? `${lock.skin_tone} skin tone` : null,
+    lock.hairstyle ? `${lock.hairstyle} hairstyle` : null,
+    lock.hair_type ? `${lock.hair_type} hair` : null,
+    lock.facial_hair || null,
+    char.appearance_notes || null,
+    char.avatar_description_text || null,
+  ].filter(Boolean);
+  const appearanceText = appearanceParts.length > 0 ? appearanceParts.join(', ') : null;
+
+  // Priority: reference_image_urls ONLY (not avatar as primary, to avoid scene contamination)
   const allRefs = (char.reference_image_urls || []).filter(
     url => url && typeof url === 'string' && !url.includes('generated_image')
   );
 
   if (allRefs.length > 0) {
-    return { refs: allRefs, missing: false };
+    return { refs: allRefs, missing: false, appearanceText };
   }
 
-  // Fallback: avatar only if no reference images
+  // Fallback: avatar only if no reference images — still valid, just weaker identity lock
   if (char.avatar_url) {
-    return { refs: [char.avatar_url], missing: false };
+    return { refs: [char.avatar_url], missing: false, appearanceText };
   }
 
-  return { refs: [], missing: true };
+  // No images at all — but if we have appearance text, identity can still be described in prompt
+  if (appearanceText) {
+    return { refs: [], missing: false, appearanceText };
+  }
+
+  return { refs: [], missing: true, appearanceText: null };
 }
 
 /**
@@ -92,33 +113,33 @@ export async function validateSelectedPeopleIdentities(
 
   // 1. PRIMARY CHARACTER (always required in chat)
   if (primaryCharacterId) {
-    const { refs: charRefs, missing } = await resolveCharacterVisualRefs(
+    const { refs: charRefs, missing, appearanceText } = await resolveCharacterVisualRefs(
       base44,
       primaryCharacterId,
       allCharacters
     );
     if (missing) {
-      errors.push(`Primary character has no visual reference images. Cannot generate.`);
+      errors.push(`Primary character has no visual reference images or appearance data. Cannot generate.`);
     } else {
-      selectedPeople.character = { id: primaryCharacterId, refs: charRefs };
+      selectedPeople.character = { id: primaryCharacterId, refs: charRefs, appearanceText };
     }
   }
 
   // 2. ADDITIONAL SELECTED CHARACTERS (from multi-select)
   if (selectedCharacterIds && selectedCharacterIds.length > 0) {
     for (const charId of selectedCharacterIds) {
-      if (charId === primaryCharacterId) continue; // Skip primary (already validated)
+      if (charId === primaryCharacterId) continue;
 
-      const { refs: charRefs, missing } = await resolveCharacterVisualRefs(
+      const { refs: charRefs, missing, appearanceText } = await resolveCharacterVisualRefs(
         base44,
         charId,
         allCharacters
       );
       if (missing) {
         const charName = allCharacters?.find(c => c.id === charId)?.name || charId;
-        errors.push(`Character "${charName}" has no visual reference images.`);
+        errors.push(`Character "${charName}" has no visual reference images or appearance description.`);
       } else {
-        selectedPeople.others.push({ id: charId, refs: charRefs });
+        selectedPeople.others.push({ id: charId, refs: charRefs, appearanceText });
       }
     }
   }
@@ -154,22 +175,24 @@ export function buildMultiPersonPayload(selectedPeople, prompt, locationId, zone
     zoneName: zoneName || null,
   };
 
-  // Primary character
+  // Primary character — include appearance text for prompt identity injection
   if (selectedPeople.character) {
     payload.selectedCharacters.push({
       role: 'primary',
       id: selectedPeople.character.id,
       referenceImages: selectedPeople.character.refs,
+      appearanceText: selectedPeople.character.appearanceText || null,
     });
   }
 
-  // Additional characters
+  // Additional characters — include per-character appearance text for each subject slot
   if (selectedPeople.others && selectedPeople.others.length > 0) {
     selectedPeople.others.forEach((char, idx) => {
       payload.selectedCharacters.push({
         role: `additional_${idx}`,
         id: char.id,
         referenceImages: char.refs,
+        appearanceText: char.appearanceText || null,
       });
     });
   }
