@@ -165,6 +165,14 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       imageAnalysisContext = analysis.imageAnalysisContext;
     }
 
+    // ── MESSAGE SEND SAFETY: Single contact only ──────────────────────────────────
+    // Only send to selectedContact — never fan out to all contacts.
+    // Verify selectedContact identity before generating response.
+    if (!selectedContact?.person_name) {
+      setIsTyping(false);
+      return;
+    }
+
     const allMsgs = [...messages, userMsg];
     const historyStr = allMsgs
       .map(m => `${m.role === "user" ? "User" : selectedContact.person_name}: ${m.content}`)
@@ -221,6 +229,18 @@ Reply as ${selectedContact.person_name}:`;
 
     // FIX: Stamp the CONTACT's real character_id on the reply message (not the owner's ID).
     // This ensures reply messages are correctly attributed and memory queries find them.
+    // SAFETY: Verify contact is not the user before creating message.
+    const currentUser = await base44.auth.me().catch(() => null);
+    const isUserContact = selectedContact.related_character_id === currentUser?.id ||
+                         selectedContact.email === currentUser?.email ||
+                         selectedContact.is_user === true;
+    
+    if (isUserContact) {
+      console.warn(`[WorldContactsPopup] BLOCKED: Attempted to create message as user contact "${selectedContact.person_name}"`);
+      setIsTyping(false);
+      return;
+    }
+
     const savedNpcMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",

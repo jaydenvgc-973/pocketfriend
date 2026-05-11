@@ -95,40 +95,19 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     });
   }
 
-  // ── SOURCE 2: family_members ─────────────────────────────────────────────────
-  // Add to contact list if not already present from fictional_relationships.
-  // Also capture any inline image fields for avatar hydration.
+  // ── SOURCE 2: family_members [REMOVED] ───────────────────────────────────────
+  // Internal family_members list is NOT a World Contacts source.
+  // Family members appear only if they are:
+  // 1. Already established in fictional_relationships
+  // 2. Linked as real Character records from conversation history
+  // 
+  // Capture inline avatars for hydration only — do NOT create contacts from family_members alone.
   const familyInlineAvatars = new Map(); // name.toLowerCase() → inline avatar url
   for (const fm of (character.family_members || [])) {
     const name = fm.name || fm.person_name;
     if (!name) continue;
     const inlineAvatar = fm.avatar_url || fm.image_url || fm.image_avatar_url || null;
     if (inlineAvatar) familyInlineAvatars.set(name.trim().toLowerCase(), inlineAvatar);
-
-    if (isUserSelf(fm)) {
-      console.log(`[ContactsResolver] EXCLUDED (user-self) family_members entry: "${name}"`);
-      continue;
-    }
-    const key = fm.related_character_id || `name:${name}`;
-    if (seen.has(key)) continue; // already in from fictional_relationships
-
-    seen.set(key, {
-      person_name: name,
-      relationship_type: fm.relationship_type || fm.relationship || 'Family',
-      description: fm.description || '',
-      history_summary: '',
-      last_interaction_summary: '',
-      emotional_impact: '',
-      current_status: '',
-      romantic_level: 0,
-      friendship_level: fm.friendship_level || 50,
-      related_character_id: fm.related_character_id || null,
-      avatar_url: inlineAvatar || null,
-      _source: 'family_members',
-      _linkage: fm.related_character_id ? 'linked' : 'name_only',
-      _matched_character_id: null,
-      _avatar_source: inlineAvatar ? 'family_members_inline' : null,
-    });
   }
 
   // ── SOURCE 3: people_in_world / known_people ─────────────────────────────────
