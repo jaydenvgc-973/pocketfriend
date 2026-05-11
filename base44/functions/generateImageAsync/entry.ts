@@ -1035,12 +1035,8 @@ Deno.serve(async (req) => {
       return s.trim();
     }
     // CRITICAL: sanitizePrompt IS defined above — call it here.
-    // Previously this line was `const sanitizedPrompt = prompt` which bypassed the entire
-    // classification-first sanitization system, making it dead code.
-    // The original scene prompt must be sanitized before being passed to buildPrompt.
-    // The sanitizer classifies context first (safe vs explicit) and only rewrites when necessary.
     const rawPromptForSanitize = prompt.replace(/^\[CHARACTER\]\s*/i, '').trim();
-    const sanitizedPrompt = sanitizePrompt(rawPromptForSanitize);
+    let sanitizedPrompt = sanitizePrompt(rawPromptForSanitize);
 
     if (sanitizedPrompt !== rawPromptForSanitize) {
       console.log(`[generateImageAsync] ⚠️ PROMPT MUTATION DETECTED:`);
@@ -1048,6 +1044,87 @@ Deno.serve(async (req) => {
       console.log(`  AFTER:  ${sanitizedPrompt}`);
     } else {
       console.log(`[generateImageAsync] ✓ Prompt passed sanitizer unchanged`);
+    }
+
+    // ── APPEARANCE LOCK VALIDATION (Part 4) ──────────────────────────────────
+    // Validate the sanitized prompt against the character's appearance_lock BEFORE generation.
+    // If the prompt contains wording that directly contradicts locked appearance fields,
+    // remove or rewrite the conflicting phrase. appearance_lock always wins.
+    // This is applied to sanitizedPrompt (reassignable let) so corrections feed into buildPrompt.
+    function validatePromptAgainstAppearanceLock(p, lock) {
+      if (!lock || typeof lock !== 'object') return { prompt: p, corrections: [] };
+      const corrections = [];
+      let result = p;
+
+      // Hair type/style conflicts
+      if (lock.hair_type || lock.hairstyle) {
+        const lockedHair = [lock.hair_type, lock.hairstyle].filter(Boolean).join(' ').toLowerCase();
+        const isLongOrVoluminous = /\b(long|afro|coily|coil|voluminous|thick|natural|curly)\b/.test(lockedHair);
+        if (isLongOrVoluminous) {
+          // Remove contradicting short hair descriptors
+          const shortHairPattern = /\b(short\s+(?:dark\s+)?hair|closely?\s+cropped\s+hair|buzz\s+cut|fade\s+cut|cropped\s+hair)\b/gi;
+          const fixed = result.replace(shortHairPattern, `${lockedHair} hair`);
+          if (fixed !== result) {
+            corrections.push({ field: 'hair', removed: result.match(shortHairPattern)?.[0], injected: `${lockedHair} hair` });
+            result = fixed;
+          }
+        }
+        const isShort = /\b(short|cropped|buzz|fade)\b/.test(lockedHair);
+        if (isShort) {
+          const longHairPattern = /\b(long\s+(?:flowing\s+)?hair|flowing\s+hair|waist[\s-]length\s+hair)\b/gi;
+          const fixed = result.replace(longHairPattern, `${lockedHair} hair`);
+          if (fixed !== result) {
+            corrections.push({ field: 'hair', removed: result.match(longHairPattern)?.[0], injected: `${lockedHair} hair` });
+            result = fixed;
+          }
+        }
+      }
+
+      // Facial hair conflicts
+      if (lock.facial_hair) {
+        const lockedFacial = lock.facial_hair.toLowerCase();
+        const hasBeard = /\b(beard|goatee|stubble|mustache)\b/.test(lockedFacial);
+        const isCleanShaven = /\b(clean.?shaven|no facial hair|shaved)\b/.test(lockedFacial);
+        if (isCleanShaven) {
+          const beardPattern = /\b(thick\s+beard|full\s+beard|long\s+beard|beard|goatee|stubble)\b/gi;
+          const fixed = result.replace(beardPattern, 'clean-shaven');
+          if (fixed !== result) {
+            corrections.push({ field: 'facial_hair', removed: 'beard/stubble', injected: 'clean-shaven' });
+            result = fixed;
+          }
+        } else if (hasBeard) {
+          const cleanPattern = /\bclean.?shaven\b/gi;
+          const fixed = result.replace(cleanPattern, lockedFacial);
+          if (fixed !== result) {
+            corrections.push({ field: 'facial_hair', removed: 'clean-shaven', injected: lockedFacial });
+            result = fixed;
+          }
+        }
+      }
+
+      // Skin tone conflicts — only rewrite if clearly wrong tone is stated
+      if (lock.skin_tone) {
+        const lockedSkin = lock.skin_tone.toLowerCase();
+        const isDark = /\b(dark|deep|rich brown|brown skin|dark brown)\b/.test(lockedSkin);
+        const isFair = /\b(fair|light|pale|porcelain|ivory)\b/.test(lockedSkin);
+        if (isDark) {
+          const fairSkinPattern = /\b(fair[- ]?skinned|light[- ]?skinned|pale[- ]?skinned|pale skin|fair skin|light skin)\b/gi;
+          const fixed = result.replace(fairSkinPattern, `${lockedSkin} skin`);
+          if (fixed !== result) {
+            corrections.push({ field: 'skin_tone', removed: 'fair/light/pale', injected: `${lockedSkin} skin` });
+            result = fixed;
+          }
+        } else if (isFair) {
+          const darkSkinPattern = /\b(dark[- ]?skinned|dark skin|deeply complexioned)\b/gi;
+          const fixed = result.replace(darkSkinPattern, `${lockedSkin} skin`);
+          if (fixed !== result) {
+            corrections.push({ field: 'skin_tone', removed: 'dark-skinned', injected: `${lockedSkin} skin` });
+            result = fixed;
+          }
+        }
+      }
+
+      return { prompt: result, corrections };
     }
 
     // ── 2. RESOLVE CHARACTER ──────────────────────────────────────────────────
@@ -1364,11 +1441,34 @@ Deno.serve(async (req) => {
     console.log(`[IdentityAudit]   subject_2_visual_refs_found: ${USER_SLOTS > 0}`);
     console.log(`[IdentityAudit]   joint_dual_slot_active:    ${subjectType === 'joint'}`);
     console.log(`[IdentityAudit]   generic_fallback_inserted: false`);
+    console.log(`[IdentityAudit]   appearance_conflicts_detected: ${appearanceLockCorrections.length > 0}`);
+    console.log(`[IdentityAudit]   appearance_conflicts_corrected: ${appearanceLockCorrections.map(c => c.field).join(', ') || 'none'}`);
+    console.log(`[IdentityAudit]   structured_subjects_count: ${structuredSubjects.length}`);
+    console.log(`[IdentityAudit]   background_extras_allowed: ${baseGenerationContext.background_extras_allowed}`);
     console.log(`[IdentityAudit]   generation_context.character_id will be: ${characterId || 'null'}`);
     console.log(`[IdentityAudit]   message_id: ${messageId}`);
 
 
     // Mutation logging is already done above immediately after sanitization — no duplicate needed here.
+
+    // ── 5b. APPLY APPEARANCE LOCK VALIDATION ─────────────────────────────────
+    // Now that charRecord is resolved, validate sanitizedPrompt against appearance_lock.
+    // This must happen AFTER character resolution so we have the real lock data.
+    const appearanceLockCorrections = [];
+    if (charRecord?.appearance_lock && sanitizedPrompt) {
+      const { prompt: correctedPrompt, corrections } = validatePromptAgainstAppearanceLock(
+        sanitizedPrompt,
+        charRecord.appearance_lock
+      );
+      if (corrections.length > 0) {
+        console.warn(`[AppearanceLock] ⚠️ Prompt contradicted appearance_lock — ${corrections.length} correction(s) applied:`);
+        corrections.forEach(c => console.warn(`  field=${c.field} | removed="${c.removed}" | injected="${c.injected}"`));
+        sanitizedPrompt = correctedPrompt;
+        appearanceLockCorrections.push(...corrections);
+      } else {
+        console.log(`[AppearanceLock] ✓ Prompt consistent with appearance_lock — no corrections needed`);
+      }
+    }
 
     // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
     // SYNC NOTE: The classifySceneContext + sanitizePrompt functions above are
@@ -1471,8 +1571,57 @@ All reference images (if any) are environment/location refs only — do NOT trea
     const MAX_ATTEMPTS = 3;
     const stagedAttempts = []; // all attempts, win or lose
 
+    // ── BUILD STRUCTURED SUBJECTS ARRAY (Part 2 — recovery-safe generation_context) ──
+    // Every subject is explicitly named, typed, and assigned a stable ID.
+    // Failed image recovery and regeneration flows read from this — never from the old raw prompt tags.
+    const structuredSubjects = [];
+
+    // Subject 1: the character (if resolved)
+    if (charRecord || characterId) {
+      structuredSubjects.push({
+        subject_type: 'character',
+        subject_id: charRecord?.id || characterId || null,
+        subject_name: charRecord?.name || characterName || null,
+        role: 'primary',
+        reference_image_count: CHAR_SLOTS,
+        reference_images: charRefs,
+        appearance_lock_snapshot: charRecord?.appearance_lock || null,
+        outfit_snapshot: charDesc?.match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] || null,
+        appearance_lock_injected: !!(charRecord?.appearance_lock && Object.keys(charRecord.appearance_lock).length > 0),
+        outfit_injected: /Currently wearing:/i.test(charDesc),
+      });
+    }
+
+    // Subject 2: the user (for joint/user images)
+    if (subjectType === 'joint' || subjectType === 'user') {
+      const userSettings = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
+      const userSett = userSettings?.[0] || {};
+      structuredSubjects.push({
+        subject_type: 'user',
+        subject_id: requestingUser,
+        subject_name: userWorldName || userSett.fictional_world_name || 'user',
+        role: subjectType === 'user' ? 'primary' : 'primary',
+        reference_image_count: USER_SLOTS,
+        reference_images: userRefs,
+        appearance_lock_snapshot: userSett.appearance_lock || null,
+        outfit_snapshot: userSett.user_current_outfit?.full_description || null,
+        appearance_lock_injected: !!(userSett.appearance_lock && Object.keys(userSett.appearance_lock).length > 0),
+        outfit_injected: !!(userSett.user_current_outfit?.full_description),
+      });
+    }
+
     // Base generation context (shared across all attempts — written once, attempts appended)
     const baseGenerationContext = {
+      // Structured identity (new format — used by regenerate/recovery flows)
+      image_type: subjectType === 'joint' ? 'joint' : subjectType === 'user' ? 'user' : 'character',
+      subject_count: structuredSubjects.length,
+      subjects: structuredSubjects,
+      scene_prompt: sanitizedPrompt,
+      original_raw_prompt: prompt,
+      background_extras_allowed: /\b(pool party|club|concert|bar|beach|festival|mall|airport|restaurant|crowd)\b/i.test(sanitizedPrompt),
+      appearance_lock_corrections: appearanceLockCorrections.length > 0 ? appearanceLockCorrections : undefined,
+
+      // Legacy fields — kept for backward compat with existing regenerate/media grid flows
       prompt,
       character_id: characterId || null,
       character_reference_images: charRefs,

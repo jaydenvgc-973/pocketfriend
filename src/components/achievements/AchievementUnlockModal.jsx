@@ -1,12 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
 import { ACHIEVEMENTS } from "@/lib/achievements";
+
+// Session-level set: tracks achievement IDs shown this session.
+// Prevents re-showing achievements that were already shown after a component remount.
+const sessionShownIds = new Set();
 
 export default function AchievementUnlockModal() {
   const [queue, setQueue] = useState([]);
   const [current, setCurrent] = useState(null);
   const [userEmail, setUserEmail] = useState(null);
+  // Whether we have done the initial unseen fetch — only do it once per mount.
+  const initialFetchDone = useRef(false);
 
   useEffect(() => {
     base44.auth.me().then(u => u?.email && setUserEmail(u.email)).catch(() => {});
@@ -16,28 +22,43 @@ export default function AchievementUnlockModal() {
     if (!userEmail) return;
 
     // Subscribe to new UserAchievement records in real-time
+    // Only show if: newly created, not yet seen, belongs to this user, not already shown this session
     const unsubscribe = base44.entities.UserAchievement.subscribe((event) => {
-      if (event.type === "create" && event.data?.is_seen === false && event.data?.created_by === userEmail) {
+      if (
+        event.type === "create" &&
+        event.data?.is_seen === false &&
+        event.data?.created_by === userEmail &&
+        !sessionShownIds.has(event.data.achievement_id) // dedupe by achievement_id, not record id
+      ) {
         setQueue(prev => {
-          // Avoid duplicates in queue
-          if (prev.some(r => r.id === event.data.id)) return prev;
+          if (prev.some(r => r.achievement_id === event.data.achievement_id)) return prev;
           return [...prev, event.data];
         });
       }
     });
 
-    // Also fetch any unseen achievements on mount (in case app was closed when earned)
-    base44.entities.UserAchievement.filter({ is_seen: false, created_by: userEmail })
-      .then(unseen => {
-        if (unseen.length > 0) {
+    // Fetch unseen achievements ONCE on mount (in case app was closed when earned).
+    // Cap at achievements created in the last 24 hours to avoid showing stale backlog.
+    // This only runs once per userEmail mount — not on every re-render.
+    if (!initialFetchDone.current) {
+      initialFetchDone.current = true;
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      base44.entities.UserAchievement.filter({ is_seen: false, created_by: userEmail })
+        .then(unseen => {
+          if (unseen.length === 0) return;
+          // Only show recent ones (last 24h) and ones not already queued/shown this session
+          const fresh = unseen.filter(r =>
+            !sessionShownIds.has(r.achievement_id) &&
+            r.unlocked_at && r.unlocked_at > cutoff
+          );
+          if (fresh.length === 0) return;
           setQueue(prev => {
-            const existingIds = new Set(prev.map(r => r.id));
-            const newOnes = unseen.filter(r => !existingIds.has(r.id));
-            return [...prev, ...newOnes];
+            const existingAchIds = new Set(prev.map(r => r.achievement_id));
+            return [...prev, ...fresh.filter(r => !existingAchIds.has(r.achievement_id))];
           });
-        }
-      })
-      .catch(() => {});
+        })
+        .catch(() => {});
+    }
 
     return () => unsubscribe();
   }, [userEmail]);
@@ -45,7 +66,14 @@ export default function AchievementUnlockModal() {
   // Show next in queue when current is cleared
   useEffect(() => {
     if (!current && queue.length > 0) {
-      setCurrent(queue[0]);
+      const next = queue[0];
+      // Final session guard: don't show if already shown this session
+      if (sessionShownIds.has(next.achievement_id)) {
+        setQueue(prev => prev.slice(1));
+        return;
+      }
+      sessionShownIds.add(next.achievement_id);
+      setCurrent(next);
       setQueue(prev => prev.slice(1));
     }
   }, [current, queue]);
