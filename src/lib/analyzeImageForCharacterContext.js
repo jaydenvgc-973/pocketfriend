@@ -19,8 +19,8 @@
  *
  * RULES:
  *   - Never swallow errors silently
- *   - Never return an empty string on failure (that would allow character to hallucinate)
- *   - Caller passes base44 client and optional messageId for durable storage
+ *   - Never return an empty string on failure (that would allow character to hallucination)
+ *   - Uses the shared base44 client imported from @/api/base44Client
  *   - messageId is optional — if absent, description is returned but not stored
  */
 

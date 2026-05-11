@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Forward, Check, Loader2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 
 export default function ForwardMessageModal({ message, onClose }) {
   const [characters, setCharacters] = useState([]);
@@ -25,6 +26,18 @@ export default function ForwardMessageModal({ message, onClose }) {
     if (selectedIds.length === 0) return;
     setIsSending(true);
     try {
+      // If the original message has an image but no stored description, analyze it once
+      // before creating any forwarded messages so all recipients get the same description.
+      let resolvedImageDescription = message.image_description || null;
+      if (message.image_url && !resolvedImageDescription) {
+        const analysis = await analyzeImageForCharacterContext({
+          imageUrl: message.image_url,
+          messageId: null, // don't overwrite the original message — store on each forwarded copy below
+          context: "forwarded",
+        });
+        resolvedImageDescription = analysis.imageDescription || null;
+      }
+
       for (const charId of selectedIds) {
         const char = characters.find(c => c.id === charId);
         if (!char) continue;
@@ -47,8 +60,6 @@ export default function ForwardMessageModal({ message, onClose }) {
           ? `Fwd Message from ${senderLabel}:\n${message.content}`
           : `Fwd Message from ${senderLabel}`;
 
-        // CRITICAL: Preserve location_share payload so the receiving chat renders the
-        // same location card UI as the original message — not just generic forwarded text.
         const forwardedPayload = {
           conversation_id: convoId,
           sender_type: "user",
@@ -58,27 +69,25 @@ export default function ForwardMessageModal({ message, onClose }) {
           is_forwarded: true,
           forwarded_from: senderLabel,
         };
+
+        // CRITICAL: Preserve location_share so the receiving chat renders the card UI
         if (message.location_share) {
           forwardedPayload.location_share = message.location_share;
-          // Location card has no text content — clear the generic "Fwd Message" text
-          // so the renderer hits the location_share branch, not the text branch.
           forwardedPayload.content = "";
         }
 
-        // Preserve stored image_description on forwarded messages so the
-        // receiving character inherits the visual analysis and is not blind.
-        // If no stored description exists, image_analysis_status marks it pending
-        // so a future analysis pass can back-fill it if needed.
+        // Carry image description to receiving character — never leave them blind
         if (message.image_url) {
-          if (message.image_description) {
-            forwardedPayload.image_description = message.image_description;
+          if (resolvedImageDescription) {
+            forwardedPayload.image_description = resolvedImageDescription;
             forwardedPayload.image_analysis_status = "complete";
           } else {
-            forwardedPayload.image_analysis_status = "pending";
+            // Analysis ran but returned nothing — mark failed visibly, not pending
+            forwardedPayload.image_analysis_status = "failed";
           }
         }
 
-        await base44.entities.Message.create(forwardedPayload);
+        const created = await base44.entities.Message.create(forwardedPayload);
 
         await base44.entities.Conversation.update(convoId, {
           last_message_preview: fwdContent.substring(0, 100),
@@ -120,7 +129,7 @@ export default function ForwardMessageModal({ message, onClose }) {
             <button onClick={onClose}><X className="w-4 h-4 text-muted-foreground" /></button>
           </div>
 
-          {/* Preview of what's being forwarded */}
+          {/* Preview */}
           <div className="px-3 py-2 rounded-xl bg-secondary border border-border text-xs text-muted-foreground max-h-16 overflow-hidden">
             <span className="font-medium text-foreground">Fwd: </span>
             {message.image_url && !message.content && "📷 Photo"}

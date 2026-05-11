@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
-import { analyzeImageForCharacterContext, buildImageContextFromStoredDescription } from "@/lib/analyzeImageForCharacterContext";
+import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 
 // ── CONTACT KEY: use stable character_id when available, fall back to name-keyed only for unlinked NPCs ──
 // Format with linked ID:    npc_chat__[ownerCharId]__cid_[contactCharId]
