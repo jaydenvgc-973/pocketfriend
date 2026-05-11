@@ -289,12 +289,14 @@ Deno.serve(async (req) => {
       detectDataAchievements(base44, user.email, characterId, characterName, userMessage, existingIds),
     ]);
 
-    // Merge and dedupe — only ones not already unlocked
-    const combined = [...new Set([...textAchievements, ...dataAchievements])]
-      .filter(id => !existingIds.includes(id));
+    // Split: new unlocks vs. revisits of already-unlocked achievements
+    const allDetected = [...new Set([...textAchievements, ...dataAchievements])];
+    const newIds    = allDetected.filter(id => !existingIds.includes(id));
+    const revisitIds = allDetected.filter(id => existingIds.includes(id));
 
+    // Create records for genuinely new unlocks only
     const newlyUnlocked = [];
-    for (const achievement_id of combined) {
+    for (const achievement_id of newIds) {
       const record = await base44.entities.UserAchievement.create({
         achievement_id,
         character_id: characterId,
@@ -307,9 +309,30 @@ Deno.serve(async (req) => {
       existingIds.push(achievement_id);
     }
 
-    console.log(`[checkAchievements] user=${user.email} charId=${characterId} textHits=${textAchievements.length} dataHits=${dataAchievements.length} unlocked=${newlyUnlocked.length}`);
+    // For revisited achievements, write a lightweight Life Journal entry
+    // so the moment is recorded — but no modal is shown
+    for (const achievement_id of revisitIds.slice(0, 2)) {
+      const existingRecord = existing.find(a => a.achievement_id === achievement_id);
+      base44.asServiceRole.entities.CharacterMemory.create({
+        character_id: characterId,
+        memory_type: 'event',
+        memory_text: `Revisited emotional moment: "${achievement_id.replace(/_/g, ' ')}" felt again during conversation.`,
+        memory_summary: `Moment revisited: ${achievement_id}`,
+        importance_score: 3,
+        permanence: 'short_term',
+      }).catch(() => {});
+    }
 
-    return Response.json({ unlocked: newlyUnlocked });
+    // Build revisit metadata for frontend quiet toast
+    const revisited = revisitIds.slice(0, 2).map(id => ({
+      achievement_id: id,
+      character_id: characterId,
+      character_name: characterName || '',
+    }));
+
+    console.log(`[checkAchievements] user=${user.email} charId=${characterId} textHits=${textAchievements.length} dataHits=${dataAchievements.length} unlocked=${newlyUnlocked.length} revisited=${revisited.length}`);
+
+    return Response.json({ unlocked: newlyUnlocked, revisited });
   } catch (error) {
     console.error('[checkAchievements] ERROR:', error.message);
     return Response.json({ error: error.message }, { status: 500 });

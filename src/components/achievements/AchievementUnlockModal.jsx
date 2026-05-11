@@ -22,6 +22,21 @@ export default function AchievementUnlockModal() {
     base44.auth.me().then(u => u?.email && setUserEmail(u.email)).catch(() => {});
   }, []);
 
+  // Listen for in-session revisit events dispatched from useChatBackgroundTasks
+  useEffect(() => {
+    const handler = (e) => {
+      const revisited = e.detail || [];
+      revisited.forEach(r => {
+        setToastQueue(prev => {
+          if (prev.some(t => t.achievement_id === r.achievement_id && t.character_id === r.character_id)) return prev;
+          return [...prev, { ...r, _revisit: true }];
+        });
+      });
+    };
+    window.addEventListener('achievement:revisited', handler);
+    return () => window.removeEventListener('achievement:revisited', handler);
+  }, []);
+
   useEffect(() => {
     if (!userEmail) return;
 
@@ -149,7 +164,7 @@ export default function AchievementUnlockModal() {
         )}
       </AnimatePresence>
 
-      {/* ── QUIET TOAST — revisited/stale achievements, non-blocking ── */}
+      {/* ── QUIET TOAST — current-session revisits, non-blocking, auto-dismiss ── */}
       <AnimatePresence>
         {currentToast && toastAchievement && !current && (
           <motion.div
@@ -157,11 +172,13 @@ export default function AchievementUnlockModal() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 16 }}
             transition={{ duration: 0.25 }}
-            className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[90] pointer-events-none"
+            className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[90] pointer-events-none whitespace-nowrap"
           >
             <div className="flex items-center gap-2.5 bg-card/95 border border-border rounded-2xl px-4 py-2.5 shadow-lg text-sm">
               <span className="text-base">{toastAchievement.emoji}</span>
-              <span className="text-foreground font-medium">{toastAchievement.title}</span>
+              <span className="text-foreground font-medium">
+                {currentToast._revisit ? 'Moment revisited: ' : ''}{toastAchievement.title}
+              </span>
               {currentToast.character_name && (
                 <span className="text-muted-foreground text-xs">· {currentToast.character_name}</span>
               )}

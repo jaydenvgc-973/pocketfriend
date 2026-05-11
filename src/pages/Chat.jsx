@@ -327,6 +327,9 @@ export default function Chat() {
 
   const { dispatchPostSend, clearCharacterCooldowns } = useChatBackgroundTasks({
     queryClient, setNewPeopleDetected, setPendingAliasResolution, setLastChangeReason, setMessages,
+    onAchievementRevisited: (revisited) => {
+      window.dispatchEvent(new CustomEvent('achievement:revisited', { detail: revisited }));
+    },
   });
 
   // Register page context so simulationGate knows chat is active for this character

@@ -79,6 +79,7 @@ export function useChatBackgroundTasks({
   setPendingAliasResolution,
   setLastChangeReason,
   setMessages,
+  onAchievementRevisited,
 }) {
 
   const dispatchPostSend = useCallback(({
@@ -245,7 +246,12 @@ Return ONLY valid JSON, nothing else.`,
       }
 
       if (!isOnCooldown(characterId, 'achievements', 120000)) {
-        safeInvoke('checkAchievements', { characterId }, characterId, 'achievements');
+        safeInvoke('checkAchievements', { characterId }, characterId, 'achievements').then(res => {
+          const revisited = res?.data?.revisited || [];
+          if (revisited.length > 0 && onAchievementRevisited) {
+            onAchievementRevisited(revisited);
+          }
+        });
       }
 
       if (!isOnCooldown(characterId, 'processIncome', 60000)) {
