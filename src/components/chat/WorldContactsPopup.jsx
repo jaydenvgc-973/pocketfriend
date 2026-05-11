@@ -128,10 +128,13 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           { conversation_id: found.id },
           "created_date"
         );
+        // Messages sent BY Character A (the owner of this World Phone) render on the right.
+        // Messages sent BY Character B (the contact) render on the left.
+        // sender_type "user" is a legacy fallback — treat it as "sent" (right side).
         setMessages(history.map(m => ({
           id: m.id,
           dbId: m.id,
-          role: m.sender_type === "user" ? "user" : "npc",
+          role: (m.sender_type === "user" || m.character_id === character.id) ? "sent" : "npc",
           content: m.content,
         })));
 
@@ -140,23 +143,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           await base44.entities.Message.update(msg.id, { is_read: true }).catch(() => {});
         }
 
-        // ── REAL-TIME SUBSCRIPTION: Auto-sync new messages ──────────────────────
-        // When either character adds a message, update the local thread immediately.
-        if (unsubscribeRef.current) unsubscribeRef.current();
-        unsubscribeRef.current = base44.entities.Message.subscribe((event) => {
-          if (event.data?.conversation_id !== found.id) return;
-          if (event.type === "create") {
-            setMessages(prev => {
-              if (prev.some(m => m.id === event.data.id)) return prev;
-              return [...prev, {
-                id: event.data.id,
-                dbId: event.data.id,
-                role: event.data.sender_type === "user" ? "user" : "npc",
-                content: event.data.content,
-              }];
-            });
-          }
-        });
+        subscribeToConversation(found.id);
       }
     } catch {
       // Could not load history — start fresh
@@ -188,6 +175,29 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     }
   }, [messages, isTyping]);
 
+  // ── SHARED SUBSCRIPTION HELPER ─────────────────────────────────────────────
+  // Real-time sync for any conversation thread. Must be called whenever a
+  // conversation ID is resolved — both for existing and newly created threads.
+  const subscribeToConversation = (convoId) => {
+    if (unsubscribeRef.current) unsubscribeRef.current();
+    unsubscribeRef.current = base44.entities.Message.subscribe((event) => {
+      if (event.data?.conversation_id !== convoId) return;
+      if (event.type === "create") {
+        setMessages(prev => {
+          if (prev.some(m => m.id === event.data.id)) return prev;
+          // Character A's own messages (character.id) → right bubble ("sent")
+          // Contact's messages → left bubble ("npc")
+          return [...prev, {
+            id: event.data.id,
+            dbId: event.data.id,
+            role: event.data.character_id === character.id ? "sent" : "npc",
+            content: event.data.content,
+          }];
+        });
+      }
+    });
+  };
+
   const ensureConversation = async () => {
     if (conversationId) return conversationId;
     // FIX: Use stable character_id key when available so future lookups find this thread
@@ -212,6 +222,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       owner_email: me?.email || character.owner_email,
     });
     setConversationId(convo.id);
+    // Subscribe immediately so messages created after this point are auto-synced
+    subscribeToConversation(convo.id);
     return convo.id;
   };
 
@@ -222,16 +234,25 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setIsTyping(true);
 
     const convoId = await ensureConversation();
+
+    // ── TRUE CHARACTER-TO-CHARACTER IDENTITY ────────────────────────────────────
+    // The user is operating Character A's phone. The message is authored BY Character A.
+    // sender_type: "character" + character_id: character.id marks this as Character A speaking.
+    // typed_by_user: true is a non-destructive audit flag only — it does NOT change identity.
     const savedUserMsg = await base44.entities.Message.create({
       conversation_id: convoId,
-      sender_type: "user",
+      sender_type: "character",
+      character_id: character.id,
+      character_name: character.name,
       content: text,
       image_url: imageUrl || undefined,
       timestamp: new Date().toISOString(),
+      typed_by_user: true,
     });
 
-    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "user", content: text };
-    setMessages(prev => [...prev, userMsg]);
+    // Render on right side (sent) immediately — subscription will also fire, dedup is handled
+    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text };
+    setMessages(prev => prev.some(m => m.id === savedUserMsg.id) ? prev : [...prev, userMsg]);
 
     // ── IMAGE UNDERSTANDING PIPELINE ──────────────────────────────────────
     // Analyze any attached image before the NPC LLM call.
@@ -255,8 +276,10 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     }
 
     const allMsgs = [...messages, userMsg];
+    // Character A sent the message — label it with Character A's name so Character B sees
+    // "Character A: ..." not "User: ..." in the conversation history.
     const historyStr = allMsgs
-      .map(m => `${m.role === "user" ? "User" : selectedContact.person_name}: ${m.content}`)
+      .map(m => `${(m.role === "sent" || m.role === "user") ? character.name : selectedContact.person_name}: ${m.content}`)
       .join("\n");
 
     let characterHardFacts = "";
@@ -279,23 +302,23 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       }
     } catch { /* non-blocking */ }
 
-    const prompt = `You are ${selectedContact.person_name}, a real person in ${character.name}'s life.
+    const prompt = `You are ${selectedContact.person_name}. ${character.name} just texted you on their phone.
 
 ABOUT YOU (${selectedContact.person_name}):
-- Relationship to ${character.name}: ${selectedContact.relationship_type || "acquaintance"}
-- Description: ${selectedContact.description || "A person in their social world."}
-- Current status: ${selectedContact.current_status || ""}
+- Your relationship to ${character.name}: ${selectedContact.relationship_type || "acquaintance"}
+- About you: ${selectedContact.description || "A person in their social world."}
+- Your current situation: ${selectedContact.current_status || ""}
 - How you feel about ${character.name}: ${selectedContact.emotional_impact || ""}
-- Your history with ${character.name}: ${selectedContact.history_summary || "You have shared history."}
-- Last interaction: ${selectedContact.last_interaction_summary || ""}
+- Your history together: ${selectedContact.history_summary || "You have shared history."}
+- Last time you two talked: ${selectedContact.last_interaction_summary || ""}
 ${characterMemoryContext}
-WHAT YOU KNOW ABOUT ${character.name}'s CURRENT SITUATION:
-${characterHardFacts || `${character.name} is doing what they normally do. You know them well.`}
+WHAT YOU KNOW ABOUT ${character.name} RIGHT NOW:
+${characterHardFacts || `${character.name} is living their life. You know them well.`}
 
-You are NOT an AI. You are a real person. Speak naturally in short conversational texts. Do NOT use bullet points or formal language. Do NOT start with your name.
-Do NOT contradict any facts listed above about ${character.name}'s current situation. Your knowledge of them is accurate and current.
+This is a text conversation between you and ${character.name}. You are NOT an AI.
+Respond naturally in short conversational texts. Do NOT use bullet points. Do NOT start with your name. Do NOT address ${character.name} by name every message.
 
-Conversation so far:
+Conversation so far (${character.name} texted you):
 ${historyStr}
 ${imageAnalysisContext}
 Reply as ${selectedContact.person_name}:`;
@@ -527,10 +550,10 @@ Reply as ${selectedContact.person_name}:`;
                       key={msg.id}
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                      className={`flex ${(msg.role === "user" || msg.role === "sent") ? "justify-end" : "justify-start"}`}
                     >
                       <div className={`max-w-[78%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                        msg.role === "user"
+                        (msg.role === "user" || msg.role === "sent")
                           ? "bg-primary text-primary-foreground rounded-br-sm"
                           : "bg-secondary text-foreground rounded-bl-sm"
                       }`}>
