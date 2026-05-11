@@ -511,7 +511,7 @@ Reply as ${selectedContact.person_name}:`;
       sender_character_id: selectedContact.related_character_id || null,  // ← Character B's ID
       receiver_character_id: character.id,  // ← Character A's ID
       participant_character_ids: participantIdsForMsg,
-      ...(canonicalKeyForMsg ? { shared_conversation_key: canonicalKeyForMsg } : {}),
+      shared_conversation_key: canonicalKeyForMsg || null,
       content: npcText,
       timestamp: new Date().toISOString(),
       channel: "world_phone",
@@ -541,6 +541,8 @@ Reply as ${selectedContact.person_name}:`;
         receiver_message_id: savedNpcMsg.id,
         message_content: text,
         response_content: npcText,
+        shared_conversation_key: canonicalKeyForMsg,
+        participant_character_ids: participantIdsForMsg,
         channel: 'world_phone',
         topic: text.substring(0, 100),
         emotional_tone: 'calm',
