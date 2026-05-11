@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { Plus, X, AlertCircle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { buildNpcCharacterCreatePayload } from '@/lib/npcCharacterCreatePayloadBuilder';
 
 export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
   const [mode, setMode] = useState(null); // 'new' | 'existing' | null
@@ -73,22 +72,20 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
         payloadHasOwnerEmail: true,
       }));
 
-      // Build payload via shared helper — sole source of truth for NPC creation
-      const charData = buildNpcCharacterCreatePayload({
-        currentUser: {
-          email: currentUser.email,
-          id: currentUser.id,
-          role: currentUser.role,
-        },
+      // Call backend function to create NPC via service role
+      const createRes = await base44.functions.invoke('createOwnedNpcCharacter', {
         name: newName,
         characterType: 'npc_fictitious',
         linkedActiveCharacterId: character.id,
         relationshipType: 'friend',
         familyTitle: null,
-        source: 'AddPeopleInTheirWorldPanel.handleAddNew',
       });
 
-      const newNPC = await base44.entities.Character.create(charData);
+      if (!createRes.data?.success) {
+        throw new Error(createRes.data?.error || 'Failed to create character');
+      }
+
+      const newNPC = createRes.data.character;
 
       // ── RELATIONSHIP UPDATE: attach NPC to parent character's fictional_relationships ──
       const updatedRels = [

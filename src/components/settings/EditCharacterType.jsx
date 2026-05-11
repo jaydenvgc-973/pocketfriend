@@ -505,21 +505,20 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         attemptingCharacterCreate: true,
       }));
 
-      const charData = buildNpcCharacterCreatePayload({
-        currentUser: {
-          email: lockedActingUserEmail,
-          id: lockedActingUserId,
-          role: lockedActingUserRole,
-        },
+      // Call backend function to create NPC via service role
+      const createRes = await base44.functions.invoke('createOwnedNpcCharacter', {
         name: newCharName,
         characterType: selectedType,
         linkedActiveCharacterId: linkedCharId,
         relationshipType: relationshipType,
         familyTitle: familyTitle,
-        source: 'EditCharacterType.handleCreateNew',
       });
 
-      const created = await base44.entities.Character.create(charData);
+      if (!createRes.data?.success) {
+        throw new Error(createRes.data?.error || 'Failed to create character');
+      }
+
+      const created = createRes.data.character;
 
       // Set up relationships immediately
       if (linkedCharId) {
