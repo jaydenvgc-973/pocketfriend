@@ -6,9 +6,17 @@ import { base44 } from "@/api/base44Client";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { resolveCharacterContacts } from "@/lib/characterContactsResolver";
 
-// ── CONTACT KEY: use stable character_id when available, fall back to name-keyed only for unlinked NPCs ──
-// Format with linked ID:    npc_chat__[ownerCharId]__cid_[contactCharId]
-// Format without linked ID: npc_chat__[ownerCharId]__[contactName]   (legacy / unlinked)
+// ── CANONICAL SHARED KEY ────────────────────────────────────────────────────
+// ONE deterministic key for any two linked characters, regardless of direction.
+// world_phone::[lower_id]::[higher_id]
+// James→Ethan and Ethan→James both resolve to the SAME key.
+function getCanonicalSharedKey(charIdA, charIdB) {
+  if (!charIdA || !charIdB) return null;
+  const sorted = [charIdA, charIdB].sort();
+  return `world_phone::${sorted[0]}::${sorted[1]}`;
+}
+
+// Legacy title formats — used for fallback lookup only, never for new threads
 function npcConvoTitle(ownerCharacterId, contactName, contactCharacterId) {
   if (contactCharacterId) return `npc_chat__${ownerCharacterId}__cid_${contactCharacterId}`;
   return `npc_chat__${ownerCharacterId}__${contactName}`;
@@ -101,88 +109,111 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setIsLoadingHistory(true);
 
     try {
-      // Diagnostic logging for thread resolution
-      const bilateralKey = contact.related_character_id
-        ? `bilateral_${[character.id, contact.related_character_id].sort().join('_')}_world_phone`
+      const contactId = contact.related_character_id;
+      const canonicalKey = getCanonicalSharedKey(character.id, contactId);
+      const legacyBilateralKey = contactId
+        ? `bilateral_${[character.id, contactId].sort().join('_')}_world_phone`
         : null;
-      const stableTitle = npcConvoTitle(character.id, contact.person_name, contact.related_character_id);
-      const legacyTitle  = npcConvoTitle(character.id, contact.person_name, null);
+      const stableTitle = npcConvoTitle(character.id, contact.person_name, contactId);
+      const legacyTitle = npcConvoTitle(character.id, contact.person_name, null);
+      const participantIds = contactId ? [character.id, contactId].sort() : [character.id];
 
       console.log(
-        `[WorldPhone] Opening contact | current_char=${character.id} | contact=${contact.related_character_id || contact.person_name} | shared_key=${bilateralKey || 'none'}`
+        `[WorldPhone] Opening | current_char=${character.id} | contact_id=${contactId || 'none'} | canonical_key=${canonicalKey || 'none'}`
       );
 
-      // Load conversations where either character is a participant.
-      // PRIMARY: shared_conversation_key (bilateral schema)
-      // SECONDARY: participant_character_ids (bilateral fallback)
-      // TERTIARY: character_ids (legacy schema)
-      const [bySharedKey, byParticipant, byCharacterId] = await Promise.all([
-        bilateralKey ? base44.entities.Conversation.filter({ shared_conversation_key: bilateralKey }, "-updated_date", 10).catch(() => []) : Promise.resolve([]),
-        contact.related_character_id
-          ? base44.entities.Conversation.filter({ participant_character_ids: [character.id] }, "-updated_date", 100).catch(() => [])
-          : Promise.resolve([]),
+      // ── STEP 1: Search by canonical shared key (most precise) ──────────────
+      const [byCanonicalKey, byLegacyKey, byParticipant, byCharacterId] = await Promise.all([
+        canonicalKey ? base44.entities.Conversation.filter({ shared_conversation_key: canonicalKey }, "-updated_date", 5).catch(() => []) : Promise.resolve([]),
+        legacyBilateralKey ? base44.entities.Conversation.filter({ shared_conversation_key: legacyBilateralKey }, "-updated_date", 5).catch(() => []) : Promise.resolve([]),
+        contactId ? base44.entities.Conversation.filter({ participant_character_ids: [character.id] }, "-updated_date", 100).catch(() => []) : Promise.resolve([]),
         base44.entities.Conversation.filter({ character_ids: [character.id] }, "-updated_date", 150).catch(() => []),
       ]);
 
-      // Merge and deduplicate by id
+      // Merge all candidates, deduplicated
       const seenIds = new Set();
-      const existing = [...bySharedKey, ...byParticipant, ...byCharacterId].filter(c => {
+      const allCandidates = [...byCanonicalKey, ...byLegacyKey, ...byParticipant, ...byCharacterId].filter(c => {
         if (seenIds.has(c.id)) return false;
         seenIds.add(c.id);
         return true;
       });
 
-      // Resolve conversation: shared key first, then participant match, then title match
-      const found = (bilateralKey && existing.find(c => c.shared_conversation_key === bilateralKey)) ||
-                    (contact.related_character_id && existing.find(c => 
-                      c.participant_character_ids && 
-                      [character.id, contact.related_character_id].every(id => c.participant_character_ids.includes(id))
-                    )) ||
-                    existing.find(c => c.title === stableTitle) ||
-                    existing.find(c => c.title === legacyTitle);
+      // Ordered resolution: canonical key → legacy bilateral key → participant_character_ids both present → legacy title
+      let found =
+        allCandidates.find(c => c.shared_conversation_key === canonicalKey) ||
+        allCandidates.find(c => c.shared_conversation_key === legacyBilateralKey) ||
+        (contactId && allCandidates.find(c =>
+          Array.isArray(c.participant_character_ids) &&
+          [character.id, contactId].every(id => c.participant_character_ids.includes(id))
+        )) ||
+        (contactId && allCandidates.find(c =>
+          Array.isArray(c.character_ids) &&
+          [character.id, contactId].every(id => c.character_ids.includes(id))
+        )) ||
+        allCandidates.find(c => c.title === stableTitle) ||
+        allCandidates.find(c => c.title === legacyTitle);
+
+      // Duplicate detection
+      const duplicates = contactId ? allCandidates.filter(c =>
+        (c.shared_conversation_key === canonicalKey || c.shared_conversation_key === legacyBilateralKey) ||
+        (Array.isArray(c.participant_character_ids) && [character.id, contactId].every(id => c.participant_character_ids.includes(id))) ||
+        (Array.isArray(c.character_ids) && [character.id, contactId].every(id => c.character_ids.includes(id)))
+      ) : [];
+
+      console.log(
+        `[WorldPhone] canonical_found=${!!found} | canonical_id=${found?.id || 'none'} | legacy_candidates=${allCandidates.length} | duplicate_threads=${duplicates.length}`
+      );
 
       if (found) {
-        console.log(
-          `[WorldPhone] Conversation found | convo_id=${found.id} | shared_key=${found.shared_conversation_key || 'none'} | participants=${JSON.stringify(found.participant_character_ids || found.character_ids)}`
-        );
-        setConversationId(found.id);
-        const history = await base44.entities.Message.filter(
-          { conversation_id: found.id },
-          "created_date"
-        );
-        
-        // Diagnostic: log message sender resolution
-        const msgSenderInfo = history.map(m => ({
-          id: m.id.substring(0, 8),
-          sender_character_id: m.sender_character_id || 'none',
-          character_id: m.character_id || 'none',
-          sender_type: m.sender_type,
-        }));
-        console.log(`[WorldPhone] Loaded ${history.length} messages | senders=${JSON.stringify(msgSenderInfo)}`);
+        // ── UPGRADE LEGACY THREAD: stamp canonical fields if missing ──────────
+        const needsUpgrade = !found.shared_conversation_key ||
+          found.shared_conversation_key !== canonicalKey ||
+          !Array.isArray(found.participant_character_ids) ||
+          (contactId && !found.participant_character_ids?.includes(contactId));
 
-        // CRITICAL: Use sender_character_id to determine direction, not sender_type alone
-        // Messages sent BY Character A render on the right (role: "sent")
-        // Messages sent BY Character B render on the left (role: "npc")
+        if (needsUpgrade && canonicalKey && contactId) {
+          const currentCharIds = Array.isArray(found.character_ids) ? found.character_ids : [character.id];
+          const mergedCharIds = [...new Set([...currentCharIds, contactId])];
+          base44.entities.Conversation.update(found.id, {
+            shared_conversation_key: canonicalKey,
+            participant_character_ids: participantIds,
+            character_ids: mergedCharIds,
+            channel: 'world_phone',
+          }).catch(err => console.warn('[WorldPhone] Failed to upgrade legacy thread:', err.message));
+          console.log(`[WorldPhone] Upgraded legacy thread to canonical | id=${found.id} | new_key=${canonicalKey}`);
+        }
+
+        setConversationId(found.id);
+        const history = await base44.entities.Message.filter({ conversation_id: found.id }, "created_date");
+
+        // Diagnostic: log per-message sender info
+        console.log(`[WorldPhone] Loaded ${history.length} messages for convo ${found.id}`);
+        history.forEach(m => {
+          console.log(`  msg ${m.id.substring(0, 8)} | sender_char_id=${m.sender_character_id || 'none'} | char_id=${m.character_id || 'none'} | sender_type=${m.sender_type}`);
+        });
+
+        // DIRECTION RULE: sender_character_id === current character → "sent" (right)
+        // Fallback: character_id === current character (legacy messages without sender_character_id)
         setMessages(history.map(m => ({
           id: m.id,
           dbId: m.id,
-          role: (m.sender_character_id === character.id || (m.sender_character_id === null && m.character_id === character.id)) ? "sent" : "npc",
+          role: (m.sender_character_id === character.id || (!m.sender_character_id && m.character_id === character.id))
+            ? "sent" : "npc",
           content: m.content,
         })));
 
-        const unreadIncoming = history.filter(m => m.sender_type === "character" && !m.is_read);
-        for (const msg of unreadIncoming) {
-          await base44.entities.Message.update(msg.id, { is_read: true }).catch(() => {});
-        }
+        // Mark incoming as read (non-blocking)
+        history.filter(m => m.sender_character_id !== character.id && !m.is_read).forEach(m => {
+          base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
+        });
 
         subscribeToConversation(found.id);
       } else {
         console.log(
-          `[WorldPhone] No conversation found | shared_key=${bilateralKey || 'none'} | contact_id=${contact.related_character_id || 'none'} | existing_convos=${existing.length}`
+          `[WorldPhone] No thread found | will create canonical on first message | key=${canonicalKey || 'none'}`
         );
       }
     } catch (err) {
-      // Could not load history — start fresh
       console.error('[WorldPhone] selectContact error:', err.message);
     }
 
@@ -266,8 +297,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   };
 
   // ── SHARED SUBSCRIPTION HELPER ─────────────────────────────────────────────
-  // Real-time sync for any conversation thread. Must be called whenever a
-  // conversation ID is resolved — both for existing and newly created threads.
+  // Uses sender_character_id (not character_id) for direction — the single source of truth.
   const subscribeToConversation = (convoId) => {
     if (unsubscribeRef.current) unsubscribeRef.current();
     unsubscribeRef.current = base44.entities.Message.subscribe((event) => {
@@ -275,38 +305,65 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       if (event.type === "create") {
         setMessages(prev => {
           if (prev.some(m => m.id === event.data.id)) return prev;
-          // Character A's own messages (character.id) → right bubble ("sent")
-          // Contact's messages → left bubble ("npc")
+          const d = event.data;
+          // DIRECTION: sender_character_id is authoritative; character_id is legacy fallback
+          const isSent = d.sender_character_id === character.id ||
+            (!d.sender_character_id && d.character_id === character.id);
           return [...prev, {
-            id: event.data.id,
-            dbId: event.data.id,
-            role: event.data.character_id === character.id ? "sent" : "npc",
-            content: event.data.content,
+            id: d.id,
+            dbId: d.id,
+            role: isSent ? "sent" : "npc",
+            content: d.content,
           }];
         });
       }
     });
   };
 
+  // ── ENSURE CONVERSATION: canonical-first, never create if one already exists ──
+  // This is the single gate for thread creation. It re-checks the DB before creating
+  // to prevent race conditions and duplicate threads from concurrent sends.
   const ensureConversation = async () => {
     if (conversationId) return conversationId;
-    const title = npcConvoTitle(character.id, selectedContact.person_name, selectedContact.related_character_id);
-    const me = await base44.auth.me().catch(() => null);
-    const charIds = selectedContact.related_character_id
-      ? [character.id, selectedContact.related_character_id]
-      : [character.id];
-    const bilateralKey = selectedContact.related_character_id
-      ? `bilateral_${[character.id, selectedContact.related_character_id].sort().join('_')}_world_phone`
+
+    const contactId = selectedContact.related_character_id;
+    const canonicalKey = getCanonicalSharedKey(character.id, contactId);
+    const legacyBilateralKey = contactId
+      ? `bilateral_${[character.id, contactId].sort().join('_')}_world_phone`
       : null;
-    const participantIds = selectedContact.related_character_id
-      ? [character.id, selectedContact.related_character_id].sort()
-      : [character.id];
+    const participantIds = contactId ? [character.id, contactId].sort() : [character.id];
+    const me = await base44.auth.me().catch(() => null);
+
+    // Always re-check DB before creating — prevents duplicates from race conditions
+    if (canonicalKey) {
+      const [byCanonical, byLegacy] = await Promise.all([
+        base44.entities.Conversation.filter({ shared_conversation_key: canonicalKey }, "-updated_date", 5).catch(() => []),
+        legacyBilateralKey ? base44.entities.Conversation.filter({ shared_conversation_key: legacyBilateralKey }, "-updated_date", 5).catch(() => []) : Promise.resolve([]),
+      ]);
+      const existing = [...byCanonical, ...byLegacy][0];
+      if (existing) {
+        console.log(`[WorldPhone] ensureConversation: found existing | id=${existing.id} | key=${existing.shared_conversation_key}`);
+        // Upgrade to canonical if using legacy key
+        if (existing.shared_conversation_key !== canonicalKey) {
+          base44.entities.Conversation.update(existing.id, {
+            shared_conversation_key: canonicalKey,
+            participant_character_ids: participantIds,
+          }).catch(() => {});
+        }
+        setConversationId(existing.id);
+        subscribeToConversation(existing.id);
+        return existing.id;
+      }
+    }
+
+    // Nothing found — create ONE canonical thread
+    console.log(`[WorldPhone] ensureConversation: creating canonical thread | key=${canonicalKey}`);
     const convo = await base44.entities.Conversation.create({
-      title,
+      title: `world_phone::${participantIds.join('::')}`,
       type: "npc",
-      character_ids: charIds,
+      character_ids: contactId ? [character.id, contactId] : [character.id],
       participant_character_ids: participantIds,
-      ...(bilateralKey ? { shared_conversation_key: bilateralKey } : {}),
+      ...(canonicalKey ? { shared_conversation_key: canonicalKey } : {}),
       owner_email: me?.email || character.owner_email,
       channel: "world_phone",
       sync_status: "pending",
@@ -325,12 +382,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     const convoId = await ensureConversation();
 
     // ── TRUE CHARACTER-TO-CHARACTER IDENTITY ────────────────────────────────────
-    // The user is operating Character A's phone. The message is authored BY Character A.
-    // sender_character_id: character.id marks this as Character A speaking.
-    // This allows both Character A and Character B to resolve the message direction correctly.
-    const bilateralKeyForMsg = selectedContact.related_character_id
-      ? `bilateral_${[character.id, selectedContact.related_character_id].sort().join('_')}_world_phone`
-      : null;
+    // Use canonical key (world_phone::A::B) on all new messages for consistent lookup.
+    const canonicalKeyForMsg = getCanonicalSharedKey(character.id, selectedContact.related_character_id);
     const participantIdsForMsg = selectedContact.related_character_id
       ? [character.id, selectedContact.related_character_id].sort()
       : [character.id];
@@ -343,7 +396,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       sender_character_id: character.id,  // ← CRITICAL: Character A's ID
       receiver_character_id: selectedContact.related_character_id || null,
       participant_character_ids: participantIdsForMsg,
-      ...(bilateralKeyForMsg ? { shared_conversation_key: bilateralKeyForMsg } : {}),
+      ...(canonicalKeyForMsg ? { shared_conversation_key: canonicalKeyForMsg } : {}),
       content: text,
       image_url: imageUrl || undefined,
       timestamp: new Date().toISOString(),
@@ -458,7 +511,7 @@ Reply as ${selectedContact.person_name}:`;
       sender_character_id: selectedContact.related_character_id || null,  // ← Character B's ID
       receiver_character_id: character.id,  // ← Character A's ID
       participant_character_ids: participantIdsForMsg,
-      ...(bilateralKeyForMsg ? { shared_conversation_key: bilateralKeyForMsg } : {}),
+      ...(canonicalKeyForMsg ? { shared_conversation_key: canonicalKeyForMsg } : {}),
       content: npcText,
       timestamp: new Date().toISOString(),
       channel: "world_phone",
