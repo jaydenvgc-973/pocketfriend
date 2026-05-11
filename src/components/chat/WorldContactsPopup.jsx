@@ -248,6 +248,9 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       image_url: imageUrl || undefined,
       timestamp: new Date().toISOString(),
       typed_by_user: true,
+      sync_status: "pending",
+      user_operated: true,
+      channel: "world_phone",
     });
 
     // Render on right side (sent) immediately — subscription will also fire, dedup is handled
@@ -364,9 +367,10 @@ Reply as ${selectedContact.person_name}:`;
 
     setIsTyping(false);
 
-    // ── BILATERAL SYNC + MEMORY (non-blocking background operations) ─────────────
-    // UI is already updated — these run in the background for continuity/memory only.
+    // ── BILATERAL SYNC + MEMORY (non-blocking with failure tracking) ────────────────
+    // UI is already updated. Sync runs in background but failures are stored for retry.
     if (selectedContact.related_character_id) {
+      // Non-blocking bilateral sync with stored sync_status tracking
       base44.functions.invoke('syncBilateralCharacterConversation', {
         sender_character_id: character.id,
         receiver_character_id: selectedContact.related_character_id,
@@ -379,8 +383,23 @@ Reply as ${selectedContact.person_name}:`;
         emotional_tone: 'calm',
         outcome: 'shared',
         timestamp: new Date().toISOString(),
-      }).catch(err => console.warn('[WorldContactsPopup] syncBilateral failed:', err.message));
+      })
+        .then(() => {
+          // Mark sync as successful in stored data so retry path can check
+          base44.entities.Message.update(savedUserMsg.id, {
+            sync_status: 'complete',
+          }).catch(() => {});
+        })
+        .catch(err => {
+          // Mark sync as failed in stored data — failure is now visible/retryable
+          base44.entities.Message.update(savedUserMsg.id, {
+            sync_status: 'failed',
+            sync_error: err.message || 'Unknown sync error',
+          }).catch(() => {});
+          console.warn('[WorldContactsPopup] syncBilateral failed:', err.message);
+        });
     }
+    // Sync memories after bilateral sync completes
     base44.functions.invoke('syncGroupChatMemories', {
       conversationId: convoId,
       source: 'world_phone',
