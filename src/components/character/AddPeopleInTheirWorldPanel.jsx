@@ -72,13 +72,18 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
         payloadHasOwnerEmail: true,
       }));
 
-      // Call backend function to create NPC via service role
-      const createRes = await base44.functions.invoke('createOwnedNpcCharacter', {
-        name: newName,
-        characterType: 'npc_fictitious',
-        linkedActiveCharacterId: character.id,
-        relationshipType: 'friend',
-        familyTitle: null,
+      // Route through the existing working path: createCharacterWithRelationships
+      const createRes = await base44.functions.invoke('createCharacterWithRelationships', {
+        characterData: {
+          name: newName,
+          character_type: 'npc_fictitious',
+          owner_email: currentUser.email,
+          owner_user_id: currentUser.id,
+          created_by_role: currentUser.role || 'user',
+          status: 'active',
+          exclude_from_homepage: true,
+        },
+        characterRelationships: [],
       });
 
       if (!createRes.data?.success) {

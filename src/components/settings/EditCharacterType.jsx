@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import { motion, AnimatePresence } from "framer-motion";
-import { buildNpcCharacterCreatePayload } from "@/lib/npcCharacterCreatePayloadBuilder";
+
 
 // Type definitions matching the actual Character entity enum
 const CHARACTER_TYPES = [
@@ -505,13 +505,18 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         attemptingCharacterCreate: true,
       }));
 
-      // Call backend function to create NPC via service role
-      const createRes = await base44.functions.invoke('createOwnedNpcCharacter', {
-        name: newCharName,
-        characterType: selectedType,
-        linkedActiveCharacterId: linkedCharId,
-        relationshipType: relationshipType,
-        familyTitle: familyTitle,
+      // Route through the existing working path: createCharacterWithRelationships
+      const createRes = await base44.functions.invoke('createCharacterWithRelationships', {
+        characterData: {
+          name: newCharName,
+          character_type: selectedType,
+          owner_email: lockedActingUserEmail,
+          owner_user_id: lockedActingUserId,
+          created_by_role: lockedActingUserRole,
+          status: 'active',
+          exclude_from_homepage: true,
+        },
+        characterRelationships: [],
       });
 
       if (!createRes.data?.success) {
