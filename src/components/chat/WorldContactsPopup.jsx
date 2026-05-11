@@ -379,24 +379,35 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setInputText("");
     setIsTyping(true);
 
-    const convoId = await ensureConversation();
+    // ── CANONICAL IDENTITY: compute BEFORE ensureConversation ───────────────────
+    // Must be computed first — canonical key is required before ANY message or thread creation.
+    const contactId = selectedContact.related_character_id;
+    const canonicalKeyForMsg = getCanonicalSharedKey(character.id, contactId);
+    const participantIdsForMsg = contactId ? [character.id, contactId].sort() : [character.id];
 
-    // ── TRUE CHARACTER-TO-CHARACTER IDENTITY ────────────────────────────────────
-    // Use canonical key (world_phone::A::B) on all new messages for consistent lookup.
-    const canonicalKeyForMsg = getCanonicalSharedKey(character.id, selectedContact.related_character_id);
-    const participantIdsForMsg = selectedContact.related_character_id
-      ? [character.id, selectedContact.related_character_id].sort()
-      : [character.id];
+    // ── HARD REJECTION: linked character-to-character World Phone requires canonical key ──
+    // If we cannot compute a canonical key (no related_character_id), reject immediately.
+    // Do NOT create any message or conversation — two realities would be the result.
+    if (!contactId || !canonicalKeyForMsg) {
+      console.warn(
+        `[WorldPhone] SEND REJECTED — cannot compute canonical key.` +
+        ` contact_id=${contactId || 'MISSING'} | key=${canonicalKeyForMsg || 'MISSING'}`
+      );
+      setIsTyping(false);
+      return;
+    }
+
+    const convoId = await ensureConversation();
 
     const savedUserMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",
       character_id: character.id,
       character_name: character.name,
-      sender_character_id: character.id,  // ← CRITICAL: Character A's ID
-      receiver_character_id: selectedContact.related_character_id || null,
+      sender_character_id: character.id,
+      receiver_character_id: contactId,
       participant_character_ids: participantIdsForMsg,
-      ...(canonicalKeyForMsg ? { shared_conversation_key: canonicalKeyForMsg } : {}),
+      shared_conversation_key: canonicalKeyForMsg,
       content: text,
       image_url: imageUrl || undefined,
       timestamp: new Date().toISOString(),
@@ -423,16 +434,6 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         context: "user_uploaded",
       });
       imageAnalysisContext = analysis.imageAnalysisContext;
-    }
-
-    // ── MESSAGE SEND SAFETY: Reject if canonical key cannot be computed ──────────
-    // For character-to-character World Phone, a deterministic canonical key is REQUIRED.
-    // If we cannot compute it (no related_character_id), reject the send.
-    // This ensures both directions will always load the same conversation_id.
-    if (!selectedContact?.related_character_id || !canonicalKeyForMsg) {
-      console.warn(`[WorldPhone] REJECTED: Cannot compute canonical key for world phone send. related_id=${selectedContact?.related_character_id} | key=${canonicalKeyForMsg}`);
-      setIsTyping(false);
-      return;
     }
 
     // ── CONTACT IDENTITY VERIFICATION ────────────────────────────────────────────
@@ -515,12 +516,12 @@ Reply as ${selectedContact.person_name}:`;
     const savedNpcMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",
-      character_id: selectedContact.related_character_id || character.id,
+      character_id: contactId,
       character_name: selectedContact.person_name,
-      sender_character_id: selectedContact.related_character_id || null,  // ← Character B's ID
-      receiver_character_id: character.id,  // ← Character A's ID
+      sender_character_id: contactId,
+      receiver_character_id: character.id,
       participant_character_ids: participantIdsForMsg,
-      shared_conversation_key: canonicalKeyForMsg || null,
+      shared_conversation_key: canonicalKeyForMsg,
       content: npcText,
       timestamp: new Date().toISOString(),
       channel: "world_phone",
@@ -542,9 +543,19 @@ Reply as ${selectedContact.person_name}:`;
     // ── BILATERAL SYNC + MEMORY (non-blocking with full failure tracking) ──────────
     // UI is already updated. Sync runs in background. All three records are marked.
     if (selectedContact.related_character_id) {
+      // ── VERIFICATION LOG: confirm all canonical identity fields before sync ──────
+      console.log(
+        `[WorldPhone] SEND VERIFICATION` +
+        ` | conversation_id=${convoId}` +
+        ` | canonical_key=${canonicalKeyForMsg}` +
+        ` | participants=${participantIdsForMsg.join(',')}` +
+        ` | sender_msg=${savedUserMsg.id}` +
+        ` | receiver_msg=${savedNpcMsg.id}`
+      );
+
       base44.functions.invoke('syncBilateralCharacterConversation', {
         sender_character_id: character.id,
-        receiver_character_id: selectedContact.related_character_id,
+        receiver_character_id: contactId,
         conversation_id: convoId,
         sender_message_id: savedUserMsg.id,
         receiver_message_id: savedNpcMsg.id,
@@ -559,7 +570,7 @@ Reply as ${selectedContact.person_name}:`;
         timestamp: new Date().toISOString(),
       })
         .then(() => {
-          // Mark all three records as sync complete
+          console.log(`[WorldPhone] sync_status=complete | convo=${convoId} | sender_msg=${savedUserMsg.id} | receiver_msg=${savedNpcMsg.id}`);
           Promise.allSettled([
             base44.entities.Message.update(savedUserMsg.id, { sync_status: 'complete' }),
             base44.entities.Message.update(savedNpcMsg.id, { sync_status: 'complete' }),
@@ -568,13 +579,12 @@ Reply as ${selectedContact.person_name}:`;
         })
         .catch(err => {
           const errMsg = err.message || 'Unknown sync error';
-          // Mark all three records as sync failed — visible and retryable
+          console.warn(`[WorldPhone] sync_status=failed | convo=${convoId} | error=${errMsg}`);
           Promise.allSettled([
             base44.entities.Message.update(savedUserMsg.id, { sync_status: 'failed', sync_error: errMsg }),
             base44.entities.Message.update(savedNpcMsg.id, { sync_status: 'failed', sync_error: errMsg }),
             base44.entities.Conversation.update(convoId, { sync_status: 'failed', sync_error: errMsg }),
           ]);
-          console.warn('[WorldContactsPopup] syncBilateral failed (stored):', errMsg);
         });
     }
     // Memory sync — non-blocking, runs regardless of bilateral sync outcome
