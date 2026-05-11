@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
+import { resolveCharacterContacts } from "@/lib/characterContactsResolver";
 
 // ── CONTACT KEY: use stable character_id when available, fall back to name-keyed only for unlinked NPCs ──
 // Format with linked ID:    npc_chat__[ownerCharId]__cid_[contactCharId]
@@ -11,222 +12,6 @@ import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterC
 function npcConvoTitle(ownerCharacterId, contactName, contactCharacterId) {
   if (contactCharacterId) return `npc_chat__${ownerCharacterId}__cid_${contactCharacterId}`;
   return `npc_chat__${ownerCharacterId}__${contactName}`;
-}
-
-// ── BUILD MERGED CONTACT LIST from all available sources ──
-// Sources (in priority order — deduped by stable characterId then name):
-//   1. fictional_relationships with related_character_id → linked, highest trust
-//   2. fictional_relationships without related_character_id → name-only (legacy)
-//   3. family_members array image fields (avatar_url / image_url on the inline entry)
-//   4. npc_family_member Character records owned by this character's owner
-//   5. active_created_character / npc_fictitious Character records in existing Conversations
-//   6. Name-match pass against ALL owner_email-scoped Character records for still-unhydrated entries
-// A contact with a real Character record gets avatar, stable ID, and bilateral memory.
-async function buildMergedContactList(character, ownerEmail) {
-  const seen = new Map(); // key: related_character_id or `name:${person_name}` → contact object
-
-  // ── Helper: pick best avatar from a Character record ──────────────────────
-  function bestAvatar(rec) {
-    return rec?.avatar_url || rec?.image_avatar_url || null;
-  }
-
-  // ── Helper: log each contact's resolution state ───────────────────────────
-  function logContact(contact, avatarSource) {
-    console.log(
-      `[WorldContacts] name="${contact.person_name}" | source=${contact._source || '?'} | related_character_id=${contact.related_character_id || 'none'} | matched_character_id=${contact._matched_character_id || 'none'} | avatar=${contact.avatar_url ? 'YES' : 'NO'} | avatar_source=${avatarSource || 'none'} | linkage=${contact._linkage}`
-    );
-  }
-
-  // 1 + 2. fictional_relationships (always primary — preserves all entries)
-  for (const rel of (character?.fictional_relationships || [])) {
-    if (!rel.person_name) continue;
-    const key = rel.related_character_id || `name:${rel.person_name}`;
-    if (!seen.has(key)) {
-      seen.set(key, {
-        person_name: rel.person_name,
-        relationship_type: rel.relationship_type,
-        description: rel.description,
-        history_summary: rel.history_summary,
-        last_interaction_summary: rel.last_interaction_summary,
-        emotional_impact: rel.emotional_impact,
-        current_status: rel.current_status,
-        romantic_level: rel.romantic_level || 0,
-        friendship_level: rel.friendship_level || 0,
-        related_character_id: rel.related_character_id || null,
-        avatar_url: null, // enriched below
-        _linkage: rel.related_character_id ? 'linked' : 'name_only',
-        _source: 'fictional_relationships',
-        _matched_character_id: null,
-        _avatar_source: null,
-      });
-    }
-  }
-
-  // 3. family_members inline array — hydrate avatar from image fields on the entry itself
-  for (const fm of (character?.family_members || [])) {
-    const name = fm.name || fm.person_name;
-    if (!name) continue;
-    const inlineAvatar = fm.avatar_url || fm.image_url || fm.image_avatar_url || null;
-    if (!inlineAvatar) continue;
-    // Try to enrich any existing name-only entry for this person
-    const existingEntry = [...seen.values()].find(c =>
-      c.person_name?.trim().toLowerCase() === name.trim().toLowerCase() && !c.avatar_url
-    );
-    if (existingEntry) {
-      existingEntry.avatar_url = inlineAvatar;
-      existingEntry._avatar_source = 'family_members_inline';
-    }
-    // No new entry created from family_members alone — fictional_relationships is the source of truth for contacts
-  }
-
-  if (!ownerEmail) {
-    const result = [...seen.values()].sort((a, b) => (a.person_name || '').localeCompare(b.person_name || ''));
-    result.forEach(c => logContact(c, c._avatar_source));
-    return result;
-  }
-
-  // ── SINGLE BROAD FETCH: one call to get all owner Characters needed for hydration ──
-  // This replaces all individual-per-ID parallel fetches that caused 429 storms.
-  // We fetch all active Characters for this owner once, then resolve everything in-memory.
-  const allOwnerChars = await base44.entities.Character.filter(
-    { owner_email: ownerEmail, status: 'active' },
-    null, 200
-  ).catch(() => []);
-
-  const charById = new Map(allOwnerChars.map(c => [c.id, c]));
-  const charByName = new Map(allOwnerChars.map(c => [c.name?.trim().toLowerCase(), c]));
-
-  // ── AVATAR HYDRATION: resolve linked IDs from in-memory map ──────────────
-  for (const entry of seen.values()) {
-    if (entry.related_character_id && !entry.avatar_url) {
-      const rec = charById.get(entry.related_character_id);
-      if (rec) {
-        const av = bestAvatar(rec);
-        if (av) {
-          entry.avatar_url = av;
-          entry._matched_character_id = rec.id;
-          entry._avatar_source = 'linked_character_record';
-          entry._linkage = 'linked';
-        }
-      }
-    }
-  }
-
-  // 4. Hydrate avatars from npc_family_member records ONLY for contacts already in this character's family_members list
-  // Never create new contacts from global family records — only this character's own family_members array should be a source of truth
-  const thisCharFamilyMemberIds = new Set(
-    (character?.family_members || [])
-      .map(fm => {
-        // Try to find the matching Character record by exact name match
-        const match = allOwnerChars.find(c =>
-          c.character_type === 'npc_family_member' &&
-          c.name?.trim().toLowerCase() === (fm.name || fm.person_name)?.trim().toLowerCase()
-        );
-        return match?.id;
-      })
-      .filter(Boolean)
-  );
-
-  for (const id of thisCharFamilyMemberIds) {
-    const fc = charById.get(id);
-    if (!fc) continue;
-    const av = bestAvatar(fc);
-
-    // Only hydrate existing entries — never create new contacts from family_member matches
-    if (seen.has(fc.id)) {
-      const entry = seen.get(fc.id);
-      if (!entry.avatar_url && av) {
-        entry.avatar_url = av;
-        entry._matched_character_id = fc.id;
-        entry._avatar_source = 'npc_family_member_record';
-      }
-    } else {
-      // Try to match by name in existing unlinked entries only (do NOT create new)
-      const nameEntry = [...seen.values()].find(c =>
-        c.person_name?.trim().toLowerCase() === fc.name?.trim().toLowerCase() && !c.related_character_id
-      );
-      if (nameEntry && !nameEntry.avatar_url && av) {
-        nameEntry.avatar_url = av;
-        nameEntry._matched_character_id = fc.id;
-        nameEntry._avatar_source = 'npc_family_member_name_match';
-      }
-    }
-  }
-
-  // 5. Resolve conversation-linked Character IDs from in-memory map (no extra API calls)
-  const existingConvos = await base44.entities.Conversation.filter(
-    { character_ids: [character.id], owner_email: ownerEmail },
-    '-updated_date', 30
-  ).catch(() => []);
-
-  const convoLinkedIds = new Set(
-    existingConvos.flatMap(c => c.character_ids || []).filter(id => id !== character.id)
-  );
-
-  for (const id of convoLinkedIds) {
-    const lc = charById.get(id);
-    if (!lc) continue;
-    const av = bestAvatar(lc);
-    if (seen.has(lc.id)) {
-      const entry = seen.get(lc.id);
-      if (!entry.avatar_url && av) {
-        entry.avatar_url = av;
-        entry._matched_character_id = lc.id;
-        entry._avatar_source = 'conversation_linked_record';
-      }
-    } else {
-      const nameEntry = [...seen.values()].find(c =>
-        c.person_name?.trim().toLowerCase() === lc.name?.trim().toLowerCase() && !c.related_character_id
-      );
-      if (nameEntry) {
-        nameEntry.related_character_id = lc.id;
-        if (!nameEntry.avatar_url && av) nameEntry.avatar_url = av;
-        nameEntry._matched_character_id = lc.id;
-        nameEntry._avatar_source = nameEntry._avatar_source || 'conversation_name_match';
-        nameEntry._linkage = 'linked_from_conversation';
-      } else {
-        seen.set(lc.id, {
-          person_name: lc.name,
-          relationship_type: lc.character_type === 'npc_fictitious' ? 'Known Contact' : 'Character',
-          description: lc.profile_summary || lc.backstory || '',
-          history_summary: '',
-          last_interaction_summary: '',
-          emotional_impact: '',
-          current_status: lc.current_activity || '',
-          romantic_level: 0,
-          friendship_level: 30,
-          related_character_id: lc.id,
-          avatar_url: av || null,
-          _linkage: 'linked_from_conversation',
-          _source: 'conversation',
-          _matched_character_id: lc.id,
-          _avatar_source: av ? 'conversation_linked_record' : null,
-        });
-      }
-    }
-  }
-
-  // 6. Final name-match pass for still-unhydrated name-only contacts — using the same in-memory map
-  for (const entry of seen.values()) {
-    if (!entry.avatar_url && !entry.related_character_id) {
-      const match = charByName.get(entry.person_name?.trim().toLowerCase());
-      if (match) {
-        const av = bestAvatar(match);
-        if (av) {
-          entry.avatar_url = av;
-          entry._matched_character_id = match.id;
-          entry._avatar_source = 'broad_name_match';
-          entry.related_character_id = match.id;
-          entry._linkage = 'linked_from_name_match';
-        }
-      }
-    }
-  }
-
-  // Emit diagnostics and sort
-  const result = [...seen.values()].sort((a, b) => (a.person_name || '').localeCompare(b.person_name || ''));
-  result.forEach(c => logContact(c, c._avatar_source));
-  return result;
 }
 
 export default function WorldContactsPopup({ isOpen, onClose, character }) {
@@ -240,24 +25,25 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const bottomRef = useRef(null);
 
-  // ── LOAD MERGED CONTACTS when popup opens ─────────────────────────────────
+  // ── LOAD CONTACTS via shared resolver ────────────────────────────────────
   useEffect(() => {
     if (!isOpen || !character?.id) return;
     setIsLoadingContacts(true);
-    base44.auth.me().then(me => {
-      buildMergedContactList(character, me?.email).then(list => {
+    base44.auth.me()
+      .then(me => resolveCharacterContacts(character, me?.email))
+      .then(list => {
         setContacts(list);
         setIsLoadingContacts(false);
+      })
+      .catch(() => {
+        // Fallback: fictional_relationships only — NEVER hide existing contacts
+        const fallback = (character?.fictional_relationships || []).filter(r => r.person_name).map(r => ({
+          ...r,
+          _linkage: r.related_character_id ? 'linked' : 'name_only',
+        }));
+        setContacts(fallback);
+        setIsLoadingContacts(false);
       });
-    }).catch(() => {
-      // Fallback: fictional_relationships only — NEVER hide existing contacts
-      const fallback = (character?.fictional_relationships || []).filter(r => r.person_name).map(r => ({
-        ...r,
-        _linkage: r.related_character_id ? 'linked' : 'name_only',
-      }));
-      setContacts(fallback);
-      setIsLoadingContacts(false);
-    });
   }, [isOpen, character?.id]);
 
   // Load or create a persistent conversation for the selected NPC
