@@ -1044,16 +1044,41 @@ Deno.serve(async (req) => {
       // Fallback to UI-provided refs if DB had none (only reference_image_urls — NOT avatar)
       // Note: Chat.jsx now only passes reference_image_urls (not avatar) as characterReferenceImages
       if (charRefs.length === 0 && characterReferenceImages?.length > 0) {
-        charRefs = cdnFilter(characterReferenceImages).slice(0, 3);
-        console.log(`[generateImageAsync] Using UI-provided charRefs (reference images only): ${charRefs.length}`);
+        // Filter out avatar_url entries passed from Chat.jsx — only accept real reference_image_urls.
+        // avatar_url ends in specific path patterns or is stored as a single root-level field.
+        // reference_image_urls are stored as arrays and individually uploaded.
+        // We cannot reliably distinguish here, so accept UI refs as-is but cap at 2.
+        charRefs = cdnFilter(characterReferenceImages).filter(u => !u.includes('generated_image')).slice(0, 2);
+        console.log(`[generateImageAsync] Using UI-provided charRefs: ${charRefs.length}`);
       }
 
-      // If still no refs: generate using text description ONLY — do NOT fall back to avatar_url.
-      // Avatar photos (selfies, mirror shots) contaminate the entire scene with their background,
-      // pose, props, and lighting. Text-only generation produces a clean, correct scene.
+      // CONTROLLED LAST-RESORT: if still no refs but avatar_url exists on the record,
+      // use it as a single face-only reference. This is explicitly controlled — face extraction
+      // instructions are already in the prompt preamble, so background contamination is minimized.
+      // Without this, zero-ref characters silently generate a random unrelated person.
+      // This is better than silent wrong-person generation.
+      if (charRefs.length === 0 && charRecord?.avatar_url) {
+        const avatarPublic = toPublicCDN(charRecord.avatar_url);
+        if (isAccessible(avatarPublic) && !avatarPublic.includes('generated_image')) {
+          charRefs = [avatarPublic];
+          console.warn(`[generateImageAsync] ⚠️ No reference_image_urls for "${charRecord.name}" — using avatar_url as controlled last-resort face anchor (1 image, face-only extraction). Add reference photos for better identity lock.`);
+        }
+      }
+
+      // If still no refs AND no charDesc: fail visibly rather than generating a random person.
+      // Silent wrong-person generation is worse than an explicit error.
+      if (charRefs.length === 0 && !charDesc) {
+        console.error(`[generateImageAsync] ❌ IDENTITY MISSING for "${characterName || characterId}" — no reference_image_urls, no avatar_url, no appearance description. Cannot generate identity-locked image.`);
+        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+        return Response.json({
+          success: false,
+          error: `No identity data for ${characterName || 'this character'}. Add reference photos or an appearance description to enable photo generation.`,
+          identity_missing: true,
+        });
+      }
+
       if (charRefs.length === 0) {
-        console.log(`[generateImageAsync] ℹ️ No reference images for "${characterName || characterId}" — will generate from text description only (no avatar fallback to prevent scene contamination)`);
-        // charRefs stays empty — buildPrompt will omit identity ref block, charDesc carries the description
+        console.log(`[generateImageAsync] ℹ️ No reference images for "${characterName || characterId}" — generating from text description only (charDesc present)`);
       }
     } // end else-if (characterId && subjectType in character/joint/known_character)
 
