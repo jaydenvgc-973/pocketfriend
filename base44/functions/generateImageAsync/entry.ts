@@ -674,9 +674,101 @@ If reference images show bright daylight or bright windows:
 Generate ONLY from the server time lighting rules above.
 The scene lighting must match the actual world time, not the reference images.`;
 
+  // ── APPEARANCE LOCK HELPER ───────────────────────────────────────────────────
+  function buildAppearanceLockText(desc) {
+    return [
+      (desc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || null,
+      (desc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || null,
+      (desc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || null,
+      (desc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || null,
+    ].filter(Boolean).join(', ') || 'as described';
+  }
+
   let identityLock = '';
-  if (hasChar && !isSelfieMode) {
-    // Standard scene mode identity lock
+
+  // ── JOINT SUBJECT MODE — dual named identity slots ────────────────────────
+  // When subjectType === 'joint', both the character AND the user are primary subjects.
+  // Generic "User" label is not enough — each subject needs a fully-named, numbered identity slot
+  // so the model never merges, blurs, or substitutes one person for the other.
+  if (subjectType === 'joint') {
+    // Background population rules for joint scenes
+    const promptLowerForBg = (prompt || '').toLowerCase();
+    const isPrivateScene = /\b(selfie|close.?up|just us|just the two|alone|private|bedroom|mirror|portrait|intimate|romantic)\b/i.test(prompt);
+    const isPublicScene = /\b(pool party|club|concert|bar|beach|festival|mall|airport|restaurant|crowd|party|event)\b/i.test(prompt);
+    const bgRule = isPrivateScene
+      ? `⛔ BACKGROUND PEOPLE: ZERO. This is a private/intimate scene. Do NOT add any background figures, bystanders, or extras — not even one. The subjects are alone.`
+      : isPublicScene
+      ? `BACKGROUND PEOPLE: Allowed as environmental texture ONLY. Background figures must be out-of-focus, non-specific, and visually subordinate. They must NEVER enter the foreground framing or become cast members. No children unless the prompt explicitly mentions them.`
+      : `BACKGROUND PEOPLE: Avoid unless the scene clearly requires a populated environment. If present, they must be blurred, indistinct, and visually subordinate. No children unless explicitly requested.`;
+
+    identityLock = `
+
+════════════════════════════════════════════════════════════
+⚠️ JOINT IMAGE — TWO SEPARATE IDENTITY-LOCKED SUBJECTS
+════════════════════════════════════════════════════════════
+This image contains EXACTLY TWO primary subjects. Each subject has a separate identity slot below.
+You MUST render both subjects as distinct individuals. Do NOT merge, blend, or substitute their appearances.
+The scene description comes AFTER these identity definitions — read both identity slots BEFORE reading the scene.
+
+────────────────────────────────────────────────────────────
+SUBJECT 1 — CHARACTER: "${charName}"
+────────────────────────────────────────────────────────────
+Subject 1 Type: character
+Subject 1 ID: ${characterId || 'resolved from prompt'}
+${charRefCount > 0
+  ? `Subject 1 Reference Images: Images ${charRefStart}–${charEnd} (${charRefCount} photo${charRefCount > 1 ? 's' : ''})
+These are face/identity reference photographs of "${charName}".
+Extract ONLY: face structure, skin tone, eye shape, nose, mouth, hair color/length/style, facial hair, body type.
+⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.`
+  : `Subject 1 Reference Images: NONE — generate from text description below ONLY.`
+}
+Subject 1 Appearance Lock (ABSOLUTE — 100% non-negotiable):
+  ${charDesc ? charDesc : 'Generate as described in scene prompt.'}
+Subject 1 Appearance Key: ${buildAppearanceLockText(charDesc)}
+⛔ Subject 1 MUST look like "${charName}" at all times. Do NOT substitute a generic person.
+⛔ Do NOT let Subject 2's appearance overwrite or bleed into Subject 1.
+
+────────────────────────────────────────────────────────────
+SUBJECT 2 — USER: "${userWorldName || 'the user'}"
+────────────────────────────────────────────────────────────
+Subject 2 Type: user
+Subject 2 ID: current app user
+${userRefCount > 0
+  ? `Subject 2 Reference Images: Images ${userRefStart}–${userEnd} (${userRefCount} photo${userRefCount > 1 ? 's' : ''})
+These are face/identity reference photographs of the user.
+Extract ONLY: face structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
+⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.`
+  : `Subject 2 Reference Images: NONE — render the user as a realistic human consistent with scene context. Do NOT substitute a child or irrelevant person.`
+}
+⛔ Subject 2 MUST look like the person in the reference photos (if provided). Do NOT use a generic face.
+⛔ Do NOT let Subject 1's appearance overwrite or bleed into Subject 2.
+
+════════════════════════════════════════════════════════════
+JOINT RENDERING RULES — NON-NEGOTIABLE
+════════════════════════════════════════════════════════════
+✅ BOTH subjects must be clearly visible and visually dominant in the frame
+✅ Each subject retains their own distinct face, hair, skin tone, and body type throughout
+✅ Neither subject's identity bleeds into the other
+✅ Both subjects are physically integrated into the same scene — same lighting, same perspective, same floor plane
+✅ Anatomically correct hands (exactly 5 fingers per hand) on both subjects
+✅ Both subjects cast real shadows from the same time-of-day light source
+
+⛔ Do NOT introduce a third foreground person unless explicitly requested in the scene prompt
+⛔ Do NOT add children unless the scene prompt explicitly mentions them
+⛔ Do NOT substitute a generic second person for Subject 2
+⛔ Do NOT treat the user (Subject 2) as scenery or a background element
+⛔ Do NOT render one subject correctly and make the other generic/approximate
+⛔ HARD FAIL: Any unintended person appears in the foreground framing
+
+${bgRule}
+
+CAMERA HIERARCHY FOR THIS JOINT SCENE:
+1. Both subjects and their interaction/emotion (primary — always dominant)
+2. Scene environment and setting (secondary)
+3. Background extras if any (environmental texture only — never competing)`;
+
+  } else if (hasChar && !isSelfieMode) {
+    // Standard single-character scene mode identity lock
     identityLock += `
 
   CHARACTER IDENTITY — "${charName}":
@@ -694,7 +786,7 @@ The scene lighting must match the actual world time, not the reference images.`;
   ✅ Cast real shadows from the character onto the floor and nearby furniture using ${timeLighting.period} lighting
   ✅ Skin tones, highlights, and shadows on the character MUST match the room's time-of-day lighting exactly
   ✅ Character scale must be physically correct relative to the room furniture and camera distance
-  ✅ APPEARANCE LOCK (100% ABSOLUTE): Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}), Body type (${(charDesc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || 'as described'}) — NON-NEGOTIABLE
+  ✅ APPEARANCE LOCK (100% ABSOLUTE): ${buildAppearanceLockText(charDesc)} — NON-NEGOTIABLE
   ✅ OUTFIT: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] ? `If the scene prompt specifies clothing, use THAT clothing. If no clothing is described in the scene prompt, default to: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1]}.` : 'Clothing should match what the scene prompt describes, or their personality and context if unspecified.'}
   
   ⛔ HARD FAILS:
@@ -711,10 +803,12 @@ The scene lighting must match the actual world time, not the reference images.`;
   ? `Images ${charRefStart}–${charEnd} are face reference photos. Match ONLY face structure, skin tone, eyes, hair color/length/style, facial hair, body type.`
   : `Generate "${charName}" from text description: ${charDesc || 'realistic human'}.`
   }
-  ✅ APPEARANCE LOCK: Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}) — NON-NEGOTIABLE
+  ✅ APPEARANCE LOCK: ${buildAppearanceLockText(charDesc)} — NON-NEGOTIABLE
   ⛔ Do NOT copy pose, background, or clothing from reference photos — only the face identity transfers`;
   }
-  if (hasUser) {
+
+  // For non-joint user identity (user-only photos)
+  if (hasUser && subjectType !== 'joint') {
     identityLock += `
 
 USER IDENTITY:
@@ -1257,9 +1351,19 @@ Deno.serve(async (req) => {
 
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length}`);
     console.log(`[IdentityAudit] FINAL STATE before generation:`);
-    console.log(`[IdentityAudit]   charRefs_final_count: ${CHAR_SLOTS}`);
-    console.log(`[IdentityAudit]   charDesc_present:     ${!!charDesc} (${charDesc ? charDesc.substring(0,80) : 'EMPTY'})`);
-    console.log(`[IdentityAudit]   avatar_fallback_used: ${charRefs.length > 0 && (charRecord?.reference_image_urls || []).filter(u => !u.includes('generated_image')).length === 0 && !!charRecord?.avatar_url}`);
+    console.log(`[IdentityAudit]   subject_type:              ${subjectType}`);
+    console.log(`[IdentityAudit]   subject_1_id:              ${characterId || 'null'}`);
+    console.log(`[IdentityAudit]   subject_1_name:            ${charRecord?.name || characterName || 'unknown'}`);
+    console.log(`[IdentityAudit]   subject_1_ref_count:       ${CHAR_SLOTS}`);
+    console.log(`[IdentityAudit]   subject_1_charDesc_present: ${!!charDesc}`);
+    console.log(`[IdentityAudit]   subject_1_appearance_lock:  ${charRecord?.appearance_lock ? Object.keys(charRecord.appearance_lock).join(', ') || 'none' : 'none'}`);
+    console.log(`[IdentityAudit]   subject_1_avatar_fallback: ${charRefs.length > 0 && (charRecord?.reference_image_urls || []).filter(u => !u.includes('generated_image')).length === 0 && !!charRecord?.avatar_url}`);
+    console.log(`[IdentityAudit]   subject_2_id:              ${subjectType === 'joint' || subjectType === 'user' ? requestingUser : 'n/a'}`);
+    console.log(`[IdentityAudit]   subject_2_name:            ${subjectType === 'joint' || subjectType === 'user' ? (userWorldName || 'user') : 'n/a'}`);
+    console.log(`[IdentityAudit]   subject_2_ref_count:       ${USER_SLOTS}`);
+    console.log(`[IdentityAudit]   subject_2_visual_refs_found: ${USER_SLOTS > 0}`);
+    console.log(`[IdentityAudit]   joint_dual_slot_active:    ${subjectType === 'joint'}`);
+    console.log(`[IdentityAudit]   generic_fallback_inserted: false`);
     console.log(`[IdentityAudit]   generation_context.character_id will be: ${characterId || 'null'}`);
     console.log(`[IdentityAudit]   message_id: ${messageId}`);
 
