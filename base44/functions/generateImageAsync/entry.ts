@@ -655,7 +655,28 @@ RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
   This rule applies to bedrooms, living rooms, kitchens, bathrooms, offices, businesses, outdoor spaces, and all zones.`;
   }
 
-  let refImageOverride = `
+  // When the prompt explicitly declares a time of day, do NOT inject the server-time reference
+  // image override — the prompt IS the lighting authority. Injecting "server time = 3pm" when
+  // the prompt says "nighttime" creates a conflicting signal that confuses the model and
+  // produces daytime images despite the user's explicit night request.
+  let refImageOverride = promptHasExplicitTime ? `
+
+════════════════════════════════════════════════════════════
+⛔ REFERENCE IMAGE LIGHTING IS IGNORED — PROMPT TIME IS AUTHORITY ⛔
+════════════════════════════════════════════════════════════
+The prompt explicitly specifies a time of day. Reference images may have been taken at a different time.
+
+THIS REFERENCE IMAGE LIGHTING MUST BE COMPLETELY IGNORED.
+
+Lighting is ONLY determined by the scene prompt's time declaration.
+
+If reference images show bright daylight but the prompt says nighttime:
+🚫 DO NOT replicate that daylight lighting
+🚫 DO NOT use that color temperature
+🚫 DO NOT copy that brightness level
+
+Generate lighting ONLY from what the prompt describes.
+The scene lighting must match the PROMPT, not the reference images.` : `
 
 ════════════════════════════════════════════════════════════
 ⛔ CRITICAL OVERRIDE: REFERENCE IMAGE LIGHTING IS IGNORED ⛔
@@ -1638,8 +1659,13 @@ All reference images (if any) are environment/location refs only — do NOT trea
 
     // ── DISPATCH LOG — logged once before loop, updated on camera override ─────
     console.log(`[generateImageAsync] ── PROVIDER DISPATCH ──`);
-    console.log(`  raw prompt:       ${rawPromptForSanitize.substring(0, 200)}${rawPromptForSanitize.length > 200 ? '…' : ''}`);
-    console.log(`  sanitized prompt: ${sanitizedPrompt.substring(0, 200)}${sanitizedPrompt.length > 200 ? '…' : ''}`);
+    console.log(`  raw prompt:             ${rawPromptForSanitize.substring(0, 200)}${rawPromptForSanitize.length > 200 ? '…' : ''}`);
+    console.log(`  sanitized prompt:       ${sanitizedPrompt.substring(0, 200)}${sanitizedPrompt.length > 200 ? '…' : ''}`);
+    console.log(`  prompt_has_explicit_time: ${promptHasExplicitTime}`);
+    console.log(`  server_hour:            ${serverTime.getHours()}`);
+    console.log(`  time_lighting_period:   ${timeLighting.period}`);
+    console.log(`  lighting_authority:     ${promptHasExplicitTime ? 'PROMPT (explicit time declared)' : `SERVER TIME (${timeLighting.period})`}`);
+    console.log(`  env_refs_time_override: ${promptHasExplicitTime ? 'BLOCKED — prompt time is authority' : 'ACTIVE — server time enforced'}`);
     console.log(`  char refs: ${CHAR_SLOTS} | env refs: ${ENV_SLOTS} | user refs: ${USER_SLOTS}`);
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

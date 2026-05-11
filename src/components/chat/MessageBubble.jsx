@@ -408,7 +408,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                 />
                 {showImageDelete && (
                   <div className="absolute inset-0 bg-black/40 rounded-t-2xl flex items-center justify-center gap-2">
-                    {!isUser && (
+                    {/* Show regenerate for character-sent images OR any app-generated image (has generation_context).
+                        User-sent Media Grid images have generation_context and must also support regeneration. */}
+                    {(!isUser || message.generation_context) && (
                       <button
                         onClick={(e) => { e.stopPropagation(); setShowRegenModal(true); }}
                         className="p-2 rounded-full bg-white/20 text-white hover:bg-white/30 transition-colors"
