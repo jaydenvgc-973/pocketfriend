@@ -101,11 +101,23 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setIsLoadingHistory(true);
 
     try {
+      // Diagnostic logging for thread resolution
+      const bilateralKey = contact.related_character_id
+        ? `bilateral_${[character.id, contact.related_character_id].sort().join('_')}_world_phone`
+        : null;
+      const stableTitle = npcConvoTitle(character.id, contact.person_name, contact.related_character_id);
+      const legacyTitle  = npcConvoTitle(character.id, contact.person_name, null);
+
+      console.log(
+        `[WorldPhone] Opening contact | current_char=${character.id} | contact=${contact.related_character_id || contact.person_name} | shared_key=${bilateralKey || 'none'}`
+      );
+
       // Load conversations where either character is a participant.
-      // PRIMARY: participant_character_ids (bilateral schema)
-      // FALLBACK: character_ids (legacy schema)
-      // Both are queried to ensure legacy threads are not lost.
-      const [byParticipant, byCharacterId] = await Promise.all([
+      // PRIMARY: shared_conversation_key (bilateral schema)
+      // SECONDARY: participant_character_ids (bilateral fallback)
+      // TERTIARY: character_ids (legacy schema)
+      const [bySharedKey, byParticipant, byCharacterId] = await Promise.all([
+        bilateralKey ? base44.entities.Conversation.filter({ shared_conversation_key: bilateralKey }, "-updated_date", 10).catch(() => []) : Promise.resolve([]),
         contact.related_character_id
           ? base44.entities.Conversation.filter({ participant_character_ids: [character.id] }, "-updated_date", 100).catch(() => [])
           : Promise.resolve([]),
@@ -114,36 +126,47 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
 
       // Merge and deduplicate by id
       const seenIds = new Set();
-      const existing = [...byParticipant, ...byCharacterId].filter(c => {
+      const existing = [...bySharedKey, ...byParticipant, ...byCharacterId].filter(c => {
         if (seenIds.has(c.id)) return false;
         seenIds.add(c.id);
         return true;
       });
 
-      const stableTitle = npcConvoTitle(character.id, contact.person_name, contact.related_character_id);
-      const legacyTitle  = npcConvoTitle(character.id, contact.person_name, null);
-
-      const bilateralKey = contact.related_character_id
-        ? `bilateral_${[character.id, contact.related_character_id].sort().join('_')}_world_phone`
-        : null;
-
+      // Resolve conversation: shared key first, then participant match, then title match
       const found = (bilateralKey && existing.find(c => c.shared_conversation_key === bilateralKey)) ||
+                    (contact.related_character_id && existing.find(c => 
+                      c.participant_character_ids && 
+                      [character.id, contact.related_character_id].every(id => c.participant_character_ids.includes(id))
+                    )) ||
                     existing.find(c => c.title === stableTitle) ||
                     existing.find(c => c.title === legacyTitle);
 
       if (found) {
+        console.log(
+          `[WorldPhone] Conversation found | convo_id=${found.id} | shared_key=${found.shared_conversation_key || 'none'} | participants=${JSON.stringify(found.participant_character_ids || found.character_ids)}`
+        );
         setConversationId(found.id);
         const history = await base44.entities.Message.filter(
           { conversation_id: found.id },
           "created_date"
         );
-        // Messages sent BY Character A (the owner of this World Phone) render on the right.
-        // Messages sent BY Character B (the contact) render on the left.
-        // sender_type "user" is a legacy fallback — treat it as "sent" (right side).
+        
+        // Diagnostic: log message sender resolution
+        const msgSenderInfo = history.map(m => ({
+          id: m.id.substring(0, 8),
+          sender_character_id: m.sender_character_id || 'none',
+          character_id: m.character_id || 'none',
+          sender_type: m.sender_type,
+        }));
+        console.log(`[WorldPhone] Loaded ${history.length} messages | senders=${JSON.stringify(msgSenderInfo)}`);
+
+        // CRITICAL: Use sender_character_id to determine direction, not sender_type alone
+        // Messages sent BY Character A render on the right (role: "sent")
+        // Messages sent BY Character B render on the left (role: "npc")
         setMessages(history.map(m => ({
           id: m.id,
           dbId: m.id,
-          role: (m.sender_type === "user" || m.character_id === character.id) ? "sent" : "npc",
+          role: (m.sender_character_id === character.id || (m.sender_character_id === null && m.character_id === character.id)) ? "sent" : "npc",
           content: m.content,
         })));
 
@@ -153,9 +176,14 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         }
 
         subscribeToConversation(found.id);
+      } else {
+        console.log(
+          `[WorldPhone] No conversation found | shared_key=${bilateralKey || 'none'} | contact_id=${contact.related_character_id || 'none'} | existing_convos=${existing.length}`
+        );
       }
-    } catch {
+    } catch (err) {
       // Could not load history — start fresh
+      console.error('[WorldPhone] selectContact error:', err.message);
     }
 
     setIsLoadingHistory(false);
@@ -298,7 +326,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
 
     // ── TRUE CHARACTER-TO-CHARACTER IDENTITY ────────────────────────────────────
     // The user is operating Character A's phone. The message is authored BY Character A.
-    // sender_type: "character" + character_id: character.id marks this as Character A speaking.
+    // sender_character_id: character.id marks this as Character A speaking.
+    // This allows both Character A and Character B to resolve the message direction correctly.
     const bilateralKeyForMsg = selectedContact.related_character_id
       ? `bilateral_${[character.id, selectedContact.related_character_id].sort().join('_')}_world_phone`
       : null;
@@ -311,7 +340,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       sender_type: "character",
       character_id: character.id,
       character_name: character.name,
-      sender_character_id: character.id,
+      sender_character_id: character.id,  // ← CRITICAL: Character A's ID
       receiver_character_id: selectedContact.related_character_id || null,
       participant_character_ids: participantIdsForMsg,
       ...(bilateralKeyForMsg ? { shared_conversation_key: bilateralKeyForMsg } : {}),
@@ -323,6 +352,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       channel: "world_phone",
       sync_status: "pending",
     });
+
+    console.log(`[WorldPhone] Sent message | from=${character.id} | to=${selectedContact.related_character_id} | msg_id=${savedUserMsg.id.substring(0, 8)}`);
 
     // Render on right side (sent) immediately — subscription will also fire, dedup is handled
     const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text };
@@ -424,8 +455,8 @@ Reply as ${selectedContact.person_name}:`;
       sender_type: "character",
       character_id: selectedContact.related_character_id || character.id,
       character_name: selectedContact.person_name,
-      sender_character_id: selectedContact.related_character_id || null,
-      receiver_character_id: character.id,
+      sender_character_id: selectedContact.related_character_id || null,  // ← Character B's ID
+      receiver_character_id: character.id,  // ← Character A's ID
       participant_character_ids: participantIdsForMsg,
       ...(bilateralKeyForMsg ? { shared_conversation_key: bilateralKeyForMsg } : {}),
       content: npcText,
@@ -433,6 +464,8 @@ Reply as ${selectedContact.person_name}:`;
       channel: "world_phone",
       sync_status: "pending",
     });
+
+    console.log(`[WorldPhone] Response message | from=${selectedContact.related_character_id} | to=${character.id} | msg_id=${savedNpcMsg.id.substring(0, 8)}`);
 
     const npcMsg = { id: savedNpcMsg.id, dbId: savedNpcMsg.id, role: "npc", content: npcText };
     setMessages(prev => [...prev, npcMsg]);
