@@ -56,6 +56,21 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
     }
     setIsLoading(true);
     try {
+      // ── PRE-CREATE DIAGNOSTIC LOG ──────────────────────────────────────────
+      console.log('[AddPeopleInTheirWorldPanel] handleAddNew PRE-CREATE:', JSON.stringify({
+        route: 'Character Profile → Add to People In Their World → New',
+        selectedType: 'npc_fictitious',
+        currentUserEmailPresent: !!currentUser?.email,
+        owner_email: currentUser.email,
+        owner_user_id_present: !!currentUser?.id,
+        character_type: 'npc_fictitious',
+        linked_active_character_id: character.id,
+        relationship_type: 'friend',
+        family_title: null,
+        payloadHasOwnerEmail: true,
+        attemptingCharacterCreate: true,
+      }));
+
       // Create new NPC with canonical type npc_fictitious
       const newNPC = await base44.entities.Character.create({
         name: newName.trim(),

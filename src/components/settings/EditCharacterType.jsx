@@ -109,13 +109,13 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     queryFn: async () => {
       if (!currentUser?.email) return [];
       const allChars = await base44.entities.Character.list("-created_date", 200);
-      return allChars.filter(c => (c.owner_email === currentUser.email || c.created_by === currentUser.email));
+      return allChars.filter(c => c.owner_email === currentUser.email);
     },
     enabled: !!currentUser?.email,
   });
 
-  // ONLY use freshly fetched characters filtered by owner_email or created_by
-  const scopedCharacters = userCharacters.filter(c => (c.owner_email === currentUser?.email || c.created_by === currentUser?.email));
+  // ONLY use freshly fetched characters filtered by owner_email
+  const scopedCharacters = userCharacters.filter(c => c.owner_email === currentUser?.email);
 
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -131,12 +131,12 @@ export default function EditCharacterType({ characters = [], currentUser }) {
   const [showMatchWarning, setShowMatchWarning] = useState(false);
   const [potentialMatches, setPotentialMatches] = useState([]);
 
-  // CRITICAL: Only show characters that belong to the current user
+  // CRITICAL: Only show characters that belong to the current user (owner_email only — never created_by)
   const activeChars = useMemo(
     () => scopedCharacters.filter(c => 
       c.character_type === "active_created_character" && 
       c.status !== "deleted" && 
-      (c.owner_email === currentUser?.email || c.created_by === currentUser?.email)
+      c.owner_email === currentUser?.email
     ),
     [scopedCharacters, currentUser?.email]
   );
@@ -159,7 +159,7 @@ export default function EditCharacterType({ characters = [], currentUser }) {
       // Source 1: Backend Character table (filter by owner)
       const allChars = await base44.entities.Character.list("-created_date", 500);
       const owned = allChars.filter(c => 
-        (c.owner_email === userEmail || c.created_by === userEmail) && 
+        c.owner_email === userEmail && 
         c.status !== "deleted"
       );
       
@@ -351,6 +351,23 @@ export default function EditCharacterType({ characters = [], currentUser }) {
 
     try {
       const oldType = selectedChar.character_type;
+
+      // ── PRE-SAVE DIAGNOSTIC LOG ────────────────────────────────────────────
+      console.log('[EditCharacterType] handleSaveExisting PRE-SAVE:', JSON.stringify({
+        route: 'Settings → Edit Character Type → Promote/Reclassify Existing',
+        isExistingCharacter: true,
+        attemptingTypePromotion: true,
+        originalCharacterType: oldType,
+        targetCharacterType: selectedType,
+        bypassingLightweightCreateFlow: true,
+        currentUserEmailPresent: !!currentUser?.email,
+        owner_email: currentUser.email,
+        character_id: selectedChar.id,
+        linked_active_character_id: linkedCharId || null,
+        relationship_type: relationshipType || null,
+        family_title: familyTitle || null,
+      }));
+
       const updatePayload = { character_type: selectedType };
       
       // Repair missing owner_email on existing character
@@ -463,14 +480,29 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     setSaveResult(null);
 
     try {
+      // ── PRE-CREATE DIAGNOSTIC LOG ──────────────────────────────────────────
+      console.log('[EditCharacterType] handleCreateNew PRE-CREATE:', JSON.stringify({
+        route: 'Settings → Edit Character Type → Create New',
+        selectedType,
+        currentUserEmailPresent: !!lockedActingUserEmail,
+        owner_email: lockedActingUserEmail,
+        owner_user_id_present: !!lockedActingUserId,
+        character_type: selectedType,
+        linked_active_character_id: linkedCharId || null,
+        relationship_type: relationshipType || null,
+        family_title: familyTitle || null,
+        payloadHasOwnerEmail: true,
+        attemptingCharacterCreate: true,
+      }));
+
       const charData = {
         name: newCharName.trim(),
         character_type: selectedType,
         status: "active",
-        created_by: lockedActingUserEmail,
         owner_email: lockedActingUserEmail,
         owner_user_id: lockedActingUserId,
         created_by_role: lockedActingUserRole,
+        exclude_from_homepage: selectedType !== 'active_created_character',
       };
 
       const created = await base44.entities.Character.create(charData);
