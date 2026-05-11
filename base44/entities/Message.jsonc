@@ -145,11 +145,11 @@
         },
         "presence_status": {
           "type": "string",
-          "description": "Character's presence status at this location (at_work, home, visiting, etc.)"
+          "description": "Character's presence status at this location"
         },
         "location_category": {
           "type": "string",
-          "description": "Category of the location (home, workplace, gym, etc.)"
+          "description": "Category of the location"
         },
         "character_avatar_url": {
           "type": "string",
@@ -163,6 +163,44 @@
           "type": "string",
           "format": "date-time",
           "description": "When the location was shared"
+        }
+      }
+    },
+    "money_transfer": {
+      "type": "object",
+      "description": "Money transfer card \u2014 populated when user sends money to a character or vice versa",
+      "properties": {
+        "amount": {
+          "type": "number",
+          "description": "Amount transferred in USD"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "sent",
+            "received"
+          ],
+          "description": "Direction from the user's perspective"
+        },
+        "recipient_name": {
+          "type": "string",
+          "description": "Display name of who received the money"
+        },
+        "recipient_id": {
+          "type": "string",
+          "description": "Character ID of recipient"
+        },
+        "sender_name": {
+          "type": "string",
+          "description": "Display name of who sent the money"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Optional reason for the transfer"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
         }
       }
     },
