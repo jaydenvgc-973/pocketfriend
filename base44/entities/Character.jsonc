@@ -8,34 +8,13 @@
       }
     },
     "read": {
-      "$or": [
-        {
-          "data.owner_email": "{{user.email}}"
-        },
-        {
-          "created_by": "{{user.email}}"
-        }
-      ]
+      "data.owner_email": "{{user.email}}"
     },
     "update": {
-      "$or": [
-        {
-          "data.owner_email": "{{user.email}}"
-        },
-        {
-          "created_by": "{{user.email}}"
-        }
-      ]
+      "data.owner_email": "{{user.email}}"
     },
     "delete": {
-      "$or": [
-        {
-          "data.owner_email": "{{user.email}}"
-        },
-        {
-          "created_by": "{{user.email}}"
-        }
-      ]
+      "data.owner_email": "{{user.email}}"
     }
   },
   "properties": {

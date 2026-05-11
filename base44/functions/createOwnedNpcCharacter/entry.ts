@@ -62,8 +62,11 @@ Deno.serve(async (req) => {
       familyTitle: familyTitle || null,
     }));
 
-    // ── CREATE via service role (bypasses RLS) ──────────────────────────────
-    const newNPC = await base44.asServiceRole.entities.Character.create(charData);
+    // ── CREATE via user-scoped context ──────────────────────────────────────
+    // RLS create rule: {"user_condition": {"role": "user"}} — satisfied by authenticated user.
+    // owner_email and owner_user_id are stamped HERE from auth, never from frontend payload.
+    // This function IS the ownership enforcement layer — frontend cannot influence owner fields.
+    const newNPC = await base44.entities.Character.create(charData);
 
     return Response.json({
       success: true,
