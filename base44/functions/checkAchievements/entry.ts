@@ -309,26 +309,54 @@ Deno.serve(async (req) => {
       existingIds.push(achievement_id);
     }
 
-    // For revisited achievements, write a lightweight Life Journal entry
-    // so the moment is recorded — but no modal is shown
-    for (const achievement_id of revisitIds.slice(0, 2)) {
-      const existingRecord = existing.find(a => a.achievement_id === achievement_id);
-      base44.asServiceRole.entities.CharacterMemory.create({
-        character_id: characterId,
-        memory_type: 'event',
-        memory_text: `Revisited emotional moment: "${achievement_id.replace(/_/g, ' ')}" felt again during conversation.`,
-        memory_summary: `Moment revisited: ${achievement_id}`,
-        importance_score: 3,
-        permanence: 'short_term',
-      }).catch(() => {});
-    }
+    // EMOTIONAL WEIGHT CLASSIFICATION for revisits
+    // Determines whether a revisit is meaningful enough for Life Journal vs. memory-only
+    const HIGH_WEIGHT_ACHIEVEMENTS = new Set([
+      'inner_circle', 'they_opened_up', 'hit_deep', 'that_meant_something',
+      'ride_along', 'trust_built', 'tension_resolved', 'first_responder',
+      'bedside_manner', 'watched_them_grow', 'you_were_there', 'big_moment',
+    ]);
+    const MEDIUM_WEIGHT_ACHIEVEMENTS = new Set([
+      'the_push', 'voice_of_reason', 'shifted_perspective', 'let_them_in',
+      'hard_truth', 'apologized', 'clutch_timing', 'reconnected',
+    ]);
 
-    // Build revisit metadata for frontend quiet toast
-    const revisited = revisitIds.slice(0, 2).map(id => ({
-      achievement_id: id,
-      character_id: characterId,
-      character_name: characterName || '',
-    }));
+    const revisited = [];
+    for (const achievement_id of revisitIds.slice(0, 2)) {
+      const isHigh   = HIGH_WEIGHT_ACHIEVEMENTS.has(achievement_id);
+      const isMedium = MEDIUM_WEIGHT_ACHIEVEMENTS.has(achievement_id);
+      const label    = achievement_id.replace(/_/g, ' ');
+
+      if (isHigh) {
+        // Meaningful emotional revisit → Life Journal (visible) + quiet toast
+        base44.asServiceRole.entities.LifeEvent.create({
+          character_id: characterId,
+          character_name: characterName || '',
+          event_type: 'emotional_exchange',
+          valence: 'positive',
+          severity: 'moderate',
+          title: `Moment revisited: ${label}`,
+          description: `This emotional moment was felt again during conversation: "${label}".`,
+          emotional_impact: 'A recurring emotional theme in this relationship.',
+          triggered_by: 'user_message',
+          timestamp: new Date().toISOString(),
+          systems_updated: ['memory'],
+        }).catch(() => {});
+        revisited.push({ achievement_id, character_id: characterId, character_name: characterName || '', weight: 'high' });
+      } else if (isMedium) {
+        // Moderate revisit → CharacterMemory only (importance 4 so retrieveActiveMemory surfaces it) + toast
+        base44.asServiceRole.entities.CharacterMemory.create({
+          character_id: characterId,
+          memory_type: 'event',
+          memory_text: `Recurring emotional pattern: "${label}" felt again in conversation.`,
+          memory_summary: `Moment revisited: ${label}`,
+          importance_score: 4,
+          permanence: 'long_term',
+        }).catch(() => {});
+        revisited.push({ achievement_id, character_id: characterId, character_name: characterName || '', weight: 'medium' });
+      }
+      // Low-weight revisits (tension, bad_influence, etc.) → silently ignored, no write, no toast
+    }
 
     console.log(`[checkAchievements] user=${user.email} charId=${characterId} textHits=${textAchievements.length} dataHits=${dataAchievements.length} unlocked=${newlyUnlocked.length} revisited=${revisited.length}`);
 

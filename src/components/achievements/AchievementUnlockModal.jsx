@@ -7,6 +7,10 @@ import { ACHIEVEMENTS } from "@/lib/achievements";
 // Prevents re-showing the big modal after remount within the same browser session.
 const sessionFullModalShown = new Set();
 
+// Per-achievement revisit toast cooldown: keyed as `${achievement_id}::${character_id}`.
+// Prevents the same revisit toast from firing more than once per 10 minutes per character.
+const revisitToastShownAt = {};
+
 export default function AchievementUnlockModal() {
   // fullQueue: show large modal (true first-time unlocks happening NOW in this session)
   const [fullQueue, setFullQueue] = useState([]);
@@ -26,7 +30,12 @@ export default function AchievementUnlockModal() {
   useEffect(() => {
     const handler = (e) => {
       const revisited = e.detail || [];
+      const TOAST_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes per achievement per character
       revisited.forEach(r => {
+        const cooldownKey = `${r.achievement_id}::${r.character_id}`;
+        const lastShown = revisitToastShownAt[cooldownKey] || 0;
+        if (Date.now() - lastShown < TOAST_COOLDOWN_MS) return; // still in cooldown
+        revisitToastShownAt[cooldownKey] = Date.now();
         setToastQueue(prev => {
           if (prev.some(t => t.achievement_id === r.achievement_id && t.character_id === r.character_id)) return prev;
           return [...prev, { ...r, _revisit: true }];
