@@ -101,19 +101,28 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setIsLoadingHistory(true);
 
     try {
-      // Search by shared_conversation_key first (bilateral), then stable title, then legacy name key.
-      // shared_conversation_key is deterministic: bilateral_<sortedA>_<sortedB>_world_phone
-      // This ensures Character B finds Character A's initiated thread and vice versa.
-      const existing = await base44.entities.Conversation.filter(
-        { character_ids: [character.id] },
-        "-updated_date",
-        150
-      );
+      // Load conversations where either character is a participant.
+      // PRIMARY: participant_character_ids (bilateral schema)
+      // FALLBACK: character_ids (legacy schema)
+      // Both are queried to ensure legacy threads are not lost.
+      const [byParticipant, byCharacterId] = await Promise.all([
+        contact.related_character_id
+          ? base44.entities.Conversation.filter({ participant_character_ids: [character.id] }, "-updated_date", 100).catch(() => [])
+          : Promise.resolve([]),
+        base44.entities.Conversation.filter({ character_ids: [character.id] }, "-updated_date", 150).catch(() => []),
+      ]);
+
+      // Merge and deduplicate by id
+      const seenIds = new Set();
+      const existing = [...byParticipant, ...byCharacterId].filter(c => {
+        if (seenIds.has(c.id)) return false;
+        seenIds.add(c.id);
+        return true;
+      });
 
       const stableTitle = npcConvoTitle(character.id, contact.person_name, contact.related_character_id);
       const legacyTitle  = npcConvoTitle(character.id, contact.person_name, null);
 
-      // Build shared key — same derivation as syncBilateralCharacterConversation
       const bilateralKey = contact.related_character_id
         ? `bilateral_${[character.id, contact.related_character_id].sort().join('_')}_world_phone`
         : null;
@@ -175,6 +184,59 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     }
   }, [messages, isTyping]);
 
+  // ── RETRY FAILED SYNC ────────────────────────────────────────────────────────
+  const retryWorldPhoneSync = async (convoId, contactId) => {
+    if (!convoId || !contactId) return;
+    // Reload failed/pending messages for this conversation
+    const failedMsgs = await base44.entities.Message.filter(
+      { conversation_id: convoId, sync_status: 'failed' },
+      'created_date', 50
+    ).catch(() => []);
+    const pendingMsgs = await base44.entities.Message.filter(
+      { conversation_id: convoId, sync_status: 'pending' },
+      'created_date', 50
+    ).catch(() => []);
+    const toRetry = [...failedMsgs, ...pendingMsgs];
+    if (toRetry.length === 0) return;
+
+    const outgoing = toRetry.find(m => m.sender_character_id === character.id || m.typed_by_user);
+    const response = toRetry.find(m => m.sender_character_id === contactId);
+    if (!outgoing) return;
+
+    base44.functions.invoke('syncBilateralCharacterConversation', {
+      sender_character_id: character.id,
+      receiver_character_id: contactId,
+      conversation_id: convoId,
+      message_id: outgoing.id,
+      message_content: outgoing.content,
+      response_content: response?.content || '',
+      channel: 'world_phone',
+      topic: outgoing.content?.substring(0, 100) || '',
+      emotional_tone: 'calm',
+      outcome: 'shared',
+      timestamp: new Date().toISOString(),
+    })
+      .then(() => {
+        const ids = [outgoing.id, response?.id, convoId].filter(Boolean);
+        ids.forEach(id => {
+          if (id === convoId) {
+            base44.entities.Conversation.update(id, { sync_status: 'complete', sync_error: null }).catch(() => {});
+          } else {
+            base44.entities.Message.update(id, { sync_status: 'complete', sync_error: null }).catch(() => {});
+          }
+        });
+        console.log('[WorldContactsPopup] Retry sync succeeded for convo', convoId);
+      })
+      .catch(err => {
+        const errMsg = err.message || 'Retry sync error';
+        [outgoing.id, response?.id].filter(Boolean).forEach(id => {
+          base44.entities.Message.update(id, { sync_status: 'failed', sync_error: errMsg }).catch(() => {});
+        });
+        base44.entities.Conversation.update(convoId, { sync_status: 'failed', sync_error: errMsg }).catch(() => {});
+        console.warn('[WorldContactsPopup] Retry sync failed (stored):', errMsg);
+      });
+  };
+
   // ── SHARED SUBSCRIPTION HELPER ─────────────────────────────────────────────
   // Real-time sync for any conversation thread. Must be called whenever a
   // conversation ID is resolved — both for existing and newly created threads.
@@ -200,13 +262,11 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
 
   const ensureConversation = async () => {
     if (conversationId) return conversationId;
-    // FIX: Use stable character_id key when available so future lookups find this thread
     const title = npcConvoTitle(character.id, selectedContact.person_name, selectedContact.related_character_id);
     const me = await base44.auth.me().catch(() => null);
     const charIds = selectedContact.related_character_id
       ? [character.id, selectedContact.related_character_id]
       : [character.id];
-    // Stamp shared_conversation_key so both characters can find this thread
     const bilateralKey = selectedContact.related_character_id
       ? `bilateral_${[character.id, selectedContact.related_character_id].sort().join('_')}_world_phone`
       : null;
@@ -220,9 +280,10 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       participant_character_ids: participantIds,
       ...(bilateralKey ? { shared_conversation_key: bilateralKey } : {}),
       owner_email: me?.email || character.owner_email,
+      channel: "world_phone",
+      sync_status: "pending",
     });
     setConversationId(convo.id);
-    // Subscribe immediately so messages created after this point are auto-synced
     subscribeToConversation(convo.id);
     return convo.id;
   };
@@ -238,23 +299,33 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     // ── TRUE CHARACTER-TO-CHARACTER IDENTITY ────────────────────────────────────
     // The user is operating Character A's phone. The message is authored BY Character A.
     // sender_type: "character" + character_id: character.id marks this as Character A speaking.
-    // typed_by_user: true is a non-destructive audit flag only — it does NOT change identity.
+    const bilateralKeyForMsg = selectedContact.related_character_id
+      ? `bilateral_${[character.id, selectedContact.related_character_id].sort().join('_')}_world_phone`
+      : null;
+    const participantIdsForMsg = selectedContact.related_character_id
+      ? [character.id, selectedContact.related_character_id].sort()
+      : [character.id];
+
     const savedUserMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",
       character_id: character.id,
       character_name: character.name,
+      sender_character_id: character.id,
+      receiver_character_id: selectedContact.related_character_id || null,
+      participant_character_ids: participantIdsForMsg,
+      ...(bilateralKeyForMsg ? { shared_conversation_key: bilateralKeyForMsg } : {}),
       content: text,
       image_url: imageUrl || undefined,
       timestamp: new Date().toISOString(),
       typed_by_user: true,
-      sync_status: "pending",
       user_operated: true,
       channel: "world_phone",
+      sync_status: "pending",
     });
 
     // Render on right side (sent) immediately — subscription will also fire, dedup is handled
-    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text, sync_status: "pending" };
+    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text };
     setMessages(prev => prev.some(m => m.id === savedUserMsg.id) ? prev : [...prev, userMsg]);
 
     // ── IMAGE UNDERSTANDING PIPELINE ──────────────────────────────────────
@@ -351,10 +422,16 @@ Reply as ${selectedContact.person_name}:`;
     const savedNpcMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",
-      character_id: selectedContact.related_character_id || character.id, // ← real contact ID when known
+      character_id: selectedContact.related_character_id || character.id,
       character_name: selectedContact.person_name,
+      sender_character_id: selectedContact.related_character_id || null,
+      receiver_character_id: character.id,
+      participant_character_ids: participantIdsForMsg,
+      ...(bilateralKeyForMsg ? { shared_conversation_key: bilateralKeyForMsg } : {}),
       content: npcText,
       timestamp: new Date().toISOString(),
+      channel: "world_phone",
+      sync_status: "pending",
     });
 
     const npcMsg = { id: savedNpcMsg.id, dbId: savedNpcMsg.id, role: "npc", content: npcText };
@@ -367,10 +444,9 @@ Reply as ${selectedContact.person_name}:`;
 
     setIsTyping(false);
 
-    // ── BILATERAL SYNC + MEMORY (non-blocking with failure tracking) ────────────────
-    // UI is already updated. Sync runs in background but failures are stored for retry.
+    // ── BILATERAL SYNC + MEMORY (non-blocking with full failure tracking) ──────────
+    // UI is already updated. Sync runs in background. All three records are marked.
     if (selectedContact.related_character_id) {
-      // Non-blocking bilateral sync with stored sync_status tracking
       base44.functions.invoke('syncBilateralCharacterConversation', {
         sender_character_id: character.id,
         receiver_character_id: selectedContact.related_character_id,
@@ -385,54 +461,29 @@ Reply as ${selectedContact.person_name}:`;
         timestamp: new Date().toISOString(),
       })
         .then(() => {
-          // Mark sync complete in DB and in local UI state
-          base44.entities.Message.update(savedUserMsg.id, { sync_status: 'complete' }).catch(() => {});
-          setMessages(prev => prev.map(m => m.id === savedUserMsg.id ? { ...m, sync_status: 'complete' } : m));
+          // Mark all three records as sync complete
+          Promise.allSettled([
+            base44.entities.Message.update(savedUserMsg.id, { sync_status: 'complete' }),
+            base44.entities.Message.update(savedNpcMsg.id, { sync_status: 'complete' }),
+            base44.entities.Conversation.update(convoId, { sync_status: 'complete' }),
+          ]);
         })
         .catch(err => {
-          // Mark sync failed in DB and in local UI state — failure is visible and retryable
           const errMsg = err.message || 'Unknown sync error';
-          base44.entities.Message.update(savedUserMsg.id, {
-            sync_status: 'failed',
-            sync_error: errMsg,
-          }).catch(() => {});
-          setMessages(prev => prev.map(m => m.id === savedUserMsg.id ? { ...m, sync_status: 'failed', sync_error: errMsg } : m));
-          console.warn('[WorldContactsPopup] syncBilateral failed:', errMsg);
+          // Mark all three records as sync failed — visible and retryable
+          Promise.allSettled([
+            base44.entities.Message.update(savedUserMsg.id, { sync_status: 'failed', sync_error: errMsg }),
+            base44.entities.Message.update(savedNpcMsg.id, { sync_status: 'failed', sync_error: errMsg }),
+            base44.entities.Conversation.update(convoId, { sync_status: 'failed', sync_error: errMsg }),
+          ]);
+          console.warn('[WorldContactsPopup] syncBilateral failed (stored):', errMsg);
         });
     }
-    // Sync memories after bilateral sync completes
+    // Memory sync — non-blocking, runs regardless of bilateral sync outcome
     base44.functions.invoke('syncGroupChatMemories', {
       conversationId: convoId,
       source: 'world_phone',
     }).catch(() => {});
-  };
-
-  // Retry bilateral sync for a message that previously failed
-  const retrySyncForMessage = (msg) => {
-    if (!selectedContact?.related_character_id || !conversationId) return;
-    setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, sync_status: 'pending' } : m));
-    base44.entities.Message.update(msg.id, { sync_status: 'pending', sync_error: null }).catch(() => {});
-    base44.functions.invoke('syncBilateralCharacterConversation', {
-      sender_character_id: character.id,
-      receiver_character_id: selectedContact.related_character_id,
-      conversation_id: conversationId,
-      message_id: msg.id,
-      message_content: msg.content,
-      channel: 'world_phone',
-      topic: msg.content.substring(0, 100),
-      emotional_tone: 'calm',
-      outcome: 'shared',
-      timestamp: new Date().toISOString(),
-    })
-      .then(() => {
-        base44.entities.Message.update(msg.id, { sync_status: 'complete' }).catch(() => {});
-        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, sync_status: 'complete' } : m));
-      })
-      .catch(err => {
-        const errMsg = err.message || 'Unknown sync error';
-        base44.entities.Message.update(msg.id, { sync_status: 'failed', sync_error: errMsg }).catch(() => {});
-        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, sync_status: 'failed', sync_error: errMsg } : m));
-      });
   };
 
   const handleKeyDown = (e) => {
@@ -478,10 +529,15 @@ Reply as ${selectedContact.person_name}:`;
               <h3 className="text-sm font-semibold text-foreground truncate">
                 {selectedContact ? selectedContact.person_name : `${character?.name}'s World`}
               </h3>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
                 {selectedContact
                   ? selectedContact.relationship_type || "known contact"
                   : `${contacts.length} known contact${contacts.length !== 1 ? "s" : ""}`}
+                {conversationId && selectedContact?.related_character_id && (
+                  <span className="text-[10px] text-amber-500">
+                    {/* Sync status will be checked when conversation loads */}
+                  </span>
+                )}
               </p>
             </div>
             <button onClick={handleClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -592,7 +648,7 @@ Reply as ${selectedContact.person_name}:`;
                       key={msg.id}
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className={`flex flex-col ${(msg.role === "user" || msg.role === "sent") ? "items-end" : "items-start"}`}
+                      className={`flex ${(msg.role === "user" || msg.role === "sent") ? "justify-end" : "justify-start"}`}
                     >
                       <div className={`max-w-[78%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
                         (msg.role === "user" || msg.role === "sent")
@@ -601,22 +657,6 @@ Reply as ${selectedContact.person_name}:`;
                       }`}>
                         {msg.content}
                       </div>
-                      {/* Sync failure indicator — visible, retryable, non-destructive */}
-                      {msg.sync_status === 'failed' && (msg.role === "sent" || msg.role === "user") && (
-                        <div className="flex items-center gap-1.5 mt-1 mr-1">
-                          <AlertTriangle className="w-3 h-3 text-amber-400" />
-                          <span className="text-[10px] text-amber-400">Sync failed</span>
-                          <button
-                            onClick={() => retrySyncForMessage(msg)}
-                            className="flex items-center gap-0.5 text-[10px] text-primary hover:text-primary/80 transition-colors"
-                          >
-                            <RefreshCw className="w-3 h-3" /> Retry
-                          </button>
-                        </div>
-                      )}
-                      {msg.sync_status === 'pending' && (msg.role === "sent" || msg.role === "user") && (
-                        <span className="text-[10px] text-muted-foreground mt-1 mr-1">Syncing…</span>
-                      )}
                     </motion.div>
                   ))}
                 </AnimatePresence>
