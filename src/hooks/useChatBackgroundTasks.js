@@ -130,33 +130,6 @@ export function useChatBackgroundTasks({
         }));
       }
 
-      // ── CONTACT INTENT DETECTION ──────────────────────────────────────────
-      // Detect when user instructs Character A to contact Character B.
-      // Triggers a real World Phone thread + bilateral memory — NOT just narrative.
-      // Only fires once per 5 minutes per character to prevent duplicate calls.
-      if (!isOnCooldown(characterId, 'contactIntent', 300000) && text && character) {
-        const contactMatch = text.match(
-          /\b(?:call|text|message|contact|reach out to|hit up|tell|let|check on|check in with|hmu|reach)\b.{0,30}\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i
-        );
-        if (contactMatch) {
-          const rawName = contactMatch[1]?.trim();
-          // Exclude common false positives (user's own world name, pronoun words, etc.)
-          const nonNames = new Set(['me', 'you', 'him', 'her', 'them', 'us', 'it', 'home', 'back', 'out']);
-          if (rawName && rawName.length > 2 && !nonNames.has(rawName.toLowerCase())) {
-            // Only dispatch if the character's response confirms they will do it
-            const responseConfirms = /\b(i'll|i will|i'm going to|gonna|going to|will|okay|sure|yeah|yep)\b.{0,40}\b(call|text|message|contact|reach|hit)\b/i.test(responseText || '');
-            if (responseConfirms) {
-              console.log(`[Governor] Contact intent detected: "${character.name}" → "${rawName}" | response confirms: true`);
-              safeInvoke('triggerCharacterContact', {
-                senderCharacterId: characterId,
-                receiverCharacterName: rawName,
-                topic: text.substring(0, 200),
-              }, characterId, 'contactIntent');
-            }
-          }
-        }
-      }
-
       if (!isOnCooldown(characterId, 'classifyConvo', 60000)) {
         // Pass characterState so the classifier can see known people (fictional_relationships)
         // Without this, knownPeopleStr is always 'none listed' and social events are missed
@@ -174,6 +147,51 @@ export function useChatBackgroundTasks({
             fictional_relationships: character.fictional_relationships || [],
           } : {},
         }, characterId, 'classifyConvo');
+      }
+
+      // ── CONTACT INTENT — LLM-BASED, RELIABLE ──────────────────────────────
+      // Fires only when the user message contains contact-suggestive language.
+      // Uses a targeted LLM call instead of a fragile regex. 5-minute cooldown.
+      // Only creates a real contact event — never a narrative-only response.
+      if (!isOnCooldown(characterId, 'contactIntent', 300000) && text && character) {
+        const contactTriggerWords = /\b(call|text|message|contact|reach out|hit up|check on|check in with|let .{0,15} know|tell .{0,15} (that|about|i))\b/i;
+        if (contactTriggerWords.test(text)) {
+          // Build known names from fictional_relationships for context
+          const knownNames = (character.fictional_relationships || [])
+            .map(r => r.person_name).filter(Boolean).join(', ');
+
+          base44.integrations.Core.InvokeLLM({
+            prompt: `A user told a character named "${character.name}" the following:
+"${text}"
+
+The character's known contacts: ${knownNames || 'none listed'}
+
+Does this message explicitly instruct "${character.name}" to contact or reach out to a specific person?
+If YES: return JSON { "contact_requested": true, "target_name": "<exact name from message>", "topic": "<brief reason or topic>" }
+If NO (casual mention, talking about a third party, no clear instruction): return JSON { "contact_requested": false }
+Return ONLY valid JSON, nothing else.`,
+            response_json_schema: {
+              type: 'object',
+              properties: {
+                contact_requested: { type: 'boolean' },
+                target_name: { type: 'string' },
+                topic: { type: 'string' },
+              },
+              required: ['contact_requested'],
+            },
+          }).then(result => {
+            if (result?.contact_requested && result?.target_name) {
+              console.log(`[Governor] Contact intent confirmed by LLM: "${character.name}" → "${result.target_name}"`);
+              markCooldown(characterId, 'contactIntent');
+              safeInvoke('triggerCharacterContact', {
+                senderCharacterId: characterId,
+                receiverCharacterName: result.target_name,
+                topic: result.topic || text.substring(0, 200),
+                trigger_source: 'user_requested',
+              }, characterId, 'contactIntent_exec');
+            }
+          }).catch(() => {}); // non-blocking — never interrupts chat
+        }
       }
     }, 2000);
 

@@ -3,17 +3,24 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 /**
  * triggerCharacterContact
  *
- * Called when the user tells Character A to contact Character B in Chat.
- * Creates a real World Phone thread + message + bilateral memory.
+ * Unified entry point for ALL character-to-character contact:
+ *   - user-requested ("tell Ethan to call Maya")
+ *   - need-driven (social_value < 35, introvert prefers call over travel)
+ *   - autonomous (scheduled / relationship maintenance)
+ *
+ * Creates a real World Phone thread + Message + bilateral Memory records.
+ * Does NOT create narrative-only contact — if it runs, a real event exists.
  *
  * Payload:
- *   senderCharacterId: string — Character A (the one the user is chatting with)
- *   receiverCharacterName: string — Character B's name (used to resolve their ID)
- *   topic: string — what the contact is about (from conversation context)
- *   messageContent: string (optional) — explicit message text; generated if absent
+ *   senderCharacterId: string       — Character A (the sender)
+ *   receiverCharacterName: string   — Character B's name (resolved to ID internally)
+ *   receiverCharacterId?: string    — optional: pass directly to skip name resolution
+ *   topic: string                   — what the contact is about
+ *   messageContent?: string         — if provided, used as-is; otherwise generated
+ *   trigger_source?: string         — 'user_requested' | 'need_driven' | 'autonomous' | 'relationship'
  *
  * Returns:
- *   { success, conversationId, messageId, senderName, receiverName, receiverResolved }
+ *   { success, conversationId, messageId, senderName, receiverName, receiverResolved, bilateralMemoryWritten }
  */
 
 // World Phone conversation title convention — mirrors WorldContactsPopup
@@ -28,17 +35,28 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { senderCharacterId, receiverCharacterName, topic, messageContent } = await req.json();
+    const { senderCharacterId, receiverCharacterName, receiverCharacterId, topic, messageContent, trigger_source } = await req.json();
 
-    if (!senderCharacterId || !receiverCharacterName) {
+    if (!senderCharacterId || (!receiverCharacterName && !receiverCharacterId)) {
       return Response.json({
-        error: 'senderCharacterId and receiverCharacterName are required',
-        fields_received: { senderCharacterId, receiverCharacterName },
+        error: 'senderCharacterId and either receiverCharacterName or receiverCharacterId are required',
+        fields_received: { senderCharacterId, receiverCharacterName, receiverCharacterId },
       }, { status: 400 });
     }
 
     // ── 1. RESOLVE SENDER ────────────────────────────────────────────────────
-    const senderList = await base44.entities.Character.filter({ id: senderCharacterId }, null, 1);
+    // Platform throws "Object not found" when filter({ id }) receives a nonexistent ID.
+    // Catch it explicitly and return 404 — not 500.
+    let senderList;
+    try {
+      senderList = await base44.entities.Character.filter({ id: senderCharacterId }, null, 1);
+    } catch (lookupErr) {
+      const msg = lookupErr?.message || String(lookupErr);
+      if (msg.includes('Object not found') || msg.includes('not found') || msg.includes('Invalid id')) {
+        return Response.json({ error: `Sender character id=${senderCharacterId} not found`, stage: 'sender_lookup' }, { status: 404 });
+      }
+      throw lookupErr; // unexpected — re-throw
+    }
     const sender = senderList?.[0];
     if (!sender) {
       return Response.json({ error: `Sender character id=${senderCharacterId} not found`, stage: 'sender_lookup' }, { status: 404 });
@@ -47,29 +65,79 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Ownership violation: sender does not belong to ${user.email}`, stage: 'ownership' }, { status: 403 });
     }
 
-    // ── 2. RESOLVE RECEIVER BY NAME (prefer stable ID) ──────────────────────
-    // First look in sender's fictional_relationships for a linked Character record
-    let receiver = null;
-    let receiverFoundVia = null;
-
-    const linkedRel = (sender.fictional_relationships || []).find(
-      r => r.person_name?.trim().toLowerCase() === receiverCharacterName.trim().toLowerCase()
-        && r.related_character_id
-    );
-
-    if (linkedRel?.related_character_id) {
-      const rcList = await base44.entities.Character.filter({ id: linkedRel.related_character_id }, null, 1);
-      if (rcList?.[0] && rcList[0].owner_email === user.email) {
-        receiver = rcList[0];
-        receiverFoundVia = 'fictional_relationships_linked';
+    // ── 1b. DAILY AUTONOMOUS CAP ─────────────────────────────────────────────
+    // Autonomous contact is capped at 3 per sender character per day to prevent spam.
+    // User-requested contact always bypasses this cap.
+    const triggerSrc = trigger_source || 'user_requested';
+    if (triggerSrc !== 'user_requested') {
+      const today = new Date().toISOString().split('T')[0];
+      const todayConvos = await base44.entities.Conversation.filter({
+        type: 'npc',
+        character_ids: [senderCharacterId],
+        owner_email: user.email,
+      }).catch(() => []);
+      let autonomousToday = 0;
+      for (const c of todayConvos) {
+        const recentMsgs = await base44.entities.Message.filter({
+          conversation_id: c.id,
+          sender_type: 'character',
+          character_id: senderCharacterId,
+        }, '-timestamp', 20).catch(() => []);
+        autonomousToday += recentMsgs.filter(m =>
+          m.created_date?.startsWith(today) &&
+          (m.trigger_source === 'need_driven' || m.trigger_source === 'autonomous' || m.trigger_source === 'relationship')
+        ).length;
+      }
+      if (autonomousToday >= 3) {
+        return Response.json({
+          success: false,
+          reason: 'daily_autonomous_cap_reached',
+          detail: `${sender.name} has already made 3 autonomous contacts today`,
+          autonomousToday,
+        });
       }
     }
 
-    // Fallback: search all owned characters by name
-    if (!receiver) {
-      const nameMatch = await base44.entities.Character.filter({ owner_email: user.email }, null, 300);
+    // ── 2. RESOLVE RECEIVER BY STABLE ID FIRST, THEN NAME ───────────────────
+    let receiver = null;
+    let receiverFoundVia = null;
+    const resolvedReceiverName = receiverCharacterName || '';
+
+    // Path A: caller provided a direct character ID (most reliable)
+    if (receiverCharacterId) {
+      let rcList;
+      try {
+        rcList = await base44.entities.Character.filter({ id: receiverCharacterId }, null, 1);
+      } catch { rcList = []; }
+      if (rcList?.[0] && rcList[0].owner_email === user.email) {
+        receiver = rcList[0];
+        receiverFoundVia = 'direct_id';
+      }
+    }
+
+    // Path B: look in sender's fictional_relationships for a linked Character record
+    if (!receiver && resolvedReceiverName) {
+      const linkedRel = (sender.fictional_relationships || []).find(
+        r => r.person_name?.trim().toLowerCase() === resolvedReceiverName.trim().toLowerCase()
+          && r.related_character_id
+      );
+      if (linkedRel?.related_character_id) {
+        let rcList;
+        try {
+          rcList = await base44.entities.Character.filter({ id: linkedRel.related_character_id }, null, 1);
+        } catch { rcList = []; }
+        if (rcList?.[0] && rcList[0].owner_email === user.email) {
+          receiver = rcList[0];
+          receiverFoundVia = 'fictional_relationships_linked';
+        }
+      }
+    }
+
+    // Path C: search all owned characters by name
+    if (!receiver && resolvedReceiverName) {
+      const nameMatch = await base44.entities.Character.filter({ owner_email: user.email }, null, 300).catch(() => []);
       const matched = nameMatch.find(
-        c => c.name?.trim().toLowerCase() === receiverCharacterName.trim().toLowerCase()
+        c => c.name?.trim().toLowerCase() === resolvedReceiverName.trim().toLowerCase()
           && c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
       );
       if (matched) {
@@ -78,11 +146,13 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Use receiver's real name if resolved, otherwise use provided name
+    const finalReceiverName = receiver?.name || resolvedReceiverName || 'them';
+
     // ── 3. BUILD MESSAGE CONTENT ─────────────────────────────────────────────
     let finalMessage = messageContent?.trim() || null;
 
     if (!finalMessage) {
-      // Generate a contextually appropriate message from sender to receiver
       const canonicalRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
         characterId: senderCharacterId,
         interactionContext: 'world_phone',
@@ -93,12 +163,12 @@ Deno.serve(async (req) => {
       finalMessage = await base44.asServiceRole.integrations.Core.InvokeLLM({
         prompt: `${senderContext}
 
-You need to contact ${receiverCharacterName} about: ${topic || 'catching up'}.
+You need to contact ${finalReceiverName} about: ${topic || 'catching up'}.
 
 Write a short, natural text message (1-3 sentences) that you would send them right now.
 Write in your own voice. Make it feel spontaneous and real, not formal.
 Return only the message text, nothing else.`,
-      });
+      }).catch(() => null);
       finalMessage = (finalMessage || '').trim();
     }
 
@@ -107,8 +177,8 @@ Return only the message text, nothing else.`,
     }
 
     // ── 4. FIND OR CREATE WORLD PHONE CONVERSATION ──────────────────────────
-    const stableTitle = npcConvoTitle(senderCharacterId, receiverCharacterName, receiver?.id || null);
-    const legacyTitle  = npcConvoTitle(senderCharacterId, receiverCharacterName, null);
+    const stableTitle = npcConvoTitle(senderCharacterId, finalReceiverName, receiver?.id || null);
+    const legacyTitle  = npcConvoTitle(senderCharacterId, finalReceiverName, null);
 
     const existingConvos = await base44.entities.Conversation.filter({
       type: 'npc',
@@ -144,6 +214,8 @@ Return only the message text, nothing else.`,
       character_name: sender.name,
       content: finalMessage,
       timestamp: new Date().toISOString(),
+      // Store trigger_source so daily cap queries can count autonomous contacts
+      trigger_source: triggerSrc,
     });
 
     await base44.entities.Conversation.update(conversationId, {
@@ -178,7 +250,8 @@ Return only the message text, nothing else.`,
     }
 
     console.log(
-      `[triggerCharacterContact] ✓ ${sender.name} → ${receiverCharacterName}` +
+      `[triggerCharacterContact] ✓ ${sender.name} → ${finalReceiverName}` +
+      ` | trigger=${triggerSrc}` +
       ` | receiver_resolved=${!!receiver}` +
       ` | receiver_found_via=${receiverFoundVia || 'not_found'}` +
       ` | bilateral_memory=${memorySynced}` +
@@ -191,11 +264,12 @@ Return only the message text, nothing else.`,
       conversationId,
       messageId: savedMsg.id,
       senderName: sender.name,
-      receiverName: receiverCharacterName,
+      receiverName: finalReceiverName,
       receiverResolved: !!receiver,
       receiverFoundVia: receiverFoundVia || null,
       bilateralMemoryWritten: memorySynced,
       messageContent: finalMessage,
+      trigger_source: triggerSrc,
     });
 
   } catch (error) {
