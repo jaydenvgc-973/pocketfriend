@@ -39,7 +39,8 @@ Deno.serve(async (req) => {
       sender_character_id,
       receiver_character_id,
       conversation_id,
-      message_id,
+      sender_message_id,
+      receiver_message_id,
       message_content,
       response_content,
       channel,
@@ -189,6 +190,14 @@ Deno.serve(async (req) => {
       }).catch(() => {});
     }
 
+    // ── MARK ALL THREE RECORDS AS SYNC COMPLETE ───────────────────────────────────
+    // Update sender message, receiver message, and conversation
+    await Promise.allSettled([
+     sender_message_id ? base44.asServiceRole.entities.Message.update(sender_message_id, { sync_status: 'complete' }) : Promise.resolve(),
+     receiver_message_id ? base44.asServiceRole.entities.Message.update(receiver_message_id, { sync_status: 'complete' }) : Promise.resolve(),
+     convoId ? base44.asServiceRole.entities.Conversation.update(convoId, { sync_status: 'complete' }) : Promise.resolve(),
+    ]);
+
     // ── RETURN DIAGNOSTICS ───────────────────────────────────────────────────────
     return Response.json({
       success: true,
@@ -197,13 +206,15 @@ Deno.serve(async (req) => {
       participant_character_ids: participantIds,
       sender_character_id,
       receiver_character_id,
+      sender_message_id,
+      receiver_message_id,
       memories_created: memories.length,
       memory_ids: memories.map(m => m.memory_id),
       life_event_created: !!lifeEvent,
       life_event_id: lifeEvent?.id || null,
       relationships_updated: !hasReceiverRel || !hasSenderRel,
+      sync_status: 'complete',
       timestamp: baseDate,
-      message_id,
     });
   } catch (error) {
     console.error('[syncBilateralCharacterConversation] Error:', error.message);
