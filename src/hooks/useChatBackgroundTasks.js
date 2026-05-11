@@ -155,9 +155,15 @@ export function useChatBackgroundTasks({
       if (isGloballyRateLimited()) return;
 
       if (!isOnCooldown(characterId, 'memoryExtract', 90000)) {
+        // Include image_description from the user message if vision analysis completed.
+        // This threads visual context into memory so the character can remember what was shared.
+        const userMsgImageDesc = userMsg?.image_description || null;
+        const enrichedUserMessage = userMsgImageDesc
+          ? `${text} [Image shared — visual content: ${userMsgImageDesc}]`
+          : text;
         safeInvoke('extractMemoriesFromTurn', {
           characterId, conversationId: convoId,
-          userMessage: text, characterResponse: responseText,
+          userMessage: enrichedUserMessage, characterResponse: responseText,
           recentMessages: (recentMsgs || []).slice(-10),
           playAsCharacterId: activeCharacter?.id || null,
         }, characterId, 'memoryExtract').then(res => {

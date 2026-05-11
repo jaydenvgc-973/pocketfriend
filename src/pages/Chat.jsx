@@ -69,6 +69,7 @@ import { usePageContext } from "@/hooks/usePageContext";
 import { isGloballyRateLimited, reportRateLimit, activateChatSafeMode, isChatSafeModeActive } from "@/lib/simulationGate";
 import { resolveCoPresence } from "@/lib/coPresenceResolver";
 import LocationShareTool from "@/components/chat/LocationShareTool";
+import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -386,68 +387,6 @@ export default function Chat() {
 
     const lookupMatch = text.match(/(?:look up|search|find out|what.*about|can you.*find|research)[\s:]*(.*?)(?:\?|$)/i);
 
-      // ── IMAGE UNDERSTANDING PIPELINE ──────────────────────────────────────
-      // When a user attaches an image, analyze it with vision before the character responds.
-      // The description is stored durably on the Message record and injected into the prompt.
-      // This prevents character hallucination about unseen image content.
-      let imageAnalysisContext = "";
-      if (userImageUrl) {
-        try {
-          console.log(`[ImageAnalysis] Starting vision analysis for user image`);
-          const analysisResult = await base44.integrations.Core.InvokeLLM({
-            prompt: `Analyze this image and provide a detailed, factual visual description in 2-4 sentences.
-Describe exactly what you see: people (appearance, expressions, clothing, pose), objects, setting/environment, text visible, colors, lighting, and any notable details.
-Do NOT interpret meaning or make assumptions. Only describe what is literally visible.
-If the image is blurry, dark, or unclear, describe that explicitly.
-Return ONLY the description text, nothing else.`,
-            file_urls: [userImageUrl],
-          });
-          const imageDescription = (typeof analysisResult === 'string' ? analysisResult : '').trim();
-          console.log(`[ImageAnalysis] ✓ Description: "${imageDescription.substring(0, 150)}"`);
-
-          if (imageDescription && imageDescription.length > 5) {
-            imageAnalysisContext = `\n\n════════════════════════════════════
-IMAGE SHARED BY USER — VISUAL ANALYSIS
-════════════════════════════════════
-Analysis status: complete
-Visual description: ${imageDescription}
-
-CRITICAL RULES FOR RESPONDING TO THIS IMAGE:
-• You may respond ONLY based on the visual description above
-• Do NOT invent details not present in the description
-• Do NOT pretend to know what is in the image beyond what is described
-• If the user asks about something not visible in the description, say you cannot make it out
-• React naturally to what the description actually shows
-════════════════════════════════════`;
-
-            // Store description durably on the message record — non-blocking
-            if (userMsg?.id) {
-              base44.entities.Message.update(userMsg.id, {
-                image_description: imageDescription,
-                image_analysis_status: 'complete',
-              }).catch(() => {});
-            }
-          } else {
-            imageAnalysisContext = `\n\nIMAGE SHARED BY USER — ANALYSIS FAILED:\nThe user sent an image but it could not be analyzed. You may acknowledge you received an image but cannot make out its contents.`;
-            if (userMsg?.id) {
-              base44.entities.Message.update(userMsg.id, {
-                image_analysis_status: 'failed',
-                image_analysis_error: 'Vision analysis returned empty description',
-              }).catch(() => {});
-            }
-          }
-        } catch (analysisErr) {
-          console.warn(`[ImageAnalysis] Analysis failed: ${analysisErr?.message}`);
-          imageAnalysisContext = `\n\nIMAGE SHARED BY USER — ANALYSIS FAILED:\nThe user sent an image but it could not be analyzed. You may acknowledge you received an image but cannot make out its contents.`;
-          if (userMsg?.id) {
-            base44.entities.Message.update(userMsg.id, {
-              image_analysis_status: 'failed',
-              image_analysis_error: analysisErr?.message || 'Unknown error',
-            }).catch(() => {});
-          }
-        }
-      }
-
       // ── QR CODE DETECTION (when user uploads an image) ────────────────────
       let qrContext = "";
       if (userImageUrl) {
@@ -566,6 +505,20 @@ CRITICAL RULES FOR RESPONDING TO THIS IMAGE:
       return;
     }
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
+
+    // ── IMAGE UNDERSTANDING PIPELINE ──────────────────────────────────────
+    // Runs AFTER userMsg is created so we have userMsg.id for durable storage.
+    // Uses the shared analyzeImageForCharacterContext module (lib/analyzeImageForCharacterContext.js).
+    // Failure returns a fail-visible context block — never empty (which would allow hallucination).
+    let imageAnalysisContext = "";
+    if (userImageUrl) {
+      const analysisResult = await analyzeImageForCharacterContext({
+        imageUrl: userImageUrl,
+        messageId: userMsg.id,
+        context: "user_uploaded",
+      });
+      imageAnalysisContext = analysisResult.imageAnalysisContext;
+    }
 
     // processUserIncome is dispatched via useChatBackgroundTasks (Tier 4, 7s, with cooldown)
 

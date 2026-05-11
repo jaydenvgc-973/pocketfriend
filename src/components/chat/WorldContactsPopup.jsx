@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { analyzeImageForCharacterContext, buildImageContextFromStoredDescription } from "@/lib/analyzeImageForCharacterContext";
 
 // ── CONTACT KEY: use stable character_id when available, fall back to name-keyed only for unlinked NPCs ──
 // Format with linked ID:    npc_chat__[ownerCharId]__cid_[contactCharId]
@@ -254,7 +255,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     return convo.id;
   };
 
-  const sendMessage = async () => {
+  const sendMessage = async (imageUrl = null) => {
     if (!inputText.trim() || isTyping) return;
     const text = inputText.trim();
     setInputText("");
@@ -265,11 +266,25 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       conversation_id: convoId,
       sender_type: "user",
       content: text,
+      image_url: imageUrl || undefined,
       timestamp: new Date().toISOString(),
     });
 
     const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "user", content: text };
     setMessages(prev => [...prev, userMsg]);
+
+    // ── IMAGE UNDERSTANDING PIPELINE ──────────────────────────────────────
+    // Analyze any attached image before the NPC LLM call.
+    // Uses the shared module so World Contacts are not blind to image content.
+    let imageAnalysisContext = "";
+    if (imageUrl) {
+      const analysis = await analyzeImageForCharacterContext({
+        imageUrl,
+        messageId: savedUserMsg.id,
+        context: "user_uploaded",
+      });
+      imageAnalysisContext = analysis.imageAnalysisContext;
+    }
 
     const allMsgs = [...messages, userMsg];
     const historyStr = allMsgs
@@ -314,7 +329,7 @@ Do NOT contradict any facts listed above about ${character.name}'s current situa
 
 Conversation so far:
 ${historyStr}
-
+${imageAnalysisContext}
 Reply as ${selectedContact.person_name}:`;
 
     let npcText = "...";

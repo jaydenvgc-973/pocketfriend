@@ -1478,9 +1478,20 @@ All reference images (if any) are environment/location refs only — do NOT trea
         const reason = isFirstGeneration ? 'first generation (no prior camera)' : `${diffCount} camera variables changed`;
         console.log(`[generateImageAsync] ✅ Camera ACCEPTED — attempt ${attempt} (${reason})`);
 
+        // Build a compact image_description from the sanitized prompt so that
+        // downstream consumers (group chat, world contacts, memory extraction) can
+        // reference what this generated image actually shows without re-running vision.
+        const generatedImageDescription = sanitizedPrompt
+          ? `Generated character photo. Scene: ${sanitizedPrompt.substring(0, 300)}${sanitizedPrompt.length > 300 ? '…' : ''}`
+          : null;
+
         // Write staging data + final image atomically
         await base44.asServiceRole.entities.Message.update(messageId, {
           image_url: acceptedGenRes.url,
+          ...(generatedImageDescription ? {
+            image_description: generatedImageDescription,
+            image_analysis_status: 'complete',
+          } : {}),
           generation_context: {
             ...baseGenerationContext,
             camera_variables: acceptedCameraVars,

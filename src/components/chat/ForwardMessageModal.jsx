@@ -65,6 +65,19 @@ export default function ForwardMessageModal({ message, onClose }) {
           forwardedPayload.content = "";
         }
 
+        // Preserve stored image_description on forwarded messages so the
+        // receiving character inherits the visual analysis and is not blind.
+        // If no stored description exists, image_analysis_status marks it pending
+        // so a future analysis pass can back-fill it if needed.
+        if (message.image_url) {
+          if (message.image_description) {
+            forwardedPayload.image_description = message.image_description;
+            forwardedPayload.image_analysis_status = "complete";
+          } else {
+            forwardedPayload.image_analysis_status = "pending";
+          }
+        }
+
         await base44.entities.Message.create(forwardedPayload);
 
         await base44.entities.Conversation.update(convoId, {

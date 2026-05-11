@@ -152,8 +152,20 @@ Deno.serve(async (req) => {
       console.log(`[GROUP-CHAT] ${character.name} | delay=${Math.round(delayMs / 1000)}s | comm_type=group_text`);
       await new Promise(r => setTimeout(r, delayMs));
 
+      // ── IMAGE CONTEXT: inject stored image_description into conversation history ──
+      // The frontend analyzeImageForCharacterContext stores image_description on user Messages.
+      // Group chat backend reads it here so characters are not blind to image content.
       const historyLines = messages
-        .map(m => `${m.sender_type === 'user' ? 'User' : m.character_name}: ${m.content}`)
+        .map(m => {
+          const speaker = m.sender_type === 'user' ? 'User' : m.character_name;
+          let line = `${speaker}: ${m.content}`;
+          if (m.image_url && m.image_description) {
+            line += `\n[Image attached — visual description: ${m.image_description}]`;
+          } else if (m.image_url && !m.image_description) {
+            line += `\n[Image attached — visual content unknown: image was not analyzed]`;
+          }
+          return line;
+        })
         .join('\n');
 
       const otherParticipants = convoCharacters
