@@ -388,65 +388,6 @@ export default function Chat() {
 
     const lookupMatch = text.match(/(?:look up|search|find out|what.*about|can you.*find|research)[\s:]*(.*?)(?:\?|$)/i);
 
-      // ── QR CODE DETECTION (when user uploads an image) ────────────────────
-      let qrContext = "";
-      if (userImageUrl) {
-        try {
-          const qrResult = await base44.integrations.Core.InvokeLLM({
-            prompt: `Examine this image carefully. Does it contain a QR code?
-    If YES: decode the QR code and return ONLY the decoded content (URL or text) — nothing else, no explanation.
-    If NO QR code is present: return exactly the word "NO_QR".
-    If a QR code is present but cannot be decoded: return exactly the word "QR_UNREADABLE".`,
-            file_urls: [userImageUrl],
-          });
-          const qrRaw = (typeof qrResult === 'string' ? qrResult : '').trim();
-
-          if (qrRaw && qrRaw !== 'NO_QR') {
-            if (qrRaw === 'QR_UNREADABLE') {
-              qrContext = `\n\nQR CODE DETECTED — CANNOT DECODE:
-    The user uploaded an image containing a QR code, but it could not be read clearly.
-    You MUST tell the user you can see the QR code but could not decode it. Do NOT guess what it contains.`;
-            } else if (/^https?:\/\//i.test(qrRaw)) {
-              // QR contains a URL — run it through the same link lookup flow
-              try {
-                const res = await base44.functions.invoke('performWebLookup', { characterId, searchQuery: qrRaw, sourceUrl: qrRaw });
-                const data = res?.data;
-                const content = (data?.title || data?.summary)
-                  ? `Title: ${data.title || 'Unknown'}\nContent: ${data.summary || data.description || 'No content retrieved'}`
-                  : '(Content could not be retrieved)';
-                qrContext = `\n\nQR CODE DECODED — LINK:
-    The user's uploaded image contained a QR code that decoded to this URL: ${qrRaw}
-    ${content}
-    STRICT RULES: Respond ONLY to the actual content above. If content was retrieved, reference specific details. If not retrieved, tell the user explicitly you cannot access the linked content. Do NOT fabricate or guess.`;
-              } catch {
-                qrContext = `\n\nQR CODE DECODED — LINK (unresolved):
-    The user's image contained a QR code that decoded to: ${qrRaw}
-    The linked content could not be retrieved. You MUST tell the user you can see the link from the QR code but cannot access its content.`;
-              }
-            } else {
-              // QR contains plain text
-              qrContext = `\n\nQR CODE DECODED — TEXT CONTENT:
-    The user's uploaded image contained a QR code with the following exact text:
-    "${qrRaw}"
-    Respond to this exact decoded content. Do NOT fabricate or expand on it beyond what is provided.`;
-            }
-          }
-        } catch {
-          // QR scan failed silently — do not block message flow
-        }
-      }
-
-      // ── LINK / VIDEO UNDERSTANDING PIPELINE ───────────────────────────────
-    // Uses analyzeSharedLink backend function + tiered confidence model.
-    // Handles: YouTube, Instagram, TikTok, Twitter/X, Reddit, Facebook, Dailymotion, articles, images.
-    // Excludes music links (handled by handleShareSong above).
-    // Characters respond based ONLY on verified extracted content — never hallucinate.
-    const isMusicLink = /(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|tidal\.com|soundcloud\.com|bandcamp\.com)/i.test(text);
-    let linkContext = "";
-    if (!isMusicLink) {
-      linkContext = await buildLinkContext(text, userMsg.id, conversationId || null, characterId);
-    }
-
     let convoId = conversationIdRef.current || conversationId;
     if (!convoId) {
       const convo = await base44.entities.Conversation.create({
@@ -476,19 +417,22 @@ export default function Chat() {
     }
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
 
-    // ── IMAGE UNDERSTANDING PIPELINE ──────────────────────────────────────
-    // Runs AFTER userMsg is created so we have userMsg.id for durable storage.
-    // Uses the shared analyzeImageForCharacterContext module (lib/analyzeImageForCharacterContext.js).
-    // Failure returns a fail-visible context block — never empty (which would allow hallucination).
-    let imageAnalysisContext = "";
-    if (userImageUrl) {
-      const analysisResult = await analyzeImageForCharacterContext({
-        imageUrl: userImageUrl,
-        messageId: userMsg.id,
-        context: "user_uploaded",
-      });
-      imageAnalysisContext = analysisResult.imageAnalysisContext;
-    }
+    // ── IMAGE + LINK ANALYSIS — started immediately, non-blocking ────────────
+    // Both analyses are kicked off right after userMsg is created (we have the ID).
+    // They run concurrently and are awaited later inside the LLM prep block,
+    // by which time they will usually have resolved — but they NEVER block the
+    // optimistic message insert or the setIsTyping(true) call below.
+    const imageAnalysisPromise = userImageUrl
+      ? analyzeImageForCharacterContext({ imageUrl: userImageUrl, messageId: userMsg.id, context: "user_uploaded" })
+          .then(r => r.imageAnalysisContext || "")
+          .catch(() => "")
+      : Promise.resolve("");
+
+    const isMusicLinkForAnalysis = /(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|tidal\.com|soundcloud\.com|bandcamp\.com)/i.test(text);
+    const linkAnalysisPromise = (!isMusicLinkForAnalysis && !isGloballyRateLimited())
+      ? buildLinkContext(text, userMsg.id, conversationIdRef.current || conversationId, characterId)
+          .catch(() => "")
+      : Promise.resolve("");
 
     // processUserIncome is dispatched via useChatBackgroundTasks (Tier 4, 7s, with cooldown)
 
@@ -600,6 +544,49 @@ export default function Chat() {
       const educationContext = buildEducationContext(character);
       const songsContext = buildSongsContext(character);
       const { weatherContext, recentEventsContext, culturalContext } = await buildDynamicContexts(text, character, recentMsgs);
+
+      // ── QR CODE DETECTION (when user uploads an image) ────────────────────
+      let qrContext = "";
+      if (userImageUrl) {
+        try {
+          const qrResult = await base44.integrations.Core.InvokeLLM({
+            prompt: `Examine this image carefully. Does it contain a QR code?
+If YES: decode the QR code and return ONLY the decoded content (URL or text) — nothing else, no explanation.
+If NO QR code is present: return exactly the word "NO_QR".
+If a QR code is present but cannot be decoded: return exactly the word "QR_UNREADABLE".`,
+            file_urls: [userImageUrl],
+          });
+          const qrRaw = (typeof qrResult === 'string' ? qrResult : '').trim();
+          if (qrRaw && qrRaw !== 'NO_QR') {
+            if (qrRaw === 'QR_UNREADABLE') {
+              qrContext = `\n\nQR CODE DETECTED — CANNOT DECODE:\nThe user uploaded an image containing a QR code, but it could not be read clearly. You MUST tell the user you can see the QR code but could not decode it. Do NOT guess what it contains.`;
+            } else if (/^https?:\/\//i.test(qrRaw)) {
+              try {
+                const res = await base44.functions.invoke('performWebLookup', { characterId, searchQuery: qrRaw, sourceUrl: qrRaw });
+                const data = res?.data;
+                const content = (data?.title || data?.summary)
+                  ? `Title: ${data.title || 'Unknown'}\nContent: ${data.summary || data.description || 'No content retrieved'}`
+                  : '(Content could not be retrieved)';
+                qrContext = `\n\nQR CODE DECODED — LINK:\nThe user's uploaded image contained a QR code that decoded to this URL: ${qrRaw}\n${content}\nSTRICT RULES: Respond ONLY to the actual content above. If content was retrieved, reference specific details. If not retrieved, tell the user explicitly you cannot access the linked content. Do NOT fabricate or guess.`;
+              } catch {
+                qrContext = `\n\nQR CODE DECODED — LINK (unresolved):\nThe user's image contained a QR code that decoded to: ${qrRaw}\nThe linked content could not be retrieved. You MUST tell the user you can see the link from the QR code but cannot access its content.`;
+              }
+            } else {
+              qrContext = `\n\nQR CODE DECODED — TEXT CONTENT:\nThe user's uploaded image contained a QR code with the following exact text:\n"${qrRaw}"\nRespond to this exact decoded content. Do NOT fabricate or expand on it beyond what is provided.`;
+            }
+          }
+        } catch {
+          // QR scan failed silently — do not block message flow
+        }
+      }
+
+      // ── RESOLVE IMAGE + LINK ANALYSIS (started before setIsTyping) ───────────
+      // Both promises were kicked off immediately after userMsg was created.
+      // By this point (after memory/progression/spatial/weather fetches) they are resolved.
+      const [imageAnalysisContext, linkContext] = await Promise.all([
+        imageAnalysisPromise,
+        linkAnalysisPromise,
+      ]);
 
       const frequentedPlaces = character.frequented_places || [];
       if (frequentedPlaces.length > 0) {
