@@ -328,32 +328,53 @@ Deno.serve(async (req) => {
       const label    = achievement_id.replace(/_/g, ' ');
 
       if (isHigh) {
-        // Meaningful emotional revisit → Life Journal (visible) + quiet toast
-        base44.asServiceRole.entities.LifeEvent.create({
+        // Backend cooldown: only write LifeEvent if none exists for this achievement + character in last 30 min
+        const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        const recentLifeEvents = await base44.asServiceRole.entities.LifeEvent.filter({
           character_id: characterId,
-          character_name: characterName || '',
-          event_type: 'emotional_exchange',
-          valence: 'positive',
-          severity: 'moderate',
           title: `Moment revisited: ${label}`,
-          description: `This emotional moment was felt again during conversation: "${label}".`,
-          emotional_impact: 'A recurring emotional theme in this relationship.',
-          triggered_by: 'user_message',
-          timestamp: new Date().toISOString(),
-          systems_updated: ['memory'],
-        }).catch(() => {});
-        revisited.push({ achievement_id, character_id: characterId, character_name: characterName || '', weight: 'high' });
+        }, '-timestamp', 1).catch(() => []);
+        const alreadyWrittenRecently = recentLifeEvents.length > 0 &&
+          new Date(recentLifeEvents[0].timestamp) > new Date(thirtyMinAgo);
+
+        if (!alreadyWrittenRecently) {
+          base44.asServiceRole.entities.LifeEvent.create({
+            character_id: characterId,
+            character_name: characterName || '',
+            event_type: 'emotional_exchange',
+            valence: 'positive',
+            severity: 'moderate',
+            title: `Moment revisited: ${label}`,
+            description: `This emotional moment was felt again during conversation: "${label}".`,
+            emotional_impact: 'A recurring emotional theme in this relationship.',
+            triggered_by: 'user_message',
+            timestamp: new Date().toISOString(),
+            systems_updated: ['memory'],
+          }).catch(() => {});
+          revisited.push({ achievement_id, character_id: characterId, character_name: characterName || '', weight: 'high' });
+        }
+        // If already written recently, skip write AND skip toast (no point signaling what wasn't recorded)
       } else if (isMedium) {
-        // Moderate revisit → CharacterMemory only (importance 4 so retrieveActiveMemory surfaces it) + toast
-        base44.asServiceRole.entities.CharacterMemory.create({
+        // Backend cooldown for CharacterMemory: check last 30 min
+        const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        const recentMems = await base44.asServiceRole.entities.CharacterMemory.filter({
           character_id: characterId,
-          memory_type: 'event',
-          memory_text: `Recurring emotional pattern: "${label}" felt again in conversation.`,
           memory_summary: `Moment revisited: ${label}`,
-          importance_score: 4,
-          permanence: 'long_term',
-        }).catch(() => {});
-        revisited.push({ achievement_id, character_id: characterId, character_name: characterName || '', weight: 'medium' });
+        }, '-created_date', 1).catch(() => []);
+        const alreadyWrittenRecently = recentMems.length > 0 &&
+          new Date(recentMems[0].created_date) > new Date(thirtyMinAgo);
+
+        if (!alreadyWrittenRecently) {
+          base44.asServiceRole.entities.CharacterMemory.create({
+            character_id: characterId,
+            memory_type: 'event',
+            memory_text: `Recurring emotional pattern: "${label}" felt again in conversation.`,
+            memory_summary: `Moment revisited: ${label}`,
+            importance_score: 4,
+            permanence: 'long_term',
+          }).catch(() => {});
+          revisited.push({ achievement_id, character_id: characterId, character_name: characterName || '', weight: 'medium' });
+        }
       }
       // Low-weight revisits (tension, bad_influence, etc.) → silently ignored, no write, no toast
     }

@@ -47,9 +47,10 @@ export default function Moments() {
   const { data: messages = [] } = useQuery({
     queryKey: ["allMessages", currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Message.filter({}, "-created_date", 500)
+      ? base44.entities.Message.filter({ owner_email: currentUser.email }, "-created_date", 500)
       : [],
     enabled: !!currentUser?.email,
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: userChallenges = [] } = useQuery({

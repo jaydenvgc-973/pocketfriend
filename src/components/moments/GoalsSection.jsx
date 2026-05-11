@@ -102,8 +102,16 @@ export default function GoalsSection({ characters, messages }) {
     });
     const multi_convo_day = Object.values(dayConvos).some(s => s.size >= 2) ? 1 : 0;
 
-    // Fast reply: character sent message, user replied quickly
-    const fast_reply = 1; // tracked externally, default show as 1 to encourage
+    // Fast reply: user replied within 2 minutes of a character message
+    const charMsgsSorted = messages.filter(m => m.sender_type === 'character').slice(0, 100);
+    const userMsgsSorted = messages.filter(m => m.sender_type === 'user');
+    const fast_reply = charMsgsSorted.some(cm => {
+      const cmTime = new Date(cm.created_date || cm.timestamp).getTime();
+      return userMsgsSorted.some(um => {
+        const umTime = new Date(um.created_date || um.timestamp).getTime();
+        return umTime > cmTime && umTime - cmTime < 2 * 60 * 1000;
+      });
+    }) ? 1 : 0;
 
     // Care reactions
     const care_reactions = messages.filter(m =>
