@@ -36,10 +36,11 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         const contactList = await resolveCharacterContacts(character, me?.email, me);
         
         // Load conversations where this character is ANY participant
+        // character_ids array contains the character's ID (covers both sender and receiver)
         const convos = await base44.entities.Conversation.filter(
           { character_ids: [character.id] },
           '-updated_date',
-          100
+          150
         ).catch(() => []);
 
         // Merge conversation-linked contacts that aren't already in the list
@@ -99,18 +100,25 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setIsLoadingHistory(true);
 
     try {
-      // FIX: Search by BOTH the stable character_id key AND the legacy name-based key.
-      // This prevents creating a new orphan thread when a legacy conversation exists.
+      // Search by shared_conversation_key first (bilateral), then stable title, then legacy name key.
+      // shared_conversation_key is deterministic: bilateral_<sortedA>_<sortedB>_world_phone
+      // This ensures Character B finds Character A's initiated thread and vice versa.
       const existing = await base44.entities.Conversation.filter(
-        { type: "npc", character_ids: [character.id] },
+        { character_ids: [character.id] },
         "-updated_date",
-        100
+        150
       );
 
       const stableTitle = npcConvoTitle(character.id, contact.person_name, contact.related_character_id);
-      const legacyTitle  = npcConvoTitle(character.id, contact.person_name, null); // name-only fallback
+      const legacyTitle  = npcConvoTitle(character.id, contact.person_name, null);
 
-      const found = existing.find(c => c.title === stableTitle) ||
+      // Build shared key — same derivation as syncBilateralCharacterConversation
+      const bilateralKey = contact.related_character_id
+        ? `bilateral_${[character.id, contact.related_character_id].sort().join('_')}_world_phone`
+        : null;
+
+      const found = (bilateralKey && existing.find(c => c.shared_conversation_key === bilateralKey)) ||
+                    existing.find(c => c.title === stableTitle) ||
                     existing.find(c => c.title === legacyTitle);
 
       if (found) {
@@ -164,14 +172,22 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     // FIX: Use stable character_id key when available so future lookups find this thread
     const title = npcConvoTitle(character.id, selectedContact.person_name, selectedContact.related_character_id);
     const me = await base44.auth.me().catch(() => null);
-    // Include contact's character_id in character_ids when we have it — enables bilateral memory
     const charIds = selectedContact.related_character_id
       ? [character.id, selectedContact.related_character_id]
+      : [character.id];
+    // Stamp shared_conversation_key so both characters can find this thread
+    const bilateralKey = selectedContact.related_character_id
+      ? `bilateral_${[character.id, selectedContact.related_character_id].sort().join('_')}_world_phone`
+      : null;
+    const participantIds = selectedContact.related_character_id
+      ? [character.id, selectedContact.related_character_id].sort()
       : [character.id];
     const convo = await base44.entities.Conversation.create({
       title,
       type: "npc",
       character_ids: charIds,
+      participant_character_ids: participantIds,
+      ...(bilateralKey ? { shared_conversation_key: bilateralKey } : {}),
       owner_email: me?.email || character.owner_email,
     });
     setConversationId(convo.id);
@@ -321,7 +337,7 @@ Reply as ${selectedContact.person_name}:`;
         response_content: npcText,
         channel: 'world_phone',
         topic: text.substring(0, 100),
-        emotional_tone: character?.emotional_state || 'calm',
+        emotional_tone: 'calm',
         outcome: 'shared',
         timestamp: new Date().toISOString(),
       }).catch(err => console.warn('[WorldContactsPopup] syncBilateralCharacterConversation failed:', err.message));
