@@ -950,17 +950,15 @@ Match: face structure, skin tone, hair, body type.`;
       const place = [locationName, zoneName].filter(Boolean).join(' → ');
       selfieEnvBlock = `
 
-════════════════════════════════════════════════════════════
-ROOM BLUEPRINT FOR SELFIE BACKGROUND — CRITICAL
-════════════════════════════════════════════════════════════
+ENVIRONMENT BLUEPRINT FOR SELFIE BACKGROUND — CRITICAL
 Reference images ${envRefStart}–${envEnd} are photographs of the "${zoneName || place}".
 
-The background of this selfie MUST show the real room — not a generic or invented space.
+The background of this selfie MUST show the real environment — not a generic or invented space.
 
 YOUR JOB:
-1. READ the room blueprint: extract floor, walls, furniture types, colors, window positions, decor.
-2. DETERMINE what would be VISIBLE directly behind the subject given the selfie camera angle and body position described in the prompt (e.g. lying in bed → pillows, headboard, wall behind them; seated at desk → wall, shelving, window beside them).
-3. RE-RENDER only the portion of the room that appears in that angle as the background.
+1. READ the environment blueprint: extract floor, walls, furniture types, colors, window positions, decor, spatial structure.
+2. DETERMINE what would be VISIBLE directly behind the subject given the selfie camera angle and body position described in the prompt (e.g. lying in bed: pillows, headboard, wall behind them; seated at desk: wall, shelving, window beside them).
+3. RE-RENDER only the portion of the environment that appears in that angle as the background.
 
 RULES — GLOBAL 3D ENVIRONMENT RULE APPLIES HERE TOO:
 ✅ The reference images are a SPATIAL GUIDE — extract layout, materials, colors, and object types ONLY
@@ -969,18 +967,30 @@ RULES — GLOBAL 3D ENVIRONMENT RULE APPLIES HERE TOO:
 ✅ Background perspective must match the selfie camera angle exactly — close-up = compressed background, overhead = ceiling/bedding visible
 ✅ Active lighting: ${timeLighting.desc} — apply to background regardless of what references show
 ⛔ Do NOT copy the reference photo's camera angle as the background
-⛔ Do NOT copy the reference photo's lighting, exposure, or brightness
-⛔ Do NOT let dark references suppress daylight if current time is ${timeLighting.period}
+⛔ Do NOT copy the reference photo's lighting, exposure, color temperature, or shadow state
+⛔ Do NOT let dark references make the selfie background dark unless the active prompt/time says it is dark
+⛔ Do NOT let bright references make the selfie background bright unless the active prompt/time says it is bright
 ⛔ Do NOT require every reference object to appear — only what this angle would show
-⛔ Do NOT invent a generic room — use the spatial identity from images ${envRefStart}–${envEnd}
-⛔ Do NOT show parts of the room that wouldn't be visible from this selfie angle`;
+⛔ Do NOT invent a generic environment — use the spatial identity from images ${envRefStart}–${envEnd}
+⛔ Do NOT show parts of the environment that would not be visible from this selfie angle`;
     }
 
     const selfieLightingTitle = promptHasExplicitTime ? 'PROMPT-SPECIFIED TIME' : timeLighting.period;
+    const selfieLightingSource = promptHasExplicitTime ? 'prompt' : 'server_time';
     const selfieLightingDesc = promptHasExplicitTime
-      ? 'Apply lighting that matches the time of day described in the prompt.'
-      : `Current time: ${serverHour}:00 — ${timeLighting.period}. Lighting: ${timeLighting.desc}.`;
-    let selfieLightingBlock = `\n\nLIGHTING — ${selfieLightingTitle}\n${selfieLightingDesc}\nREFERENCE IMAGE LIGHTING IS NON-AUTHORITATIVE — apply ${selfieLightingTitle} conditions regardless of reference image brightness.\nBoth the subject AND the background must be lit consistently from the same light source.`;
+      ? 'Apply lighting that matches the time of day described in the prompt. The prompt is the sole authority.'
+      : `Active time period: ${timeLighting.period}. Lighting: ${timeLighting.desc}.`;
+    const lightingOverrideBlockInjected = hasEnv;
+    let selfieLightingBlock = '\n\nLIGHTING AUTHORITY — ' + selfieLightingTitle + '\n'
+      + selfieLightingDesc + '\n'
+      + 'REFERENCE IMAGE LIGHTING IS NON-AUTHORITATIVE — completely discard any lighting, exposure, brightness, color temperature, or shadow state visible in reference images.\n'
+      + 'Active lighting source: ' + selfieLightingSource + '\n'
+      + (promptHasExplicitTime
+          ? 'The prompt explicitly declares the environmental state. This overrides server time, reference images, and all other signals.\n'
+          : 'Server time determines lighting. Reference image lighting does NOT.\n')
+      + 'explicit_prompt_environment_authority: ' + promptHasExplicitTime + '\n'
+      + 'reference_lighting_authority: false\n'
+      + 'Both the subject AND the background must be lit consistently from the same active light source. No exceptions.';
 
     return `${preamble}${selfieEnvBlock}${selfieLightingBlock}
 
@@ -1762,11 +1772,16 @@ All reference images (if any) are environment/location refs only — do NOT trea
     console.log(`[generateImageAsync] ── PROVIDER DISPATCH ──`);
     console.log(`  raw prompt:             ${rawPromptForSanitize.substring(0, 200)}${rawPromptForSanitize.length > 200 ? '…' : ''}`);
     console.log(`  sanitized prompt:       ${sanitizedPrompt.substring(0, 200)}${sanitizedPrompt.length > 200 ? '…' : ''}`);
-    console.log(`  prompt_has_explicit_time: ${promptHasExplicitTime}`);
-    console.log(`  server_hour:            ${serverTime.getHours()}`);
-    console.log(`  time_lighting_period:   ${timeLighting.period}`);
-    console.log(`  lighting_authority:     ${promptHasExplicitTime ? 'PROMPT (explicit time declared)' : `SERVER TIME (${timeLighting.period})`}`);
-    console.log(`  env_refs_time_override: ${promptHasExplicitTime ? 'BLOCKED — prompt time is authority' : 'ACTIVE — server time enforced'}`);
+    console.log(`  prompt_has_explicit_time:             ${promptHasExplicitTime}`);
+    console.log(`  explicit_prompt_environment_authority: ${promptHasExplicitTime}`);
+    console.log(`  reference_lighting_authority:         false`);
+    console.log(`  active_lighting_source:               ${promptHasExplicitTime ? 'prompt' : 'server_time'}`);
+    console.log(`  server_hour:                          ${serverTime.getHours()}`);
+    console.log(`  time_lighting_period:                 ${timeLighting.period}`);
+    console.log(`  lighting_authority:                   ${promptHasExplicitTime ? 'PROMPT (explicit time declared)' : `SERVER TIME (${timeLighting.period})`}`);
+    console.log(`  env_refs_count:                       ${ENV_SLOTS}`);
+    console.log(`  lighting_override_block_injected:     ${ENV_SLOTS > 0}`);
+    console.log(`  env_refs_lighting_block:              ${promptHasExplicitTime ? 'BLOCKED — prompt is authority' : 'ACTIVE — server time enforced over ref images'}`);
     console.log(`  char refs: ${CHAR_SLOTS} | env refs: ${ENV_SLOTS} | user refs: ${USER_SLOTS}`);
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
