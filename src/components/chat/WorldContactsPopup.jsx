@@ -30,7 +30,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     if (!isOpen || !character?.id) return;
     setIsLoadingContacts(true);
     base44.auth.me()
-      .then(me => resolveCharacterContacts(character, me?.email))
+      .then(me => resolveCharacterContacts(character, me?.email, me))
       .then(list => {
         setContacts(list);
         setIsLoadingContacts(false);

@@ -44,10 +44,25 @@ function bestAvatar(rec) {
  *
  * @param {object} character - The full Character record (must have .id)
  * @param {string} ownerEmail - The authenticated user's email (for scoped Character fetch)
+ * @param {object} [currentUser] - Optional: the authenticated user object (id, email, full_name).
+ *   When provided, any entry that resolves to the user themselves is excluded from World Contacts.
+ *   The user already communicates via Chat/Text; World Contacts are for OTHER people.
  * @returns {Promise<Array>} Sorted array of contact objects
  */
-export async function resolveCharacterContacts(character, ownerEmail) {
+export async function resolveCharacterContacts(character, ownerEmail, currentUser = null) {
   if (!character?.id) return [];
+
+  // ── USER-SELF EXCLUSION HELPER ───────────────────────────────────────────────
+  // Returns true if a raw entry (from any source) resolves to the current user.
+  // Checks all available identity signals; does NOT require all fields to be present.
+  function isUserSelf(entry) {
+    if (!currentUser) return false;
+    if (entry.is_user === true) return true;
+    if (currentUser.id && entry.related_user_id && entry.related_user_id === currentUser.id) return true;
+    if (currentUser.id && entry.owner_user_id && entry.owner_user_id === currentUser.id) return true;
+    if (currentUser.email && entry.email && entry.email.toLowerCase() === currentUser.email.toLowerCase()) return true;
+    return false;
+  }
 
   const seen = new Map(); // key: related_character_id or `name:${person_name}`
 
@@ -55,6 +70,10 @@ export async function resolveCharacterContacts(character, ownerEmail) {
   for (const rel of (character.fictional_relationships || [])) {
     const name = rel.person_name;
     if (!name) continue;
+    if (isUserSelf(rel)) {
+      console.log(`[ContactsResolver] EXCLUDED (user-self) fictional_relationships entry: "${name}"`);
+      continue;
+    }
     const key = rel.related_character_id || `name:${name}`;
     if (seen.has(key)) continue;
     seen.set(key, {
@@ -86,6 +105,10 @@ export async function resolveCharacterContacts(character, ownerEmail) {
     const inlineAvatar = fm.avatar_url || fm.image_url || fm.image_avatar_url || null;
     if (inlineAvatar) familyInlineAvatars.set(name.trim().toLowerCase(), inlineAvatar);
 
+    if (isUserSelf(fm)) {
+      console.log(`[ContactsResolver] EXCLUDED (user-self) family_members entry: "${name}"`);
+      continue;
+    }
     const key = fm.related_character_id || `name:${name}`;
     if (seen.has(key)) continue; // already in from fictional_relationships
 
@@ -113,6 +136,10 @@ export async function resolveCharacterContacts(character, ownerEmail) {
   for (const p of peopleInWorld) {
     const name = p.name || p.person_name;
     if (!name) continue;
+    if (isUserSelf(p)) {
+      console.log(`[ContactsResolver] EXCLUDED (user-self) people_in_world entry: "${name}"`);
+      continue;
+    }
     const key = p.related_character_id || p.character_id || `name:${name}`;
     if (seen.has(key)) continue;
     seen.set(key, {
@@ -204,6 +231,11 @@ export async function resolveCharacterContacts(character, ownerEmail) {
         nameEntry._linkage = 'linked_from_conversation';
       } else {
         // New contact from conversation — only for characters this character has spoken with
+        // Exclude if this conversation partner resolves to the current user
+        if (isUserSelf({ owner_user_id: lc.owner_user_id, email: lc.owner_email, is_user: lc.is_user })) {
+          console.log(`[ContactsResolver] EXCLUDED (user-self) conversation-linked entry: "${lc.name}"`);
+          continue;
+        }
         seen.set(lc.id, {
           person_name: lc.name,
           relationship_type: lc.character_type === 'npc_fictitious' ? 'Known Contact' : 'Character',
