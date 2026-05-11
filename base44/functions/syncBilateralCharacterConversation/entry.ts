@@ -43,6 +43,8 @@ Deno.serve(async (req) => {
       receiver_message_id,
       message_content,
       response_content,
+      shared_conversation_key: incomingSharedKey,
+      participant_character_ids: incomingParticipantIds,
       channel,
       topic,
       emotional_tone,
@@ -73,9 +75,12 @@ Deno.serve(async (req) => {
     }
 
     // ── SHARED CONVERSATION KEY ───────────────────────────────────────────────────
-    // Deterministic, sorted so either character can derive the same key.
-    const participantIds = [sender_character_id, receiver_character_id].sort();
-    const shared_conversation_key = `bilateral_${participantIds[0]}_${participantIds[1]}_${channel || 'world_phone'}`;
+    // CRITICAL: Honor the canonical key sent from the frontend (world_phone::A::B).
+    // NEVER regenerate a legacy bilateral_X_Y key here — that would overwrite the
+    // canonical key on the conversation record and break Character B's lookup.
+    const participantIds = incomingParticipantIds || [sender_character_id, receiver_character_id].sort();
+    const shared_conversation_key = incomingSharedKey ||
+      `world_phone::${participantIds[0]}::${participantIds[1]}`;
 
     // ── ENSURE CONVERSATION HAS BOTH PARTICIPANTS ─────────────────────────────────
     const existingConvo = await base44.asServiceRole.entities.Conversation.filter({ id: conversation_id })
@@ -83,15 +88,16 @@ Deno.serve(async (req) => {
 
     let convoId = conversation_id;
     if (existingConvo) {
-      // Ensure receiver is in character_ids and shared fields are stamped
+      // Ensure receiver is in character_ids, and canonical key + participant_ids are stamped.
+      // Only update what is missing or wrong — never downgrade a canonical key to a legacy one.
       const currentIds = Array.isArray(existingConvo.character_ids) ? existingConvo.character_ids : [sender_character_id];
-      const needsUpdate = !currentIds.includes(receiver_character_id) || !existingConvo.shared_conversation_key;
+      const missingReceiver = !currentIds.includes(receiver_character_id);
+      const wrongKey = existingConvo.shared_conversation_key !== shared_conversation_key;
+      const missingParticipants = !Array.isArray(existingConvo.participant_character_ids) ||
+        !participantIds.every(id => existingConvo.participant_character_ids.includes(id));
 
-      if (needsUpdate) {
-        const updatedIds = currentIds.includes(receiver_character_id)
-          ? currentIds
-          : [...currentIds, receiver_character_id];
-
+      if (missingReceiver || wrongKey || missingParticipants) {
+        const updatedIds = missingReceiver ? [...currentIds, receiver_character_id] : currentIds;
         await base44.asServiceRole.entities.Conversation.update(convoId, {
           character_ids: updatedIds,
           participant_character_ids: participantIds,
@@ -99,7 +105,7 @@ Deno.serve(async (req) => {
         }).catch(() => {});
       }
     } else {
-      // Conversation record does not exist — create it fresh with shared fields
+      // Conversation record does not exist — create it fresh with canonical fields
       const newConvo = await base44.asServiceRole.entities.Conversation.create({
         title: `${senderChar.name} ↔ ${receiverChar.name} (${channel || 'world_phone'})`,
         type: 'npc',
