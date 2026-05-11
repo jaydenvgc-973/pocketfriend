@@ -364,29 +364,23 @@ Reply as ${selectedContact.person_name}:`;
 
     setIsTyping(false);
 
-    // ── BILATERAL CONVERSATION SYNC (BLOCKING) ──────────────────────────────────
-    // MUST await this before clearing UI state so both characters see the same data.
+    // ── BILATERAL SYNC + MEMORY (non-blocking background operations) ─────────────
+    // UI is already updated — these run in the background for continuity/memory only.
     if (selectedContact.related_character_id) {
-      try {
-        await base44.functions.invoke('syncBilateralCharacterConversation', {
-          sender_character_id: character.id,
-          receiver_character_id: selectedContact.related_character_id,
-          conversation_id: convoId,
-          message_id: userMsg.id,
-          message_content: text,
-          response_content: npcText,
-          channel: 'world_phone',
-          topic: text.substring(0, 100),
-          emotional_tone: 'calm',
-          outcome: 'shared',
-          timestamp: new Date().toISOString(),
-        });
-      } catch (err) {
-        console.warn('[WorldContactsPopup] syncBilateralCharacterConversation failed:', err.message);
-      }
+      base44.functions.invoke('syncBilateralCharacterConversation', {
+        sender_character_id: character.id,
+        receiver_character_id: selectedContact.related_character_id,
+        conversation_id: convoId,
+        message_id: savedUserMsg.id,
+        message_content: text,
+        response_content: npcText,
+        channel: 'world_phone',
+        topic: text.substring(0, 100),
+        emotional_tone: 'calm',
+        outcome: 'shared',
+        timestamp: new Date().toISOString(),
+      }).catch(err => console.warn('[WorldContactsPopup] syncBilateral failed:', err.message));
     }
-
-    // Sync memories (non-blocking)
     base44.functions.invoke('syncGroupChatMemories', {
       conversationId: convoId,
       source: 'world_phone',
