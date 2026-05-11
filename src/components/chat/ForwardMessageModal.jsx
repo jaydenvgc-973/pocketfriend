@@ -13,9 +13,13 @@ export default function ForwardMessageModal({ message, onClose }) {
 
   useEffect(() => {
     if (!message) return;
-    base44.entities.Character.filter({ status: "active" })
-      .then(chars => setCharacters(chars || []))
-      .catch(() => {});
+    // OWNERSHIP: scope to authenticated user's characters only
+    base44.auth.me().then(me => {
+      if (!me?.email) return;
+      base44.entities.Character.filter({ status: "active", owner_email: me.email })
+        .then(chars => setCharacters(chars || []))
+        .catch(() => {});
+    }).catch(() => {});
   }, [message]);
 
   const toggle = (id) => setSelectedIds(prev =>
@@ -87,7 +91,7 @@ export default function ForwardMessageModal({ message, onClose }) {
           }
         }
 
-        const created = await base44.entities.Message.create(forwardedPayload);
+        await base44.entities.Message.create(forwardedPayload);
 
         await base44.entities.Conversation.update(convoId, {
           last_message_preview: fwdContent.substring(0, 100),
