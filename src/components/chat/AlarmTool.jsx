@@ -1,15 +1,18 @@
 /**
  * AlarmTool
  *
- * Wakes the currently active character from sleep — as if their OWN alarm went off.
- * Does NOT wake the whole world. Targeted single-character update only.
+ * Four modes:
+ *   1. Ring Now — wake the character immediately as if their alarm fired
+ *   2. Set Alarm — pick a time and schedule it
+ *   3. View scheduled alarm
+ *   4. Cancel scheduled alarm
  *
- * Narrative framing: "Their alarm went off." NOT "the user woke them."
+ * Framing: The character's OWN alarm — not the user waking them.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlarmClock, X, Moon, BatteryLow } from "lucide-react";
+import { AlarmClock, X, Moon, BatteryLow, Bell, BellOff, Clock, CheckCircle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -17,84 +20,86 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
   const queryClientInternal = useQueryClient();
   const queryClient = qcProp || queryClientInternal;
 
-  const [isWaking, setIsWaking] = useState(false);
+  const [view, setView] = useState("main"); // main | schedule
+  const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState(null); // { type: 'success'|'info'|'error', text: string }
+  const [pendingAlarm, setPendingAlarm] = useState(character?.pending_alarm_time || null);
+  const [scheduleTime, setScheduleTime] = useState("");
+
+  // Sync pending alarm from character prop when it changes
+  useEffect(() => {
+    setPendingAlarm(character?.pending_alarm_time || null);
+  }, [character?.pending_alarm_time]);
+
+  // Reset on open
+  useEffect(() => {
+    if (isOpen) {
+      setView("main");
+      setResult(null);
+      setScheduleTime("");
+      setPendingAlarm(character?.pending_alarm_time || null);
+    }
+  }, [isOpen]);
 
   if (!isOpen || !character) return null;
 
   const presenceStatus = character.resolved_presence_status || character.location_status || "";
   const isAsleep = presenceStatus === "sleeping" || presenceStatus === "napping";
+  const firstName = character.name?.split(" ")[0] || "Character";
 
-  const handleAlarm = async () => {
-    if (!isAsleep) {
-      setResult({ type: "info", text: `${character.name?.split(" ")[0]} is already awake.` });
-      return;
-    }
-
-    setIsWaking(true);
+  const invoke = async (action, extra = {}) => {
+    setIsLoading(true);
     setResult(null);
-
-    // Calculate sleep duration to determine exhaustion
-    const sleepStart = character.last_sleep_start ? new Date(character.last_sleep_start).getTime() : null;
-    const wakeTime = character.wake_up_time || "07:00";
-    const [wh, wm] = wakeTime.split(":").map(Number);
-    const now = new Date();
-    const scheduledWake = new Date(now);
-    scheduledWake.setHours(wh, wm, 0, 0);
-    if (scheduledWake < now) scheduledWake.setDate(scheduledWake.getDate() + 1);
-
-    const minutesEarlyMs = scheduledWake - now;
-    const minutesEarly = minutesEarlyMs > 0 ? Math.round(minutesEarlyMs / 60000) : 0;
-    const isEarlyWake = minutesEarly > 30;
-
-    // Determine tiredness state
-    let sleepDebtHours = character.sleep_debt_hours || 0;
-    if (sleepStart) {
-      const hoursSlept = (Date.now() - sleepStart) / 3600000;
-      const neededHours = 7.5;
-      if (hoursSlept < neededHours) {
-        sleepDebtHours = Math.min(sleepDebtHours + (neededHours - hoursSlept), 24);
-      }
-    }
-
-    const newEmotionalState = isEarlyWake || sleepDebtHours > 2 ? "tired" : "calm";
-
     try {
-      // Targeted single-character wake — owner_email scoped
-      await base44.entities.Character.update(characterId, {
-        resolved_presence_status: "home",
-        location_status: "home",
-        current_activity: isEarlyWake ? "just woke up (alarm, earlier than usual)" : "just woke up (alarm)",
-        emotional_state: newEmotionalState,
-        sleep_debt_hours: Math.round(sleepDebtHours * 10) / 10,
-        sleep_interrupted_at: new Date().toISOString(),
-        resolved_last_updated_at: new Date().toISOString(),
+      const res = await base44.functions.invoke('characterAlarm', {
+        characterId, action, ...extra,
       });
-
-      // Scoped cache invalidation — only this character
-      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-
-      const firstName = character.name?.split(" ")[0] || "They";
-      if (isEarlyWake) {
-        setResult({
-          type: "success",
-          text: `${firstName}'s alarm went off early. They're awake but tired — may need coffee or a nap later.`,
-        });
+      const data = res?.data;
+      if (data?.success) {
+        setResult({ type: "success", text: data.message });
+        if (action === 'ring_now' || action === 'cancel') {
+          setPendingAlarm(null);
+          queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+          queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+        }
+        if (action === 'schedule') {
+          setPendingAlarm(data.pending_alarm_time);
+          setView("main");
+        }
       } else {
-        setResult({
-          type: "success",
-          text: `${firstName}'s alarm went off. They're up and starting their day.`,
-        });
+        setResult({ type: "error", text: data?.error || "Something went wrong." });
       }
     } catch (err) {
-      setResult({ type: "error", text: "Wake failed. Please try again." });
+      setResult({ type: "error", text: err.message || "Action failed." });
     } finally {
-      setIsWaking(false);
+      setIsLoading(false);
     }
   };
 
-  const firstName = character.name?.split(" ")[0] || "Character";
+  const handleRingNow = () => invoke('ring_now');
+
+  const handleSchedule = () => {
+    if (!scheduleTime) return;
+    // Build a full ISO datetime for today at the chosen time (EST)
+    const [h, m] = scheduleTime.split(':').map(Number);
+    const dt = new Date();
+    dt.setHours(h, m, 0, 0);
+    // If already past, schedule for tomorrow
+    if (dt <= new Date()) dt.setDate(dt.getDate() + 1);
+    invoke('schedule', { scheduled_time: dt.toISOString() });
+  };
+
+  const handleCancel = () => invoke('cancel');
+
+  // Format stored alarm for display
+  const formatAlarm = (isoStr) => {
+    if (!isoStr) return null;
+    try {
+      return new Date(isoStr).toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', hour12: true,
+      });
+    } catch { return isoStr; }
+  };
 
   return createPortal(
     <AnimatePresence>
@@ -122,7 +127,7 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
             <div className="flex-1 min-w-0">
               <h3 className="text-sm font-semibold text-foreground">Alarm</h3>
               <p className="text-xs text-muted-foreground">
-                {isAsleep ? `Wake ${firstName} with their alarm` : `${firstName} is already awake`}
+                {isAsleep ? `${firstName} is sleeping` : `${firstName} is awake`}
               </p>
             </div>
             <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -130,59 +135,118 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
             </button>
           </div>
 
-          {/* Status */}
+          {/* Sleep status banner */}
           <div className={`px-4 py-3 rounded-xl flex items-center gap-3 ${
             isAsleep ? "bg-indigo-500/10 border border-indigo-500/20" : "bg-secondary border border-border"
           }`}>
-            {isAsleep ? (
-              <Moon className="w-4 h-4 text-indigo-400 flex-shrink-0" />
-            ) : (
-              <AlarmClock className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-            )}
+            {isAsleep
+              ? <Moon className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+              : <AlarmClock className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            }
             <p className="text-sm text-foreground">
-              {isAsleep
-                ? `${firstName} is currently sleeping.`
-                : `${firstName} is already awake.`}
+              {isAsleep ? `${firstName} is currently sleeping.` : `${firstName} is already awake.`}
             </p>
           </div>
 
-          {/* Sleep debt context */}
+          {/* Scheduled alarm display */}
+          {pendingAlarm && (
+            <div className="px-4 py-3 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Bell className="w-4 h-4 text-primary flex-shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-primary">Alarm Scheduled</p>
+                  <p className="text-sm text-foreground">{formatAlarm(pendingAlarm)}</p>
+                </div>
+              </div>
+              <button
+                onClick={handleCancel}
+                disabled={isLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors disabled:opacity-50"
+              >
+                <BellOff className="w-3.5 h-3.5" />
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* Sleep debt warning */}
           {isAsleep && (character.sleep_debt_hours || 0) > 1.5 && (
             <div className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-2">
               <BatteryLow className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
               <p className="text-xs text-amber-400">
-                {firstName} is carrying sleep debt — waking early may leave them exhausted.
+                {firstName} is carrying sleep debt — early wake may leave them exhausted.
               </p>
             </div>
           )}
 
           {/* Result feedback */}
           {result && (
-            <div className={`px-3 py-2.5 rounded-xl text-xs font-medium ${
+            <div className={`px-3 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2 ${
               result.type === "success"
                 ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                 : result.type === "info"
                 ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
                 : "bg-destructive/10 text-destructive border border-destructive/20"
             }`}>
+              {result.type === "success" && <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />}
               {result.text}
             </div>
           )}
 
-          {/* Action button */}
-          {isAsleep && !result && (
-            <button
-              onClick={handleAlarm}
-              disabled={isWaking}
-              className="w-full h-12 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-            >
-              <AlarmClock className="w-4 h-4" />
-              {isWaking ? "Waking up…" : `Sound ${firstName}'s Alarm`}
-            </button>
+          {/* Schedule view */}
+          {view === "schedule" ? (
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-foreground">Set alarm time</p>
+              <input
+                type="time"
+                value={scheduleTime}
+                onChange={e => setScheduleTime(e.target.value)}
+                className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-foreground text-base focus:outline-none focus:border-primary"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setView("main")}
+                  className="flex-1 h-11 rounded-xl border border-border text-muted-foreground text-sm hover:text-foreground transition-colors"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={handleSchedule}
+                  disabled={!scheduleTime || isLoading}
+                  className="flex-1 h-11 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  <Bell className="w-4 h-4" />
+                  {isLoading ? "Saving…" : "Set Alarm"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Main action buttons */
+            <div className="space-y-2">
+              {/* Ring Now */}
+              <button
+                onClick={handleRingNow}
+                disabled={isLoading || !isAsleep}
+                className="w-full h-12 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-40"
+              >
+                <AlarmClock className="w-4 h-4" />
+                {isLoading ? "Waking up…" : `Ring ${firstName}'s Alarm Now`}
+              </button>
+
+              {/* Schedule */}
+              <button
+                onClick={() => { setResult(null); setView("schedule"); }}
+                disabled={isLoading}
+                className="w-full h-11 rounded-xl border border-border text-foreground text-sm flex items-center justify-center gap-2 hover:bg-secondary/60 transition-colors disabled:opacity-40"
+              >
+                <Clock className="w-4 h-4 text-muted-foreground" />
+                Set Alarm Time
+              </button>
+            </div>
           )}
 
           <p className="text-[10px] text-muted-foreground/50 text-center">
-            The character interprets this as their own alarm — not as the user waking them.
+            {firstName} interprets this as their own alarm — not as you waking them.
           </p>
         </motion.div>
       </motion.div>

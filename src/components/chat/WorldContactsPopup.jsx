@@ -46,7 +46,33 @@ async function buildMergedContactList(character, ownerEmail) {
     }
   }
 
-  if (!ownerEmail) return [...seen.values()];
+  if (!ownerEmail) {
+    // Sort alphabetically even in fallback path
+    return [...seen.values()].sort((a, b) => (a.person_name || '').localeCompare(b.person_name || ''));
+  }
+
+  // ── AVATAR HYDRATION for source-1 linked contacts ──────────────────────────
+  // fictional_relationships entries with related_character_id have avatar_url: null above.
+  // Batch-fetch the real Character records for all linked IDs and hydrate avatars.
+  const linkedIds = [...seen.values()]
+    .filter(c => c.related_character_id && !c.avatar_url)
+    .map(c => c.related_character_id);
+
+  if (linkedIds.length > 0) {
+    const linkedRecords = await Promise.all(
+      linkedIds.slice(0, 30).map(id =>
+        base44.entities.Character.filter({ id, owner_email: ownerEmail }, null, 1)
+          .then(r => r?.[0] || null).catch(() => null)
+      )
+    );
+    for (const rec of linkedRecords.filter(Boolean)) {
+      const entry = seen.get(rec.id);
+      if (entry && rec.avatar_url) {
+        entry.avatar_url = rec.avatar_url;
+        entry._linkage = 'linked';
+      }
+    }
+  }
 
   // 3. Pull npc_family_member records on this account — they should be contactable
   const familyChars = await base44.entities.Character.filter({
@@ -133,7 +159,8 @@ async function buildMergedContactList(character, ownerEmail) {
     }
   }
 
-  return [...seen.values()];
+  // Sort alphabetically by display name
+  return [...seen.values()].sort((a, b) => (a.person_name || '').localeCompare(b.person_name || ''));
 }
 
 export default function WorldContactsPopup({ isOpen, onClose, character }) {
