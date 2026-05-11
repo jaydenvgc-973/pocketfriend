@@ -529,6 +529,21 @@
     "wake_up_time": {
       "type": "string"
     },
+    "sleep_interrupted_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the character's sleep was last interrupted (alarm, emergency, etc.)"
+    },
+    "pending_alarm_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO datetime of a scheduled alarm. Cleared when the alarm fires or is canceled. Scoped to owner_email only."
+    },
+    "alarm_woke_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the scheduled alarm last successfully woke this character. Written by processScheduledCharacterAlarms."
+    },
     "work_start_time": {
       "type": "string"
     },
