@@ -58,13 +58,23 @@
       "enum": [
         "pending",
         "complete",
-        "failed"
+        "failed",
+        "merged"
       ],
-      "description": "Bilateral sync status for world phone conversations"
+      "description": "Bilateral sync status for world phone conversations. 'merged' means this thread was consolidated into merged_into_conversation_id and should not evolve further."
     },
     "sync_error": {
       "type": "string",
       "description": "Error message if bilateral sync failed"
+    },
+    "merged_into_conversation_id": {
+      "type": "string",
+      "description": "If sync_status is 'merged', the canonical conversation ID this thread was consolidated into. The original thread is preserved; only new messages should go to the canonical thread."
+    },
+    "merged_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO timestamp when this conversation was archived/merged into the canonical thread."
     }
   },
   "required": [

@@ -259,8 +259,11 @@ Deno.serve(async (req) => {
       const archivePayload = {
         sync_status: 'merged',
         shared_conversation_key: canonicalKey,
+        participant_character_ids: participantIds,
+        character_ids: participantIds,
         channel: 'world_phone',
         merged_into_conversation_id: canonicalConvo.id,
+        merged_at: new Date().toISOString(),
       };
       log.push(`[Repair] Archiving duplicate ${dup.convo.id.substring(0,8)} → merged_into=${canonicalConvo.id.substring(0,8)}`);
       repairActions.duplicates_archived.push({
