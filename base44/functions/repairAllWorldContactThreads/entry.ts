@@ -165,8 +165,9 @@ Deno.serve(async (req) => {
           !m.shared_conversation_key ||
           !Array.isArray(m.participant_character_ids) ||
           m.participant_character_ids.length < 2 ||
-          !m.sender_character_id ||
-          m.channel !== 'world_phone'
+          m.channel !== 'world_phone' ||
+          // Only flag missing sender_character_id for character-sent messages
+          (m.sender_type === 'character' && !m.sender_character_id)
         );
 
         if (fullyFormed && !messagesNeedBackfill) {
@@ -193,12 +194,13 @@ Deno.serve(async (req) => {
           }
 
           let bf = 0;
+          let bfWriteCount = 0;
           for (const msg of msgs) {
             const needsMsg = !msg.shared_conversation_key ||
               !Array.isArray(msg.participant_character_ids) ||
               msg.participant_character_ids.length < 2 ||
-              !msg.sender_character_id ||
-              msg.channel !== 'world_phone';
+              msg.channel !== 'world_phone' ||
+              (msg.sender_type === 'character' && !msg.sender_character_id);
             if (!needsMsg) continue;
 
             const inferredSender = msg.sender_character_id ||
@@ -206,14 +208,26 @@ Deno.serve(async (req) => {
             const inferredReceiver = msg.receiver_character_id ||
               (inferredSender === idA ? idB : inferredSender === idB ? idA : null);
 
-            await base44.asServiceRole.entities.Message.update(msg.id, {
+            // Throttle: pause every 3 writes to avoid 429
+            if (bfWriteCount > 0 && bfWriteCount % 3 === 0) {
+              await new Promise(r => setTimeout(r, 800));
+            }
+
+            const updatePayload = {
               shared_conversation_key: canonicalKey,
               participant_character_ids: participantIds,
               channel: 'world_phone',
-              ...(inferredSender && !msg.sender_character_id ? { sender_character_id: inferredSender } : {}),
-              ...(inferredReceiver && !msg.receiver_character_id ? { receiver_character_id: inferredReceiver } : {}),
-            }).catch(err => report.errors.push(`backfill msg ${msg.id.substring(0,8)}: ${err.message}`));
+            };
+            // Only write sender/receiver if we have a real value — never write null
+            if (inferredSender) updatePayload.sender_character_id = inferredSender;
+            if (inferredReceiver) updatePayload.receiver_character_id = inferredReceiver;
+            // If sender cannot be inferred, stamp a fallback so this message stops re-triggering
+            if (!inferredSender) updatePayload.sender_character_id = idA; // default to idA (first sorted participant)
+
+            await base44.asServiceRole.entities.Message.update(msg.id, updatePayload)
+              .catch(err => report.errors.push(`backfill msg ${msg.id.substring(0,8)}: ${err.message}`));
             bf++;
+            bfWriteCount++;
           }
           report.messages_backfilled = bf;
           totalBackfilled += bf;
@@ -222,8 +236,8 @@ Deno.serve(async (req) => {
             !m.shared_conversation_key ||
             !Array.isArray(m.participant_character_ids) ||
             m.participant_character_ids.length < 2 ||
-            !m.sender_character_id ||
-            m.channel !== 'world_phone'
+            m.channel !== 'world_phone' ||
+            (m.sender_type === 'character' && !m.sender_character_id)
           ).length;
           totalBackfilled += report.messages_backfilled;
         }
@@ -272,8 +286,12 @@ Deno.serve(async (req) => {
         }).catch(err => report.errors.push(`canonical upgrade: ${err.message}`));
 
         // Migrate messages from duplicates
+        let migrateWriteCount = 0;
         for (const dup of duplicates) {
           for (const msg of dup.messages) {
+            if (migrateWriteCount > 0 && migrateWriteCount % 3 === 0) {
+              await new Promise(r => setTimeout(r, 800));
+            }
             const inferredSender = msg.sender_character_id ||
               (msg.character_id === idA ? idA : msg.character_id === idB ? idB : null);
             const inferredReceiver = msg.receiver_character_id ||
@@ -312,17 +330,19 @@ Deno.serve(async (req) => {
               .catch(err => report.errors.push(`migrate msg ${msg.id.substring(0,8)}: ${err.message}`));
             report.messages_migrated++;
             totalMigrated++;
+            migrateWriteCount++;
           }
         }
 
         // Backfill legacy messages in canonical
         let bf = 0;
+        let canonicalBfCount = 0;
         for (const msg of canonicalEntry.messages) {
           const needsMsg = !msg.shared_conversation_key ||
             !Array.isArray(msg.participant_character_ids) ||
             msg.participant_character_ids.length < 2 ||
-            !msg.sender_character_id ||
-            msg.channel !== 'world_phone';
+            msg.channel !== 'world_phone' ||
+            (msg.sender_type === 'character' && !msg.sender_character_id);
           if (!needsMsg) continue;
 
           const inferredSender = msg.sender_character_id ||
@@ -330,14 +350,23 @@ Deno.serve(async (req) => {
           const inferredReceiver = msg.receiver_character_id ||
             (inferredSender === idA ? idB : inferredSender === idB ? idA : null);
 
-          await base44.asServiceRole.entities.Message.update(msg.id, {
+          if (canonicalBfCount > 0 && canonicalBfCount % 3 === 0) {
+            await new Promise(r => setTimeout(r, 800));
+          }
+
+          const canonicalUpdatePayload = {
             shared_conversation_key: canonicalKey,
             participant_character_ids: participantIds,
             channel: 'world_phone',
-            ...(inferredSender && !msg.sender_character_id ? { sender_character_id: inferredSender } : {}),
-            ...(inferredReceiver && !msg.receiver_character_id ? { receiver_character_id: inferredReceiver } : {}),
-          }).catch(err => report.errors.push(`backfill msg ${msg.id.substring(0,8)}: ${err.message}`));
+          };
+          if (inferredSender) canonicalUpdatePayload.sender_character_id = inferredSender;
+          if (inferredReceiver) canonicalUpdatePayload.receiver_character_id = inferredReceiver;
+          if (!inferredSender) canonicalUpdatePayload.sender_character_id = idA;
+
+          await base44.asServiceRole.entities.Message.update(msg.id, canonicalUpdatePayload)
+            .catch(err => report.errors.push(`backfill msg ${msg.id.substring(0,8)}: ${err.message}`));
           bf++;
+          canonicalBfCount++;
         }
         report.messages_backfilled = bf;
         totalBackfilled += bf;
