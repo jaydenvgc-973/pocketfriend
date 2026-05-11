@@ -1,14 +1,17 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * createOwnedNpcCharacter — Backend function for safe NPC creation
- * 
- * Server-side character creation that:
- * - Authenticates the user
- * - Stamps owner_email from auth context (never from payload)
- * - Rejects active_created_character creation
- * - Uses service role to bypass RLS
- * - Returns the created character
+ * createOwnedNpcCharacter — NPC creation routed through the existing working path.
+ *
+ * Routes through createCharacterWithRelationships — the same function that
+ * CreateCharacter.jsx uses successfully — so it satisfies the same RLS gate.
+ *
+ * Guards:
+ * - Authenticates user from session (never from payload)
+ * - Rejects active_created_character
+ * - Allowlists only: npc_fictitious, npc_family_member, npc_regular
+ * - owner_email stamped from auth only
+ * - No created_by
  */
 Deno.serve(async (req) => {
   try {
@@ -21,7 +24,6 @@ Deno.serve(async (req) => {
 
     const { name, characterType, linkedActiveCharacterId, relationshipType, familyTitle } = await req.json();
 
-    // ── VALIDATION ──────────────────────────────────────────────────────────
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return Response.json({ error: 'Character name is required' }, { status: 400 });
     }
@@ -33,15 +35,13 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    // ── GUARD: Reject active_created_character ──────────────────────────────
     if (characterType === 'active_created_character') {
       return Response.json({
-        error: 'Active Creative Characters must be created from the dedicated character creation page, not from this lightweight panel.'
+        error: 'Active Creative Characters must be created from the dedicated character creation page.'
       }, { status: 400 });
     }
 
-    // ── BUILD SAFE PAYLOAD (server-side only) ───────────────────────────────
-    // owner_email is ALWAYS set from authenticated user, never from request payload
+    // Build payload — ownership stamped from auth, never from request payload
     const charData = {
       name: name.trim(),
       character_type: characterType,
@@ -52,25 +52,30 @@ Deno.serve(async (req) => {
       exclude_from_homepage: true,
     };
 
-    console.log('[createOwnedNpcCharacter] Creating NPC:', JSON.stringify({
+    console.log('[createOwnedNpcCharacter] Routing through createCharacterWithRelationships:', JSON.stringify({
       name: charData.name,
       character_type: charData.character_type,
       owner_email: charData.owner_email,
-      owner_user_id_present: !!charData.owner_user_id,
       linkedActiveCharacterId: linkedActiveCharacterId || null,
       relationshipType: relationshipType || null,
       familyTitle: familyTitle || null,
     }));
 
-    // ── CREATE via user-scoped context ──────────────────────────────────────
-    // RLS create rule: {"user_condition": {"role": "user"}} — satisfied by authenticated user.
-    // owner_email and owner_user_id are stamped HERE from auth, never from frontend payload.
-    // This function IS the ownership enforcement layer — frontend cannot influence owner fields.
-    const newNPC = await base44.entities.Character.create(charData);
+    // Route through the existing working path — same function CreateCharacter.jsx uses.
+    // This satisfies the same RLS gate that active character creation already passes.
+    const createRes = await base44.functions.invoke('createCharacterWithRelationships', {
+      characterData: charData,
+      characterRelationships: [],
+    });
+
+    const result = createRes?.data || createRes;
+    if (!result?.success || !result?.character) {
+      throw new Error(result?.error || 'createCharacterWithRelationships returned no character');
+    }
 
     return Response.json({
       success: true,
-      character: newNPC,
+      character: result.character,
       linkedActiveCharacterId,
       relationshipType,
       familyTitle,
