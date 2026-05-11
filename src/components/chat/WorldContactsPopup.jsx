@@ -112,11 +112,27 @@ async function buildMergedContactList(character, ownerEmail) {
     }
   }
 
-  // 4. Pull npc_family_member records from in-memory map
-  const familyChars = allOwnerChars.filter(c => c.character_type === 'npc_family_member');
+  // 4. Hydrate avatars from npc_family_member records ONLY for contacts already in this character's family_members list
+  // Never create new contacts from global family records — only this character's own family_members array should be a source of truth
+  const thisCharFamilyMemberIds = new Set(
+    (character?.family_members || [])
+      .map(fm => {
+        // Try to find the matching Character record by exact name match
+        const match = allOwnerChars.find(c =>
+          c.character_type === 'npc_family_member' &&
+          c.name?.trim().toLowerCase() === (fm.name || fm.person_name)?.trim().toLowerCase()
+        );
+        return match?.id;
+      })
+      .filter(Boolean)
+  );
 
-  for (const fc of familyChars) {
+  for (const id of thisCharFamilyMemberIds) {
+    const fc = charById.get(id);
+    if (!fc) continue;
     const av = bestAvatar(fc);
+
+    // Only hydrate existing entries — never create new contacts from family_member matches
     if (seen.has(fc.id)) {
       const entry = seen.get(fc.id);
       if (!entry.avatar_url && av) {
@@ -125,33 +141,14 @@ async function buildMergedContactList(character, ownerEmail) {
         entry._avatar_source = 'npc_family_member_record';
       }
     } else {
-      const nameEntry = seen.get(`name:${fc.name}`) || [...seen.values()].find(c =>
+      // Try to match by name in existing unlinked entries only (do NOT create new)
+      const nameEntry = [...seen.values()].find(c =>
         c.person_name?.trim().toLowerCase() === fc.name?.trim().toLowerCase() && !c.related_character_id
       );
-      if (nameEntry) {
-        if (!nameEntry.related_character_id) nameEntry.related_character_id = fc.id;
-        if (!nameEntry.avatar_url && av) nameEntry.avatar_url = av;
+      if (nameEntry && !nameEntry.avatar_url && av) {
+        nameEntry.avatar_url = av;
         nameEntry._matched_character_id = fc.id;
-        nameEntry._avatar_source = nameEntry._avatar_source || 'npc_family_member_name_match';
-        nameEntry._linkage = 'linked_from_character_record';
-      } else {
-        seen.set(fc.id, {
-          person_name: fc.name,
-          relationship_type: 'Family',
-          description: fc.profile_summary || fc.backstory || '',
-          history_summary: '',
-          last_interaction_summary: '',
-          emotional_impact: '',
-          current_status: fc.current_activity || '',
-          romantic_level: 0,
-          friendship_level: 50,
-          related_character_id: fc.id,
-          avatar_url: av || null,
-          _linkage: 'family_character',
-          _source: 'npc_family_member',
-          _matched_character_id: fc.id,
-          _avatar_source: av ? 'npc_family_member_record' : null,
-        });
+        nameEntry._avatar_source = 'npc_family_member_name_match';
       }
     }
   }
