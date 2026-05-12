@@ -301,18 +301,22 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       let prompt;
       if (isBaby) {
         prompt = `A realistic, candid photo of ${member.name}, a newborn baby (under 1 year old), who is ${character.name}'s ${member.relationship_type}.
-${character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : ""}
-Adorable infant, soft natural lighting, like a real family photo. NOT a cartoon, NOT illustrated. Photorealistic. Baby features — round face, chubby cheeks. Show family resemblance to the parents.`;
+      ${character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : ""}
+      Adorable infant, soft natural lighting, like a real family photo. NOT a cartoon, NOT illustrated. Photorealistic. Baby features — round face, chubby cheeks. Show family resemblance to the parents. This is a separate person, not a clone.`;
       } else {
         let resemblanceNote = "";
-        if (isChild) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. Blend facial features to show clear family resemblance with the parent.`;
-        else if (isParent) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. They should look like they could be the parent — similar bone structure, eyes, coloring.`;
-        else if (isSibling) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. They should look clearly related — similar features, coloring, and bone structure.`;
+        if (isChild) {
+          resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. Blend facial features to show clear family resemblance with the parent. Use ${character.name} as a family resemblance reference only—do not copy their face. This is a separate child with their own distinct appearance and features.`;
+        } else if (isParent) {
+          resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. They should look like they could be the parent — similar bone structure, eyes, coloring. Do not generate a younger or older version of ${character.name}. This is a distinct adult with their own unique face.`;
+        } else if (isSibling) {
+          resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. They should look clearly related — similar features, coloring, and bone structure. Critical: Do NOT make this a clone or identical copy of ${character.name}. Same-gender siblings must have distinct facial structure, nose shape, jaw, cheekbones, eye spacing, brow, and expression unless explicitly marked as an identical twin. Vary hairstyle, facial hair (if male), skin texture, and age appearance.`;
+        }
 
         prompt = `A realistic, candid-style portrait photo of ${member.name}, who is ${character.name}'s ${member.relationship_type || "family member"}.
-${character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : ""}
-${resemblanceNote}
-Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illustrated. Photorealistic. ${ageNote}`;
+      ${character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : ""}
+      ${resemblanceNote}
+      Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illustrated. Photorealistic. ${ageNote} Generate a distinct person with their own unique identity — not a replacement for or duplicate of ${character.name}.`;
       }
 
       const result = await base44.integrations.Core.GenerateImage({
@@ -771,11 +775,12 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                         </div>
                       );
                     })()}
-                    {!getFamilyMemberAvatar(member.name) && (
+                    {/* Show camera icon for ALL editable family members, not just those missing avatars */}
+                    {!isMemberLocked(member.name) && !readOnly && (
                       <button
                         onClick={() => generatePhoto(idx)}
                         disabled={generatingIdx === idx || !member.name?.trim()}
-                        title="Generate photo"
+                        title="Generate or regenerate photo"
                         className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-primary flex items-center justify-center disabled:opacity-40 hover:bg-primary/80 transition-colors"
                       >
                         {generatingIdx === idx

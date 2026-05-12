@@ -1,8 +1,15 @@
 /**
- * FOREGROUND PRIORITY MANAGER — Single Source of Truth
+ * FOREGROUND PRIORITY MANAGER — Single Source of Truth (Stack-Based)
  *
  * Tracks what the user is actively doing and signals background systems to yield.
  * Background tasks MUST check isForegroundActive() / shouldYieldToForeground() before running.
+ *
+ * ARCHITECTURE:
+ * - Task registry: all active tasks (global + owner-scoped) stored in Map
+ * - Global active task: highest-priority non-expired task from the entire registry
+ * - Clearing one task: only removes that task, recomputes global active
+ * - Auto-expire: stale tasks pruned on access
+ * - Listener notifications: fire only on global active state change
  *
  * RULES:
  * - All owner_email-scoped tasks use the per-user task stack
@@ -57,14 +64,76 @@ export const FOREGROUND_TASKS = {
   SAVE_CHARACTER:       'save_character',
 };
 
-// ─── Global single-task state (legacy, used by useChatBackgroundTasks etc.) ───
-// This is the simple string-based flag existing consumers rely on.
-let _activeForegroundTask = null;
+// ─── Task Registry & State ────────────────────────────────────────────────────
+// All active tasks: global and owner-scoped, keyed by taskId
+const _taskRegistry = new Map(); // taskId → { id, type, priority, ownerEmail, started_at, expires_at }
+
+// Cached global active task (highest priority non-expired)
+let _cachedGlobalActive = null;
+let _listenersDirty = false;
+
+// Listeners for global active state changes
 let _foregroundListeners = [];
 
-// ─── Per-user task map (owner_email → task) for multi-user scoping ────────────
-// This enables the owner_email-scoped API without breaking existing consumers.
-const _userTasks = new Map(); // owner_email → { id, type, priority, started_at, expires_at }
+// ─── Private Utilities ────────────────────────────────────────────────────────
+
+/**
+ * Prune expired tasks from registry.
+ * Called before computing global active to ensure stale tasks don't block.
+ */
+function _pruneExpiredTasks() {
+  const now = Date.now();
+  const toDelete = [];
+  for (const [taskId, task] of _taskRegistry) {
+    if (task.expires_at < now) {
+      toDelete.push(taskId);
+    }
+  }
+  for (const taskId of toDelete) {
+    _taskRegistry.delete(taskId);
+  }
+}
+
+/**
+ * Recompute the global active task: highest priority non-expired task.
+ * Call after any registry change.
+ * Returns the task object or null if registry is empty.
+ */
+function _recomputeGlobalActive() {
+  _pruneExpiredTasks();
+  
+  if (_taskRegistry.size === 0) {
+    const changed = _cachedGlobalActive !== null;
+    _cachedGlobalActive = null;
+    return changed;
+  }
+
+  let highest = null;
+  let highestRank = 0;
+
+  for (const task of _taskRegistry.values()) {
+    const rank = priorityRank(task.priority);
+    if (rank > highestRank) {
+      highestRank = rank;
+      highest = task;
+    }
+  }
+
+  const changed = _cachedGlobalActive !== highest;
+  _cachedGlobalActive = highest;
+  return changed;
+}
+
+/**
+ * Notify listeners if global active state changed.
+ */
+function _notifyListeners() {
+  if (!_listenersDirty) return;
+  _listenersDirty = false;
+  _foregroundListeners.forEach((l) => {
+    try { l(_cachedGlobalActive); } catch (_) {}
+  });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LEGACY API — used by useChatBackgroundTasks, useNarrativeCorrection, etc.
@@ -80,18 +149,37 @@ const _userTasks = new Map(); // owner_email → { id, type, priority, started_a
  * @returns {function} cleanup — call when task completes
  */
 export function registerForegroundTask(type, priority = 'high') {
+  const taskId = `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const incoming = priorityRank(priority);
-  const current = _activeForegroundTask ? priorityRank(_activeForegroundTask.priority) : 0;
 
-  // Only replace if incoming priority is >= current
-  if (incoming >= current) {
-    _activeForegroundTask = { type, priority, started_at: Date.now() };
+  // Check if we can add this task (don't add if lower priority than current global)
+  const currentRank = _cachedGlobalActive ? priorityRank(_cachedGlobalActive.priority) : 0;
+  if (incoming < currentRank) {
+    // Lower priority — don't add, but still return a cleanup function
+    return () => {};
+  }
+
+  const now = Date.now();
+  _taskRegistry.set(taskId, {
+    id: taskId,
+    type,
+    priority,
+    ownerEmail: null, // global task
+    started_at: now,
+    expires_at: now + 30000, // 30s default
+  });
+
+  const changed = _recomputeGlobalActive();
+  if (changed) {
+    _listenersDirty = true;
     _notifyListeners();
   }
 
   return () => {
-    if (_activeForegroundTask?.type === type) {
-      _activeForegroundTask = null;
+    _taskRegistry.delete(taskId);
+    const changed = _recomputeGlobalActive();
+    if (changed) {
+      _listenersDirty = true;
       _notifyListeners();
     }
   };
@@ -113,14 +201,16 @@ export async function runAsForegroundTask(type, fn, priority = 'high') {
  * Returns true if any foreground task is currently active.
  */
 export function isForegroundActive() {
-  return _activeForegroundTask !== null;
+  _pruneExpiredTasks();
+  return _cachedGlobalActive !== null;
 }
 
 /**
  * Returns the current foreground task object, or null.
  */
 export function getActiveForegroundTask() {
-  return _activeForegroundTask;
+  _pruneExpiredTasks();
+  return _cachedGlobalActive;
 }
 
 /**
@@ -160,12 +250,6 @@ export function subscribe(listener) {
   };
 }
 
-function _notifyListeners() {
-  _foregroundListeners.forEach((l) => {
-    try { l(_activeForegroundTask); } catch (_) {}
-  });
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // OWNER-SCOPED API — used by MediaGallery, useForegroundTask hook, etc.
 // Scoped per owner_email. Priority comparison enforced.
@@ -173,7 +257,7 @@ function _notifyListeners() {
 
 /**
  * Register a foreground task scoped to an owner_email.
- * Will NOT overwrite a higher-priority active task for the same user.
+ * Will NOT overwrite a higher-priority active task.
  *
  * @param {string} taskType - from FOREGROUND_TASKS
  * @param {object} options - { ownerEmail, priority, page, durationMs }
@@ -189,21 +273,17 @@ export function registerUserForegroundTask(taskType, options = {}) {
 
   if (!ownerEmail) return null;
 
+  const taskId = `user_${ownerEmail}_${taskType}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const incoming = priorityRank(priority);
-  const existing = _userTasks.get(ownerEmail);
 
-  // Do not overwrite a higher-priority active task
-  if (existing && existing.expires_at > Date.now()) {
-    const existingRank = priorityRank(existing.priority);
-    if (existingRank > incoming) {
-      // Keep the higher-priority task, do not register lower one
-      return null;
-    }
+  // Do not add if lower priority than current global active
+  const currentRank = _cachedGlobalActive ? priorityRank(_cachedGlobalActive.priority) : 0;
+  if (incoming < currentRank) {
+    return null;
   }
 
-  const taskId = `${taskType}_${Date.now()}`;
   const now = Date.now();
-  const task = {
+  _taskRegistry.set(taskId, {
     id: taskId,
     type: taskType,
     priority,
@@ -211,27 +291,21 @@ export function registerUserForegroundTask(taskType, options = {}) {
     page,
     started_at: now,
     expires_at: now + durationMs,
-  };
+  });
 
-  _userTasks.set(ownerEmail, task);
-
-  // Also update the global flag if this is higher priority
-  const currentGlobal = _activeForegroundTask ? priorityRank(_activeForegroundTask.priority) : 0;
-  if (incoming >= currentGlobal) {
-    _activeForegroundTask = { type: taskType, priority, started_at: now };
+  const changed = _recomputeGlobalActive();
+  if (changed) {
+    _listenersDirty = true;
     _notifyListeners();
   }
 
   // Auto-clear after duration
   setTimeout(() => {
-    const current = _userTasks.get(ownerEmail);
-    if (current && current.id === taskId) {
-      _userTasks.delete(ownerEmail);
-      // Also clear global if this was the active one
-      if (_activeForegroundTask?.type === taskType) {
-        _activeForegroundTask = null;
-        _notifyListeners();
-      }
+    _taskRegistry.delete(taskId);
+    const changed = _recomputeGlobalActive();
+    if (changed) {
+      _listenersDirty = true;
+      _notifyListeners();
     }
   }, durationMs);
 
@@ -243,31 +317,39 @@ export function registerUserForegroundTask(taskType, options = {}) {
  */
 export function clearUserForegroundTask(ownerEmail, taskId = null) {
   if (!ownerEmail) return;
-  const current = _userTasks.get(ownerEmail);
-  if (!current) return;
-  if (taskId && current.id !== taskId) return;
 
-  _userTasks.delete(ownerEmail);
+  if (taskId) {
+    // Clear specific task
+    _taskRegistry.delete(taskId);
+  } else {
+    // Clear all tasks for this owner
+    for (const [id] of _taskRegistry) {
+      if (id.startsWith(`user_${ownerEmail}_`)) {
+        _taskRegistry.delete(id);
+      }
+    }
+  }
 
-  // Clear global flag if this was the active task
-  if (_activeForegroundTask?.type === current.type) {
-    _activeForegroundTask = null;
+  const changed = _recomputeGlobalActive();
+  if (changed) {
+    _listenersDirty = true;
     _notifyListeners();
   }
 }
 
 /**
- * Get the active foreground task for a specific user.
+ * Get the active foreground task for a specific user (if any).
  */
 export function getUserForegroundTask(ownerEmail) {
   if (!ownerEmail) return null;
-  const task = _userTasks.get(ownerEmail);
-  if (!task) return null;
-  if (task.expires_at < Date.now()) {
-    _userTasks.delete(ownerEmail);
-    return null;
+  _pruneExpiredTasks();
+
+  for (const task of _taskRegistry.values()) {
+    if (task.ownerEmail === ownerEmail) {
+      return task;
+    }
   }
-  return task;
+  return null;
 }
 
 /**
@@ -320,8 +402,13 @@ export async function withForegroundPriority(taskType, fn, options = {}) {
 }
 
 /**
- * Debug: get all active user tasks.
+ * Debug: get all active tasks (global + owner-scoped).
  */
 export function debugGetActiveTasks() {
-  return Object.fromEntries(_userTasks);
+  _pruneExpiredTasks();
+  return {
+    registry: Object.fromEntries(_taskRegistry),
+    globalActive: _cachedGlobalActive,
+    listenerCount: _foregroundListeners.length,
+  };
 }
