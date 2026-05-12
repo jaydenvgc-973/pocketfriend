@@ -333,6 +333,14 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         content: "",
         emotional_state: character.emotional_state || "calm",
         timestamp: new Date().toISOString(),
+        generation_context: {
+          prompt: promptText,
+          character_id: subjectType !== 'user' ? character.id : null,
+          location_id: selectedLocation?.id || null,
+          location_name: selectedLocation?.name || null,
+          zone_name: selectedZone || null,
+          subject_type: subjectType,
+        },
       });
       if (!newMsg?.id) throw new Error('Failed to create message');
 
