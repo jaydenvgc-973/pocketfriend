@@ -312,7 +312,17 @@ export default function Home() {
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;
   const showPerformanceWarning = activeCustomChars.length >= 7;
-  const thomasAnderson = allCharacters.find(c => c.name === 'Thomas Anderson' || c.name === 'Thomas');
+  
+  // THOMAS ANDERSON FIX: Only show popup for VALID active_created_character records
+  // Exclude: deleted, soft_deleted, merged, archived, excluded_from_homepage, npc_*, test_*, diagnostic_*
+  const thomasAnderson = allCharacters.find(c => 
+    (c.name === 'Thomas Anderson' || c.name === 'Thomas') &&
+    c.character_type === 'active_created_character' &&
+    c.status === 'active' &&
+    !c.exclude_from_homepage &&
+    !c.is_test_character &&
+    !c.diagnostic_only
+  );
   const thomasInDisplay = activeCustomChars.some(c => c.id === thomasAnderson?.id);
   const showThomasAndersonFix = thomasAnderson && !thomasInDisplay;
 
