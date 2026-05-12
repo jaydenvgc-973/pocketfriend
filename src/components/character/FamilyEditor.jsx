@@ -142,6 +142,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
   const [saving, setSaving] = useState(false);
   const [generatingIdx, setGeneratingIdx] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  const [generationError, setGenerationError] = useState(null);
   // Master lock: prevents ANY new additions to the family list
   const [masterLocked, setMasterLocked] = useState(character.family_list_locked || false);
   // Per-member locks: stored as a set of member names (lowercased)
@@ -379,8 +380,9 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         queryClient.invalidateQueries({ queryKey: ["character", character.id] });
         queryClient.invalidateQueries({ queryKey: ["characters"] });
       }
-    } catch {
-      // silently fail
+    } catch (err) {
+      console.error('[FamilyEditor] Image generation failed:', err);
+      setGenerationError(`Failed to generate photo: ${err.message}`);
     }
     setGeneratingIdx(null);
   };
@@ -866,6 +868,9 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
                 </div>
                 {generatingIdx === idx && (
                   <p className="text-xs text-muted-foreground">Generating photo for {member.name}...</p>
+                )}
+                {generationError && (
+                  <p className="text-xs text-destructive">{generationError}</p>
                 )}
               </>
             )}
