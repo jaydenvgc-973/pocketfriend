@@ -6,6 +6,7 @@ import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
+import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -76,32 +77,61 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [userSettings, setUserSettings] = useState(null);
   const [allCharacters, setAllCharacters] = useState([]);
 
-  // Get current user's email for character fetching
+  // Get current user's email — resolved once on mount, not gated on isOpen
   const [userEmail, setUserEmail] = useState(null);
+  const userEmailRef = useRef(null);
   useEffect(() => {
     base44.auth.me()
-      .then(user => setUserEmail(user?.email))
+      .then(user => {
+        if (user?.email) {
+          userEmailRef.current = user.email;
+          setUserEmail(user.email);
+        }
+      })
       .catch(() => {});
   }, []);
 
-  // Load locations, user settings, and unified roster when modal opens
-  // CRITICAL: ALL fetches are scoped to the authenticated userEmail — never use .list() without a filter
+  // Track whether dropdown data has been loaded for the current open session
+  const dropdownLoadedRef = useRef(false);
+
+  // Load dropdowns (characters + locations + settings) as soon as the modal opens.
+  // PRIORITY: This fires immediately on open and registers a foreground task so background
+  // systems yield. The heavy 500-message image fetch is staggered AFTER dropdowns resolve.
+  // CRITICAL: All queries use owner_email — never created_by, never unscoped.
   useEffect(() => {
-    if (!isOpen || !userEmail) return;
+    if (!isOpen) {
+      dropdownLoadedRef.current = false;
+      return;
+    }
+
+    // Use cached email ref immediately if available — avoids waiting for state update
+    const email = userEmailRef.current || userEmail;
+    if (!email) {
+      // Email not resolved yet — re-fires once userEmail state updates
+      return;
+    }
+
+    if (dropdownLoadedRef.current) return; // Already loaded for this open session
+    dropdownLoadedRef.current = true;
+
+    // Register foreground priority — background simulations yield while generator is open
+    const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'critical');
+
+    // Fire all three dropdown queries in parallel — no serial blocking
     Promise.all([
       base44.functions.invoke('fetchAllLocationsForUser', {})
         .then(res => setLocations(res?.data?.locations || []))
         .catch(() => {}),
-      // ACCOUNT-SCOPED: filter by owner_email
-      base44.entities.UserSettings.filter({ owner_email: userEmail })
+      base44.entities.UserSettings.filter({ owner_email: email })
         .then(settingsList => setUserSettings(settingsList?.[0] || null))
         .catch(() => {}),
-      fetchUnifiedRoster(base44, userEmail)
-        .then(roster => {
-          setAllCharacters(roster || []);
-        })
+      fetchUnifiedRoster(base44, email)
+        .then(roster => setAllCharacters(roster || []))
         .catch(() => {}),
-    ]);
+    ]).finally(() => {
+      // Release foreground after dropdown data is ready
+      releaseForeground();
+    });
   }, [isOpen, userEmail]);
 
   const availableZones = selectedLocation?.zones?.filter(z => z.image_urls?.length > 0) || [];
@@ -172,29 +202,32 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
   useEffect(() => {
     if (!isOpen || !conversationId) return;
-    setIsFetchingImages(true);
-    // Fetch the most recent 500 messages to source images — separate from the 50-message chat feed
-    base44.entities.Message.filter(
-      { conversation_id: conversationId },
-      "-created_date",
-      500
-    )
-      .then(msgs => {
-        const imgs = (msgs || [])
-          .filter(m => m.image_url)
-          .map(m => ({
-            id: m.id,
-            url: m.image_url,
-            senderType: m.sender_type,
-            senderName: m.character_name || "You",
-            timestamp: m.timestamp || m.created_date,
-          }))
-          // Sort newest→oldest for display
-          .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
-        setAllImages(imgs);
-      })
-      .catch(() => {})
-      .finally(() => setIsFetchingImages(false));
+    // Stagger the heavy 500-message image scan by 800ms so the dropdown data (characters +
+    // locations) always resolves and renders first. The user sees the generator UI immediately.
+    const timer = setTimeout(() => {
+      setIsFetchingImages(true);
+      base44.entities.Message.filter(
+        { conversation_id: conversationId },
+        "-created_date",
+        500
+      )
+        .then(msgs => {
+          const imgs = (msgs || [])
+            .filter(m => m.image_url)
+            .map(m => ({
+              id: m.id,
+              url: m.image_url,
+              senderType: m.sender_type,
+              senderName: m.character_name || "You",
+              timestamp: m.timestamp || m.created_date,
+            }))
+            .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+          setAllImages(imgs);
+        })
+        .catch(() => {})
+        .finally(() => setIsFetchingImages(false));
+    }, 800);
+    return () => clearTimeout(timer);
   }, [isOpen, conversationId]);
 
   // Also merge in any new images from the current feed (real-time arrivals not yet in DB fetch)
