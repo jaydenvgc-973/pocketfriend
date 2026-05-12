@@ -6,9 +6,20 @@
  */
 
 /**
- * Resolve user visual reference images from UserSettings
+ * Resolve user visual reference images from UserSettings.
+ *
+ * @param {object} base44 - base44 SDK instance
+ * @param {string} userEmail - owner_email scope
+ * @param {object} [options]
+ * @param {string[]} [options.sessionCacheRefs] - Last-known-good refs from the active Media Grid session.
+ *   If DB lookup returns empty, these are returned instead of surfacing a false "missing" error.
+ * @param {string} [options.selectorAvatarUrl] - The avatar_url already visible beside the user in the
+ *   selector dropdown. If DB lookup returns empty and session cache is empty, this is used as a last
+ *   fallback — the image is visible in the UI so it must be usable as a reference.
  */
-export async function resolveUserVisualRefs(base44, userEmail) {
+export async function resolveUserVisualRefs(base44, userEmail, options = {}) {
+  const { sessionCacheRefs = [], selectorAvatarUrl = null } = options;
+
   if (!userEmail) return { refs: [], missing: true, error: 'User email not available — cannot resolve user identity.' };
 
   try {
@@ -54,13 +65,38 @@ export async function resolveUserVisualRefs(base44, userEmail) {
       return { refs, missing: false };
     }
 
-    // No reference images found in any source — return missing with a diagnostic message
+    // ── SESSION CACHE FALLBACK ────────────────────────────────────────────────
+    // DB returned empty. Before reporting "missing", check the session cache.
+    // A user image that was successfully used 30 seconds ago is NOT missing.
+    // This is the primary fix for the false "missing" error state contradiction.
+    if (sessionCacheRefs.length > 0) {
+      console.log(`[resolveUserVisualRefs] DB returned empty — using session cache (${sessionCacheRefs.length} refs). NOT a missing error.`);
+      return { refs: sessionCacheRefs, missing: false };
+    }
+
+    // ── SELECTOR AVATAR FALLBACK ──────────────────────────────────────────────
+    // If the user's avatar is visible in the selector dropdown, use it.
+    // "Visible in the UI = valid identity reference" is a hard rule.
+    if (selectorAvatarUrl && typeof selectorAvatarUrl === 'string') {
+      console.log(`[resolveUserVisualRefs] DB + session cache empty — using selector avatar URL as last fallback`);
+      return { refs: [selectorAvatarUrl], missing: false };
+    }
+
+    // No reference images found from any source
     return {
       refs: [],
       missing: true,
       error: 'No user reference images found. Add a persona photo in Settings → My Profile to enable user likeness in generated images.',
     };
   } catch (err) {
+    // On lookup failure, try session cache before reporting error
+    if (sessionCacheRefs.length > 0) {
+      console.log(`[resolveUserVisualRefs] Lookup failed — using session cache as recovery (${sessionCacheRefs.length} refs)`);
+      return { refs: sessionCacheRefs, missing: false };
+    }
+    if (selectorAvatarUrl) {
+      return { refs: [selectorAvatarUrl], missing: false };
+    }
     return { refs: [], missing: true, error: `User identity lookup failed: ${err?.message || 'unknown error'}` };
   }
 }
@@ -129,6 +165,16 @@ export async function resolveCharacterVisualRefs(base44, characterId, allCharact
 /**
  * Validate that all selected people have visual references.
  * Returns: { valid: boolean, errors: string[], selectedPeople: {...} }
+ *
+ * @param {object} base44
+ * @param {string[]} selectedCharacterIds
+ * @param {boolean} includeUser
+ * @param {string} userEmail
+ * @param {string} primaryCharacterId
+ * @param {object[]} allCharacters - local roster cache
+ * @param {object} [userRefHints] - session-scoped user ref hints to prevent false "missing" errors
+ * @param {string[]} [userRefHints.sessionCacheRefs] - last-known-good refs from active session
+ * @param {string} [userRefHints.selectorAvatarUrl] - avatar shown in selector list
  */
 export async function validateSelectedPeopleIdentities(
   base44,
@@ -136,7 +182,8 @@ export async function validateSelectedPeopleIdentities(
   includeUser,
   userEmail,
   primaryCharacterId,
-  allCharacters
+  allCharacters,
+  userRefHints = {}
 ) {
   const errors = [];
   const selectedPeople = {
@@ -180,7 +227,16 @@ export async function validateSelectedPeopleIdentities(
 
   // 3. USER (if selected in multi-select)
   if (includeUser) {
-    const { refs: userRefs, missing, error: userError } = await resolveUserVisualRefs(base44, userEmail);
+    // Pass session cache and selector avatar so resolveUserVisualRefs never produces a
+    // false "missing" error when a known-good ref exists from the current session.
+    const { refs: userRefs, missing, error: userError } = await resolveUserVisualRefs(
+      base44,
+      userEmail,
+      {
+        sessionCacheRefs: userRefHints.sessionCacheRefs || [],
+        selectorAvatarUrl: userRefHints.selectorAvatarUrl || null,
+      }
+    );
     if (missing) {
       // Surface the specific diagnostic message from resolveUserVisualRefs
       errors.push(userError || 'User visual reference image is missing. Add a persona photo in Settings to enable user likeness.');

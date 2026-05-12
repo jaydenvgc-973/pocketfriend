@@ -86,6 +86,15 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   // Get current user's email — resolved once on mount, not gated on isOpen
   const [userEmail, setUserEmail] = useState(null);
   const userEmailRef = useRef(null);
+
+  // ── SESSION USER REF CACHE ────────────────────────────────────────────────
+  // Once user refs are successfully resolved (from any source), store them here
+  // for the entire Media Grid session. Never cleared by prompt changes, location
+  // changes, or generation completion. Only cleared when the modal fully unmounts.
+  // This prevents the false "No user reference images found" error after a
+  // successful user-image generation in the same session.
+  const sessionUserRefsRef = useRef([]); // string[] — last-known-good user ref URLs
+
   useEffect(() => {
     base44.auth.me()
       .then(user => {
@@ -522,6 +531,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     // ═════════════════════════════════════════════════════════════════════════
     let selectedPeople = null;
 
+    // Resolve world-self character early — needed for validation hints and user ref building below
+    const userChar = allCharacters.find(c => c.is_user);
+
     // CRITICAL PRE-CHECK: Determine if the selection is exclusively the user world-self.
     // If so, skip multi-person validation entirely — this is a user-only image.
     // The user-self character (is_user: true) selected alone must NOT trigger multi-person
@@ -541,7 +553,12 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         userIsSelected, // true when user world-self is explicitly in selectedCharacterIds
         userEmail,
         character.id,
-        allCharacters
+        allCharacters,
+        // Pass session cache + selector avatar so validation never produces a false "missing" error
+        {
+          sessionCacheRefs: sessionUserRefsRef.current,
+          selectorAvatarUrl: userChar?.avatar_url || null,
+        }
       );
 
       if (!validation.valid) {
@@ -555,21 +572,44 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     }
     // If no multi-select, use single-character mode (existing path)
 
-    // Build user refs — needed for user-only mode (tab OR picker selection of user world-self)
-    // CRITICAL FIX: User reference images live on UserSettings (reference_image_urls, generated_avatar_urls),
-    // NOT on the world-self Character record. The Character record with is_user=true rarely has reference
-    // images — pulling from it produces empty refs and a generic user likeness.
-    // Source of truth: UserSettings.reference_image_urls → UserSettings.generated_avatar_urls → UserSettings.appearance_lock avatar
-    const userChar = allCharacters.find(c => c.is_user);
+    // Build user refs — SESSION-CACHED PRIORITY ORDER:
+    // 1. sessionUserRefsRef (last-known-good from this Media Grid session — never cleared mid-session)
+    // 2. UserSettings.reference_image_urls (fresh DB)
+    // 3. UserSettings.generated_avatar_urls (fresh DB)
+    // 4. Selector list avatar_url for the world-self character (visible in picker = valid identity ref)
+    // 5. world-self Character.avatar_url
+    //
+    // RULE: If any source resolves refs, store them in sessionUserRefsRef immediately.
+    // Subsequent generations in the same session always have refs available.
     const needsUserRefs = subjectType !== 'character' || allSelectedAreUser;
-    const userRefImages = needsUserRefs
-      ? [
-          ...(userSettings?.reference_image_urls || []).slice(0, 3),
-          ...(userSettings?.generated_avatar_urls || []).slice(0, 2),
-          // Only fall back to world-self Character avatar as absolute last resort
-          userChar?.avatar_url,
-        ].filter(Boolean)
-      : [];
+
+    let userRefImages = [];
+    if (needsUserRefs) {
+      // Build fresh candidate list using all sources in priority order
+      const freshRefs = [
+        ...(userSettings?.reference_image_urls || []).slice(0, 3),
+        ...(userSettings?.generated_avatar_urls || []).slice(0, 2),
+        // Selector list image: the avatar_url already shown beside the user in the picker dropdown.
+        // If it's visible in the UI, it's a valid identity reference — must be usable.
+        userChar?.avatar_url,
+      ].filter(Boolean);
+
+      if (freshRefs.length > 0) {
+        // Good resolution — update session cache
+        sessionUserRefsRef.current = freshRefs;
+        userRefImages = freshRefs;
+        console.log(`[MediaGallery] User refs resolved fresh (${freshRefs.length}) — session cache updated`);
+      } else if (sessionUserRefsRef.current.length > 0) {
+        // Fresh lookup returned empty but session cache has known-good refs — reuse them.
+        // This is the fix for the false "missing" error after a successful generation.
+        userRefImages = sessionUserRefsRef.current;
+        console.log(`[MediaGallery] User refs: fresh lookup empty — using session cache (${sessionUserRefsRef.current.length} refs). This is NOT a missing error.`);
+      } else {
+        // Truly no refs from any source in this session
+        userRefImages = [];
+        console.warn(`[MediaGallery] User refs: no refs found from any source (UserSettings, avatar, session cache)`);
+      }
+    }
 
     // FIX: Do NOT use avatar_url as the primary reference image.
     // Avatar photos contain background, pose, and lighting that contaminate the generated scene.
