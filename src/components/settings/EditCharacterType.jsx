@@ -506,37 +506,22 @@ export default function EditCharacterType({ characters = [], currentUser }) {
       }));
 
       // Route through the existing working path: createCharacterWithRelationships
-      const testPayload2 = {
-        name: newCharName,
-        character_type: selectedType,
-        owner_email: lockedActingUserEmail,
-        owner_user_id: lockedActingUserId,
-        created_by_role: lockedActingUserRole,
-        status: 'active',
-        exclude_from_homepage: true,
-      };
-      console.log('[EditCharacterType] DIAGNOSTIC — Session:', {
-        email: lockedActingUserEmail,
-        role: lockedActingUserRole,
-      });
-      console.log('[EditCharacterType] DIAGNOSTIC — Payload keys:', Object.keys(testPayload2));
-      console.log('[EditCharacterType] DIAGNOSTIC — created_by in payload:', 'created_by' in testPayload2);
-      console.log('[EditCharacterType] DIAGNOSTIC — owner_email:', testPayload2.owner_email);
-      
       const createRes = await base44.functions.invoke('createCharacterWithRelationships', {
-        characterData: testPayload2,
+        characterData: {
+          name: newCharName,
+          character_type: selectedType,
+          owner_email: lockedActingUserEmail,
+          owner_user_id: lockedActingUserId,
+          created_by_role: lockedActingUserRole,
+          status: 'active',
+          exclude_from_homepage: true,
+        },
         characterRelationships: [],
       });
 
       if (!createRes.data?.success) {
-        console.log('[EditCharacterType] DIAGNOSTIC — CREATE FAILED:', {
-          status: createRes.status,
-          error: createRes.data?.error,
-          fullResponse: createRes.data
-        });
         throw new Error(createRes.data?.error || 'Failed to create character');
       }
-      console.log('[EditCharacterType] DIAGNOSTIC — CREATE SUCCESS:', createRes.data.character?.id);
 
       const created = createRes.data.character;
 

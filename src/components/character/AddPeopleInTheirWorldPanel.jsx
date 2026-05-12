@@ -62,23 +62,6 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
 
     setIsLoading(true);
     try {
-      const testPayload = {
-        name: newName,
-        character_type: 'npc_fictitious',
-        owner_email: currentUser.email,
-        owner_user_id: currentUser.id,
-        created_by_role: currentUser.role || 'user',
-        status: 'active',
-        exclude_from_homepage: true,
-      };
-      console.log('[AddPeopleInTheirWorldPanel] DIAGNOSTIC — Session:', {
-        email: currentUser.email,
-        role: currentUser.role,
-      });
-      console.log('[AddPeopleInTheirWorldPanel] DIAGNOSTIC — Payload keys:', Object.keys(testPayload));
-      console.log('[AddPeopleInTheirWorldPanel] DIAGNOSTIC — created_by in payload:', 'created_by' in testPayload);
-      console.log('[AddPeopleInTheirWorldPanel] DIAGNOSTIC — owner_email:', testPayload.owner_email);
-
       // Route through the existing working path: createCharacterWithRelationships
       const createRes = await base44.functions.invoke('createCharacterWithRelationships', {
         characterData: {
@@ -94,14 +77,8 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
       });
 
       if (!createRes.data?.success) {
-        console.log('[AddPeopleInTheirWorldPanel] DIAGNOSTIC — CREATE FAILED:', {
-          status: createRes.status,
-          error: createRes.data?.error,
-          fullResponse: createRes.data
-        });
         throw new Error(createRes.data?.error || 'Failed to create character');
       }
-      console.log('[AddPeopleInTheirWorldPanel] DIAGNOSTIC — CREATE SUCCESS:', createRes.data.character?.id);
 
       const newNPC = createRes.data.character;
 
