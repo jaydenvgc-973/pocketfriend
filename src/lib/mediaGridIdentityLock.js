@@ -24,6 +24,7 @@ export async function resolveUserVisualRefs(base44, userEmail) {
     // Priority order for user identity references:
     // 1. reference_image_urls (real uploaded face photos — best identity lock)
     // 2. generated_avatar_urls (AI-generated avatars — weaker but valid)
+    // 3. world-self Character avatar_url (fallback when UserSettings arrays are empty)
     // Note: We do NOT use appearance_lock fields here — those are text descriptions,
     // not image URLs. They are injected into the prompt text by the caller if needed.
     const refs = [
@@ -31,11 +32,29 @@ export async function resolveUserVisualRefs(base44, userEmail) {
       ...(sett.generated_avatar_urls || []),
     ].filter(Boolean);
 
+    // If UserSettings arrays are empty, fetch world-self Character record and check avatar_url
+    if (refs.length === 0) {
+      try {
+        const userCharList = await base44.entities.Character.filter(
+          { owner_email: userEmail, is_user: true },
+          null,
+          1
+        ).catch(() => []);
+        const userChar = userCharList?.[0];
+        if (userChar?.avatar_url && typeof userChar.avatar_url === 'string') {
+          refs.push(userChar.avatar_url);
+          console.log(`[resolveUserVisualRefs] Fallback: world-self Character avatar_url found`);
+        }
+      } catch (charErr) {
+        console.warn(`[resolveUserVisualRefs] World-self Character lookup failed: ${charErr?.message}`);
+      }
+    }
+
     if (refs.length > 0) {
       return { refs, missing: false };
     }
 
-    // No reference images found — return missing with a diagnostic message
+    // No reference images found in any source — return missing with a diagnostic message
     return {
       refs: [],
       missing: true,
