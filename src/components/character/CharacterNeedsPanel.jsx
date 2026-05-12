@@ -31,10 +31,11 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
   // Only show for active created characters (HARD RULE: character_type must be exactly 'active_created_character')
   const isActiveCreated = character?.character_type === 'active_created_character' && character?.status === 'active';
 
-  // Run simulation on mount and when character changes
+  // Run simulation on mount — staggered 3s to avoid 429 alongside other profile queries
   useEffect(() => {
     if (!isActiveCreated || !character?.id) return;
-    runSimulation();
+    const timer = setTimeout(runSimulation, 3000);
+    return () => clearTimeout(timer);
   }, [character?.id]);
 
   // Auto-refresh every 5 minutes while panel is visible

@@ -20,7 +20,7 @@ const SEVERITY_STYLES = {
   high:   { border: 'border-red-500/30',     bg: 'bg-red-500/5',     text: 'text-red-400',     dot: 'bg-red-400',    label: 'High Tension' },
 };
 
-export default function RelationshipTensionCard({ characterId, relatedCharId, relatedCharName }) {
+export default function RelationshipTensionCard({ characterId, relatedCharId, relatedCharName, loadDelayMs = 1500 }) {
   const [tension, setTension] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
@@ -49,8 +49,8 @@ export default function RelationshipTensionCard({ characterId, relatedCharId, re
   useEffect(() => {
     if (loadedRef.current) return;
     loadedRef.current = true;
-    // Defer load by 1.5s so profile renders first
-    const timer = setTimeout(() => loadTension(false), 1500);
+    // Defer load so profile renders first; loadDelayMs staggers multiple cards
+    const timer = setTimeout(() => loadTension(false), loadDelayMs);
     return () => clearTimeout(timer);
   }, [characterId, relatedCharId]);
 

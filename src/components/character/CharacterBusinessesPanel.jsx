@@ -27,7 +27,10 @@ export default function CharacterBusinessesPanel({ characterId }) {
 
   const { data: allCharacters = [] } = useQuery({
     queryKey: ["characters_for_biz"],
-    queryFn: () => base44.entities.Character.filter({ status: "active" }),
+    queryFn: async () => {
+      await new Promise(r => setTimeout(r, 1200));
+      return base44.entities.Character.filter({ status: "active" });
+    },
     staleTime: 60000,
   });
 
@@ -35,11 +38,15 @@ export default function CharacterBusinessesPanel({ characterId }) {
     queryKey: ["character", characterId],
     queryFn: () => base44.entities.Character.filter({ id: characterId }).then(r => r[0] || {}),
     enabled: !!characterId,
+    staleTime: 30000,
   });
 
   const { data: ownedLocations = [] } = useQuery({
     queryKey: ["ownedLocations", characterId],
-    queryFn: () => base44.entities.LocationReference.filter({ owner_character_id: characterId }),
+    queryFn: async () => {
+      await new Promise(r => setTimeout(r, 800));
+      return base44.entities.LocationReference.filter({ owner_character_id: characterId });
+    },
     enabled: !!characterId,
   });
 

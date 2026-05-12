@@ -1004,6 +1004,7 @@ export default function CharacterProfile() {
                           characterId={characterId}
                           relatedCharId={rel.related_character_id}
                           relatedCharName={rel.person_name || linkedChar?.name || 'them'}
+                          loadDelayMs={3500 + idx * 1500}
                         />
                       )}
                     </div>
