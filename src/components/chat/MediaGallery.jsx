@@ -269,11 +269,20 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     // HARD IDENTITY LOCK: Validate ALL selected people have visual references
     // ═════════════════════════════════════════════════════════════════════════
     let selectedPeople = null;
-    if (selectedCharacterIds.length > 0) {
-      // Multi-person image: validate all selected people
+
+    // CRITICAL PRE-CHECK: Determine if the selection is exclusively the user world-self.
+    // If so, skip multi-person validation entirely — this is a user-only image.
+    // The user-self character (is_user: true) selected alone must NOT trigger multi-person
+    // path which would also load the active chat character (Ethan etc.) as "primary".
+    const allSelectedAreUser = selectedCharacterIds.length > 0 &&
+      selectedCharacterIds.every(id => allCharacters.find(c => c.id === id)?.is_user);
+
+    if (selectedCharacterIds.length > 0 && !allSelectedAreUser) {
+      // Multi-person image: validate all selected people (excluding user-self characters)
+      const nonUserIds = selectedCharacterIds.filter(id => !allCharacters.find(c => c.id === id)?.is_user);
       const validation = await validateSelectedPeopleIdentities(
         base44,
-        selectedCharacterIds,
+        nonUserIds,
         false, // includeUser — only set if user is in selectedCharacterIds
         userEmail,
         character.id,
@@ -286,12 +295,19 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       }
       selectedPeople = validation.selectedPeople;
       console.log(`[MediaGallery] Identity lock PASSED for ${selectedCharacterIds.length} selected people`);
+    } else if (allSelectedAreUser) {
+      console.log(`[MediaGallery] User-self selected — bypassing multi-person validation, routing as user-only`);
     }
     // If no multi-select, use single-character mode (existing path)
 
-    // Build user refs for user/joint subject types (single-character fallback)
+    // Build user refs — needed for user-only mode (tab OR picker selection of user world-self)
+    // IMPORTANT: Build these before singleSelectIsUser is resolved, since we need them available.
+    // effectiveSubjectType is resolved below — but we know user refs are needed if:
+    //   a) subjectType === 'user' (tab selection), OR
+    //   b) allSelectedAreUser (user world-self picked from character picker)
     const userChar = allCharacters.find(c => c.is_user);
-    const userRefImages = subjectType !== 'character'
+    const needsUserRefs = subjectType !== 'character' || allSelectedAreUser;
+    const userRefImages = needsUserRefs
       ? [
           ...(userChar?.reference_image_urls || []).slice(0, 3),
           ...(userChar?.generated_avatar_urls || []).slice(0, 1),
@@ -353,8 +369,17 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     // Final effective subject type — user-only if tab=user OR single selection is the user world-self
     const effectiveSubjectType = (isUserOnlyMode || singleSelectIsUser) ? 'user' : subjectType;
 
-    if (isUserOnlyMode || singleSelectIsUser) {
-      console.log(`[MediaGallery] USER-ONLY mode — character identity cleared. Active chat character "${character.name}" is NOT a subject.`);
+    // CRITICAL: If effective subject is user-only, the multi-person payload must be completely
+    // suppressed — even if selectedPeople was computed above. The multi-person path in
+    // mediaGridGenerate would include the active chat character (Ethan, etc.) as "primary"
+    // regardless of who the user intended to show. User-only = no multiPersonSelection, period.
+    const isEffectivelyUserOnly = (isUserOnlyMode || singleSelectIsUser);
+    const effectiveMultiPersonSelection = (!isEffectivelyUserOnly && selectedPeople)
+      ? buildMultiPersonPayload(selectedPeople, promptText, selectedLocation?.id || null, selectedZone || null)
+      : null;
+
+    if (isEffectivelyUserOnly) {
+      console.log(`[MediaGallery] USER-ONLY mode — character identity cleared. Active chat character "${character.name}" is NOT a subject. multiPersonSelection suppressed.`);
     }
 
     setIsGenerating(true);
@@ -397,13 +422,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         locationName: selectedLocation?.name || null,
         zoneName: selectedZone || (selectedLocation ? selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.zone_name : null) || null,
         zoneImageUrls,
-        // HARD IDENTITY LOCK: Multi-person selection with validated references
-        multiPersonSelection: selectedPeople ? buildMultiPersonPayload(
-          selectedPeople,
-          promptText,
-          selectedLocation?.id || null,
-          selectedZone || null
-        ) : null,
+        // HARD IDENTITY LOCK: Multi-person selection with validated references.
+        // CRITICAL: null when user-only — prevents active chat character contamination via multi-person path.
+        multiPersonSelection: effectiveMultiPersonSelection,
         // User-uploaded reference image for visual guidance
         referenceImageUrl: referenceImageUrl || null,
         referenceImageMode: referenceImageUrl ? referenceImageMode : 'prompt_only',
