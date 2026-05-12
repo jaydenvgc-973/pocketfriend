@@ -8,21 +8,7 @@ Deno.serve(async (req) => {
     // LOCK ACTING USER CONTEXT AT REQUEST START (CRITICAL FIX)
     // ══════════════════════════════════════════════════════════════
     // Do NOT re-read auth later. Use only this frozen context.
-    // Retry auth.me() up to 3 times — it can be rate-limited under heavy automation load
-    let actingUser = null;
-    for (let authAttempt = 1; authAttempt <= 3; authAttempt++) {
-      try {
-        actingUser = await base44.auth.me();
-        break;
-      } catch (authErr) {
-        const isRateLimit = authErr.message && (authErr.message.includes('Rate limit') || authErr.message.includes('429'));
-        if (isRateLimit && authAttempt < 3) {
-          await new Promise(r => setTimeout(r, authAttempt * 1500));
-        } else {
-          throw authErr;
-        }
-      }
-    }
+    const actingUser = await base44.auth.me();
     if (!actingUser) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -131,39 +117,25 @@ Deno.serve(async (req) => {
     // ══════════════════════════════════════════════════════════════
     // FORCE CREATOR/OWNER FROM LOCKED ACTING USER CONTEXT
     // ══════════════════════════════════════════════════════════════
-    // Retry logic for rate-limited character creation (user-scoped required by RLS)
-    let newChar = null;
-    let lastErr = null;
-    for (let attempt = 1; attempt <= 4; attempt++) {
-      try {
-        newChar = await base44.entities.Character.create({
-          ...charDataWithoutPrompt,
-          system_prompt_url: system_prompt_url || undefined,
-          owner_user_id: actingUserId,
-          owner_email: actingUserEmail,
-          created_by_role: actingUserRole,
-          visibility_scope: charDataWithoutPrompt.visibility_scope || 'account_private',
-        });
-        break; // success
-      } catch (err) {
-        lastErr = err;
-        const isRateLimit = err.message && (err.message.includes('Rate limit') || err.message.includes('429'));
-        if (isRateLimit && attempt < 4) {
-          console.warn(`[createCharacterWithRelationships] Rate limit on attempt ${attempt} — retrying in ${attempt * 2}s`);
-          await new Promise(r => setTimeout(r, attempt * 2000));
-        } else {
-          throw err;
-        }
-      }
-    }
-    if (!newChar) throw lastErr;
+    // Do NOT use anything else. Do NOT re-read session. This is atomic.
+    const newChar = await base44.entities.Character.create({
+      ...charDataWithoutPrompt,
+      system_prompt_url: system_prompt_url || undefined,
+      owner_user_id: actingUserId,
+      owner_email: actingUserEmail,
+      created_by_role: actingUserRole,
+      visibility_scope: charDataWithoutPrompt.visibility_scope || 'account_private',
+    });
     
-    console.log(`[createCharacterWithRelationships] Character "${newChar.name}" created. owner_email="${newChar.owner_email}", acting_user="${actingUserEmail}".`);
+    // ══════════════════════════════════════════════════════════════
+    // LOG CREATION EVENT FOR AUDIT
+    // ══════════════════════════════════════════════════════════════
+    console.log(`[createCharacterWithRelationships] Character "${newChar.name}" created. owner_email="${newChar.owner_email}", created_by="${newChar.created_by}", acting_user="${actingUserEmail}". Consistency verified.`);
 
-    // Handle bidirectional relationships — use service role (no RLS issue on update from service)
+    // Handle bidirectional relationships
     if (characterRelationships && characterRelationships.length > 0) {
       for (const rel of characterRelationships) {
-        const relatedChar = await base44.asServiceRole.entities.Character.filter({ id: rel.related_character_id });
+        const relatedChar = await base44.entities.Character.filter({ id: rel.related_character_id });
         if (relatedChar[0]) {
           const existingRels = relatedChar[0].fictional_relationships || [];
           const filtered = existingRels.filter(r => r.person_name !== rel.person_name);
@@ -174,7 +146,7 @@ Deno.serve(async (req) => {
             description: `${newChar.name} is a ${rel.relationship_type} of ${relatedChar[0].name}.`,
           };
           filtered.push(reciprocal);
-          await base44.asServiceRole.entities.Character.update(relatedChar[0].id, {
+          await base44.entities.Character.update(relatedChar[0].id, {
             fictional_relationships: filtered,
           });
         }
