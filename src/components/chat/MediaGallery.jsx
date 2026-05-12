@@ -384,6 +384,117 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     }
   };
 
+  // ── SELECTED IDENTITY MAP BUILDER ─────────────────────────────────────────
+  // Builds a map from every name form (full, first, display, aliases) to the selected
+  // character record. Used to enrich the prompt before generation so typed short names
+  // ("Henry") resolve to the explicitly selected character ("Henry Billion").
+  //
+  // CONTRACT: only call with characters that are already in selectedCharacterIds.
+  // Never used for roster-wide name matching — only the user's active selection.
+  const buildSelectedIdentityMap = (selectedCharRecords) => {
+    const normalize = (s) => (s || '').toLowerCase().trim();
+    const map = new Map(); // normalized name → character record
+
+    for (const char of selectedCharRecords) {
+      if (!char) continue;
+
+      // Full name
+      if (char.name) map.set(normalize(char.name), char);
+
+      // First name (first word of name)
+      const firstName = (char.name || '').split(/\s+/)[0];
+      if (firstName && firstName.length > 1) map.set(normalize(firstName), char);
+
+      // display_name / primary_name if different
+      if (char.display_name && char.display_name !== char.name) map.set(normalize(char.display_name), char);
+      if (char.primary_name && char.primary_name !== char.name) map.set(normalize(char.primary_name), char);
+
+      // nickname_for_user
+      if (char.nickname_for_user) map.set(normalize(char.nickname_for_user), char);
+
+      // Aliases array — each alias object has a .name or .alias field
+      const aliases = char.aliases || [];
+      for (const a of aliases) {
+        const aliasText = typeof a === 'string' ? a : (a.name || a.alias || '');
+        if (aliasText) map.set(normalize(aliasText), char);
+      }
+    }
+
+    return map;
+  };
+
+  // ── NAME REFERENCE KEY INJECTOR ────────────────────────────────────────────
+  // Given the user's raw prompt and a selectedIdentityMap, returns an enriched
+  // prompt that prepends a "NAME REFERENCE KEY" section so the AI model knows
+  // exactly which selected character each short name refers to.
+  //
+  // Example output:
+  //   [NAME REFERENCE KEY — SELECTED CHARACTERS]
+  //   "Henry" = Henry Billion (ID: abc123) — use their identity references
+  //   "Ethan" = Ethan Thompson (ID: def456) — use their identity references
+  //   [END NAME REFERENCE KEY]
+  //   Henry at the gym, smiling
+  //
+  // RULES:
+  //   - Only injected when there are actually selected characters (not for tab-only generation)
+  //   - Only injects for characters who appear in the prompt by any name form
+  //   - If a name has ambiguous matches (two selected chars share a first name), uses full names
+  //   - Does NOT rewrite the prompt — only prepends the key block
+  const injectNameReferenceKey = (rawPrompt, selectedIdentityMap, selectedCharRecords) => {
+    if (!selectedIdentityMap || selectedIdentityMap.size === 0) return rawPrompt;
+
+    const promptLower = rawPrompt.toLowerCase();
+    const referenced = new Set(); // char IDs that appear in the prompt
+    const keyLines = [];
+
+    // Check first-name ambiguity: if two selected chars have the same first name, skip first-name
+    // resolution for those and rely on full name or explicit user selection
+    const firstNameCount = new Map();
+    for (const char of selectedCharRecords) {
+      const firstName = (char.name || '').split(/\s+/)[0].toLowerCase();
+      if (firstName) firstNameCount.set(firstName, (firstNameCount.get(firstName) || 0) + 1);
+    }
+
+    for (const char of selectedCharRecords) {
+      if (!char?.name) continue;
+
+      const firstName = (char.name || '').split(/\s+/)[0];
+      const isAmbiguousFirstName = (firstNameCount.get(firstName.toLowerCase()) || 0) > 1;
+
+      // Determine all name forms to check in prompt
+      const nameForms = [
+        char.name,
+        !isAmbiguousFirstName ? firstName : null, // skip ambiguous first names
+        char.display_name,
+        char.primary_name,
+        char.nickname_for_user,
+        ...(char.aliases || []).map(a => typeof a === 'string' ? a : (a.name || a.alias || '')),
+      ].filter(Boolean);
+
+      const appearsInPrompt = nameForms.some(n => promptLower.includes(n.toLowerCase()));
+      if (appearsInPrompt && !referenced.has(char.id)) {
+        referenced.add(char.id);
+        keyLines.push(`"${firstName}" = ${char.name} (ID: ${char.id}) — use their visual identity references`);
+      }
+    }
+
+    // If none of the selected characters appear by name in the prompt, still inject all of them
+    // so the model knows the full cast. This handles prompts like "at the gym smiling" where
+    // no name is mentioned but a character is explicitly selected.
+    if (referenced.size === 0 && selectedCharRecords.length > 0) {
+      for (const char of selectedCharRecords) {
+        if (!char?.name) continue;
+        const firstName = (char.name || '').split(/\s+/)[0];
+        keyLines.push(`"${char.name}" is a selected subject — use their visual identity references`);
+      }
+    }
+
+    if (keyLines.length === 0) return rawPrompt;
+
+    const keyBlock = `[NAME REFERENCE KEY — SELECTED CHARACTERS]\n${keyLines.join('\n')}\n[END NAME REFERENCE KEY]\n`;
+    return keyBlock + rawPrompt;
+  };
+
   // ── SHARED GENERATE HANDLER ────────────────────────────────────────────────
   // Source-of-truth model: use exactly what the user selected. No guessing.
   const handleGenerate = async (subjectType) => {
@@ -523,6 +634,45 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       console.log(`[MediaGallery] USER-ONLY mode — character identity cleared. Active chat character "${character.name}" is NOT a subject. multiPersonSelection suppressed.`);
     }
 
+    // ── SELECTED IDENTITY NAME RESOLUTION ────────────────────────────────────
+    // Build the identity map from all selected character records (not just IDs).
+    // This maps every name form (full, first, alias) to the full character record.
+    // Used to inject a Name Reference Key into the prompt so typed short names
+    // (e.g. "Henry") resolve to the selected character ("Henry Billion"), not a generic person.
+    const selectedCharRecords = selectedCharacterIds
+      .map(id => allCharacters.find(c => c.id === id))
+      .filter(Boolean)
+      .filter(c => !c.is_user); // exclude user world-self — handled via user identity path
+
+    const selectedIdentityMap = buildSelectedIdentityMap(selectedCharRecords);
+
+    // Enrich the prompt with the Name Reference Key if any characters are selected
+    // IMPORTANT: This only adds a header block — never rewrites the user's prompt text.
+    // The original promptText is preserved as-is for generation_context.prompt (source of truth).
+    const enrichedPrompt = selectedCharRecords.length > 0
+      ? injectNameReferenceKey(promptText, selectedIdentityMap, selectedCharRecords)
+      : promptText;
+
+    if (enrichedPrompt !== promptText) {
+      console.log(`[MediaGallery] Name Reference Key injected for ${selectedCharRecords.length} selected character(s)`);
+      selectedCharRecords.forEach(c => console.log(`  → ${c.name} (${c.id})`));
+    }
+
+    // For multi-person path: enrich the multiPersonSelection with character display names
+    // so the backend prompt labels subjects as "Henry Billion" not "additional_0"
+    let finalMultiPersonSelection = effectiveMultiPersonSelection;
+    if (finalMultiPersonSelection?.selectedCharacters) {
+      finalMultiPersonSelection = {
+        ...finalMultiPersonSelection,
+        selectedCharacters: finalMultiPersonSelection.selectedCharacters.map(sc => {
+          const charRecord = allCharacters.find(c => c.id === sc.id);
+          return charRecord
+            ? { ...sc, displayName: charRecord.name, firstName: (charRecord.name || '').split(/\s+/)[0] }
+            : sc;
+        }),
+      };
+    }
+
     setIsGenerating(true);
     setGenerateError(null);
     try {
@@ -536,7 +686,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         emotional_state: character.emotional_state || "calm",
         timestamp: new Date().toISOString(),
         generation_context: {
-          prompt: promptText,
+          prompt: promptText, // always store the ORIGINAL user prompt — not the enriched version
           character_id: resolvedCharacterId,
           character_reference_images: resolvedCharRefImages,
           location_id: selectedLocation?.id || null,
@@ -549,7 +699,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
       const genRes = await base44.functions.invoke('mediaGridGenerate', {
         messageId: newMsg.id,
-        prompt: promptText,
+        prompt: enrichedPrompt, // enriched with Name Reference Key — backend sees who "Henry" is
         subjectType: effectiveSubjectType,
         // Character identity — uses explicit selection override; null for user-only
         characterId: resolvedCharacterId,
@@ -565,7 +715,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         zoneImageUrls,
         // HARD IDENTITY LOCK: Multi-person selection with validated references.
         // CRITICAL: null when user-only — prevents active chat character contamination via multi-person path.
-        multiPersonSelection: effectiveMultiPersonSelection,
+        // finalMultiPersonSelection has displayName/firstName enrichment for better backend labeling.
+        multiPersonSelection: finalMultiPersonSelection,
         // User-uploaded reference image for visual guidance
         referenceImageUrl: referenceImageUrl || null,
         referenceImageMode: referenceImageUrl ? referenceImageMode : 'prompt_only',

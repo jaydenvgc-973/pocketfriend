@@ -227,6 +227,10 @@ Deno.serve(async (req) => {
         people.push({
           role: person.role,
           id: person.id,
+          // displayName and firstName come from frontend enrichment (buildSelectedIdentityMap)
+          // These ensure the prompt labels subjects by real name ("Henry Billion") not role ("additional_0")
+          displayName: person.displayName || null,
+          firstName: person.firstName || null,
           refStart: refIndex,
           refCount: refs.length,
         });
@@ -239,6 +243,8 @@ Deno.serve(async (req) => {
         people.push({
           role: 'user',
           id: 'user',
+          displayName: null,
+          firstName: null,
           refStart: refIndex,
           refCount: refs.length,
         });
@@ -290,12 +296,15 @@ ${envRefs.length > 0 ? `ENVIRONMENT (70–80% structural truth, 20–30% dynamic
 SELECTED PEOPLE (100% identity lock from reference photos):
 
 ${people.map(p => {
-  const label = p.role === 'user' ? 'User' : p.role.replace(/_/g, ' ').toUpperCase();
+  // Use displayName if the frontend enriched it — fall back to role label
+  const nameLabel = p.displayName || (p.role === 'user' ? 'User' : p.role.replace(/_/g, ' ').toUpperCase());
+  const firstName = p.firstName || nameLabel.split(/\s+/)[0];
   const startIdx = envRefs.length + p.refStart;
   const endIdx = envRefs.length + p.refStart + p.refCount - 1;
-  return `${label} (${p.id}): Images ${startIdx}–${endIdx}
+  return `${nameLabel} (ID: ${p.id}): Images ${startIdx}–${endIdx}
+  When this scene refers to "${firstName}" or "${nameLabel}", this IS that person — use these reference images.
   ✅ MATCH EXACTLY: face structure, skin tone, hair, body type, age
-  ⛔ Do NOT: substitute, distort, use generic person, invent new body`;
+  ⛔ Do NOT: substitute a generic person, distort, or invent a new body`;
 }).join('\n\n')}
 
 ════════════════════════════════════════════════════════════
