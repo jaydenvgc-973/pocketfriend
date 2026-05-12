@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
+import { useForegroundTask } from "@/hooks/useForegroundTask";
+import { FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import ChatHeader from "./ChatHeader";
 import MediaGallery from "./MediaGallery";
 import NarrativeActionButton from "./NarrativeActionButton";
@@ -80,6 +82,9 @@ export default function ChatPageLayout({
   playCharacterVoice,
   sendMessage,
 }) {
+  // Register chat as a foreground task so all background simulation systems yield
+  useForegroundTask(isPhone ? FOREGROUND_TASKS.CHAT_LOADING : FOREGROUND_TASKS.CHAT_LOADING, !!characterId);
+
   return (
     <div className={`h-screen flex flex-col bg-background pb-[60px] ${isPhone ? "max-w-lg mx-auto" : ""}`}>
       <ChatHeader

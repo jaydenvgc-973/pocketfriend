@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { isForegroundActive } from '@/lib/foregroundPriority';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { X, Play, MessageCircle, RefreshCw, Check, AlertCircle } from 'lucide-react';
@@ -116,6 +117,11 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
 
   const handleSimulate = async () => {
     if (selected.length < 2) return;
+    // Yield if user is actively doing something more important (e.g. chatting, creating)
+    if (isForegroundActive()) {
+      setSimulationError('Another operation is in progress. Please try again in a moment.');
+      return;
+    }
     setIsRunning(true);
     setIsApprovalMode(false);
     setSimulationError(null);

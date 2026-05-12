@@ -26,6 +26,8 @@ import { shouldVGCResidentBeAtHome } from "@/lib/vgcTowersPresenceEngine";
 import { useUserPresence } from "@/hooks/useUserPresence";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
+import { useForegroundTask } from "@/hooks/useForegroundTask";
+import { FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 
 
 export default function Travel() {
@@ -85,6 +87,9 @@ export default function Travel() {
 
   // useUserPresence: gives optimistic-aware presence (survives cache staleness and optimistic UI)
   const { userPresence } = useUserPresence(currentUser, safeSettings, safeSettings?.id);
+
+  // Travel page is foreground — background simulation must yield while user is here
+  useForegroundTask(FOREGROUND_TASKS.TRAVEL_PAGE, !!currentUser?.email);
 
   // ALL character records for internal family scanning (parent character lookup)
   const allCharactersForFamilyScan = [...activeCharacters, ...npcCharacters, ...npcFamilyMembers];

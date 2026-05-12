@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { isForegroundActive } from '@/lib/foregroundPriority';
 
 /**
  * Hook to generate catch-up narratives when user returns to a conversation
@@ -44,8 +45,9 @@ export function useCatchUpNarrative(conversationId, characterId, character) {
           return;
         }
       }
-      // Delay slightly to let messages load first
-      const timer = setTimeout(generateCatchUp, 1000);
+      // Delay to let messages load first, and yield if a critical foreground task is active
+      const baseDelay = isForegroundActive() ? 8000 : 1500;
+      const timer = setTimeout(generateCatchUp, baseDelay);
       return () => clearTimeout(timer);
     }
   }, [conversationId, characterId, character]);
