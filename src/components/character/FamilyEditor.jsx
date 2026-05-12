@@ -427,8 +427,22 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
   const alreadyAddedSelf = members.some(m => m._is_user);
 
   // Characters available to add: active characters, NPC fictitious people, and family NPCs (all status=active)
-  const ALLOWED_TYPES = new Set(['active', 'npc', 'family_npc']);
-  const typeOrder = (t) => t === 'active' ? 0 : t === 'npc' ? 1 : t === 'family_npc' ? 2 : 3;
+  // CRITICAL: use the actual character_type enum values from the schema, not short aliases.
+  const ALLOWED_TYPES = new Set([
+    'active_created_character',
+    'npc_fictitious',
+    'npc_family_member',
+    'npc_regular',
+    // Legacy short-form aliases for backward compatibility with older records
+    'active', 'npc', 'family_npc',
+  ]);
+  const typeOrder = (t) => {
+    if (t === 'active_created_character' || t === 'active') return 0;
+    if (t === 'npc_fictitious' || t === 'npc') return 1;
+    if (t === 'npc_family_member' || t === 'family_npc') return 2;
+    if (t === 'npc_regular') return 3;
+    return 4;
+  };
   const availableCharacters = allCharacters
     .filter(c =>
       c.status === 'active' &&
@@ -550,10 +564,10 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                 {showCharacterPicker && (
                   <div className="border-t border-border max-h-56 overflow-y-auto">
                     {/* Active characters */}
-                    {availableCharacters.filter(c => c.character_type === 'active').length > 0 && (
+                    {availableCharacters.filter(c => c.character_type === 'active_created_character' || c.character_type === 'active').length > 0 && (
                       <>
                         <p className="px-3 pt-2 pb-1 text-[9px] font-semibold text-primary/70 uppercase tracking-wider">Active Characters</p>
-                        {availableCharacters.filter(c => c.character_type === 'active').map(char => (
+                        {availableCharacters.filter(c => c.character_type === 'active_created_character' || c.character_type === 'active').map(char => (
                           <button key={char.id} onClick={() => addCharacterAsMember(char)}
                             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-secondary transition-colors text-left">
                             {char.avatar_url
@@ -566,10 +580,10 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                       </>
                     )}
                     {/* NPC fictitious people */}
-                    {availableCharacters.filter(c => c.character_type === 'npc').length > 0 && (
+                    {availableCharacters.filter(c => c.character_type === 'npc_fictitious' || c.character_type === 'npc_regular' || c.character_type === 'npc').length > 0 && (
                       <>
                         <p className="px-3 pt-2 pb-1 text-[9px] font-semibold text-amber-400/70 uppercase tracking-wider">NPC Fictitious People</p>
-                        {availableCharacters.filter(c => c.character_type === 'npc').map(char => (
+                        {availableCharacters.filter(c => c.character_type === 'npc_fictitious' || c.character_type === 'npc_regular' || c.character_type === 'npc').map(char => (
                           <button key={char.id} onClick={() => addCharacterAsMember(char)}
                             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-secondary transition-colors text-left">
                             {char.avatar_url
@@ -581,11 +595,11 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                         ))}
                       </>
                     )}
-                    {/* Family NPC characters (Character entities with character_type=family_npc) */}
-                    {availableCharacters.filter(c => c.character_type === 'family_npc').length > 0 && (
+                    {/* Family NPC characters (Character entities with character_type=npc_family_member) */}
+                    {availableCharacters.filter(c => c.character_type === 'npc_family_member' || c.character_type === 'family_npc').length > 0 && (
                       <>
                         <p className="px-3 pt-2 pb-1 text-[9px] font-semibold text-blue-400/70 uppercase tracking-wider">Family NPCs</p>
-                        {availableCharacters.filter(c => c.character_type === 'family_npc').map(char => (
+                        {availableCharacters.filter(c => c.character_type === 'npc_family_member' || c.character_type === 'family_npc').map(char => (
                           <button key={char.id} onClick={() => addCharacterAsMember(char)}
                             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-secondary transition-colors text-left">
                             {char.avatar_url
