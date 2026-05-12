@@ -122,7 +122,7 @@ Deno.serve(async (req) => {
     // FORCE CREATOR/OWNER FROM LOCKED ACTING USER CONTEXT
     // ══════════════════════════════════════════════════════════════
     // Do NOT use anything else. Do NOT re-read session. This is atomic.
-    const newChar = await base44.entities.Character.create({
+    const newChar = await base44.asServiceRole.entities.Character.create({
       ...charDataWithoutPrompt,
       system_prompt_url: system_prompt_url || undefined,
       owner_user_id: actingUserId,
