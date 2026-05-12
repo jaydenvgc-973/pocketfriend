@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Plus, Trash2, Camera, Loader2, ZoomIn, Lock, Unlock, User, X } from "lucide-react";
+import { Plus, Trash2, Camera, Loader2, ZoomIn, Lock, Unlock, User } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
@@ -180,37 +180,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
     return activeChar?.avatar_url || null;
   };
 
-  // Sync family member photo to their linked Character entity's avatar_url
-  const syncPhotoToCharacterAvatar = async (familyMember, photoUrl) => {
-    if (!familyMember._linked_character_id || !photoUrl) return;
-    try {
-      await base44.entities.Character.update(familyMember._linked_character_id, {
-        avatar_url: photoUrl
-      });
-    } catch (err) {
-      console.warn('[FamilyEditor] Failed to sync photo to character avatar:', err.message);
-    }
-  };
 
-  // Clear photo from both family member and linked Character entity
-  const clearMemberPhoto = async (idx) => {
-    const member = members[idx];
-    if (!member) return;
-    
-    // Clear from linked Character entity if present
-    if (member._linked_character_id) {
-      try {
-        await base44.entities.Character.update(member._linked_character_id, {
-          avatar_url: null
-        });
-      } catch (err) {
-        console.warn('[FamilyEditor] Failed to clear character avatar:', err.message);
-      }
-    }
-    
-    // Clear from family member entry
-    setMembers(prev => prev.map((m, i) => i === idx ? { ...m, photo_url: null } : m));
-  };
 
   // Keep local state in sync if the character prop changes (e.g. after re-fetch)
   useEffect(() => {
@@ -371,12 +341,6 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         }
         await base44.entities.Character.update(character.id, updateData);
 
-        // Sync photo to linked Character avatar
-        const member = updatedMembers[idx];
-        if (member._linked_character_id) {
-          await syncPhotoToCharacterAvatar(member, result.url);
-        }
-
         // Store family member photo as reference image for other characters who share this child
         if (isChild && allCharacters.length > 0) {
           for (const otherChar of allCharacters) {
@@ -410,11 +374,6 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
                 family_members: otherUpdated,
                 fictional_relationships: otherRelationships,
               });
-              // Also sync to linked Character entity if present
-              const otherLinkedMember = otherUpdated[otherIdx];
-              if (otherLinkedMember._linked_character_id) {
-                await syncPhotoToCharacterAvatar(otherLinkedMember, result.url);
-              }
             }
           }
         }
@@ -433,13 +392,6 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         if (retryResult?.url) {
           const updatedMembers = members.map((m, i) => i === idx ? { ...m, photo_url: retryResult.url } : m);
           setMembers(updatedMembers);
-          
-          // Sync photo to linked Character avatar
-          const member = updatedMembers[idx];
-          if (member._linked_character_id) {
-            await syncPhotoToCharacterAvatar(member, retryResult.url);
-          }
-          
           const valid = updatedMembers.filter(m => m.name?.trim());
           const updatedRelationships = await syncFamilyToRelationships(character, valid, currentUser);
           const systemPrompt = buildSystemPrompt({ ...character, family_members: valid });
@@ -467,14 +419,6 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       const userEntry = members.find(m => m._is_user);
       const valid = members.filter(m => m.name?.trim() && !m._is_user);
       if (userEntry) valid.push(userEntry); // keep user entry intact
-      
-      // Sync photos to linked Character avatars
-      for (const member of valid) {
-        if (member.photo_url && member._linked_character_id) {
-          await syncPhotoToCharacterAvatar(member, member.photo_url);
-        }
-      }
-      
       const updatedRelationships = await syncFamilyToRelationships(character, valid, currentUser);
       const updated = { ...character, family_members: valid };
       const systemPrompt = buildSystemPrompt(updated);
@@ -860,29 +804,17 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
                     })()}
                     {/* Show camera icon for ALL editable family members, not just those missing avatars */}
                     {!isMemberLocked(member.name) && !readOnly && (
-                      <div className="absolute -bottom-1 -right-1 flex gap-0.5">
-                        {member.photo_url && (
-                          <button
-                            onClick={() => clearMemberPhoto(idx)}
-                            disabled={generatingIdx === idx}
-                            title="Clear photo"
-                            className="w-5 h-5 rounded-full bg-destructive/80 flex items-center justify-center disabled:opacity-40 hover:bg-destructive transition-colors"
-                          >
-                            <X className="w-2.5 h-2.5 text-destructive-foreground" />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => generatePhoto(idx)}
-                          disabled={generatingIdx === idx || !member.name?.trim()}
-                          title="Generate or regenerate photo"
-                          className="w-5 h-5 rounded-full bg-primary flex items-center justify-center disabled:opacity-40 hover:bg-primary/80 transition-colors"
-                        >
-                          {generatingIdx === idx
-                            ? <Loader2 className="w-3 h-3 text-primary-foreground animate-spin" />
-                            : <Camera className="w-2.5 h-2.5 text-primary-foreground" />
-                          }
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => generatePhoto(idx)}
+                        disabled={generatingIdx === idx || !member.name?.trim()}
+                        title="Generate or regenerate photo"
+                        className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-primary flex items-center justify-center disabled:opacity-40 hover:bg-primary/80 transition-colors"
+                      >
+                        {generatingIdx === idx
+                          ? <Loader2 className="w-3 h-3 text-primary-foreground animate-spin" />
+                          : <Camera className="w-2.5 h-2.5 text-primary-foreground" />
+                        }
+                      </button>
                     )}
                   </div>
 
