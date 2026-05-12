@@ -317,23 +317,40 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     let resolvedCharacterName = isUserOnlyMode ? null : character.name;
     let resolvedCharRefImages = isUserOnlyMode ? [] : charRefImages;
 
+    // Resolve the single explicitly selected character (if any)
+    let resolvedSingleChar = null;
     if (!isUserOnlyMode && selectedCharacterIds.length === 1 && !selectedPeople) {
-      // Single explicit selection — find the character in the roster
-      const explicitChar = allCharacters.find(c => c.id === selectedCharacterIds[0]);
-      if (explicitChar) {
-        resolvedCharacterId = explicitChar.id;
-        resolvedCharacterName = explicitChar.name;
-        const explicitRefs = (explicitChar.reference_image_urls || [])
-          .filter(url => url && !url.includes('generated_image'))
-          .slice(0, 3);
-        resolvedCharRefImages = explicitRefs.length > 0
-          ? explicitRefs
-          : (explicitChar.avatar_url ? [explicitChar.avatar_url] : []);
-        console.log(`[MediaGallery] Single explicit subject override: "${explicitChar.name}" (${explicitChar.id}) — NOT active chat character "${character.name}"`);
-      }
+      resolvedSingleChar = allCharacters.find(c => c.id === selectedCharacterIds[0]) || null;
     }
 
-    if (isUserOnlyMode) {
+    // If user selected a single character who IS the user's world-self (is_user: true),
+    // treat them as subjectType='user' so generateImageAsync uses user refs + user identity,
+    // not character location/environment resolution.
+    const singleSelectIsUser = !!(resolvedSingleChar?.is_user);
+
+    if (resolvedSingleChar && !singleSelectIsUser) {
+      // Explicit non-user character selected — override identity to that character
+      resolvedCharacterId = resolvedSingleChar.id;
+      resolvedCharacterName = resolvedSingleChar.name;
+      const explicitRefs = (resolvedSingleChar.reference_image_urls || [])
+        .filter(url => url && !url.includes('generated_image'))
+        .slice(0, 3);
+      resolvedCharRefImages = explicitRefs.length > 0
+        ? explicitRefs
+        : (resolvedSingleChar.avatar_url ? [resolvedSingleChar.avatar_url] : []);
+      console.log(`[MediaGallery] Single character override: "${resolvedSingleChar.name}" (${resolvedSingleChar.id}) — NOT active chat character "${character.name}"`);
+    } else if (resolvedSingleChar && singleSelectIsUser) {
+      // User's world-self selected — clear all character identity, treat as user-only
+      resolvedCharacterId = null;
+      resolvedCharacterName = null;
+      resolvedCharRefImages = [];
+      console.log(`[MediaGallery] Single selection is user world-self ("${resolvedSingleChar.name}") — routing as user-only, clearing character identity`);
+    }
+
+    // Final effective subject type — user-only if tab=user OR single selection is the user world-self
+    const effectiveSubjectType = (isUserOnlyMode || singleSelectIsUser) ? 'user' : subjectType;
+
+    if (isUserOnlyMode || singleSelectIsUser) {
       console.log(`[MediaGallery] USER-ONLY mode — character identity cleared. Active chat character "${character.name}" is NOT a subject.`);
     }
 
@@ -343,7 +360,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       // Create placeholder message
       const newMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
-        sender_type: subjectType === 'user' ? 'user' : 'character',
+        sender_type: effectiveSubjectType === 'user' ? 'user' : 'character',
         character_id: resolvedCharacterId || undefined,
         character_name: resolvedCharacterName || undefined,
         content: "",
@@ -356,7 +373,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
           location_id: selectedLocation?.id || null,
           location_name: selectedLocation?.name || null,
           zone_name: selectedZone || null,
-          subject_type: subjectType,
+          subject_type: effectiveSubjectType,
         },
       });
       if (!newMsg?.id) throw new Error('Failed to create message');
@@ -364,9 +381,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const genRes = await base44.functions.invoke('mediaGridGenerate', {
         messageId: newMsg.id,
         prompt: promptText,
-        subjectType,
-        // Character identity — uses explicit selection override or active chat character
-        // resolvedCharacterId/Name/RefImages are null/empty for user-only images
+        subjectType: effectiveSubjectType,
+        // Character identity — uses explicit selection override; null for user-only
         characterId: resolvedCharacterId,
         characterName: resolvedCharacterName,
         characterRefImages: resolvedCharRefImages,
