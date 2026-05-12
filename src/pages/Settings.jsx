@@ -319,12 +319,18 @@ export default function Settings() {
             )}
           </div>
 
-          {/* Active Characters */}
+          {/* Character Voices (ONLY active_created_character) */}
           {(() => {
-            const activeChars = characters.filter(c => c.character_type === "active_created_character" && c.status === "active").sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            // SOURCE OF TRUTH: Filter STRICTLY to active_created_character + status === "active"
+            // No npc_family_member, npc_fictitious, or npc_regular in voice controls
+            const activeChars = characters.filter(c =>
+              c.character_type === "active_created_character" &&
+              c.status === "active" &&
+              c.owner_email === user?.email
+            ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
             return activeChars.length > 0 ? (
               <div className="space-y-3 pb-4 border-b border-border">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Characters ({activeChars.length})</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Character Voices ({activeChars.length})</p>
                 <div className="space-y-4">
                   {activeChars.map(char => {
                     const charVoiceForm = charVoiceForms[char.id] || {
