@@ -796,80 +796,72 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         console.warn('[CreateCharacter] System prompt upload failed — continuing without it:', promptErr.message);
       }
 
-      // Create character and handle bidirectional relationships
-      const res = await base44.functions.invoke("createCharacterWithRelationships", {
-        characterData: charData,
-        characterRelationships: charData.fictional_relationships || []
+      // Create character directly from frontend — avoids backend function rate limit pool
+      // which is shared with all scheduled automations. Frontend SDK uses its own session pool.
+      const newChar = await base44.entities.Character.create({
+        ...charData,
+        owner_user_id: currentUser.id,
+        created_by_role: currentUser.role || 'user',
       });
 
-      if (res?.data?.success) {
-        const newChar = res.data.character;
-        localStorage.removeItem(DRAFT_KEY);
+      if (!newChar?.id) throw new Error("Character creation returned no ID");
 
-        // Persist generated memories to the Memory entity for long-term recall
-        if (finalMemories && newChar?.id) {
-          finalMemories.forEach(mem => {
-            base44.entities.Memory.create({
-              character_id: newChar.id,
-              title: mem.title,
-              description: mem.description,
-              emotional_impact: mem.emotional_impact || "",
-              lesson_learned: mem.lesson_learned || "",
-              timestamp: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString(),
-              source_context: "character_creation",
-            }).catch(() => {});
-          });
-        }
+      // Non-blocking post-creation tasks
+      if ((charData.fictional_relationships || []).length > 0) {
+        base44.functions.invoke("createCharacterWithRelationships", {
+          characterData: { name: newChar.name, id: newChar.id },
+          characterRelationships: charData.fictional_relationships || []
+        }).catch(() => {});
+      }
 
-        // Pre-create both direct and phone conversations so they exist immediately
-         if (newChar?.id) {
-           Promise.all([
-             base44.entities.Conversation.create({
-               title: `Chat with ${newChar.name}`,
-               type: "direct",
-               character_ids: [newChar.id],
-             }),
-             base44.entities.Conversation.create({
-               title: `Text with ${newChar.name}`,
-               type: "phone",
-               character_ids: [newChar.id],
-             }),
-           ]).catch(() => {});
-         }
+      localStorage.removeItem(DRAFT_KEY);
 
-         // Setup character's home with default location registration + financial record
-         if (newChar?.id) {
-           Promise.all([
-             base44.functions.invoke('setupCharacterHome', {
-               characterId: newChar.id,
-               characterName: newChar.name,
-             }).catch(() => {}),
-             base44.functions.invoke('initializeCharacterFinancials', {
-               characterId: newChar.id,
-               characterName: newChar.name,
-               isNpc: false,
-             }).catch(() => {}),
-           ]);
-         }
+      if (finalMemories) {
+        finalMemories.forEach(mem => {
+          base44.entities.Memory.create({
+            character_id: newChar.id,
+            title: mem.title,
+            description: mem.description,
+            emotional_impact: mem.emotional_impact || "",
+            lesson_learned: mem.lesson_learned || "",
+            timestamp: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString(),
+            source_context: "character_creation",
+          }).catch(() => {});
+        });
+      }
 
-         // Invalidate ALL character cache variants to guarantee Home page refresh
-         queryClient.invalidateQueries({ queryKey: ["characters"] });
-         queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-         queryClient.invalidateQueries({ queryKey: ["user"] });
-         queryClient.invalidateQueries({ queryKey: ["locationReferences"] });
-         queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
-         // Force a fresh refetch before navigating
-         await queryClient.refetchQueries({ queryKey: ["characters", currentUser?.email] });
-         navigate("/home");
-       } else {
-         throw new Error(res?.data?.error || "Failed to create character");
-       }
-     } catch (error) {
+      Promise.all([
+        base44.entities.Conversation.create({ title: `Chat with ${newChar.name}`, type: "direct", character_ids: [newChar.id] }),
+        base44.entities.Conversation.create({ title: `Text with ${newChar.name}`, type: "phone", character_ids: [newChar.id] }),
+      ]).catch(() => {});
+
+      base44.functions.invoke('setupCharacterHome', { characterId: newChar.id, characterName: newChar.name }).catch(() => {});
+      base44.functions.invoke('initializeCharacterFinancials', { characterId: newChar.id, characterName: newChar.name, isNpc: false }).catch(() => {});
+
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ["user"] });
+      queryClient.invalidateQueries({ queryKey: ["locationReferences"] });
+      await queryClient.refetchQueries({ queryKey: ["characters", currentUser?.email] });
+      navigate("/home");
+    } catch (error) {
       setIsCreating(false);
       // CREATION_VERSION_MISMATCH / CREATION_BLOCKED_ERROR:
       // Surface a clear error with a retry option rather than a dead state.
       const msg = error?.message || "Unknown error";
-      alert(`Failed to create character: ${msg}`);
+      const isRateLimit = msg.includes("Rate limit") || msg.includes("429") || msg.includes("rate limit");
+      if (isRateLimit) {
+        const retry = window.confirm("The server is busy right now (rate limit). Wait 10 seconds and try again?\n\nPress OK to retry automatically.");
+        if (retry) {
+          setTimeout(() => {
+            setIsCreating(false);
+            handleCreate();
+          }, 10000);
+          return;
+        }
+      } else {
+        alert(`Failed to create character: ${msg}`);
+      }
      }
      };
 
