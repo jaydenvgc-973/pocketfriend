@@ -214,7 +214,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const images = [...freshFeedImages, ...allImages]
     .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
 
-  const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null, directLocationImages = null, directLocationName = null) => {
+  const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null, directLocationImages = null, directLocationName = null, intendedSubjects = null) => {
     if (!regenTarget) return;
     setIsRegenerating(true);
     try {
@@ -227,6 +227,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         directLocationImages: directLocationImages || null,
         directZoneName: manualZoneId || null,
         directLocationName: directLocationName || null,
+        // For no_avatar: the explicitly selected intended subjects override auto-resolved identity
+        intendedSubjectIds: intendedSubjects?.intendedSubjectIds || null,
+        includeUserSubject: intendedSubjects?.includeUser || false,
       });
       if (res?.data?.success && res?.data?.image_url) {
         // Hydrate gallery immediately so updated image shows without reload
@@ -868,6 +871,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         onSelect={handleRegenSelect}
         isRegenerating={isRegenerating}
         originalPrompt={regenTarget ? (messages.find(m => m.id === regenTarget.id)?.generation_context?.prompt || null) : null}
+        generationContext={regenTarget ? (messages.find(m => m.id === regenTarget.id)?.generation_context || null) : null}
       />
     </>
   );

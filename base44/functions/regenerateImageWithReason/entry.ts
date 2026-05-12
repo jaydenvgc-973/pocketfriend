@@ -425,6 +425,9 @@ Deno.serve(async (req) => {
       directLocationImages, // pre-resolved zone images from UI (optional)
       directZoneName,
       directLocationName,
+      // For no_avatar: user-selected intended subjects (override auto-resolved identity)
+      intendedSubjectIds,   // array of character IDs the user said the image was supposed to show
+      includeUserSubject,   // true if the user said "me/my persona" was supposed to be in it
     } = await req.json();
 
     if (!messageId || !reason) {
@@ -463,17 +466,29 @@ Deno.serve(async (req) => {
     let charDesc = '';  // text-based identity fallback — passed to buildRegenPrompt
     let charName = ctx.character_name || 'the character';
 
-    if (originalCharId) {
-      const charListUser = await base44.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
+    // For no_avatar: user explicitly selected who the image was supposed to show.
+    // Override the original character_id resolution entirely with the user's selection.
+    // This prevents the system from defaulting to the active chat character when the user
+    // knows the image was supposed to show a different person.
+    const effectiveCharId = (reason === 'no_avatar' && intendedSubjectIds?.length > 0)
+      ? intendedSubjectIds[0]  // primary intended subject
+      : originalCharId;
+
+    if (reason === 'no_avatar' && intendedSubjectIds?.length > 0) {
+      console.log(`[regenerateImageWithReason] no_avatar — user-selected intended subjects: ${intendedSubjectIds.join(', ')} | includeUser: ${includeUserSubject}`);
+    }
+
+    if (effectiveCharId) {
+      const charListUser = await base44.entities.Character.filter({ id: effectiveCharId }, null, 1).catch(() => []);
       let charRecord = charListUser?.[0] || null;
 
       if (!charRecord) {
-        const charListSR = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
+        const charListSR = await base44.asServiceRole.entities.Character.filter({ id: effectiveCharId }, null, 1).catch(() => []);
         const candidate = charListSR?.[0] || null;
         if (candidate) {
           const owner = candidate.owner_email;
           if (owner && owner !== requestingUser) {
-            console.error(`[regenerateImageWithReason] ⛔ Cross-account: char ${originalCharId} owned by ${owner}`);
+            console.error(`[regenerateImageWithReason] ⛔ Cross-account: char ${effectiveCharId} owned by ${owner}`);
             return Response.json({ success: false, error: 'Character does not belong to your account.' }, { status: 403 });
           }
           charRecord = candidate;
@@ -541,11 +556,20 @@ Deno.serve(async (req) => {
 
     // ── 2b. RESOLVE USER IDENTITY REFS ───────────────────────────────────────
     let userRefs = [];
-    if (ctx.subject_type === 'user' || ctx.subject_type === 'joint') {
+    const needsUserRefs = ctx.subject_type === 'user' || ctx.subject_type === 'joint' || (reason === 'no_avatar' && includeUserSubject);
+    if (needsUserRefs) {
       // Use user refs from generation_context (the ORIGINAL saved refs)
       if (ctx.user_reference_images?.length > 0) {
         userRefs = cdnFilter(ctx.user_reference_images).slice(0, 3);
         console.log(`[regenerateImageWithReason] Using saved user refs from context: ${userRefs.length}`);
+      }
+      // If no saved refs, try fetching from UserSettings
+      if (userRefs.length === 0) {
+        const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
+        const sett = settingsList?.[0] || {};
+        const dbUserRefs = [...(sett.reference_image_urls || []), ...(sett.generated_avatar_urls || [])];
+        userRefs = cdnFilter(dbUserRefs).slice(0, 3);
+        if (userRefs.length > 0) console.log(`[regenerateImageWithReason] User refs fetched from UserSettings: ${userRefs.length}`);
       }
     }
 
