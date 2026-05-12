@@ -9,6 +9,14 @@
  *  - Stale threshold: 10 minutes — after that, refresh silently in background
  *    but still show cached data immediately while refresh runs.
  *  - No created_by logic anywhere.
+ *
+ * Load statuses exposed to UI:
+ *   'loading'       — fetch in progress, no cache available yet
+ *   'cache'         — showing last-known-good cache (server refresh may be running)
+ *   'fresh'         — server data loaded and confirmed complete
+ *   'user_only'     — server returned data but only the user entity was found (suspicious)
+ *   'empty_warned'  — server confirmed empty AND no prior cache — truly empty account
+ *   'error'         — both cache and server failed; user must retry
  */
 
 const STALE_MS = 10 * 60 * 1000; // 10 minutes
@@ -27,9 +35,7 @@ export function readCache(email, type) {
     const raw = localStorage.getItem(cacheKey(email, type));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // Reject if not explicitly marked complete
     if (!parsed?.complete) return null;
-    // Reject if records is not an array with at least one entry
     if (!Array.isArray(parsed.records) || parsed.records.length === 0) return null;
     return parsed;
   } catch {
@@ -48,37 +54,46 @@ export function isCacheStale(cached) {
 
 /**
  * Write cache. Only called when data is confirmed complete and valid.
- * Validation rules:
- *  - characters: must have at least one record; must include the user entity or characters
- *  - locations: must have at least one record
- *  - empty arrays are NEVER written as complete
+ * Empty arrays are NEVER written as complete cache.
  */
 export function writeCache(email, type, records) {
   if (!email) return;
-  if (!Array.isArray(records) || records.length === 0) {
-    // Empty result — do NOT overwrite existing good cache
-    return;
-  }
+  if (!Array.isArray(records) || records.length === 0) return;
   try {
-    const entry = {
+    localStorage.setItem(cacheKey(email, type), JSON.stringify({
       complete: true,
       loaded_at: Date.now(),
       records,
-    };
-    localStorage.setItem(cacheKey(email, type), JSON.stringify(entry));
+    }));
   } catch {
-    // localStorage quota exceeded or unavailable — silently skip
+    // localStorage quota exceeded — silently skip
   }
 }
 
 /**
  * Validate a character roster result before writing cache.
- * A valid roster must have at least one record.
- * A roster containing ONLY the user entity is valid IF the account truly has no characters —
- * but since we can't confirm that here, we accept it as valid (the server returned it).
+ *
+ * Returns:
+ *   { valid: true }                          — roster is complete, safe to cache and display
+ *   { valid: false, reason: 'empty' }        — empty array, do not cache
+ *   { valid: false, reason: 'user_only' }    — only the user entity returned; may be incomplete
+ *                                              (do NOT overwrite existing cache; warn in UI)
+ *
+ * "user_only" is NOT treated as a confirmed empty account. The server may have returned a
+ * partial result due to rate-limiting, filtering, or a query error. The existing cache must
+ * be preserved and a warning must be shown rather than silently showing only the user.
  */
-export function isValidCharacterRoster(roster) {
-  return Array.isArray(roster) && roster.length > 0;
+export function validateCharacterRoster(roster) {
+  if (!Array.isArray(roster) || roster.length === 0) {
+    return { valid: false, reason: 'empty' };
+  }
+  const nonUserEntries = roster.filter(c => !c.is_user);
+  if (nonUserEntries.length === 0) {
+    // Only the user entity — this is suspicious unless the account truly has no characters.
+    // We cannot confirm that here, so we treat it as potentially incomplete.
+    return { valid: false, reason: 'user_only' };
+  }
+  return { valid: true };
 }
 
 /**

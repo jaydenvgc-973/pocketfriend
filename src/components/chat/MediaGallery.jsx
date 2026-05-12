@@ -7,7 +7,7 @@ import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
 import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
-import { readCache, writeCache, isCacheStale, isValidCharacterRoster, isValidLocationList } from "@/lib/mediaGridCache";
+import { readCache, writeCache, isCacheStale, validateCharacterRoster, isValidLocationList } from "@/lib/mediaGridCache";
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -78,6 +78,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [userSettings, setUserSettings] = useState(null);
   const [allCharacters, setAllCharacters] = useState([]);
 
+  // Load status for dropdowns — drives visible error/retry UI
+  // 'loading' | 'cache' | 'fresh' | 'user_only' | 'empty_warned' | 'error'
+  const [charsLoadStatus, setCharsLoadStatus] = useState('loading');
+  const [locsLoadStatus, setLocsLoadStatus] = useState('loading');
+
   // Get current user's email — resolved once on mount, not gated on isOpen
   const [userEmail, setUserEmail] = useState(null);
   const userEmailRef = useRef(null);
@@ -95,15 +100,20 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   // Track whether dropdown data has been loaded for the current open session
   const dropdownLoadedRef = useRef(false);
 
+  // Manual retry — bumping this counter re-triggers the load effect
+  const [retryCount, setRetryCount] = useState(0);
+
   // Load dropdowns (characters + locations + settings) when the modal opens.
   //
-  // STRATEGY — last-known-good cache + background refresh:
+  // STRATEGY — last-known-good cache + background refresh + visible failure states:
   //   1. Register foreground task immediately (background systems yield).
   //   2. Read localStorage cache scoped by owner_email — show instantly if valid.
-  //   3. If cache is fresh (<10 min), skip server fetch entirely.
+  //   3. If cache is fresh (<10 min), skip server fetch for that data type.
   //   4. If cache is stale or missing, fetch from server in parallel.
   //   5. Write server results to cache ONLY if they are complete and valid.
   //   6. Never overwrite good cache with empty/partial/failed results.
+  //   7. If both cache and server fail or return empty → set status to 'error' (visible retry).
+  //   8. If server returns user-only roster → keep existing cache, set status to 'user_only' (visible warning).
   //
   // CRITICAL: All queries use owner_email — never created_by, never unscoped.
   useEffect(() => {
@@ -118,6 +128,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     if (dropdownLoadedRef.current) return;
     dropdownLoadedRef.current = true;
 
+    // Reset statuses to loading while we figure out what to show
+    setCharsLoadStatus('loading');
+    setLocsLoadStatus('loading');
+
     // Register foreground priority — background simulations yield
     const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'critical');
 
@@ -125,15 +139,22 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     const cachedChars = readCache(email, 'characters');
     const cachedLocs = readCache(email, 'locations');
 
-    if (cachedChars) setAllCharacters(cachedChars.records);
-    if (cachedLocs) setLocations(cachedLocs.records);
+    if (cachedChars) {
+      setAllCharacters(cachedChars.records);
+      setCharsLoadStatus('cache');
+    }
+    if (cachedLocs) {
+      setLocations(cachedLocs.records);
+      setLocsLoadStatus('cache');
+    }
 
     // If both caches are fresh, no server fetch needed — release foreground now
     const charsFresh = cachedChars && !isCacheStale(cachedChars);
     const locsFresh = cachedLocs && !isCacheStale(cachedLocs);
 
     if (charsFresh && locsFresh) {
-      // Settings is small — always fetch fresh, non-blocking
+      setCharsLoadStatus('fresh');
+      setLocsLoadStatus('fresh');
       base44.entities.UserSettings.filter({ owner_email: email })
         .then(s => setUserSettings(s?.[0] || null))
         .catch(() => {});
@@ -148,14 +169,36 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       refreshPromises.push(
         fetchUnifiedRoster(base44, email)
           .then(roster => {
-            if (isValidCharacterRoster(roster)) {
+            const validation = validateCharacterRoster(roster);
+            if (validation.valid) {
               setAllCharacters(roster);
               writeCache(email, 'characters', roster);
+              setCharsLoadStatus('fresh');
+            } else if (validation.reason === 'user_only') {
+              // Server returned only the user entity — suspicious partial result.
+              // Keep existing cache if available; surface a visible warning.
+              if (!cachedChars) {
+                // No prior cache — show the user-only list so the UI isn't blank,
+                // but flag that it may be incomplete.
+                setAllCharacters(roster);
+              }
+              setCharsLoadStatus('user_only');
+              console.warn('[MediaGallery] Character roster returned user-only — may be incomplete. Not overwriting cache.');
+            } else {
+              // Empty result and no prior cache → visible error state
+              if (!cachedChars) setCharsLoadStatus('error');
+              else setCharsLoadStatus('cache'); // Keep showing cache, no update needed
+              console.warn('[MediaGallery] Character roster returned empty — preserving existing cache.');
             }
-            // If invalid/empty, keep showing whatever was in cache — do NOT clear it
           })
-          .catch(() => {})
+          .catch(err => {
+            console.error('[MediaGallery] Character roster fetch failed:', err?.message);
+            // If we have cache, keep showing it; otherwise surface error
+            setCharsLoadStatus(cachedChars ? 'cache' : 'error');
+          })
       );
+    } else {
+      setCharsLoadStatus('fresh');
     }
 
     if (!locsFresh) {
@@ -166,13 +209,24 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
             if (isValidLocationList(locs)) {
               setLocations(locs);
               writeCache(email, 'locations', locs);
+              setLocsLoadStatus('fresh');
+            } else {
+              // Empty or invalid — keep cache if available, otherwise error
+              if (!cachedLocs) setLocsLoadStatus('error');
+              else setLocsLoadStatus('cache');
+              console.warn('[MediaGallery] Location list returned empty — preserving existing cache.');
             }
           })
-          .catch(() => {})
+          .catch(err => {
+            console.error('[MediaGallery] Location list fetch failed:', err?.message);
+            setLocsLoadStatus(cachedLocs ? 'cache' : 'error');
+          })
       );
+    } else {
+      setLocsLoadStatus('fresh');
     }
 
-    // Settings is always refreshed (small payload)
+    // Settings is always refreshed (small payload, non-blocking)
     refreshPromises.push(
       base44.entities.UserSettings.filter({ owner_email: email })
         .then(s => setUserSettings(s?.[0] || null))
@@ -180,7 +234,13 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     );
 
     Promise.all(refreshPromises).finally(() => releaseForeground());
-  }, [isOpen, userEmail]);
+  }, [isOpen, userEmail, retryCount]);
+
+  // Retry handler — clears the session lock so the effect re-runs cleanly
+  const handleDropdownRetry = () => {
+    dropdownLoadedRef.current = false;
+    setRetryCount(c => c + 1);
+  };
 
   const availableZones = selectedLocation?.zones?.filter(z => z.image_urls?.length > 0) || [];
 
@@ -627,6 +687,25 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       </div>
 
                       {/* Character picker dropdown */}
+                      {showCharacterPicker && charsLoadStatus === 'error' && (
+                        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive space-y-1.5">
+                          <p className="font-medium">Character list failed to load.</p>
+                          <p className="text-destructive/70">Both cache and server returned no data. This is a load failure, not an empty account.</p>
+                          <button onClick={handleDropdownRetry} className="mt-1 px-3 py-1 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive font-medium transition-colors">Retry</button>
+                        </div>
+                      )}
+                      {showCharacterPicker && charsLoadStatus === 'user_only' && (
+                        <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-400 space-y-1.5">
+                          <p className="font-medium">Character list may be incomplete.</p>
+                          <p className="text-amber-400/70">Only your user profile was returned. Your characters may not have loaded yet.</p>
+                          <button onClick={handleDropdownRetry} className="mt-1 px-3 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 font-medium transition-colors">Retry</button>
+                        </div>
+                      )}
+                      {showCharacterPicker && charsLoadStatus === 'loading' && allCharacters.length === 0 && (
+                        <div className="rounded-xl border border-border bg-card px-3 py-4 text-xs text-muted-foreground flex items-center gap-2">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading characters...
+                        </div>
+                      )}
                       {showCharacterPicker && allCharacters.length > 0 && (
                         <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
                           {/* Grouped by type, alphabetical within each group:
@@ -720,6 +799,18 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       )}
 
                       {/* Location picker dropdown */}
+                      {showLocationPicker && locsLoadStatus === 'error' && (
+                        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive space-y-1.5">
+                          <p className="font-medium">Location list failed to load.</p>
+                          <p className="text-destructive/70">Both cache and server returned no data. This is a load failure, not an empty account.</p>
+                          <button onClick={handleDropdownRetry} className="mt-1 px-3 py-1 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive font-medium transition-colors">Retry</button>
+                        </div>
+                      )}
+                      {showLocationPicker && locsLoadStatus === 'loading' && locations.length === 0 && (
+                        <div className="rounded-xl border border-border bg-card px-3 py-4 text-xs text-muted-foreground flex items-center gap-2">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading locations...
+                        </div>
+                      )}
                       {showLocationPicker && locations.length > 0 && (
                         <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
                           {locations.map(loc => (
