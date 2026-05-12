@@ -7,11 +7,15 @@ export default function CharacterFinancialSummary({ characterId }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    base44.entities.CharacterFinancial.filter({ character_id: characterId })
-      .then(results => {
-        if (results.length > 0) setFinancial(results[0]);
-      })
-      .finally(() => setLoading(false));
+    // Stagger 400ms to avoid firing in the same tick as the primary character query
+    const timer = setTimeout(() => {
+      base44.entities.CharacterFinancial.filter({ character_id: characterId })
+        .then(results => {
+          if (results.length > 0) setFinancial(results[0]);
+        })
+        .finally(() => setLoading(false));
+    }, 400);
+    return () => clearTimeout(timer);
   }, [characterId]);
 
   if (loading) return <div className="h-32 bg-secondary/30 rounded-xl animate-pulse" />;

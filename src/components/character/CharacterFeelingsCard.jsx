@@ -10,16 +10,19 @@ export default function CharacterFeelingsCard({ character, onRespectCorrected })
     if (!character?.id) return;
     setLoading(true);
     setFeelings(null);
-    base44.functions.invoke("generateCharacterFeelings", { characterId: character.id })
-      .then(res => {
-        setFeelings(res?.data?.feelings || null);
-        // If the backend corrected a stale respect value, notify parent to refetch bars
-        if (res?.data?.respect_used !== undefined && res.data.respect_used !== (character.user_respect_level ?? 50)) {
-          onRespectCorrected?.();
-        }
-      })
-      .catch(() => setFeelings(null))
-      .finally(() => setLoading(false));
+    // Delay 2.5s to avoid 429 — this is a non-critical enrichment call that fires after all primary queries
+    const timer = setTimeout(() => {
+      base44.functions.invoke("generateCharacterFeelings", { characterId: character.id })
+        .then(res => {
+          setFeelings(res?.data?.feelings || null);
+          if (res?.data?.respect_used !== undefined && res.data.respect_used !== (character.user_respect_level ?? 50)) {
+            onRespectCorrected?.();
+          }
+        })
+        .catch(() => setFeelings(null))
+        .finally(() => setLoading(false));
+    }, 2500);
+    return () => clearTimeout(timer);
   }, [character?.id]);
 
   return (

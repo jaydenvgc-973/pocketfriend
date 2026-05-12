@@ -175,7 +175,10 @@ export default function LifeJournal({ characterId, character }) {
 
   const { data: lifeEvents = [], isLoading } = useQuery({
     queryKey: ["lifeEvents", characterId],
-    queryFn: () => base44.entities.LifeEvent.filter({ character_id: characterId }, "-timestamp", 50),
+    queryFn: async () => {
+      await new Promise(r => setTimeout(r, 1400));
+      return base44.entities.LifeEvent.filter({ character_id: characterId }, "-timestamp", 50);
+    },
     enabled: !!characterId,
   });
 
