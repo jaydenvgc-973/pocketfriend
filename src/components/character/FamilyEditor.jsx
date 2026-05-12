@@ -63,6 +63,7 @@ function defaultLevels(relationshipType) {
 
 // Sync family members into fictional_relationships so they appear in the world list
 // Also ensures each named family member has a real Character record (npc_family_member type)
+// CRITICAL: The linked Character's avatar_url is the SOURCE OF TRUTH for the avatar
 async function syncFamilyToRelationships(character, familyMembers, currentUser) {
   const existing = character.fictional_relationships || [];
 
@@ -93,7 +94,7 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
             if (existingNPC) {
               linkedCharId = existingNPC.id;
             } else {
-              // Create a real npc_family_member Character record
+              // Create a real npc_family_member Character record with avatar
               const newFamilyNPC = await base44.entities.Character.create({
                 name: m.name.trim(),
                 character_type: 'npc_family_member',
@@ -112,6 +113,17 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
             }
           } catch (err) {
             console.warn('[FamilyEditor] Could not create Character for family member:', m.name, err.message);
+          }
+        }
+
+        // CRITICAL: If we have a linked Character, sync the photo_url to its avatar_url
+        if (linkedCharId && m.photo_url) {
+          try {
+            await base44.entities.Character.update(linkedCharId, {
+              avatar_url: m.photo_url,
+            });
+          } catch (err) {
+            console.warn('[FamilyEditor] Failed to sync photo to Character avatar:', err.message);
           }
         }
 
