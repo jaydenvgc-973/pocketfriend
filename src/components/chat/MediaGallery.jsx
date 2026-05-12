@@ -7,7 +7,7 @@ import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import { useAuth } from "@/lib/AuthContext";
 import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
-import { registerForegroundTask, clearForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from "@/lib/foregroundPriorityManager";
+import { registerUserForegroundTask, clearUserForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from "@/lib/foregroundPriority";
 import { readCache, writeCache, isCacheStale, validateCharacterRoster, isValidLocationList } from "@/lib/mediaGridCache";
 
 function toPublicCDN(url) {
@@ -146,7 +146,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     setLocsLoadStatus('loading');
 
     // Register foreground priority — background simulations yield
-    const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'critical');
+    const email2 = userEmailRef.current || userEmail;
+    const mediaTaskId = email2
+      ? registerUserForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, { ownerEmail: email2, priority: PRIORITY_LEVELS.HIGH, durationMs: 15000 })
+      : null;
+    const releaseForeground = () => { if (email2 && mediaTaskId) clearUserForegroundTask(email2, mediaTaskId); };
 
     // ── STEP 1: Show last-known-good cache immediately ──────────────────────
     const cachedChars = readCache(email, 'characters');
@@ -726,7 +730,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
     // Register foreground task — background systems yield during image generation
     if (user?.email) {
-      foregroundTaskIdRef.current = registerForegroundTask(FOREGROUND_TASKS.IMAGE_GENERATION, {
+      foregroundTaskIdRef.current = registerUserForegroundTask(FOREGROUND_TASKS.IMAGE_GENERATION, {
         ownerEmail: user.email,
         priority: PRIORITY_LEVELS.CRITICAL,
         page: 'MediaGrid',
@@ -817,7 +821,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       setIsGenerating(false);
       // Clear foreground task
       if (user?.email && foregroundTaskIdRef.current) {
-        clearForegroundTask(user.email, foregroundTaskIdRef.current);
+        clearUserForegroundTask(user.email, foregroundTaskIdRef.current);
         foregroundTaskIdRef.current = null;
       }
     }

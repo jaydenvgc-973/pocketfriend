@@ -1,34 +1,19 @@
 /**
  * useForegroundTask Hook
  *
- * Register and manage foreground tasks within React components.
+ * Register and manage owner-scoped foreground tasks within React components.
  * Automatically cleans up on unmount.
- *
- * Usage:
- *   const { registerTask, clearTask } = useForegroundTask();
- *   
- *   const handleSendMessage = async () => {
- *     const taskId = registerTask('chat_message_response', {
- *       priority: 'critical',
- *       durationMs: 10000,
- *     });
- *     
- *     try {
- *       await sendMessage();
- *     } finally {
- *       clearTask(taskId);
- *     }
- *   };
+ * Imports from the single source of truth: lib/foregroundPriority.js
  */
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import {
-  registerForegroundTask,
-  clearForegroundTask,
+  registerUserForegroundTask,
+  clearUserForegroundTask,
   FOREGROUND_TASKS,
   PRIORITY_LEVELS,
-} from '@/lib/foregroundPriorityManager';
+} from '@/lib/foregroundPriority';
 
 export function useForegroundTask() {
   const { user } = useAuth();
@@ -36,22 +21,16 @@ export function useForegroundTask() {
 
   const registerTask = useCallback(
     (taskType, options = {}) => {
-      if (!user?.email) {
-        console.warn('[useForegroundTask] User email required to register task');
-        return null;
-      }
+      if (!user?.email) return null;
 
-      const taskId = registerForegroundTask(taskType, {
+      const taskId = registerUserForegroundTask(taskType, {
         ownerEmail: user.email,
         priority: options.priority || PRIORITY_LEVELS.HIGH,
         page: options.page || null,
-        durationMs: options.durationMs ?? 5000,
+        durationMs: options.durationMs ?? 8000,
       });
 
-      if (taskId) {
-        taskIdsRef.current.push(taskId);
-      }
-
+      if (taskId) taskIdsRef.current.push(taskId);
       return taskId;
     },
     [user?.email]
@@ -60,7 +39,7 @@ export function useForegroundTask() {
   const clearTask = useCallback(
     (taskId) => {
       if (!user?.email || !taskId) return;
-      clearForegroundTask(user.email, taskId);
+      clearUserForegroundTask(user.email, taskId);
       taskIdsRef.current = taskIdsRef.current.filter((id) => id !== taskId);
     },
     [user?.email]
@@ -71,19 +50,14 @@ export function useForegroundTask() {
     return () => {
       if (user?.email) {
         taskIdsRef.current.forEach((taskId) => {
-          clearForegroundTask(user.email, taskId);
+          clearUserForegroundTask(user.email, taskId);
         });
         taskIdsRef.current = [];
       }
     };
   }, [user?.email]);
 
-  return {
-    registerTask,
-    clearTask,
-    FOREGROUND_TASKS,
-    PRIORITY_LEVELS,
-  };
+  return { registerTask, clearTask, FOREGROUND_TASKS, PRIORITY_LEVELS };
 }
 
 export default useForegroundTask;
