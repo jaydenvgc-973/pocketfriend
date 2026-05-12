@@ -142,7 +142,6 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
   const [saving, setSaving] = useState(false);
   const [generatingIdx, setGeneratingIdx] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
-  const [generationError, setGenerationError] = useState(null);
   // Master lock: prevents ANY new additions to the family list
   const [masterLocked, setMasterLocked] = useState(character.family_list_locked || false);
   // Per-member locks: stored as a set of member names (lowercased)
@@ -382,7 +381,31 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       }
     } catch (err) {
       console.error('[FamilyEditor] Image generation failed:', err);
-      setGenerationError(`Failed to generate photo: ${err.message}`);
+      // Retry once on failure
+      try {
+        const retryResult = await base44.integrations.Core.GenerateImage({
+          prompt,
+          existing_image_urls: parentRefs.length > 0 ? parentRefs : undefined,
+        });
+        if (retryResult?.url) {
+          const updatedMembers = members.map((m, i) => i === idx ? { ...m, photo_url: retryResult.url } : m);
+          setMembers(updatedMembers);
+          const valid = updatedMembers.filter(m => m.name?.trim());
+          const updatedRelationships = await syncFamilyToRelationships(character, valid, currentUser);
+          const systemPrompt = buildSystemPrompt({ ...character, family_members: valid });
+          let updateData = { family_members: valid, fictional_relationships: updatedRelationships };
+          if (systemPrompt) {
+            const file = new File([systemPrompt], "system_prompt.txt", { type: "text/plain" });
+            const { file_url } = await base44.integrations.Core.UploadFile({ file });
+            updateData.system_prompt_url = file_url;
+          }
+          await base44.entities.Character.update(character.id, updateData);
+          queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+          queryClient.invalidateQueries({ queryKey: ["characters"] });
+        }
+      } catch (retryErr) {
+        console.error('[FamilyEditor] Image generation retry failed:', retryErr);
+      }
     }
     setGeneratingIdx(null);
   };
@@ -868,9 +891,6 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
                 </div>
                 {generatingIdx === idx && (
                   <p className="text-xs text-muted-foreground">Generating photo for {member.name}...</p>
-                )}
-                {generationError && (
-                  <p className="text-xs text-destructive">{generationError}</p>
                 )}
               </>
             )}
