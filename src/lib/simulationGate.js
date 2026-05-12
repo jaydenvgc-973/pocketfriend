@@ -24,6 +24,8 @@
  * Lower-priority systems must not overwrite higher-priority writes.
  */
 
+import { isForegroundActive } from '@/lib/foregroundPriority';
+
 // ── Active context registry ────────────────────────────────────────────────
 // Mutated by page-level hooks when they mount/unmount.
 const _context = {
@@ -221,6 +223,12 @@ export function gate(characterId, fnName, opts = {}) {
   // 1. Global rate limit check
   if (window.__simRateLimited) {
     console.log(`[SimGate] BLOCKED ${fnName}(${characterId}) — global rate limit`);
+    return false;
+  }
+
+  // 1a. Foreground priority check — yield to active user task unless hardTransition
+  if (!hardTransition && !opts.allowInForeground && isForegroundActive()) {
+    console.log(`[SimGate] YIELD ${fnName}(${characterId}) — foreground user task active`);
     return false;
   }
 

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useNavigate, Link } from "react-router-dom";
+import { runAsForegroundTask, registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Plus, X, Sparkles, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -395,6 +396,7 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
       alert('You have reached the maximum of 4 active characters. Delete or archive one to create another.');
       return;
     }
+    registerForegroundTask(FOREGROUND_TASKS.SAVE_CHARACTER, "critical");
     
     // ══════════════════════════════════════════════════════════════
     // LOCK ACTING USER CONTEXT AT RANDOM CREATE START (CRITICAL FIX)
@@ -586,6 +588,7 @@ Return ONLY a JSON object with a "memories" array. Each memory: { title, descrip
       alert('You have reached the maximum of 4 active characters. Delete or archive one to create another.');
       return;
     }
+    registerForegroundTask(FOREGROUND_TASKS.SAVE_CHARACTER, "critical");
     
     // ══════════════════════════════════════════════════════════════
     // LOCK ACTING USER CONTEXT AT CREATION START (CRITICAL FIX)

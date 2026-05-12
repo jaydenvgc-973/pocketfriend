@@ -14,6 +14,7 @@
 import { useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { reportRateLimit, isGloballyRateLimited, isChatSafeModeActive, escalateChatRetry, resetChatRetry, getChatRetryState, isRetryPaused, areOptionalSystemsDisabled } from "@/lib/simulationGate";
+import { isForegroundActive, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
 
 // Per-session cooldown state — keyed by `${characterId}:${taskName}`
@@ -47,6 +48,12 @@ function setInFlight(characterId, taskName, val) {
 }
 
 async function safeInvoke(fnName, payload, characterId, taskName) {
+  // Yield to any active foreground task that isn't chat itself
+  const fg = isForegroundActive ? isForegroundActive() : false;
+  if (fg) {
+    console.log(`[Governor] YIELD ${taskName} — foreground task active`);
+    return null;
+  }
   if (isGloballyRateLimited()) {
     console.log(`[Governor] SKIP ${taskName} — global rate limit active`);
     return null;
