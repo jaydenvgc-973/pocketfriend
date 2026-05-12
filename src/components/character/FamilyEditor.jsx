@@ -75,6 +75,7 @@ function defaultLevels(relationshipType) {
 // Sync family members into fictional_relationships so they appear in the world list
 // Also ensures each named family member has a real Character record (npc_family_member type)
 // CRITICAL: The linked Character's avatar_url is the SOURCE OF TRUTH for the avatar
+// All linkages follow Hayden's model: stable ID, synced avatar, unified avatar source
 async function syncFamilyToRelationships(character, familyMembers, currentUser) {
   const existing = character.fictional_relationships || [];
 
@@ -86,26 +87,25 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
     familyMembers
       .filter(m => m.name?.trim())
       .map(async (m) => {
-        // If already linked to a Character ID, use it directly
+        // HAYDEN MODEL: Every family member MUST have a stable _linked_character_id
+        // This is the ONLY identity anchor — not index, not name matching
         let linkedCharId = m._linked_character_id || null;
 
-        // For unlinked family members with a real name, ensure a Character record exists
+        // If not yet linked, find or create the npc_family_member Character record
         if (!linkedCharId && currentUser?.email && currentUser?.id) {
           try {
-            // Check if a Character record already exists for this name under this user
+            // First: check if an npc_family_member exists with this exact name
             const existing = await base44.entities.Character.filter({
               name: m.name.trim(),
               owner_email: currentUser.email,
+              character_type: 'npc_family_member'
             });
-            const existingNPC = existing.find(c =>
-              c.status !== 'deleted' && c.status !== 'soft_deleted' &&
-              ['npc_family_member', 'npc_fictitious', 'npc_fictitious_person', 'npc_regular'].includes(c.character_type)
-            );
 
-            if (existingNPC) {
-              linkedCharId = existingNPC.id;
+            if (existing.length > 0) {
+              // Reuse the existing npc_family_member
+              linkedCharId = existing[0].id;
             } else {
-              // Create a real npc_family_member Character record with avatar
+              // Create a new npc_family_member Character record
               const newFamilyNPC = await base44.entities.Character.create({
                 name: m.name.trim(),
                 character_type: 'npc_family_member',
@@ -127,7 +127,8 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
           }
         }
 
-        // CRITICAL: If we have a linked Character, sync the photo_url to its avatar_url
+        // CRITICAL: Sync avatar_url between family_members[] entry and linked Character
+        // This ensures the SAME avatar resolves in Family Editor and Settings NPC FAMILY list
         if (linkedCharId && m.photo_url) {
           try {
             await base44.entities.Character.update(linkedCharId, {
@@ -271,7 +272,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
           }
           const existingRefs = character.reference_image_urls || [];
           updateData2.reference_image_urls = existingRefs.includes(match.photo_url) ? existingRefs : [...existingRefs, match.photo_url];
-          
+
           await base44.entities.Character.update(character.id, updateData2);
           queryClient.invalidateQueries({ queryKey: ["character", character.id] });
           queryClient.invalidateQueries({ queryKey: ["characters"] });
@@ -281,14 +282,11 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       }
     }
 
-    // Only send parent face references for children (sons/daughters).
-    // For siblings, parents, aunts, uncles, cousins, etc. — do NOT send character's own face
-    // as a reference image. Doing so causes the AI to generate clones.
+    // GLOBAL CONTRACT: Parent face references ONLY for children (both parents)
+    // For all siblings, parents, relatives: NO parent face images — text-only context
     const parentRefs = [];
     if (isChild) {
-      // For children: blend both parents' faces
       if (character.avatar_url) parentRefs.push(character.avatar_url);
-      // Also include the other parent's avatar if available
       for (const otherChar of allCharacters) {
         if (otherChar.id === character.id) continue;
         const hasChild = (otherChar.family_members || []).some(
@@ -301,12 +299,11 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         }
       }
     }
-    // For all other relationships: no face reference images — ethnicity context in prompt is sufficient
 
     try {
       const isParent = ["mother", "father"].includes(member.relationship_type);
       const isSibling = ["sister", "brother", "half-sister", "half-brother"].includes(member.relationship_type);
-      
+
       const isSlowAgingEthnicity = character.ethnicities?.some(e => {
         const eth = e.toLowerCase();
         return eth.includes("african american") ||
@@ -338,22 +335,24 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       const ageStr = currentAge != null ? `, age ${currentAge}` : "";
       const ethnicityStr = character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : "";
 
+      // GLOBAL PROMPT RULE: Family member is distinct individual. Parent is genetic/family reference only.
+      // Mandate: distinct facial structure, never clone parent's face.
       let prompt;
       if (isBaby) {
-        prompt = `Generate an avatar for ${member.name}, a newborn baby (under 1 year old), who is ${character.name}'s ${member.relationship_type}. ${ethnicityStr} ${character.name} may be used only as a loose family resemblance reference. Do not copy ${character.name}'s face. This is a separate person. Adorable infant, soft natural lighting, like a real family photo. NOT a cartoon, NOT illustrated. Photorealistic. Baby features — round face, chubby cheeks.`;
+        prompt = `Generate an avatar for ${member.name}, a newborn baby (under 1 year old), who is ${character.name}'s ${member.relationship_type}. ${ethnicityStr} Adorable infant, soft natural lighting, like a real family photo. NOT a cartoon, NOT illustrated. Photorealistic. Baby features — round face, chubby cheeks. This is a distinct individual with their own identity, not a duplicate.`;
       } else {
         let resemblanceRule = "";
         if (isChild) {
-          resemblanceRule = `${character.name} may be used only as a loose family resemblance reference — inherit at most ONE specific feature (e.g. eye color OR nose shape). Do not copy ${character.name}'s face. This is a separate person.`;
+          resemblanceRule = `Generate ${member.name}${ageStr}, a distinct individual with their own identity, face shape, and facial features. Maintain believable family resemblance to ${character.name} only through ethnicity/genetic context—NOT by duplicating facial features. Allow distinct variations: different nose structure, different jaw line, different eye shape, different hairstyle.`;
         } else if (isParent) {
-          resemblanceRule = `${character.name} may be used only as a loose ethnic background reference. Do not copy ${character.name}'s face, jaw, nose, eyes, or any facial feature. This is a completely different person who is ${character.name}'s biological parent with their own distinct facial identity.`;
+          resemblanceRule = `Generate ${member.name}${ageStr}, ${character.name}'s ${member.relationship_type}. This is a completely separate individual with their own facial identity. Do not duplicate ${character.name}'s face, jaw, nose, eyes, or expression. Use ethnicity only as genetic context. Distinct facial structure, different age markers.`;
         } else if (isSibling) {
-          resemblanceRule = `${character.name} may be used only as a loose ethnic background reference. Do not copy ${character.name}'s face. Same-gender relatives must have distinct facial structure, age markers, hairstyle/facial hair differences, skin detail, and expression unless explicitly marked as an identical twin. This is a separate person.`;
+          resemblanceRule = `Generate ${member.name}${ageStr}, ${character.name}'s ${member.relationship_type}. This is a separate person with distinct facial structure, different nose/jaw/eye shape, different hairstyle/facial hair pattern, different expression. Same-gender relatives must NOT become clones. Maintain family resemblance through ethnicity and age proximity only.`;
         } else {
-          resemblanceRule = `${character.name} may be used only as a loose ethnic background reference. Do not copy ${character.name}'s face. This is a completely separate person.`;
+          resemblanceRule = `Generate ${member.name}${ageStr}, ${character.name}'s ${member.relationship_type}. Distinct individual with own facial identity. Use ethnicity as genetic reference only. Do not duplicate ${character.name}'s face.`;
         }
 
-        prompt = `Generate an avatar for ${member.name}${ageStr}, who is ${character.name}'s ${member.relationship_type || "family member"}. ${ethnicityStr} ${resemblanceRule} Natural lighting, unposed, like a real person's candid photo. NOT a cartoon, NOT illustrated. Photorealistic. ${ageNote}`;
+        prompt = `${resemblanceRule} Natural lighting, unposed, like a real person's candid photo. NOT a cartoon, NOT illustrated. Photorealistic. ${ageNote}`;
       }
 
       const result = await base44.integrations.Core.GenerateImage({
@@ -376,7 +375,14 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         }
         await base44.entities.Character.update(character.id, updateData);
 
-        // Store family member photo as reference image for other characters who share this child
+        // CRITICAL: Update linked npc_family_member Character with the generated avatar
+        if (member._linked_character_id) {
+          await base44.entities.Character.update(member._linked_character_id, {
+            avatar_url: result.url
+          });
+        }
+
+        // Store family member photo as reference for co-parents
         if (isChild && allCharacters.length > 0) {
           for (const otherChar of allCharacters) {
             if (otherChar.id === character.id) continue;
@@ -392,7 +398,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
           }
         }
 
-        // Propagate to other active characters who share this child
+        // Propagate to co-parents' family lists
         if (isChild && allCharacters.length > 0) {
           for (const otherChar of allCharacters) {
             if (otherChar.id === character.id) continue;
@@ -418,7 +424,6 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       }
     } catch (err) {
       console.error('[FamilyEditor] Image generation failed:', err);
-      // Retry once on failure
       try {
         const retryResult = await base44.integrations.Core.GenerateImage({
           prompt,
@@ -437,15 +442,20 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
             updateData.system_prompt_url = file_url;
           }
           await base44.entities.Character.update(character.id, updateData);
+          if (member._linked_character_id) {
+            await base44.entities.Character.update(member._linked_character_id, {
+              avatar_url: retryResult.url
+            });
+          }
           queryClient.invalidateQueries({ queryKey: ["character", character.id] });
           queryClient.invalidateQueries({ queryKey: ["characters"] });
         }
       } catch (retryErr) {
         console.error('[FamilyEditor] Image generation retry failed:', retryErr);
-        }
       }
-      setGeneratingMemberId(null);
-      };
+    }
+    setGeneratingMemberId(null);
+  };
 
   const save = async () => {
     setSaving(true);
