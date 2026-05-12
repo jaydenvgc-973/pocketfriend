@@ -48,6 +48,17 @@ const RELATIONSHIP_TYPES = [
   "significant other", "romantic interest", "other",
 ];
 
+// Generate a stable unique ID for a family member (lightweight, no external dep)
+function generateMemberId() {
+  return `fm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Ensure every member object has a stable _member_id
+// This is the ONLY identity anchor — never use array index or name for identity
+function withStableIds(members) {
+  return members.map(m => m._member_id ? m : { ...m, _member_id: generateMemberId() });
+}
+
 // Default relationship bars based on family role
 function defaultLevels(relationshipType) {
   const close = ["mother", "father", "sister", "brother", "daughter", "son", "spouse"];
@@ -150,9 +161,10 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
 export default function FamilyEditor({ character, readOnly = false, allCharacters = [], currentUser = null, userSettings = null }) {
   // currentUser is passed from parent (CharacterProfile) and used for Character record creation
   const queryClient = useQueryClient();
-  const [members, setMembers] = useState(character.family_members || []);
+  const [members, setMembers] = useState(() => withStableIds(character.family_members || []));
   const [saving, setSaving] = useState(false);
-  const [generatingIdx, setGeneratingIdx] = useState(null);
+  // Track generation by stable _member_id, not by array index
+  const [generatingMemberId, setGeneratingMemberId] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
   // Master lock: prevents ANY new additions to the family list
   const [masterLocked, setMasterLocked] = useState(character.family_list_locked || false);
@@ -195,15 +207,24 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
 
 
   // Keep local state in sync if the character prop changes (e.g. after re-fetch)
+  // CRITICAL: preserve _member_id from existing state — do not overwrite stable IDs
   useEffect(() => {
     if (!saving) {
-      setMembers(character.family_members || []);
+      setMembers(prev => {
+        const incoming = character.family_members || [];
+        // Re-use existing stable IDs where name+relationship matches, assign new ones otherwise
+        return incoming.map(m => {
+          if (m._member_id) return m;
+          const existing = prev.find(p => p.name === m.name && p.relationship_type === m.relationship_type);
+          return existing ? { ...m, _member_id: existing._member_id } : { ...m, _member_id: generateMemberId() };
+        });
+      });
     }
   }, [character.id, JSON.stringify(character.family_members)]);
 
   const addMember = () => {
     if (masterLocked) return; // master lock blocks new additions
-    setMembers(prev => [...prev, { name: "", relationship_type: "mother", photo_url: null, age_at_creation: null, age_set_date: null }]);
+    setMembers(prev => [...prev, { _member_id: generateMemberId(), name: "", relationship_type: "mother", photo_url: null, age_at_creation: null, age_set_date: null }]);
   };
 
   const updateMember = (idx, field, value) => {
@@ -219,7 +240,8 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
   const generatePhoto = async (idx) => {
     const member = members[idx];
     if (!member.name?.trim()) return;
-    setGeneratingIdx(idx);
+    const memberId = member._member_id;
+    setGeneratingMemberId(memberId);
 
     const isChild = ["daughter", "son"].includes(member.relationship_type);
     const currentAge = member.age_at_creation != null ? calcFamilyMemberAge(member, character.created_date, idx) : null;
@@ -253,20 +275,20 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
           await base44.entities.Character.update(character.id, updateData2);
           queryClient.invalidateQueries({ queryKey: ["character", character.id] });
           queryClient.invalidateQueries({ queryKey: ["characters"] });
-          setGeneratingIdx(null);
+          setGeneratingMemberId(null);
           return;
         }
       }
     }
 
-    // Collect parent reference images for face blending
+    // Only send parent face references for children (sons/daughters).
+    // For siblings, parents, aunts, uncles, cousins, etc. — do NOT send character's own face
+    // as a reference image. Doing so causes the AI to generate clones.
     const parentRefs = [];
-    if (character.avatar_url) parentRefs.push(character.avatar_url);
-    (character.reference_image_urls || []).slice(0, 2).forEach(u => {
-      if (!parentRefs.includes(u)) parentRefs.push(u);
-    });
-    // Also include the other parent's avatar if available
-    if (isChild && allCharacters.length > 0) {
+    if (isChild) {
+      // For children: blend both parents' faces
+      if (character.avatar_url) parentRefs.push(character.avatar_url);
+      // Also include the other parent's avatar if available
       for (const otherChar of allCharacters) {
         if (otherChar.id === character.id) continue;
         const hasChild = (otherChar.family_members || []).some(
@@ -279,6 +301,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         }
       }
     }
+    // For all other relationships: no face reference images — ethnicity context in prompt is sufficient
 
     try {
       const isParent = ["mother", "father"].includes(member.relationship_type);
@@ -312,25 +335,25 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         }
       }
 
+      const ageStr = currentAge != null ? `, age ${currentAge}` : "";
+      const ethnicityStr = character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : "";
+
       let prompt;
       if (isBaby) {
-        prompt = `A realistic, candid photo of ${member.name}, a newborn baby (under 1 year old), who is ${character.name}'s ${member.relationship_type}.
-      ${character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : ""}
-      Adorable infant, soft natural lighting, like a real family photo. NOT a cartoon, NOT illustrated. Photorealistic. Baby features — round face, chubby cheeks. Show family resemblance to the parents. This is a separate person, not a clone.`;
+        prompt = `Generate an avatar for ${member.name}, a newborn baby (under 1 year old), who is ${character.name}'s ${member.relationship_type}. ${ethnicityStr} ${character.name} may be used only as a loose family resemblance reference. Do not copy ${character.name}'s face. This is a separate person. Adorable infant, soft natural lighting, like a real family photo. NOT a cartoon, NOT illustrated. Photorealistic. Baby features — round face, chubby cheeks.`;
       } else {
-        let resemblanceNote = "";
+        let resemblanceRule = "";
         if (isChild) {
-          resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. FAMILY RESEMBLANCE RULE: Share 1-2 specific facial features with the parent (e.g., eye color OR nose shape OR jawline) for believable family connection, but generate a completely distinct face otherwise. Different nose, different jawline from parent, different eye shape from parent, different face overall. This is NOT a mini-version or younger clone of ${character.name}—it's a separate child who happens to inherit one or two traits. Use ${character.name} ONLY as a resemblance reference for ONE specific inherited trait.`;
+          resemblanceRule = `${character.name} may be used only as a loose family resemblance reference — inherit at most ONE specific feature (e.g. eye color OR nose shape). Do not copy ${character.name}'s face. This is a separate person.`;
         } else if (isParent) {
-          resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. Generate an adult with a completely different face structure—different nose, different jaw, different cheekbones, different eye shape. Inherit ONLY general ethnicity/coloring from the child's description. Do not make this person look like an older, younger, or any variation of ${character.name}. This is a distinct adult who is the biological parent but has their own unique facial identity.`;
+          resemblanceRule = `${character.name} may be used only as a loose ethnic background reference. Do not copy ${character.name}'s face, jaw, nose, eyes, or any facial feature. This is a completely different person who is ${character.name}'s biological parent with their own distinct facial identity.`;
         } else if (isSibling) {
-          resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. CRITICAL DISTINCTNESS RULE: Generate a completely distinct face. Different nose shape, different jaw structure, different cheekbones, different eye shape, different brow, different overall facial proportions from ${character.name}. Same-gender siblings must NOT look like variants of each other. Vary: hairstyle, facial hair (if applicable), skin tone (can vary within same ethnicity), facial hair grooming, and age presentation. Share ONLY general ethnicity background, not specific facial features. Use ${character.name} ONLY as an ethnic/family background reference, never as a facial template.`;
+          resemblanceRule = `${character.name} may be used only as a loose ethnic background reference. Do not copy ${character.name}'s face. Same-gender relatives must have distinct facial structure, age markers, hairstyle/facial hair differences, skin detail, and expression unless explicitly marked as an identical twin. This is a separate person.`;
+        } else {
+          resemblanceRule = `${character.name} may be used only as a loose ethnic background reference. Do not copy ${character.name}'s face. This is a completely separate person.`;
         }
 
-        prompt = `A realistic, candid-style portrait photo of ${member.name}, who is ${character.name}'s ${member.relationship_type || "family member"}.
-      ${character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : ""}
-      ${resemblanceNote}
-      Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illustrated. Photorealistic. ${ageNote} Generate a distinct person with their own unique identity — not a replacement for or duplicate of ${character.name}.`;
+        prompt = `Generate an avatar for ${member.name}${ageStr}, who is ${character.name}'s ${member.relationship_type || "family member"}. ${ethnicityStr} ${resemblanceRule} Natural lighting, unposed, like a real person's candid photo. NOT a cartoon, NOT illustrated. Photorealistic. ${ageNote}`;
       }
 
       const result = await base44.integrations.Core.GenerateImage({
@@ -419,10 +442,10 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         }
       } catch (retryErr) {
         console.error('[FamilyEditor] Image generation retry failed:', retryErr);
+        }
       }
-    }
-    setGeneratingIdx(null);
-  };
+      setGeneratingMemberId(null);
+      };
 
   const save = async () => {
     setSaving(true);
@@ -519,6 +542,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
     setShowCharacterPicker(false);
     setShowAddMenu(false);
     setMembers(prev => [...prev, {
+      _member_id: generateMemberId(),
       name: char.name,
       relationship_type: "other",
       photo_url: char.avatar_url || null,
@@ -547,6 +571,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       || null;
     const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "Me";
     setMembers(prev => [...prev, {
+      _member_id: generateMemberId(),
       name: worldName,
       relationship_type: "other",
       photo_url: userAvatar,
@@ -697,7 +722,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
 
       <div className="space-y-3">
         {members.map((member, idx) => (
-          <div key={idx} className="rounded-xl border border-border bg-secondary/30 p-3 space-y-2">
+          <div key={member._member_id || idx} className="rounded-xl border border-border bg-secondary/30 p-3 space-y-2">
             {/* User entry — read-only, managed from My Profile */}
             {member._is_user ? (
               <div className="flex items-center gap-3">
@@ -795,11 +820,16 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
               <>
                 <div className="flex items-center gap-2">
                   {/* Photo thumbnail + generate button */}
+                  {/* SOURCE OF TRUTH: member.photo_url is the primary avatar source.
+                      Linked Character avatar is used only if member.photo_url is absent. */}
                   <div className="relative flex-shrink-0">
                     {(() => {
-                      const activeCharAvatar = getFamilyMemberAvatar(member.name);
-                      const displayUrl = activeCharAvatar || member.photo_url;
-                      const isActiveChar = !!activeCharAvatar;
+                      // Priority: 1) member.photo_url (direct stored), 2) linked Character by ID, 3) name-match fallback
+                      const linkedChar = member._linked_character_id
+                        ? allCharacters.find(c => c.id === member._linked_character_id)
+                        : null;
+                      const displayUrl = member.photo_url || linkedChar?.avatar_url || getFamilyMemberAvatar(member.name);
+                      const isActiveChar = !!(linkedChar || getFamilyMemberAvatar(member.name));
                       return displayUrl ? (
                         <button onClick={() => setLightboxSrc(displayUrl)} className="block group">
                           <img src={displayUrl} alt={member.name} className="w-10 h-10 rounded-full object-cover" />
@@ -818,11 +848,11 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
                     {!isMemberLocked(member.name) && !readOnly && (
                       <button
                         onClick={() => generatePhoto(idx)}
-                        disabled={generatingIdx === idx || !member.name?.trim()}
+                        disabled={generatingMemberId === member._member_id || !member.name?.trim()}
                         title="Generate or regenerate photo"
                         className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-primary flex items-center justify-center disabled:opacity-40 hover:bg-primary/80 transition-colors"
                       >
-                        {generatingIdx === idx
+                        {generatingMemberId === member._member_id
                           ? <Loader2 className="w-3 h-3 text-primary-foreground animate-spin" />
                           : <Camera className="w-2.5 h-2.5 text-primary-foreground" />
                         }
@@ -903,7 +933,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
                     );
                   })()}
                 </div>
-                {generatingIdx === idx && (
+                {generatingMemberId === member._member_id && (
                   <p className="text-xs text-muted-foreground">Generating photo for {member.name}...</p>
                 )}
               </>
