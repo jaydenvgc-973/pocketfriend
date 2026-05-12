@@ -14,7 +14,7 @@ import CharacterInteractionSimulator from "@/components/home/CharacterInteractio
 import BottomNav from "@/components/BottomNav";
 import DailyAchievementReminder from "@/components/home/DailyAchievementReminder";
 import TroubleshootingPanelHome from "@/components/home/TroubleshootingPanelHome";
-import ThomasAndersonFix from "@/components/home/ThomasAndersonFix";
+
 import InviteOutModal from "@/components/home/InviteOutModal";
 import NPCContactPanel from "@/components/home/NPCContactPanel";
 import CommunityEventsStrip from "@/components/home/CommunityEventsStrip";
@@ -312,19 +312,6 @@ export default function Home() {
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;
   const showPerformanceWarning = activeCustomChars.length >= 7;
-  
-  // THOMAS ANDERSON FIX: Only show popup for VALID active_created_character records
-  // Exclude: deleted, soft_deleted, merged, archived, excluded_from_homepage, npc_*, test_*, diagnostic_*
-  const thomasAnderson = allCharacters.find(c => 
-    (c.name === 'Thomas Anderson' || c.name === 'Thomas') &&
-    c.character_type === 'active_created_character' &&
-    c.status === 'active' &&
-    !c.exclude_from_homepage &&
-    !c.is_test_character &&
-    !c.diagnostic_only
-  );
-  const thomasInDisplay = activeCustomChars.some(c => c.id === thomasAnderson?.id);
-  const showThomasAndersonFix = thomasAnderson && !thomasInDisplay;
 
   return (
     <div className="min-h-screen bg-background">
@@ -373,9 +360,7 @@ export default function Home() {
 
       {!isInitialLoading && (
         <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
-          {showThomasAndersonFix && (
-            <ThomasAndersonFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />
-          )}
+
           {currentUser && (
             <UserCard
               user={currentUser}
