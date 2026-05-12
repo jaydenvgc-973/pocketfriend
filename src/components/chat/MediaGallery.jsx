@@ -306,36 +306,53 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       ? refUrls
       : (character.avatar_url ? [character.avatar_url] : []);
 
+    // STRICT USER-ONLY GUARD: If subjectType is "user", the active chat character
+    // is the conversation context — NOT an image subject.
+    const isUserOnlyMode = subjectType === 'user';
+
+    // ── SINGLE EXPLICIT CHARACTER SELECTION OVERRIDE ──────────────────────────
+    // If user picked exactly one character from the picker, that character is the
+    // authoritative subject — regardless of the tab or the active chat character.
+    let resolvedCharacterId = isUserOnlyMode ? null : character.id;
+    let resolvedCharacterName = isUserOnlyMode ? null : character.name;
+    let resolvedCharRefImages = isUserOnlyMode ? [] : charRefImages;
+
+    if (!isUserOnlyMode && selectedCharacterIds.length === 1 && !selectedPeople) {
+      // Single explicit selection — find the character in the roster
+      const explicitChar = allCharacters.find(c => c.id === selectedCharacterIds[0]);
+      if (explicitChar) {
+        resolvedCharacterId = explicitChar.id;
+        resolvedCharacterName = explicitChar.name;
+        const explicitRefs = (explicitChar.reference_image_urls || [])
+          .filter(url => url && !url.includes('generated_image'))
+          .slice(0, 3);
+        resolvedCharRefImages = explicitRefs.length > 0
+          ? explicitRefs
+          : (explicitChar.avatar_url ? [explicitChar.avatar_url] : []);
+        console.log(`[MediaGallery] Single explicit subject override: "${explicitChar.name}" (${explicitChar.id}) — NOT active chat character "${character.name}"`);
+      }
+    }
+
+    if (isUserOnlyMode) {
+      console.log(`[MediaGallery] USER-ONLY mode — character identity cleared. Active chat character "${character.name}" is NOT a subject.`);
+    }
+
     setIsGenerating(true);
     setGenerateError(null);
     try {
-      // Log identity lock validation chain
-      console.log(`[MediaGallery.handleGenerate] ═══════════════════════════════════════════════`);
-      console.log(`[MediaGallery.handleGenerate] IDENTITY LOCK VALIDATION`);
-      console.log(`[MediaGallery.handleGenerate] Selected characters: ${selectedCharacterIds.length}`);
-      if (selectedPeople) {
-        console.log(`[MediaGallery.handleGenerate]   Primary: ${selectedPeople.character?.id} → refs: ${selectedPeople.character?.refs?.length || 0}`);
-        selectedPeople.others.forEach((ch, i) => {
-          console.log(`[MediaGallery.handleGenerate]   Other ${i}: ${ch.id} → refs: ${ch.refs?.length || 0}`);
-        });
-        if (selectedPeople.user) {
-          console.log(`[MediaGallery.handleGenerate]   User → refs: ${selectedPeople.user?.refs?.length || 0}`);
-        }
-      }
-      console.log(`[MediaGallery.handleGenerate] ═══════════════════════════════════════════════`);
-
       // Create placeholder message
       const newMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
         sender_type: subjectType === 'user' ? 'user' : 'character',
-        character_id: subjectType !== 'user' ? character.id : undefined,
-        character_name: subjectType !== 'user' ? character.name : undefined,
+        character_id: resolvedCharacterId || undefined,
+        character_name: resolvedCharacterName || undefined,
         content: "",
         emotional_state: character.emotional_state || "calm",
         timestamp: new Date().toISOString(),
         generation_context: {
           prompt: promptText,
-          character_id: subjectType !== 'user' ? character.id : null,
+          character_id: resolvedCharacterId,
+          character_reference_images: resolvedCharRefImages,
           location_id: selectedLocation?.id || null,
           location_name: selectedLocation?.name || null,
           zone_name: selectedZone || null,
@@ -344,23 +361,15 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       });
       if (!newMsg?.id) throw new Error('Failed to create message');
 
-      // STRICT USER-ONLY GUARD: If subjectType is "user", the active chat character
-      // is the conversation context — NOT an image subject. Clear all character identity
-      // fields to prevent subject leak into user-only generated images.
-      const isUserOnlyMode = subjectType === 'user';
-      if (isUserOnlyMode) {
-        console.log(`[MediaGallery] USER-ONLY mode — clearing all character identity from payload (subject leak prevention)`);
-        console.log(`[MediaGallery] active chat character "${character.name}" (${character.id}) is NOT a subject in this image`);
-      }
-
       const genRes = await base44.functions.invoke('mediaGridGenerate', {
         messageId: newMsg.id,
         prompt: promptText,
         subjectType,
-        // Character identity — explicitly null for user-only images
-        characterId: isUserOnlyMode ? null : character.id,
-        characterName: isUserOnlyMode ? null : character.name,
-        characterRefImages: isUserOnlyMode ? [] : charRefImages,
+        // Character identity — uses explicit selection override or active chat character
+        // resolvedCharacterId/Name/RefImages are null/empty for user-only images
+        characterId: resolvedCharacterId,
+        characterName: resolvedCharacterName,
+        characterRefImages: resolvedCharRefImages,
         // User identity
         userRefImages,
         userName: userSettings?.fictional_world_name || userChar?.world_name || userChar?.name || 'the user',
