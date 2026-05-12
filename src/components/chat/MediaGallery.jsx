@@ -7,6 +7,7 @@ import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
 import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
+import { readCache, writeCache, isCacheStale, isValidCharacterRoster, isValidLocationList } from "@/lib/mediaGridCache";
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -94,9 +95,16 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   // Track whether dropdown data has been loaded for the current open session
   const dropdownLoadedRef = useRef(false);
 
-  // Load dropdowns (characters + locations + settings) as soon as the modal opens.
-  // PRIORITY: This fires immediately on open and registers a foreground task so background
-  // systems yield. The heavy 500-message image fetch is staggered AFTER dropdowns resolve.
+  // Load dropdowns (characters + locations + settings) when the modal opens.
+  //
+  // STRATEGY — last-known-good cache + background refresh:
+  //   1. Register foreground task immediately (background systems yield).
+  //   2. Read localStorage cache scoped by owner_email — show instantly if valid.
+  //   3. If cache is fresh (<10 min), skip server fetch entirely.
+  //   4. If cache is stale or missing, fetch from server in parallel.
+  //   5. Write server results to cache ONLY if they are complete and valid.
+  //   6. Never overwrite good cache with empty/partial/failed results.
+  //
   // CRITICAL: All queries use owner_email — never created_by, never unscoped.
   useEffect(() => {
     if (!isOpen) {
@@ -104,34 +112,74 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       return;
     }
 
-    // Use cached email ref immediately if available — avoids waiting for state update
     const email = userEmailRef.current || userEmail;
-    if (!email) {
-      // Email not resolved yet — re-fires once userEmail state updates
+    if (!email) return; // Re-fires once userEmail state updates
+
+    if (dropdownLoadedRef.current) return;
+    dropdownLoadedRef.current = true;
+
+    // Register foreground priority — background simulations yield
+    const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'critical');
+
+    // ── STEP 1: Show last-known-good cache immediately ──────────────────────
+    const cachedChars = readCache(email, 'characters');
+    const cachedLocs = readCache(email, 'locations');
+
+    if (cachedChars) setAllCharacters(cachedChars.records);
+    if (cachedLocs) setLocations(cachedLocs.records);
+
+    // If both caches are fresh, no server fetch needed — release foreground now
+    const charsFresh = cachedChars && !isCacheStale(cachedChars);
+    const locsFresh = cachedLocs && !isCacheStale(cachedLocs);
+
+    if (charsFresh && locsFresh) {
+      // Settings is small — always fetch fresh, non-blocking
+      base44.entities.UserSettings.filter({ owner_email: email })
+        .then(s => setUserSettings(s?.[0] || null))
+        .catch(() => {});
+      releaseForeground();
       return;
     }
 
-    if (dropdownLoadedRef.current) return; // Already loaded for this open session
-    dropdownLoadedRef.current = true;
+    // ── STEP 2: Refresh stale/missing data from server in parallel ──────────
+    const refreshPromises = [];
 
-    // Register foreground priority — background simulations yield while generator is open
-    const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'critical');
+    if (!charsFresh) {
+      refreshPromises.push(
+        fetchUnifiedRoster(base44, email)
+          .then(roster => {
+            if (isValidCharacterRoster(roster)) {
+              setAllCharacters(roster);
+              writeCache(email, 'characters', roster);
+            }
+            // If invalid/empty, keep showing whatever was in cache — do NOT clear it
+          })
+          .catch(() => {})
+      );
+    }
 
-    // Fire all three dropdown queries in parallel — no serial blocking
-    Promise.all([
-      base44.functions.invoke('fetchAllLocationsForUser', {})
-        .then(res => setLocations(res?.data?.locations || []))
-        .catch(() => {}),
+    if (!locsFresh) {
+      refreshPromises.push(
+        base44.functions.invoke('fetchAllLocationsForUser', {})
+          .then(res => {
+            const locs = res?.data?.locations;
+            if (isValidLocationList(locs)) {
+              setLocations(locs);
+              writeCache(email, 'locations', locs);
+            }
+          })
+          .catch(() => {})
+      );
+    }
+
+    // Settings is always refreshed (small payload)
+    refreshPromises.push(
       base44.entities.UserSettings.filter({ owner_email: email })
-        .then(settingsList => setUserSettings(settingsList?.[0] || null))
-        .catch(() => {}),
-      fetchUnifiedRoster(base44, email)
-        .then(roster => setAllCharacters(roster || []))
-        .catch(() => {}),
-    ]).finally(() => {
-      // Release foreground after dropdown data is ready
-      releaseForeground();
-    });
+        .then(s => setUserSettings(s?.[0] || null))
+        .catch(() => {})
+    );
+
+    Promise.all(refreshPromises).finally(() => releaseForeground());
   }, [isOpen, userEmail]);
 
   const availableZones = selectedLocation?.zones?.filter(z => z.image_urls?.length > 0) || [];
