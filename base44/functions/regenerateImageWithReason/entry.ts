@@ -606,6 +606,27 @@ Deno.serve(async (req) => {
         userRefs = cdnFilter(dbUserRefs).slice(0, 3);
         if (userRefs.length > 0) console.log(`[regenerateImageWithReason] User refs fetched from UserSettings: ${userRefs.length}`);
       }
+      // CRITICAL FALLBACK: If all UserSettings sources are empty, check the world-self Character avatar_url.
+      // This is the same image displayed in the Media Grid selector — if the UI shows it, the generator must use it.
+      if (userRefs.length === 0) {
+        try {
+          const userCharList = await base44.asServiceRole.entities.Character.filter(
+            { owner_email: requestingUser, is_user: true },
+            null,
+            1
+          ).catch(() => []);
+          const userChar = userCharList?.[0];
+          if (userChar?.avatar_url) {
+            const avatarPublic = toPublicCDN(userChar.avatar_url);
+            if (isAccessible(avatarPublic) && !avatarPublic.includes('generated_image')) {
+              userRefs = [avatarPublic];
+              console.log(`[regenerateImageWithReason] User identity fallback: world-self Character avatar_url used (matches selector display)`);
+            }
+          }
+        } catch (fallbackErr) {
+          console.warn(`[regenerateImageWithReason] World-self Character fallback lookup failed: ${fallbackErr?.message}`);
+        }
+      }
     }
 
     // ── CLASSIFICATION-FIRST SANITIZER ────────────────────────────────────────

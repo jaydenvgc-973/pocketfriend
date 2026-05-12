@@ -33,6 +33,7 @@ import LifeJournal from "@/components/character/LifeJournal";
 import CharacterQuirksPanel from "@/components/character/CharacterQuirksPanel";
 import CharacterClosetPanel from "@/components/character/CharacterClosetPanel";
 import AddPeopleInTheirWorldPanel from "@/components/character/AddPeopleInTheirWorldPanel";
+import RelationshipTensionCard from "@/components/character/RelationshipTensionCard";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -996,6 +997,14 @@ export default function CharacterProfile() {
                           </div>
                         ))}
                       </div>
+                      {/* Relationship Tension — lazy loaded, does not block profile */}
+                      {rel.related_character_id && (
+                        <RelationshipTensionCard
+                          characterId={characterId}
+                          relatedCharId={rel.related_character_id}
+                          relatedCharName={rel.person_name || linkedChar?.name || 'them'}
+                        />
+                      )}
                     </div>
                   );
                 })}

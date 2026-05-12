@@ -1,0 +1,64 @@
+{
+  "name": "RelationshipTension",
+  "type": "object",
+  "properties": {
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email \u2014 primary ownership source of truth"
+    },
+    "character_a_id": {
+      "type": "string",
+      "description": "First character in the tension pair"
+    },
+    "character_b_id": {
+      "type": "string",
+      "description": "Second character in the tension pair"
+    },
+    "pair_key": {
+      "type": "string",
+      "description": "Deterministic sorted key: sorted([a_id, b_id]).join('_')"
+    },
+    "has_tension": {
+      "type": "boolean",
+      "default": false
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default": "low"
+    },
+    "pattern_type": {
+      "type": "string",
+      "description": "e.g. trust_jealousy_conflict, attachment_independence_conflict"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "summary": {
+      "type": "string",
+      "description": "AI-generated human-readable tension summary"
+    },
+    "last_computed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trigger_context": {
+      "type": "string",
+      "description": "What triggered this recomputation (conversation_id, life_event, manual)"
+    }
+  },
+  "required": [
+    "owner_email",
+    "character_a_id",
+    "character_b_id",
+    "pair_key"
+  ]
+}

@@ -1423,6 +1423,28 @@ Deno.serve(async (req) => {
       if (userRefs.length === 0 && userReferenceImages?.length > 0) {
         userRefs = cdnFilter(userReferenceImages).slice(0, 3);
       }
+      // CRITICAL FALLBACK: If UserSettings arrays and UI refs are all empty, check the world-self
+      // Character record's avatar_url — this is the same image displayed in the Media Grid selector.
+      // The selector renders char.avatar_url, so if the UI shows it, we must be able to use it.
+      if (userRefs.length === 0) {
+        try {
+          const userCharList = await base44.asServiceRole.entities.Character.filter(
+            { owner_email: requestingUser, is_user: true },
+            null,
+            1
+          ).catch(() => []);
+          const userChar = userCharList?.[0];
+          if (userChar?.avatar_url) {
+            const avatarPublic = toPublicCDN(userChar.avatar_url);
+            if (isAccessible(avatarPublic) && !avatarPublic.includes('generated_image')) {
+              userRefs = [avatarPublic];
+              console.log(`[generateImageAsync] User identity fallback: world-self Character avatar_url used (matches selector display)`);
+            }
+          }
+        } catch (fallbackErr) {
+          console.warn(`[generateImageAsync] World-self Character fallback lookup failed: ${fallbackErr?.message}`);
+        }
+      }
       console.log(`[generateImageAsync] User identity refs: ${userRefs.length}`);
     }
 
