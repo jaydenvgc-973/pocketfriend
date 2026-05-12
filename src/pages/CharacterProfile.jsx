@@ -404,7 +404,7 @@ export default function CharacterProfile() {
         <MonthlyStatementPanel characterId={characterId} />
 
         {/* Monthly Expenses */}
-        <CharacterExpenseManager characterId={characterId} readOnly={character.is_default} />
+        <CharacterExpenseManager characterId={characterId} readOnly={false} />
 
         {/* Your Connection */}
         <div className="bg-card border border-border rounded-2xl p-4">
@@ -913,7 +913,7 @@ export default function CharacterProfile() {
 
         {/* Family Members */}
 
-        <FamilyEditor character={character} readOnly={character.is_default} allCharacters={allCharacters} currentUser={currentUser} userSettings={userSettings[0]} />
+        <FamilyEditor character={character} readOnly={false} allCharacters={allCharacters} currentUser={currentUser} userSettings={userSettings[0]} />
 
         {/* Family History */}
         {character.family_history && (
