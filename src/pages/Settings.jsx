@@ -387,104 +387,30 @@ export default function Settings() {
             ) : null;
           })()}
 
-          {/* NPC Family */}
+          {/* NPC Family (Read-only display only) */}
           {(() => {
-            // "npc_family_member" is the canonical type — "family_npc" was an old alias, never written to DB
-            const familyChars = characters.filter(c => c.character_type === "npc_family_member" && c.status === "active");
+            const familyChars = characters.filter(c => c.character_type === "npc_family_member" && c.status === "active").sort((a, b) => (a.name || '').localeCompare(b.name || ''));
             return familyChars.length > 0 ? (
               <div className="space-y-3 pb-4 border-b border-border">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">NPC Family ({familyChars.length})</p>
-                <div className="space-y-4">
-                  {familyChars.map(char => {
-                    const charVoiceForm = charVoiceForms[char.id] || {
-                      voice_enabled: char.voice_enabled || false,
-                      voice_name: char.voice_name || "",
-                      voice_style_note: char.voice_style_note || "",
-                    };
-                    const isSavingChar = savingCharIds.has(char.id);
-                    return (
-                      <div key={char.id} className="border border-border rounded-xl p-3 space-y-3">
-                        <div className="flex items-center gap-3">
-                          <CharacterAvatar character={char} size="sm" />
-                          <span className="text-sm font-medium text-foreground w-24 shrink-0 truncate">{char.name}</span>
-                          <input
-                            type="text"
-                            placeholder={settings.fictional_world_name || "nickname..."}
-                            defaultValue={char.nickname_for_user || ""}
-                            onBlur={e => {
-                              const val = e.target.value.trim();
-                              if (val !== (char.nickname_for_user || "")) {
-                                base44.entities.Character.update(char.id, { nickname_for_user: val || null })
-                                  .then(() => queryClient.invalidateQueries({ queryKey: ["characters", user?.email] }));
-                              }
-                            }}
-                            className="flex-1 h-9 px-3 rounded-lg bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground"
-                          />
-                        </div>
-                        <div className="pl-11">
-                          <VoiceSettings 
-                            data={charVoiceForm} 
-                            onUpdate={(field, value) => setCharVoiceForms(p => ({ ...p, [char.id]: { ...charVoiceForm, [field]: value } }))} 
-                            hasApiKey={true}
-                            character={char}
-                          />
-                          {(charVoiceForm.voice_enabled !== char.voice_enabled || charVoiceForm.voice_name !== char.voice_name || charVoiceForm.voice_style_note !== char.voice_style_note) && (
-                            <Button 
-                              onClick={async () => {
-                                setSavingCharIds(p => new Set([...p, char.id]));
-                                await base44.entities.Character.update(char.id, {
-                                  voice_enabled: charVoiceForm.voice_enabled,
-                                  voice_name: charVoiceForm.voice_name,
-                                  voice_style_note: charVoiceForm.voice_style_note,
-                                });
-                                queryClient.invalidateQueries({ queryKey: ["characters", user?.id] });
-                                setSavingCharIds(p => { const next = new Set(p); next.delete(char.id); return next; });
-                              }} 
-                              disabled={isSavingChar} 
-                              size="sm"
-                              className="w-full mt-2 gap-1 rounded-lg h-8"
-                            >
-                              {isSavingChar ? "Saving..." : <><Check className="w-3 h-3" /> Save</>}
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null;
-          })()}
-
-
-
-          {/* NPC Fictitious People */}
-          {(() => {
-            const npcFictitiousChars = characters.filter(c => c.character_type === "npc_fictitious" && c.status !== "deleted").sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-            return npcFictitiousChars.length > 0 ? (
-              <div className="space-y-3 pb-4 border-b border-border">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">NPC Fictitious ({npcFictitiousChars.length})</p>
                 <div className="space-y-3">
-                  {npcFictitiousChars.map(char => (
+                  {familyChars.map(char => (
                     <div key={char.id} className="border border-border rounded-xl p-3 flex items-center gap-3">
                       <CharacterAvatar character={char} size="sm" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">{char.name}</p>
                         <p className="text-xs text-muted-foreground capitalize">{char.status}</p>
                       </div>
-                      <button
-                        onClick={() => setPendingDelete(char)}
-                        className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                        title="Delete NPC"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
                     </div>
                   ))}
                 </div>
               </div>
             ) : null;
           })()}
+
+
+
+
 
           {/* Moved Away & Deleted Characters at bottom */}
           <div className="space-y-4">
