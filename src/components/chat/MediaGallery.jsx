@@ -5,8 +5,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
+import { useAuth } from "@/lib/AuthContext";
 import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
-import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
+import { registerForegroundTask, clearForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from "@/lib/foregroundPriorityManager";
 import { readCache, writeCache, isCacheStale, validateCharacterRoster, isValidLocationList } from "@/lib/mediaGridCache";
 
 function toPublicCDN(url) {
@@ -27,6 +28,9 @@ function isProviderAccessible(url) {
 }
 
 export default function MediaGallery({ messages, onDeleteImage, character, conversationId, onImageGenerated, externalTrigger, onExternalClose }) {
+  const { user } = useAuth();
+  const foregroundTaskIdRef = useRef(null);
+
   // Initialize open immediately if mounted with externalTrigger=true.
   // This prevents a race where onExternalClose() resets the parent flag before
   // isOpen has committed, which would unmount the component before it renders.
@@ -719,6 +723,17 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
     setIsGenerating(true);
     setGenerateError(null);
+
+    // Register foreground task — background systems yield during image generation
+    if (user?.email) {
+      foregroundTaskIdRef.current = registerForegroundTask(FOREGROUND_TASKS.IMAGE_GENERATION, {
+        ownerEmail: user.email,
+        priority: PRIORITY_LEVELS.CRITICAL,
+        page: 'MediaGrid',
+        durationMs: 60000, // 60s timeout for image generation
+      });
+    }
+
     try {
       // Create placeholder message
       const newMsg = await base44.entities.Message.create({
@@ -800,6 +815,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       setGenerateError(err.message || "Failed to generate image");
     } finally {
       setIsGenerating(false);
+      // Clear foreground task
+      if (user?.email && foregroundTaskIdRef.current) {
+        clearForegroundTask(user.email, foregroundTaskIdRef.current);
+        foregroundTaskIdRef.current = null;
+      }
     }
   };
 
