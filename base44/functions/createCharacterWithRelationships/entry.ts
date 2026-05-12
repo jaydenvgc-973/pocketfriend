@@ -33,12 +33,8 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
     
-    if (characterData.created_by && characterData.created_by !== actingUserEmail) {
-      console.error(`[createCharacterWithRelationships] CONTAMINATION DETECTED: Frontend passed created_by="${characterData.created_by}" but acting user is "${actingUserEmail}". This indicates session bleed.`);
-      return Response.json({ 
-        error: 'Identity mismatch: created_by does not match the authenticated user session. This may indicate a session contamination issue.' 
-      }, { status: 400 });
-    }
+    // created_by is always overridden from the server-side session below — no frontend check needed.
+    // The backend authoritatively sets it from actingUserEmail.
 
     // ── BACKWARD-COMPATIBLE SCHEMA NORMALIZATION ─────────────────────────────
     // Older clients may omit newer fields. We never reject based on missing new fields.

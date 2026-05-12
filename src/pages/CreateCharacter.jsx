@@ -481,7 +481,6 @@ Return ONLY a JSON object with a "memories" array. Each memory: { title, descrip
       // ══════════════════════════════════════════════════════════════
       const charData = {
         name: fullName,
-        created_by: lockedActingUserEmail,
         owner_email: lockedActingUserEmail,
         character_type: "active_created_character",
         gender: randomGender.toLowerCase(),
@@ -726,7 +725,6 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
       // ══════════════════════════════════════════════════════════════
       const charData = {
         name: fullName,
-        created_by: lockedActingUserEmail,
         owner_email: lockedActingUserEmail,
         character_type: "active_created_character",
         gender: data.gender?.toLowerCase(),
@@ -870,12 +868,8 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
       setIsCreating(false);
       // CREATION_VERSION_MISMATCH / CREATION_BLOCKED_ERROR:
       // Surface a clear error with a retry option rather than a dead state.
-      const msg = error?.message || "";
-      if (msg.includes("validation") || msg.includes("required") || msg.includes("field")) {
-        alert("Some fields couldn't be validated. Retrying with safe defaults — please tap Create again.");
-      } else {
-        alert("Failed to create character. Please check your connection and try again.");
-      }
+      const msg = error?.message || "Unknown error";
+      alert(`Failed to create character: ${msg}`);
      }
      };
 
