@@ -532,10 +532,13 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     if (selectedCharacterIds.length > 0 && !allSelectedAreUser) {
       // Multi-person image: validate all selected people (excluding user-self characters)
       const nonUserIds = selectedCharacterIds.filter(id => !allCharacters.find(c => c.id === id)?.is_user);
+      // CRITICAL FIX: includeUser must be true when the user world-self IS in the selection.
+      // Previously hardcoded false — caused user identity to be excluded from multi-person payload.
+      const userIsSelected = selectedCharacterIds.some(id => allCharacters.find(c => c.id === id)?.is_user);
       const validation = await validateSelectedPeopleIdentities(
         base44,
         nonUserIds,
-        false, // includeUser — only set if user is in selectedCharacterIds
+        userIsSelected, // true when user world-self is explicitly in selectedCharacterIds
         userEmail,
         character.id,
         allCharacters
@@ -553,16 +556,17 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     // If no multi-select, use single-character mode (existing path)
 
     // Build user refs — needed for user-only mode (tab OR picker selection of user world-self)
-    // IMPORTANT: Build these before singleSelectIsUser is resolved, since we need them available.
-    // effectiveSubjectType is resolved below — but we know user refs are needed if:
-    //   a) subjectType === 'user' (tab selection), OR
-    //   b) allSelectedAreUser (user world-self picked from character picker)
+    // CRITICAL FIX: User reference images live on UserSettings (reference_image_urls, generated_avatar_urls),
+    // NOT on the world-self Character record. The Character record with is_user=true rarely has reference
+    // images — pulling from it produces empty refs and a generic user likeness.
+    // Source of truth: UserSettings.reference_image_urls → UserSettings.generated_avatar_urls → UserSettings.appearance_lock avatar
     const userChar = allCharacters.find(c => c.is_user);
     const needsUserRefs = subjectType !== 'character' || allSelectedAreUser;
     const userRefImages = needsUserRefs
       ? [
-          ...(userChar?.reference_image_urls || []).slice(0, 3),
-          ...(userChar?.generated_avatar_urls || []).slice(0, 1),
+          ...(userSettings?.reference_image_urls || []).slice(0, 3),
+          ...(userSettings?.generated_avatar_urls || []).slice(0, 2),
+          // Only fall back to world-self Character avatar as absolute last resort
           userChar?.avatar_url,
         ].filter(Boolean)
       : [];

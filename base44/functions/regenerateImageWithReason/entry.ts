@@ -155,7 +155,7 @@ function resolveOutfitTextFromCharacterRegen(character) {
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
-function buildRegenPrompt({ scenePrompt, charName, charDesc, locationName, zoneName, envRefs, charRefs, reason }) {
+function buildRegenPrompt({ scenePrompt, charName, charDesc, locationName, zoneName, envRefs, charRefs, userRefs, includeUser, reason }) {
   // ── IMAGE GENERATION PRIORITY STACK (GOVERNING LAW) ──────────────────────
   // Priority 1: SCENE INTENT — user prompt meaning, emotion, action
   // Priority 2: CHARACTER PRESENCE — who is there and what they are doing
@@ -182,13 +182,17 @@ function buildRegenPrompt({ scenePrompt, charName, charDesc, locationName, zoneN
 
    const hasEnv  = envRefs.length > 0;
    const hasChar = charRefs.length > 0;
+   const hasUser = (userRefs || []).length > 0;
 
    const ENV_SLOTS  = Math.min(envRefs.length, 4);
    const CHAR_SLOTS = Math.min(charRefs.length, 2);
+   const USER_SLOTS = Math.min((userRefs || []).length, 3);
 
    const envEnd    = ENV_SLOTS;
    const charStart = ENV_SLOTS + 1;
    const charEnd   = ENV_SLOTS + CHAR_SLOTS;
+   const userStart = ENV_SLOTS + CHAR_SLOTS + 1;
+   const userEnd   = ENV_SLOTS + CHAR_SLOTS + USER_SLOTS;
 
    const cameraPos = selectCameraPosition(scenePrompt);
 
@@ -221,12 +225,20 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
 `;
   }
   if (hasChar) {
-     preamble += `Images ${charStart}–${charEnd}: FACE-CROP IDENTITY PHOTOS — FACE ONLY, NOTHING ELSE.
-  "${charName}" — Match ONLY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
-  ⛔ ABSOLUTE PROHIBITION: The background, room, walls, lighting, furniture, pose, and clothing in these photos MUST BE COMPLETELY IGNORED.
-  ⛔ DO NOT USE THESE AS A SCENE BACKGROUND — the room comes from zone images only.
-  ⛔ DO NOT BLEND any environment from these photos into the output.
-  ⛔ Treat these as face texture samples ONLY — nothing else from them transfers to the scene.
+     preamble += `Images ${charStart}–${charEnd}: FACE-CROP IDENTITY PHOTOS — FACE ONLY — "${charName}".
+  Match ONLY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
+  ⛔ ABSOLUTE PROHIBITION: Background, room, walls, lighting, furniture, pose, clothing in these photos MUST BE COMPLETELY IGNORED.
+  ⛔ DO NOT USE AS SCENE BACKGROUND — room comes from zone images only.
+  ⛔ Treat as face texture samples ONLY.
+
+  `;
+  }
+  if (hasUser && includeUser) {
+    preamble += `Images ${userStart}–${userEnd}: FACE-CROP IDENTITY PHOTOS — FACE ONLY — USER / MY PERSONA.
+  These are photos of the user (the person who owns this app). Match ONLY: face structure, skin tone, hair, body type.
+  ⛔ ABSOLUTE PROHIBITION: Background, pose, clothing, lighting from these photos MUST BE COMPLETELY IGNORED.
+  ⛔ DO NOT treat these as a scene template — face identity ONLY transfers.
+  The user must appear as a distinct person from "${charName}" — do NOT merge their appearances.
 
   `;
   }
@@ -277,14 +289,18 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
   Re-render with MAXIMUM fidelity. Every constraint above is non-negotiable.
   Correct: body proportions, furniture exact match (no duplication), correct face/hair/skin tone, anatomically correct hands/fingers, existing objects only.`;
   } else if (reason === 'no_avatar') {
-    reasonBlock = `
+     const subjectList = [];
+     if (hasChar) subjectList.push(`"${charName}" (Images ${charStart}–${charEnd})`);
+     if (hasUser && includeUser) subjectList.push(`User / My Persona (Images ${userStart}–${userEnd})`);
+     reasonBlock = `
 
-  IDENTITY CORRECTION — "${charName}":
-  The previous image did not look like the character. Fix identity with MAXIMUM PRECISION.
-  Reference images ${charStart}–${charEnd} are photographs of this exact person.
-  Match PRECISELY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
-  These appearance traits are ABSOLUTE TRUTH — NEVER approximate or substitute.
-  ⛔ Do NOT generate an approximate or generic person.`;
+  IDENTITY CORRECTION — ${subjectList.length > 0 ? subjectList.join(' and ') : `"${charName}"`}:
+  The previous image did not look like the correct person(s). Fix all identity references with MAXIMUM PRECISION.
+  ${hasChar ? `"${charName}" reference images: ${charStart}–${charEnd}. Match face structure, skin tone, hair, body type PRECISELY.` : ''}
+  ${hasUser && includeUser ? `User persona reference images: ${userStart}–${userEnd}. Match face structure, skin tone, hair, body type PRECISELY.` : ''}
+  Each person's appearance traits are ABSOLUTE TRUTH — NEVER approximate or substitute.
+  ⛔ Do NOT generate a generic, approximate, or randomly generated person for ANY subject.
+  ⛔ Do NOT let one subject's appearance bleed into or overwrite the other.`;
   } else if (reason === 'wrong_location') {
     reasonBlock = `
 
@@ -328,6 +344,25 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
   ⛔ THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS
   ⛔ CRITICAL: The character must look PHYSICALLY PRESENT inside the room — integrated with the room's perspective, depth, and lighting. NOT cut out. NOT composited. NOT overlaid on a background. ONE UNIFIED SCENE.
   ⛔ If the character looks pasted or floating — the generation has FAILED. Redo with full integration.`;
+  }
+
+  // User identity lock — added when user is a subject in the regenerated image
+  if (hasUser && includeUser) {
+    identityLock += `
+
+  USER IDENTITY — "My Persona / Me":
+  ${hasUser
+    ? `Images ${userStart}–${userEnd} are FACE-CROP REFERENCE PHOTOS of the user (the app owner).
+  Match PRECISELY: face bone structure, eyes, skin tone, hair color/length/style, body type.
+  ⛔ ABSOLUTE PROHIBITION: Background, pose, clothing, lighting from these photos MUST BE COMPLETELY IGNORED.
+  ⛔ DO NOT use these photos as a scene template — only face identity transfers.`
+    : `No user reference photos available. Generate the user as a realistic person consistent with scene context.`
+  }
+
+  ✅ The user must appear as a DISTINCT person from "${charName}" — different face, different identity
+  ⛔ Do NOT merge or blend the user's appearance with the character's appearance
+  ⛔ Do NOT generate a generic placeholder for the user when reference photos exist
+  ⛔ BOTH subjects must be physically integrated into the same scene — same lighting, same floor plane, same perspective`;
   }
 
   return `${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${reasonBlock}${identityLock}`;
@@ -733,6 +768,7 @@ Deno.serve(async (req) => {
     const ENV_SLOTS  = Math.min(envRefs.length, 4);
     const CHAR_SLOTS = Math.min(charRefs.length, 3);
     const USER_SLOTS = Math.min(userRefs.length, 3);
+    const needsUserRefsForRegen = needsUserRefs; // already resolved above
 
     const referenceImages = [
       ...envRefs.slice(0, ENV_SLOTS),
@@ -740,17 +776,19 @@ Deno.serve(async (req) => {
       ...userRefs.slice(0, USER_SLOTS),
     ].filter(Boolean);
 
-    console.log(`[regenerateImageWithReason] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} total=${referenceImages.length} | reason=${reason}`);
+    console.log(`[regenerateImageWithReason] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | reason=${reason} | includeUser=${!!includeUserSubject}`);
 
     // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
     const finalPrompt = buildRegenPrompt({
       scenePrompt,
       charName,
-      charDesc,   // ← text identity now flows through for characters without reference photos
+      charDesc,
       locationName: resolvedLocationName,
       zoneName: resolvedZoneName,
       envRefs: envRefs.slice(0, ENV_SLOTS),
       charRefs: charRefs.slice(0, CHAR_SLOTS),
+      userRefs: userRefs.slice(0, USER_SLOTS),
+      includeUser: needsUserRefsForRegen && USER_SLOTS > 0,
       reason,
     });
 
@@ -938,7 +976,13 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('[regenerateImageWithReason] Fatal:', error.message);
-    return Response.json({ success: false, error: error.message }, { status: 500 });
+    // CRITICAL: Always produce a string message — never return undefined/null as error
+    // error.message may be undefined for non-Error throws (plain objects, network errors, etc.)
+    const safeMsg = (typeof error?.message === 'string' && error.message)
+      ? error.message
+      : (typeof error === 'string' ? error : 'An unexpected error occurred in regeneration. Check backend logs for details.');
+    console.error('[regenerateImageWithReason] Fatal error:', safeMsg);
+    console.error('[regenerateImageWithReason] Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error || {})));
+    return Response.json({ success: false, error: safeMsg }, { status: 500 });
   }
 });

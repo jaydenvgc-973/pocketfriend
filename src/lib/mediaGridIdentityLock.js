@@ -9,7 +9,7 @@
  * Resolve user visual reference images from UserSettings
  */
 export async function resolveUserVisualRefs(base44, userEmail) {
-  if (!userEmail) return { refs: [], missing: true };
+  if (!userEmail) return { refs: [], missing: true, error: 'User email not available — cannot resolve user identity.' };
 
   try {
     // OWNERSHIP: use owner_email — created_by is permanently forbidden
@@ -20,14 +20,29 @@ export async function resolveUserVisualRefs(base44, userEmail) {
     ).catch(() => []);
 
     const sett = settingsList?.[0] || {};
+
+    // Priority order for user identity references:
+    // 1. reference_image_urls (real uploaded face photos — best identity lock)
+    // 2. generated_avatar_urls (AI-generated avatars — weaker but valid)
+    // Note: We do NOT use appearance_lock fields here — those are text descriptions,
+    // not image URLs. They are injected into the prompt text by the caller if needed.
     const refs = [
       ...(sett.reference_image_urls || []),
       ...(sett.generated_avatar_urls || []),
     ].filter(Boolean);
 
-    return { refs, missing: refs.length === 0 };
-  } catch {
-    return { refs: [], missing: true };
+    if (refs.length > 0) {
+      return { refs, missing: false };
+    }
+
+    // No reference images found — return missing with a diagnostic message
+    return {
+      refs: [],
+      missing: true,
+      error: 'No user reference images found. Add a persona photo in Settings → My Profile to enable user likeness in generated images.',
+    };
+  } catch (err) {
+    return { refs: [], missing: true, error: `User identity lookup failed: ${err?.message || 'unknown error'}` };
   }
 }
 
@@ -146,9 +161,10 @@ export async function validateSelectedPeopleIdentities(
 
   // 3. USER (if selected in multi-select)
   if (includeUser) {
-    const { refs: userRefs, missing } = await resolveUserVisualRefs(base44, userEmail);
+    const { refs: userRefs, missing, error: userError } = await resolveUserVisualRefs(base44, userEmail);
     if (missing) {
-      errors.push(`User visual reference image is missing.`);
+      // Surface the specific diagnostic message from resolveUserVisualRefs
+      errors.push(userError || 'User visual reference image is missing. Add a persona photo in Settings to enable user likeness.');
     } else {
       selectedPeople.user = { refs: userRefs };
     }
