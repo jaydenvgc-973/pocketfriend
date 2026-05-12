@@ -3,6 +3,7 @@ import { Plus, Trash2, Camera, Loader2, ZoomIn, Lock, Unlock, User } from "lucid
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
+import { resolveOrCreateFamilyMemberCharacter } from "@/lib/familyMemberResolver";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 
 /**
@@ -73,9 +74,10 @@ function defaultLevels(relationshipType) {
 }
 
 // Sync family members into fictional_relationships so they appear in the world list
-// Also ensures each named family member has a real Character record (npc_family_member type)
-// CRITICAL: The linked Character's avatar_url is the SOURCE OF TRUTH for the avatar
-// All linkages follow Hayden's model: stable ID, synced avatar, unified avatar source
+// Uses shared resolveOrCreateFamilyMemberCharacter to ensure consistent resolution:
+// - No duplicates across parents
+// - Shared children (like Leo Parker) remain one record
+// - Every family member has stable _linked_character_id anchor
 async function syncFamilyToRelationships(character, familyMembers, currentUser) {
   const existing = character.fictional_relationships || [];
 
@@ -91,39 +93,24 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
         // This is the ONLY identity anchor — not index, not name matching
         let linkedCharId = m._linked_character_id || null;
 
-        // If not yet linked, find or create the npc_family_member Character record
+        // If not yet linked, use the shared global resolver
         if (!linkedCharId && currentUser?.email && currentUser?.id) {
           try {
-            // First: check if an npc_family_member exists with this exact name
-            const existing = await base44.entities.Character.filter({
+            // GLOBAL CONTRACT: Use shared resolver for all family member creation
+            // This ensures Leo Parker stays ONE record, no duplicates across parents
+            const resolved = await resolveOrCreateFamilyMemberCharacter({
               name: m.name.trim(),
               owner_email: currentUser.email,
-              character_type: 'npc_family_member'
+              owner_user_id: currentUser.id,
+              user_role: currentUser.role || 'user',
+              photo_url: m.photo_url || null,
+              linked_character_id: null,
+              all_live_characters: [], // Empty array OK here — resolver will fetch fresh
+              base44
             });
-
-            if (existing.length > 0) {
-              // Reuse the existing npc_family_member
-              linkedCharId = existing[0].id;
-            } else {
-              // Create a new npc_family_member Character record
-              const newFamilyNPC = await base44.entities.Character.create({
-                name: m.name.trim(),
-                character_type: 'npc_family_member',
-                owner_email: currentUser.email,
-                owner_user_id: currentUser.id,
-                created_by_role: currentUser.role || 'user',
-                status: 'active',
-                is_active_character: false,
-                visibility_scope: 'account_private',
-                data_scope: 'private_user',
-                exclude_from_homepage: true,
-                exclude_from_roster: true,
-                avatar_url: m.photo_url || null,
-              });
-              linkedCharId = newFamilyNPC.id;
-            }
+            linkedCharId = resolved.id;
           } catch (err) {
-            console.warn('[FamilyEditor] Could not create Character for family member:', m.name, err.message);
+            console.warn('[FamilyEditor] Could not resolve or create Character for family member:', m.name, err.message);
           }
         }
 
