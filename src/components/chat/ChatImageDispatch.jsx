@@ -102,6 +102,8 @@ export async function dispatchImageGeneration({
       liveLocationContext: buildLiveLocationContext(character, {}, true),
       homeResolutionFailed,
       mayAssignTemporaryHousing,
+      // Pass ownerEmail for service-role callers (scheduled/autonomous) to authenticate and scope correctly
+      ownerEmail: currentUser.email,
     });
 
     const returnedMsgId = res?.data?.messageId;
