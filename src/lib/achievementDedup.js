@@ -1,58 +1,60 @@
 /**
  * achievementDedup.js
  *
- * Single source of truth for achievement deduplication key logic.
- * Used by:
- *   - checkAchievements (backend function)
- *   - retroactiveAchievementScan (backend function)
- *   - backfillAchievementOwnerEmail (backend function)
+ * Single source of truth for achievement dedup key logic on the FRONTEND.
+ * Derives scope directly from ACHIEVEMENTS — no separate hardcoded list.
  *
- * Scope is derived from the achievement definition in lib/achievements.js.
- * Never hardcode scope lists here — read from ACHIEVEMENTS[id].scope.
- *
- * Key format:
- *   global:    "global::{owner_email}::{achievement_id}"
- *   character: "char::{owner_email}::{achievement_id}::{character_id}"
- *
- * This file is safe to import in both frontend and backend contexts.
- * Backend functions inline the same logic (no local imports allowed in Deno).
+ * Backend functions (Deno) cannot import this file. They maintain an inline
+ * BACKEND_ACHIEVEMENT_SCOPES mirror. Run auditAchievementScopeDrift to verify
+ * backend inline maps are in sync with this file whenever lib/achievements.js changes.
  */
-
-import { ACHIEVEMENTS } from './achievements.js';
+import { ACHIEVEMENTS } from '@/lib/achievements';
 
 /**
- * Returns the dedup key for an achievement record.
- * @param {string} ownerEmail
- * @param {string} achievementId
- * @param {string|null} characterId
- * @returns {string}
+ * Returns the scope for an achievement id.
+ * Derived from ACHIEVEMENTS — no hardcoded separate list.
+ * Falls back to 'character' for any id not present in ACHIEVEMENTS (e.g. legacy records).
+ */
+export function getAchievementScope(id) {
+  return ACHIEVEMENTS[id]?.scope ?? 'character';
+}
+
+/**
+ * Builds the canonical dedup key for a UserAchievement record.
+ *   global scope:    "global::{ownerEmail}::{achievementId}"
+ *   character scope: "char::{ownerEmail}::{achievementId}::{characterId}"
+ *
+ * ownerEmail   — required. The record's owner_email field.
+ * achievementId — required. The record's achievement_id field.
+ * characterId  — optional. The record's character_id field (null/undefined for global).
  */
 export function buildDedupKey(ownerEmail, achievementId, characterId) {
-  const def = ACHIEVEMENTS[achievementId];
-  const scope = def?.scope ?? 'character'; // default to character-scoped if definition missing
-  if (scope === 'global') {
+  if (getAchievementScope(achievementId) === 'global') {
     return `global::${ownerEmail}::${achievementId}`;
   }
-  // character scope (and any future scopes that use character_id)
   return `char::${ownerEmail}::${achievementId}::${characterId || ''}`;
 }
 
 /**
- * Returns true if the achievement is global-scoped.
- * @param {string} achievementId
- * @returns {boolean}
+ * Builds a Set of existing dedup keys from an array of UserAchievement records.
+ * Use this to guard against creating duplicates before inserting a new record.
  */
-export function isGlobalAchievement(achievementId) {
-  return ACHIEVEMENTS[achievementId]?.scope === 'global';
+export function buildExistingKeySet(records, ownerEmail) {
+  return new Set(records.map(r => buildDedupKey(ownerEmail, r.achievement_id, r.character_id)));
 }
 
 /**
- * Builds a Set of existing dedup keys from a list of UserAchievement records.
- * @param {Array} records - UserAchievement records (must have owner_email, achievement_id, character_id)
- * @returns {Set<string>}
+ * Returns a Map of frontendScopes derived from ACHIEVEMENTS,
+ * suitable for passing to auditAchievementScopeDrift as the payload.
+ *
+ *   { achievement_id: 'global' | 'character', ... }
+ *
+ * Use this when calling the drift audit:
+ *   const frontendScopes = getFrontendScopeMap();
+ *   await base44.functions.invoke('auditAchievementScopeDrift', { frontendScopes });
  */
-export function buildExistingKeySet(records) {
-  return new Set(records.map(r =>
-    buildDedupKey(r.owner_email, r.achievement_id, r.character_id)
-  ));
+export function getFrontendScopeMap() {
+  return Object.fromEntries(
+    Object.values(ACHIEVEMENTS).map(a => [a.id, a.scope])
+  );
 }
