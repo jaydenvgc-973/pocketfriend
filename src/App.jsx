@@ -34,6 +34,7 @@ import MyProfile from './pages/MyProfile';
 import Travel from './pages/Travel';
 import Scene from './pages/Scene';
 import Moments from './pages/Moments';
+import MemoryReelCreator from './pages/MemoryReelCreator';
 import Locations from './pages/Locations';
 import Finance from './pages/Finance';
 import EditCharacterTraits from './pages/EditCharacterTraits';
@@ -91,6 +92,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/edit-character-photos" element={<EditCharacterPhotos />} />
       <Route path="/edit-character-emotions" element={<EditCharacterEmotions />} />
       <Route path="/moments" element={<Moments />} />
+      <Route path="/memory-reel" element={<MemoryReelCreator />} />
       <Route path="/locations" element={<Locations />} />
       <Route path="/edit-character-relationships" element={<EditCharacterRelationships />} />
       <Route path="/edit-character-traits" element={<EditCharacterTraits />} />
