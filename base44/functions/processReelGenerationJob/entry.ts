@@ -152,19 +152,10 @@ Deno.serve(async (req) => {
             ? `The person in this photo: ${charAppearance.fingerprint}.`
             : '';
 
-          // PROMPT STRUCTURE: open with "animate this exact photo" so the model
-          // treats the source image as the foundation frame, not inspiration.
-          // Identity anchor reinforces who NOT to replace.
-          // Motion instruction is minimal and placed LAST.
-          const animPrompt = [
-            `Animate this exact photo into a short video clip. The photo IS the first frame.`,
-            `Do NOT recast, replace, or reinterpret the person in this image.`,
-            `Preserve exactly: their face, eyes, nose, lips, skin tone, hair color, hair texture, beard, body type, age, clothing, and background.`,
-            identityAnchor,
-            `The animated subject must be visually identical to the person in the source photo — not a similar person, not a generic AI person.`,
-            `Motion only: ${motion}.`,
-            `No scene changes. No new characters. No location changes. Vertical 9:16. Smooth cinematic motion. Memory reel style.`,
-          ].filter(Boolean).join(' ');
+          // PROMPT: Minimal text reduces model reinterpretation surface.
+          // The source image in existing_image_urls is the primary input — let it dominate.
+          // Only describe the motion — do not re-describe the character (that invites replacement).
+          const animPrompt = `Image-to-video. Animate this photo exactly as shown. Preserve the person's face, skin, hair, body, and clothing unchanged. Motion only: ${motion}. Vertical 9:16. No cuts. No new characters.`;
 
           // ONLY the source image as existing_image_urls — this is the frame the model animates FROM.
           // Do NOT add avatar as second reference — it confuses model identity and causes actor replacement.
@@ -180,14 +171,9 @@ Deno.serve(async (req) => {
             clipType = 'animated';
             clipStatus = 'success';
           } else {
-            // Retry once with even stronger source-frame emphasis
+            // Retry with even simpler prompt — less text = less reinterpretation
             try {
-              const retryPrompt = [
-                `This is an image-to-video animation task. Start from this exact image as frame 1.`,
-                `Do NOT generate a new person. Do NOT change the face, skin, hair, body, or clothing.`,
-                identityAnchor,
-                `Animate only: ${motion}. The subject must look exactly like the person in the photo. Vertical 9:16.`,
-              ].filter(Boolean).join(' ');
+              const retryPrompt = `Animate this exact photo. Do not change the person. Motion: ${motion}. Vertical 9:16.`;
 
               const retryResult = await base44.integrations.Core.GenerateVideo({
                 prompt: retryPrompt,
@@ -219,11 +205,7 @@ Deno.serve(async (req) => {
             const identityAnchor = charAppearance?.fingerprint ? `Person: ${charAppearance.fingerprint}.` : '';
             const motion = ['subtle breathing motion and eye blink', 'soft ambient motion', 'gentle camera push-in'][i % 3];
 
-            const fallbackPrompt = [
-              `Animate this exact photo. Do not change the person. Do not recast them.`,
-              identityAnchor,
-              `Motion: ${motion}. Vertical 9:16. No scene changes.`,
-            ].filter(Boolean).join(' ');
+            const fallbackPrompt = `Animate this exact photo. Motion: ${motion}. Vertical 9:16.`;
 
             const retryResult = await base44.integrations.Core.GenerateVideo({
               prompt: fallbackPrompt,

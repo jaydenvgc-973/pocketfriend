@@ -10,7 +10,7 @@
  * This component IS the reel. It replaces the need for a final "assembled" AI video.
  */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Play, Pause } from "lucide-react";
 
@@ -27,31 +27,58 @@ const MOTION_EFFECTS = [
 const SLIDE_DURATION = 3200; // ms per static slide
 const VIDEO_DURATION = 4500; // ms budget per animated clip (actual video controls its own)
 
+// FRAME-0 GUARANTEE: For animated clips, show the source image for 400ms before
+// the video plays. This ensures the viewer sees the exact source character first,
+// regardless of what the video model generated as its first frame.
+const FRAME0_HOLD_MS = 400;
+
 function SlideFrame({ clip, index, isActive, onEnded }) {
   const effect = MOTION_EFFECTS[index % MOTION_EFFECTS.length];
   const caption = clip.caption || null;
   const isVideo = clip.clip_type === 'animated' && clip.clip_url;
   const videoRef = useRef(null);
+  const [showFrame0, setShowFrame0] = useState(isVideo); // start with source image visible
+
+  // Reset frame-0 state every time this slide becomes active
+  useEffect(() => {
+    if (!isVideo) return;
+    setShowFrame0(true);
+    const t = setTimeout(() => {
+      setShowFrame0(false); // release to video after hold
+    }, FRAME0_HOLD_MS);
+    return () => clearTimeout(t);
+  }, [isActive, isVideo]);
 
   useEffect(() => {
-    if (isActive && isVideo && videoRef.current) {
+    if (isActive && isVideo && !showFrame0 && videoRef.current) {
       videoRef.current.currentTime = 0;
       videoRef.current.play().catch(() => {});
     }
-  }, [isActive, isVideo]);
+  }, [isActive, isVideo, showFrame0]);
 
   return (
     <div className="absolute inset-0 overflow-hidden">
       {isVideo ? (
-        <video
-          ref={videoRef}
-          src={clip.clip_url}
-          className="w-full h-full object-cover"
-          muted
-          playsInline
-          onEnded={onEnded}
-          loop={false}
-        />
+        <>
+          {/* Frame-0: source image shown first before video plays — guarantees character identity at frame 0 */}
+          {showFrame0 && clip.image_url && (
+            <img
+              src={clip.image_url}
+              alt="Source frame"
+              className="absolute inset-0 w-full h-full object-cover z-10"
+              draggable={false}
+            />
+          )}
+          <video
+            ref={videoRef}
+            src={clip.clip_url}
+            className="w-full h-full object-cover"
+            muted
+            playsInline
+            onEnded={onEnded}
+            loop={false}
+          />
+        </>
       ) : (
         <motion.div
           className="w-full h-full"
