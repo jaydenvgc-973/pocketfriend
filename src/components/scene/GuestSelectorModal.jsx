@@ -42,10 +42,21 @@ export default function GuestSelectorModal({ location, onSelect, onClose }) {
               setLoadStatus('fresh');
             }
             setRoster(guests);
+            // RUNTIME PROOF LOG — readable in browser console when modal opens
+            console.group('[GuestSelectorModal] Canonical roster loaded');
+            console.log(`Total selectable guests: ${guests.length}`);
+            guests.forEach(e => console.log(
+              `  SELECTABLE | canonical_person_id=${e.canonical_person_id} | name="${e.name}" | type=${e.character_type} | id_is_synthetic=${e.canonical_person_id?.startsWith('npc_') || e.canonical_person_id === '__user__'}`
+            ));
             if (diag?.length > 0) {
               setRepairDiagnostics(diag);
-              console.warn('[GuestSelectorModal] Unresolved people (needs_review — not shown as guests):', diag);
+              console.group(`[GuestSelectorModal] NOT selectable — needs_review (${diag.length})`);
+              diag.forEach(d => console.warn(`  needs_review | name="${d.name}" | confidence=${d.confidence} | reason=${d.failure_reason}`));
+              console.groupEnd();
+            } else {
+              console.log('[GuestSelectorModal] No needs_review entries.');
             }
+            console.groupEnd();
           });
       })
       .catch(err => {

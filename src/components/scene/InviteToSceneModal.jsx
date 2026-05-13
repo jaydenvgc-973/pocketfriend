@@ -107,10 +107,21 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
               setLoadStatus('fresh');
             }
             setRoster(invitees);
+            // RUNTIME PROOF LOG — readable in browser console when modal opens
+            console.group('[InviteToSceneModal] Canonical roster loaded');
+            console.log(`Total selectable invitees: ${invitees.length}`);
+            invitees.forEach(e => console.log(
+              `  SELECTABLE | canonical_person_id=${e.canonical_person_id} | name="${e.name}" | type=${e.character_type} | id_is_synthetic=${e.canonical_person_id?.startsWith('npc_') || e.canonical_person_id === '__user__'}`
+            ));
             if (diag?.length > 0) {
               setRepairDiagnostics(diag);
-              console.warn('[InviteToSceneModal] Unresolved people (needs_review — not shown as invitees):', diag);
+              console.group(`[InviteToSceneModal] NOT selectable — needs_review (${diag.length})`);
+              diag.forEach(d => console.warn(`  needs_review | name="${d.name}" | confidence=${d.confidence} | reason=${d.failure_reason}`));
+              console.groupEnd();
+            } else {
+              console.log('[InviteToSceneModal] No needs_review entries.');
             }
+            console.groupEnd();
           });
       })
       .catch(err => {
