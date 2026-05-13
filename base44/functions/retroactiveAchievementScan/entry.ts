@@ -187,6 +187,7 @@ Deno.serve(async (req) => {
         unlocked_at: new Date().toISOString(),
         tier: 'bronze',
         is_seen: false,
+        owner_email: userEmail,
       });
       granted.push(record);
       existingIds.add(achievement_id);

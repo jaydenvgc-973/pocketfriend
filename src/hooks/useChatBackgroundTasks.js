@@ -289,7 +289,15 @@ Return ONLY valid JSON, nothing else.`,
       }
 
       if (!isOnCooldown(characterId, 'achievements', 120000)) {
-        safeInvoke('checkAchievements', { characterId }, characterId, 'achievements').then(res => {
+        safeInvoke('checkAchievements', {
+          characterId,
+          characterName: character?.name || '',
+          userMessage: text || '',
+          characterState: character ? {
+            emotional_state: character.emotional_state,
+            personality_summary: character.personality_summary,
+          } : {},
+        }, characterId, 'achievements').then(res => {
           const revisited = res?.data?.revisited || [];
           if (revisited.length > 0 && onAchievementRevisited) {
             onAchievementRevisited(revisited);
@@ -324,7 +332,10 @@ Return ONLY valid JSON, nothing else.`,
       base44.integrations.Core.InvokeLLM({
         prompt: `You are ${character?.name}. The user just sent: "${text.substring(0, 200)}". React with ONE emoji that fits your personality and emotional state (${character?.emotional_state || 'calm'}). Return only the emoji character, nothing else.`,
       }).then(emoji => {
-        const cleaned = (typeof emoji === 'string' ? emoji : '').trim().replace(/[^\u{1F300}-\u{1FAFF}\u{2600}-\u{27FF}]/gu, '').substring(0, 2);
+        // Strip to a single emoji — covers all major emoji Unicode blocks including ❤️ (U+2764), 👍 (U+1F44D), etc.
+        const cleaned = (typeof emoji === 'string' ? emoji : '').trim()
+          .replace(/[\u200D\uFE0F]/g, '') // strip ZWJ and variation selectors
+          .match(/(\p{Emoji_Presentation}|\p{Extended_Pictographic})/u)?.[0]?.substring(0, 2) || '';
         if (!cleaned) return null;
         return base44.entities.Message.update(lastUserMsg.id, {
           reactions: [...(lastUserMsg.reactions || []), {

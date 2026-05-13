@@ -40,8 +40,7 @@ export default function Moments() {
   const { data: unlocked = [], refetch: refetchAchievements } = useQuery({
     queryKey: ["userAchievements", currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.UserAchievement.filter({ created_by: currentUser.email }, "-unlocked_at")
-      // NOTE: UserAchievement uses created_by for RLS — this is a platform entity filter, not ownership logic
+      ? base44.entities.UserAchievement.filter({ owner_email: currentUser.email }, "-unlocked_at")
       : [],
     enabled: !!currentUser?.email,
   });

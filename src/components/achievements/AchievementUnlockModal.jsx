@@ -50,11 +50,13 @@ export default function AchievementUnlockModal() {
     if (!userEmail) return;
 
     // Subscribe: NEW creates in this session → full modal (if truly new)
+    // Use is_seen === false as the gate (not created_by — that field is platform-managed
+    // and may not match userEmail for backend-created achievement records).
+    // sessionFullModalShown provides the dedup guard so same-session repeats are impossible.
     const unsubscribe = base44.entities.UserAchievement.subscribe((event) => {
       if (
         event.type === "create" &&
         event.data?.is_seen === false &&
-        event.data?.created_by === userEmail &&
         !sessionFullModalShown.has(event.data.achievement_id)
       ) {
         setFullQueue(prev => {
@@ -69,7 +71,7 @@ export default function AchievementUnlockModal() {
     // Show a small non-blocking toast instead, then mark as seen.
     if (!initialFetchDone.current) {
       initialFetchDone.current = true;
-      base44.entities.UserAchievement.filter({ is_seen: false, created_by: userEmail })
+      base44.entities.UserAchievement.filter({ is_seen: false })
         .then(unseen => {
           if (unseen.length === 0) return;
           // Filter out anything that was created this session (subscribe will handle those)
