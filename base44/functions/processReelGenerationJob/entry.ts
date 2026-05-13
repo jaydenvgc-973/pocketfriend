@@ -128,43 +128,51 @@ Deno.serve(async (req) => {
 
       if (shouldAnimate && imageUrl) {
         try {
-          // SOURCE-LOCK: existing_image_urls = [imageUrl] locks the source frame.
-          // Prompt only describes minimal motion — no character invention.
+          // SOURCE-LOCK: The source image IS the video. existing_image_urls must contain
+          // ONLY the source image as the first (and sole) entry. The video model treats
+          // the first image as the literal first frame to animate FROM.
+          // Avatar/reference goes into the text prompt as a verbal anchor — NOT as a
+          // second image, which confuses the model and causes identity replacement.
+
           const motionOptions = [
-            'subtle breathing motion and gentle eye blink, camera slowly pushing in',
-            'soft hair movement from a light breeze, natural body stillness',
-            'head turns slightly, eyes look gently to the side, camera drifts left',
-            'slight smile appears, natural ambient light shift, camera slow pull-back',
-            'hand moves slightly, weight shift, natural environment ambient motion',
+            'subtle breathing, gentle eye blink, camera slowly pushing in',
+            'soft hair movement from a light breeze, natural body stillness, camera holds steady',
+            'head turns slightly, eyes shift gently to the side, camera drifts left',
+            'slight natural smile, ambient light shifts softly, camera slow pull-back',
+            'weight shifts slightly, hand moves naturally, environment has gentle ambient motion',
           ];
           const motion = motionOptions[i % motionOptions.length];
 
-          // CHARACTER LOOK LOCK: inject canonical appearance fingerprint so the
-          // generator preserves the specific character rather than inventing a generic person.
           const charId = msgRecord?.character_id || null;
           const charAppearance = charId ? characterAppearanceCache[charId] : null;
-          const charLockBlock = charAppearance?.fingerprint
-            ? `CHARACTER IDENTITY LOCK — this person must remain: ${charAppearance.fingerprint}. Do NOT change their face, skin tone, body type, hair, or clothing. Do NOT replace them with a different or generic person.`
-            : 'Preserve exact character identity from the source image. Do NOT replace the person with someone else or a generic individual.';
 
-          // Build identity-preserving prompt
-          const identityContext = originalPrompt
-            ? `Continuation of this exact scene: ${originalPrompt.slice(0, 200)}.`
-            : 'Preserve exact character identity, face, outfit, setting, and lighting from the source image.';
+          // Build verbal identity anchor from appearance fingerprint.
+          // This goes INTO the prompt — not as a second image reference.
+          const identityAnchor = charAppearance?.fingerprint
+            ? `The person in this photo: ${charAppearance.fingerprint}.`
+            : '';
 
-          const animPrompt = `${charLockBlock} ${identityContext} Add only this subtle motion: ${motion}. Do NOT change the character, their face, body, clothing, hair color, skin tone, or setting. Do NOT introduce new people or locations. Keep the scene identical to the source image. Vertical 9:16 format. Smooth, cinematic motion. No cuts. Memory reel style.`;
+          // PROMPT STRUCTURE: open with "animate this exact photo" so the model
+          // treats the source image as the foundation frame, not inspiration.
+          // Identity anchor reinforces who NOT to replace.
+          // Motion instruction is minimal and placed LAST.
+          const animPrompt = [
+            `Animate this exact photo into a short video clip. The photo IS the first frame.`,
+            `Do NOT recast, replace, or reinterpret the person in this image.`,
+            `Preserve exactly: their face, eyes, nose, lips, skin tone, hair color, hair texture, beard, body type, age, clothing, and background.`,
+            identityAnchor,
+            `The animated subject must be visually identical to the person in the source photo — not a similar person, not a generic AI person.`,
+            `Motion only: ${motion}.`,
+            `No scene changes. No new characters. No location changes. Vertical 9:16. Smooth cinematic motion. Memory reel style.`,
+          ].filter(Boolean).join(' ');
 
-          // Include character avatar as additional reference if available, alongside source image
-          const referenceImages = [imageUrl];
-          if (charAppearance?.avatar_url && charAppearance.avatar_url !== imageUrl) {
-            referenceImages.push(charAppearance.avatar_url);
-          }
-
+          // ONLY the source image as existing_image_urls — this is the frame the model animates FROM.
+          // Do NOT add avatar as second reference — it confuses model identity and causes actor replacement.
           const result = await base44.integrations.Core.GenerateVideo({
             prompt: animPrompt,
             duration: 4,
             aspect_ratio: '9:16',
-            existing_image_urls: referenceImages,
+            existing_image_urls: [imageUrl],
           });
 
           if (result?.url) {
@@ -172,17 +180,74 @@ Deno.serve(async (req) => {
             clipType = 'animated';
             clipStatus = 'success';
           } else {
-            // No URL returned — fallback to static slide to avoid inventing footage
-            clipType = 'static';
-            clipStatus = 'fallback_no_url';
-            warnings.push(`Clip ${i + 1}: animation returned no URL — using static slide to preserve character identity.`);
+            // Retry once with even stronger source-frame emphasis
+            try {
+              const retryPrompt = [
+                `This is an image-to-video animation task. Start from this exact image as frame 1.`,
+                `Do NOT generate a new person. Do NOT change the face, skin, hair, body, or clothing.`,
+                identityAnchor,
+                `Animate only: ${motion}. The subject must look exactly like the person in the photo. Vertical 9:16.`,
+              ].filter(Boolean).join(' ');
+
+              const retryResult = await base44.integrations.Core.GenerateVideo({
+                prompt: retryPrompt,
+                duration: 4,
+                aspect_ratio: '9:16',
+                existing_image_urls: [imageUrl],
+              });
+
+              if (retryResult?.url) {
+                clipUrl = retryResult.url;
+                clipType = 'animated';
+                clipStatus = 'success_retry';
+              } else {
+                clipType = 'static';
+                clipStatus = 'fallback_no_url';
+                warnings.push(`Clip ${i + 1}: animation returned no URL after retry — static slide used.`);
+              }
+            } catch (retryErr) {
+              clipType = 'static';
+              clipStatus = 'fallback_no_url';
+              warnings.push(`Clip ${i + 1}: animation retry also failed — static slide used.`);
+            }
           }
         } catch (err) {
-          // Animation error — fallback to static slide rather than generating a random person
-          clipType = 'static';
-          clipStatus = 'fallback_error';
-          clipError = err.message;
-          warnings.push(`Clip ${i + 1}: animation failed — using static slide to preserve character identity (${err.message}).`);
+          // First attempt failed — retry with maximally minimal prompt to reduce model confusion
+          try {
+            const charId = msgRecord?.character_id || null;
+            const charAppearance = charId ? characterAppearanceCache[charId] : null;
+            const identityAnchor = charAppearance?.fingerprint ? `Person: ${charAppearance.fingerprint}.` : '';
+            const motion = ['subtle breathing motion and eye blink', 'soft ambient motion', 'gentle camera push-in'][i % 3];
+
+            const fallbackPrompt = [
+              `Animate this exact photo. Do not change the person. Do not recast them.`,
+              identityAnchor,
+              `Motion: ${motion}. Vertical 9:16. No scene changes.`,
+            ].filter(Boolean).join(' ');
+
+            const retryResult = await base44.integrations.Core.GenerateVideo({
+              prompt: fallbackPrompt,
+              duration: 4,
+              aspect_ratio: '9:16',
+              existing_image_urls: [imageUrl],
+            });
+
+            if (retryResult?.url) {
+              clipUrl = retryResult.url;
+              clipType = 'animated';
+              clipStatus = 'success_retry';
+            } else {
+              clipType = 'static';
+              clipStatus = 'fallback_error';
+              clipError = err.message;
+              warnings.push(`Clip ${i + 1}: animation failed after retry — static slide used (${err.message}).`);
+            }
+          } catch (_retryErr) {
+            clipType = 'static';
+            clipStatus = 'fallback_error';
+            clipError = err.message;
+            warnings.push(`Clip ${i + 1}: animation failed — static slide used (${err.message}).`);
+          }
         }
       } else if (shouldAnimate && !imageUrl) {
         // Missing source image — do not animate; do not invent a person
