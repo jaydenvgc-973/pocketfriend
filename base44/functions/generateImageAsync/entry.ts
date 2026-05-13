@@ -1458,39 +1458,46 @@ Deno.serve(async (req) => {
     let resolvedZoneName = null;
 
     if (charRecord) {
-      // Non-blocking location fetch with 2-second timeout
-      // If it fails/times out, fallback and continue
-      const locContextPromise = Promise.race([
+      // NON-BLOCKING inline location fetch — 2s timeout, never blocks image generation
+      const locContext = await Promise.race([
         (async () => {
           try {
-            const res = await base44.asServiceRole.functions.invoke('resolveLocationContext', {
-              charRecord,
-              characterId,
-              requestingUser,
-              prompt,
-            });
-            return res?.data?.data || null;
-          } catch (err) {
-            console.warn(`[generateImageAsync] resolveLocationContext failed: ${err?.message}`);
+            const locationId = charRecord.resolved_current_location_id || charRecord.current_home_location_id || charRecord.home_location_id || charRecord.current_work_location_id || charRecord.occupation_location_id || null;
+            if (!locationId) {
+              // Resident scan — cap at 20 locations to reduce load
+              const savedLocs = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: requestingUser }, '-created_date', 20).catch(() => []);
+              const home = savedLocs.find(l => l.category === 'home' && ((l.resident_character_ids || []).includes(characterId) || (l.residents || []).some(r => r.character_id === characterId)));
+              if (home) {
+                const { images, zoneName } = resolveZoneFromLocation(home, (prompt || '').toLowerCase());
+                return { envRefs: images, locationName: home.name, zoneName };
+              }
+              return null;
+            }
+            let locRecord = (await base44.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []))?.[0] || null;
+            if (!locRecord) {
+              const cand = (await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []))?.[0] || null;
+              if (cand) {
+                const isShared = cand.scope === 'shared' || cand.location_type === 'shared';
+                if (cand.owner_email && cand.owner_email !== requestingUser && !isShared) return null;
+                locRecord = cand;
+              }
+            }
+            if (!locRecord) return null;
+            const { images, zoneName } = resolveZoneFromLocation(locRecord, (prompt || '').toLowerCase());
+            console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" → zone "${zoneName || 'none'}" → ${images.length} env refs`);
+            return { envRefs: images, locationName: locRecord.name, zoneName };
+          } catch (e) {
+            console.warn(`[generateImageAsync] LOCATION_CONTEXT_FALLBACK_USED: ${e?.message} — continuing`);
             return null;
           }
         })(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
-      ]).catch((err) => {
-        console.warn(`[generateImageAsync] LOCATION_CONTEXT_FALLBACK_USED: ${err?.message}. Continuing with minimal context.`);
-        return null;
-      });
+        new Promise(resolve => setTimeout(() => { console.warn(`[generateImageAsync] LOCATION_CONTEXT_FALLBACK_USED: timeout — continuing`); resolve(null); }, 2000))
+      ]).catch(() => null);
 
-      const locContext = await locContextPromise;
       if (locContext) {
         envRefs = locContext.envRefs || [];
         resolvedLocationName = locContext.locationName;
         resolvedZoneName = locContext.zoneName;
-        if (envRefs.length > 0 || resolvedLocationName) {
-          console.log(`[generateImageAsync] ✓ Location context loaded: "${resolvedLocationName}" → ${envRefs.length} env refs`);
-        }
-      } else {
-        console.log(`[generateImageAsync] ℹ️ Location context unavailable — image will use prompt-provided environment`);
       }
     }
 

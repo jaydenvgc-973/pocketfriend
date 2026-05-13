@@ -440,16 +440,27 @@ DO:
       // NO manualLocationId — generateImageAsync resolves from character record
     });
 
-    if (!singleCharRes?.data?.success) {
-      const errorMsg = singleCharRes?.data?.error || 'Image generation failed';
-      await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-      return Response.json({ success: false, error: errorMsg }, { status: singleCharRes?.status || 500 });
+    // generateImageAsync handles its own message updates and fallbacks.
+    // Only surface errors that are truly unrecoverable (identity missing, content policy).
+    const genData = singleCharRes?.data;
+    if (!genData?.success) {
+      const errorMsg = genData?.error || 'Image generation failed';
+      const isIdentityMissing = genData?.identity_missing === true;
+      const isContentPolicy = genData?.filtered === true;
+      // Only hard-fail for identity missing or content policy — everything else retry/fallback
+      if (isIdentityMissing || isContentPolicy) {
+        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+        return Response.json({ success: false, error: errorMsg, filtered: isContentPolicy, identity_missing: isIdentityMissing });
+      }
+      // For all other failures: log and surface but don't double-mark the message
+      console.warn(`[mediaGridGenerate] generateImageAsync returned failure: ${errorMsg}`);
+      return Response.json({ success: false, error: errorMsg }, { status: 500 });
     }
 
     console.log(`[mediaGridGenerate] ✓ Single-character SUCCESS via generateImageAsync: ${messageId}`);
     return Response.json({
       success: true,
-      imageUrl: singleCharRes.data.imageUrl,
+      imageUrl: genData.imageUrl,
       messageId,
       subjectType: 'character',
     });
