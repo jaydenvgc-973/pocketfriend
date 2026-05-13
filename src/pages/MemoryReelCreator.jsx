@@ -1,28 +1,47 @@
-import React, { useState, useCallback } from "react";
+/**
+ * MemoryReelCreator
+ *
+ * SOURCE-LOCK ARCHITECTURE:
+ * - The reel is built entirely from user-selected Media Grid images.
+ * - Image-to-video generation uses the source image as existing_image_urls (source frame).
+ * - A ReelGenerationJob entity persists the job state so navigation away does not lose work.
+ * - The client-side ReelPlayer renders the final montage from the locked clip_results.
+ * - No freeform AI video generation that could invent random people or scenes.
+ *
+ * ACTIVATION FLOW:
+ * Moments → "Create Memory Reel" → inactive start screen → "Start Building Reel"
+ * → only then queries 14 days of media → user selects → "Create Vid" → background job
+ * → user can navigate away → returns and resumes job → ReelPlayer on completion
+ */
+
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Film, Play, Download, Send, Trash2, Sparkles, Camera,
-  CheckSquare, Square, Zap, AlertTriangle, Loader2, X, ChevronDown,
-  ChevronUp, User, Image, FileText
+  CheckSquare, Square, Zap, AlertTriangle, Loader2, X,
+  ChevronDown, ChevronUp, Image, RefreshCw
 } from "lucide-react";
+import ReelPlayer from "@/components/moments/ReelPlayer";
 
-const TRANSITION_OPTIONS = ["slide", "fade", "zoom", "pan"];
+// ── STATUS LABELS ─────────────────────────────────────────────────────────────
+const STATUS_LABELS = {
+  queued:     { label: "Queued",                    pct: 5  },
+  preparing:  { label: "Preparing images",          pct: 15 },
+  animating:  { label: "Animating selected clips",  pct: 40 },
+  assembling: { label: "Assembling reel",           pct: 80 },
+  validating: { label: "Validating selected images", pct: 92 },
+  complete:   { label: "Complete",                  pct: 100 },
+  failed:     { label: "Failed",                    pct: 100 },
+};
 
-// Progress step labels
-const PROGRESS_STEPS = [
-  "Preparing images",
-  "Animating selected moments",
-  "Building reel",
-  "Finalizing download",
-];
+const POLL_INTERVAL = 6000; // ms — poll job status every 6s while processing
 
+// ── IMAGE CARD ────────────────────────────────────────────────────────────────
 function ImageCard({ item, onToggle, onAnimateToggle, onCaptionChange }) {
   const [showCaption, setShowCaption] = useState(false);
-  const included = item.included;
-  const animate = item.animate;
 
   return (
     <motion.div
@@ -30,67 +49,59 @@ function ImageCard({ item, onToggle, onAnimateToggle, onCaptionChange }) {
       initial={{ opacity: 0, scale: 0.97 }}
       animate={{ opacity: 1, scale: 1 }}
       className={`rounded-2xl border overflow-hidden transition-all ${
-        included ? "border-primary/60 bg-primary/5" : "border-border bg-card"
+        item.included ? "border-primary/60 bg-primary/5" : "border-border bg-card"
       }`}
     >
-      {/* Image */}
       <div className="relative aspect-square">
         <img
           src={item.image_url}
           alt={item.character_name || "Memory"}
           className="w-full h-full object-cover"
+          draggable={false}
         />
-        {/* Include checkbox overlay */}
         <button
           onClick={() => onToggle(item.id)}
           className="absolute top-2 left-2 p-1 rounded-lg bg-black/50 hover:bg-black/70 transition-colors"
         >
-          {included
+          {item.included
             ? <CheckSquare className="w-4 h-4 text-primary" />
             : <Square className="w-4 h-4 text-white/80" />
           }
         </button>
-        {/* Animate badge */}
-        {included && (
+        {item.included && (
           <button
             onClick={() => onAnimateToggle(item.id)}
+            title={item.animate ? "Animate: ON — will use image-to-video" : "Static: image will be a photo slide"}
             className={`absolute top-2 right-2 px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors flex items-center gap-1 ${
-              animate
+              item.animate
                 ? "bg-primary text-primary-foreground"
                 : "bg-black/50 text-white/70 hover:bg-black/70"
             }`}
           >
             <Zap className="w-2.5 h-2.5" />
-            {animate ? "Animate" : "Static"}
+            {item.animate ? "Animate" : "Static"}
           </button>
         )}
       </div>
 
-      {/* Meta */}
       <div className="p-2.5 space-y-1.5">
         <div className="flex items-center gap-1.5">
           {item.avatar_url && (
             <img src={item.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
           )}
           <p className="text-xs font-medium text-foreground truncate">{item.character_name || "Unknown"}</p>
-          <span className="text-[10px] text-muted-foreground ml-auto flex-shrink-0">
-            {item.date_label}
-          </span>
+          <span className="text-[10px] text-muted-foreground ml-auto flex-shrink-0">{item.date_label}</span>
         </div>
 
-        {item.prompt_preview && (
-          <p className="text-[10px] text-muted-foreground/70 italic line-clamp-2">
-            "{item.prompt_preview}"
-          </p>
-        )}
-        {!item.prompt_preview && (
+        {item.prompt_preview ? (
+          <p className="text-[10px] text-muted-foreground/70 italic line-clamp-2">"{item.prompt_preview}"</p>
+        ) : (
           <p className="text-[10px] text-amber-400/70 flex items-center gap-1">
             <AlertTriangle className="w-2.5 h-2.5" /> No prompt — static slide only
           </p>
         )}
 
-        {/* Caption toggle */}
-        {included && (
+        {item.included && (
           <div>
             <button
               onClick={() => setShowCaption(v => !v)}
@@ -116,6 +127,7 @@ function ImageCard({ item, onToggle, onAnimateToggle, onCaptionChange }) {
   );
 }
 
+// ── CHARACTER PICKER ──────────────────────────────────────────────────────────
 function CharacterPicker({ characters, onSelect, onClose }) {
   const [picked, setPicked] = useState(null);
   const [message, setMessage] = useState("");
@@ -142,9 +154,7 @@ function CharacterPicker({ characters, onSelect, onClose }) {
             <button
               key={c.id}
               onClick={() => setPicked(c)}
-              className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary transition-colors text-left ${
-                picked?.id === c.id ? "bg-primary/10" : ""
-              }`}
+              className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary transition-colors text-left ${picked?.id === c.id ? "bg-primary/10" : ""}`}
             >
               {c.avatar_url
                 ? <img src={c.avatar_url} alt={c.name} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
@@ -179,21 +189,24 @@ function CharacterPicker({ characters, onSelect, onClose }) {
   );
 }
 
+// ── MAIN PAGE ─────────────────────────────────────────────────────────────────
 export default function MemoryReelCreator() {
   const [activated, setActivated] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [mediaItems, setMediaItems] = useState([]); // all fetched media
+  const [mediaItems, setMediaItems] = useState([]);
   const [charFilter, setCharFilter] = useState("all");
   const [memories, setMemories] = useState([]);
   const [loadError, setLoadError] = useState(null);
 
-  const [generating, setGenerating] = useState(false);
-  const [progressStep, setProgressStep] = useState(0);
-  const [progressWarnings, setProgressWarnings] = useState([]);
-  const [reelResult, setReelResult] = useState(null); // { video_url, thumbnail_url, reel_id }
+  // Persistent job tracking
+  const [activeJob, setActiveJob] = useState(null); // ReelGenerationJob record
+  const [jobSubmitting, setJobSubmitting] = useState(false);
+  const [jobError, setJobError] = useState(null);
+  const pollTimerRef = useRef(null);
 
+  // Post-completion UI
   const [showCharPicker, setShowCharPicker] = useState(false);
-  const [sendStatus, setSendStatus] = useState(null); // null | 'sending' | 'sent' | 'error'
+  const [sendStatus, setSendStatus] = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -210,16 +223,56 @@ export default function MemoryReelCreator() {
     enabled: !!currentUser?.email,
   });
 
-  // Derive unique character IDs from loaded media for filter pills
-  const mediaCharIds = [...new Set(mediaItems.map(m => m.character_id).filter(Boolean))];
-  const filterChars = characters.filter(c => mediaCharIds.includes(c.id));
+  // On mount: check for an existing in-progress or completed job
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    base44.entities.ReelGenerationJob
+      .filter({ owner_email: currentUser.email }, "-created_date", 5)
+      .then(jobs => {
+        // Find the most recent non-deleted job that is in-progress or complete
+        const live = jobs.find(j =>
+          j.status !== 'failed' ||
+          (j.status === 'complete')
+        );
+        const inProgress = jobs.find(j => ['queued','preparing','animating','assembling','validating'].includes(j.status));
+        const complete = jobs.find(j => j.status === 'complete');
+        if (inProgress) {
+          setActiveJob(inProgress);
+          setActivated(true);
+          startPolling(inProgress.id);
+        } else if (complete) {
+          setActiveJob(complete);
+          setActivated(true);
+        }
+      })
+      .catch(() => {});
+  }, [currentUser?.email]);
 
-  const selectedItems = mediaItems.filter(m => m.included);
-  const filteredItems = charFilter === "all"
-    ? mediaItems
-    : mediaItems.filter(m => m.character_id === charFilter);
+  // ── POLLING ─────────────────────────────────────────────────────────────────
+  const startPolling = useCallback((jobId) => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    pollTimerRef.current = setInterval(async () => {
+      try {
+        const jobs = await base44.entities.ReelGenerationJob.filter({ owner_email: currentUser?.email }, "-created_date", 5);
+        const job = jobs.find(j => j.id === jobId);
+        if (job) {
+          setActiveJob(job);
+          if (job.status === 'complete' || job.status === 'failed') {
+            clearInterval(pollTimerRef.current);
+            pollTimerRef.current = null;
+          }
+        }
+      } catch (_) {}
+    }, POLL_INTERVAL);
+  }, [currentUser?.email]);
 
-  // ── ACTIVATION: load last 14 days of media + memories ────────────────────
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    };
+  }, []);
+
+  // ── ACTIVATION ───────────────────────────────────────────────────────────────
   const handleActivate = useCallback(async () => {
     if (!currentUser?.email) return;
     setActivated(true);
@@ -231,25 +284,21 @@ export default function MemoryReelCreator() {
     const cutoffISO = cutoff.toISOString();
 
     try {
-      // Load recent messages with images (media grid source)
-      // Message has no owner_email — scoped by conversation via platform RLS.
-      // We filter by created_date client-side after fetching.
       const [recentMessages, recentMemories] = await Promise.all([
         base44.entities.Message.filter({ sender_type: "character" }, "-created_date", 200).catch(() => []),
-        base44.entities.CharacterMemory.filter(
-          { character_id: characters.map(c => c.id) },
-          "-created_date", 100
-        ).catch(() => []),
+        base44.entities.CharacterMemory.filter({}, "-created_date", 100).catch(() => []),
       ]);
 
-      // Filter to last 14 days and only image messages
       const charById = Object.fromEntries(characters.map(c => [c.id, c]));
+      const ownedCharIds = new Set(characters.map(c => c.id));
 
-      const rawMedia = recentMessages
-        .filter(m => m.image_url && m.created_date >= cutoffISO)
-        .slice(0, 30);
+      // Only images from the user's own characters, within 14 days
+      const rawMedia = recentMessages.filter(m =>
+        m.image_url &&
+        m.created_date >= cutoffISO &&
+        (!m.character_id || ownedCharIds.has(m.character_id))
+      ).slice(0, 30);
 
-      // Deduplicate by image_url
       const seenUrls = new Set();
       const dedupedMedia = rawMedia.filter(m => {
         if (seenUrls.has(m.image_url)) return false;
@@ -257,12 +306,10 @@ export default function MemoryReelCreator() {
         return true;
       });
 
-      // Build media items
       const items = dedupedMedia.slice(0, 20).map(m => {
         const char = charById[m.character_id] || null;
         const genCtx = m.generation_context || {};
         const prompt = genCtx.prompt || null;
-        const dateLabel = new Date(m.created_date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
         return {
           id: m.id,
           message_id: m.id,
@@ -272,181 +319,116 @@ export default function MemoryReelCreator() {
           avatar_url: char?.avatar_url || null,
           prompt_preview: prompt ? prompt.slice(0, 120) : null,
           full_prompt: prompt || null,
-          date_label: dateLabel,
+          date_label: new Date(m.created_date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
           created_date: m.created_date,
           included: true,
-          animate: !!(prompt), // default: animate only if prompt exists
+          animate: !!(prompt),
           caption: "",
-          transition: "slide",
         };
       });
 
-      // Filter memories to last 14 days
       const filteredMemories = recentMemories
         .filter(mem => mem.created_date >= cutoffISO)
-        .slice(0, 15);
+        .slice(0, 10);
 
       setMediaItems(items);
       setMemories(filteredMemories);
     } catch (err) {
-      console.error('[MemoryReelCreator] load failed:', err?.message);
       setLoadError(err?.message || "Failed to load media. Please try again.");
     } finally {
       setLoading(false);
     }
   }, [currentUser?.email, characters]);
 
-  const toggleInclude = (id) => {
-    setMediaItems(prev => prev.map(m => m.id === id ? { ...m, included: !m.included } : m));
-  };
+  const toggleInclude = (id) => setMediaItems(prev => prev.map(m => m.id === id ? { ...m, included: !m.included } : m));
+  const toggleAnimate = (id) => setMediaItems(prev => prev.map(m => m.id === id ? { ...m, animate: !m.animate } : m));
+  const setCaption = (id, caption) => setMediaItems(prev => prev.map(m => m.id === id ? { ...m, caption } : m));
 
-  const toggleAnimate = (id) => {
-    setMediaItems(prev => prev.map(m => m.id === id ? { ...m, animate: !m.animate } : m));
-  };
+  const selectedItems = mediaItems.filter(m => m.included);
+  const filteredItems = charFilter === "all" ? mediaItems : mediaItems.filter(m => m.character_id === charFilter);
+  const mediaCharIds = [...new Set(mediaItems.map(m => m.character_id).filter(Boolean))];
+  const filterChars = characters.filter(c => mediaCharIds.includes(c.id));
 
-  const setCaption = (id, caption) => {
-    setMediaItems(prev => prev.map(m => m.id === id ? { ...m, caption } : m));
-  };
-
-  // ── GENERATE REEL ─────────────────────────────────────────────────────────
+  // ── CREATE VID — creates persistent job then kicks off backend processing ──
   const handleGenerate = async () => {
-    const toInclude = mediaItems.filter(m => m.included);
-    if (toInclude.length === 0 || generating) return;
-
-    setGenerating(true);
-    setProgressStep(0);
-    setProgressWarnings([]);
-    setReelResult(null);
-
-    const warnings = [];
+    if (selectedItems.length === 0 || jobSubmitting) return;
+    setJobSubmitting(true);
+    setJobError(null);
 
     try {
-      // Step 0: Preparing
-      setProgressStep(0);
-      await new Promise(r => setTimeout(r, 600));
+      const charNames = [...new Set(selectedItems.map(i => i.character_name))].join(", ");
+      const memoryHighlights = memories.slice(0, 5).map(m => m.memory_summary || m.memory_text?.slice(0, 80)).filter(Boolean);
 
-      // Step 1: Animate selected moments
-      setProgressStep(1);
-      const animatedClips = [];
-      for (const item of toInclude) {
-        if (item.animate && item.full_prompt) {
-          try {
-            // Build animation prompt preserving character identity
-            const animPrompt = `${item.full_prompt} — add subtle natural motion: ${
-              ["a gentle smile spreading across their face",
-               "slowly turning their head to look around",
-               "natural breathing and slight body movement",
-               "soft environmental motion in the background",
-               "gentle camera drift and natural light shift"][Math.floor(Math.random() * 5)]
-            }. Preserve exact character appearance, clothing, setting, and mood. Vertical 9:16 format. No sudden cuts. Smooth motion only.`;
+      // Build clip_results pre-populated with animate flags and captions
+      // (the backend will fill in clip_url after generation)
+      const preClipResults = selectedItems.map(item => ({
+        image_id: item.id,
+        image_url: item.image_url,
+        clip_url: null,
+        clip_type: 'static',
+        animate: item.animate && !!(item.full_prompt),
+        caption: item.caption || '',
+        status: 'pending',
+      }));
 
-            const result = await base44.integrations.Core.GenerateVideo({
-              prompt: animPrompt,
-              duration: 4,
-              aspect_ratio: "9:16",
-            });
-            animatedClips.push({
-              ...item,
-              clip_url: result?.url || null,
-              clip_type: result?.url ? "animated" : "static",
-            });
-          } catch (err) {
-            warnings.push(`Animation failed for "${item.character_name}" image (${item.date_label}) — using static slide.`);
-            animatedClips.push({ ...item, clip_url: null, clip_type: "static" });
-          }
-        } else {
-          animatedClips.push({ ...item, clip_url: null, clip_type: "static" });
-        }
-      }
-
-      if (warnings.length > 0) setProgressWarnings([...warnings]);
-
-      // Step 2: Building reel
-      setProgressStep(2);
-      await new Promise(r => setTimeout(r, 800));
-
-      // Build a memory reel description for the AI video generator
-      // We use the static images as the reference input
-      const staticRefs = animatedClips
-        .filter(c => c.clip_type === "static")
-        .map(c => c.image_url)
-        .slice(0, 4);
-
-      const captionLines = animatedClips
-        .filter(c => c.caption)
-        .map(c => `• ${c.caption}`)
-        .join(" | ");
-
-      const charNames = [...new Set(animatedClips.map(c => c.character_name))].join(", ");
-      const memoryHighlights = memories
-        .slice(0, 5)
-        .map(m => m.memory_summary || m.memory_text?.slice(0, 80))
-        .filter(Boolean)
-        .join(" | ");
-
-      const reelPrompt = `Create a vertical Instagram Reel / TikTok memory montage (9:16 format, 15-30 seconds). 
-Characters featured: ${charNames}.
-${memoryHighlights ? `Memory highlights: ${memoryHighlights}` : ""}
-${captionLines ? `Captions: ${captionLines}` : ""}
-Style: warm, cinematic memory montage with smooth slide/fade transitions between moments.
-Maintain consistent character appearances throughout. Natural lighting, authentic moments.
-Text overlays: minimal, readable. Do not rush transitions. Emotional, personal feel.
-Do not change character identities, ages, or appearances between clips.`;
-
-      const reelVideo = await base44.integrations.Core.GenerateVideo({
-        prompt: reelPrompt,
-        duration: 6,
-        aspect_ratio: "9:16",
-        existing_image_urls: staticRefs.length > 0 ? staticRefs : undefined,
-      });
-
-      // Step 3: Finalizing
-      setProgressStep(3);
-      await new Promise(r => setTimeout(r, 500));
-
-      // Use first static image as thumbnail
-      const thumbnailUrl = toInclude[0]?.image_url || null;
-
-      // Store a lightweight record of the generated reel
-      const reelRecord = await base44.entities.Message.create({
-        sender_type: "user",
-        content: `[Memory Reel] ${charNames} — ${new Date().toLocaleDateString()}`,
-        image_url: thumbnailUrl,
-        timestamp: new Date().toISOString(),
-        generation_context: {
-          prompt: reelPrompt,
-          subject_type: "memory_reel",
-          reel_video_url: reelVideo?.url || null,
-          related_character_ids: [...new Set(toInclude.map(i => i.character_id).filter(Boolean))],
-          source: "moments_memory_reel_creator",
-          created_at: new Date().toISOString(),
-        },
-      }).catch(() => null);
-
-      setReelResult({
-        video_url: reelVideo?.url || null,
-        thumbnail_url: thumbnailUrl,
-        reel_record_id: reelRecord?.id || null,
+      // Create the persistent job record
+      const job = await base44.entities.ReelGenerationJob.create({
+        owner_email: currentUser.email,
+        status: 'queued',
+        progress_percent: 0,
+        selected_image_ids: selectedItems.map(i => i.id),
+        selected_image_urls: selectedItems.map(i => i.image_url),
+        selected_character_ids: [...new Set(selectedItems.map(i => i.character_id).filter(Boolean))],
+        clip_results: preClipResults,
         char_names: charNames,
-        included_items: toInclude,
-        warnings,
+        memory_highlights: memoryHighlights,
+        thumbnail_url: selectedItems[0]?.image_url || null,
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        estimated_time_remaining: preClipResults.some(c => c.animate) ? '3–6 minutes' : '1–2 minutes',
       });
+
+      setActiveJob(job);
+      startPolling(job.id);
+
+      // Kick off backend processing (fire-and-forget style — job persists independently)
+      base44.functions.invoke('processReelGenerationJob', { job_id: job.id }).catch(err => {
+        console.error('[MemoryReelCreator] Backend job invoke failed:', err?.message);
+        // Job status will remain 'queued' — user can retry
+      });
+
     } catch (err) {
-      console.error('[MemoryReelCreator] generation failed:', err?.message);
-      setProgressWarnings(prev => [...prev, `Generation failed: ${err?.message || "Unknown error"}`]);
+      setJobError(err?.message || "Failed to start reel generation.");
     } finally {
-      setGenerating(false);
+      setJobSubmitting(false);
     }
+  };
+
+  // ── RETRY failed job ────────────────────────────────────────────────────────
+  const handleRetry = async () => {
+    if (!activeJob) return;
+    // Reset the job to queued
+    await base44.entities.ReelGenerationJob.update(activeJob.id, {
+      status: 'queued',
+      progress_percent: 0,
+      error_message: null,
+      validation_notes: [],
+      updated_at: new Date().toISOString(),
+    }).catch(() => {});
+    const refreshed = await base44.entities.ReelGenerationJob.filter({ owner_email: currentUser.email }, "-created_date", 5);
+    const job = refreshed.find(j => j.id === activeJob.id);
+    if (job) setActiveJob(job);
+    startPolling(job?.id || activeJob.id);
+    base44.functions.invoke('processReelGenerationJob', { job_id: activeJob.id }).catch(() => {});
   };
 
   // ── SEND TO CHARACTER ─────────────────────────────────────────────────────
   const handleSendToCharacter = async (char, caption) => {
-    if (!reelResult?.video_url || !currentUser?.email) return;
+    if (!activeJob?.clip_results?.length || !currentUser?.email) return;
     setShowCharPicker(false);
     setSendStatus('sending');
 
     try {
-      // Find or create a conversation with this character
       const convos = await base44.entities.Conversation.filter(
         { character_ids: [char.id], owner_email: currentUser.email },
         "-updated_date", 5
@@ -463,39 +445,32 @@ Do not change character identities, ages, or appearances between clips.`;
         convoId = newConvo.id;
       }
 
-      const relatedCharIds = [...new Set(reelResult.included_items.map(i => i.character_id).filter(Boolean))];
-      const relatedMemIds = memories.slice(0, 5).map(m => m.id).filter(Boolean);
-
-      // Send the reel as a message
       await base44.entities.Message.create({
         conversation_id: convoId,
         sender_type: "user",
-        content: caption || `I made a memory reel featuring ${reelResult.char_names}! 🎬✨`,
-        image_url: reelResult.thumbnail_url || null,
+        content: caption || `I made a memory reel featuring ${activeJob.char_names}! 🎬✨`,
+        image_url: activeJob.thumbnail_url || null,
         timestamp: new Date().toISOString(),
         generation_context: {
-          prompt: caption || "",
           subject_type: "memory_reel",
-          reel_video_url: reelResult.video_url,
-          thumbnail_url: reelResult.thumbnail_url,
+          thumbnail_url: activeJob.thumbnail_url,
           sender_user_id: currentUser.id,
           recipient_character_id: char.id,
           owner_email: currentUser.email,
           media_type: "memory_reel",
-          related_memory_ids: relatedMemIds,
-          related_character_ids: relatedCharIds,
+          related_character_ids: activeJob.selected_character_ids || [],
+          clip_results: activeJob.clip_results,
           source: "moments_memory_reel_creator",
           created_at: new Date().toISOString(),
         },
       });
 
-      // Write a lightweight memory to the character
-      const memText = `${currentUser.full_name || "The user"} sent me a memory reel they created on ${new Date().toLocaleDateString()}. It featured ${reelResult.char_names}. ${caption ? `They wrote: "${caption}"` : ""}`;
+      const memText = `${currentUser.full_name || "The user"} sent me a memory reel they created on ${new Date().toLocaleDateString()}. It featured ${activeJob.char_names}. ${caption ? `They wrote: "${caption}"` : ""}`;
       await base44.entities.CharacterMemory.create({
         character_id: char.id,
         memory_type: "event",
         memory_text: memText,
-        memory_summary: `Received a memory reel from the user featuring ${reelResult.char_names}.`,
+        memory_summary: `Received a memory reel from the user featuring ${activeJob.char_names}.`,
         importance_score: 7,
         confidence_score: 1.0,
         permanence: "long_term",
@@ -504,33 +479,28 @@ Do not change character identities, ages, or appearances between clips.`;
 
       setSendStatus('sent');
     } catch (err) {
-      console.error('[MemoryReelCreator] send failed:', err?.message);
       setSendStatus('error');
     }
   };
 
-  // ── DELETE REEL ───────────────────────────────────────────────────────────
+  // ── DELETE ─────────────────────────────────────────────────────────────────
   const handleDeleteReel = async () => {
-    if (!reelResult) return;
+    if (!activeJob) return;
     setDeleting(true);
     try {
-      if (reelResult.reel_record_id) {
-        await base44.entities.Message.delete(reelResult.reel_record_id).catch(() => {});
-      }
-      setReelResult(null);
+      await base44.entities.ReelGenerationJob.delete(activeJob.id).catch(() => {});
+      setActiveJob(null);
       setShowDeleteConfirm(false);
-      setProgressWarnings([]);
-      setProgressStep(0);
+      setSendStatus(null);
     } finally {
       setDeleting(false);
     }
   };
 
-  // ── INACTIVE START SCREEN ────────────────────────────────────────────────
+  // ── INACTIVE START SCREEN ─────────────────────────────────────────────────
   if (!activated) {
     return (
       <div className="min-h-screen bg-background flex flex-col">
-        {/* Header */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/90 backdrop-blur-xl sticky top-0 z-50">
           <Link to="/moments" className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors">
             <ArrowLeft className="w-5 h-5" />
@@ -541,7 +511,6 @@ Do not change character identities, ages, or appearances between clips.`;
           </div>
         </div>
 
-        {/* Inactive start screen */}
         <div className="flex-1 flex flex-col items-center justify-center px-6 gap-8">
           <div className="text-center space-y-4">
             <div className="w-20 h-20 rounded-3xl bg-primary/10 flex items-center justify-center mx-auto">
@@ -550,17 +519,17 @@ Do not change character identities, ages, or appearances between clips.`;
             <div>
               <h2 className="text-xl font-bold text-foreground">Memory Reel Creator</h2>
               <p className="text-sm text-muted-foreground mt-2 max-w-xs mx-auto">
-                Turn your recent character moments and images into a short vertical memory video — Instagram Reel / TikTok style.
+                Turn your recent character moments into a TikTok / Instagram Reel-style memory montage using your actual Media Grid photos.
               </p>
             </div>
           </div>
 
           <div className="w-full max-w-xs space-y-3 text-xs text-muted-foreground">
             {[
-              { icon: Camera, text: "Uses media from the past 14 days" },
-              { icon: Sparkles, text: "Animates selected images with AI" },
-              { icon: Film, text: "Generates a vertical 9:16 reel" },
-              { icon: Send, text: "Send directly to a character" },
+              { icon: Camera, text: "Uses your actual Media Grid images from the past 14 days" },
+              { icon: Zap,    text: "Optionally animates each photo using image-to-video (source-locked)" },
+              { icon: Film,   text: "Renders a vertical 9:16 Reel/TikTok style gallery montage" },
+              { icon: Send,   text: "Send directly to a character's chat" },
             ].map(({ icon: Icon, text }, i) => (
               <div key={i} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-secondary/50">
                 <Icon className="w-4 h-4 text-primary flex-shrink-0" />
@@ -579,7 +548,7 @@ Do not change character identities, ages, or appearances between clips.`;
               Start Building Reel
             </button>
             {characters.length === 0 && (
-              <p className="text-[10px] text-muted-foreground text-center">You need at least one active character to use this feature.</p>
+              <p className="text-[10px] text-muted-foreground text-center">You need at least one active character.</p>
             )}
           </div>
         </div>
@@ -587,7 +556,7 @@ Do not change character identities, ages, or appearances between clips.`;
     );
   }
 
-  // ── ACTIVE: LOADING STATE ────────────────────────────────────────────────
+  // ── LOADING ───────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex flex-col">
@@ -606,41 +575,271 @@ Do not change character identities, ages, or appearances between clips.`;
     );
   }
 
-  // ── ACTIVE: MAIN EDITOR ──────────────────────────────────────────────────
+  // ── ACTIVE JOB: if a job is in-flight or complete, show its status ─────────
+  if (activeJob) {
+    const isProcessing = ['queued','preparing','animating','assembling','validating'].includes(activeJob.status);
+    const isComplete = activeJob.status === 'complete';
+    const isFailed = activeJob.status === 'failed';
+    const statusInfo = STATUS_LABELS[activeJob.status] || STATUS_LABELS.queued;
+    const clips = (activeJob.clip_results || []).filter(c => c.image_url);
+
+    return (
+      <div className="min-h-screen bg-background pb-24">
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/90 backdrop-blur-xl sticky top-0 z-50">
+          <Link to="/moments" className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors">
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-sm font-bold text-foreground">Memory Reel Creator</h1>
+            <p className="text-xs text-muted-foreground">
+              {isProcessing ? `${statusInfo.label}…` : isComplete ? "Your reel is ready!" : "Generation failed"}
+            </p>
+          </div>
+          {isProcessing && (
+            <span className="text-xs text-primary/80 font-medium">{activeJob.progress_percent || 0}%</span>
+          )}
+        </div>
+
+        <div className="px-4 py-5 space-y-6">
+
+          {/* In-progress status card */}
+          {isProcessing && (
+            <div className="rounded-2xl border border-primary/30 bg-primary/5 p-5 space-y-4">
+              <div className="flex items-center gap-3">
+                <Loader2 className="w-5 h-5 text-primary animate-spin flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">{statusInfo.label}</p>
+                  {activeJob.estimated_time_remaining && activeJob.estimated_time_remaining !== '0' && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Est. {activeJob.estimated_time_remaining} remaining
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+                <motion.div
+                  animate={{ width: `${activeJob.progress_percent || 0}%` }}
+                  transition={{ duration: 0.6 }}
+                  className="h-full bg-primary rounded-full"
+                />
+              </div>
+
+              {/* Per-clip progress */}
+              {clips.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                  {clips.map((clip, i) => (
+                    <div key={i} className="flex-shrink-0 relative">
+                      <img src={clip.image_url} alt="" className="w-10 h-10 rounded-lg object-cover opacity-60" />
+                      {clip.status === 'success' && (
+                        <div className="absolute inset-0 rounded-lg bg-primary/30 flex items-center justify-center">
+                          <Zap className="w-3 h-3 text-primary" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-[10px] text-muted-foreground/60 text-center">
+                You can navigate away and return — this job continues in the background
+              </p>
+            </div>
+          )}
+
+          {/* Failure state */}
+          {isFailed && (
+            <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-destructive">Reel generation failed</p>
+                  <p className="text-xs text-muted-foreground mt-1">{activeJob.error_message || "An error occurred."}</p>
+                </div>
+              </div>
+              {(activeJob.validation_notes || []).length > 0 && (
+                <div className="space-y-1">
+                  {activeJob.validation_notes.map((n, i) => (
+                    <p key={i} className="text-[10px] text-muted-foreground flex items-start gap-1">
+                      <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0 mt-0.5 text-amber-400" /> {n}
+                    </p>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button onClick={handleRetry} className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium flex items-center justify-center gap-2">
+                  <RefreshCw className="w-4 h-4" /> Retry
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="py-2.5 px-4 rounded-xl border border-destructive/40 text-destructive text-sm flex items-center gap-2"
+                >
+                  <Trash2 className="w-4 h-4" /> Discard
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Complete: Reel Player + actions */}
+          {isComplete && clips.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Film className="w-5 h-5 text-primary" />
+                <h3 className="text-sm font-bold text-foreground">Your Memory Reel is Ready</h3>
+              </div>
+
+              {/* Source-locked reel player */}
+              <ReelPlayer clips={clips} autoPlay={false} />
+
+              {/* Source validation notes */}
+              {(activeJob.validation_notes || []).filter(n => n.startsWith('WARN')).length > 0 && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 space-y-1">
+                  {activeJob.validation_notes.filter(n => n.startsWith('WARN')).map((n, i) => (
+                    <p key={i} className="text-[10px] text-amber-400 flex items-start gap-1">
+                      <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0 mt-0.5" /> {n.replace('WARN: ', '')}
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {/* Send status feedback */}
+              {sendStatus === 'sent' && (
+                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-xs text-emerald-400 flex items-center gap-2">
+                  <CheckSquare className="w-4 h-4" /> Reel sent to character!
+                </div>
+              )}
+              {sendStatus === 'error' && (
+                <div className="rounded-xl bg-destructive/10 border border-destructive/30 px-3 py-2 text-xs text-destructive flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" /> Send failed. Please try again.
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="grid grid-cols-3 gap-2">
+                <a
+                  href={activeJob.thumbnail_url || "#"}
+                  download="memory_reel_thumb.jpg"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                >
+                  <Download className="w-4 h-4" />
+                  Save
+                </a>
+                <button
+                  onClick={() => { setSendStatus(null); setShowCharPicker(true); }}
+                  disabled={sendStatus === 'sending'}
+                  className="flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl bg-secondary border border-border text-foreground text-xs font-medium hover:border-primary/40 transition-colors disabled:opacity-50"
+                >
+                  {sendStatus === 'sending' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  Send
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl bg-secondary border border-border text-foreground text-xs font-medium hover:border-destructive/40 hover:text-destructive transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete
+                </button>
+              </div>
+
+              <p className="text-[10px] text-muted-foreground/60 text-center">
+                {clips.length} image{clips.length !== 1 ? "s" : ""} · {clips.filter(c => c.clip_type === 'animated').length} animated · source-locked
+              </p>
+            </div>
+          )}
+
+          {/* New reel button */}
+          {(isComplete || isFailed) && (
+            <button
+              onClick={() => { setActiveJob(null); }}
+              className="w-full py-3 rounded-xl border border-border text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Start a new reel
+            </button>
+          )}
+        </div>
+
+        {/* Character picker */}
+        <AnimatePresence>
+          {showCharPicker && (
+            <CharacterPicker
+              characters={characters}
+              onSelect={handleSendToCharacter}
+              onClose={() => setShowCharPicker(false)}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* Delete confirm */}
+        <AnimatePresence>
+          {showDeleteConfirm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowDeleteConfirm(false)}>
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                onClick={e => e.stopPropagation()}
+                className="w-full max-w-sm bg-card border border-border rounded-2xl p-5 space-y-4"
+              >
+                <div className="flex items-start gap-3">
+                  <Trash2 className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Delete this memory reel?</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      This removes the generated reel job and clips. Original images, memories, and characters are never deleted. Sent messages are not removed.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-2.5 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+                  <button onClick={handleDeleteReel} disabled={deleting} className="flex-1 py-2.5 rounded-xl bg-destructive text-destructive-foreground text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+                    {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                    Delete
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  }
+
+  // ── EDITOR: media selection ───────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-background pb-24">
-      {/* Header */}
+    <div className="min-h-screen bg-background pb-32">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/90 backdrop-blur-xl sticky top-0 z-50">
         <Link to="/moments" className="p-2 -ml-2 text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <div className="flex-1 min-w-0">
           <h1 className="text-sm font-bold text-foreground">Memory Reel Creator</h1>
-          <p className="text-xs text-muted-foreground">Past 14 days · {mediaItems.length} images found</p>
+          <p className="text-xs text-muted-foreground">Past 14 days · {mediaItems.length} images · {selectedItems.length} selected</p>
         </div>
-        <span className="text-xs text-primary font-medium">
-          {selectedItems.length} selected
-        </span>
       </div>
 
       <div className="px-4 py-4 space-y-6">
 
-        {/* Load error */}
         {loadError && (
           <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            {loadError}
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {loadError}
           </div>
         )}
 
-        {/* Character filter */}
+        {jobError && (
+          <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {jobError}
+          </div>
+        )}
+
+        {/* Character filter pills */}
         {filterChars.length > 1 && (
           <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
             <button
               onClick={() => setCharFilter("all")}
-              className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                charFilter === "all" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
-              }`}
+              className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${charFilter === "all" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}
             >
               All
             </button>
@@ -648,9 +847,7 @@ Do not change character identities, ages, or appearances between clips.`;
               <button
                 key={c.id}
                 onClick={() => setCharFilter(c.id)}
-                className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                  charFilter === c.id ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
-                }`}
+                className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${charFilter === c.id ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}
               >
                 {c.avatar_url && <img src={c.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover" />}
                 {c.name}
@@ -669,23 +866,11 @@ Do not change character identities, ages, or appearances between clips.`;
         ) : (
           <section className="space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                📸 Select Images
-              </h2>
+              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">📸 Select Images</h2>
               <div className="flex gap-2">
-                <button
-                  onClick={() => setMediaItems(prev => prev.map(m => ({ ...m, included: true })))}
-                  className="text-[10px] text-primary hover:underline"
-                >
-                  Select all
-                </button>
+                <button onClick={() => setMediaItems(prev => prev.map(m => ({ ...m, included: true })))} className="text-[10px] text-primary hover:underline">Select all</button>
                 <span className="text-[10px] text-muted-foreground">·</span>
-                <button
-                  onClick={() => setMediaItems(prev => prev.map(m => ({ ...m, included: false })))}
-                  className="text-[10px] text-muted-foreground hover:underline"
-                >
-                  Clear
-                </button>
+                <button onClick={() => setMediaItems(prev => prev.map(m => ({ ...m, included: false })))} className="text-[10px] text-muted-foreground hover:underline">Clear</button>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -702,14 +887,12 @@ Do not change character identities, ages, or appearances between clips.`;
           </section>
         )}
 
-        {/* Memory highlights panel */}
+        {/* Memory highlights */}
         {memories.length > 0 && (
           <section className="space-y-2">
-            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              💭 Memory Highlights (past 14 days)
-            </h2>
+            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">💭 Memory Highlights</h2>
             <div className="space-y-2">
-              {memories.slice(0, 5).map((mem, i) => (
+              {memories.slice(0, 4).map((mem, i) => (
                 <div key={mem.id || i} className="rounded-xl bg-secondary/40 border border-border px-3 py-2.5 text-xs">
                   <p className="text-foreground/80 line-clamp-2">{mem.memory_summary || mem.memory_text?.slice(0, 100)}</p>
                   <p className="text-muted-foreground/60 mt-1">{new Date(mem.created_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</p>
@@ -719,16 +902,15 @@ Do not change character identities, ages, or appearances between clips.`;
           </section>
         )}
 
-        {/* Selected reel items summary */}
-        {selectedItems.length > 0 && !reelResult && (
-          <section className="rounded-2xl border border-primary/30 bg-primary/5 p-4 space-y-2">
-            <h3 className="text-xs font-semibold text-primary uppercase tracking-wider">🎬 Your Reel</h3>
-            <p className="text-xs text-muted-foreground">{selectedItems.length} image{selectedItems.length !== 1 ? "s" : ""} · {selectedItems.filter(i => i.animate).length} animated</p>
+        {/* Selected reel preview strip */}
+        {selectedItems.length > 0 && (
+          <section className="rounded-2xl border border-primary/30 bg-primary/5 p-3 space-y-2">
+            <p className="text-xs font-semibold text-primary">🎬 Reel — {selectedItems.length} image{selectedItems.length !== 1 ? "s" : ""} · {selectedItems.filter(i => i.animate).length} to animate</p>
             <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
               {selectedItems.map(item => (
                 <div key={item.id} className="flex-shrink-0 relative">
                   <img src={item.image_url} alt="" className="w-12 h-12 rounded-lg object-cover" />
-                  {item.animate && (
+                  {item.animate && item.full_prompt && (
                     <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-primary flex items-center justify-center">
                       <Zap className="w-2.5 h-2.5 text-primary-foreground" />
                     </div>
@@ -736,202 +918,29 @@ Do not change character identities, ages, or appearances between clips.`;
                 </div>
               ))}
             </div>
-          </section>
-        )}
-
-        {/* Progress warnings */}
-        {progressWarnings.length > 0 && (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 space-y-1">
-            {progressWarnings.map((w, i) => (
-              <p key={i} className="text-[10px] text-amber-400 flex items-start gap-1">
-                <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" /> {w}
-              </p>
-            ))}
-          </div>
-        )}
-
-        {/* Generating state */}
-        {generating && (
-          <div className="rounded-2xl border border-primary/30 bg-primary/5 p-6 flex flex-col items-center gap-4">
-            <Loader2 className="w-8 h-8 text-primary animate-spin" />
-            <div className="text-center">
-              <p className="text-sm font-medium text-foreground">{PROGRESS_STEPS[progressStep]}</p>
-              <p className="text-xs text-muted-foreground mt-1">Step {progressStep + 1} of {PROGRESS_STEPS.length}</p>
-            </div>
-            <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
-              <motion.div
-                animate={{ width: `${((progressStep + 1) / PROGRESS_STEPS.length) * 100}%` }}
-                transition={{ duration: 0.5 }}
-                className="h-full bg-primary rounded-full"
-              />
-            </div>
-            <p className="text-[10px] text-muted-foreground/60">This may take 30–90 seconds</p>
-          </div>
-        )}
-
-        {/* Result panel */}
-        {reelResult && !generating && (
-          <div className="rounded-2xl border border-primary/40 bg-card p-4 space-y-4">
-            <div className="flex items-center gap-2">
-              <Film className="w-5 h-5 text-primary" />
-              <h3 className="text-sm font-bold text-foreground">Your Memory Reel is Ready</h3>
-            </div>
-
-            {/* Video preview */}
-            {reelResult.video_url ? (
-              <video
-                src={reelResult.video_url}
-                controls
-                playsInline
-                className="w-full rounded-xl aspect-[9/16] object-cover bg-black"
-                style={{ maxHeight: "60vh" }}
-              />
-            ) : reelResult.thumbnail_url ? (
-              <div className="relative">
-                <img src={reelResult.thumbnail_url} alt="Reel thumbnail" className="w-full rounded-xl aspect-[9/16] object-cover" />
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="px-4 py-2 rounded-xl bg-black/60 text-white text-xs text-center">
-                    Video generation completed — use Download to save
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {/* Send status feedback */}
-            {sendStatus === 'sent' && (
-              <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-xs text-emerald-400 flex items-center gap-2">
-                <CheckSquare className="w-4 h-4" /> Reel sent to character! They'll remember it.
-              </div>
-            )}
-            {sendStatus === 'error' && (
-              <div className="rounded-xl bg-destructive/10 border border-destructive/30 px-3 py-2 text-xs text-destructive flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4" /> Send failed. Please try again.
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="grid grid-cols-3 gap-2">
-              {/* Download */}
-              {reelResult.video_url ? (
-                <a
-                  href={reelResult.video_url}
-                  download="memory_reel.mp4"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
-                >
-                  <Download className="w-4 h-4" />
-                  Download
-                </a>
-              ) : (
-                <button
-                  disabled
-                  className="flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl bg-secondary text-muted-foreground text-xs font-medium opacity-50"
-                >
-                  <Download className="w-4 h-4" />
-                  Download
-                </button>
-              )}
-
-              {/* Send to Character */}
-              <button
-                onClick={() => { setSendStatus(null); setShowCharPicker(true); }}
-                disabled={sendStatus === 'sending'}
-                className="flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl bg-secondary border border-border text-foreground text-xs font-medium hover:border-primary/40 transition-colors disabled:opacity-50"
-              >
-                {sendStatus === 'sending'
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                  : <Send className="w-4 h-4" />
-                }
-                Send
-              </button>
-
-              {/* Delete */}
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                className="flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl bg-secondary border border-border text-foreground text-xs font-medium hover:border-destructive/40 hover:text-destructive transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete
-              </button>
-            </div>
-
-            <p className="text-[10px] text-muted-foreground/60 text-center">
-              Deleting the reel does not delete your original images or memories.
+            <p className="text-[10px] text-muted-foreground/60">
+              ⚡ = animate (image-to-video, source-locked) · no icon = static photo slide
             </p>
-          </div>
-        )}
-
-        {/* Create Vid button */}
-        {!reelResult && !generating && (
-          <div className="fixed bottom-4 left-4 right-4 z-40">
-            <button
-              onClick={handleGenerate}
-              disabled={selectedItems.length === 0 || generating}
-              className="w-full py-4 rounded-2xl bg-primary text-primary-foreground text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors disabled:opacity-40 shadow-lg shadow-primary/30"
-            >
-              <Sparkles className="w-4 h-4" />
-              Create Vid{selectedItems.length > 0 ? ` (${selectedItems.length} images)` : ""}
-            </button>
-            {selectedItems.length === 0 && (
-              <p className="text-center text-[10px] text-muted-foreground mt-2">Select at least one image to create your reel</p>
-            )}
-          </div>
+          </section>
         )}
       </div>
 
-      {/* Character picker modal */}
-      <AnimatePresence>
-        {showCharPicker && (
-          <CharacterPicker
-            characters={characters.filter(c => c.owner_email === currentUser?.email || c.status === 'active')}
-            onSelect={handleSendToCharacter}
-            onClose={() => setShowCharPicker(false)}
-          />
+      {/* Sticky Create Vid button */}
+      <div className="fixed bottom-4 left-4 right-4 z-40">
+        <button
+          onClick={handleGenerate}
+          disabled={selectedItems.length === 0 || jobSubmitting}
+          className="w-full py-4 rounded-2xl bg-primary text-primary-foreground text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors disabled:opacity-40 shadow-lg shadow-primary/30"
+        >
+          {jobSubmitting
+            ? <><Loader2 className="w-4 h-4 animate-spin" /> Starting…</>
+            : <><Sparkles className="w-4 h-4" /> Create Vid{selectedItems.length > 0 ? ` (${selectedItems.length} images)` : ""}</>
+          }
+        </button>
+        {selectedItems.length === 0 && (
+          <p className="text-center text-[10px] text-muted-foreground mt-2">Select at least one image</p>
         )}
-      </AnimatePresence>
-
-      {/* Delete confirmation */}
-      <AnimatePresence>
-        {showDeleteConfirm && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowDeleteConfirm(false)}>
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              onClick={e => e.stopPropagation()}
-              className="w-full max-w-sm bg-card border border-border rounded-2xl p-5 space-y-4"
-            >
-              <div className="flex items-start gap-3">
-                <Trash2 className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-semibold text-foreground">Delete this memory reel?</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    This will remove the generated video file, but it will not delete the original images, memories, or characters.
-                    If you already sent this reel to a character, their message thread will not be deleted.
-                  </p>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowDeleteConfirm(false)}
-                  className="flex-1 py-2.5 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleDeleteReel}
-                  disabled={deleting}
-                  className="flex-1 py-2.5 rounded-xl bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                  Delete Reel
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      </div>
     </div>
   );
 }

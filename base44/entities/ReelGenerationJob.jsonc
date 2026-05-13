@@ -1,0 +1,104 @@
+{
+  "name": "ReelGenerationJob",
+  "type": "object",
+  "properties": {
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email \u2014 primary ownership source of truth"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "preparing",
+        "animating",
+        "assembling",
+        "validating",
+        "complete",
+        "failed"
+      ],
+      "default": "queued"
+    },
+    "progress_percent": {
+      "type": "number",
+      "default": 0
+    },
+    "selected_image_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "selected_image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "selected_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "clip_results": {
+      "type": "array",
+      "description": "Per-image clip output: { image_id, image_url, clip_url, clip_type, caption, status, error }",
+      "items": {
+        "type": "object"
+      },
+      "default": []
+    },
+    "output_video_url": {
+      "type": "string",
+      "description": "Final assembled reel video URL"
+    },
+    "thumbnail_url": {
+      "type": "string"
+    },
+    "error_message": {
+      "type": "string"
+    },
+    "validation_passed": {
+      "type": "boolean"
+    },
+    "validation_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "estimated_time_remaining": {
+      "type": "string"
+    },
+    "char_names": {
+      "type": "string"
+    },
+    "memory_highlights": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "required": [
+    "owner_email"
+  ]
+}

@@ -3,7 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Wrench, Film } from "lucide-react";
+import { Wrench, Film, Loader2, CheckCircle2 } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import ActiveArcCard from "@/components/moments/ActiveArcCard";
 import AchievementBadge from "@/components/moments/AchievementBadge";
@@ -18,6 +18,7 @@ const CATEGORIES = Object.keys(CATEGORY_LABELS);
 export default function Moments() {
   const [activeCategory, setActiveCategory] = useState("all");
   const [scanning, setScanning] = useState(false);
+  const [reelJobStatus, setReelJobStatus] = useState(null); // null | 'processing' | 'complete'
   const [scanResult, setScanResult] = useState(null);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const hasScanned = useRef(false);
@@ -91,6 +92,21 @@ export default function Moments() {
     runScan();
   }, [currentUser?.email]);
 
+  // Check for active reel job — session-gated, lightweight
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    base44.entities.ReelGenerationJob
+      .filter({ owner_email: currentUser.email }, "-created_date", 3)
+      .then(jobs => {
+        const inProgress = jobs.find(j => ['queued','preparing','animating','assembling','validating'].includes(j.status));
+        const complete = jobs.find(j => j.status === 'complete');
+        if (inProgress) setReelJobStatus('processing');
+        else if (complete) setReelJobStatus('complete');
+        else setReelJobStatus(null);
+      })
+      .catch(() => {});
+  }, [currentUser?.email]);
+
   // Subscribe to real-time achievement unlocks
   useEffect(() => {
     if (!currentUser?.email) return;
@@ -132,8 +148,12 @@ export default function Moments() {
                to="/memory-reel"
                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-xs font-medium"
              >
-               <Film className="w-3.5 h-3.5" />
-               Create Memory Reel
+               {reelJobStatus === 'processing'
+                 ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Memory Reel processing</>
+                 : reelJobStatus === 'complete'
+                 ? <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Memory Reel ready</>
+                 : <><Film className="w-3.5 h-3.5" /> Create Memory Reel</>
+               }
              </Link>
              <button
                onClick={() => setShowTroubleshooting(true)}
