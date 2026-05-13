@@ -54,14 +54,18 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const AUTO_LOAD_TIMEOUT_MS = 90000; // 90s — generous window for backend generation
   const [autoLoadExpired, setAutoLoadExpired] = useState(false);
 
-  // Sync if parent passes a new image_url (e.g. from real-time subscription)
-  const prevImageUrl = message.image_url;
-  const normalizedPrev = prevImageUrl ? normalizeImageUrl(prevImageUrl) : null;
-  if (normalizedPrev && normalizedPrev !== localImageUrl) {
-    setLocalImageUrl(normalizedPrev);
-    setImgLoadError(false);
-    setImgRetryKey(0);
-  }
+  // Sync if parent passes a new image_url (e.g. from real-time subscription or direct hydration).
+  // Using useEffect ensures this is reactive to prop changes without triggering during-render setState.
+  useEffect(() => {
+    if (!message.image_url) return;
+    const normalized = normalizeImageUrl(message.image_url);
+    if (normalized && normalized !== localImageUrl) {
+      console.log(`[MessageBubble] Syncing image_url from prop → localImageUrl: ${normalized.substring(0, 60)}...`);
+      setLocalImageUrl(normalized);
+      setImgLoadError(false);
+      setImgRetryKey(0);
+    }
+  }, [message.image_url]); // eslint-disable-line
 
   // Auto-load: if message has no image yet and content is "" (actively generating),
   // silently wait for the subscription to push the URL. After timeout, escalate to recovery.

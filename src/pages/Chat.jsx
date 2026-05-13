@@ -265,7 +265,22 @@ export default function Chat() {
           queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
         }
       } else if (event.type === "update") {
-        setMessages(prev => prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m));
+        setMessages(prev => prev.map(m => {
+          if (m.id !== event.data.id) return m;
+          // CRITICAL: Never clobber an existing image_url with undefined/null from a partial
+          // staging write. The backend does two writes per image generation:
+          //   1. A non-final "staging" write (no image_url) for camera validation state
+          //   2. The final accepted write (with image_url)
+          // If write #1 arrives after write #2 (out of order), or if write #1 spreads
+          // `image_url: undefined` onto a message that already has a valid URL, the image
+          // disappears and never recovers without a manual retry.
+          const incoming = { ...event.data };
+          if (!incoming.image_url && m.image_url) {
+            // Preserve the existing image_url — do not let a partial write erase it
+            incoming.image_url = m.image_url;
+          }
+          return { ...m, ...incoming };
+        }));
       } else if (event.type === "delete") {
         setMessages(prev => prev.filter(m => m.id !== event.data.id));
       }
