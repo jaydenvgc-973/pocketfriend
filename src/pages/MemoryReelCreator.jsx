@@ -10,7 +10,7 @@
  *
  * ACTIVATION FLOW:
  * Moments → "Create Memory Reel" → inactive start screen → "Start Building Reel"
- * → only then queries 14 days of media → user selects → "Create Vid" → background job
+ * → only then queries 30 days of media → user selects → "Create Vid" → background job
  * → user can navigate away → returns and resumes job → ReelPlayer on completion
  */
 
@@ -289,24 +289,24 @@ export default function MemoryReelCreator() {
     setLoadError(null);
 
     const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 14);
+    cutoff.setDate(cutoff.getDate() - 30);
     const cutoffISO = cutoff.toISOString();
 
     try {
       const [recentMessages, recentMemories] = await Promise.all([
-        base44.entities.Message.filter({ sender_type: "character" }, "-created_date", 200).catch(() => []),
-        base44.entities.CharacterMemory.filter({}, "-created_date", 100).catch(() => []),
+        base44.entities.Message.filter({ sender_type: "character" }, "-created_date", 400).catch(() => []),
+        base44.entities.CharacterMemory.filter({}, "-created_date", 150).catch(() => []),
       ]);
 
       const charById = Object.fromEntries(characters.map(c => [c.id, c]));
       const ownedCharIds = new Set(characters.map(c => c.id));
 
-      // Only images from the user's own characters, within 14 days
+      // Only images from the user's own characters, within 30 days
       const rawMedia = recentMessages.filter(m =>
         m.image_url &&
         m.created_date >= cutoffISO &&
         (!m.character_id || ownedCharIds.has(m.character_id))
-      ).slice(0, 30);
+      ).slice(0, 60);
 
       const seenUrls = new Set();
       const dedupedMedia = rawMedia.filter(m => {
@@ -315,7 +315,7 @@ export default function MemoryReelCreator() {
         return true;
       });
 
-      const items = dedupedMedia.slice(0, 20).map(m => {
+      const items = dedupedMedia.slice(0, 30).map(m => {
         const char = charById[m.character_id] || null;
         const genCtx = m.generation_context || {};
         const prompt = genCtx.prompt || null;
@@ -338,7 +338,7 @@ export default function MemoryReelCreator() {
 
       const filteredMemories = recentMemories
         .filter(mem => mem.created_date >= cutoffISO)
-        .slice(0, 10);
+        .slice(0, 20);
 
       setMediaItems(items);
       setMemories(filteredMemories);
@@ -637,7 +637,7 @@ export default function MemoryReelCreator() {
 
           <div className="w-full max-w-xs space-y-3 text-xs text-muted-foreground">
             {[
-              { icon: Camera, text: "Uses your actual Media Grid images from the past 14 days" },
+              { icon: Camera, text: "Uses your actual Media Grid images from the past month" },
               { icon: Zap,    text: "Optionally animates each photo using image-to-video (source-locked)" },
               { icon: Film,   text: "Renders a vertical 9:16 Reel/TikTok style gallery montage" },
               { icon: Send,   text: "Send directly to a character's chat" },
@@ -680,7 +680,7 @@ export default function MemoryReelCreator() {
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <Loader2 className="w-8 h-8 text-primary animate-spin" />
           <p className="text-sm text-muted-foreground">Loading your recent memories…</p>
-          <p className="text-xs text-muted-foreground/60">Scanning the past 14 days</p>
+          <p className="text-xs text-muted-foreground/60">Scanning the past 30 days</p>
         </div>
       </div>
     );
@@ -1079,7 +1079,7 @@ export default function MemoryReelCreator() {
         </Link>
         <div className="flex-1 min-w-0">
           <h1 className="text-sm font-bold text-foreground">Memory Reel Creator</h1>
-          <p className="text-xs text-muted-foreground">Past 14 days · {mediaItems.length} images · {selectedItems.length} selected</p>
+          <p className="text-xs text-muted-foreground">Past Month · {mediaItems.length} images · {selectedItems.length} selected</p>
         </div>
       </div>
 
@@ -1123,7 +1123,7 @@ export default function MemoryReelCreator() {
         {mediaItems.length === 0 ? (
           <div className="rounded-2xl border border-border bg-card p-8 text-center space-y-2">
             <Image className="w-8 h-8 text-muted-foreground mx-auto" />
-            <p className="text-sm font-medium text-foreground">No images found in the past 14 days</p>
+            <p className="text-sm font-medium text-foreground">No images found in the past month</p>
             <p className="text-xs text-muted-foreground">Media Grid images from character chats will appear here.</p>
           </div>
         ) : (
