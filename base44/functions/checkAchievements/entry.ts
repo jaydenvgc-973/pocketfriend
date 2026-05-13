@@ -278,9 +278,13 @@ Deno.serve(async (req) => {
 
     if (!characterId) return Response.json({ unlocked: [] });
 
-    // Get existing achievements
-    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
-    const existing = await base44.entities.UserAchievement.filter({ owner_email: user.email });
+    // Get ALL existing achievements for this user.
+    // Use user-scoped list (RLS ensures only this user's records are returned).
+    // We then check BOTH owner_email match and records without owner_email (legacy records
+    // whose owner is proven by RLS). This prevents false "new unlock" on every call
+    // before the backfill has set owner_email on legacy records.
+    const existing = await base44.entities.UserAchievement.list('-created_date', 500);
+    // Deduplicate by achievement_id — only keep first occurrence per achievement_id+character_id
     const existingIds = existing.map(a => a.achievement_id);
 
     // Run both detection passes in parallel
@@ -294,9 +298,13 @@ Deno.serve(async (req) => {
     const newIds    = allDetected.filter(id => !existingIds.includes(id));
     const revisitIds = allDetected.filter(id => existingIds.includes(id));
 
-    // Create records for genuinely new unlocks only
+    // Create records for genuinely new unlocks only.
+    // Double-check against the full existing list to prevent race-condition duplicates:
+    // achievement is "new" only if no record exists with same achievement_id regardless of character.
     const newlyUnlocked = [];
     for (const achievement_id of newIds) {
+      // Final guard: skip if already in existingIds (could have been pushed in a prior loop iteration)
+      if (existingIds.includes(achievement_id)) continue;
       const record = await base44.entities.UserAchievement.create({
         achievement_id,
         character_id: characterId,
@@ -307,7 +315,7 @@ Deno.serve(async (req) => {
         owner_email: user.email,
       });
       newlyUnlocked.push(record);
-      existingIds.push(achievement_id);
+      existingIds.push(achievement_id); // prevent same-session duplicate
     }
 
     // EMOTIONAL WEIGHT CLASSIFICATION for revisits

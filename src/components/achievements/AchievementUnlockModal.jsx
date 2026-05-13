@@ -57,6 +57,7 @@ export default function AchievementUnlockModal() {
       if (
         event.type === "create" &&
         event.data?.is_seen === false &&
+        event.data?.owner_email === userEmail &&
         !sessionFullModalShown.has(event.data.achievement_id)
       ) {
         setFullQueue(prev => {
@@ -66,16 +67,17 @@ export default function AchievementUnlockModal() {
       }
     });
 
-    // On mount: fetch unseen records from PREVIOUS sessions.
-    // These should NOT re-trigger the full modal — the user already saw them.
-    // Show a small non-blocking toast instead, then mark as seen.
+    // On mount: fetch unseen records from PREVIOUS sessions, scoped to this user.
+    // Only records with owner_email === userEmail are fetched — no cross-account leakage.
+    // Legacy records without owner_email are intentionally excluded from new-popup behavior
+    // (they require a backfill pass first via backfillAchievementsOwnerEmail).
+    // These should NOT re-trigger the full modal — mark as seen silently instead.
     if (!initialFetchDone.current) {
       initialFetchDone.current = true;
-      base44.entities.UserAchievement.filter({ is_seen: false })
+      base44.entities.UserAchievement.filter({ owner_email: userEmail, is_seen: false })
         .then(unseen => {
           if (unseen.length === 0) return;
-          // Filter out anything that was created this session (subscribe will handle those)
-          // and anything already shown via full modal
+          // Filter out anything already shown via full modal this session
           const stale = unseen.filter(r => !sessionFullModalShown.has(r.achievement_id));
           if (stale.length === 0) return;
           // Mark them all as seen silently — no full modal for old unseen records
