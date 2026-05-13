@@ -14,7 +14,7 @@
 import { useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { reportRateLimit, isGloballyRateLimited, isChatSafeModeActive, escalateChatRetry, resetChatRetry, getChatRetryState, isRetryPaused, areOptionalSystemsDisabled } from "@/lib/simulationGate";
-import { isForegroundActive, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
+import { isForegroundActive } from "@/lib/foregroundPriority";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
 
 // Per-session cooldown state — keyed by `${characterId}:${taskName}`

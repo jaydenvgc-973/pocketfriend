@@ -10,6 +10,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { foregroundPriority } from "@/lib/foregroundPriority";
 import { Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
@@ -288,6 +289,9 @@ export default function MemoryReelCreator() {
     setJobSubmitting(true);
     setJobError(null);
 
+    const fgId = `reel_generate_${Date.now()}`;
+    foregroundPriority.startForegroundAction('memory_reels', 'reel_generation', fgId);
+
     try {
       const charNames = [...new Set(selectedItems.map(i => i.character_name))].join(", ");
 
@@ -313,6 +317,7 @@ export default function MemoryReelCreator() {
       setJobError(err?.message || "Failed to start generation.");
     } finally {
       setJobSubmitting(false);
+      foregroundPriority.endForegroundAction(fgId);
     }
   };
 

@@ -5,7 +5,7 @@ import { X, AlertTriangle, UserX, ThumbsDown, Loader2, PenLine, MapPin, Users, C
 import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import { readCache, writeCache, isCacheStale, validateCharacterRoster } from "@/lib/mediaGridCache";
-import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
+import { foregroundPriority } from "@/lib/foregroundPriority";
 
 const REASONS = [
   {
@@ -155,7 +155,8 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     setRosterLoadStatus(cached ? 'cache' : 'loading');
 
     // Register foreground task — background systems yield while user is picking subjects
-    const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'high');
+    const fgId = `regen_modal_${Date.now()}`;
+    foregroundPriority.startForegroundAction('media_grid', 'subject_picker', fgId);
 
     fetchUnifiedRoster(base44, email)
       .then(({ roster, repairDiagnostics }) => {
@@ -184,7 +185,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       })
       .finally(() => {
         setLoadingCharacters(false);
-        releaseForeground();
+        foregroundPriority.endForegroundAction(fgId);
       });
   };
 

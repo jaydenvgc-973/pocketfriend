@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
+import { foregroundPriority } from "@/lib/foregroundPriority";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X } from "lucide-react";
@@ -122,6 +123,16 @@ export default function CharacterProfile() {
   const [showOutfitSharer, setShowOutfitSharer] = useState(false);
   const [expandedMemory, setExpandedMemory] = useState(null);
   
+  // Mark profile open as a foreground action so background systems stand down
+  useEffect(() => {
+    if (!characterId) return;
+    const fgId = `profile_${characterId}_${Date.now()}`;
+    foregroundPriority.startForegroundAction('profile', 'profile_load', fgId);
+    // Release after 10s — enrichment queries (workLocations, relationships) all have delays
+    const t = setTimeout(() => foregroundPriority.endForegroundAction(fgId), 10000);
+    return () => { clearTimeout(t); foregroundPriority.endForegroundAction(fgId); };
+  }, [characterId]);
+
   const { data: character, isLoading, refetch } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
