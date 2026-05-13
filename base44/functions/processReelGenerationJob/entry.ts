@@ -145,17 +145,40 @@ Deno.serve(async (req) => {
             : `Animate the person in IMAGE 1 (the starting frame). The video must begin from IMAGE 1 exactly as it appears. Keep the scene, body, outfit, pose, lighting, and identity exactly as shown. Do not change gender, body type, ethnicity, or outfit. Do not create a new person.`;
 
           // Call Veo via Core.GenerateVideo
+          // PROOF LOGGING: Capture exact payload structure
+          const veoPayload = {
+            prompt: identityPrompt,
+            existing_image_urls: existingImages,
+            duration: 4,
+            aspect_ratio: '9:16',
+          };
+          
+          console.log(`\n[Clip ${i + 1}] ══════════════════════════════════════════════════════════════`);
+          console.log(`[Clip ${i + 1}] VEO PAYLOAD PROOF`);
+          console.log(`[Clip ${i + 1}] ──────────────────────────────────────────────────────────────`);
+          console.log(`[Clip ${i + 1}] existing_image_urls array (PROOF OF ORDER):`);
+          for (let idx = 0; idx < existingImages.length; idx++) {
+            const imgUrl = existingImages[idx];
+            const role = idx === 0 ? 'FRAME_0_SOURCE' : idx === 1 ? 'IDENTITY_ANCHOR' : 'OTHER';
+            console.log(`[Clip ${i + 1}]   [${idx}] ${role}: ${imgUrl.slice(-50)}`);
+          }
+          console.log(`[Clip ${i + 1}] prompt (first 200 chars): ${identityPrompt.slice(0, 200)}...`);
+          console.log(`[Clip ${i + 1}] character_id: ${charId}`);
+          console.log(`[Clip ${i + 1}] character_name: ${charAppearance?.name}`);
+          console.log(`[Clip ${i + 1}] ──────────────────────────────────────────────────────────────`);
+          
           try {
-            const generateRes = await base44.integrations.Core.GenerateVideo({
-              prompt: identityPrompt,
-              existing_image_urls: existingImages,
-              duration: 4,
-              aspect_ratio: '9:16',
-            });
+            const generateRes = await base44.integrations.Core.GenerateVideo(veoPayload);
             
             clipUrl = generateRes.url || null;
             clipType = clipUrl ? 'animated' : 'static';
             clipStatus = clipUrl ? 'veo_generated' : 'fallback_generation_failed';
+
+            console.log(`[Clip ${i + 1}] VEO RESPONSE:`);
+            console.log(`[Clip ${i + 1}]   clip_url: ${clipUrl ? clipUrl.slice(-50) : 'NULL'}`);
+            console.log(`[Clip ${i + 1}]   clip_type: ${clipType}`);
+            console.log(`[Clip ${i + 1}]   status: ${clipStatus}`);
+            console.log(`[Clip ${i + 1}] ══════════════════════════════════════════════════════════════\n`);
 
             if (clipUrl) {
               console.log(`[Clip ${i + 1}] VEO ANIMATED | Character '${charId}' | Source: ${imageUrl.slice(-40)} | Avatar: ${avatarUrl ? 'yes' : 'no'}`);
@@ -165,6 +188,7 @@ Deno.serve(async (req) => {
             }
           } catch (err) {
             console.error(`[Clip ${i + 1}] VEO ERROR:`, err.message);
+            console.log(`[Clip ${i + 1}] ══════════════════════════════════════════════════════════════\n`);
             clipType = 'static';
             clipStatus = 'fallback_generation_error';
             warnings.push(`Clip ${i + 1}: Veo error — ${err.message}`);
@@ -236,7 +260,7 @@ Deno.serve(async (req) => {
         };
       }
 
-      clipResults.push({
+      const clipRecord = {
         image_id: imageId,
         image_url: imageUrl,
         clip_url: clipUrl,
@@ -259,7 +283,25 @@ Deno.serve(async (req) => {
           character_fingerprint: charAppearanceForClip?.fingerprint || null,
           identity_confidence: charAppearanceForClip?.fingerprint ? 'high' : (imageUrl ? 'source_only' : 'low'),
         },
-      });
+      };
+      
+      // PROOF LOGGING: Show exactly what is saved to clip_results
+      console.log(`[Clip ${i + 1}] CLIP_RESULTS SAVED:`);
+      console.log(`[Clip ${i + 1}]   image_url: ${clipRecord.image_url.slice(-50)}`);
+      console.log(`[Clip ${i + 1}]   clip_url: ${clipRecord.clip_url ? clipRecord.clip_url.slice(-50) : 'NULL'}`);
+      console.log(`[Clip ${i + 1}]   clip_type: ${clipRecord.clip_type}`);
+      console.log(`[Clip ${i + 1}]   status: ${clipRecord.status}`);
+      console.log(`[Clip ${i + 1}]   character_id: ${clipRecord.subject_identity.linked_character_id}`);
+      if (veo_diagnostics) {
+        console.log(`[Clip ${i + 1}]   veo_diagnostics.source_image_url: ${veo_diagnostics.source_image_url.slice(-50)}`);
+        console.log(`[Clip ${i + 1}]   veo_diagnostics.avatar_reference_url: ${veo_diagnostics.avatar_reference_url ? veo_diagnostics.avatar_reference_url.slice(-50) : 'NULL'}`);
+        console.log(`[Clip ${i + 1}]   veo_diagnostics.source_image_index_in_payload: ${veo_diagnostics.source_image_index_in_payload}`);
+        console.log(`[Clip ${i + 1}]   veo_diagnostics.avatar_reference_index_in_payload: ${veo_diagnostics.avatar_reference_index_in_payload}`);
+        console.log(`[Clip ${i + 1}]   veo_diagnostics.existing_image_urls_order: ${veo_diagnostics.existing_image_urls_order}`);
+      }
+      console.log(`[Clip ${i + 1}] ────────────────────────────────────────────────────────────────\n`);
+      
+      clipResults.push(clipRecord);
 
       const pct = 15 + Math.round(((i + 1) / selectedImageUrls.length) * 55);
       await base44.entities.ReelGenerationJob.update(job.id, {
@@ -332,6 +374,36 @@ Deno.serve(async (req) => {
     }
 
     // ── COMPLETE ───────────────────────────────────────────────────────────────
+    
+    // FINAL PROOF SUMMARY
+    console.log(`\n${'═'.repeat(80)}`);
+    console.log(`REEL GENERATION JOB COMPLETE: ${job.id}`);
+    console.log(`${'═'.repeat(80)}`);
+    console.log(`Total clips processed: ${clipResults.length}`);
+    console.log(`Selected source images: ${selectedImageUrls.length}`);
+    console.log(`Character(s): ${selectedCharacterIds.join(', ')}`);
+    console.log(`${'═'.repeat(80)}\n`);
+    
+    for (let idx = 0; idx < clipResults.length; idx++) {
+      const clip = clipResults[idx];
+      console.log(`CLIP ${idx + 1} SUMMARY:`);
+      console.log(`  image_url (selected source): ${clip.image_url.slice(-60)}`);
+      console.log(`  clip_url (generated video): ${clip.clip_url ? clip.clip_url.slice(-60) : 'NULL'}`);
+      console.log(`  clip_type: ${clip.clip_type}`);
+      console.log(`  character_id: ${clip.subject_identity.linked_character_id}`);
+      if (clip.veo_diagnostics) {
+        const diag = clip.veo_diagnostics;
+        console.log(`  VEO PROOF:`);
+        console.log(`    - source_image_url matches image_url? ${diag.source_image_url === clip.image_url ? 'YES' : 'NO'}`);
+        console.log(`    - source_image_index_in_payload: ${diag.source_image_index_in_payload}`);
+        console.log(`    - avatar_reference_url: ${diag.avatar_reference_url ? diag.avatar_reference_url.slice(-60) : 'NULL'}`);
+        console.log(`    - avatar_reference_index_in_payload: ${diag.avatar_reference_index_in_payload}`);
+        console.log(`    - avatar belongs to same character? ${diag.character_id === clip.subject_identity.linked_character_id ? 'YES' : 'CHECK'}`);
+      }
+      console.log(`\n`);
+    }
+    console.log(`${'═'.repeat(80)}\n`);
+    
     await base44.entities.ReelGenerationJob.update(job.id, {
       status: 'complete',
       progress_percent: 100,
