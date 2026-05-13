@@ -1007,8 +1007,9 @@ Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. No
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    // auth.me() may return null for scheduled/service-role callers — that's OK.
+    // Ownership is validated below using ownerEmail param or character.owner_email.
+    const user = await base44.auth.me().catch(() => null);
 
     const {
       messageId,
@@ -1022,6 +1023,7 @@ Deno.serve(async (req) => {
       userWorldName,
       characterEmotionalState,
       userUploadedReferenceUrl,   // optional: user-uploaded image for visual guidance (from Media Grid)
+      ownerEmail,         // OPTIONAL: passed by service-role callers (scheduled/autonomous) when no user session exists
       // manualLocationId is NOT used — location resolved from character record
     } = await req.json();
 

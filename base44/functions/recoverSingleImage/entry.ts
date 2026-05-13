@@ -43,15 +43,28 @@ Deno.serve(async (req) => {
       referenceImages.push(...character.reference_image_urls.slice(0, 2));
     }
 
-    // --- STEP 1: Try to extract prompt from [IMAGE: ...] tag in content ---
+    // --- STEP 1: Use stored generation_context.prompt (source of truth) ---
     let imagePrompt = null;
-    const imageTagMatch = message.content?.match(/\[IMAGE:\s*([\s\S]+?)\]/i);
-    if (imageTagMatch) {
-      imagePrompt = imageTagMatch[1].trim();
-      console.log(`[recoverSingleImage] Found [IMAGE:] tag prompt: "${imagePrompt.substring(0, 80)}"`);
+
+    // PRIMARY: generation_context.prompt is the exact prompt that was used — always prefer it
+    const storedPrompt = message.generation_context?.prompt ||
+      message.generation_context?.scene_prompt ||
+      message.generation_context?.original_raw_prompt;
+    if (storedPrompt && storedPrompt.trim()) {
+      imagePrompt = storedPrompt.trim();
+      console.log(`[recoverSingleImage] Using stored generation_context.prompt: "${imagePrompt.substring(0, 80)}"`);
     }
 
-    // --- STEP 2: If no tag, look at surrounding conversation for context ---
+    // SECONDARY: Try to extract prompt from [IMAGE: ...] tag in content
+    if (!imagePrompt) {
+      const imageTagMatch = message.content?.match(/\[IMAGE:\s*([\s\S]+?)\]/i);
+      if (imageTagMatch) {
+        imagePrompt = imageTagMatch[1].trim();
+        console.log(`[recoverSingleImage] Found [IMAGE:] tag prompt: "${imagePrompt.substring(0, 80)}"`);
+      }
+    }
+
+    // --- STEP 2: If no stored prompt and no tag, look at surrounding conversation for context ---
     if (!imagePrompt && message.conversation_id) {
       const nearbyMsgs = await base44.asServiceRole.entities.Message.filter(
         { conversation_id: message.conversation_id },
