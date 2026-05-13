@@ -1595,10 +1595,7 @@ Deno.serve(async (req) => {
     console.log(`[IdentityAudit]   subject_2_visual_refs_found: ${USER_SLOTS > 0}`);
     console.log(`[IdentityAudit]   joint_dual_slot_active:    ${subjectType === 'joint'}`);
     console.log(`[IdentityAudit]   generic_fallback_inserted: false`);
-    console.log(`[IdentityAudit]   appearance_conflicts_detected: ${appearanceLockCorrections.length > 0}`);
-    console.log(`[IdentityAudit]   appearance_conflicts_corrected: ${appearanceLockCorrections.map(c => c.field).join(', ') || 'none'}`);
-    console.log(`[IdentityAudit]   structured_subjects_count: ${structuredSubjects.length}`);
-    console.log(`[IdentityAudit]   background_extras_allowed: ${baseGenerationContext.background_extras_allowed}`);
+    console.log(`[IdentityAudit]   appearance_conflicts_detected: (resolved after character fetch)`);
     console.log(`[IdentityAudit]   generation_context.character_id will be: ${characterId || 'null'}`);
     console.log(`[IdentityAudit]   message_id: ${messageId}`);
 
