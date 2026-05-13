@@ -32,7 +32,7 @@ export async function resolveOrCreateFamilyMemberCharacter({
     linked_character_id: linked_character_id || null,
     avatar_url: photo_url || null,
     source_type: 'family_member',
-    mode: 'create_if_confident',
+    mode: 'create_from_explicit_user_action',
     all_live_characters: all_live_characters || [],
     all_fictional_rels: (all_live_characters || []).flatMap(c => c.fictional_relationships || []),
     base44,

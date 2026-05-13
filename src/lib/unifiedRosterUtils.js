@@ -111,8 +111,12 @@ export async function fetchUnifiedRoster(base44, userEmail) {
     c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
   );
 
-  // Aggregate all fictional_relationships for cross-reference scoring
-  const allFictionalRels = liveChars.flatMap(c => c.fictional_relationships || []);
+  // Aggregate all fictional_relationships for cross-reference scoring.
+  // Tag each entry with _source_character_id so the scorer can verify independence
+  // (two refs are "independent" only if they come from different source characters).
+  const allFictionalRels = liveChars.flatMap(c =>
+    (c.fictional_relationships || []).map(rel => ({ ...rel, _source_character_id: c.id }))
+  );
 
   const repairDiagnostics = [];
 
@@ -219,7 +223,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
         source_character_id: char.id,
         relationship_context: fm.relationship_type || null,
         avatar_url: fm.photo_url || null,
-        mode: 'read',  // READ ONLY — no creates
+        mode: 'read',  // READ ONLY — no creates, no writes
         all_live_characters: liveChars,
         all_fictional_rels: allFictionalRels,
         base44,
@@ -234,7 +238,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
           resolvedNameKeys.add(resolvedChar.name.trim().toLowerCase());
         }
       } else {
-        // needs_review or failed — log diagnostic, do not add to roster, do not create
+        // needs_review — log diagnostic, do not add to roster, do not create
         repairDiagnostics.push({
           name: fm.name,
           source_type: 'family_member',
@@ -253,6 +257,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   //   Call resolveCanonicalPerson in "read" mode.
   //   If resolved: ensure the character is in the roster.
   //   If needs_review: add to repairDiagnostics. Do NOT create.
+  //   A fictional relationship edge is NOT automatically a new person record.
   //
   // For entries that already have related_character_id: ensure that Character is in roster.
 
@@ -285,7 +290,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
         source_character_id: char.id,
         relationship_context: rel.relationship_type || null,
         avatar_url: rel.photo_url || rel.avatar_url || null,
-        mode: 'read',  // READ ONLY — no creates
+        mode: 'read',  // READ ONLY — no creates, no writes
         all_live_characters: liveChars,
         all_fictional_rels: allFictionalRels,
         base44,

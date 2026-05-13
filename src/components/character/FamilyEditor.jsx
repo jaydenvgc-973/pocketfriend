@@ -109,7 +109,7 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
               source_type: 'family_member',
               source_character_id: character.id,
               relationship_context: m.relationship_type || null,
-              mode: 'create_if_confident',
+              mode: 'create_from_explicit_user_action',
               all_live_characters: liveChars,
               all_fictional_rels: liveChars.flatMap(c => c.fictional_relationships || []),
               base44,
