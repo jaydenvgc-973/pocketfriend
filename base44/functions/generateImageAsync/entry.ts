@@ -278,7 +278,7 @@ function getTimeLighting(hour = new Date().getHours()) {
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
-function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime }) {
+function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime, subjectType, characterId, userWorldName }) {
   // ── IMAGE GENERATION PRIORITY STACK (GOVERNING LAW) ──────────────────────
   // Priority 1: SCENE INTENT — user prompt meaning, emotion, action
   // Priority 2: CHARACTER PRESENCE — who is there and what they are doing
@@ -1670,6 +1670,11 @@ All reference images (if any) are environment/location refs only — do NOT trea
       userRefStart,
       serverHour: serverTime.getHours(),
       serverTime: serverTime.toLocaleTimeString(),
+      // RULE: module-level functions do NOT have access to handler-scope variables via closure.
+      // These must be passed explicitly as parameters.
+      subjectType,
+      characterId,
+      userWorldName,
     });
 
     // ── 7. CAMERA ENFORCEMENT — EXTRACT PREVIOUS CAMERA STATE ────────────────
@@ -1788,19 +1793,13 @@ All reference images (if any) are environment/location refs only — do NOT trea
     };
 
     // ── DISPATCH LOG — logged once before loop, updated on camera override ─────
+    // RULE: promptHasExplicitTime and timeLighting are local to buildPrompt — do NOT reference here.
+    // Only log variables that are declared in this handler scope.
     console.log(`[generateImageAsync] ── PROVIDER DISPATCH ──`);
     console.log(`  raw prompt:             ${rawPromptForSanitize.substring(0, 200)}${rawPromptForSanitize.length > 200 ? '…' : ''}`);
     console.log(`  sanitized prompt:       ${sanitizedPrompt.substring(0, 200)}${sanitizedPrompt.length > 200 ? '…' : ''}`);
-    console.log(`  prompt_has_explicit_time:             ${promptHasExplicitTime}`);
-    console.log(`  explicit_prompt_environment_authority: ${promptHasExplicitTime}`);
-    console.log(`  reference_lighting_authority:         false`);
-    console.log(`  active_lighting_source:               ${promptHasExplicitTime ? 'prompt' : 'server_time'}`);
     console.log(`  server_hour:                          ${serverTime.getHours()}`);
-    console.log(`  time_lighting_period:                 ${timeLighting.period}`);
-    console.log(`  lighting_authority:                   ${promptHasExplicitTime ? 'PROMPT (explicit time declared)' : `SERVER TIME (${timeLighting.period})`}`);
     console.log(`  env_refs_count:                       ${ENV_SLOTS}`);
-    console.log(`  lighting_override_block_injected:     ${ENV_SLOTS > 0}`);
-    console.log(`  env_refs_lighting_block:              ${promptHasExplicitTime ? 'BLOCKED — prompt is authority' : 'ACTIVE — server time enforced over ref images'}`);
     console.log(`  char refs: ${CHAR_SLOTS} | env refs: ${ENV_SLOTS} | user refs: ${USER_SLOTS}`);
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
