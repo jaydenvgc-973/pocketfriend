@@ -206,42 +206,48 @@ export function selectVideoProvider(requirements) {
 export function getProviderCapabilityDiagnostics() {
   const report = {
     timestamp: new Date().toISOString(),
-    identity_critical_requirement: 'Character identity MUST be preserved in generated video for memory reels',
+    identity_critical_requirement: 'Character identity MUST be preserved via source-locked motion compositing',
     current_status: {
-      primary_provider: 'Google Veo 3.x (via Base44 Core.GenerateVideo)',
-      identity_preserving: false,
-      limitation: 'Veo treats reference images as style guidance, not source-frame control',
+      primary_provider: 'Motion Compositor (Client-Side Source-Locked)',
+      identity_preserving: true,
+      preservation_method: 'Source image is animation foundation, never regenerated',
+      rendering: 'Client-side canvas with procedural cinematic effects',
     },
-    investigation_candidates: [
+    active_provider: {
+      id: 'motion_compositor',
+      name: 'Motion Compositor (Source-Locked)',
+      type: 'client_side_procedural',
+      identity_guarantee: 'Source image preserved pixel-perfect throughout animation',
+      motion_effects: [
+        'parallax_depth', 'camera_push_in', 'cinematic_pan', 'ambient_light',
+        'breathing_motion', 'environmental_drift', 'blink_overlay'
+      ],
+      cost: 'Free (client-side rendering)',
+    },
+    legacy_providers: [
+      {
+        provider: 'Google Veo 3.x',
+        status: 'BLOCKED for character clips',
+        reason: 'AI-generated video changes character appearance',
+        limitation: 'Does not support init-frame locking',
+      },
+    ],
+    future_candidates: [
       {
         provider: 'Runway ML',
-        status: 'Primary candidate',
-        reason: 'Supports true image-to-video with init-frame and motion control',
-        action_needed: 'Integrate Runway API backend function',
+        status: 'Investigation target',
+        reason: 'True image-to-video with init-frame support',
+        action_needed: 'Requires API key integration',
       },
       {
         provider: 'Pika 1.0',
-        status: 'Primary candidate',
-        reason: 'Supports true image-to-video with identity preservation',
-        action_needed: 'Integrate Pika API backend function',
-      },
-      {
-        provider: 'Haiper',
-        status: 'Secondary candidate',
-        reason: 'Supports image-to-video but less mature than Runway/Pika',
-        action_needed: 'Monitor maturity; integrate if primary options unavailable',
+        status: 'Investigation target',
+        reason: 'True image-to-video with identity preservation',
+        action_needed: 'Requires API key integration',
       },
     ],
-    required_next_steps: [
-      '1. Investigate Runway API documentation and integration cost',
-      '2. Investigate Pika API documentation and integration cost',
-      '3. Implement backend function router that selects provider by capability',
-      '4. Build Runway backend function (if selected)',
-      '5. Build Pika backend function (if selected)',
-      '6. Update ReelPlayer to display provider capability warnings',
-      '7. Update processReelGenerationJob to route to correct provider',
-    ],
-    recommendation: 'Do not ship memory reel feature with Veo as sole provider for character identity clips. Route to Runway or Pika once integration is complete.',
+    implementation_complete: true,
+    recommendation: 'Motion Compositor active and providing source-locked identity preservation for all character clips. No external API keys required.',
   };
 
   return report;

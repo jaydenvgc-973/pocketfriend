@@ -295,7 +295,7 @@ export default function ReelPlayer({ clips = [], autoPlay = false }) {
       {/* Slide type badge */}
       <div className="absolute bottom-4 left-4 z-20">
         <span className="text-[10px] text-white/70 bg-black/40 rounded px-1.5 py-0.5">
-          {isVideo ? "🎬 animated" : "📸 photo"}
+          {current?.clip_type === 'motion_composite' ? "🎬 source-locked motion" : isVideo ? "🎬 animated" : "📸 photo"}
         </span>
       </div>
     </div>
