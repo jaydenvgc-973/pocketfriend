@@ -27,10 +27,10 @@ const MOTION_EFFECTS = [
 const SLIDE_DURATION = 3200; // ms per static slide
 const VIDEO_DURATION = 4500; // ms budget per animated clip (actual video controls its own)
 
-// FRAME-0 GUARANTEE: For animated clips, show the source image for 400ms before
-// the video plays. This ensures the viewer sees the exact source character first,
-// regardless of what the video model generated as its first frame.
-const FRAME0_HOLD_MS = 400;
+// SOURCE IMAGE PREVIEW: Show the source image briefly as a visual reference.
+// This is a UI affordance only — it does not control the generated video's frame-0.
+// Character identity in the animated clip depends on the provider's actual init-frame support.
+const SOURCE_PREVIEW_HOLD_MS = 200;
 
 function SlideFrame({ clip, index, isActive, onEnded }) {
   const effect = MOTION_EFFECTS[index % MOTION_EFFECTS.length];
@@ -39,13 +39,13 @@ function SlideFrame({ clip, index, isActive, onEnded }) {
   const videoRef = useRef(null);
   const [showFrame0, setShowFrame0] = useState(isVideo); // start with source image visible
 
-  // Reset frame-0 state every time this slide becomes active
+  // Reset source preview state every time this slide becomes active
   useEffect(() => {
     if (!isVideo) return;
     setShowFrame0(true);
     const t = setTimeout(() => {
-      setShowFrame0(false); // release to video after hold
-    }, FRAME0_HOLD_MS);
+      setShowFrame0(false); // release to video after preview
+    }, SOURCE_PREVIEW_HOLD_MS);
     return () => clearTimeout(t);
   }, [isActive, isVideo]);
 
