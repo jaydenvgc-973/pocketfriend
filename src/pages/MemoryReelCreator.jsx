@@ -22,7 +22,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Film, Play, Download, Send, Trash2, Sparkles, Camera,
   CheckSquare, Square, Zap, AlertTriangle, Loader2, X,
-  ChevronDown, ChevronUp, Image, RefreshCw
+  ChevronDown, ChevronUp, Image, RefreshCw, StopCircle, Edit3
 } from "lucide-react";
 import ReelPlayer from "@/components/moments/ReelPlayer";
 
@@ -35,6 +35,7 @@ const STATUS_LABELS = {
   validating: { label: "Validating selected images", pct: 92 },
   complete:   { label: "Complete",                  pct: 100 },
   failed:     { label: "Failed",                    pct: 100 },
+  cancelled:  { label: "Cancelled",                 pct: 0  },
 };
 
 const POLL_INTERVAL = 6000; // ms — poll job status every 6s while processing
@@ -213,6 +214,11 @@ export default function MemoryReelCreator() {
   // Partial preview
   const [showPartialPreview, setShowPartialPreview] = useState(false);
 
+  // Job controls
+  const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
@@ -260,7 +266,7 @@ export default function MemoryReelCreator() {
         const job = jobs.find(j => j.id === jobId);
         if (job) {
           setActiveJob(job);
-          if (job.status === 'complete' || job.status === 'failed') {
+          if (['complete', 'failed', 'cancelled'].includes(job.status)) {
             clearInterval(pollTimerRef.current);
             pollTimerRef.current = null;
           }
@@ -425,6 +431,108 @@ export default function MemoryReelCreator() {
     base44.functions.invoke('processReelGenerationJob', { job_id: activeJob.id }).catch(() => {});
   };
 
+  // ── CANCEL GENERATION ─────────────────────────────────────────────────────
+  const handleCancel = async () => {
+    if (!activeJob || cancelling) return;
+    setCancelling(true);
+    try {
+      await base44.entities.ReelGenerationJob.update(activeJob.id, {
+        status: 'cancelled',
+        updated_at: new Date().toISOString(),
+      });
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      // Refresh job state
+      const refreshed = await base44.entities.ReelGenerationJob.filter({ owner_email: currentUser.email }, "-created_date", 5);
+      const job = refreshed.find(j => j.id === activeJob.id);
+      if (job) setActiveJob(job);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  // ── RESTART GENERATION ────────────────────────────────────────────────────
+  // Cancels the active job, creates a new job reusing selected images + settings
+  const handleRestart = async () => {
+    if (!activeJob || restarting) return;
+    setRestarting(true);
+    setShowRestartConfirm(false);
+    try {
+      // Cancel active job first
+      await base44.entities.ReelGenerationJob.update(activeJob.id, {
+        status: 'cancelled',
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+
+      // Reuse original selections from the cancelled job
+      const prevClips = activeJob.clip_results || [];
+      const preClipResults = prevClips.map(c => ({
+        image_id: c.image_id,
+        image_url: c.image_url,
+        clip_url: null,
+        clip_type: 'static',
+        animate: c.animate,
+        caption: c.caption || '',
+        status: 'pending',
+      }));
+
+      const newJob = await base44.entities.ReelGenerationJob.create({
+        owner_email: currentUser.email,
+        status: 'queued',
+        progress_percent: 0,
+        selected_image_ids: activeJob.selected_image_ids || [],
+        selected_image_urls: activeJob.selected_image_urls || [],
+        selected_character_ids: activeJob.selected_character_ids || [],
+        clip_results: preClipResults,
+        char_names: activeJob.char_names || '',
+        memory_highlights: activeJob.memory_highlights || [],
+        thumbnail_url: activeJob.thumbnail_url || null,
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        estimated_time_remaining: preClipResults.some(c => c.animate) ? '3–6 minutes' : '1–2 minutes',
+      });
+
+      setActiveJob(newJob);
+      startPolling(newJob.id);
+      base44.functions.invoke('processReelGenerationJob', { job_id: newJob.id }).catch(() => {});
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  // ── EDIT SELECTION (after cancel) ─────────────────────────────────────────
+  // Restores the media selection UI from the cancelled job's data
+  const handleEditSelection = () => {
+    if (!activeJob) return;
+    // Restore mediaItems from the cancelled job's clip_results
+    const prevClips = activeJob.clip_results || [];
+    if (prevClips.length > 0) {
+      setMediaItems(prevClips.map(c => ({
+        id: c.image_id,
+        message_id: c.image_id,
+        image_url: c.image_url,
+        character_id: null,
+        character_name: 'Unknown',
+        avatar_url: null,
+        prompt_preview: null,
+        full_prompt: null,
+        date_label: '',
+        created_date: '',
+        included: true,
+        animate: c.animate || false,
+        caption: c.caption || '',
+      })));
+    }
+    setActiveJob(null);
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+  };
+
   // ── SEND TO CHARACTER ─────────────────────────────────────────────────────
   const handleSendToCharacter = async (char, caption) => {
     if (!activeJob?.clip_results?.length || !currentUser?.email) return;
@@ -583,6 +691,7 @@ export default function MemoryReelCreator() {
     const isProcessing = ['queued','preparing','animating','assembling','validating'].includes(activeJob.status);
     const isComplete = activeJob.status === 'complete';
     const isFailed = activeJob.status === 'failed';
+    const isCancelled = activeJob.status === 'cancelled';
     const statusInfo = STATUS_LABELS[activeJob.status] || STATUS_LABELS.queued;
     const clips = (activeJob.clip_results || []).filter(c => c.image_url);
 
@@ -595,7 +704,7 @@ export default function MemoryReelCreator() {
           <div className="flex-1 min-w-0">
             <h1 className="text-sm font-bold text-foreground">Memory Reel Creator</h1>
             <p className="text-xs text-muted-foreground">
-              {isProcessing ? `${statusInfo.label}…` : isComplete ? "Your reel is ready!" : "Generation failed"}
+              {isProcessing ? `${statusInfo.label}…` : isComplete ? "Your reel is ready!" : isCancelled ? "Generation cancelled" : "Generation failed"}
             </p>
           </div>
           {isProcessing && (
@@ -704,6 +813,25 @@ export default function MemoryReelCreator() {
               <p className="text-[10px] text-muted-foreground/60 text-center">
                 You can navigate away and return — this job continues in the background
               </p>
+
+              {/* Job controls: Cancel + Restart */}
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => setShowRestartConfirm(true)}
+                  disabled={restarting || cancelling}
+                  className="flex-1 py-2 rounded-xl border border-border text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Restart Generation
+                </button>
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelling || restarting}
+                  className="flex-1 py-2 rounded-xl border border-destructive/40 text-destructive text-xs hover:bg-destructive/5 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40"
+                >
+                  {cancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <StopCircle className="w-3.5 h-3.5" />}
+                  Cancel Generation
+                </button>
+              </div>
             </div>
           )}
 
@@ -735,6 +863,43 @@ export default function MemoryReelCreator() {
                   className="py-2.5 px-4 rounded-xl border border-destructive/40 text-destructive text-sm flex items-center gap-2"
                 >
                   <Trash2 className="w-4 h-4" /> Discard
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Cancelled state */}
+          {isCancelled && (
+            <div className="rounded-2xl border border-border bg-secondary/30 p-5 space-y-4">
+              <div className="flex items-start gap-3">
+                <StopCircle className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Generation cancelled</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Your selected photos, captions, and settings were preserved. No original images or media records were changed.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => setShowRestartConfirm(true)}
+                  disabled={restarting}
+                  className="w-full py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {restarting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Start Again
+                </button>
+                <button
+                  onClick={handleEditSelection}
+                  className="w-full py-2.5 rounded-xl border border-border text-sm text-foreground flex items-center justify-center gap-2 hover:border-primary/40 transition-colors"
+                >
+                  <Edit3 className="w-4 h-4" /> Edit Selection
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="w-full py-2.5 rounded-xl border border-destructive/30 text-destructive text-sm flex items-center justify-center gap-2 hover:bg-destructive/5 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete Draft
                 </button>
               </div>
             </div>
@@ -818,7 +983,46 @@ export default function MemoryReelCreator() {
               Start a new reel
             </button>
           )}
+
         </div>
+
+        {/* Restart confirm modal */}
+        <AnimatePresence>
+          {showRestartConfirm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowRestartConfirm(false)}>
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                onClick={e => e.stopPropagation()}
+                className="w-full max-w-sm bg-card border border-border rounded-2xl p-5 space-y-4"
+              >
+                <div className="flex items-start gap-3">
+                  <RefreshCw className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Restart reel generation?</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      The current render will stop, but your selected photos and settings will stay.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowRestartConfirm(false)} className="flex-1 py-2.5 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground transition-colors">
+                    Keep going
+                  </button>
+                  <button
+                    onClick={handleRestart}
+                    disabled={restarting}
+                    className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {restarting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    Restart
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* Character picker */}
         <AnimatePresence>

@@ -25,9 +25,12 @@ Deno.serve(async (req) => {
     const job = jobs.find(j => j.id === job_id);
     if (!job) return Response.json({ error: 'Job not found or not owned by user' }, { status: 404 });
 
-    // Only process queued or failed jobs
+    // Only process queued/failed jobs — stop immediately if already complete or cancelled
     if (job.status === 'complete') {
       return Response.json({ status: 'complete', job });
+    }
+    if (job.status === 'cancelled') {
+      return Response.json({ status: 'cancelled', message: 'Job was cancelled by user.' });
     }
 
     const selectedImageIds = job.selected_image_ids || [];
@@ -102,6 +105,15 @@ Deno.serve(async (req) => {
     const captions = job.clip_results?.map(c => c.caption || '') || selectedImageUrls.map(() => '');
 
     for (let i = 0; i < selectedImageUrls.length; i++) {
+      // ── CANCELLATION CHECK: re-fetch job before each clip to respect user cancel ──
+      try {
+        const freshJobs = await base44.entities.ReelGenerationJob.filter({ owner_email: user.email });
+        const freshJob = freshJobs.find(j => j.id === job_id);
+        if (freshJob?.status === 'cancelled') {
+          return Response.json({ status: 'cancelled', message: 'Job cancelled by user during animation.' });
+        }
+      } catch (_) {} // non-blocking — if check fails, continue processing
+
       const imageUrl = selectedImageUrls[i];
       const imageId = selectedImageIds[i];
       const shouldAnimate = animateFlags[i] || false;
@@ -179,6 +191,15 @@ Deno.serve(async (req) => {
         warnings.push(`Clip ${i + 1}: no source image available — static slide used, no person invented.`);
       }
 
+      // Build strong subject identity metadata for this clip
+      const charId = msgRecord?.character_id || null;
+      const charAppearanceForClip = charId ? characterAppearanceCache[charId] : null;
+      const subjectIds = [];
+      if (charId) subjectIds.push(charId);
+      const characterReferenceUrls = charAppearanceForClip
+        ? [charAppearanceForClip.avatar_url, ...(charAppearanceForClip.reference_image_urls || [])].filter(Boolean)
+        : [];
+
       clipResults.push({
         image_id: imageId,
         image_url: imageUrl,
@@ -188,6 +209,18 @@ Deno.serve(async (req) => {
         error: clipError,
         caption,
         animate: shouldAnimate,
+        // Strong identity reference metadata
+        subject_identity: {
+          media_id: imageId,
+          source_image_url: imageUrl,
+          linked_character_id: charId || null,
+          visible_subject_type: charId ? 'character' : 'unknown',
+          visible_subject_ids: subjectIds,
+          original_prompt: originalPrompt || null,
+          character_reference_urls: characterReferenceUrls,
+          character_fingerprint: charAppearanceForClip?.fingerprint || null,
+          identity_confidence: charAppearanceForClip?.fingerprint ? 'high' : (imageUrl ? 'source_only' : 'low'),
+        },
       });
 
       // Update progress
