@@ -198,7 +198,7 @@ Deno.serve(async (req) => {
 
     // Grant all marked achievements
     const granted = [];
-    for (const [achievement_id, { character_id, character_name }] of toUnlock.entries()) {
+    for (const [dedupKey, { achievement_id, character_id, character_name }] of toUnlock.entries()) {
       const record = await base44.entities.UserAchievement.create({
         achievement_id,
         character_id: character_id || null,
@@ -209,7 +209,7 @@ Deno.serve(async (req) => {
         owner_email: userEmail,
       });
       granted.push(record);
-      existingIds.add(achievement_id);
+      existingKeys.add(dedupKey); // prevent same-session duplicates
     }
 
     console.log(`[retroactiveScan] user=${userEmail} scanned ${allMessages.length} messages, granted ${granted.length} achievements`);
