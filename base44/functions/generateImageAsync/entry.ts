@@ -1025,8 +1025,11 @@ Deno.serve(async (req) => {
       // manualLocationId is NOT used — location resolved from character record
     } = await req.json();
 
-    if (!messageId || !prompt) {
-      return Response.json({ error: 'messageId and prompt are required' }, { status: 400 });
+    if (!messageId) {
+      return Response.json({ error: 'messageId is required' }, { status: 400 });
+    }
+    if (!prompt) {
+      return Response.json({ error: 'prompt is required' }, { status: 400 });
     }
 
     // ── HARD SUBJECT LOCK DETECTION ───────────────────────────────────────────
@@ -1499,23 +1502,9 @@ Deno.serve(async (req) => {
           console.warn(`[generateImageAsync] ⚠️ Location ${locationId} not found or access denied — proceeding without environment`);
         }
       } else {
-        // No location on character — scan LocationReference records for resident match
-        const savedLocs = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: requestingUser }, '-created_date', 50).catch(() => []);
-        const residentHome = savedLocs.find(l =>
-          l.category === 'home' &&
-          ((l.resident_character_ids || []).includes(characterId) ||
-           (l.residents || []).some(r => r.character_id === characterId))
-        );
-        if (residentHome) {
-          resolvedLocationName = residentHome.name;
-          const promptLower = (prompt || '').toLowerCase();
-          const { images, zoneName } = resolveZoneFromLocation(residentHome, promptLower);
-          envRefs = images;
-          resolvedZoneName = zoneName;
-          console.log(`[generateImageAsync] ✓ Resident scan found "${residentHome.name}" → zone "${zoneName || 'none'}" → ${envRefs.length} env refs`);
-        } else {
-          console.warn(`[generateImageAsync] ⚠️ No location found for character ${characterId} — proceeding without environment refs`);
-        }
+        // No location on character — skip broad scan to prevent 429.
+        // This is optional context — absence never blocks generation.
+        console.log(`[generateImageAsync] No location ID on character record — skipping resident scan. Proceeding without environment refs.`);
       }
     }
 

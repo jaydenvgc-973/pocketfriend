@@ -51,8 +51,12 @@ Deno.serve(async (req) => {
       referenceImagePurpose, // 'pose' | 'placement' | 'background' | 'lighting' | 'composition' | 'general'
     } = await req.json();
 
-    if (!messageId || !prompt) {
-      return Response.json({ error: 'messageId and prompt required' }, { status: 400 });
+    if (!messageId) {
+      return Response.json({ error: 'messageId required' }, { status: 400 });
+    }
+    // prompt is required — even image_only mode sends a minimal fallback prompt from the frontend
+    if (!prompt) {
+      return Response.json({ error: 'prompt required' }, { status: 400 });
     }
 
     console.log(`[mediaGridGenerate] ▶ messageId=${messageId} | multiPerson=${!!multiPersonSelection}`);
@@ -423,7 +427,10 @@ DO:
       ? '\n\n⛔ USER-ONLY IMAGE: Do NOT include any app characters, fictional persons, or named individuals in this image unless they are explicitly described in the scene prompt. The person in this image is only the user. No character identity refs were provided.'
       : '';
 
-    const singleCharRes = await base44.asServiceRole.functions.invoke('generateImageAsync', {
+    // CRITICAL: Must use base44.functions.invoke (user-scoped), NOT asServiceRole.
+    // generateImageAsync calls base44.auth.me() — if called via asServiceRole, the user context
+    // is stripped and auth.me() returns null/service-role, causing 403 cross-account failures.
+    const singleCharRes = await base44.functions.invoke('generateImageAsync', {
       messageId,
       prompt: sanitizedPrompt + userOnlyExclusionNote,
       characterId: effectiveCharacterId,
