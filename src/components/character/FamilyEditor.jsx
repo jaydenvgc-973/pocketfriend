@@ -3,7 +3,7 @@ import { Plus, Trash2, Camera, Loader2, ZoomIn, Lock, Unlock, User } from "lucid
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
-import { resolveOrCreateFamilyMemberCharacter } from "@/lib/familyMemberResolver";
+import { resolveCanonicalPerson } from "@/lib/canonicalPersonResolver";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 
 /**
@@ -89,28 +89,40 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
     familyMembers
       .filter(m => m.name?.trim())
       .map(async (m) => {
-        // HAYDEN MODEL: Every family member MUST have a stable _linked_character_id
+        // Every family member MUST have a stable _linked_character_id
         // This is the ONLY identity anchor — not index, not name matching
         let linkedCharId = m._linked_character_id || null;
 
-        // If not yet linked, use the shared global resolver
+        // If not yet linked, use the canonical resolver in create_if_confident mode.
+        // This is an explicit user-triggered save — creation is permitted here.
         if (!linkedCharId && currentUser?.email && currentUser?.id) {
           try {
-            // GLOBAL CONTRACT: Use shared resolver for all family member creation
-            // This ensures Leo Parker stays ONE record, no duplicates across parents
-            const resolved = await resolveOrCreateFamilyMemberCharacter({
-              name: m.name.trim(),
+            // Fetch live chars fresh for accurate resolution
+            const liveChars = await base44.entities.Character.filter(
+              { owner_email: currentUser.email }, '-created_date', 200
+            ).catch(() => []);
+            const resolved = await resolveCanonicalPerson({
               owner_email: currentUser.email,
+              name: m.name.trim(),
+              linked_character_id: null,
+              avatar_url: m.photo_url || null,
+              source_type: 'family_member',
+              source_character_id: character.id,
+              relationship_context: m.relationship_type || null,
+              mode: 'create_if_confident',
+              all_live_characters: liveChars,
+              all_fictional_rels: liveChars.flatMap(c => c.fictional_relationships || []),
+              base44,
               owner_user_id: currentUser.id,
               user_role: currentUser.role || 'user',
-              photo_url: m.photo_url || null,
-              linked_character_id: null,
-              all_live_characters: [], // Empty array OK here — resolver will fetch fresh
-              base44
             });
-            linkedCharId = resolved.id;
+            if (resolved.canonical_person_id) {
+              linkedCharId = resolved.canonical_person_id;
+            } else {
+              console.warn('[FamilyEditor] Could not resolve or create Character for family member:', m.name, resolved.failure_reason);
+            }
           } catch (err) {
-            console.warn('[FamilyEditor] Could not resolve or create Character for family member:', m.name, err.message);
+            console.warn('[FamilyEditor] Resolver error for family member:', m.name, err.message);
           }
         }
 

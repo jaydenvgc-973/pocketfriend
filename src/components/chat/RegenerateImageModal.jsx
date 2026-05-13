@@ -65,7 +65,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const [allCharacters, setAllCharacters] = useState([]);
   const [loadingCharacters, setLoadingCharacters] = useState(false);
   const [rosterLoadStatus, setRosterLoadStatus] = useState('idle'); // 'idle'|'loading'|'cache'|'fresh'|'user_only'|'error'
-  const [rosterRepairFailures, setRosterRepairFailures] = useState([]);
+  const [rosterRepairDiagnostics, setRosterRepairDiagnostics] = useState([]);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
   const [userEmail, setUserEmail] = useState(null);
   // Ref so openSubjectPicker always has the email even if state hasn't propagated yet
@@ -90,7 +90,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       setSelectedZone(null);
       setShowSubjectPicker(false);
       setSelectedSubjectIds([]);
-      setRosterRepairFailures([]);
+      setRosterRepairDiagnostics([]);
     }
   }, [isOpen]);
 
@@ -158,10 +158,10 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'high');
 
     fetchUnifiedRoster(base44, email)
-      .then(({ roster, repairFailures }) => {
-        if (repairFailures?.length > 0) {
-          setRosterRepairFailures(repairFailures);
-          console.warn('[RegenerateModal] Roster repair failures:', repairFailures);
+      .then(({ roster, repairDiagnostics }) => {
+        if (repairDiagnostics?.length > 0) {
+          setRosterRepairDiagnostics(repairDiagnostics);
+          console.warn('[RegenerateModal] Roster unresolved people (needs_review):', repairDiagnostics);
         }
         const validation = validateCharacterRoster(roster);
         if (validation.valid) {
@@ -335,11 +335,11 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                       </button>
                     </div>
                   )}
-                  {rosterRepairFailures.length > 0 && (
+                  {rosterRepairDiagnostics.length > 0 && (
                     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-400 space-y-1 mb-1">
-                      <p className="font-semibold">Some people could not be resolved:</p>
-                      {rosterRepairFailures.map((f, i) => (
-                        <p key={i} className="text-amber-400/80">• <span className="font-medium">{f.name}</span> — {f.reason}</p>
+                      <p className="font-semibold">Some people need review before they can be selected:</p>
+                      {rosterRepairDiagnostics.map((f, i) => (
+                        <p key={i} className="text-amber-400/80">• <span className="font-medium">{f.name}</span> — {f.failure_reason || 'Confidence too low to auto-resolve'}</p>
                       ))}
                     </div>
                   )}

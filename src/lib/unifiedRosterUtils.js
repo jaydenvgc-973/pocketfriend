@@ -1,18 +1,21 @@
 /**
- * Unified Roster — Global Canonical Identity System
+ * Unified Roster — Read-Only Canonical Identity Surface
  *
  * ARCHITECTURE CONTRACT:
- * Every person entry in the roster has a real Character.id (or '__user__') as
- * canonical_person_id. Synthetic IDs are NEVER valid roster entries.
+ * fetchUnifiedRoster is a READ-ONLY operation.
+ * It NEVER calls Character.create.
+ * It NEVER writes to any entity.
+ * It NEVER invents IDs or resolves by name alone.
  *
- * RESOLVE-BEFORE-BUILD RULE:
- * Any family member, fictional relationship person, or world contact that lacks a
- * stable Character.id is resolved (or created) BEFORE the roster is returned.
- * The roster is always the final clean surface — no synthetic IDs ever reach it.
+ * It calls resolveCanonicalPerson in "read" mode only, which:
+ *   - returns a resolved canonical_person_id if confidence ≥ 0.70
+ *   - returns needs_review diagnostics if confidence < 0.70
  *
- * REPAIR TRANSPARENCY:
- * If resolution fails (RLS, missing data, SDK error), the failure is recorded in
- * repairFailures[] and returned alongside the roster so callers can surface it.
+ * Entries in the roster have a real Character.id as canonical_person_id.
+ * Entries that could not be resolved appear in repairDiagnostics[], NOT in the roster.
+ *
+ * Character creation is ONLY allowed through resolveCanonicalPerson in
+ * "create_if_confident" mode, called explicitly from FamilyEditor after a user action.
  *
  * DEDUP RULE (for Character entities that already exist):
  * When multiple Character records share a name, pick canonical using:
@@ -23,6 +26,8 @@
  *   5. oldest created_date (tiebreak)
  * All non-canonical same-name records are listed in source_record_ids.
  */
+
+import { resolveCanonicalPerson } from './canonicalPersonResolver.js';
 
 export function getPlaceholderColor() { return 'bg-purple-500'; }
 export function getInitial(name) { return name?.[0]?.toUpperCase() || '?'; }
@@ -70,153 +75,23 @@ function buildCharacterEntry(char, sourceRecordIds = []) {
 }
 
 /**
- * Resolve a person name to an existing Character record from liveChars.
- * Resolution chain (read-only, no writes):
- *   1. explicit linkedCharId → look up live Character by ID
- *   2. fictional_relationships[].related_character_id where person_name matches
- *   3. Name match against all live Characters (type priority tiebreak)
- * Returns the Character record or null.
- */
-function resolveExistingCharacter(name, linkedCharId, allLiveChars, allFictionalRels) {
-  if (!name?.trim()) return null;
-  const nameKey = name.trim().toLowerCase();
-
-  // Step 1: Trust explicit linked_character_id
-  if (linkedCharId) {
-    const linked = allLiveChars.find(c => c.id === linkedCharId);
-    if (linked && linked.status !== 'deleted' && linked.status !== 'soft_deleted') return linked;
-  }
-
-  // Step 2: Check fictional_relationships cross-references
-  for (const rel of allFictionalRels) {
-    if (rel.person_name?.trim().toLowerCase() === nameKey && rel.related_character_id) {
-      const relChar = allLiveChars.find(c => c.id === rel.related_character_id);
-      if (relChar) return relChar;
-    }
-  }
-
-  // Step 3: Name match with type-priority tiebreak
-  const matches = allLiveChars.filter(c => c.name?.trim().toLowerCase() === nameKey);
-  if (matches.length === 0) return null;
-  return matches.sort((a, b) => {
-    const pDiff = typePriority(a.character_type) - typePriority(b.character_type);
-    if (pDiff !== 0) return pDiff;
-    return new Date(a.created_date || 0) - new Date(b.created_date || 0);
-  })[0];
-}
-
-/**
- * Resolve or create a canonical Character record for a named person.
- * - Tries resolution chain first (no write if already exists).
- * - If no match: creates a new npc_family_member Character record.
- * - Writes _linked_character_id back to the source family member entry on the parent Character.
- *
- * Returns { character, created, error } where character is the resolved/created record.
- */
-async function resolveOrCreate({
-  name,
-  linkedCharId,
-  photoUrl,
-  relationshipType,
-  ownerEmail,
-  ownerUserId,
-  userRole,
-  parentCharId,       // Character whose family_members[] contains this entry
-  memberIndex,        // Index in family_members[] for writeback
-  allLiveChars,
-  allFictionalRels,
-  base44,
-}) {
-  // First: try to find an existing record without any writes
-  const existing = resolveExistingCharacter(name, linkedCharId, allLiveChars, allFictionalRels);
-  if (existing) {
-    // Write back _linked_character_id if the parent family member entry is missing it
-    if (parentCharId && memberIndex !== null && memberIndex !== undefined && !linkedCharId) {
-      try {
-        const parentChar = allLiveChars.find(c => c.id === parentCharId);
-        if (parentChar?.family_members) {
-          const updatedMembers = parentChar.family_members.map((fm, i) =>
-            i === memberIndex ? { ...fm, _linked_character_id: existing.id } : fm
-          );
-          await base44.entities.Character.update(parentCharId, { family_members: updatedMembers });
-          // Patch in-memory so subsequent uses in this roster build see the link
-          parentChar.family_members = updatedMembers;
-        }
-      } catch (writebackErr) {
-        // Non-fatal: writeback failed but resolution succeeded — log and continue
-        console.warn('[unifiedRoster] _linked_character_id writeback failed:', writebackErr.message);
-      }
-    }
-    return { character: existing, created: false, error: null };
-  }
-
-  // No existing record found — create a new npc_family_member
-  try {
-    if (!ownerEmail || !ownerUserId) {
-      return {
-        character: null,
-        created: false,
-        error: `Cannot create Character for "${name}": ownerEmail or ownerUserId missing`,
-      };
-    }
-    const newChar = await base44.entities.Character.create({
-      name: name.trim(),
-      character_type: 'npc_family_member',
-      owner_email: ownerEmail,
-      owner_user_id: ownerUserId,
-      created_by_role: userRole || 'user',
-      status: 'active',
-      is_active_character: false,
-      visibility_scope: 'account_private',
-      data_scope: 'private_user',
-      exclude_from_homepage: true,
-      exclude_from_roster: true,
-      avatar_url: photoUrl || null,
-    });
-
-    // Add to liveChars in-memory so later iterations in this build see it
-    allLiveChars.push(newChar);
-
-    // Write back _linked_character_id to parent family member entry
-    if (parentCharId && memberIndex !== null && memberIndex !== undefined) {
-      try {
-        const parentChar = allLiveChars.find(c => c.id === parentCharId);
-        if (parentChar?.family_members) {
-          const updatedMembers = parentChar.family_members.map((fm, i) =>
-            i === memberIndex ? { ...fm, _linked_character_id: newChar.id } : fm
-          );
-          await base44.entities.Character.update(parentCharId, { family_members: updatedMembers });
-          parentChar.family_members = updatedMembers;
-        }
-      } catch (writebackErr) {
-        console.warn('[unifiedRoster] _linked_character_id writeback after create failed:', writebackErr.message);
-      }
-    }
-
-    return { character: newChar, created: true, error: null };
-  } catch (createErr) {
-    return {
-      character: null,
-      created: false,
-      error: `Failed to create Character for "${name}": ${createErr.message}`,
-    };
-  }
-}
-
-/**
  * MAIN EXPORT: fetchUnifiedRoster
  *
- * Returns { roster, repairFailures }.
+ * READ-ONLY. No Character.create. No entity writes.
  *
- * roster: array of fully resolved entries — every entry has a real canonical_person_id.
- * repairFailures: array of { name, source, reason } for any person that could not be resolved/created.
+ * Returns {
+ *   roster: array of resolved roster entries (canonical_person_id = real Character.id),
+ *   repairDiagnostics: array of unresolved people with confidence scores and evidence,
+ * }
  *
- * The roster is always the final clean surface.
- * No synthetic IDs. No blocked entries. No unresolved entries.
- * If a person cannot be resolved, they appear in repairFailures instead.
+ * repairDiagnostics entries have:
+ *   { name, source_type, source_character_id, confidence, matched_evidence, failure_reason }
+ *
+ * Callers that need to CREATE missing characters must call resolveCanonicalPerson directly
+ * with mode="create_if_confident" — never from inside a list/picker render.
  */
 export async function fetchUnifiedRoster(base44, userEmail) {
-  if (!userEmail) return { roster: [], repairFailures: [] };
+  if (!userEmail) return { roster: [], repairDiagnostics: [] };
 
   const ADMIN_EMAIL = 'murqart@gmail.com';
   const isAdmin = userEmail === ADMIN_EMAIL;
@@ -230,18 +105,16 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   ]);
 
   const settings = Array.isArray(settingsList) ? settingsList[0] : (settingsList || {});
-  const ownerUserId = user?.id || null;
-  const userRole = user?.role || 'user';
 
   // Live characters only — never hide legacy characters (no newer-field requirements)
   const liveChars = all.filter(c =>
     c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
   );
 
-  // Collect ALL fictional_relationships from all live chars for cross-reference resolution
+  // Aggregate all fictional_relationships for cross-reference scoring
   const allFictionalRels = liveChars.flatMap(c => c.fictional_relationships || []);
 
-  const repairFailures = [];
+  const repairDiagnostics = [];
 
   // ── USER ENTRY ───────────────────────────────────────────────────────────
   const userWorldName = settings?.fictional_world_name || user?.full_name || 'You';
@@ -297,7 +170,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   });
 
   const canonicalEntries = [];
-  const canonicalById = new Map();   // Character.id → canonical entry
+  const canonicalById = new Map();    // Character.id → canonical entry
   const resolvedNameKeys = new Set(); // normalized names already in canonical roster
 
   charsByName.forEach((records, nameKey) => {
@@ -315,163 +188,134 @@ export async function fetchUnifiedRoster(base44, userEmail) {
     resolvedNameKeys.add(nameKey);
   });
 
-  const activeEntries = canonicalEntries
-    .filter(e => e.is_active_character)
-    .sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
-  const inactiveEntries = canonicalEntries
-    .filter(e => !e.is_active_character)
-    .sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
+  // ── FAMILY MEMBERS — read-only resolution pass ───────────────────────────
+  // For each family member not already in the canonical roster:
+  //   Call resolveCanonicalPerson in "read" mode.
+  //   If resolved (confidence ≥ 0.70): add to roster.
+  //   If needs_review (confidence < 0.70): add to repairDiagnostics. Do NOT create.
+  //
+  // NO Character.create here. NO writes here.
 
-  // ── FAMILY MEMBERS — resolve-or-create before adding to roster ───────────
-  // For each unique family member name not already in the canonical roster:
-  //   1. Try to resolve to an existing Character (read-only)
-  //   2. If not found: create a new npc_family_member Character record
-  //   3. Write _linked_character_id back to the source family_members[] entry
-  //   4. Build a real roster entry from the resolved/created Character
-  //   5. On failure: record in repairFailures, skip this person from roster
-
-  const processedFamilyNames = new Set(); // normalized names we've already resolved in this pass
+  const processedFamilyNames = new Set();
 
   for (const char of liveChars) {
     const members = char.family_members || [];
-    for (let idx = 0; idx < members.length; idx++) {
-      const fm = members[idx];
+    for (const fm of members) {
       if (!fm.name?.trim()) continue;
       if (fm._is_user) continue;
       if (fm.name.toLowerCase().includes('unnamed')) continue;
 
       const nameKey = fm.name.trim().toLowerCase();
-
-      // Already in canonical roster (a Character entity exists with this name)
       if (resolvedNameKeys.has(nameKey)) continue;
-      // Already resolved in this roster build pass
       if (processedFamilyNames.has(nameKey)) continue;
-
       processedFamilyNames.add(nameKey);
 
-      const { character, created, error } = await resolveOrCreate({
+      const result = await resolveCanonicalPerson({
+        owner_email: userEmail,
         name: fm.name,
-        linkedCharId: fm._linked_character_id || null,
-        photoUrl: fm.photo_url || null,
-        relationshipType: fm.relationship_type || null,
-        ownerEmail: userEmail,
-        ownerUserId,
-        userRole,
-        parentCharId: char.id,
-        memberIndex: idx,
-        allLiveChars: liveChars,
-        allFictionalRels,
+        linked_character_id: fm._linked_character_id || null,
+        source_type: 'family_member',
+        source_record_id: fm._member_id || null,
+        source_character_id: char.id,
+        relationship_context: fm.relationship_type || null,
+        avatar_url: fm.photo_url || null,
+        mode: 'read',  // READ ONLY — no creates
+        all_live_characters: liveChars,
+        all_fictional_rels: allFictionalRels,
         base44,
       });
 
-      if (error || !character) {
-        repairFailures.push({
+      if (result.status === 'resolved' || result.status === 'repaired') {
+        const resolvedChar = liveChars.find(c => c.id === result.canonical_person_id);
+        if (resolvedChar && !canonicalById.has(resolvedChar.id)) {
+          const entry = buildCharacterEntry(resolvedChar, result.source_record_ids);
+          canonicalEntries.push(entry);
+          canonicalById.set(resolvedChar.id, entry);
+          resolvedNameKeys.add(resolvedChar.name.trim().toLowerCase());
+        }
+      } else {
+        // needs_review or failed — log diagnostic, do not add to roster, do not create
+        repairDiagnostics.push({
           name: fm.name,
-          source: `family_members[] on Character "${char.name}" (id: ${char.id})`,
-          source_object: fm,
-          reason: error || 'Unknown resolution failure',
+          source_type: 'family_member',
+          source_character_id: char.id,
+          source_character_name: char.name,
+          confidence: result.confidence,
+          matched_evidence: result.matched_evidence,
+          failure_reason: result.failure_reason,
         });
-        continue;
-      }
-
-      // Add to canonical roster if not already there (creation adds to liveChars in-memory)
-      if (!canonicalById.has(character.id)) {
-        const entry = buildCharacterEntry(character, []);
-        canonicalEntries.push(entry);
-        canonicalById.set(character.id, entry);
-        resolvedNameKeys.add(character.name.trim().toLowerCase());
-        inactiveEntries.push(entry); // npc_family_member is never is_active_character
       }
     }
   }
 
-  // ── FICTIONAL RELATIONSHIPS — resolve related_character_id where missing ──
-  // For each fictional_relationship entry with person_name but no related_character_id:
-  //   - Run the same resolve-or-create logic
-  //   - Write related_character_id back to the source array
-  //   - Ensure the Character is in the roster
+  // ── FICTIONAL RELATIONSHIPS — read-only resolution pass ──────────────────
+  // For each fictional_relationship with a person_name but no related_character_id:
+  //   Call resolveCanonicalPerson in "read" mode.
+  //   If resolved: ensure the character is in the roster.
+  //   If needs_review: add to repairDiagnostics. Do NOT create.
+  //
+  // For entries that already have related_character_id: ensure that Character is in roster.
 
   for (const char of liveChars) {
     const rels = char.fictional_relationships || [];
-    let relsChanged = false;
-    const updatedRels = [...rels];
 
-    for (let idx = 0; idx < updatedRels.length; idx++) {
-      const rel = updatedRels[idx];
-      if (!rel.person_name?.trim()) continue;
+    for (const rel of rels) {
+      // Already linked — ensure target is in roster
       if (rel.related_character_id) {
-        // Already has an ID — ensure it's in the roster
-        const existing = liveChars.find(c => c.id === rel.related_character_id);
-        if (existing && !canonicalById.has(existing.id)) {
-          const entry = buildCharacterEntry(existing, []);
+        const linkedChar = liveChars.find(c => c.id === rel.related_character_id);
+        if (linkedChar && !canonicalById.has(linkedChar.id)) {
+          const entry = buildCharacterEntry(linkedChar, []);
           canonicalEntries.push(entry);
-          canonicalById.set(existing.id, entry);
-          resolvedNameKeys.add(existing.name.trim().toLowerCase());
+          canonicalById.set(linkedChar.id, entry);
+          resolvedNameKeys.add(linkedChar.name.trim().toLowerCase());
         }
         continue;
       }
 
-      const nameKey = rel.person_name.trim().toLowerCase();
-      // If already resolved in canonical roster, just write back the ID
-      const existingEntry = [...canonicalById.values()].find(
-        e => e.name?.trim().toLowerCase() === nameKey
-      );
-      if (existingEntry) {
-        updatedRels[idx] = { ...rel, related_character_id: existingEntry.canonical_person_id };
-        relsChanged = true;
-        continue;
-      }
+      if (!rel.person_name?.trim()) continue;
 
-      // Need to resolve or create
-      const { character, error } = await resolveOrCreate({
+      const nameKey = rel.person_name.trim().toLowerCase();
+      if (resolvedNameKeys.has(nameKey)) continue;
+
+      const result = await resolveCanonicalPerson({
+        owner_email: userEmail,
         name: rel.person_name,
-        linkedCharId: null,
-        photoUrl: rel.photo_url || rel.avatar_url || null,
-        relationshipType: rel.relationship_type || null,
-        ownerEmail: userEmail,
-        ownerUserId,
-        userRole,
-        parentCharId: null, // writeback handled manually below
-        memberIndex: null,
-        allLiveChars: liveChars,
-        allFictionalRels,
+        related_character_id: rel.related_character_id || null,
+        source_type: 'fictional_relationship',
+        source_character_id: char.id,
+        relationship_context: rel.relationship_type || null,
+        avatar_url: rel.photo_url || rel.avatar_url || null,
+        mode: 'read',  // READ ONLY — no creates
+        all_live_characters: liveChars,
+        all_fictional_rels: allFictionalRels,
         base44,
       });
 
-      if (error || !character) {
-        repairFailures.push({
+      if (result.status === 'resolved' || result.status === 'repaired') {
+        const resolvedChar = liveChars.find(c => c.id === result.canonical_person_id);
+        if (resolvedChar && !canonicalById.has(resolvedChar.id)) {
+          const entry = buildCharacterEntry(resolvedChar, result.source_record_ids);
+          canonicalEntries.push(entry);
+          canonicalById.set(resolvedChar.id, entry);
+          resolvedNameKeys.add(resolvedChar.name.trim().toLowerCase());
+        }
+      } else {
+        // Fictional relationship person with no confident match — log diagnostic, skip
+        // This is correct: a relationship edge is NOT automatically a new person record.
+        repairDiagnostics.push({
           name: rel.person_name,
-          source: `fictional_relationships[] on Character "${char.name}" (id: ${char.id})`,
-          source_object: rel,
-          reason: error || 'Unknown resolution failure',
+          source_type: 'fictional_relationship',
+          source_character_id: char.id,
+          source_character_name: char.name,
+          confidence: result.confidence,
+          matched_evidence: result.matched_evidence,
+          failure_reason: result.failure_reason,
         });
-        continue;
-      }
-
-      updatedRels[idx] = { ...rel, related_character_id: character.id };
-      relsChanged = true;
-
-      if (!canonicalById.has(character.id)) {
-        const entry = buildCharacterEntry(character, []);
-        canonicalEntries.push(entry);
-        canonicalById.set(character.id, entry);
-        resolvedNameKeys.add(character.name.trim().toLowerCase());
-      }
-    }
-
-    // Write back updated fictional_relationships if anything changed
-    if (relsChanged) {
-      try {
-        await base44.entities.Character.update(char.id, { fictional_relationships: updatedRels });
-        char.fictional_relationships = updatedRels;
-      } catch (writeErr) {
-        console.warn('[unifiedRoster] fictional_relationships writeback failed:', writeErr.message);
       }
     }
   }
 
   // ── UNIFIED ROSTER ───────────────────────────────────────────────────────
-  // Deduplicate the final canonicalEntries (in case resolve/create added duplicates)
   const seenIds = new Set();
   const deduped = [];
   for (const entry of canonicalEntries) {
@@ -494,17 +338,19 @@ export async function fetchUnifiedRoster(base44, userEmail) {
     ...inactiveDeduped,
   ];
 
-  return { roster, repairFailures };
+  return { roster, repairDiagnostics };
 }
 
 /**
  * Convenience wrapper — returns just the roster array (backward compat).
- * Logs repair failures to console so they're visible in diagnostics.
+ * Logs repair diagnostics to console so they're visible during development.
+ * Note: repairDiagnostics are NOT failures — they are people that need a
+ * higher-confidence resolution before they can be linked or created.
  */
 export async function fetchUnifiedRosterArray(base44, userEmail) {
-  const { roster, repairFailures } = await fetchUnifiedRoster(base44, userEmail);
-  if (repairFailures.length > 0) {
-    console.warn('[unifiedRoster] Repair failures during roster build:', repairFailures);
+  const { roster, repairDiagnostics } = await fetchUnifiedRoster(base44, userEmail);
+  if (repairDiagnostics.length > 0) {
+    console.warn('[unifiedRoster] Unresolved people (needs_review — no creation performed):', repairDiagnostics);
   }
   return roster;
 }
