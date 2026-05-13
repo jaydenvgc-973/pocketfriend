@@ -8,41 +8,29 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/lib/AuthContext';
-import {
-  registerUserForegroundTask,
-  clearUserForegroundTask,
-  FOREGROUND_TASKS,
-  PRIORITY_LEVELS,
-} from '@/lib/foregroundPriority';
+import { foregroundPriority } from '@/lib/foregroundPriority';
 
 export function useForegroundTask() {
   const { user } = useAuth();
   const taskIdsRef = useRef([]);
 
   const registerTask = useCallback(
-    (taskType, options = {}) => {
-      if (!user?.email) return null;
-
-      const taskId = registerUserForegroundTask(taskType, {
-        ownerEmail: user.email,
-        priority: options.priority || PRIORITY_LEVELS.HIGH,
-        page: options.page || null,
-        durationMs: options.durationMs ?? 8000,
-      });
-
-      if (taskId) taskIdsRef.current.push(taskId);
-      return taskId;
+    (page, action, options = {}) => {
+      const fgId = `${page}_${action}_${Date.now()}`;
+      foregroundPriority.startForegroundAction(page, action, fgId);
+      taskIdsRef.current.push(fgId);
+      return fgId;
     },
-    [user?.email]
+    []
   );
 
   const clearTask = useCallback(
-    (taskId) => {
-      if (!user?.email || !taskId) return;
-      clearUserForegroundTask(user.email, taskId);
-      taskIdsRef.current = taskIdsRef.current.filter((id) => id !== taskId);
+    (fgId) => {
+      if (!fgId) return;
+      foregroundPriority.endForegroundAction(fgId);
+      taskIdsRef.current = taskIdsRef.current.filter((id) => id !== fgId);
     },
-    [user?.email]
+    []
   );
 
   // Cleanup on unmount
@@ -50,14 +38,14 @@ export function useForegroundTask() {
     return () => {
       if (user?.email) {
         taskIdsRef.current.forEach((taskId) => {
-          clearUserForegroundTask(user.email, taskId);
+          foregroundPriority.endForegroundAction(taskId);
         });
         taskIdsRef.current = [];
       }
     };
   }, [user?.email]);
 
-  return { registerTask, clearTask, FOREGROUND_TASKS, PRIORITY_LEVELS };
+  return { registerTask, clearTask };
 }
 
 export default useForegroundTask;
