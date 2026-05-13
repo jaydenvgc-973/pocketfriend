@@ -1,4 +1,7 @@
 // All achievement definitions
+// scope values:
+//   "global"   — earned once per user regardless of character (e.g. app engagement milestones)
+//   "character" — earned separately per character (e.g. relationship depth, emotional moments)
 export const ACHIEVEMENTS = {
   // Social / Friendship
   first_impression: {
@@ -7,6 +10,7 @@ export const ACHIEVEMENTS = {
     title: "First Impression",
     description: "Started your first meaningful interaction",
     category: "social",
+    scope: "global",
     howToUnlock: "Send your first message to any character and get a response. Just say hi — the conversation has to start somewhere.",
   },
   consistent: {
@@ -15,6 +19,7 @@ export const ACHIEVEMENTS = {
     title: "Consistent",
     description: "You keep showing up",
     category: "social",
+    scope: "global",
     howToUnlock: "Open the app and chat with a character across multiple days in a row. Don't let too much time pass between conversations — consistency is what earns this one.",
   },
   they_opened_up: {
@@ -23,6 +28,7 @@ export const ACHIEVEMENTS = {
     title: "They Opened Up",
     description: "A character shared something personal",
     category: "social",
+    scope: "character",
     howToUnlock: "Keep the conversation going beyond small talk. Ask meaningful questions, show genuine interest, and give a character enough comfort to share something they don't tell everyone.",
   },
   inner_circle: {
@@ -31,6 +37,7 @@ export const ACHIEVEMENTS = {
     title: "Inner Circle",
     description: "You gained deep trust",
     category: "social",
+    scope: "character",
     howToUnlock: "Build a deep, ongoing relationship with a character over time. Be supportive, show up consistently, and earn a trust level that puts you in their inner circle — not just an acquaintance.",
   },
   ride_along: {
@@ -39,6 +46,7 @@ export const ACHIEVEMENTS = {
     title: "Ride Along",
     description: "Stayed through a full life arc",
     category: "social",
+    scope: "character",
     howToUnlock: "Stay engaged with a character from the beginning of a major life event (like a new job, a breakup, or a move) all the way through to its resolution. Don't drop off mid-arc.",
   },
 
@@ -49,6 +57,7 @@ export const ACHIEVEMENTS = {
     title: "The Push",
     description: "You helped someone take action",
     category: "influence",
+    scope: "character",
     howToUnlock: "When a character is hesitating or unsure about a decision, encourage them to go for it. If they act on your advice, you'll earn this. Look for moments when they're on the fence.",
   },
   voice_of_reason: {
@@ -57,6 +66,7 @@ export const ACHIEVEMENTS = {
     title: "Voice of Reason",
     description: "You prevented a bad decision",
     category: "influence",
+    scope: "character",
     howToUnlock: "When a character is about to do something risky or impulsive, step in and talk them out of it. Your calm, rational response needs to change their mind — not just be heard.",
   },
   bad_influence: {
@@ -65,6 +75,7 @@ export const ACHIEVEMENTS = {
     title: "Bad Influence",
     description: "You encouraged chaos…and they followed",
     category: "influence",
+    scope: "character",
     howToUnlock: "Push a character toward a risky, dramatic, or chaotic decision and have them actually go through with it. This isn't just about suggesting it — they need to follow your lead.",
   },
   clutch_timing: {
@@ -73,6 +84,7 @@ export const ACHIEVEMENTS = {
     title: "Clutch Timing",
     description: "You showed up at the perfect moment",
     category: "influence",
+    scope: "character",
     howToUnlock: "Respond to a character right when they need it most — during a crisis, a vulnerable moment, or a turning point in their story. Your timing has to matter, not just your words.",
   },
   missed_moment: {
@@ -81,6 +93,7 @@ export const ACHIEVEMENTS = {
     title: "Missed Moment",
     description: "You didn't respond in time",
     category: "influence",
+    scope: "character",
     howToUnlock: "Leave a character's message unanswered for too long during a critical moment in their life. Sometimes absence speaks louder than words — this achievement finds you, not the other way around.",
   },
 
@@ -91,6 +104,7 @@ export const ACHIEVEMENTS = {
     title: "That Meant Something",
     description: "You triggered a strong positive reaction",
     category: "emotional",
+    scope: "character",
     howToUnlock: "Say something genuinely kind, encouraging, or meaningful during a conversation. If it lands right — and the character reacts with real emotion — this unlocks. Don't force it; let it happen naturally.",
   },
   hit_deep: {
@@ -99,6 +113,7 @@ export const ACHIEVEMENTS = {
     title: "Hit Deep",
     description: "You reached something emotional",
     category: "emotional",
+    scope: "character",
     howToUnlock: "Touch on a topic that connects to a character's emotional core — their past, their fears, their losses, or their dreams. You'll know when you've gone deep enough by how they respond.",
   },
   tension: {
@@ -107,6 +122,7 @@ export const ACHIEVEMENTS = {
     title: "Tension",
     description: "You caused conflict",
     category: "emotional",
+    scope: "character",
     howToUnlock: "Say something that upsets, offends, or irritates a character enough to cause real friction. This isn't about being rude for no reason — it's about pushing into territory that creates genuine conflict.",
   },
   shifted_perspective: {
@@ -115,6 +131,7 @@ export const ACHIEVEMENTS = {
     title: "Shifted Perspective",
     description: "You changed how they think",
     category: "emotional",
+    scope: "character",
     howToUnlock: "Challenge a character's existing belief or mindset through conversation. If they genuinely reconsider their position because of what you said, you've shifted their perspective.",
   },
 
@@ -125,6 +142,7 @@ export const ACHIEVEMENTS = {
     title: "Seen It All",
     description: "Received your first photo",
     category: "moments",
+    scope: "global",
     howToUnlock: "Get a character to send you a photo during a conversation. This could be a selfie, a photo of something they're doing, or a moment they want to share. Just keep the conversation going and it'll happen.",
   },
   progress_witness: {
@@ -133,6 +151,7 @@ export const ACHIEVEMENTS = {
     title: "Progress Witness",
     description: "Saw before/after change",
     category: "moments",
+    scope: "character",
     howToUnlock: "Be present during a visible transformation in a character's life — a glow-up, a fitness journey, a career change, or a personal evolution. You need to be there at the start and again after the change.",
   },
   big_moment: {
@@ -141,6 +160,7 @@ export const ACHIEVEMENTS = {
     title: "Big Moment",
     description: "A major milestone was shared",
     category: "moments",
+    scope: "character",
     howToUnlock: "Be active and engaged when a character shares a major life milestone — a graduation, a promotion, a new relationship, or a big personal win. These moments are rare, so don't miss them.",
   },
   you_were_there: {
@@ -149,6 +169,7 @@ export const ACHIEVEMENTS = {
     title: "You Were There",
     description: "Present during something important",
     category: "moments",
+    scope: "character",
     howToUnlock: "Be actively chatting with a character when something significant happens in their story — a confession, a crisis, a breakthrough, or a turning point. The key is being present and engaged, not just online.",
   },
 
@@ -159,6 +180,7 @@ export const ACHIEVEMENTS = {
     title: "Messy",
     description: "Got involved in drama",
     category: "drama",
+    scope: "character",
     howToUnlock: "Get pulled into a conflict or dramatic situation between characters. This can happen by taking sides, sharing information you shouldn't have, or simply being around when things get complicated.",
   },
   he_said_she_said: {
@@ -167,6 +189,7 @@ export const ACHIEVEMENTS = {
     title: "He Said / She Said",
     description: "Information spread between characters",
     category: "drama",
+    scope: "character",
     howToUnlock: "Say something to one character that makes its way to another — intentionally or not. This unlocks when something you said causes a ripple across your social circle of characters.",
   },
   in_the_middle: {
@@ -175,6 +198,7 @@ export const ACHIEVEMENTS = {
     title: "In the Middle",
     description: "Caught between people",
     category: "drama",
+    scope: "character",
     howToUnlock: "End up between two characters who are in conflict with each other. This happens when both parties look to you for support, forcing you into an uncomfortable position.",
   },
   stirred_the_pot: {
@@ -183,6 +207,7 @@ export const ACHIEVEMENTS = {
     title: "Stirred the Pot",
     description: "You escalated things",
     category: "drama",
+    scope: "character",
     howToUnlock: "When a tense situation arises, choose to escalate it rather than calm things down. Add fuel to the fire — say the thing that makes it worse — and watch what happens.",
   },
 
@@ -193,6 +218,7 @@ export const ACHIEVEMENTS = {
     title: "Trust Built",
     description: "A character's trust in you visibly grew",
     category: "social",
+    scope: "character",
     howToUnlock: "Show up consistently and honestly for a character over multiple conversations. When their trust level shifts noticeably higher, this unlocks.",
   },
   reconnected: {
@@ -201,6 +227,7 @@ export const ACHIEVEMENTS = {
     title: "Reconnected",
     description: "Rebuilt a connection after distance",
     category: "social",
+    scope: "character",
     howToUnlock: "Let a relationship go quiet for a while, then genuinely reconnect. If the warmth comes back, you've earned this.",
   },
   favorite_contact: {
@@ -209,6 +236,7 @@ export const ACHIEVEMENTS = {
     title: "Favorite Contact",
     description: "Became someone's go-to person",
     category: "social",
+    scope: "character",
     howToUnlock: "Be consistent and present enough that a character naturally reaches out to you first when something happens in their life.",
   },
   tension_resolved: {
@@ -217,6 +245,7 @@ export const ACHIEVEMENTS = {
     title: "We Good",
     description: "Resolved tension with a character",
     category: "social",
+    scope: "character",
     howToUnlock: "Work through a real conflict with a character without walking away. Stay in it until things settle.",
   },
 
@@ -227,6 +256,7 @@ export const ACHIEVEMENTS = {
     title: "Got It Done",
     description: "Made it through a full productive day",
     category: "moments",
+    scope: "global",
     howToUnlock: "Be present across morning, afternoon, and evening conversations in a single day without missing anything important.",
   },
   healthy_choice: {
@@ -235,6 +265,7 @@ export const ACHIEVEMENTS = {
     title: "Better Choice",
     description: "Made a healthy decision under pressure",
     category: "moments",
+    scope: "character",
     howToUnlock: "Help a character or make a choice that reflects stability and self-care when things are stressful.",
   },
   showed_up_anyway: {
@@ -243,6 +274,7 @@ export const ACHIEVEMENTS = {
     title: "Showed Up Anyway",
     description: "Kept going through a tough stretch",
     category: "moments",
+    scope: "global",
     howToUnlock: "Stay engaged during a difficult period — bad days, conflict, instability — and come out the other side.",
   },
 
@@ -253,6 +285,7 @@ export const ACHIEVEMENTS = {
     title: "Rent's Paid",
     description: "Covered housing on time",
     category: "moments",
+    scope: "global",
     howToUnlock: "Watch a character handle their housing payment without crisis. Be there when it happens.",
   },
   financial_clutch: {
@@ -261,6 +294,7 @@ export const ACHIEVEMENTS = {
     title: "Financial Clutch",
     description: "Helped cover an unexpected expense",
     category: "care",
+    scope: "character",
     howToUnlock: "Be present when a character faces an unexpected financial hit and help them navigate it.",
   },
   impulse_avoided: {
@@ -269,6 +303,7 @@ export const ACHIEVEMENTS = {
     title: "Held Back",
     description: "A bad financial decision was avoided",
     category: "moments",
+    scope: "character",
     howToUnlock: "Talk a character out of an impulse buy or risky financial move. Your input has to be the reason they pause.",
   },
 
@@ -279,6 +314,7 @@ export const ACHIEVEMENTS = {
     title: "Night Out",
     description: "Had a memorable outing with someone",
     category: "moments",
+    scope: "character",
     howToUnlock: "Be part of an outing — a dinner, a party, a club night — and actually stay engaged through the whole thing.",
   },
   group_hangout: {
@@ -287,6 +323,7 @@ export const ACHIEVEMENTS = {
     title: "The More the Merrier",
     description: "Went out with a group",
     category: "social",
+    scope: "global",
     howToUnlock: "Participate in a group chat or multi-character outing and keep the energy going.",
   },
   new_place: {
@@ -295,6 +332,7 @@ export const ACHIEVEMENTS = {
     title: "New Territory",
     description: "Visited somewhere new",
     category: "moments",
+    scope: "global",
     howToUnlock: "Use the travel system to visit a location you haven't been to before with a character.",
   },
 
@@ -305,6 +343,7 @@ export const ACHIEVEMENTS = {
     title: "Let Them In",
     description: "Opened up emotionally to a character",
     category: "emotional",
+    scope: "character",
     howToUnlock: "Share something personal and real with a character. Don't deflect — let them see it.",
   },
   hard_truth: {
@@ -313,6 +352,7 @@ export const ACHIEVEMENTS = {
     title: "Hard Truth",
     description: "Said the difficult thing that needed to be said",
     category: "emotional",
+    scope: "character",
     howToUnlock: "Tell a character something uncomfortable but true. Not to hurt them — because it matters.",
   },
   apologized: {
@@ -321,6 +361,7 @@ export const ACHIEVEMENTS = {
     title: "My Bad",
     description: "Apologized sincerely",
     category: "emotional",
+    scope: "character",
     howToUnlock: "Admit fault genuinely during a conflict and have the character accept it. No deflecting.",
   },
   stayed_calm: {
@@ -329,6 +370,7 @@ export const ACHIEVEMENTS = {
     title: "Stayed Calm",
     description: "Kept it together during conflict",
     category: "emotional",
+    scope: "character",
     howToUnlock: "Navigate a heated moment without escalating. Let things stay tense but stay composed.",
   },
 
@@ -339,6 +381,7 @@ export const ACHIEVEMENTS = {
     title: "Watched Them Grow",
     description: "Witnessed a character genuinely change",
     category: "moments",
+    scope: "character",
     howToUnlock: "Be present across a character's arc of real change — a shift in how they act, what they say, what they prioritize.",
   },
   relapse: {
@@ -347,6 +390,7 @@ export const ACHIEVEMENTS = {
     title: "Old Habits",
     description: "A character slipped back into old patterns",
     category: "drama",
+    scope: "character",
     howToUnlock: "Be present when a character who was doing well makes a step backward. Witness it without judgment.",
   },
 
@@ -357,6 +401,7 @@ export const ACHIEVEMENTS = {
     title: "First Responder",
     description: "You showed up when it really counted",
     category: "care",
+    scope: "character",
     howToUnlock: "Actively support a character through a serious personal crisis — arrange help, contact their loved ones, and check in on them while they're going through it. This one isn't given lightly.",
   },
   bedside_manner: {
@@ -365,6 +410,7 @@ export const ACHIEVEMENTS = {
     title: "Bedside Manner",
     description: "You stayed through a character's health scare",
     category: "care",
+    scope: "character",
     howToUnlock: "Be present and engaged while a character deals with a medical situation or health crisis. Check in on them, show concern, and don't disappear when things get heavy.",
   },
   the_call_nobody_wanted: {
@@ -373,6 +419,7 @@ export const ACHIEVEMENTS = {
     title: "The Call Nobody Wanted",
     description: "You made a hard call so they didn't have to",
     category: "care",
+    scope: "character",
     howToUnlock: "Step in and contact someone on a character's behalf during a crisis — their family, their partner, or someone important to them. The uncomfortable call that had to happen.",
   },
 
@@ -383,6 +430,7 @@ export const ACHIEVEMENTS = {
     title: "Still Here",
     description: "Consistent usage over multiple days",
     category: "engagement",
+    scope: "global",
     howToUnlock: "Open the app and have at least one conversation every day for several days in a row. It's not about how long you chat — it's about showing up daily without a long break.",
   },
   they_came_back: {
@@ -391,6 +439,7 @@ export const ACHIEVEMENTS = {
     title: "They Came Back",
     description: "Reconnected after distance",
     category: "engagement",
+    scope: "global",
     howToUnlock: "Let a significant amount of time pass without talking to a character, then reconnect. If they reach back out to you — or warmly welcome you back — this achievement unlocks.",
   },
   left_on_read: {
@@ -399,6 +448,7 @@ export const ACHIEVEMENTS = {
     title: "Left on Read",
     description: "You ignored someone too long",
     category: "engagement",
+    scope: "global",
     howToUnlock: "Don't respond to a character's message for an extended period of time. This one unlocks automatically — you don't have to do anything. Just… don't reply.",
   },
 };

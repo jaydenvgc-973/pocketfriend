@@ -1,4 +1,24 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+// ── Inline achievement scope map (mirrors lib/achievements.js scope fields)
+// Must stay in sync with lib/achievements.js — no local imports in Deno functions.
+const ACHIEVEMENT_SCOPES = {
+  first_impression: 'global', consistent: 'global', seen_it_all: 'global',
+  still_here: 'global', they_came_back: 'global', left_on_read: 'global',
+  group_hangout: 'global', new_place: 'global', productive_day: 'global',
+  showed_up_anyway: 'global', rent_paid: 'global',
+};
+
+function getAchievementScope(id) {
+  return ACHIEVEMENT_SCOPES[id] ?? 'character';
+}
+
+function buildDedupKey(ownerEmail, achievementId, characterId) {
+  if (getAchievementScope(achievementId) === 'global') {
+    return `global::${ownerEmail}::${achievementId}`;
+  }
+  return `char::${ownerEmail}::${achievementId}::${characterId || ''}`;
+}
 
 /**
  * Retroactive achievement scan — call this once per user to award
@@ -23,20 +43,11 @@ Deno.serve(async (req) => {
       base44.asServiceRole.entities.Conversation.filter({ owner_email: userEmail }),
     ]);
 
-    // Global-per-user achievements: dedup by achievement_id only
-    const GLOBAL_ACHIEVEMENTS = new Set([
-      'first_impression', 'still_here', 'consistent', 'they_came_back',
-      'left_on_read', 'seen_it_all', 'group_hangout', 'new_place',
-      'productive_day', 'showed_up_anyway', 'rent_paid',
-    ]);
-
-    // Build existing key set — global vs character-scoped
+    // Build existing key set using scope-derived dedup keys
     const existingKeys = new Set(existing.map(a =>
-      GLOBAL_ACHIEVEMENTS.has(a.achievement_id)
-        ? `global::${a.achievement_id}`
-        : `char::${a.achievement_id}::${a.character_id || ''}`
+      buildDedupKey(userEmail, a.achievement_id, a.character_id)
     ));
-    // Also keep flat id set for legacy checks in loops
+    // Flat id set for legacy loop checks
     const existingIds = new Set(existing.map(a => a.achievement_id));
 
     // toUnlock: Map of dedupKey -> { achievement_id, character_id, character_name }
@@ -46,11 +57,9 @@ Deno.serve(async (req) => {
     const charMessages = allMessages.filter(m => m.sender_type === 'character');
     const activeChars = allCharacters.filter(c => c.status !== 'deleted');
 
-    // Helper: mark for unlock using context-aware dedup key
+    // Helper: mark for unlock using scope-derived dedup key
     const mark = (id, charId = null, charName = '') => {
-      const key = GLOBAL_ACHIEVEMENTS.has(id)
-        ? `global::${id}`
-        : `char::${id}::${charId || ''}`;
+      const key = buildDedupKey(userEmail, id, charId);
       if (!existingKeys.has(key) && !toUnlock.has(key)) {
         toUnlock.set(key, { achievement_id: id, character_id: charId, character_name: charName });
       }
