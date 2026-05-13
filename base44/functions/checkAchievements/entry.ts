@@ -23,10 +23,14 @@ function buildDedupKey(ownerEmail, achievementId, characterId) {
 }
 
 // Pattern-based checks on message text
-function detectTextPatternAchievements(msg, existingIds) {
+// existingKeys: Set of scoped dedup keys (global:: or char::) — used for character-aware guard
+// characterId: the current character being chatted with — needed to build scoped keys
+function detectTextPatternAchievements(msg, existingKeys, ownerEmail, characterId) {
   const text = (msg || '').toLowerCase();
   const toUnlock = [];
-  const has = (id) => existingIds.includes(id);
+  // Use scoped dedup key — character-scoped achievements check against this character's key,
+  // NOT the flat existingIds which would incorrectly treat any prior character's unlock as blocking.
+  const has = (id) => existingKeys.has(buildDedupKey(ownerEmail, id, characterId));
 
   // first_responder
   if (!has('first_responder')) {
@@ -316,8 +320,10 @@ Deno.serve(async (req) => {
     const hasForContext = (id) => existingKeys.has(buildDedupKey(user.email, id, characterId));
 
     // Run both detection passes in parallel
+    // Text patterns now use scoped keys (not flat existingIds) so character-scoped achievements
+    // can trigger independently per character — fixes cross-character suppression bug.
     const [textAchievements, dataAchievements] = await Promise.all([
-      Promise.resolve(detectTextPatternAchievements(userMessage || '', existingIds)),
+      Promise.resolve(detectTextPatternAchievements(userMessage || '', existingKeys, user.email, characterId)),
       detectDataAchievements(base44, user.email, characterId, characterName, userMessage, existingIds),
     ]);
 
