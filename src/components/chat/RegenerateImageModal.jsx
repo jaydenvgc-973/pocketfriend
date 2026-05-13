@@ -65,6 +65,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const [allCharacters, setAllCharacters] = useState([]);
   const [loadingCharacters, setLoadingCharacters] = useState(false);
   const [rosterLoadStatus, setRosterLoadStatus] = useState('idle'); // 'idle'|'loading'|'cache'|'fresh'|'user_only'|'error'
+  const [rosterRepairFailures, setRosterRepairFailures] = useState([]);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
   const [userEmail, setUserEmail] = useState(null);
   // Ref so openSubjectPicker always has the email even if state hasn't propagated yet
@@ -89,6 +90,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       setSelectedZone(null);
       setShowSubjectPicker(false);
       setSelectedSubjectIds([]);
+      setRosterRepairFailures([]);
     }
   }, [isOpen]);
 
@@ -99,24 +101,23 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     }
   }, [originalPrompt, promptMode, isOpen]);
 
-  // Pre-select subjects from generation_context.
-  // Always use canonical_person_id for pre-selection — never synthetic IDs.
+  // Pre-select subjects from generation_context using canonical_person_id only.
+  // Every roster entry at this point has a real Character.id — no synthetic IDs.
   const applyPreSelection = (roster) => {
     const ctx = generationContext || {};
     const preSelected = [];
     if (ctx.subjects?.length > 0) {
       ctx.subjects.forEach(s => {
         if (s.subject_id) {
-          // Resolve subject_id to canonical via roster
           const rosterEntry = roster.find(r => r.id === s.subject_id || r.source_record_ids?.includes(s.subject_id));
           const canonicalId = rosterEntry?.canonical_person_id || s.subject_id;
-          if (canonicalId && !rosterEntry?.image_generation_blocked) preSelected.push(canonicalId);
+          if (canonicalId) preSelected.push(canonicalId);
         }
       });
     } else if (ctx.character_id) {
       const rosterEntry = roster.find(r => r.id === ctx.character_id || r.source_record_ids?.includes(ctx.character_id));
       const canonicalId = rosterEntry?.canonical_person_id || ctx.character_id;
-      if (canonicalId && !rosterEntry?.image_generation_blocked) preSelected.push(canonicalId);
+      if (canonicalId) preSelected.push(canonicalId);
     }
     if (ctx.subject_type === 'user' || ctx.isUserSubject) {
       preSelected.push('__user__');
@@ -157,7 +158,11 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'high');
 
     fetchUnifiedRoster(base44, email)
-      .then(roster => {
+      .then(({ roster, repairFailures }) => {
+        if (repairFailures?.length > 0) {
+          setRosterRepairFailures(repairFailures);
+          console.warn('[RegenerateModal] Roster repair failures:', repairFailures);
+        }
         const validation = validateCharacterRoster(roster);
         if (validation.valid) {
           setAllCharacters(roster);
@@ -165,14 +170,10 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
           setRosterLoadStatus('fresh');
           applyPreSelection(roster);
         } else if (validation.reason === 'user_only') {
-          // User-only result — suspicious. Keep cache if available, warn.
-          if (!cached) {
-            setAllCharacters(roster || []);
-          }
+          if (!cached) setAllCharacters(roster || []);
           setRosterLoadStatus('user_only');
           console.warn('[RegenerateModal] Roster returned user-only — may be incomplete. Cache preserved.');
         } else {
-          // Empty — keep cache if available, show error if not
           setRosterLoadStatus(cached ? 'cache' : 'error');
           console.warn('[RegenerateModal] Roster returned empty — preserving cache if available.');
         }
@@ -201,12 +202,8 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
 
   const handleConfirmSubjectPicker = () => {
     const hasUser = selectedSubjectIds.includes('__user__');
-    // Only pass canonical_person_ids that are NOT blocked — these are real Character.ids
-    const charIds = selectedSubjectIds.filter(id => {
-      if (id === '__user__') return false;
-      const entry = allCharacters.find(c => c.canonical_person_id === id || c.id === id);
-      return !entry?.image_generation_blocked;
-    });
+    // All roster entries are resolved — every id here is a real canonical Character.id
+    const charIds = selectedSubjectIds.filter(id => id !== '__user__');
     onSelect('no_avatar', null, null, null, null, null, { intendedSubjectIds: charIds, includeUser: hasUser });
     setShowSubjectPicker(false);
   };
@@ -338,8 +335,16 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                       </button>
                     </div>
                   )}
+                  {rosterRepairFailures.length > 0 && (
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-400 space-y-1 mb-1">
+                      <p className="font-semibold">Some people could not be resolved:</p>
+                      {rosterRepairFailures.map((f, i) => (
+                        <p key={i} className="text-amber-400/80">• <span className="font-medium">{f.name}</span> — {f.reason}</p>
+                      ))}
+                    </div>
+                  )}
                   <div className="max-h-56 overflow-y-auto space-y-1">
-                    {/* User entry */}
+                     {/* User entry */}
                     <button
                       onClick={() => toggleSubject('__user__')}
                       className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-sm text-left ${selectedSubjectIds.includes('__user__') ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'}`}
@@ -349,26 +354,20 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                       <span className="font-medium">Me / My persona</span>
                       <span className="text-[10px] text-muted-foreground ml-auto">(You)</span>
                     </button>
-                    {/* Characters — sorted alphabetically. Unresolved entries are display-only, blocked from generation. */}
+                    {/* Characters — every entry is a resolved canonical Character.id at this point */}
                     {[...allCharacters.filter(c => !c.is_user)]
                       .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
                       .map(char => {
-                        // Use canonical_person_id as the picker key — never synthetic IDs
                         const pickerId = char.canonical_person_id || char.id;
-                        const isBlocked = char.image_generation_blocked === true;
                         const isSelected = selectedSubjectIds.includes(pickerId);
                         return (
                           <button
                             key={pickerId}
-                            onClick={() => !isBlocked && toggleSubject(pickerId)}
-                            disabled={isBlocked}
-                            title={isBlocked ? `${char.name} is unresolved — no Character record exists. Cannot use in image generation.` : undefined}
+                            onClick={() => toggleSubject(pickerId)}
                             className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-sm text-left ${
-                              isBlocked
-                                ? 'border-border/30 bg-secondary/20 text-muted-foreground/50 cursor-not-allowed opacity-50'
-                                : isSelected
-                                  ? 'border-primary bg-primary/10 text-primary'
-                                  : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
+                              isSelected
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
                             }`}
                           >
                             {isSelected && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
@@ -378,7 +377,6 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                               <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">{getInitial(char.name)}</div>
                             )}
                             <span className="font-medium truncate">{char.name}</span>
-                            {isBlocked && <span className="text-[9px] text-muted-foreground/50 ml-auto flex-shrink-0">unresolved</span>}
                           </button>
                         );
                       })}
