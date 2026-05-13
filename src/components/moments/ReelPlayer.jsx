@@ -1,175 +1,49 @@
 /**
- * ReelPlayer — Client-side TikTok/Instagram Reel montage renderer
- *
- * IDENTITY-PRESERVING: Renders source images with client-side motion compositing.
+ * ReelPlayer — Simple vertical reel montage renderer
  * 
- * For static slides: CSS animations applied to source image.
- * For motion-composited clips: Canvas-based animation (parallax, camera, breathing, light, particles).
- * Character identity is NEVER replaced—only enhanced with cinematic motion effects.
- *
- * This component IS the reel. The source image is the animation foundation.
+ * Shows static images and generated videos in a TikTok/Instagram style 9:16 gallery.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, ChevronRight, Play, Pause } from "lucide-react";
-import { MotionCompositor } from "@/lib/motionCompositor";
+import { ChevronLeft, ChevronRight, Play } from "lucide-react";
 
-// CSS keyframe motion effects applied to static source images
-const MOTION_EFFECTS = [
-  { name: "zoom-in",   style: { scale: [1, 1.12],  x: [0, 0],   y: [0, 0]   } },
-  { name: "zoom-out",  style: { scale: [1.12, 1],  x: [0, 0],   y: [0, 0]   } },
-  { name: "pan-right", style: { scale: [1.08, 1.08], x: [-16, 16], y: [0, 0] } },
-  { name: "pan-left",  style: { scale: [1.08, 1.08], x: [16, -16], y: [0, 0] } },
-  { name: "pan-up",    style: { scale: [1.08, 1.08], x: [0, 0],  y: [14, -14] } },
-  { name: "fade",      style: { scale: [1, 1],    x: [0, 0],   y: [0, 0]   } },
-];
-
-const SLIDE_DURATION = 3200; // ms per static slide
-const VIDEO_DURATION = 4500; // ms budget per animated clip (actual video controls its own)
-
-// SOURCE IMAGE PREVIEW: Show the source image briefly as a visual reference.
-// This is a UI affordance only — it does not control the generated video's frame-0.
-// Character identity in the animated clip depends on the provider's actual init-frame support.
-const SOURCE_PREVIEW_HOLD_MS = 200;
+const SLIDE_DURATION = 3000; // ms per static slide
 
 function SlideFrame({ clip, index, isActive, onEnded }) {
-  const caption = clip.caption || null;
-  const isMotionComposite = clip.clip_type === 'motion_composite';
-  const isVideo = clip.clip_type === 'animated' && clip.clip_url;
-  const isStatic = clip.clip_type === 'static' || (!isMotionComposite && !isVideo);
-  
-  const containerRef = useRef(null);
-  const compositorRef = useRef(null);
-  const [motionReady, setMotionReady] = useState(false);
   const videoRef = useRef(null);
-  const [showFrame0, setShowFrame0] = useState(isVideo);
-  
-  const effect = isStatic ? MOTION_EFFECTS[index % MOTION_EFFECTS.length] : null;
-
-  // Initialize motion compositor for motion-composite clips
-  useEffect(() => {
-    if (!isMotionComposite || !isActive || !containerRef.current) return;
-
-    const initCompositor = async () => {
-      try {
-        const compositor = new MotionCompositor(
-          clip.image_url,
-          containerRef.current,
-          {
-            duration: 4,
-            motionIntensity: 0.6,
-            motionSeed: clip.seed || Math.random(),
-            ...clip.motion_effects,
-          }
-        );
-        await compositor.initialize();
-        
-        // Validate identity preservation
-        compositor.play();
-        const validation = compositor.validateSourceImagePreservation();
-        console.log('[ReelPlayer] Motion compositor validation:', validation);
-        
-        compositorRef.current = compositor;
-        setMotionReady(true);
-      } catch (err) {
-        console.error('[ReelPlayer] Motion compositor init failed:', err);
-        // Fallback: show static image
-        setMotionReady(true);
-      }
-    };
-
-    initCompositor();
-
-    return () => {
-      if (compositorRef.current) {
-        compositorRef.current.stop();
-      }
-    };
-  }, [isMotionComposite, isActive, clip]);
-
-  // Handle video preview states
-  useEffect(() => {
-    if (!isVideo) return;
-    setShowFrame0(true);
-    const t = setTimeout(() => {
-      setShowFrame0(false);
-    }, SOURCE_PREVIEW_HOLD_MS);
-    return () => clearTimeout(t);
-  }, [isActive, isVideo]);
+  const isVideo = clip.clip_type === 'animated' && clip.clip_url;
+  const isStatic = clip.clip_type === 'static' || !isVideo;
 
   useEffect(() => {
-    if (isActive && isVideo && !showFrame0 && videoRef.current) {
+    if (isActive && isVideo && videoRef.current) {
       videoRef.current.currentTime = 0;
       videoRef.current.play().catch(() => {});
     }
-  }, [isActive, isVideo, showFrame0]);
-
-  // Handle motion composite lifecycle
-  useEffect(() => {
-    if (!compositorRef.current) return;
-    if (isActive) {
-      compositorRef.current.play();
-    } else {
-      compositorRef.current.pause();
-    }
-  }, [isActive]);
+  }, [isActive, isVideo]);
 
   return (
     <div className="absolute inset-0 overflow-hidden">
-      {isMotionComposite && motionReady ? (
-        // Motion-composite rendering via Canvas
-        <div ref={containerRef} className="absolute inset-0" />
-      ) : isVideo ? (
-        // Video rendering (with frame-0 source preview)
-        <>
-          {showFrame0 && clip.image_url && (
-            <img
-              src={clip.image_url}
-              alt="Source frame"
-              className="absolute inset-0 w-full h-full object-cover z-10"
-              draggable={false}
-            />
-          )}
-          <video
-            ref={videoRef}
-            src={clip.clip_url}
-            className="w-full h-full object-cover"
-            muted
-            playsInline
-            onEnded={onEnded}
-            loop={false}
-          />
-        </>
+      {isVideo ? (
+        <video
+          ref={videoRef}
+          src={clip.clip_url}
+          className="w-full h-full object-cover"
+          muted
+          playsInline
+          onEnded={onEnded}
+          loop={false}
+        />
       ) : (
-        // Static image with CSS animation effect
-        <motion.div
-          className="w-full h-full"
-          initial={{ scale: effect.style.scale[0], x: effect.style.x[0], y: effect.style.y[0] }}
-          animate={isActive ? { scale: effect.style.scale[1], x: effect.style.x[1], y: effect.style.y[1] } : {}}
+        <motion.img
+          src={clip.image_url}
+          alt={`Slide ${index + 1}`}
+          className="w-full h-full object-cover"
+          initial={{ scale: 1 }}
+          animate={isActive ? { scale: 1.05 } : { scale: 1 }}
           transition={{ duration: SLIDE_DURATION / 1000, ease: "linear" }}
-        >
-          <img
-            src={clip.image_url}
-            alt={`Slide ${index + 1}`}
-            className="w-full h-full object-cover"
-            draggable={false}
-          />
-        </motion.div>
-      )}
-
-      {/* Caption overlay */}
-      {caption && isActive && (
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6, duration: 0.4 }}
-          className="absolute bottom-16 left-4 right-4"
-        >
-          <div className="bg-black/55 backdrop-blur-sm rounded-xl px-3 py-2 text-center">
-            <p className="text-white text-sm font-medium leading-snug">{caption}</p>
-          </div>
-        </motion.div>
+          draggable={false}
+        />
       )}
 
       {/* Slide counter */}
@@ -189,26 +63,21 @@ export default function ReelPlayer({ clips = [], autoPlay = false }) {
 
   const current = clips[currentIndex];
   const isVideo = current?.clip_type === 'animated' && current?.clip_url;
-  const isMotionComposite = current?.clip_type === 'motion_composite';
 
   const goNext = () => setCurrentIndex(i => Math.min(i + 1, clips.length - 1));
   const goPrev = () => setCurrentIndex(i => Math.max(i - 1, 0));
 
-  // Auto-advance timer: motion_composite uses MOTION_COMPOSITE_DURATION, static uses SLIDE_DURATION
-  // Video advances via onEnded callback
-  const MOTION_COMPOSITE_DURATION = 4200; // slightly longer than 4s compositor duration
   useEffect(() => {
     if (!playing || isVideo) return;
-    const duration = isMotionComposite ? MOTION_COMPOSITE_DURATION : SLIDE_DURATION;
     timerRef.current = setTimeout(() => {
       if (currentIndex < clips.length - 1) {
         setCurrentIndex(i => i + 1);
       } else {
         setPlaying(false);
       }
-    }, duration);
+    }, SLIDE_DURATION);
     return () => clearTimeout(timerRef.current);
-  }, [playing, currentIndex, isVideo, isMotionComposite, clips.length]);
+  }, [playing, currentIndex, isVideo, clips.length]);
 
   const handleVideoEnded = () => {
     if (currentIndex < clips.length - 1) {
@@ -232,14 +101,14 @@ export default function ReelPlayer({ clips = [], autoPlay = false }) {
                 className="h-full bg-white"
                 initial={{ width: "0%" }}
                 animate={{ width: "100%" }}
-                transition={{ duration: isMotionComposite ? 4.2 : SLIDE_DURATION / 1000, ease: "linear" }}
+                transition={{ duration: SLIDE_DURATION / 1000, ease: "linear" }}
               />
             )}
           </div>
         ))}
       </div>
 
-      {/* Slide frames with crossfade */}
+      {/* Slide frames */}
       <AnimatePresence mode="wait">
         <motion.div
           key={currentIndex}
@@ -247,7 +116,7 @@ export default function ReelPlayer({ clips = [], autoPlay = false }) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.45, ease: "easeInOut" }}
+          transition={{ duration: 0.3 }}
         >
           <SlideFrame
             clip={current}
@@ -258,7 +127,7 @@ export default function ReelPlayer({ clips = [], autoPlay = false }) {
         </motion.div>
       </AnimatePresence>
 
-      {/* Play/Pause overlay tap zone */}
+      {/* Play/Pause button */}
       <button
         onClick={() => setPlaying(p => !p)}
         className="absolute inset-0 z-10 flex items-center justify-center"
@@ -278,11 +147,11 @@ export default function ReelPlayer({ clips = [], autoPlay = false }) {
         </AnimatePresence>
       </button>
 
-      {/* Prev / Next arrow buttons */}
+      {/* Navigation arrows */}
       {currentIndex > 0 && (
         <button
           onClick={e => { e.stopPropagation(); goPrev(); }}
-          className="absolute left-2 top-1/2 -translate-y-1/2 z-30 w-8 h-8 rounded-full bg-black/50 flex items-center justify-center hover:bg-black/70 transition-colors"
+          className="absolute left-2 top-1/2 -translate-y-1/2 z-30 w-8 h-8 rounded-full bg-black/50 flex items-center justify-center hover:bg-black/70"
         >
           <ChevronLeft className="w-4 h-4 text-white" />
         </button>
@@ -290,16 +159,16 @@ export default function ReelPlayer({ clips = [], autoPlay = false }) {
       {currentIndex < clips.length - 1 && (
         <button
           onClick={e => { e.stopPropagation(); goNext(); }}
-          className="absolute right-2 top-1/2 -translate-y-1/2 z-30 w-8 h-8 rounded-full bg-black/50 flex items-center justify-center hover:bg-black/70 transition-colors"
+          className="absolute right-2 top-1/2 -translate-y-1/2 z-30 w-8 h-8 rounded-full bg-black/50 flex items-center justify-center hover:bg-black/70"
         >
           <ChevronRight className="w-4 h-4 text-white" />
         </button>
       )}
 
-      {/* Slide type badge */}
+      {/* Type badge */}
       <div className="absolute bottom-4 left-4 z-20">
         <span className="text-[10px] text-white/70 bg-black/40 rounded px-1.5 py-0.5">
-          {isMotionComposite ? "✨ motion" : isVideo ? "🎬 animated" : "📸 photo"}
+          {current?.clip_type === 'animated' ? "🎬 video" : "📸 photo"}
         </span>
       </div>
     </div>
