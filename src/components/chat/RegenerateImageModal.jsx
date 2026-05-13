@@ -99,14 +99,24 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     }
   }, [originalPrompt, promptMode, isOpen]);
 
-  // Pre-select subjects from generation_context
+  // Pre-select subjects from generation_context.
+  // Always use canonical_person_id for pre-selection — never synthetic IDs.
   const applyPreSelection = (roster) => {
     const ctx = generationContext || {};
     const preSelected = [];
     if (ctx.subjects?.length > 0) {
-      ctx.subjects.forEach(s => { if (s.subject_id) preSelected.push(s.subject_id); });
+      ctx.subjects.forEach(s => {
+        if (s.subject_id) {
+          // Resolve subject_id to canonical via roster
+          const rosterEntry = roster.find(r => r.id === s.subject_id || r.source_record_ids?.includes(s.subject_id));
+          const canonicalId = rosterEntry?.canonical_person_id || s.subject_id;
+          if (canonicalId && !rosterEntry?.image_generation_blocked) preSelected.push(canonicalId);
+        }
+      });
     } else if (ctx.character_id) {
-      preSelected.push(ctx.character_id);
+      const rosterEntry = roster.find(r => r.id === ctx.character_id || r.source_record_ids?.includes(ctx.character_id));
+      const canonicalId = rosterEntry?.canonical_person_id || ctx.character_id;
+      if (canonicalId && !rosterEntry?.image_generation_blocked) preSelected.push(canonicalId);
     }
     if (ctx.subject_type === 'user' || ctx.isUserSubject) {
       preSelected.push('__user__');
@@ -190,10 +200,13 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   };
 
   const handleConfirmSubjectPicker = () => {
-    // Build the intended subjects from the selection
-    const intendedSubjectIds = selectedSubjectIds;
-    const hasUser = intendedSubjectIds.includes('__user__');
-    const charIds = intendedSubjectIds.filter(id => id !== '__user__');
+    const hasUser = selectedSubjectIds.includes('__user__');
+    // Only pass canonical_person_ids that are NOT blocked — these are real Character.ids
+    const charIds = selectedSubjectIds.filter(id => {
+      if (id === '__user__') return false;
+      const entry = allCharacters.find(c => c.canonical_person_id === id || c.id === id);
+      return !entry?.image_generation_blocked;
+    });
     onSelect('no_avatar', null, null, null, null, null, { intendedSubjectIds: charIds, includeUser: hasUser });
     setShowSubjectPicker(false);
   };
@@ -336,24 +349,39 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                       <span className="font-medium">Me / My persona</span>
                       <span className="text-[10px] text-muted-foreground ml-auto">(You)</span>
                     </button>
-                    {/* Characters — sorted alphabetically */}
+                    {/* Characters — sorted alphabetically. Unresolved entries are display-only, blocked from generation. */}
                     {[...allCharacters.filter(c => !c.is_user)]
                       .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-                      .map(char => (
-                        <button
-                          key={char.id}
-                          onClick={() => toggleSubject(char.id)}
-                          className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-sm text-left ${selectedSubjectIds.includes(char.id) ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'}`}
-                        >
-                          {selectedSubjectIds.includes(char.id) && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
-                          {char.avatar_url ? (
-                            <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" onError={e => { e.target.style.display = 'none'; }} />
-                          ) : (
-                            <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">{getInitial(char.name)}</div>
-                          )}
-                          <span className="font-medium truncate">{char.name}</span>
-                        </button>
-                      ))}
+                      .map(char => {
+                        // Use canonical_person_id as the picker key — never synthetic IDs
+                        const pickerId = char.canonical_person_id || char.id;
+                        const isBlocked = char.image_generation_blocked === true;
+                        const isSelected = selectedSubjectIds.includes(pickerId);
+                        return (
+                          <button
+                            key={pickerId}
+                            onClick={() => !isBlocked && toggleSubject(pickerId)}
+                            disabled={isBlocked}
+                            title={isBlocked ? `${char.name} is unresolved — no Character record exists. Cannot use in image generation.` : undefined}
+                            className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-sm text-left ${
+                              isBlocked
+                                ? 'border-border/30 bg-secondary/20 text-muted-foreground/50 cursor-not-allowed opacity-50'
+                                : isSelected
+                                  ? 'border-primary bg-primary/10 text-primary'
+                                  : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
+                            }`}
+                          >
+                            {isSelected && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                            {char.avatar_url ? (
+                              <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" onError={e => { e.target.style.display = 'none'; }} />
+                            ) : (
+                              <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">{getInitial(char.name)}</div>
+                            )}
+                            <span className="font-medium truncate">{char.name}</span>
+                            {isBlocked && <span className="text-[9px] text-muted-foreground/50 ml-auto flex-shrink-0">unresolved</span>}
+                          </button>
+                        );
+                      })}
                     {allCharacters.filter(c => !c.is_user).length === 0 && rosterLoadStatus !== 'loading' && rosterLoadStatus !== 'error' && (
                       <p className="text-xs text-muted-foreground text-center py-3 italic">No characters on this account</p>
                     )}

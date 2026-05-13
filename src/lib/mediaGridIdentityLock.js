@@ -104,13 +104,34 @@ export async function resolveUserVisualRefs(base44, userEmail, options = {}) {
 /**
  * Resolve character visual reference images AND appearance text from Character record.
  * Returns both refs (image URLs) and appearanceText (for prompt identity injection).
+ *
+ * characterId should always be a canonical_person_id (real Character.id).
+ * If the roster entry is passed in allCharacters, it will use image_generation_target_id
+ * to ensure the correct canonical record is resolved.
  */
 export async function resolveCharacterVisualRefs(base44, characterId, allCharacters = null) {
   let char = null;
 
-  // Try from local cache first
+  // Resolve via roster entry — use image_generation_target_id if available
   if (allCharacters && Array.isArray(allCharacters)) {
-    char = allCharacters.find(c => c.id === characterId);
+    const rosterEntry = allCharacters.find(c =>
+      c.canonical_person_id === characterId ||
+      c.id === characterId ||
+      c.source_record_ids?.includes(characterId)
+    );
+    // If entry is blocked from image generation, reject immediately
+    if (rosterEntry?.image_generation_blocked) {
+      return {
+        refs: [],
+        missing: true,
+        appearanceText: null,
+        blocked: true,
+        blockReason: `${rosterEntry.name} is an unresolved family member with no canonical Character record. Cannot use in image generation.`,
+      };
+    }
+    // Use the canonical record ID for lookup
+    const resolveId = rosterEntry?.image_generation_target_id || rosterEntry?.canonical_person_id || characterId;
+    char = allCharacters.find(c => c.id === resolveId) || null;
   }
 
   // Fallback to DB
@@ -211,16 +232,22 @@ export async function validateSelectedPeopleIdentities(
     for (const charId of selectedCharacterIds) {
       if (charId === primaryCharacterId) continue;
 
-      const { refs: charRefs, missing, appearanceText } = await resolveCharacterVisualRefs(
+      const { refs: charRefs, missing, appearanceText, blocked, blockReason } = await resolveCharacterVisualRefs(
         base44,
         charId,
         allCharacters
       );
-      if (missing) {
-        const charName = allCharacters?.find(c => c.id === charId)?.name || charId;
+      if (blocked) {
+        errors.push(blockReason || `Character cannot be used in image generation (unresolved identity).`);
+      } else if (missing) {
+        const rosterEntry = allCharacters?.find(c => c.canonical_person_id === charId || c.id === charId);
+        const charName = rosterEntry?.name || charId;
         errors.push(`Character "${charName}" has no visual reference images or appearance description.`);
       } else {
-        selectedPeople.others.push({ id: charId, refs: charRefs, appearanceText });
+        // Use canonical_person_id as the stable ID for this slot
+        const rosterEntry = allCharacters?.find(c => c.canonical_person_id === charId || c.id === charId);
+        const canonicalId = rosterEntry?.canonical_person_id || charId;
+        selectedPeople.others.push({ id: canonicalId, refs: charRefs, appearanceText });
       }
     }
   }
