@@ -1,12 +1,12 @@
 /**
  * processReelGenerationJob
  *
- * Source-Lock Rule:
- * - Every animated clip uses the selected image as existing_image_urls source frame.
- * - GenerateVideo is called with the source image as reference — NOT a freeform prompt.
- * - Static slides are kept as-is with no AI replacement.
- * - Validation checks that clip_results length == selected_image_ids length.
- * - If validation fails, status is set to "failed" with validation_notes.
+ * Provider Routing & Diagnostics:
+ * - Character identity-critical clips are routed through provider selection.
+ * - Currently only Veo 3.x (Core.GenerateVideo) is available.
+ * - Veo treats existing_image_urls as loose style reference, NOT frame-lock.
+ * - For character clips, provider diagnostics are stored so caller knows actual capabilities.
+ * - No claims of identity preservation made unless provider explicitly supports it.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
@@ -128,11 +128,20 @@ Deno.serve(async (req) => {
 
       if (shouldAnimate && imageUrl) {
         try {
-          // SOURCE-LOCK: The source image IS the video. existing_image_urls must contain
-          // ONLY the source image as the first (and sole) entry. The video model treats
-          // the first image as the literal first frame to animate FROM.
-          // Avatar/reference goes into the text prompt as a verbal anchor — NOT as a
-          // second image, which confuses the model and causes identity replacement.
+          // ── PROVIDER SELECTION ────────────────────────────────────────────────
+          // Determine if this is a character identity-critical clip
+          const charId = msgRecord?.character_id || null;
+          const requires_identity_preservation = !!charId;
+
+          // Currently only Veo 3.x is available
+          const selectedProvider = {
+            provider_id: 'veo_3x',
+            provider_name: 'Google Veo 3.x',
+            supports_init_frame: false,
+            supports_identity_reference: 'loose_reference_only',
+            identity_preservation_supported: false,
+            generation_mode: 'loose_reference_only',
+          };
 
           const motionOptions = [
             'subtle breathing, gentle eye blink, camera slowly pushing in',
@@ -143,44 +152,36 @@ Deno.serve(async (req) => {
           ];
           const motion = motionOptions[i % motionOptions.length];
 
-          const charId = msgRecord?.character_id || null;
           const charAppearance = charId ? characterAppearanceCache[charId] : null;
 
-          // Build verbal identity anchor from appearance fingerprint.
-          // This goes INTO the prompt — not as a second image reference.
-          const identityAnchor = charAppearance?.fingerprint
-            ? `The person in this photo: ${charAppearance.fingerprint}.`
-            : '';
+          const animPrompt = `Animate this photo with subtle motion only: ${motion}. Vertical 9:16.`;
 
-          // PROMPT: Minimal text reduces model reinterpretation surface.
-          // The source image in existing_image_urls is the primary input — let it dominate.
-          // Only describe the motion — do not re-describe the character (that invites replacement).
-          const animPrompt = `Image-to-video. Animate this photo exactly as shown. Preserve the person's face, skin, hair, body, and clothing unchanged. Motion only: ${motion}. Vertical 9:16. No cuts. No new characters.`;
-
-          // ONLY the source image as existing_image_urls — this is the frame the model animates FROM.
-          // Do NOT add avatar as second reference — it confuses model identity and causes actor replacement.
-          const result = await base44.integrations.Core.GenerateVideo({
+          // ── LOG EXACT PAYLOAD ────────────────────────────────────────────────
+          const generateVideoPayload = {
             prompt: animPrompt,
             duration: 4,
             aspect_ratio: '9:16',
             existing_image_urls: [imageUrl],
-          });
+          };
+          console.log(`[Clip ${i + 1}] Provider: ${selectedProvider.provider_id} | Character: ${charId || 'none'} | Payload:`, JSON.stringify(generateVideoPayload));
+
+          const result = await base44.integrations.Core.GenerateVideo(generateVideoPayload);
 
           if (result?.url) {
             clipUrl = result.url;
             clipType = 'animated';
             clipStatus = 'success';
           } else {
-            // Retry with even simpler prompt — less text = less reinterpretation
+            // Retry with simpler prompt
             try {
-              const retryPrompt = `Animate this exact photo. Do not change the person. Motion: ${motion}. Vertical 9:16.`;
-
-              const retryResult = await base44.integrations.Core.GenerateVideo({
-                prompt: retryPrompt,
+              const retryPayload = {
+                prompt: `Animate this photo. Motion: ${motion}. Vertical 9:16.`,
                 duration: 4,
                 aspect_ratio: '9:16',
                 existing_image_urls: [imageUrl],
-              });
+              };
+              console.log(`[Clip ${i + 1}] Retry 1 | Payload:`, JSON.stringify(retryPayload));
+              const retryResult = await base44.integrations.Core.GenerateVideo(retryPayload);
 
               if (retryResult?.url) {
                 clipUrl = retryResult.url;
@@ -198,21 +199,17 @@ Deno.serve(async (req) => {
             }
           }
         } catch (err) {
-          // First attempt failed — retry with maximally minimal prompt to reduce model confusion
+          // Second attempt failed — final retry
           try {
-            const charId = msgRecord?.character_id || null;
-            const charAppearance = charId ? characterAppearanceCache[charId] : null;
-            const identityAnchor = charAppearance?.fingerprint ? `Person: ${charAppearance.fingerprint}.` : '';
-            const motion = ['subtle breathing motion and eye blink', 'soft ambient motion', 'gentle camera push-in'][i % 3];
-
-            const fallbackPrompt = `Animate this exact photo. Motion: ${motion}. Vertical 9:16.`;
-
-            const retryResult = await base44.integrations.Core.GenerateVideo({
-              prompt: fallbackPrompt,
+            const motion = ['subtle breathing', 'soft motion', 'gentle camera'][i % 3];
+            const fallbackPayload = {
+              prompt: `Animate. Motion: ${motion}. Vertical 9:16.`,
               duration: 4,
               aspect_ratio: '9:16',
               existing_image_urls: [imageUrl],
-            });
+            };
+            console.log(`[Clip ${i + 1}] Retry 2 | Payload:`, JSON.stringify(fallbackPayload));
+            const retryResult = await base44.integrations.Core.GenerateVideo(fallbackPayload);
 
             if (retryResult?.url) {
               clipUrl = retryResult.url;
@@ -238,14 +235,32 @@ Deno.serve(async (req) => {
         warnings.push(`Clip ${i + 1}: no source image available — static slide used, no person invented.`);
       }
 
-      // Build strong subject identity metadata for this clip
+      // Build provider diagnostics for this clip
       const charId = msgRecord?.character_id || null;
+      const requires_identity_preservation = !!charId;
       const charAppearanceForClip = charId ? characterAppearanceCache[charId] : null;
       const subjectIds = [];
       if (charId) subjectIds.push(charId);
       const characterReferenceUrls = charAppearanceForClip
         ? [charAppearanceForClip.avatar_url, ...(charAppearanceForClip.reference_image_urls || [])].filter(Boolean)
         : [];
+
+      // Provider diagnostics
+      let video_provider_capabilities = null;
+      if (clipType === 'animated' && clipUrl) {
+        video_provider_capabilities = {
+          provider_id: 'veo_3x',
+          provider_name: 'Google Veo 3.x',
+          supports_init_frame: false,
+          supports_identity_reference: 'loose_reference_only',
+          supports_reference_strength: false,
+          supports_seed: false,
+          identity_preservation_supported: false,
+          identity_validation_status: requires_identity_preservation ? 'CHARACTER_CLIP_USING_LOOSE_REFERENCE' : 'non_identity_critical',
+          generation_mode: 'loose_reference_only',
+          warning: requires_identity_preservation ? 'Provider does NOT support init-frame locking. Character identity may not be preserved.' : null,
+        };
+      }
 
       clipResults.push({
         image_id: imageId,
@@ -256,7 +271,8 @@ Deno.serve(async (req) => {
         error: clipError,
         caption,
         animate: shouldAnimate,
-        // Strong identity reference metadata
+        requires_identity_preservation,
+        video_provider_capabilities,
         subject_identity: {
           media_id: imageId,
           source_image_url: imageUrl,
