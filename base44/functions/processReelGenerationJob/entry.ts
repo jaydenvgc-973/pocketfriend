@@ -36,6 +36,7 @@ Deno.serve(async (req) => {
 
     const selectedImageIds = job.selected_image_ids || [];
     const selectedImageUrls = job.selected_image_urls || [];
+    const selectedCharacterIds = job.selected_character_ids || [];
     const clipResults = [];
     const warnings = [];
 
