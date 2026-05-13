@@ -291,7 +291,11 @@ export default function Settings() {
             </div>
           )}
         </div>
-        <SettingsTextFields settings={settings} onSave={(data) => mutation.mutate(data)} />
+        <SettingsTextFields
+          settings={settings}
+          onSave={(data) => mutation.mutate(data)}
+          firstCharacterId={characters.find(c => c.character_type === 'active_created_character' && c.status === 'active')?.id || null}
+        />
         <div className="pt-4 border-t border-border">
           <UserPhotoUploader
             referenceImages={user.reference_image_urls || []}

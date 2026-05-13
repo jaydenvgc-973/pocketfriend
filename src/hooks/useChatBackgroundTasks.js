@@ -239,9 +239,27 @@ Return ONLY valid JSON, nothing else.`,
       }
     }, 2000);
 
-    // ── TIER 3 — 4s: memory extraction + world phone sync (90s cooldown each) ──
+    // ── TIER 3 — 4s: memory extraction + birthday capture + world phone sync ──
     setTimeout(() => {
       if (isGloballyRateLimited()) return;
+
+      // ── BIRTHDAY DETECTION (once per 10 minutes per character) ──────────────
+      // Scan each user message for birthday disclosures. Non-blocking. Cached aggressively.
+      // On hit: writes to CharacterMemory (Life Journal) as a protected permanent fact.
+      if (text && !isOnCooldown(characterId, 'birthdayCapture', 600000)) {
+        const birthdayKeywordCheck = /\b(birthday|born|birth|bday|dob)\b/i;
+        if (birthdayKeywordCheck.test(text)) {
+          safeInvoke('captureUserBirthday', {
+            characterId,
+            text,
+            source: 'chat',
+          }, characterId, 'birthdayCapture').then(res => {
+            if (res?.data?.found && res?.data?.stored) {
+              console.log(`[Governor] Birthday captured: ${res.data.date} | updated=${res.data.updated} | source=chat`);
+            }
+          });
+        }
+      }
 
       if (!isOnCooldown(characterId, 'memoryExtract', 90000)) {
         // Include image_description from the user message if vision analysis completed.

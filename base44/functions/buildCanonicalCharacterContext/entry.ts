@@ -452,7 +452,7 @@ function buildModeBlock(interactionContext) {
 }
 
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
-function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null) {
+function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null) {
   const userNameLabel = character.nickname_for_user || worldName || null;
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
@@ -548,7 +548,18 @@ ${userNameLabel
     : `You don't know their name yet. Use "you" or natural pronouns. NEVER say "the user" or "user" — you are talking to a real person.`}
 
 CRITICAL — WHAT YOU DO NOT KNOW ABOUT THE USER:
-You do NOT know anything about the user's family members, their names, their lives, or their relationships unless they told you directly in this conversation. Never reference, assume, or imply knowledge of the user's family.
+ You do NOT know anything about the user's family members, their names, their lives, or their relationships unless they told you directly in this conversation. Never reference, assume, or imply knowledge of the user's family.
+${userBirthdayFact ? `
+USER BIRTHDAY — PERMANENT CONTINUITY FACT:
+The user's birthday is ${userBirthdayFact.date}${userBirthdayFact.hasYear ? '' : ' (year not known)'}.
+This is a KNOWN FACT stored durably — you DO know this. You did not guess it.
+Behavior rules:
+- If their birthday is today or very soon: acknowledge it naturally and warmly.
+- If the user mentions their birthday in conversation: confirm you remember it.
+- If asked whether you know their birthday: say yes and state the date.
+- Do NOT volunteer it unprompted in every conversation — only when contextually relevant (birthday approaching, they mention it, you're talking about celebrating, etc.).
+- This fact persists even if this conversation has no prior mention of it.
+` : ''}
 
 YOUR CORE BELIEFS:
 - Respect is non-negotiable
@@ -953,6 +964,64 @@ Deno.serve(async (req) => {
       unlinked: rels.filter(r => !r.related_character_id).length,
     });
 
+    // ── Step 7b: Extract user birthday from Life Journal ─────────────────────
+    // Birthday is stored as a CharacterMemory record with FACT:user_birthday tag.
+    // Scope: any character on this account that has heard/stored the birthday.
+    // We search across ALL character memories for this user account to find it.
+    let userBirthdayFact = null;
+    try {
+      // Search the current character's journal first (most likely location)
+      const birthdayRecord = lifeJournalEntries.find(e =>
+        e.memory_text && e.memory_text.includes('FACT:user_birthday')
+      );
+      if (birthdayRecord) {
+        const dateMatch = birthdayRecord.memory_text.match(/date:([^\s|]+)/);
+        const hasYearMatch = birthdayRecord.memory_text.match(/hasYear:(true|false)/);
+        if (dateMatch) {
+          userBirthdayFact = {
+            date: dateMatch[1],
+            hasYear: hasYearMatch ? hasYearMatch[1] === 'true' : false,
+          };
+        }
+      }
+
+      // If not found on this character's journal, do a broader account-scope scan
+      if (!userBirthdayFact) {
+        const allUserMems = await base44.asServiceRole.entities.CharacterMemory.filter(
+          { validation_status: 'confirmed', permanence: 'protected', memory_type: 'fact' },
+          '-created_date',
+          20
+        ).catch(() => []);
+        // Filter to this user's account by matching records where created_by = user.email
+        const birthdayMem = allUserMems.find(m =>
+          m.memory_text && m.memory_text.includes('FACT:user_birthday') &&
+          m.created_by === user.email
+        );
+        if (birthdayMem) {
+          const dateMatch = birthdayMem.memory_text.match(/date:([^\s|]+)/);
+          const hasYearMatch = birthdayMem.memory_text.match(/hasYear:(true|false)/);
+          if (dateMatch) {
+            userBirthdayFact = {
+              date: dateMatch[1],
+              hasYear: hasYearMatch ? hasYearMatch[1] === 'true' : false,
+            };
+          }
+        }
+      }
+    } catch (bdErr) {
+      contextLog.push({ step: 'birthday_fact_load', status: 'error', error: bdErr.message });
+    }
+
+    contextLog.push({
+      step: 'birthday_fact_load',
+      found: !!userBirthdayFact,
+      date: userBirthdayFact?.date || null,
+    });
+
+    if (userBirthdayFact) {
+      console.log(`[buildCanonicalCharacterContext] birthday_fact | date=${userBirthdayFact.date} | hasYear=${userBirthdayFact.hasYear} | injected_into_prompt=true`);
+    }
+
     // ── Step 8: Build Life Journal block for prompt injection ─────────────────
     let lifeJournalBlock = '';
     if (lifeJournalEntries.length > 0) {
@@ -975,7 +1044,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Step 10: Build canonical system prompt ────────────────────────────────
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, recentMessageBlock, coPresence);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, recentMessageBlock, coPresence, userBirthdayFact);
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
 
     const totalMs = Date.now() - startTime;

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { base44 } from "@/api/base44Client";
 
 const GENDER_OPTIONS = [
   { value: "male", label: "Male" },
@@ -7,7 +8,7 @@ const GENDER_OPTIONS = [
   { value: "other", label: "Other" },
 ];
 
-export default function SettingsTextFields({ settings, onSave }) {
+export default function SettingsTextFields({ settings, onSave, firstCharacterId }) {
   const [worldName, setWorldName] = useState("");
   const [birthday, setBirthday] = useState("");
   const [scheduleNotes, setScheduleNotes] = useState("");
@@ -75,7 +76,17 @@ export default function SettingsTextFields({ settings, onSave }) {
           onChange={e => {
             const val = e.target.value;
             setBirthday(val);
-            if (val) onSave({ user_birthday: val });
+            if (val) {
+              onSave({ user_birthday: val });
+              // Durably save to CharacterMemory (Life Journal) so characters can remember it
+              if (firstCharacterId) {
+                base44.functions.invoke('captureUserBirthday', {
+                  characterId: firstCharacterId,
+                  directDate: val,
+                  source: 'settings',
+                }).catch(() => {}); // non-blocking — Settings save is not dependent on this
+              }
+            }
           }}
           className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
         />
