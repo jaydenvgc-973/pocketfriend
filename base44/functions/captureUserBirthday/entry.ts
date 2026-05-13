@@ -4,22 +4,20 @@
  * Detects and durably stores the user's birthday from any source
  * (chat message, profile, settings, onboarding).
  *
- * Writes to CharacterMemory (Life Journal) as a protected hard fact.
- * All characters belonging to this user's account inherit access.
+ * Writes to UserSettings (account-level, not service-role dependent).
+ * Birthday is immediately available to ALL characters on the account.
  *
- * Storage schema:
- *   character_id:    <characterId who heard it> — so retrieval is scoped correctly
- *   memory_type:     "fact"
- *   memory_text:     canonical birthday fact string
- *   memory_summary:  ISO date string (YYYY-MM-DD or MM-DD)
- *   importance_score: 10 (maximum — this is a permanent continuity fact)
- *   permanence:      "protected"
- *   validation_status: "confirmed"
- *   fact_type:       "user_birthday"   (custom field stored in memory_text JSON preamble)
- *   source:          where the birthday was detected (chat/profile/settings/onboarding)
+ * Storage schema (UserSettings):
+ *   user_birthday_date:       ISO date string (YYYY-MM-DD or MM-DD)
+ *   user_birthday_has_year:   boolean — is the year known?
+ *   user_birthday_source:     where the birthday was detected (chat/profile/settings/onboarding)
+ *   user_birthday_raw:        original raw input string
+ *   user_birthday_captured_at: ISO timestamp when it was first captured
+ *   user_birthday_updates:    array of {from, to, at, source} for correction history
  *
- * Deduplication: only one user_birthday record per account. If a correction is detected,
- * the existing record is updated and a correction_history entry is appended.
+ * Deduplication: one record per user (UserSettings). If a correction is detected,
+ * the existing record is updated and a correction history entry is appended.
+ * Birthday is immediately readable by any character via UserSettings.owner_email.
  */
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
@@ -188,94 +186,93 @@ Deno.serve(async (req) => {
     const confidence = detection.confidence ?? 0.9;
 
     // ── CHECK FOR EXISTING USER BIRTHDAY RECORD ───────────────────────────────
-    // Scope: ALL characters on this account — birthday is a user-level fact.
-    // We search CharacterMemory records owned by this user that have fact_type=user_birthday.
-    const existingList = await base44.asServiceRole.entities.CharacterMemory.filter(
-      { character_id: characterId },
-      '-created_date',
-      50
+    // Scope: UserSettings (account-level, one per user).
+    // Birthday is stored at owner_email level, making it immediately available to all characters.
+    const settingsList = await base44.entities.UserSettings.filter(
+      { owner_email: user.email },
+      null,
+      1
     ).catch(() => []);
 
-    // Birthday records are tagged with "FACT:user_birthday" in memory_text
-    const existingBirthday = existingList.find(m =>
-      m.memory_text && m.memory_text.includes('FACT:user_birthday')
-    );
+    const existingSettings = settingsList?.[0] || null;
+    // Read from both new field (user_birthday_date) and legacy field (user_birthday)
+    const existingBirthdayDate = existingSettings?.user_birthday_date || existingSettings?.user_birthday || null;
+    const existingUpdates = existingSettings?.user_birthday_updates || [];
 
     const now = new Date().toISOString();
-    const newMemoryText = `FACT:user_birthday | date:${normalizedDate} | hasYear:${!!hasYear} | raw:"${rawDateStr}" | source:${source} | confidence:${confidence} | captured:${now}`;
-    const newMemorySummary = normalizedDate;
 
-    if (existingBirthday) {
-      // ── CORRECTION HANDLING ────────────────────────────────────────────────
-      // Extract previous date from existing record
-      const prevMatch = existingBirthday.memory_text?.match(/date:([^\s|]+)/);
-      const prevDate = prevMatch ? prevMatch[1] : null;
+    // ── CORRECTION HANDLING ────────────────────────────────────────────────
+    if (existingBirthdayDate === normalizedDate) {
+      // Same date — already stored, no-op
+      console.log(`[captureUserBirthday] Birthday already stored: ${normalizedDate} | no update needed`);
+      return Response.json({
+        found: true,
+        stored: false,
+        reason: 'already_stored',
+        date: normalizedDate,
+        source: 'UserSettings',
+      });
+    }
 
-      if (prevDate === normalizedDate) {
-        // Same date — already stored, no-op
-        console.log(`[captureUserBirthday] Birthday already stored: ${normalizedDate} | no update needed`);
-        return Response.json({
-          found: true,
-          stored: false,
-          reason: 'already_stored',
-          date: normalizedDate,
-          existingId: existingBirthday.id,
-        });
-      }
+    // ── CREATE OR UPDATE BIRTHDAY IN UserSettings ──────────────────────────────
+    const newUpdates = existingBirthdayDate
+      ? [
+          ...existingUpdates,
+          {
+            from: existingBirthdayDate,
+            to: normalizedDate,
+            at: now,
+            source: source,
+          }
+        ]
+      : [];
 
-      // Date changed — update with correction history
-      const correctionHistory = existingBirthday.memory_text?.match(/corrections:\[([^\]]*)\]/)?.[1] || '';
-      const prevEntry = `{from:"${prevDate}",to:"${normalizedDate}",at:"${now}",source:"${source}"}`;
-      const updatedCorrections = correctionHistory
-        ? `${correctionHistory},${prevEntry}`
-        : prevEntry;
-
-      const updatedText = newMemoryText + ` | corrections:[${updatedCorrections}]`;
-
-      await base44.asServiceRole.entities.CharacterMemory.update(existingBirthday.id, {
-        memory_text: updatedText,
-        memory_summary: newMemorySummary,
-        importance_score: 10,
-        permanence: 'protected',
-        validation_status: 'confirmed',
-        updated_date: now,
+    if (existingSettings) {
+      // Update existing UserSettings — write to both new and legacy field for compatibility
+      await base44.entities.UserSettings.update(existingSettings.id, {
+        user_birthday_date: normalizedDate,
+        user_birthday: normalizedDate,
+        user_birthday_has_year: hasYear,
+        user_birthday_source: source,
+        user_birthday_raw: rawDateStr,
+        user_birthday_captured_at: existingSettings.user_birthday_captured_at || now,
+        user_birthday_updates: newUpdates,
       });
 
-      console.log(`[captureUserBirthday] Birthday UPDATED: ${prevDate} → ${normalizedDate} | source=${source} | charId=${characterId}`);
+      console.log(`[captureUserBirthday] Birthday UPDATED in UserSettings: ${existingBirthdayDate} → ${normalizedDate} | source=${source} | owner_email=${user.email}`);
 
       return Response.json({
         found: true,
         stored: true,
         updated: true,
         date: normalizedDate,
-        previousDate: prevDate,
-        recordId: existingBirthday.id,
+        previousDate: existingBirthdayDate,
+        storedAt: 'UserSettings',
+      });
+    } else {
+      // Create new UserSettings with birthday
+      const newSettings = await base44.entities.UserSettings.create({
+        owner_email: user.email,
+        user_birthday_date: normalizedDate,
+        user_birthday_has_year: hasYear,
+        user_birthday_source: source,
+        user_birthday_raw: rawDateStr,
+        user_birthday_captured_at: now,
+        user_birthday_updates: [],
+      });
+
+      console.log(`[captureUserBirthday] Birthday STORED in new UserSettings: ${normalizedDate} | hasYear=${hasYear} | source=${source} | owner_email=${user.email}`);
+
+      return Response.json({
+        found: true,
+        stored: true,
+        updated: false,
+        date: normalizedDate,
+        hasYear,
+        storedAt: 'UserSettings',
+        source,
       });
     }
-
-    // ── CREATE NEW BIRTHDAY RECORD ─────────────────────────────────────────────
-    const newRecord = await base44.asServiceRole.entities.CharacterMemory.create({
-      character_id: characterId,
-      memory_type: 'fact',
-      memory_text: newMemoryText,
-      memory_summary: newMemorySummary,
-      importance_score: 10,
-      confidence_score: confidence,
-      permanence: 'protected',
-      validation_status: 'confirmed',
-    });
-
-    console.log(`[captureUserBirthday] Birthday STORED: ${normalizedDate} | hasYear=${hasYear} | source=${source} | charId=${characterId} | recordId=${newRecord?.id}`);
-
-    return Response.json({
-      found: true,
-      stored: true,
-      updated: false,
-      date: normalizedDate,
-      hasYear,
-      recordId: newRecord?.id,
-      source,
-    });
 
   } catch (error) {
     console.error('[captureUserBirthday] Error:', error.message);

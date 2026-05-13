@@ -964,48 +964,27 @@ Deno.serve(async (req) => {
       unlinked: rels.filter(r => !r.related_character_id).length,
     });
 
-    // ── Step 7b: Extract user birthday from Life Journal ─────────────────────
-    // Birthday is stored as a CharacterMemory record with FACT:user_birthday tag.
-    // Scope: any character on this account that has heard/stored the birthday.
-    // We search across ALL character memories for this user account to find it.
+    // ── Step 7b: Extract user birthday from UserSettings ────────────────────────
+    // Birthday is stored at account level in UserSettings — available to ALL characters.
+    // Source of truth: UserSettings.user_birthday_date (user-scoped, not service-role dependent).
     let userBirthdayFact = null;
     try {
-      // Search the current character's journal first (most likely location)
-      const birthdayRecord = lifeJournalEntries.find(e =>
-        e.memory_text && e.memory_text.includes('FACT:user_birthday')
-      );
-      if (birthdayRecord) {
-        const dateMatch = birthdayRecord.memory_text.match(/date:([^\s|]+)/);
-        const hasYearMatch = birthdayRecord.memory_text.match(/hasYear:(true|false)/);
-        if (dateMatch) {
-          userBirthdayFact = {
-            date: dateMatch[1],
-            hasYear: hasYearMatch ? hasYearMatch[1] === 'true' : false,
-          };
-        }
-      }
+      // UserSettings lookup by owner_email (user-scoped RLS)
+      const userSettingsList = await base44.entities.UserSettings.filter(
+        { owner_email: user.email },
+        null,
+        1
+      ).catch(() => []);
 
-      // If not found on this character's journal, do a broader account-scope scan
-      if (!userBirthdayFact) {
-        const allUserMems = await base44.asServiceRole.entities.CharacterMemory.filter(
-          { validation_status: 'confirmed', permanence: 'protected', memory_type: 'fact' },
-          '-created_date',
-          20
-        ).catch(() => []);
-        // Filter to this user's account by matching records where created_by = user.email
-        const birthdayMem = allUserMems.find(m =>
-          m.memory_text && m.memory_text.includes('FACT:user_birthday') &&
-          m.created_by === user.email
-        );
-        if (birthdayMem) {
-          const dateMatch = birthdayMem.memory_text.match(/date:([^\s|]+)/);
-          const hasYearMatch = birthdayMem.memory_text.match(/hasYear:(true|false)/);
-          if (dateMatch) {
-            userBirthdayFact = {
-              date: dateMatch[1],
-              hasYear: hasYearMatch ? hasYearMatch[1] === 'true' : false,
-            };
-          }
+      if (userSettingsList?.[0]) {
+        const settings = userSettingsList[0];
+        // Check both new field (user_birthday_date) and legacy field (user_birthday)
+        const birthdayDate = settings.user_birthday_date || settings.user_birthday || null;
+        if (birthdayDate) {
+          userBirthdayFact = {
+            date: birthdayDate,
+            hasYear: settings.user_birthday_has_year !== false,
+          };
         }
       }
     } catch (bdErr) {
