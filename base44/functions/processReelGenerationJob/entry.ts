@@ -127,21 +127,22 @@ Deno.serve(async (req) => {
         requires_identity_preservation = !!charId;
 
         // ANIMATE VIA VEO: Primary animation provider
-        // Source image = scene/body reference. Avatar = identity reference only.
+        // Frame 0 = source image (the selected image comes to life)
+        // Avatar = identity stabilizer only (keeps face/likeness consistent during movement)
         if (requires_identity_preservation && imageUrl) {
           const charAppearance = characterAppearanceCache[charId];
           const avatarUrl = charAppearance?.avatar_url || null;
           
-          // Build existing_image_urls: [source_image, avatar_if_available]
+          // Build existing_image_urls: [source_image (INDEX 0, FRAME 0), avatar (INDEX 1, IDENTITY FALLBACK)]
           const existingImages = [imageUrl];
           if (avatarUrl && avatarUrl !== imageUrl) {
             existingImages.push(avatarUrl);
           }
 
-          // Identity-preserving prompt for Veo
+          // Motion prompt: animate the SOURCE IMAGE, use AVATAR only to keep identity consistent
           const identityPrompt = avatarUrl
-            ? `Animate the person in IMAGE 1. Use IMAGE 1 as the scene and body reference. Use IMAGE 2 only to preserve the character's face, skin tone, hair, facial hair, age, and identity. Do not change gender, body type, ethnicity, hair, beard, or outfit. Do not create a new person.`
-            : `Animate the person in IMAGE 1. Keep the scene, body, clothing, and identity exactly as shown. Do not change gender, body type, or ethnicity. Do not create a new person.`;
+            ? `Animate the person in IMAGE 1 (the starting frame). The video must begin from IMAGE 1 exactly as it appears. As the character moves, use IMAGE 2 only to keep the face, skin tone, hair, facial hair, age, and character identity consistent. Do not change the body type, gender, ethnicity, outfit, scene, pose, lighting, or camera angle from IMAGE 1. Do not create a new person. The result should look like the person in IMAGE 1 came to life.`
+            : `Animate the person in IMAGE 1 (the starting frame). The video must begin from IMAGE 1 exactly as it appears. Keep the scene, body, outfit, pose, lighting, and identity exactly as shown. Do not change gender, body type, ethnicity, or outfit. Do not create a new person.`;
 
           // Call Veo via Core.GenerateVideo
           try {
@@ -199,17 +200,25 @@ Deno.serve(async (req) => {
           existingImages.push(avatarUrl);
         }
         const identityPrompt = avatarUrl
-          ? `Animate the person in IMAGE 1. Use IMAGE 1 as the scene and body reference. Use IMAGE 2 only to preserve the character's face, skin tone, hair, facial hair, age, and identity. Do not change gender, body type, ethnicity, hair, beard, or outfit. Do not create a new person.`
-          : `Animate the person in IMAGE 1. Keep the scene, body, clothing, and identity exactly as shown. Do not change gender, body type, or ethnicity. Do not create a new person.`;
+          ? `Animate the person in IMAGE 1 (the starting frame). The video must begin from IMAGE 1 exactly as it appears. As the character moves, use IMAGE 2 only to keep the face, skin tone, hair, facial hair, age, and character identity consistent. Do not change the body type, gender, ethnicity, outfit, scene, pose, lighting, or camera angle from IMAGE 1. Do not create a new person. The result should look like the person in IMAGE 1 came to life.`
+          : `Animate the person in IMAGE 1 (the starting frame). The video must begin from IMAGE 1 exactly as it appears. Keep the scene, body, outfit, pose, lighting, and identity exactly as shown. Do not change gender, body type, ethnicity, or outfit. Do not create a new person.`;
         
         veo_diagnostics = {
           provider_id: 'veo_3x',
-          identity_reference_mode: 'source_plus_avatar',
+          identity_reference_mode: 'frame_0_plus_identity_anchor',
           source_image_url: imageUrl,
+          source_image_role: 'frame_0_animation_starting_point',
+          source_image_index_in_payload: 0,
           avatar_reference_url: avatarUrl || null,
+          avatar_reference_role: avatarUrl ? 'identity_stabilizer_during_movement' : null,
+          avatar_reference_index_in_payload: avatarUrl ? 1 : null,
           existing_image_urls: existingImages,
+          existing_image_urls_order: `[0]=${imageUrl.slice(-30)} [1]=${avatarUrl ? avatarUrl.slice(-30) : 'none'}`,
           prompt: identityPrompt,
-          identity_preservation_supported: 'best_effort',
+          animation_starts_from: 'source_image_frame_0',
+          avatar_does_not_replace_source: true,
+          identity_preservation_approach: 'source_image_comes_to_life_with_identity_anchor',
+          identity_preservation_supported: 'source_anchored',
           character_id: charId,
           character_name: charAppearanceForDiag?.name || null,
         };
