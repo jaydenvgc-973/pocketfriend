@@ -2,11 +2,12 @@
  * processReelGenerationJob
  *
  * Provider Routing & Diagnostics:
- * - Character identity-critical clips are BLOCKED from generating through Veo.
- * - Veo treats existing_image_urls as loose style reference, NOT frame-lock.
- * - Only non-character clips generate through Veo.
- * - For blocked clips, status = 'blocked_provider_unsupported', clip_type = 'not_generated'.
- * - Provider diagnostics stored so caller knows why clip wasn't generated.
+ * - Primary animation provider: Google Veo 3.x (via Core.GenerateVideo)
+ * - Source image is the primary animation reference (scene, body, outfit)
+ * - Avatar/canonical image is secondary identity reference only (face, age, skin tone)
+ * - For character clips: Veo routes existing_image_urls = [source_image, avatar_image]
+ * - Motion compositor available as optional post-render enhancement
+ * - Full diagnostics per clip: source_image_url, avatar_reference_url, prompt, provider_id
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
@@ -125,23 +126,53 @@ Deno.serve(async (req) => {
         const charId = msgRecord?.character_id || null;
         requires_identity_preservation = !!charId;
 
-          // CHARACTER IDENTITY CLIPS: Route to Motion Compositor
-          if (requires_identity_preservation && imageUrl) {
-            clipType = 'motion_composite';
-            clipStatus = 'motion_composition_ready';
-            clipUrl = null; // Motion compositing is client-side, no URL
-
-            // Motion compositor seed for deterministic playback
-            const motionSeed = Math.sin(charId.charCodeAt(0) + i) * 10000;
-
-            console.log(`[Clip ${i + 1}] CHARACTER IDENTITY PRESERVED: Motion Compositor | Character '${charId}' | Source: ${imageUrl.slice(-40)}`);
-            warnings.push(`Clip ${i + 1}: Character identity protected via motion compositing (source-locked).`);
-          } else if (!imageUrl) {
-            // No source image to composite
-            clipType = 'static';
-            clipStatus = 'fallback_no_source';
-            warnings.push(`Clip ${i + 1}: no source image — static slide used.`);
+        // ANIMATE VIA VEO: Primary animation provider
+        // Source image = scene/body reference. Avatar = identity reference only.
+        if (requires_identity_preservation && imageUrl) {
+          const charAppearance = characterAppearanceCache[charId];
+          const avatarUrl = charAppearance?.avatar_url || null;
+          
+          // Build existing_image_urls: [source_image, avatar_if_available]
+          const existingImages = [imageUrl];
+          if (avatarUrl && avatarUrl !== imageUrl) {
+            existingImages.push(avatarUrl);
           }
+
+          // Identity-preserving prompt for Veo
+          const identityPrompt = avatarUrl
+            ? `Animate the person in IMAGE 1. Use IMAGE 1 as the scene and body reference. Use IMAGE 2 only to preserve the character's face, skin tone, hair, facial hair, age, and identity. Do not change gender, body type, ethnicity, hair, beard, or outfit. Do not create a new person.`
+            : `Animate the person in IMAGE 1. Keep the scene, body, clothing, and identity exactly as shown. Do not change gender, body type, or ethnicity. Do not create a new person.`;
+
+          // Call Veo via Core.GenerateVideo
+          try {
+            const generateRes = await base44.integrations.Core.GenerateVideo({
+              prompt: identityPrompt,
+              existing_image_urls: existingImages,
+              duration: 4,
+              aspect_ratio: '9:16',
+            });
+            
+            clipUrl = generateRes.url || null;
+            clipType = clipUrl ? 'animated' : 'static';
+            clipStatus = clipUrl ? 'veo_generated' : 'fallback_generation_failed';
+
+            if (clipUrl) {
+              console.log(`[Clip ${i + 1}] VEO ANIMATED | Character '${charId}' | Source: ${imageUrl.slice(-40)} | Avatar: ${avatarUrl ? 'yes' : 'no'}`);
+            } else {
+              console.warn(`[Clip ${i + 1}] VEO FAILED | Character '${charId}' | Fallback to static`);
+              warnings.push(`Clip ${i + 1}: Veo generation failed, using static slide.`);
+            }
+          } catch (err) {
+            console.error(`[Clip ${i + 1}] VEO ERROR:`, err.message);
+            clipType = 'static';
+            clipStatus = 'fallback_generation_error';
+            warnings.push(`Clip ${i + 1}: Veo error — ${err.message}`);
+          }
+        } else if (!imageUrl) {
+          clipType = 'static';
+          clipStatus = 'fallback_no_source';
+          warnings.push(`Clip ${i + 1}: no source image — static slide used.`);
+        }
       } else if (shouldAnimate && !imageUrl) {
         clipType = 'static';
         clipStatus = 'fallback_no_source';
@@ -157,44 +188,44 @@ Deno.serve(async (req) => {
         ? [charAppearanceForClip.avatar_url, ...(charAppearanceForClip.reference_image_urls || [])].filter(Boolean)
         : [];
 
-      let video_provider_capabilities = null;
-      if (clipType === 'motion_composite') {
-        video_provider_capabilities = {
-          provider_id: 'motion_compositor',
-          provider_name: 'Motion Compositor (Source-Locked)',
-          supports_init_frame: true,
-          identity_preservation_supported: true,
-          source_image_locked: true,
-          rendering: 'client_side_canvas',
-          identity_validation_status: 'source_image_preserved_throughout_animation',
-          motion_effects: [
-            'parallax_depth', 'camera_push_in', 'cinematic_pan', 'ambient_light',
-            'breathing_motion', 'environmental_drift', 'blink_overlay'
-          ],
+      // Build Veo diagnostics for character clips
+      const charAppearanceForDiag = charId ? characterAppearanceCache[charId] : null;
+      const avatarUrl = charAppearanceForDiag?.avatar_url || null;
+      
+      let veo_diagnostics = null;
+      if (requires_identity_preservation && imageUrl) {
+        const existingImages = [imageUrl];
+        if (avatarUrl && avatarUrl !== imageUrl) {
+          existingImages.push(avatarUrl);
+        }
+        const identityPrompt = avatarUrl
+          ? `Animate the person in IMAGE 1. Use IMAGE 1 as the scene and body reference. Use IMAGE 2 only to preserve the character's face, skin tone, hair, facial hair, age, and identity. Do not change gender, body type, ethnicity, hair, beard, or outfit. Do not create a new person.`
+          : `Animate the person in IMAGE 1. Keep the scene, body, clothing, and identity exactly as shown. Do not change gender, body type, or ethnicity. Do not create a new person.`;
+        
+        veo_diagnostics = {
+          provider_id: 'veo_3x',
+          identity_reference_mode: 'source_plus_avatar',
+          source_image_url: imageUrl,
+          avatar_reference_url: avatarUrl || null,
+          existing_image_urls: existingImages,
+          prompt: identityPrompt,
+          identity_preservation_supported: 'best_effort',
+          character_id: charId,
+          character_name: charAppearanceForDiag?.name || null,
         };
       }
-
-      // Add motion compositor metadata for character identity clips
-      const motionCompositorMeta = clipType === 'motion_composite' ? {
-        motion_seed: Math.sin((charId || '').charCodeAt(0) + i) * 10000,
-        motion_intensity: 0.6,
-        effects: {
-          parallaxDepth: true,
-          cameraPush: true,
-          cinematicPan: true,
-          ambientLight: true,
-          breathingMotion: true,
-          environmentalDrift: true,
-          particles: false,
-          blinkOverlay: false,
-        },
-        rendering: 'client_side_canvas',
-        identity_lock: {
-          method: 'source_image_compositing',
-          preservation_guarantee: 'source_image_is_animation_base_never_replaced',
-          validation_points: ['frame_0', 'frame_mid', 'frame_final'],
-        },
-      } : null;
+      
+      let video_provider_capabilities = null;
+      if (clipType === 'animated' && clipUrl) {
+        video_provider_capabilities = {
+          provider_id: 'veo_3x',
+          provider_name: 'Google Veo 3.x',
+          supports_init_frame: false,
+          identity_preservation_supported: 'best_effort',
+          rendering: 'ai_generated',
+          identity_reference_mode: 'source_plus_avatar',
+        };
+      }
 
       clipResults.push({
         image_id: imageId,
@@ -207,7 +238,7 @@ Deno.serve(async (req) => {
         animate: shouldAnimate,
         requires_identity_preservation,
         video_provider_capabilities,
-        motion_compositor_meta: motionCompositorMeta,
+        veo_diagnostics,
         subject_identity: {
           media_id: imageId,
           source_image_url: imageUrl,
