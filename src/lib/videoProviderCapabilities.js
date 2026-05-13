@@ -7,13 +7,50 @@
 
 export const VIDEO_PROVIDERS = {
   // ─────────────────────────────────────────────────────────────────────────────
+  // MOTION COMPOSITOR (Identity-Preserving Client-Side System)
+  // NEW PRIMARY SYSTEM: Cinematic motion effects layered on original source image.
+  // The source image is NEVER regenerated—only animated with parallax, camera, deformation, overlays.
+  motion_compositor: {
+    id: 'motion_compositor',
+    name: 'Motion Compositor (Source-Locked)',
+    status: 'active',
+    fallback_priority: 'primary_system',
+    capabilities: {
+      supports_init_frame: true, // source image IS the init frame (preserved exactly)
+      supports_image_to_video: false, // not AI video—client-side layered animation
+      supports_identity_reference: 'source_image_locked', // source image preserved pixel-perfect
+      supports_reference_strength: true, // motion intensity (0–100)
+      supports_seed: true, // deterministic motion replay
+      supports_multi_reference: false,
+      supports_frame_validation: true, // verify source remains visible throughout
+      aspect_ratios: ['9:16', '16:9'],
+      max_duration_seconds: 6,
+      min_duration_seconds: 2,
+      rendering: 'client_side_canvas',
+      motion_effects: [
+        'parallax_depth', 'camera_push_in', 'cinematic_pan', 'rack_focus',
+        'ambient_light_shift', 'procedural_particles', 'breathing_deformation',
+        'subtle_body_movement', 'blink_overlay', 'cloth_movement', 'hair_movement',
+        'ken_burns', 'handheld_simulation', 'environmental_drift', 'live_photo_style',
+      ],
+    },
+    limitations: [
+      'Client-side rendering only—preview may vary by device',
+      'Complex scenes may require GPU acceleration',
+      'Motion is procedural, not generative (preserves character perfectly)',
+    ],
+    use_case: 'Character identity-critical memory reels—source image animated, never replaced',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // GOOGLE VEO 3.X (via Base44 Core.GenerateVideo)
-  // Current fallback provider. Does NOT support true init-frame locking.
+  // DEPRECATED FOR CHARACTER CLIPS: Does NOT support true init-frame locking.
+  // Kept for reference. DO NOT USE for character identity clips.
   veo_3x: {
     id: 'veo_3x',
-    name: 'Google Veo 3.x',
-    status: 'active',
-    fallback_priority: 'lowest',
+    name: 'Google Veo 3.x (DEPRECATED for character clips)',
+    status: 'deprecated_for_identity',
+    fallback_priority: 'blocked',
     capabilities: {
       supports_init_frame: false,
       supports_image_to_video: false,
@@ -27,12 +64,11 @@ export const VIDEO_PROVIDERS = {
       min_duration_seconds: 4,
     },
     limitations: [
-      'No init-frame control — video can change character appearance',
-      'Reference images treated as style guidance, not source frames',
-      'Cannot guarantee character identity preservation',
-      'Suitable only as fallback for non-identity-critical clips',
+      'AI-generated video can change character appearance',
+      'Reference images treated as style guidance only',
+      'BLOCKS character identity preservation—DO NOT USE',
     ],
-    use_case: 'Motion-only clips where character identity is not critical',
+    use_case: 'DEPRECATED—do not use for memory reels',
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -154,34 +190,13 @@ export function selectVideoProvider(requirements) {
   const { needs_character_identity = true, fallback_allowed = false } = requirements;
 
   if (needs_character_identity) {
-    // Find primary candidates that support init-frame
-    const primaryCandidates = Object.values(VIDEO_PROVIDERS).filter(
-      (p) => p.capabilities.supports_init_frame && p.fallback_priority === 'primary_candidate'
-    );
-
-    if (primaryCandidates.length > 0) {
-      return primaryCandidates[0]; // Runway preferred as primary
-    }
-
-    // Secondary candidates
-    const secondaryCandidates = Object.values(VIDEO_PROVIDERS).filter(
-      (p) => p.capabilities.supports_init_frame && p.fallback_priority === 'secondary_candidate'
-    );
-
-    if (secondaryCandidates.length > 0) {
-      return secondaryCandidates[0];
-    }
-
-    // If no real provider available but fallback allowed, use Veo
-    if (fallback_allowed) {
-      return VIDEO_PROVIDERS.veo_3x;
-    }
-
-    return null; // No suitable provider
+    // REQUIRED: Motion Compositor for all character identity clips
+    // Source image is NEVER replaced—only animated with client-side motion effects
+    return VIDEO_PROVIDERS.motion_compositor;
   }
 
-  // Non-identity-critical: Veo is acceptable
-  return VIDEO_PROVIDERS.veo_3x;
+  // Non-identity-critical: Motion Compositor is still preferred (safer than Veo)
+  return VIDEO_PROVIDERS.motion_compositor;
 }
 
 /**

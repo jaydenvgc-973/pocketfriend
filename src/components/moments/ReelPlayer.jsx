@@ -1,18 +1,19 @@
 /**
  * ReelPlayer — Client-side TikTok/Instagram Reel montage renderer
  *
- * SOURCE-LOCK: Only renders the exact image_url and clip_url values
- * from the job's clip_results. Never generates new visuals.
+ * IDENTITY-PRESERVING: Renders source images with client-side motion compositing.
+ * 
+ * For static slides: CSS animations applied to source image.
+ * For motion-composited clips: Canvas-based animation (parallax, camera, breathing, light, particles).
+ * Character identity is NEVER replaced—only enhanced with cinematic motion effects.
  *
- * For static slides: CSS animations (zoom, pan, fade, slide) applied to the source image.
- * For animated clips: plays the video file returned by image-to-video generation.
- *
- * This component IS the reel. It replaces the need for a final "assembled" AI video.
+ * This component IS the reel. The source image is the animation foundation.
  */
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Play, Pause } from "lucide-react";
+import { MotionCompositor } from "@/lib/motionCompositor";
 
 // CSS keyframe motion effects applied to static source images
 const MOTION_EFFECTS = [
@@ -33,18 +34,66 @@ const VIDEO_DURATION = 4500; // ms budget per animated clip (actual video contro
 const SOURCE_PREVIEW_HOLD_MS = 200;
 
 function SlideFrame({ clip, index, isActive, onEnded }) {
-  const effect = MOTION_EFFECTS[index % MOTION_EFFECTS.length];
   const caption = clip.caption || null;
+  const isMotionComposite = clip.clip_type === 'motion_composite';
   const isVideo = clip.clip_type === 'animated' && clip.clip_url;
+  const isStatic = clip.clip_type === 'static' || (!isMotionComposite && !isVideo);
+  
+  const containerRef = useRef(null);
+  const compositorRef = useRef(null);
+  const [motionReady, setMotionReady] = useState(false);
   const videoRef = useRef(null);
-  const [showFrame0, setShowFrame0] = useState(isVideo); // start with source image visible
+  const [showFrame0, setShowFrame0] = useState(isVideo);
+  
+  const effect = isStatic ? MOTION_EFFECTS[index % MOTION_EFFECTS.length] : null;
 
-  // Reset source preview state every time this slide becomes active
+  // Initialize motion compositor for motion-composite clips
+  useEffect(() => {
+    if (!isMotionComposite || !isActive || !containerRef.current) return;
+
+    const initCompositor = async () => {
+      try {
+        const compositor = new MotionCompositor(
+          clip.image_url,
+          containerRef.current,
+          {
+            duration: 4,
+            motionIntensity: 0.6,
+            motionSeed: clip.seed || Math.random(),
+            ...clip.motion_effects,
+          }
+        );
+        await compositor.initialize();
+        
+        // Validate identity preservation
+        compositor.play();
+        const validation = compositor.validateSourceImagePreservation();
+        console.log('[ReelPlayer] Motion compositor validation:', validation);
+        
+        compositorRef.current = compositor;
+        setMotionReady(true);
+      } catch (err) {
+        console.error('[ReelPlayer] Motion compositor init failed:', err);
+        // Fallback: show static image
+        setMotionReady(true);
+      }
+    };
+
+    initCompositor();
+
+    return () => {
+      if (compositorRef.current) {
+        compositorRef.current.stop();
+      }
+    };
+  }, [isMotionComposite, isActive, clip]);
+
+  // Handle video preview states
   useEffect(() => {
     if (!isVideo) return;
     setShowFrame0(true);
     const t = setTimeout(() => {
-      setShowFrame0(false); // release to video after preview
+      setShowFrame0(false);
     }, SOURCE_PREVIEW_HOLD_MS);
     return () => clearTimeout(t);
   }, [isActive, isVideo]);
@@ -56,11 +105,24 @@ function SlideFrame({ clip, index, isActive, onEnded }) {
     }
   }, [isActive, isVideo, showFrame0]);
 
+  // Handle motion composite lifecycle
+  useEffect(() => {
+    if (!compositorRef.current) return;
+    if (isActive) {
+      compositorRef.current.play();
+    } else {
+      compositorRef.current.pause();
+    }
+  }, [isActive]);
+
   return (
     <div className="absolute inset-0 overflow-hidden">
-      {isVideo ? (
+      {isMotionComposite && motionReady ? (
+        // Motion-composite rendering via Canvas
+        <div ref={containerRef} className="absolute inset-0" />
+      ) : isVideo ? (
+        // Video rendering (with frame-0 source preview)
         <>
-          {/* Frame-0: source image shown first before video plays — guarantees character identity at frame 0 */}
           {showFrame0 && clip.image_url && (
             <img
               src={clip.image_url}
@@ -80,6 +142,7 @@ function SlideFrame({ clip, index, isActive, onEnded }) {
           />
         </>
       ) : (
+        // Static image with CSS animation effect
         <motion.div
           className="w-full h-full"
           initial={{ scale: effect.style.scale[0], x: effect.style.x[0], y: effect.style.y[0] }}

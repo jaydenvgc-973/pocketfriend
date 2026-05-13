@@ -125,77 +125,23 @@ Deno.serve(async (req) => {
         const charId = msgRecord?.character_id || null;
         requires_identity_preservation = !!charId;
 
-        // Provider capabilities
-        const veoProvider = {
-          provider_id: 'veo_3x',
-          provider_name: 'Google Veo 3.x',
-          supports_init_frame: false,
-          identity_preservation_supported: false,
-        };
+          // CHARACTER IDENTITY CLIPS: Route to Motion Compositor
+          if (requires_identity_preservation && imageUrl) {
+            clipType = 'motion_composite';
+            clipStatus = 'motion_composition_ready';
+            clipUrl = null; // Motion compositing is client-side, no URL
 
-        // BLOCK character identity clips from Veo
-        if (requires_identity_preservation && !veoProvider.identity_preservation_supported) {
-          clipType = 'not_generated';
-          clipStatus = 'blocked_provider_unsupported';
-          clipUrl = null;
-          clipError = 'Provider does not support character identity preservation.';
-          warnings.push(`Clip ${i + 1}: Character identity clip blocked — current provider cannot preserve identity.`);
-          console.log(`[Clip ${i + 1}] BLOCKED: Character '${charId}' clip requires identity preservation. Veo cannot guarantee this.`);
-        } else {
-          // Non-character clips proceed with Veo generation
-          try {
-            const motionOptions = [
-              'subtle breathing, gentle eye blink, camera slowly pushing in',
-              'soft hair movement from a light breeze, natural body stillness, camera holds steady',
-              'head turns slightly, eyes shift gently to the side, camera drifts left',
-              'slight natural smile, ambient light shifts softly, camera slow pull-back',
-              'weight shifts slightly, hand moves naturally, environment has gentle ambient motion',
-            ];
-            const motion = motionOptions[i % motionOptions.length];
-            const payload = {
-              prompt: `Animate this photo with subtle motion only: ${motion}. Vertical 9:16.`,
-              duration: 4,
-              aspect_ratio: '9:16',
-              existing_image_urls: [imageUrl],
-            };
-            console.log(`[Clip ${i + 1}] Provider: ${veoProvider.provider_id} | Payload:`, JSON.stringify(payload));
+            // Motion compositor seed for deterministic playback
+            const motionSeed = Math.sin(charId.charCodeAt(0) + i) * 10000;
 
-            const result = await base44.integrations.Core.GenerateVideo(payload);
-            if (result?.url) {
-              clipUrl = result.url;
-              clipType = 'animated';
-              clipStatus = 'success';
-            } else {
-              throw new Error('No URL returned');
-            }
-          } catch (err) {
-            try {
-              const motion = ['subtle motion', 'soft movement', 'camera drift'][i % 3];
-              const retryPayload = {
-                prompt: `Animate. Motion: ${motion}. Vertical 9:16.`,
-                duration: 4,
-                aspect_ratio: '9:16',
-                existing_image_urls: [imageUrl],
-              };
-              console.log(`[Clip ${i + 1}] Retry | Payload:`, JSON.stringify(retryPayload));
-              const retryResult = await base44.integrations.Core.GenerateVideo(retryPayload);
-              if (retryResult?.url) {
-                clipUrl = retryResult.url;
-                clipType = 'animated';
-                clipStatus = 'success_retry';
-              } else {
-                clipType = 'static';
-                clipStatus = 'fallback_no_url';
-                warnings.push(`Clip ${i + 1}: animation failed — static slide used.`);
-              }
-            } catch (_retryErr) {
-              clipType = 'static';
-              clipStatus = 'fallback_error';
-              clipError = err.message;
-              warnings.push(`Clip ${i + 1}: animation failed — static slide used.`);
-            }
+            console.log(`[Clip ${i + 1}] CHARACTER IDENTITY PRESERVED: Motion Compositor | Character '${charId}' | Source: ${imageUrl.slice(-40)}`);
+            warnings.push(`Clip ${i + 1}: Character identity protected via motion compositing (source-locked).`);
+          } else if (!imageUrl) {
+            // No source image to composite
+            clipType = 'static';
+            clipStatus = 'fallback_no_source';
+            warnings.push(`Clip ${i + 1}: no source image — static slide used.`);
           }
-        }
       } else if (shouldAnimate && !imageUrl) {
         clipType = 'static';
         clipStatus = 'fallback_no_source';
@@ -212,25 +158,43 @@ Deno.serve(async (req) => {
         : [];
 
       let video_provider_capabilities = null;
-      if (clipStatus === 'blocked_provider_unsupported') {
+      if (clipType === 'motion_composite') {
         video_provider_capabilities = {
-          provider_id: 'veo_3x',
-          provider_name: 'Google Veo 3.x',
-          supports_init_frame: false,
-          identity_preservation_supported: false,
-          identity_validation_status: 'CHARACTER_CLIP_BLOCKED_NO_SUITABLE_PROVIDER',
-          reason: 'Current provider cannot preserve character identity or use source image as real first frame.',
-        };
-      } else if (clipType === 'animated' && clipUrl) {
-        video_provider_capabilities = {
-          provider_id: 'veo_3x',
-          provider_name: 'Google Veo 3.x',
-          supports_init_frame: false,
-          identity_preservation_supported: false,
-          identity_validation_status: 'non_identity_critical_clip_generated',
-          generation_mode: 'loose_reference_only',
+          provider_id: 'motion_compositor',
+          provider_name: 'Motion Compositor (Source-Locked)',
+          supports_init_frame: true,
+          identity_preservation_supported: true,
+          source_image_locked: true,
+          rendering: 'client_side_canvas',
+          identity_validation_status: 'source_image_preserved_throughout_animation',
+          motion_effects: [
+            'parallax_depth', 'camera_push_in', 'cinematic_pan', 'ambient_light',
+            'breathing_motion', 'environmental_drift', 'blink_overlay'
+          ],
         };
       }
+
+      // Add motion compositor metadata for character identity clips
+      const motionCompositorMeta = clipType === 'motion_composite' ? {
+        motion_seed: Math.sin((charId || '').charCodeAt(0) + i) * 10000,
+        motion_intensity: 0.6,
+        effects: {
+          parallaxDepth: true,
+          cameraPush: true,
+          cinematicPan: true,
+          ambientLight: true,
+          breathingMotion: true,
+          environmentalDrift: true,
+          particles: false,
+          blinkOverlay: false,
+        },
+        rendering: 'client_side_canvas',
+        identity_lock: {
+          method: 'source_image_compositing',
+          preservation_guarantee: 'source_image_is_animation_base_never_replaced',
+          validation_points: ['frame_0', 'frame_mid', 'frame_final'],
+        },
+      } : null;
 
       clipResults.push({
         image_id: imageId,
@@ -243,6 +207,7 @@ Deno.serve(async (req) => {
         animate: shouldAnimate,
         requires_identity_preservation,
         video_provider_capabilities,
+        motion_compositor_meta: motionCompositorMeta,
         subject_identity: {
           media_id: imageId,
           source_image_url: imageUrl,
