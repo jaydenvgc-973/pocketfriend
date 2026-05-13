@@ -113,9 +113,41 @@ export async function fetchUnifiedRoster(base44, userEmail) {
     all_reference_images: userReferenceImages,
   } : null;
 
-  // ── ALL CHARACTERS ──────────────────────────────────────────────────
-  // Convert all characters to visual entities first, preserving is_active_character flag
-  const allCharsAsEntities = activeCharacters.map(c => createVisualEntity(c, 'character'));
+  // ── ALL CHARACTERS — deduplicated by canonical ID ──────────────────────
+  // Priority order for dedup: active_created_character > npc_family_member > npc_fictitious > npc_regular
+  const TYPE_PRIORITY = {
+    'active_created_character': 0,
+    'active': 0, // legacy alias
+    'npc_fictitious': 1,
+    'npc_family_member': 2,
+    'family_npc': 2, // legacy alias
+    'npc_regular': 3,
+    'npc': 3, // legacy alias
+  };
+
+  // Deduplicate Character entities by normalized name — one record per canonical person
+  // This collapses Leo Parker (npc_family_member) if an active_created_character Leo Parker also exists
+  const charsByName = new Map(); // normalized name → best Character record
+  activeCharacters.forEach(c => {
+    if (!c.name?.trim()) return;
+    const key = c.name.trim().toLowerCase();
+    const existing = charsByName.get(key);
+    if (!existing) {
+      charsByName.set(key, c);
+    } else {
+      // Keep the higher-priority type
+      const newPriority = TYPE_PRIORITY[c.character_type] ?? 99;
+      const existingPriority = TYPE_PRIORITY[existing.character_type] ?? 99;
+      if (newPriority < existingPriority) {
+        charsByName.set(key, c);
+      }
+    }
+  });
+
+  const dedupedCharacters = Array.from(charsByName.values());
+
+  // Convert deduplicated characters to visual entities
+  const allCharsAsEntities = dedupedCharacters.map(c => createVisualEntity(c, 'character'));
 
   // Separate active and inactive characters
   const activeCharsEntities = allCharsAsEntities.filter(c => c.is_active_character).sort((a, b) => 
@@ -125,24 +157,29 @@ export async function fetchUnifiedRoster(base44, userEmail) {
     new Date(b.created_date) - new Date(a.created_date)
   );
 
+  // Build a set of all canonical Character names (for filtering family/world people below)
+  const canonicalCharacterNames = new Set(dedupedCharacters.map(c => c.name?.trim().toLowerCase()).filter(Boolean));
+
   // ── FAMILY MEMBERS ──────────────────────────────────────────────────────
-  // Collect family members from all active characters
-  // Deduplicate: same name + source character = same family member, keep only one
-  const familyMembersMap = new Map();
+  // Only include family members whose name does NOT already exist as a Character entity.
+  // This prevents Leo Parker (Character record) from also appearing as a family_member entry.
+  // Deduplicate remaining family members globally by name — one entry per unique person.
+  const familyMembersMap = new Map(); // normalized name → first entry wins
 
   activeCharacters.forEach(char => {
     (char.family_members || []).forEach(fm => {
-      // Skip empty/unnamed entries (ghosts)
-      if (!fm.name || fm.name.trim() === '' || fm.name.toLowerCase().includes('unnamed')) {
-        return;
-      }
-      const key = `${fm.name.toLowerCase()}_${char.id}`;
-      // Only keep the first instance; later duplicates are ignored
-      if (!familyMembersMap.has(key)) {
-        familyMembersMap.set(key, {
+      // Skip empty/unnamed entries
+      if (!fm.name || fm.name.trim() === '' || fm.name.toLowerCase().includes('unnamed')) return;
+      // Skip if this person already exists as a Character entity (canonical wins)
+      const nameKey = fm.name.trim().toLowerCase();
+      if (canonicalCharacterNames.has(nameKey)) return;
+      // Deduplicate: first occurrence per name wins (globally across all parent characters)
+      if (!familyMembersMap.has(nameKey)) {
+        familyMembersMap.set(nameKey, {
           name: fm.name,
           relationship_type: fm.relationship_type || 'Family',
           avatar_url: fm.photo_url || null,
+          linked_character_id: fm._linked_character_id || null,
           source_character_id: char.id,
           source_character_name: char.name,
         });
@@ -152,7 +189,8 @@ export async function fetchUnifiedRoster(base44, userEmail) {
 
   const familyMembers = Array.from(familyMembersMap.values()).map(member =>
     createVisualEntity({
-      id: `family_${member.source_character_id}_${member.name.replace(/\s+/g, '_')}`,
+      // Use stable linked_character_id as the ID if available, else synthesize one
+      id: member.linked_character_id || `family_${member.name.toLowerCase().replace(/\s+/g, '_')}`,
       name: member.name,
       avatar_url: member.avatar_url,
       appearance_notes: member.relationship_type,
@@ -162,18 +200,20 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   );
 
   // ── PEOPLE IN THEIR WORLD ────────────────────────────────────────────
-  // Collect actual NPCs (with fictional_relationships records that have deeper metadata beyond just status).
-  // Pure relationship status objects (just person_name + relationship metadata) are NOT separate entities.
+  // Only include world people whose name does NOT already exist as a Character entity or family member.
   const worldPeopleMap = new Map(); // Deduplicate by person_name
 
   activeCharacters.forEach(char => {
     (char.fictional_relationships || []).forEach(rel => {
-      // Only include if there's meaningful NPC data beyond a status entry:
-      // Must have avatar_url, appearance notes, or other distinct identity markers
-      if (rel.person_name && !rel.related_character_id && rel.avatar_url) {
-        const key = rel.person_name.toLowerCase();
-        if (!worldPeopleMap.has(key)) {
-          worldPeopleMap.set(key, {
+      if (!rel.person_name) return;
+      const nameKey = rel.person_name.toLowerCase();
+      // Skip if already a Character entity or a family-only entry
+      if (canonicalCharacterNames.has(nameKey)) return;
+      if (familyMembersMap.has(nameKey)) return;
+      // Only include if there's meaningful NPC data (avatar at minimum)
+      if (!rel.related_character_id && rel.avatar_url) {
+        if (!worldPeopleMap.has(nameKey)) {
+          worldPeopleMap.set(nameKey, {
             person_name: rel.person_name,
             relationship_type: rel.relationship_type,
             description: rel.description,
@@ -188,7 +228,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
 
   const worldPeople = Array.from(worldPeopleMap.values()).map(person =>
     createVisualEntity({
-      id: `world_${person.source_character_id}_${person.person_name.replace(/\s+/g, '_')}`,
+      id: `world_${person.person_name.toLowerCase().replace(/\s+/g, '_')}`,
       name: person.person_name,
       avatar_url: person.avatar_url,
       appearance_notes: `${person.relationship_type}${person.description ? ': ' + person.description : ''}`,
@@ -198,7 +238,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   );
 
   // ── UNIFIED ROSTER ───────────────────────────────────────────────────────
-  // Order: user first, then active characters (by creation date desc), then inactive characters (by creation date desc), then family members, then world people
+  // Order: user first, then active characters, then inactive characters, then family-only members, then world people
   const roster = [
     ...(userEntity ? [userEntity] : []),
     ...activeCharsEntities,
