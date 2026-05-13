@@ -7,7 +7,7 @@ import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import { useAuth } from "@/lib/AuthContext";
 import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
-import { foregroundPriority } from "@/lib/foregroundPriority";
+import { registerUserForegroundTask, clearUserForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from "@/lib/foregroundPriority";
 import { readCache, writeCache, isCacheStale, validateCharacterRoster, isValidLocationList } from "@/lib/mediaGridCache";
 
 function toPublicCDN(url) {
@@ -146,9 +146,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     setLocsLoadStatus('loading');
 
     // Register foreground priority — background simulations yield
-    const fgId = `media_grid_load_${Date.now()}`;
-    foregroundPriority.startForegroundAction('media_grid', 'dropdown_load', fgId);
-    const releaseForeground = () => foregroundPriority.endForegroundAction(fgId);
+    const email2 = userEmailRef.current || userEmail;
+    const mediaTaskId = email2
+      ? registerUserForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, { ownerEmail: email2, priority: PRIORITY_LEVELS.HIGH, durationMs: 15000 })
+      : null;
+    const releaseForeground = () => { if (email2 && mediaTaskId) clearUserForegroundTask(email2, mediaTaskId); };
 
     // ── STEP 1: Show last-known-good cache immediately ──────────────────────
     const cachedChars = readCache(email, 'characters');
@@ -727,9 +729,14 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     setGenerateError(null);
 
     // Register foreground task — background systems yield during image generation
-    const genFgId = `media_grid_generate_${Date.now()}`;
-    foregroundPriority.startForegroundAction('media_grid', 'image_generation', genFgId);
-    foregroundTaskIdRef.current = genFgId;
+    if (user?.email) {
+      foregroundTaskIdRef.current = registerUserForegroundTask(FOREGROUND_TASKS.IMAGE_GENERATION, {
+        ownerEmail: user.email,
+        priority: PRIORITY_LEVELS.CRITICAL,
+        page: 'MediaGrid',
+        durationMs: 60000, // 60s timeout for image generation
+      });
+    }
 
     try {
       // Create placeholder message
@@ -813,8 +820,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     } finally {
       setIsGenerating(false);
       // Clear foreground task
-      if (foregroundTaskIdRef.current) {
-        foregroundPriority.endForegroundAction(foregroundTaskIdRef.current);
+      if (user?.email && foregroundTaskIdRef.current) {
+        clearUserForegroundTask(user.email, foregroundTaskIdRef.current);
         foregroundTaskIdRef.current = null;
       }
     }

@@ -1449,55 +1449,73 @@ Deno.serve(async (req) => {
     }
 
     // ── 4. RESOLVE ENVIRONMENT (location → zone → images) ────────────────────
-    // CRITICAL FIX: Location fetch is NON-BLOCKING.
-    // If it fails, times out, or hits 429: use fallback context and continue.
-    // Image generation is prioritized over location context.
-    // Location context is helpful but NOT mandatory.
+    // Source of truth: character record location fields, in strict priority order.
+    // No manual override. No guessing. No cross-account.
     let envRefs = [];
     let resolvedLocationName = null;
     let resolvedZoneName = null;
 
     if (charRecord) {
-      // NON-BLOCKING inline location fetch — 2s timeout, never blocks image generation
-      const locContext = await Promise.race([
-        (async () => {
-          try {
-            const locationId = charRecord.resolved_current_location_id || charRecord.current_home_location_id || charRecord.home_location_id || charRecord.current_work_location_id || charRecord.occupation_location_id || null;
-            if (!locationId) {
-              // Resident scan — cap at 20 locations to reduce load
-              const savedLocs = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: requestingUser }, '-created_date', 20).catch(() => []);
-              const home = savedLocs.find(l => l.category === 'home' && ((l.resident_character_ids || []).includes(characterId) || (l.residents || []).some(r => r.character_id === characterId)));
-              if (home) {
-                const { images, zoneName } = resolveZoneFromLocation(home, (prompt || '').toLowerCase());
-                return { envRefs: images, locationName: home.name, zoneName };
-              }
-              return null;
-            }
-            let locRecord = (await base44.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []))?.[0] || null;
-            if (!locRecord) {
-              const cand = (await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []))?.[0] || null;
-              if (cand) {
-                const isShared = cand.scope === 'shared' || cand.location_type === 'shared';
-                if (cand.owner_email && cand.owner_email !== requestingUser && !isShared) return null;
-                locRecord = cand;
-              }
-            }
-            if (!locRecord) return null;
-            const { images, zoneName } = resolveZoneFromLocation(locRecord, (prompt || '').toLowerCase());
-            console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" → zone "${zoneName || 'none'}" → ${images.length} env refs`);
-            return { envRefs: images, locationName: locRecord.name, zoneName };
-          } catch (e) {
-            console.warn(`[generateImageAsync] LOCATION_CONTEXT_FALLBACK_USED: ${e?.message} — continuing`);
-            return null;
-          }
-        })(),
-        new Promise(resolve => setTimeout(() => { console.warn(`[generateImageAsync] LOCATION_CONTEXT_FALLBACK_USED: timeout — continuing`); resolve(null); }, 2000))
-      ]).catch(() => null);
+      // Priority order for location ID
+      const locationId =
+        charRecord.resolved_current_location_id ||
+        charRecord.current_home_location_id ||
+        charRecord.home_location_id ||
+        charRecord.current_work_location_id ||
+        charRecord.occupation_location_id ||
+        null;
 
-      if (locContext) {
-        envRefs = locContext.envRefs || [];
-        resolvedLocationName = locContext.locationName;
-        resolvedZoneName = locContext.zoneName;
+      console.log(`[generateImageAsync] Location ID from character record: ${locationId || 'NOT FOUND'}`);
+
+      if (locationId) {
+        // Verify location belongs to this user
+        let locRecord = null;
+        const locListUser = await base44.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []);
+        locRecord = locListUser?.[0] || null;
+
+        if (!locRecord) {
+          const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []);
+          const candidate = locListSR?.[0] || null;
+          if (candidate) {
+            const locOwner = candidate.owner_email;
+            const isShared = candidate.scope === 'shared' || candidate.location_type === 'shared';
+            if (locOwner && locOwner !== requestingUser && !isShared) {
+              console.error(`[generateImageAsync] ⛔ Cross-account location: ${locationId} owned by ${locOwner}`);
+              locRecord = null;
+            } else {
+              locRecord = candidate;
+            }
+          }
+        }
+
+        if (locRecord) {
+          resolvedLocationName = locRecord.name;
+          const promptLower = (prompt || '').toLowerCase();
+          const { images, zoneName } = resolveZoneFromLocation(locRecord, promptLower);
+          envRefs = images;
+          resolvedZoneName = zoneName;
+          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" → zone "${zoneName || 'none'}" → ${envRefs.length} env refs`);
+        } else {
+          console.warn(`[generateImageAsync] ⚠️ Location ${locationId} not found or access denied — proceeding without environment`);
+        }
+      } else {
+        // No location on character — scan LocationReference records for resident match
+        const savedLocs = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: requestingUser }, '-created_date', 50).catch(() => []);
+        const residentHome = savedLocs.find(l =>
+          l.category === 'home' &&
+          ((l.resident_character_ids || []).includes(characterId) ||
+           (l.residents || []).some(r => r.character_id === characterId))
+        );
+        if (residentHome) {
+          resolvedLocationName = residentHome.name;
+          const promptLower = (prompt || '').toLowerCase();
+          const { images, zoneName } = resolveZoneFromLocation(residentHome, promptLower);
+          envRefs = images;
+          resolvedZoneName = zoneName;
+          console.log(`[generateImageAsync] ✓ Resident scan found "${residentHome.name}" → zone "${zoneName || 'none'}" → ${envRefs.length} env refs`);
+        } else {
+          console.warn(`[generateImageAsync] ⚠️ No location found for character ${characterId} — proceeding without environment refs`);
+        }
       }
     }
 

@@ -67,7 +67,6 @@ import { useChatLocationShare } from "@/hooks/useChatLocationShare";
 import { useChatBackgroundTasks } from "@/hooks/useChatBackgroundTasks.js";
 import { usePageContext } from "@/hooks/usePageContext";
 import { isGloballyRateLimited, reportRateLimit, activateChatSafeMode, isChatSafeModeActive } from "@/lib/simulationGate";
-import { foregroundPriority } from "@/lib/foregroundPriority";
 import { resolveCoPresence } from "@/lib/coPresenceResolver";
 import LocationShareTool from "@/components/chat/LocationShareTool";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
@@ -366,11 +365,6 @@ export default function Chat() {
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
     setSendError(null);
-
-    // FOREGROUND PRIORITY: Mark chat response as active foreground task.
-    // All background systems must stand down until response is complete.
-    const fgRequestId = `chat_${characterId}_${Date.now()}`;
-    foregroundPriority.startForegroundAction('chat', 'message_response', fgRequestId);
 
     if (text.trim().toLowerCase().startsWith("fix:")) {
       const directive = text.trim().slice(4).trim();
@@ -1060,8 +1054,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     } catch (err) {
       if (!isMountedRef.current) return;
       setIsTyping(false);
-      // Release foreground lock on error too
-      foregroundPriority.endForegroundAction(fgRequestId);
 
       const msg = err?.message || '';
       const isRateLimit = msg.includes('429') || msg.includes('Rate limit') || msg.includes('rate limit') || err?.status === 429;
@@ -1430,9 +1422,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       characterId, convoId, character, text, responseText, recentMsgs,
       activeCharacter, isPhone, currentUser, isTyping: false, userMsg,
     });
-
-    // FOREGROUND PRIORITY: chat response complete — release foreground lock
-    foregroundPriority.endForegroundAction(fgRequestId);
 
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 

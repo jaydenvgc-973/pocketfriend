@@ -2,7 +2,6 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
  * STRICT ACCOUNT ISOLATION — Scoped queries only. No global list reads.
- * With 429 RATE LIMIT RETRY LOGIC — exponential backoff
  *
  * QUERY STRATEGY (scoped-first, no broad service-role list):
  *   Query 1: owner_email === currentUser.email  →  all user-owned locations
@@ -20,23 +19,6 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  *   - owner_email is the ONLY valid ownership field. created_by is permanently forbidden.
  *   - No cross-account data is ever returned.
  */
-
-// Retry helper with exponential backoff
-async function queryWithRetry(fn, maxRetries = 3) {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      const is429 = err?.status === 429 || /rate limit/i.test(err?.message || '');
-      const isLastAttempt = attempt === maxRetries - 1;
-      if (!is429 || isLastAttempt) throw err;
-      const waitMs = Math.pow(2, attempt) * 500; // 500ms, 1s, 2s
-      console.log(`[fetchAllLocationsForUser] 429 rate limit — retry ${attempt + 1}/${maxRetries} after ${waitMs}ms`);
-      await new Promise(r => setTimeout(r, waitMs));
-    }
-  }
-}
-
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -46,32 +28,26 @@ Deno.serve(async (req) => {
     // ── QUERY 1: User-owned locations (scoped by owner_email) ─────────────────
     // This replaces the broad LocationReference.list('-created_date', 500).
     // Only reads records owned by this user — no cross-account exposure.
-    const ownedLocations = await queryWithRetry(() =>
-      base44.entities.LocationReference.filter(
-        { owner_email: user.email },
-        '-created_date',
-        200
-      )
+    const ownedLocations = await base44.entities.LocationReference.filter(
+      { owner_email: user.email },
+      '-created_date',
+      200
     );
 
     // ── QUERY 2: Admin-shared locations (scoped by scope + created_by_role) ───
     // These are the ONLY cross-account visible locations — admin-created and explicitly shared.
-    const sharedLocations = await queryWithRetry(() =>
-      base44.asServiceRole.entities.LocationReference.filter(
-        { scope: 'shared', created_by_role: 'admin' },
-        '-created_date',
-        100
-      )
+    const sharedLocations = await base44.asServiceRole.entities.LocationReference.filter(
+      { scope: 'shared', created_by_role: 'admin' },
+      '-created_date',
+      100
     );
 
     // ── QUERY 3: User's characters — needed to resolve character-linked location IDs ──
     // owner_email is the sole ownership source of truth — created_by is permanently forbidden
-    const userCharacters = await queryWithRetry(() =>
-      base44.entities.Character.filter(
-        { owner_email: user.email },
-        '-created_date',
-        200
-      )
+    const userCharacters = await base44.entities.Character.filter(
+      { owner_email: user.email },
+      '-created_date',
+      200
     );
 
     // Build set of character IDs for character-specific location matching
