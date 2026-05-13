@@ -278,14 +278,42 @@ Deno.serve(async (req) => {
 
     if (!characterId) return Response.json({ unlocked: [] });
 
-    // Get ALL existing achievements for this user.
-    // Use user-scoped list (RLS ensures only this user's records are returned).
-    // We then check BOTH owner_email match and records without owner_email (legacy records
-    // whose owner is proven by RLS). This prevents false "new unlock" on every call
-    // before the backfill has set owner_email on legacy records.
-    const existing = await base44.entities.UserAchievement.list('-created_date', 500);
-    // Deduplicate by achievement_id — only keep first occurrence per achievement_id+character_id
+    // Get ALL existing achievements for this user, scoped by owner_email.
+    // Dedup key depends on achievement scope (see ACHIEVEMENTS in lib/achievements.js):
+    //   - global-per-user achievements: owner_email + achievement_id
+    //   - character-specific achievements: owner_email + achievement_id + character_id
+    // All achievements in the current definition are either global-per-user or character-specific.
+    // Character-specific = achievements that reference a character's emotional state or interactions.
+    // We treat all achievements as character-scoped for dedup to avoid collapsing per-character milestones.
+    // "New" = no record exists with same (achievement_id + character_id) for this user.
+    const existing = await base44.entities.UserAchievement.filter({ owner_email: user.email }, '-created_date', 500);
+
+    // Build a Set of "owner_email::achievement_id::character_id" keys for character-scoped dedup
+    // and "owner_email::achievement_id" keys for global dedup.
+    // For the current achievement set, we use character-scoped dedup for all character-tied achievements,
+    // and global dedup for engagement/meta achievements that are not character-specific.
+    const GLOBAL_ACHIEVEMENTS = new Set([
+      'first_impression', 'still_here', 'consistent', 'they_came_back',
+      'left_on_read', 'seen_it_all', 'group_hangout', 'new_place',
+      'productive_day', 'showed_up_anyway', 'rent_paid',
+    ]);
+
+    // existingKeys: Set of dedup keys already present
+    const existingKeys = new Set(existing.map(a => {
+      if (GLOBAL_ACHIEVEMENTS.has(a.achievement_id)) {
+        return `global::${a.achievement_id}`;
+      }
+      return `char::${a.achievement_id}::${a.character_id || ''}`;
+    }));
+
+    // existingIds: flat list of achievement_ids (for legacy pattern checks that only need the id)
     const existingIds = existing.map(a => a.achievement_id);
+
+    // Helper: check if a given achievement_id is already unlocked for this call's character context
+    const hasForContext = (id) => {
+      if (GLOBAL_ACHIEVEMENTS.has(id)) return existingKeys.has(`global::${id}`);
+      return existingKeys.has(`char::${id}::${characterId}`);
+    };
 
     // Run both detection passes in parallel
     const [textAchievements, dataAchievements] = await Promise.all([
@@ -293,18 +321,22 @@ Deno.serve(async (req) => {
       detectDataAchievements(base44, user.email, characterId, characterName, userMessage, existingIds),
     ]);
 
-    // Split: new unlocks vs. revisits of already-unlocked achievements
+    // Split: new unlocks vs. revisits — use context-aware hasForContext
     const allDetected = [...new Set([...textAchievements, ...dataAchievements])];
-    const newIds    = allDetected.filter(id => !existingIds.includes(id));
-    const revisitIds = allDetected.filter(id => existingIds.includes(id));
+    const newIds     = allDetected.filter(id => !hasForContext(id));
+    const revisitIds = allDetected.filter(id => hasForContext(id));
 
     // Create records for genuinely new unlocks only.
-    // Double-check against the full existing list to prevent race-condition duplicates:
-    // achievement is "new" only if no record exists with same achievement_id regardless of character.
+    // Uses context-aware dedup key: global achievements dedup by achievement_id alone,
+    // character-specific achievements dedup by achievement_id + character_id.
     const newlyUnlocked = [];
     for (const achievement_id of newIds) {
-      // Final guard: skip if already in existingIds (could have been pushed in a prior loop iteration)
-      if (existingIds.includes(achievement_id)) continue;
+      // Final guard using context-aware key (handles same-session race conditions)
+      const dedupKey = GLOBAL_ACHIEVEMENTS.has(achievement_id)
+        ? `global::${achievement_id}`
+        : `char::${achievement_id}::${characterId}`;
+      if (existingKeys.has(dedupKey)) continue;
+
       const record = await base44.entities.UserAchievement.create({
         achievement_id,
         character_id: characterId,
@@ -315,7 +347,7 @@ Deno.serve(async (req) => {
         owner_email: user.email,
       });
       newlyUnlocked.push(record);
-      existingIds.push(achievement_id); // prevent same-session duplicate
+      existingKeys.add(dedupKey); // prevent same-session duplicate
     }
 
     // EMOTIONAL WEIGHT CLASSIFICATION for revisits

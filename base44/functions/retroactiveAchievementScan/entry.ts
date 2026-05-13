@@ -23,17 +23,36 @@ Deno.serve(async (req) => {
       base44.asServiceRole.entities.Conversation.filter({ owner_email: userEmail }),
     ]);
 
+    // Global-per-user achievements: dedup by achievement_id only
+    const GLOBAL_ACHIEVEMENTS = new Set([
+      'first_impression', 'still_here', 'consistent', 'they_came_back',
+      'left_on_read', 'seen_it_all', 'group_hangout', 'new_place',
+      'productive_day', 'showed_up_anyway', 'rent_paid',
+    ]);
+
+    // Build existing key set — global vs character-scoped
+    const existingKeys = new Set(existing.map(a =>
+      GLOBAL_ACHIEVEMENTS.has(a.achievement_id)
+        ? `global::${a.achievement_id}`
+        : `char::${a.achievement_id}::${a.character_id || ''}`
+    ));
+    // Also keep flat id set for legacy checks in loops
     const existingIds = new Set(existing.map(a => a.achievement_id));
-    const toUnlock = new Map(); // achievementId -> { characterId, characterName }
+
+    // toUnlock: Map of dedupKey -> { achievement_id, character_id, character_name }
+    const toUnlock = new Map();
 
     const userMessages = allMessages.filter(m => m.sender_type === 'user');
     const charMessages = allMessages.filter(m => m.sender_type === 'character');
     const activeChars = allCharacters.filter(c => c.status !== 'deleted');
 
-    // Helper: mark for unlock if not already done
+    // Helper: mark for unlock using context-aware dedup key
     const mark = (id, charId = null, charName = '') => {
-      if (!existingIds.has(id) && !toUnlock.has(id)) {
-        toUnlock.set(id, { character_id: charId, character_name: charName });
+      const key = GLOBAL_ACHIEVEMENTS.has(id)
+        ? `global::${id}`
+        : `char::${id}::${charId || ''}`;
+      if (!existingKeys.has(key) && !toUnlock.has(key)) {
+        toUnlock.set(key, { achievement_id: id, character_id: charId, character_name: charName });
       }
     };
 
