@@ -52,6 +52,43 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
+    // ── CHARACTER LOOK LOCK: load canonical appearance data per character ──────
+    // For each selected image, fetch the Character record and build an appearance
+    // fingerprint. This is injected into every animation prompt to prevent the
+    // generator from inventing a generic or different-looking person.
+    const characterAppearanceCache = {};
+    for (const msgId of selectedImageIds) {
+      const msg = messageRecords[msgId];
+      const charId = msg?.character_id || null;
+      if (!charId || characterAppearanceCache[charId]) continue;
+      try {
+        const chars = await base44.entities.Character.filter({ owner_email: user.email });
+        const char = chars.find(c => c.id === charId);
+        if (!char) continue;
+        // Build appearance fingerprint from canonical fields
+        const parts = [];
+        if (char.name) parts.push(`Character name: ${char.name}`);
+        if (char.gender) parts.push(`Gender: ${char.gender}`);
+        if (char.ethnicities?.length) parts.push(`Ethnicity: ${char.ethnicities.join(', ')}`);
+        if (char.age || char.appearance_age) parts.push(`Age: ${char.appearance_age || char.age}`);
+        if (char.appearance_notes) parts.push(`Appearance: ${char.appearance_notes.slice(0, 200)}`);
+        if (char.appearance_lock) {
+          const al = char.appearance_lock;
+          if (al.skin_tone) parts.push(`Skin tone: ${al.skin_tone}`);
+          if (al.hair_type) parts.push(`Hair: ${al.hair_type}`);
+          if (al.hairstyle) parts.push(`Hairstyle: ${al.hairstyle}`);
+          if (al.facial_hair) parts.push(`Facial hair: ${al.facial_hair}`);
+          if (al.overall_aesthetic) parts.push(`Style: ${al.overall_aesthetic}`);
+        }
+        characterAppearanceCache[charId] = {
+          fingerprint: parts.join('. '),
+          avatar_url: char.avatar_url || null,
+          reference_image_urls: char.reference_image_urls || [],
+          name: char.name,
+        };
+      } catch (_) {}
+    }
+
     // ── STEP 2: ANIMATE SELECTED CLIPS (SOURCE-LOCKED) ───────────────────────
     // Each clip MUST use the original image as existing_image_urls.
     // The prompt only adds SMALL motion — identity, outfit, setting preserved.
@@ -90,18 +127,32 @@ Deno.serve(async (req) => {
           ];
           const motion = motionOptions[i % motionOptions.length];
 
+          // CHARACTER LOOK LOCK: inject canonical appearance fingerprint so the
+          // generator preserves the specific character rather than inventing a generic person.
+          const charId = msgRecord?.character_id || null;
+          const charAppearance = charId ? characterAppearanceCache[charId] : null;
+          const charLockBlock = charAppearance?.fingerprint
+            ? `CHARACTER IDENTITY LOCK — this person must remain: ${charAppearance.fingerprint}. Do NOT change their face, skin tone, body type, hair, or clothing. Do NOT replace them with a different or generic person.`
+            : 'Preserve exact character identity from the source image. Do NOT replace the person with someone else or a generic individual.';
+
           // Build identity-preserving prompt
           const identityContext = originalPrompt
             ? `Continuation of this exact scene: ${originalPrompt.slice(0, 200)}.`
             : 'Preserve exact character identity, face, outfit, setting, and lighting from the source image.';
 
-          const animPrompt = `${identityContext} Add only this subtle motion: ${motion}. Do NOT change the character, their face, body, clothing, hair color, skin tone, or setting. Do NOT introduce new people or locations. Keep the scene identical to the source image. Vertical 9:16 format. Smooth, cinematic motion. No cuts. Memory reel style.`;
+          const animPrompt = `${charLockBlock} ${identityContext} Add only this subtle motion: ${motion}. Do NOT change the character, their face, body, clothing, hair color, skin tone, or setting. Do NOT introduce new people or locations. Keep the scene identical to the source image. Vertical 9:16 format. Smooth, cinematic motion. No cuts. Memory reel style.`;
+
+          // Include character avatar as additional reference if available, alongside source image
+          const referenceImages = [imageUrl];
+          if (charAppearance?.avatar_url && charAppearance.avatar_url !== imageUrl) {
+            referenceImages.push(charAppearance.avatar_url);
+          }
 
           const result = await base44.integrations.Core.GenerateVideo({
             prompt: animPrompt,
             duration: 4,
             aspect_ratio: '9:16',
-            existing_image_urls: [imageUrl],
+            existing_image_urls: referenceImages,
           });
 
           if (result?.url) {
@@ -109,16 +160,23 @@ Deno.serve(async (req) => {
             clipType = 'animated';
             clipStatus = 'success';
           } else {
+            // No URL returned — fallback to static slide to avoid inventing footage
             clipType = 'static';
             clipStatus = 'fallback_no_url';
-            warnings.push(`Clip ${i + 1}: animation returned no URL — using static slide.`);
+            warnings.push(`Clip ${i + 1}: animation returned no URL — using static slide to preserve character identity.`);
           }
         } catch (err) {
+          // Animation error — fallback to static slide rather than generating a random person
           clipType = 'static';
           clipStatus = 'fallback_error';
           clipError = err.message;
-          warnings.push(`Clip ${i + 1} (${imageUrl.slice(-20)}): animation failed — ${err.message} — using static slide.`);
+          warnings.push(`Clip ${i + 1}: animation failed — using static slide to preserve character identity (${err.message}).`);
         }
+      } else if (shouldAnimate && !imageUrl) {
+        // Missing source image — do not animate; do not invent a person
+        clipType = 'static';
+        clipStatus = 'fallback_no_source';
+        warnings.push(`Clip ${i + 1}: no source image available — static slide used, no person invented.`);
       }
 
       clipResults.push({

@@ -210,6 +210,9 @@ export default function MemoryReelCreator() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  // Partial preview
+  const [showPartialPreview, setShowPartialPreview] = useState(false);
+
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
@@ -601,6 +604,62 @@ export default function MemoryReelCreator() {
         </div>
 
         <div className="px-4 py-5 space-y-6">
+
+          {/* Partial preview button — appears at 25%+ with at least one validated clip */}
+          {isProcessing && (() => {
+            const validatedClips = (activeJob.clip_results || []).filter(c =>
+              c.image_url && (c.status === 'success' || c.status === 'static' || c.clip_type === 'static')
+            );
+            const pct = activeJob.progress_percent || 0;
+            const canPreview = pct >= 25 && validatedClips.length > 0;
+            if (!canPreview) return null;
+            return (
+              <div className="rounded-xl border border-primary/40 bg-primary/8 px-4 py-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Play className="w-4 h-4 text-primary flex-shrink-0" />
+                  <p className="text-xs text-foreground">
+                    <span className="font-semibold">{validatedClips.length} clip{validatedClips.length !== 1 ? 's' : ''}</span> ready to preview
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowPartialPreview(v => !v)}
+                  className="flex-shrink-0 px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold"
+                >
+                  {showPartialPreview ? 'Close' : 'Preview Video'}
+                </button>
+              </div>
+            );
+          })()}
+
+          {/* Partial preview panel */}
+          <AnimatePresence>
+            {showPartialPreview && isProcessing && (() => {
+              const validatedClips = (activeJob.clip_results || []).filter(c =>
+                c.image_url && (c.status === 'success' || c.status === 'static' || c.clip_type === 'static')
+              );
+              if (validatedClips.length === 0) return null;
+              return (
+                <motion.div
+                  key="partial-preview"
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="rounded-2xl border border-primary/30 bg-primary/5 overflow-hidden"
+                >
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-primary/20">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+                      <span className="text-xs font-semibold text-primary">Previewing partial reel</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">Rest still generating…</p>
+                  </div>
+                  <div className="p-3">
+                    <ReelPlayer clips={validatedClips} autoPlay={false} />
+                  </div>
+                </motion.div>
+              );
+            })()}
+          </AnimatePresence>
 
           {/* In-progress status card */}
           {isProcessing && (
