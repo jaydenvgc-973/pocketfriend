@@ -111,16 +111,8 @@ export default function ChatMessageList({
         )}
       </AnimatePresence>
 
-      {sendError && (
-        <div className="text-center px-4 py-2">
-          <p className="text-xs text-destructive bg-destructive/10 rounded-xl px-4 py-2 inline-block">
-            {sendError}{" "}
-            <button className="underline ml-1" onClick={() => setSendError(null)}>
-              Dismiss
-            </button>
-          </p>
-        </div>
-      )}
+      {/* sendError intentionally removed from conversation stream — errors are handled
+          via character fallback responses or silent retry. No system banners in chat. */}
 
       <div ref={bottomRef} />
     </div>

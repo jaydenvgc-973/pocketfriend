@@ -511,6 +511,7 @@ export default function Chat() {
     let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
     let charLocationName = character.resolved_current_location_name || null;
     let charLocationId = character.resolved_current_location_id || null;
+    let fullPrompt = ""; // hoisted so catch block can access it for retry
     try {
       if (!isMountedRef.current) {
         console.warn('[sendMessage] Component unmounted, aborting message send');
@@ -941,7 +942,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // Build location share context for the prompt
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";
 
-      const fullPrompt = `${systemPrompt}${frontendCoPresenceBlock}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
+      fullPrompt = `${systemPrompt}${frontendCoPresenceBlock}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
   "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
 
 
@@ -1051,20 +1052,85 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         setCatchupNarrativeText(null);
       }
     } catch (err) {
-      if (isMountedRef.current) {
-        setIsTyping(false);
-        const msg = err?.message || '';
-        const isRateLimit = msg.includes('429') || msg.includes('Rate limit') || msg.includes('rate limit') || err?.status === 429;
-        const isNetwork = msg.includes('Network') || msg.includes('network') || msg.includes('timeout') || msg.includes('fetch');
-        if (isRateLimit) {
-          setSendError("App is busy — wait a few seconds and send again.");
-        } else if (isNetwork) {
-          setSendError("Connection issue — check your signal and try again.");
-        } else {
-          // Log the real error so it's visible, then surface a clear message
-          console.error('[sendMessage] Unhandled error:', msg);
-          setSendError("Response failed — tap here to retry.");
+      if (!isMountedRef.current) return;
+      setIsTyping(false);
+
+      const msg = err?.message || '';
+      const isRateLimit = msg.includes('429') || msg.includes('Rate limit') || msg.includes('rate limit') || err?.status === 429;
+      const isNetwork = msg.includes('Network') || msg.includes('network') || msg.includes('timeout') || msg.includes('fetch');
+      const isRetryable = isRateLimit || isNetwork;
+
+      console.error('[sendMessage] Error:', msg, '| retryable:', isRetryable);
+
+      // CONVERSATION CONTINUITY RULE:
+      // For retryable failures (rate-limit, network, timeout): silently retry once after a short delay.
+      // For non-retryable failures: inject a character-native fallback response so the
+      // conversation stream never shows a system error banner.
+      // The "Response failed" banner is replaced by character social presence in all cases.
+
+      if (isRetryable) {
+        // Silent retry once — show "Responding…" state during retry window
+        setIsTyping(true);
+        const retryDelay = isRateLimit ? 5000 : 3000;
+        console.log(`[sendMessage] Retryable error — retrying in ${retryDelay}ms`);
+        await new Promise(r => setTimeout(r, retryDelay));
+        if (!isMountedRef.current) return;
+        try {
+          // Re-invoke the LLM with the same prompt (fullPrompt is in scope)
+          const retryResponse = await callLLMWithRetry(fullPrompt);
+          const retryObj = parseCharacterResponse(retryResponse);
+          const retryText = retryObj.text_content?.trim() || "";
+          if (retryText) {
+            setIsTyping(false);
+            if (isMountedRef.current) {
+              const retryMsg = await base44.entities.Message.create({
+                conversation_id: conversationIdRef.current || conversationId,
+                sender_type: "character",
+                character_id: characterId,
+                character_name: character.name,
+                content: retryText,
+                emotional_state: character.emotional_state || "calm",
+                is_read: true,
+                timestamp: new Date().toISOString(),
+              });
+              if (retryMsg?.id) {
+                setMessages(prev => prev.some(m => m.id === retryMsg.id) ? prev : [...prev, retryMsg]);
+              }
+            }
+            return;
+          }
+        } catch (retryErr) {
+          console.warn('[sendMessage] Retry also failed:', retryErr?.message);
         }
+        if (isMountedRef.current) setIsTyping(false);
+      }
+
+      // All failure paths — inject a character-native fallback instead of error banner.
+      // The character remains socially present even when the backend is unstable.
+      const fallbacks = [
+        "Sorry, got pulled away for a sec — what were you saying?",
+        "Give me a moment, something came up on my end.",
+        "Hey sorry — I'm here, just had a second. What's up?",
+        "My bad, got distracted. Say that again?",
+        "Sorry, lost you for a second — I'm back.",
+      ];
+      const fallbackText = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+      const convoIdForFallback = conversationIdRef.current || conversationId;
+      if (convoIdForFallback && isMountedRef.current) {
+        base44.entities.Message.create({
+          conversation_id: convoIdForFallback,
+          sender_type: "character",
+          character_id: characterId,
+          character_name: character.name,
+          content: fallbackText,
+          emotional_state: character.emotional_state || "calm",
+          is_read: true,
+          timestamp: new Date().toISOString(),
+        }).then(fallbackMsg => {
+          if (fallbackMsg?.id && isMountedRef.current) {
+            setMessages(prev => prev.some(m => m.id === fallbackMsg.id) ? prev : [...prev, fallbackMsg]);
+          }
+        }).catch(() => {});
       }
       return;
     }
