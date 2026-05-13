@@ -110,7 +110,9 @@ export async function dispatchImageGeneration({
     }
 
     // Hydrate local state immediately from response — do not rely solely on subscription
-    const imageUrl = res?.data?.imageUrl;
+    // Normalize URL to public CDN to prevent browser load failures on internal URLs
+    const rawImageUrl = res?.data?.imageUrl;
+    const imageUrl = rawImageUrl ? toPublicCDN(rawImageUrl) : null;
     if (imageUrl && imageUrl.startsWith('http') && isMountedRef.current) {
       setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, image_url: imageUrl } : m));
       base44.entities.Conversation.update(convoId, {

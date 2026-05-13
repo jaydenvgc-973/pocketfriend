@@ -37,17 +37,30 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [editedPrompt, setEditedPrompt] = useState('');
   const [imgLoadError, setImgLoadError] = useState(false);
+  // Normalize image URL to public CDN on initialization
+  const normalizeImageUrl = (url) => {
+    if (!url || typeof url !== 'string') return url;
+    if (url.startsWith('https://media.base44.com/')) return url;
+    const match = url.match(/https:\/\/base44\.app\/api\/apps\/[^\/]+\/files\/mp\/public\/([^\/]+\/[^?]+)/);
+    if (match) return `https://media.base44.com/images/public/${match[1]}`;
+    return url;
+  };
+
   // Local image URL — updated immediately from retry response, no subscription wait needed
-  const [localImageUrl, setLocalImageUrl] = useState(message.image_url || null);
+  const [localImageUrl, setLocalImageUrl] = useState(message.image_url ? normalizeImageUrl(message.image_url) : null);
+  // Track retry count for force-reloading the same URL (cache-bust on imgLoadError)
+  const [imgRetryKey, setImgRetryKey] = useState(0);
   // After AUTO_LOAD_TIMEOUT_MS with no image_url arriving, promote to actionable failure card
   const AUTO_LOAD_TIMEOUT_MS = 90000; // 90s — generous window for backend generation
   const [autoLoadExpired, setAutoLoadExpired] = useState(false);
 
   // Sync if parent passes a new image_url (e.g. from real-time subscription)
   const prevImageUrl = message.image_url;
-  if (prevImageUrl && prevImageUrl !== localImageUrl) {
-    setLocalImageUrl(prevImageUrl);
+  const normalizedPrev = prevImageUrl ? normalizeImageUrl(prevImageUrl) : null;
+  if (normalizedPrev && normalizedPrev !== localImageUrl) {
+    setLocalImageUrl(normalizedPrev);
     setImgLoadError(false);
+    setImgRetryKey(0);
   }
 
   // Auto-load: if message has no image yet and content is "" (actively generating),
@@ -89,6 +102,17 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const isImagePlaceholder = !isUser && !isNarrative && !isLocationShare && !isWaitingForGeneration && ((!localImageUrl && (message.content === "" || message.content === '[IMAGE_FAILED]')) || imgLoadError);
 
   const handleImageRetry = async (forceRegenerate = false) => {
+    // If the URL already exists but just failed to load in the browser (imgLoadError),
+    // attempt a simple browser-side reload first before hitting the backend.
+    // This handles transient network failures, CDN hiccups, and stale cache without
+    // burning a backend generation credit.
+    if (!forceRegenerate && localImageUrl && imgLoadError) {
+      console.log(`[MessageBubble] imgLoadError with existing URL — attempting browser reload: ${localImageUrl.substring(0, 60)}...`);
+      setImgLoadError(false);
+      setImgRetryKey(k => k + 1); // cache-busts the img src key — forces React to remount the <img>
+      return;
+    }
+
     setImageRetrying(true);
     setImageRetryFailed(false);
     setImageRetryStatus(forceRegenerate ? 'regenerating' : 'recovering');
@@ -98,8 +122,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
       const url = res?.data?.image_url;
       if (url && url.startsWith('http')) {
         console.log(`[MessageBubble] ✓ Image URL received from retry: ${url.substring(0, 60)}...`);
-        setLocalImageUrl(url);
+        setLocalImageUrl(normalizeImageUrl(url));
         setImgLoadError(false);
+        setImgRetryKey(0);
         // Also notify parent so its messages array stays in sync
         onImageLoaded?.(message.id, url);
       } else {
@@ -154,8 +179,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
       });
       const url = res?.data?.image_url;
       if (url && url.startsWith('http')) {
-        setLocalImageUrl(url);
+        setLocalImageUrl(normalizeImageUrl(url));
         setImgLoadError(false);
+        setImgRetryKey(0);
         onImageLoaded?.(message.id, url);
         setShowPromptEditor(false);
         setImageRetryFailed(false);
@@ -205,7 +231,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         if (returnedMsgId && returnedMsgId !== message.id) {
           console.error(`[MessageBubble] ⛔ REGEN LINEAGE MISMATCH: requested=${message.id} got=${returnedMsgId}`);
         } else {
-          setLocalImageUrl(returnedUrl);
+          setLocalImageUrl(normalizeImageUrl(returnedUrl));
+          setImgLoadError(false);
+          setImgRetryKey(0);
           onImageLoaded?.(message.id, returnedUrl);
         }
       }
@@ -442,9 +470,13 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                 onClick={() => !isUser && message.generation_context?.location_id && onLocationSignal?.(message.generation_context.location_id, message.character_id)}
               >
                 <img
+                  key={`img-${message.id}-${imgRetryKey}`}
                   src={localImageUrl}
                   alt="shared photo"
-                  onError={() => setImgLoadError(true)}
+                  onError={() => {
+                    console.warn(`[MessageBubble] Image load error (attempt ${imgRetryKey + 1}): ${localImageUrl?.substring(0, 80)}`);
+                    setImgLoadError(true);
+                  }}
                   className={`w-full max-w-xs rounded-t-2xl object-cover ${!isUser && message.generation_context?.location_id ? "cursor-pointer hover:brightness-90 transition-all" : ""}`}
                 />
                 {showImageDelete && (
