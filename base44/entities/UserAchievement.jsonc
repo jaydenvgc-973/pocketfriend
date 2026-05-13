@@ -2,13 +2,17 @@
   "name": "UserAchievement",
   "type": "object",
   "properties": {
+    "owner_email": {
+      "type": "string",
+      "description": "Email of the user who earned this achievement. Primary ownership source of truth. Required for all queries and deduplication."
+    },
     "achievement_id": {
       "type": "string",
       "description": "Unique key for the achievement (e.g. 'first_impression', 'the_push')"
     },
     "character_id": {
       "type": "string",
-      "description": "Character this achievement is tied to, if applicable"
+      "description": "Character this achievement is tied to, if applicable. Required for character-specific achievements."
     },
     "character_name": {
       "type": "string",
@@ -38,6 +42,7 @@
   },
   "required": [
     "achievement_id",
-    "unlocked_at"
+    "unlocked_at",
+    "owner_email"
   ]
 }
