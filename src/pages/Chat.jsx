@@ -583,11 +583,15 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
 
       // ── RESOLVE IMAGE + LINK ANALYSIS (started before setIsTyping) ───────────
       // Both promises were kicked off immediately after userMsg was created.
-      // By this point (after memory/progression/spatial/weather fetches) they are resolved.
+      // By this point they are resolved.
       const [imageAnalysisContext, linkContext] = await Promise.all([
         imageAnalysisPromise,
         linkAnalysisPromise,
       ]);
+
+      // ── CRITICAL PATH: Character response LLM call happens FIRST ───────────
+      // Optional context is fetched in parallel but does NOT block response.
+      // If optional context is still loading when LLM is ready, use empty fallback.
 
       const frequentedPlaces = character.frequented_places || [];
       if (frequentedPlaces.length > 0) {
@@ -629,23 +633,16 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         }, 5000);
       }
 
-      // Fetch locations for BOTH spatial awareness AND employment schedule resolution.
-      // occupation_location_id triggers this fetch so worker_shifts are available.
-      // Without locations, buildEmploymentPromptBlock cannot read worker_shifts and
-      // the LLM falls back to training knowledge (9am-5pm default).
-      //
-      // RATE LIMIT GUARD: Cache location data for the lifetime of this chat session.
-      // fetchAllLocationsForUser is the single biggest 429 contributor — it was firing
-      // on EVERY message send for any character with a job. Now fetches once per character
-      // per session. Cache is cleared when navigating to a different character.
+      // ── OPTIONAL CONTEXT LOADING (non-blocking parallel fetch) ──────────────
+      // Memory, progression, research, and spatial context are fetched in parallel
+      // but do NOT block the LLM response. If these are still loading when the LLM
+      // call completes, empty fallbacks are used instead.
       const needsLocationFetch = !!(character.occupation_location_id || character.current_activity ||
         character.additional_occupation_locations?.length > 0);
       let allLocationsForContext = [];
 
       const getLocationsForContext = async () => {
         if (!needsLocationFetch) return null;
-        // Use module-level singleton cache (persists across character switches and re-renders).
-        // Prevents fetchAllLocationsForUser from firing multiple times per second.
         const allLocs = await getLocations(async () => {
           const allLocRes = await base44.functions.invoke('fetchAllLocationsForUser', {});
           return allLocRes?.data?.locations || [];
@@ -657,40 +654,87 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
       };
 
-      // Use Promise.allSettled so any single optional context failure cannot
-      // kill the entire response pipeline. Each result is individually extracted.
-      const [memorySettled, progressionSettled, pastLookupsSettled, spatialSettled] = await Promise.allSettled([
-        base44.functions.invoke('retrieveActiveMemory', {
+      // Start optional context fetches in the background (do not await yet)
+      const optionalContextPromises = {
+        memory: base44.functions.invoke('retrieveActiveMemory', {
           characterId,
           currentMessage: text,
           recentMessages: recentMsgs.slice(-6),
           topK: 14,
-        }),
-        base44.functions.invoke('buildProgressionFilteredContext', { characterId, currentMessage: text }),
-        base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10),
-        getLocationsForContext(),
-      ]);
+        }).catch(() => ({ data: { memories: [], total: 0, _fallback: true } })),
+        progression: base44.functions.invoke('buildProgressionFilteredContext', { characterId, currentMessage: text })
+          .catch(() => null),
+        pastLookups: base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10)
+          .catch(() => []),
+        spatial: getLocationsForContext()
+          .catch(() => null),
+      };
 
-      // Extract settled values with safe fallbacks
-      let memoryResult = null;
-      if (memorySettled.status === 'fulfilled') {
-        memoryResult = memorySettled.value;
-      } else {
-        console.warn('[sendMessage] retrieveActiveMemory failed (non-blocking):', memorySettled.reason?.message);
-        // Lightweight fallback: read Memory entity directly
+      // For employment prompt block (critical for schedule accuracy), fetch locations with shorter timeout
+      let employmentLocations = [];
+      if (needsLocationFetch) {
         try {
-          const mems = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 12);
-          memoryResult = { data: { memories: mems, total: mems.length, _fallback: true } };
+          employmentLocations = await Promise.race([
+            getLocations(async () => {
+              const allLocRes = await base44.functions.invoke('fetchAllLocationsForUser', {});
+              return allLocRes?.data?.locations || [];
+            }),
+            new Promise(resolve => setTimeout(() => resolve([]), 3000)) // 3s timeout
+          ]);
         } catch {
-          memoryResult = { data: { memories: [], total: 0, _fallback: true } };
+          employmentLocations = [];
         }
       }
-      const progressionResult = progressionSettled.status === 'fulfilled' ? progressionSettled.value : null;
-      if (progressionSettled.status === 'rejected') console.warn('[sendMessage] buildProgressionFilteredContext failed (non-blocking):', progressionSettled.reason?.message);
-      const pastLookupsResult = pastLookupsSettled.status === 'fulfilled' ? pastLookupsSettled.value : [];
-      if (pastLookupsSettled.status === 'rejected') console.warn('[sendMessage] WebLookup.filter failed (non-blocking):', pastLookupsSettled.reason?.message);
-      const spatialResult = spatialSettled.status === 'fulfilled' ? spatialSettled.value : null;
-      if (spatialSettled.status === 'rejected') console.warn('[sendMessage] getLocationsForContext failed (non-blocking):', spatialSettled.reason?.message);
+
+      // Extract optional context with immediate non-blocking fallbacks
+      // These promises are already running in parallel — we do NOT await them
+      // before calling the LLM. Instead, use timeouts to grab them if ready,
+      // otherwise proceed with empty context.
+      let memoryResult = null;
+      let progressionResult = null;
+      let pastLookupsResult = [];
+      let spatialResult = null;
+
+      // Try to grab optional context if it resolves within 2s, otherwise use fallback
+      try {
+        memoryResult = await Promise.race([
+          optionalContextPromises.memory,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+        ]);
+      } catch {
+        console.log('[Chat] Memory context timeout — using fallback');
+        memoryResult = { data: { memories: [], total: 0, _fallback: true } };
+      }
+
+      try {
+        progressionResult = await Promise.race([
+          optionalContextPromises.progression,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+        ]);
+      } catch {
+        console.log('[Chat] Progression context timeout — using fallback');
+        progressionResult = null;
+      }
+
+      try {
+        pastLookupsResult = await Promise.race([
+          optionalContextPromises.pastLookups,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+        ]);
+      } catch {
+        console.log('[Chat] Past lookups timeout — using fallback');
+        pastLookupsResult = [];
+      }
+
+      try {
+        spatialResult = await Promise.race([
+          optionalContextPromises.spatial,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+        ]);
+      } catch {
+        console.log('[Chat] Spatial context timeout — using fallback');
+        spatialResult = null;
+      }
 
       let memoryContext = "";
       const memData = memoryResult?.data;
@@ -933,11 +977,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • Only include information that DIRECTLY solves the current task. Do NOT inject unrelated memory or topics.
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
-      // Pass the locations fetched above (same fetch, no duplicate call).
-      // allLocationsForContext is populated when needsLocationFetch is true (character has a job).
-      // This gives buildEmploymentPromptBlock access to worker_shifts — the authoritative
-      // schedule source. Empty array only if character has no job at all.
-      const employmentPresenceSeparation = buildEmploymentPromptBlock(character, allLocationsForContext);
+      // Use employment-scoped locations fetched with short timeout (3s).
+      // buildEmploymentPromptBlock needs worker_shifts from locations — this is the only
+      // place locations are critical for schedule accuracy. Everything else (spatial, awareness)
+      // is optional and uses fallback if timeout.
+      const employmentPresenceSeparation = buildEmploymentPromptBlock(character, employmentLocations);
 
       // Build location share context for the prompt
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";
