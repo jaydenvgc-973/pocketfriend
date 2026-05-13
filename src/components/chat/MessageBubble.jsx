@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward, MapPin, Pencil, Check } from "lucide-react";
@@ -39,6 +39,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [imgLoadError, setImgLoadError] = useState(false);
   // Local image URL — updated immediately from retry response, no subscription wait needed
   const [localImageUrl, setLocalImageUrl] = useState(message.image_url || null);
+  // After AUTO_LOAD_TIMEOUT_MS with no image_url arriving, promote to actionable failure card
+  const AUTO_LOAD_TIMEOUT_MS = 90000; // 90s — generous window for backend generation
+  const [autoLoadExpired, setAutoLoadExpired] = useState(false);
 
   // Sync if parent passes a new image_url (e.g. from real-time subscription)
   const prevImageUrl = message.image_url;
@@ -47,12 +50,43 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
     setImgLoadError(false);
   }
 
+  // Auto-load: if message has no image yet and content is "" (actively generating),
+  // silently wait for the subscription to push the URL. After timeout, escalate to recovery.
+  const isWaitingForGeneration = !isUser && !message.is_narrative && !message.location_share && !localImageUrl && message.content === "" && !autoLoadExpired && !imageRetrying;
+
+  // Start the expiry timer only while actively waiting
+  useEffect(() => {
+    if (!isWaitingForGeneration) return;
+    const t = setTimeout(() => {
+      // Before expiring: make one automatic recovery attempt
+      setAutoLoadExpired(true);
+      setImageRetrying(true);
+      setImageRetryStatus('recovering');
+      base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
+        .then(res => {
+          const url = res?.data?.image_url;
+          if (url && url.startsWith('http')) {
+            setLocalImageUrl(url);
+            setImgLoadError(false);
+            onImageLoaded?.(message.id, url);
+          } else {
+            setImageRetryFailed(true);
+          }
+        })
+        .catch(() => setImageRetryFailed(true))
+        .finally(() => { setImageRetrying(false); setImageRetryStatus('idle'); });
+    }, AUTO_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [isWaitingForGeneration, message.id]); // eslint-disable-line
+
   // Placeholder: no image yet (content is empty = still generating, or [IMAGE_FAILED] = generation failed)
   // Also covers imgLoadError: URL exists but the image itself failed to render in the browser
   // Exclude location_share messages — they have empty content but are not image placeholders
   const isLocationShare = !!message.location_share;
   const isImageFailed = !isUser && !isNarrative && !isLocationShare && ((!localImageUrl && message.content === '[IMAGE_FAILED]') || imgLoadError);
-  const isImagePlaceholder = !isUser && !isNarrative && !isLocationShare && ((!localImageUrl && (message.content === "" || message.content === '[IMAGE_FAILED]')) || imgLoadError);
+  // isImagePlaceholder = show the placeholder card (spinner or action buttons)
+  // Do NOT show if we're passively waiting for generation (isWaitingForGeneration handles that separately)
+  const isImagePlaceholder = !isUser && !isNarrative && !isLocationShare && !isWaitingForGeneration && ((!localImageUrl && (message.content === "" || message.content === '[IMAGE_FAILED]')) || imgLoadError);
 
   const handleImageRetry = async (forceRegenerate = false) => {
     setImageRetrying(true);
@@ -266,6 +300,13 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                     Save
                   </button>
                 </div>
+              </div>
+            )}
+            {/* Passive loading state: image is actively being generated — no action required */}
+            {isWaitingForGeneration && (
+              <div className="w-48 flex flex-col items-center justify-center gap-2 rounded-2xl border border-border/30 bg-secondary/40 p-4 py-5">
+                <Loader2 className="w-7 h-7 text-primary/50 animate-spin" />
+                <p className="text-xs text-muted-foreground/70 text-center">Photo on the way…</p>
               </div>
             )}
             {/* Image placeholder: character tried to send an image but URL never attached */}
