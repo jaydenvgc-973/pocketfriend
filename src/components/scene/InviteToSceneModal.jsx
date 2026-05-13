@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, UserPlus, Loader2, Check, Clock, HelpCircle, XCircle } from "lucide-react";
+import { X, UserPlus, Loader2, Check, Clock, HelpCircle, XCircle, AlertTriangle, RefreshCw } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 
 const DECISION_CONFIG = {
   coming_now: { icon: Check, color: "text-emerald-400", label: "On their way!" },
@@ -23,7 +24,7 @@ function InviteeRow({ person, isSelected, onToggle }) {
       <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center overflow-hidden flex-shrink-0">
         {person.avatar_url
           ? <img src={person.avatar_url} alt={person.name} className="w-full h-full object-cover" />
-          : <span className="text-xs font-bold text-foreground">{person.name?.[0]}</span>
+          : <span className="text-xs font-bold text-foreground">{getInitial(person.name)}</span>
         }
       </div>
       <div className="flex-1 min-w-0">
@@ -46,7 +47,7 @@ function InviteResult({ result }) {
       <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center overflow-hidden flex-shrink-0">
         {result.avatar_url
           ? <img src={result.avatar_url} alt={result.inviteeName} className="w-full h-full object-cover" />
-          : <span className="text-xs font-bold text-foreground">{result.inviteeName?.[0]}</span>
+          : <span className="text-xs font-bold text-foreground">{getInitial(result.inviteeName)}</span>
         }
       </div>
       <div className="flex-1 min-w-0">
@@ -66,69 +67,81 @@ function InviteResult({ result }) {
   );
 }
 
+/**
+ * InviteToSceneModal — canonical identity picker for inviting people to a scene.
+ *
+ * IDENTITY CONTRACT:
+ * - All selectable invitees come from fetchUnifiedRoster (real Character records only).
+ * - Every selectable person has a canonical_person_id (real Character.id).
+ * - Unresolved people (needs_review from repairDiagnostics) are shown transparently,
+ *   NOT as selectable invitees.
+ * - No synthetic IDs (npc_family_*, npc_world_*) are ever passed to inviteCharacterToLocation.
+ * - fictional_relationships[].person_name without a related_character_id is NOT selectable.
+ * - family_members[] entries without _linked_character_id are NOT selectable.
+ */
 export default function InviteToSceneModal({ isOpen, onClose, location, characters, userDisplayName, onCharacterArrived }) {
   const [selected, setSelected] = useState([]);
   const [sending, setSending] = useState(false);
   const [results, setResults] = useState([]);
   const [sent, setSent] = useState(false);
+  const [roster, setRoster] = useState([]);
+  const [loadStatus, setLoadStatus] = useState('idle'); // 'idle'|'loading'|'fresh'|'error'|'user_only'
+  const [repairDiagnostics, setRepairDiagnostics] = useState([]);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    setLoadStatus('loading');
 
-  // Build eligible invitees: active characters + NPC family members from all characters
-  const activeChars = (characters || []).filter(c =>
-    c.status === 'active' || !c.status
-  );
+    base44.auth.me()
+      .then(user => {
+        if (!user?.email || cancelled) return;
+        return fetchUnifiedRoster(base44, user.email)
+          .then(({ roster: r, repairDiagnostics: diag }) => {
+            if (cancelled) return;
+            // Exclude the user-self entry — they are the host
+            const invitees = r.filter(e => !e.is_user);
+            if (invitees.length === 0 && r.length <= 1) {
+              setLoadStatus('user_only');
+            } else {
+              setLoadStatus('fresh');
+            }
+            setRoster(invitees);
+            if (diag?.length > 0) {
+              setRepairDiagnostics(diag);
+              console.warn('[InviteToSceneModal] Unresolved people (needs_review — not shown as invitees):', diag);
+            }
+          });
+      })
+      .catch(err => {
+        console.error('[InviteToSceneModal] fetchUnifiedRoster failed:', err?.message);
+        if (!cancelled) setLoadStatus('error');
+      });
 
-  // Collect NPC family members from all active characters
-  const npcFamilyMap = new Map();
-  activeChars.forEach(char => {
-    (char.family_members || []).forEach(fm => {
-      if (fm.name && !npcFamilyMap.has(fm.name.toLowerCase())) {
-        npcFamilyMap.set(fm.name.toLowerCase(), {
-          id: `npc_family_${fm.name.replace(/\s+/g, '_')}`,
-          name: fm.name,
-          avatar_url: fm.photo_url || null,
-          inviteeType: 'npc_family',
-          subtitle: fm.relationship_type || 'Family',
-        });
-      }
-    });
-  });
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
-  // Fictional world people from fictional_relationships (named NPCs without a linked character)
-  const worldPeopleMap = new Map();
-  activeChars.forEach(char => {
-    (char.fictional_relationships || []).forEach(rel => {
-      if (rel.person_name && !rel.related_character_id && !worldPeopleMap.has(rel.person_name.toLowerCase())) {
-        worldPeopleMap.set(rel.person_name.toLowerCase(), {
-          id: `npc_world_${rel.person_name.replace(/\s+/g, '_')}`,
-          name: rel.person_name,
-          avatar_url: rel.avatar_url || null,
-          inviteeType: 'npc_world',
-          subtitle: rel.relationship_type || 'Fictional person',
-        });
-      }
-    });
-  });
-
-  const eligiblePeople = [
-    ...activeChars.map(c => ({
-      id: c.id,
-      name: c.name,
-      avatar_url: c.avatar_url,
-      inviteeType: 'character',
-      subtitle: c.personality_summary?.split('.')[0] || c.character_type || 'Character',
-      // carry full data for backend
-      _raw: c,
-    })),
-    ...Array.from(npcFamilyMap.values()),
-    ...Array.from(worldPeopleMap.values()),
-  ];
+  const handleRetry = () => {
+    setRoster([]);
+    setRepairDiagnostics([]);
+    setLoadStatus('loading');
+    base44.auth.me()
+      .then(user => {
+        if (!user?.email) return;
+        return fetchUnifiedRoster(base44, user.email)
+          .then(({ roster: r, repairDiagnostics: diag }) => {
+            setRoster(r.filter(e => !e.is_user));
+            setLoadStatus('fresh');
+            setRepairDiagnostics(diag || []);
+          });
+      })
+      .catch(() => setLoadStatus('error'));
+  };
 
   const togglePerson = (person) => {
     setSelected(prev =>
-      prev.find(p => p.id === person.id)
-        ? prev.filter(p => p.id !== person.id)
+      prev.find(p => p.canonical_person_id === person.canonical_person_id)
+        ? prev.filter(p => p.canonical_person_id !== person.canonical_person_id)
         : [...prev, person]
     );
   };
@@ -139,11 +152,18 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
     const inviteResults = [];
 
     for (const person of selected) {
+      // CANONICAL CONTRACT: only pass real canonical_person_id — never a synthetic ID
+      const canonicalId = person.canonical_person_id;
+      if (!canonicalId || canonicalId.startsWith('npc_') || canonicalId === '__user__') {
+        console.warn('[InviteToSceneModal] BLOCKED: attempted to invite non-canonical person:', person.name, canonicalId);
+        continue;
+      }
+
       try {
         const res = await base44.functions.invoke('inviteCharacterToLocation', {
-          inviteeId: person.inviteeType === 'character' ? person.id : null,
+          inviteeId: canonicalId,
           inviteeName: person.name,
-          inviteeType: person.inviteeType,
+          inviteeType: 'character',
           locationId: location.id,
           locationName: location.name,
           locationCategory: location.category,
@@ -156,12 +176,18 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
           decision: data.decision || 'declined',
           delay_minutes: data.delay_minutes || 0,
           response_text: data.response_text || `${person.name} doesn't respond.`,
-          inviteeId: person.id,
+          inviteeId: canonicalId,
         });
 
         // If coming now, notify parent so they can add to scene
-        if (data.decision === 'coming_now' && person.inviteeType === 'character' && onCharacterArrived) {
-          onCharacterArrived(person._raw || { id: person.id, name: person.name, avatar_url: person.avatar_url });
+        if (data.decision === 'coming_now' && onCharacterArrived) {
+          onCharacterArrived({
+            id: canonicalId,
+            name: person.name,
+            avatar_url: person.avatar_url,
+            character_type: person.character_type,
+            personality_summary: person.appearance_notes || '',
+          });
         }
       } catch {
         inviteResults.push({
@@ -185,6 +211,12 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
     setSent(false);
     onClose();
   };
+
+  if (!isOpen) return null;
+
+  // Split roster into active characters and other characters for display grouping
+  const activeChars = roster.filter(e => e.is_active_character);
+  const otherChars = roster.filter(e => !e.is_active_character);
 
   return createPortal(
     <AnimatePresence>
@@ -225,9 +257,47 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
               </div>
             ) : (
               <>
+                {/* Load error states */}
+                {loadStatus === 'error' && (
+                  <div className="mx-4 mt-3 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive space-y-1.5">
+                    <p className="font-medium">Character list failed to load.</p>
+                    <button onClick={handleRetry} className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive font-medium transition-colors">
+                      <RefreshCw className="w-3 h-3" /> Retry
+                    </button>
+                  </div>
+                )}
+                {loadStatus === 'user_only' && (
+                  <div className="mx-4 mt-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400 flex items-center justify-between gap-2">
+                    <span>Character list may be incomplete.</span>
+                    <button onClick={handleRetry} className="flex items-center gap-1 font-medium flex-shrink-0">
+                      <RefreshCw className="w-3 h-3" /> Retry
+                    </button>
+                  </div>
+                )}
+
+                {/* Repair diagnostics — transparent, not as selectable items */}
+                {repairDiagnostics.length > 0 && (
+                  <div className="mx-4 mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400 space-y-1">
+                    <p className="font-semibold flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      Some people need review before they can be invited:
+                    </p>
+                    {repairDiagnostics.slice(0, 3).map((d, i) => (
+                      <p key={i} className="text-amber-400/80">• <span className="font-medium">{d.name}</span> — {d.failure_reason || 'Needs higher-confidence resolution'}</p>
+                    ))}
+                    {repairDiagnostics.length > 3 && (
+                      <p className="text-amber-400/60">…and {repairDiagnostics.length - 3} more</p>
+                    )}
+                  </div>
+                )}
+
                 {/* People list */}
                 <div className="max-h-72 overflow-y-auto">
-                  {eligiblePeople.length === 0 ? (
+                  {loadStatus === 'loading' ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-5 h-5 text-muted-foreground animate-spin" />
+                    </div>
+                  ) : roster.length === 0 ? (
                     <p className="text-xs text-muted-foreground text-center py-8">No one available to invite</p>
                   ) : (
                     <>
@@ -235,37 +305,44 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
                       {activeChars.length > 0 && (
                         <>
                           <div className="px-3 py-1.5 border-b border-border/50">
-                            <p className="text-[9px] font-semibold text-primary/70 uppercase tracking-wider">Characters</p>
+                            <p className="text-[9px] font-semibold text-primary/70 uppercase tracking-wider">Active Characters</p>
                           </div>
-                          {activeChars.map(c => (
+                          {activeChars.map(entry => (
                             <InviteeRow
-                              key={c.id}
-                              person={{ id: c.id, name: c.name, avatar_url: c.avatar_url, subtitle: c.personality_summary?.split('.')[0] || c.character_type, inviteeType: 'character', _raw: c }}
-                              isSelected={!!selected.find(p => p.id === c.id)}
+                              key={entry.canonical_person_id}
+                              person={{
+                                canonical_person_id: entry.canonical_person_id,
+                                name: entry.name,
+                                avatar_url: entry.avatar_url,
+                                character_type: entry.character_type,
+                                subtitle: entry.character_type?.replace(/_/g, ' ') || 'Active',
+                              }}
+                              isSelected={!!selected.find(p => p.canonical_person_id === entry.canonical_person_id)}
                               onToggle={togglePerson}
                             />
                           ))}
                         </>
                       )}
-                      {/* NPC Family */}
-                      {npcFamilyMap.size > 0 && (
+
+                      {/* Other characters (NPCs, family members with canonical IDs) */}
+                      {otherChars.length > 0 && (
                         <>
                           <div className="px-3 py-1.5 border-b border-border/50 mt-1">
-                            <p className="text-[9px] font-semibold text-purple-400/70 uppercase tracking-wider">Family</p>
+                            <p className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-wider">Other Characters</p>
                           </div>
-                          {Array.from(npcFamilyMap.values()).map(p => (
-                            <InviteeRow key={p.id} person={p} isSelected={!!selected.find(s => s.id === p.id)} onToggle={togglePerson} />
-                          ))}
-                        </>
-                      )}
-                      {/* World people */}
-                      {worldPeopleMap.size > 0 && (
-                        <>
-                          <div className="px-3 py-1.5 border-b border-border/50 mt-1">
-                            <p className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-wider">World people</p>
-                          </div>
-                          {Array.from(worldPeopleMap.values()).map(p => (
-                            <InviteeRow key={p.id} person={p} isSelected={!!selected.find(s => s.id === p.id)} onToggle={togglePerson} />
+                          {otherChars.map(entry => (
+                            <InviteeRow
+                              key={entry.canonical_person_id}
+                              person={{
+                                canonical_person_id: entry.canonical_person_id,
+                                name: entry.name,
+                                avatar_url: entry.avatar_url,
+                                character_type: entry.character_type,
+                                subtitle: entry.character_type?.replace(/_/g, ' ') || 'NPC',
+                              }}
+                              isSelected={!!selected.find(p => p.canonical_person_id === entry.canonical_person_id)}
+                              onToggle={togglePerson}
+                            />
                           ))}
                         </>
                       )}
