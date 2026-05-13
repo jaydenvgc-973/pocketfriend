@@ -716,8 +716,12 @@ export default function MemoryReelCreator() {
 
           {/* Partial preview button — appears at 25%+ with at least one validated clip */}
           {isProcessing && (() => {
+            // Only show clips that are static or have valid veo_diagnostics with source+avatar confirmed
             const validatedClips = (activeJob.clip_results || []).filter(c =>
-              c.image_url && (c.status === 'success' || c.status === 'static' || c.clip_type === 'static')
+              c.image_url && (
+                c.clip_type === 'static' ||
+                (c.clip_type === 'animated' && c.veo_diagnostics?.source_image_url && c.veo_diagnostics?.avatar_reference_url)
+              )
             );
             const pct = activeJob.progress_percent || 0;
             const canPreview = pct >= 25 && validatedClips.length > 0;
@@ -744,7 +748,10 @@ export default function MemoryReelCreator() {
           <AnimatePresence>
             {showPartialPreview && isProcessing && (() => {
               const validatedClips = (activeJob.clip_results || []).filter(c =>
-                c.image_url && (c.status === 'success' || c.status === 'static' || c.clip_type === 'static')
+                c.image_url && (
+                  c.clip_type === 'static' ||
+                  (c.clip_type === 'animated' && c.veo_diagnostics?.source_image_url && c.veo_diagnostics?.avatar_reference_url)
+                )
               );
               if (validatedClips.length === 0) return null;
               return (
@@ -794,19 +801,37 @@ export default function MemoryReelCreator() {
                 />
               </div>
 
-              {/* Per-clip progress */}
+              {/* Per-clip identity diagnostic panel */}
               {clips.length > 0 && (
-                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-                  {clips.map((clip, i) => (
-                    <div key={i} className="flex-shrink-0 relative">
-                      <img src={clip.image_url} alt="" className="w-10 h-10 rounded-lg object-cover opacity-60" />
-                      {clip.status === 'success' && (
-                        <div className="absolute inset-0 rounded-lg bg-primary/30 flex items-center justify-center">
-                          <Zap className="w-3 h-3 text-primary" />
+                <div className="space-y-2">
+                  {clips.map((clip, i) => {
+                    const hasFail = clip.status?.startsWith('failed') || clip.status?.startsWith('identity_fail') || clip.status?.startsWith('veo_error');
+                    const hasAvatar = clip.veo_diagnostics?.avatar_reference_url;
+                    const hasSource = clip.veo_diagnostics?.source_image_url || clip.image_url;
+                    return (
+                      <div key={i} className={`rounded-xl border px-3 py-2 flex items-start gap-2 text-[10px] ${hasFail ? 'border-destructive/40 bg-destructive/5' : 'border-border bg-secondary/30'}`}>
+                        {clip.image_url && (
+                          <img src={clip.image_url} alt="" className="w-8 h-8 rounded-lg object-cover flex-shrink-0" />
+                        )}
+                        <div className="flex-1 min-w-0 space-y-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`font-semibold ${hasFail ? 'text-destructive' : 'text-foreground'}`}>Clip {i + 1}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${hasFail ? 'bg-destructive/20 text-destructive' : clip.clip_type === 'animated' ? 'bg-primary/20 text-primary' : 'bg-secondary text-muted-foreground'}`}>
+                              {clip.status || clip.clip_type}
+                            </span>
+                          </div>
+                          <div className="text-muted-foreground space-y-0.5">
+                            <div>Source: {hasSource ? <span className="text-emerald-400">✓ set</span> : <span className="text-destructive">✗ missing</span>}</div>
+                            <div>Avatar: {hasAvatar ? <span className="text-emerald-400">✓ set</span> : <span className="text-amber-400">✗ missing</span>}</div>
+                            <div>Video: {clip.clip_url ? <span className="text-emerald-400">✓ generated</span> : <span className="text-muted-foreground">—</span>}</div>
+                            {hasFail && clip.error && (
+                              <div className="text-destructive mt-1 leading-tight">{clip.error.slice(0, 120)}</div>
+                            )}
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 

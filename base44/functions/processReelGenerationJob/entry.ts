@@ -60,34 +60,42 @@ Deno.serve(async (req) => {
     // CHARACTER LOOK LOCK: load canonical appearance data per character
     const characterAppearanceCache = {};
     for (const msgId of selectedImageIds) {
-      const msg = messageRecords[msgId];
-      const charId = msg?.character_id || null;
-      if (!charId || characterAppearanceCache[charId]) continue;
-      try {
-        const chars = await base44.entities.Character.filter({ owner_email: user.email });
-        const char = chars.find(c => c.id === charId);
-        if (!char) continue;
-        const parts = [];
-        if (char.name) parts.push(`Character name: ${char.name}`);
-        if (char.gender) parts.push(`Gender: ${char.gender}`);
-        if (char.ethnicities?.length) parts.push(`Ethnicity: ${char.ethnicities.join(', ')}`);
-        if (char.age || char.appearance_age) parts.push(`Age: ${char.appearance_age || char.age}`);
-        if (char.appearance_notes) parts.push(`Appearance: ${char.appearance_notes.slice(0, 200)}`);
-        if (char.appearance_lock) {
-          const al = char.appearance_lock;
-          if (al.skin_tone) parts.push(`Skin tone: ${al.skin_tone}`);
-          if (al.hair_type) parts.push(`Hair: ${al.hair_type}`);
-          if (al.hairstyle) parts.push(`Hairstyle: ${al.hairstyle}`);
-          if (al.facial_hair) parts.push(`Facial hair: ${al.facial_hair}`);
-          if (al.overall_aesthetic) parts.push(`Style: ${al.overall_aesthetic}`);
-        }
-        characterAppearanceCache[charId] = {
-          fingerprint: parts.join('. '),
-          avatar_url: char.avatar_url || null,
-          reference_image_urls: char.reference_image_urls || [],
-          name: char.name,
-        };
-      } catch (_) {}
+    const msg = messageRecords[msgId];
+    const charId = msg?.character_id || null;
+    if (!charId || characterAppearanceCache[charId]) continue;
+    try {
+      const chars = await base44.entities.Character.filter({ owner_email: user.email });
+      const char = chars.find(c => c.id === charId);
+      if (!char) continue;
+
+      // HARD REQUIREMENT: Character MUST have avatar for animation
+      if (!char.avatar_url) {
+        console.warn(`[CHARACTER LOAD] Character '${char.name}' (${charId}) missing avatar_url. Cannot use for identity-preserved animation.`);
+        // Still cache the character, but mark avatar as missing so Veo calls fail validation
+      }
+
+      const parts = [];
+      if (char.name) parts.push(`Character name: ${char.name}`);
+      if (char.gender) parts.push(`Gender: ${char.gender}`);
+      if (char.ethnicities?.length) parts.push(`Ethnicity: ${char.ethnicities.join(', ')}`);
+      if (char.age || char.appearance_age) parts.push(`Age: ${char.appearance_age || char.age}`);
+      if (char.appearance_notes) parts.push(`Appearance: ${char.appearance_notes.slice(0, 200)}`);
+      if (char.appearance_lock) {
+        const al = char.appearance_lock;
+        if (al.skin_tone) parts.push(`Skin tone: ${al.skin_tone}`);
+        if (al.hair_type) parts.push(`Hair: ${al.hair_type}`);
+        if (al.hairstyle) parts.push(`Hairstyle: ${al.hairstyle}`);
+        if (al.facial_hair) parts.push(`Facial hair: ${al.facial_hair}`);
+        if (al.overall_aesthetic) parts.push(`Style: ${al.overall_aesthetic}`);
+      }
+      characterAppearanceCache[charId] = {
+        fingerprint: parts.join('. '),
+        avatar_url: char.avatar_url || null,
+        reference_image_urls: char.reference_image_urls || [],
+        name: char.name,
+        has_avatar: !!char.avatar_url, // EXPLICIT FLAG: true = safe for animation, false = FAIL
+      };
+    } catch (_) {}
     }
 
     // ── STEP 2: ANIMATE SELECTED CLIPS ───────────────────────────────────────
@@ -99,6 +107,10 @@ Deno.serve(async (req) => {
 
     const animateFlags = job.clip_results?.map(c => c.animate) || selectedImageUrls.map(() => false);
     const captions = job.clip_results?.map(c => c.caption || '') || selectedImageUrls.map(() => '');
+    
+    // Declare here so per-clip hard gates can write into them during the animation loop
+    const validationNotes = [];
+    let validationPassed = true;
 
     for (let i = 0; i < selectedImageUrls.length; i++) {
       // Cancellation check
@@ -122,145 +134,105 @@ Deno.serve(async (req) => {
       let clipStatus = 'static';
       let clipError = null;
       let requires_identity_preservation = false;
+      let veo_diagnostics = null;
 
-      if (shouldAnimate && imageUrl) {
-        const charId = msgRecord?.character_id || null;
+      // Resolve character identity now — used by both the Veo gate and the diagnostics
+      const charId = msgRecord?.character_id || null;
+      const charAppearance = charId ? characterAppearanceCache[charId] : null;
+      const avatarUrl = charAppearance?.avatar_url || null;
+
+      if (shouldAnimate && !imageUrl) {
+        clipType = 'static';
+        clipStatus = 'failed_no_source_image';
+        clipError = `Clip ${i + 1}: source image URL missing — cannot animate.`;
+        warnings.push(`Clip ${i + 1}: no source image — static slide used.`);
+
+      } else if (shouldAnimate && imageUrl) {
         requires_identity_preservation = !!charId;
 
-        // ANIMATE VIA VEO: Primary animation provider
-        // Frame 0 = source image (the selected image comes to life)
-        // Avatar = identity stabilizer only (keeps face/likeness consistent during movement)
-        if (requires_identity_preservation && imageUrl) {
-          const charAppearance = characterAppearanceCache[charId];
-          const avatarUrl = charAppearance?.avatar_url || null;
-          
-          // Build existing_image_urls: [source_image (INDEX 0, FRAME 0), avatar (INDEX 1, IDENTITY FALLBACK)]
-          const existingImages = [imageUrl];
+        // ── PRE-ANIMATION HARD GATES ─────────────────────────────────────────
+        // These block Veo from being called with insufficient data.
+        // Veo called without an avatar will generate a random wrong person.
+
+        if (requires_identity_preservation && !charId) {
+          clipType = 'static';
+          clipStatus = 'failed_missing_character_id';
+          clipError = `Clip ${i + 1}: character_id missing from message. Cannot preserve identity.`;
+          warnings.push(`Clip ${i + 1}: Character mapping missing — cannot animate. Static slide used.`);
+          console.error(`[Clip ${i + 1}] HARD FAIL: character_id missing. Veo BLOCKED.`);
+
+        } else if (requires_identity_preservation && !avatarUrl) {
+          // HARD BLOCK: Veo without avatar = guaranteed wrong person / wrong gender output
+          clipType = 'static';
+          clipStatus = 'failed_missing_avatar';
+          clipError = `Character '${charAppearance?.name || charId}' has no avatar_url. Veo call blocked — cannot preserve identity without avatar reference. Add an avatar to this character's profile.`;
+          warnings.push(`Clip ${i + 1}: Character '${charAppearance?.name || charId}' needs an avatar photo. Static slide used until avatar is added.`);
+          console.error(`[Clip ${i + 1}] HARD FAIL: avatar_url missing for '${charAppearance?.name || charId}'. Veo BLOCKED.`);
+
+        } else {
+          // ── ALL GATES PASSED — build payload and call Veo ─────────────────
+          const existingImages = [imageUrl]; // INDEX 0 = FRAME 0 SOURCE (MANDATORY)
           if (avatarUrl && avatarUrl !== imageUrl) {
-            existingImages.push(avatarUrl);
+            existingImages.push(avatarUrl);  // INDEX 1 = IDENTITY ANCHOR (character face/likeness)
           }
 
-          // Motion prompt: animate the SOURCE IMAGE, use AVATAR only to keep identity consistent
           const identityPrompt = avatarUrl
-            ? `Animate the person in IMAGE 1 (the starting frame). The video must begin from IMAGE 1 exactly as it appears. As the character moves, use IMAGE 2 only to keep the face, skin tone, hair, facial hair, age, and character identity consistent. Do not change the body type, gender, ethnicity, outfit, scene, pose, lighting, or camera angle from IMAGE 1. Do not create a new person. The result should look like the person in IMAGE 1 came to life.`
+            ? `Animate the person in IMAGE 1 (the starting frame). The video must begin from IMAGE 1 exactly as it appears. As the character moves, use IMAGE 2 only to keep the face, skin tone, hair, facial hair, age, and character identity consistent. Do not change the body type, gender, ethnicity, outfit, scene, pose, lighting, or camera angle from IMAGE 1. Do not create a new person. The result must look like the person in IMAGE 1 came to life.`
             : `Animate the person in IMAGE 1 (the starting frame). The video must begin from IMAGE 1 exactly as it appears. Keep the scene, body, outfit, pose, lighting, and identity exactly as shown. Do not change gender, body type, ethnicity, or outfit. Do not create a new person.`;
 
-          // Call Veo via Core.GenerateVideo
-          // PROOF LOGGING: Capture exact payload structure
-          const veoPayload = {
-            prompt: identityPrompt,
-            existing_image_urls: existingImages,
-            duration: 4,
-            aspect_ratio: '9:16',
-          };
-          
-          console.log(`\n[Clip ${i + 1}] ══════════════════════════════════════════════════════════════`);
-          console.log(`[Clip ${i + 1}] VEO PAYLOAD PROOF`);
-          console.log(`[Clip ${i + 1}] ──────────────────────────────────────────────────────────────`);
-          console.log(`[Clip ${i + 1}] existing_image_urls array (PROOF OF ORDER):`);
-          for (let idx = 0; idx < existingImages.length; idx++) {
-            const imgUrl = existingImages[idx];
-            const role = idx === 0 ? 'FRAME_0_SOURCE' : idx === 1 ? 'IDENTITY_ANCHOR' : 'OTHER';
-            console.log(`[Clip ${i + 1}]   [${idx}] ${role}: ${imgUrl.slice(-50)}`);
-          }
-          console.log(`[Clip ${i + 1}] prompt (first 200 chars): ${identityPrompt.slice(0, 200)}...`);
-          console.log(`[Clip ${i + 1}] character_id: ${charId}`);
-          console.log(`[Clip ${i + 1}] character_name: ${charAppearance?.name}`);
-          console.log(`[Clip ${i + 1}] ──────────────────────────────────────────────────────────────`);
-          
+          console.log(`\n[Clip ${i + 1}] ══════════════════════════════════════════════════`);
+          console.log(`[Clip ${i + 1}] GATES PASSED — CALLING VEO`);
+          console.log(`[Clip ${i + 1}] character: ${charAppearance?.name || charId}`);
+          console.log(`[Clip ${i + 1}] [0] FRAME_0_SOURCE: ${imageUrl.slice(-60)}`);
+          console.log(`[Clip ${i + 1}] [1] IDENTITY_ANCHOR: ${avatarUrl ? avatarUrl.slice(-60) : 'NONE'}`);
+          console.log(`[Clip ${i + 1}] ══════════════════════════════════════════════════\n`);
+
           try {
-            const generateRes = await base44.integrations.Core.GenerateVideo(veoPayload);
-            
+            const generateRes = await base44.integrations.Core.GenerateVideo({
+              prompt: identityPrompt,
+              existing_image_urls: existingImages,
+              duration: 4,
+              aspect_ratio: '9:16',
+            });
+
             clipUrl = generateRes.url || null;
             clipType = clipUrl ? 'animated' : 'static';
-            clipStatus = clipUrl ? 'veo_generated' : 'fallback_generation_failed';
+            clipStatus = clipUrl ? 'veo_generated' : 'veo_returned_no_url';
 
-            console.log(`[Clip ${i + 1}] VEO RESPONSE:`);
-            console.log(`[Clip ${i + 1}]   clip_url: ${clipUrl ? clipUrl.slice(-50) : 'NULL'}`);
-            console.log(`[Clip ${i + 1}]   clip_type: ${clipType}`);
-            console.log(`[Clip ${i + 1}]   status: ${clipStatus}`);
-            console.log(`[Clip ${i + 1}] ══════════════════════════════════════════════════════════════\n`);
+            // Save the exact payload as diagnostics proof
+            veo_diagnostics = {
+              provider_id: 'veo_3x',
+              source_image_url: imageUrl,
+              source_image_index_in_payload: 0,
+              avatar_reference_url: avatarUrl || null,
+              avatar_reference_index_in_payload: avatarUrl ? 1 : null,
+              existing_image_urls: existingImages,
+              existing_image_urls_order: `[0]=${imageUrl.slice(-30)} [1]=${avatarUrl ? avatarUrl.slice(-30) : 'none'}`,
+              prompt: identityPrompt,
+              character_id: charId,
+              character_name: charAppearance?.name || null,
+            };
 
-            if (clipUrl) {
-              console.log(`[Clip ${i + 1}] VEO ANIMATED | Character '${charId}' | Source: ${imageUrl.slice(-40)} | Avatar: ${avatarUrl ? 'yes' : 'no'}`);
-            } else {
-              console.warn(`[Clip ${i + 1}] VEO FAILED | Character '${charId}' | Fallback to static`);
-              warnings.push(`Clip ${i + 1}: Veo generation failed, using static slide.`);
+            console.log(`[Clip ${i + 1}] VEO RESULT: ${clipUrl ? 'SUCCESS' : 'NO URL'}`);
+            if (!clipUrl) {
+              warnings.push(`Clip ${i + 1}: Veo returned no URL. Static slide used.`);
             }
           } catch (err) {
             console.error(`[Clip ${i + 1}] VEO ERROR:`, err.message);
-            console.log(`[Clip ${i + 1}] ══════════════════════════════════════════════════════════════\n`);
             clipType = 'static';
-            clipStatus = 'fallback_generation_error';
+            clipStatus = 'veo_error';
+            clipError = err.message;
             warnings.push(`Clip ${i + 1}: Veo error — ${err.message}`);
           }
-        } else if (!imageUrl) {
-          clipType = 'static';
-          clipStatus = 'fallback_no_source';
-          warnings.push(`Clip ${i + 1}: no source image — static slide used.`);
         }
-      } else if (shouldAnimate && !imageUrl) {
-        clipType = 'static';
-        clipStatus = 'fallback_no_source';
-        warnings.push(`Clip ${i + 1}: no source image available — static slide used.`);
       }
 
-      // Build provider diagnostics
-      const charId = msgRecord?.character_id || null;
-      const charAppearanceForClip = charId ? characterAppearanceCache[charId] : null;
-      const subjectIds = [];
-      if (charId) subjectIds.push(charId);
-      const characterReferenceUrls = charAppearanceForClip
-        ? [charAppearanceForClip.avatar_url, ...(charAppearanceForClip.reference_image_urls || [])].filter(Boolean)
+      // Build subject identity for clip record
+      const subjectIds = charId ? [charId] : [];
+      const characterReferenceUrls = charAppearance
+        ? [charAppearance.avatar_url, ...(charAppearance.reference_image_urls || [])].filter(Boolean)
         : [];
-
-      // Build Veo diagnostics for character clips
-      const charAppearanceForDiag = charId ? characterAppearanceCache[charId] : null;
-      const avatarUrl = charAppearanceForDiag?.avatar_url || null;
       
-      let veo_diagnostics = null;
-      if (requires_identity_preservation && imageUrl) {
-        const existingImages = [imageUrl];
-        if (avatarUrl && avatarUrl !== imageUrl) {
-          existingImages.push(avatarUrl);
-        }
-        const identityPrompt = avatarUrl
-          ? `Animate the person in IMAGE 1 (the starting frame). The video must begin from IMAGE 1 exactly as it appears. As the character moves, use IMAGE 2 only to keep the face, skin tone, hair, facial hair, age, and character identity consistent. Do not change the body type, gender, ethnicity, outfit, scene, pose, lighting, or camera angle from IMAGE 1. Do not create a new person. The result should look like the person in IMAGE 1 came to life.`
-          : `Animate the person in IMAGE 1 (the starting frame). The video must begin from IMAGE 1 exactly as it appears. Keep the scene, body, outfit, pose, lighting, and identity exactly as shown. Do not change gender, body type, ethnicity, or outfit. Do not create a new person.`;
-        
-        veo_diagnostics = {
-          provider_id: 'veo_3x',
-          identity_reference_mode: 'frame_0_plus_identity_anchor',
-          source_image_url: imageUrl,
-          source_image_role: 'frame_0_animation_starting_point',
-          source_image_index_in_payload: 0,
-          avatar_reference_url: avatarUrl || null,
-          avatar_reference_role: avatarUrl ? 'identity_stabilizer_during_movement' : null,
-          avatar_reference_index_in_payload: avatarUrl ? 1 : null,
-          existing_image_urls: existingImages,
-          existing_image_urls_order: `[0]=${imageUrl.slice(-30)} [1]=${avatarUrl ? avatarUrl.slice(-30) : 'none'}`,
-          prompt: identityPrompt,
-          animation_starts_from: 'source_image_frame_0',
-          avatar_does_not_replace_source: true,
-          identity_preservation_approach: 'source_image_comes_to_life_with_identity_anchor',
-          identity_preservation_supported: 'source_anchored',
-          character_id: charId,
-          character_name: charAppearanceForDiag?.name || null,
-        };
-      }
-      
-      let video_provider_capabilities = null;
-      if (clipType === 'animated' && clipUrl) {
-        video_provider_capabilities = {
-          provider_id: 'veo_3x',
-          provider_name: 'Google Veo 3.x',
-          supports_init_frame: false,
-          identity_preservation_supported: 'best_effort',
-          rendering: 'ai_generated',
-          identity_reference_mode: 'source_plus_avatar',
-        };
-      }
-
       const clipRecord = {
         image_id: imageId,
         image_url: imageUrl,
@@ -271,7 +243,6 @@ Deno.serve(async (req) => {
         caption,
         animate: shouldAnimate,
         requires_identity_preservation,
-        video_provider_capabilities,
         veo_diagnostics,
         subject_identity: {
           media_id: imageId,
@@ -281,8 +252,8 @@ Deno.serve(async (req) => {
           visible_subject_ids: subjectIds,
           original_prompt: originalPrompt || null,
           character_reference_urls: characterReferenceUrls,
-          character_fingerprint: charAppearanceForClip?.fingerprint || null,
-          identity_confidence: charAppearanceForClip?.fingerprint ? 'high' : (imageUrl ? 'source_only' : 'low'),
+          character_fingerprint: charAppearance?.fingerprint || null,
+          identity_confidence: charAppearance?.fingerprint ? 'high' : (imageUrl ? 'source_only' : 'low'),
         },
       };
       
@@ -328,9 +299,8 @@ Deno.serve(async (req) => {
       updated_at: new Date().toISOString(),
     });
 
-    const validationNotes = [];
-    let validationPassed = true;
-
+    // validationNotes may already contain FAIL entries from per-clip hard gates
+    // Do not reset — accumulate from clip loop
     if (clipResults.length !== selectedImageUrls.length) {
       validationPassed = false;
       validationNotes.push(`FAIL: Expected ${selectedImageUrls.length} clips, got ${clipResults.length}.`);
@@ -348,6 +318,22 @@ Deno.serve(async (req) => {
       if (clip.clip_type === 'animated' && !clip.image_url) {
         validationPassed = false;
         validationNotes.push(`FAIL: Animated clip missing source image_url reference.`);
+      }
+      
+      // IDENTITY VALIDATION: If animated clip for a character, MUST have all three: source, character ID, avatar
+      if (clip.requires_identity_preservation && clip.clip_type === 'animated') {
+        if (!clip.veo_diagnostics || !clip.veo_diagnostics.source_image_url) {
+          validationPassed = false;
+          validationNotes.push(`FAIL: Character clip missing source_image_url in diagnostics.`);
+        }
+        if (!clip.veo_diagnostics || !clip.veo_diagnostics.character_id) {
+          validationPassed = false;
+          validationNotes.push(`FAIL: Character clip missing character_id in diagnostics.`);
+        }
+        if (!clip.veo_diagnostics || !clip.veo_diagnostics.avatar_reference_url) {
+          validationPassed = false;
+          validationNotes.push(`FAIL: Character clip missing avatar_reference_url in diagnostics.`);
+        }
       }
     }
 
