@@ -189,22 +189,26 @@ export default function ReelPlayer({ clips = [], autoPlay = false }) {
 
   const current = clips[currentIndex];
   const isVideo = current?.clip_type === 'animated' && current?.clip_url;
+  const isMotionComposite = current?.clip_type === 'motion_composite';
 
   const goNext = () => setCurrentIndex(i => Math.min(i + 1, clips.length - 1));
   const goPrev = () => setCurrentIndex(i => Math.max(i - 1, 0));
 
-  // Auto-advance timer for static slides
+  // Auto-advance timer: motion_composite uses MOTION_COMPOSITE_DURATION, static uses SLIDE_DURATION
+  // Video advances via onEnded callback
+  const MOTION_COMPOSITE_DURATION = 4200; // slightly longer than 4s compositor duration
   useEffect(() => {
-    if (!playing || isVideo) return; // video advances via onEnded
+    if (!playing || isVideo) return;
+    const duration = isMotionComposite ? MOTION_COMPOSITE_DURATION : SLIDE_DURATION;
     timerRef.current = setTimeout(() => {
       if (currentIndex < clips.length - 1) {
         setCurrentIndex(i => i + 1);
       } else {
         setPlaying(false);
       }
-    }, SLIDE_DURATION);
+    }, duration);
     return () => clearTimeout(timerRef.current);
-  }, [playing, currentIndex, isVideo, clips.length]);
+  }, [playing, currentIndex, isVideo, isMotionComposite, clips.length]);
 
   const handleVideoEnded = () => {
     if (currentIndex < clips.length - 1) {
@@ -228,7 +232,7 @@ export default function ReelPlayer({ clips = [], autoPlay = false }) {
                 className="h-full bg-white"
                 initial={{ width: "0%" }}
                 animate={{ width: "100%" }}
-                transition={{ duration: SLIDE_DURATION / 1000, ease: "linear" }}
+                transition={{ duration: isMotionComposite ? 4.2 : SLIDE_DURATION / 1000, ease: "linear" }}
               />
             )}
           </div>
@@ -295,7 +299,7 @@ export default function ReelPlayer({ clips = [], autoPlay = false }) {
       {/* Slide type badge */}
       <div className="absolute bottom-4 left-4 z-20">
         <span className="text-[10px] text-white/70 bg-black/40 rounded px-1.5 py-0.5">
-          {current?.clip_type === 'motion_composite' ? "🎬 source-locked motion" : isVideo ? "🎬 animated" : "📸 photo"}
+          {isMotionComposite ? "✨ motion" : isVideo ? "🎬 animated" : "📸 photo"}
         </span>
       </div>
     </div>
