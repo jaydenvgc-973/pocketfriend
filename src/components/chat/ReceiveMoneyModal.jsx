@@ -201,7 +201,7 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
                   placeholder={
                     mode === 'request'
                       ? 'e.g., "Help with groceries"'
-                      : 'e.g., "McDonald\'s" or "Uber"'
+                      : 'e.g., "Payroll" or "coffee"'
                   }
                   className="mt-1"
                 />
