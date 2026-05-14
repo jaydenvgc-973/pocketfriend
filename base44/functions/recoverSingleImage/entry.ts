@@ -169,7 +169,7 @@ Deno.serve(async (req) => {
     // ── STEP 3: BUILD CHARACTER IDENTITY REFS ────────────────────────────────
     // Use reference_image_urls first (face-only, no background contamination).
     // Fall back to avatar_url as controlled identity anchor (face extraction enforced in prompt).
-    const referenceImages = [];
+    const identityRefs = [];
     let charDesc = '';
 
     if (subjectCharRecord) {
@@ -178,12 +178,12 @@ Deno.serve(async (req) => {
         .slice(0, 2);
 
       if (refUrls.length > 0) {
-        referenceImages.push(...refUrls);
+        identityRefs.push(...refUrls);
         console.log(`[recoverSingleImage] Using ${refUrls.length} reference_image_urls for "${charName}"`);
       } else if (subjectCharRecord.avatar_url) {
         const avatarPublic = toPublicCDN(subjectCharRecord.avatar_url);
         if (isAccessible(avatarPublic) && !avatarPublic.includes('generated_image')) {
-          referenceImages.push(avatarPublic);
+          identityRefs.push(avatarPublic);
           console.log(`[recoverSingleImage] Using avatar_url as face identity anchor for "${charName}"`);
         }
       }
@@ -204,7 +204,7 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 4: RESOLVE LOCATION REFERENCE PHOTOS ────────────────────────────
-    const envRefsBefore = referenceImages.length;
+    const envRefs = [];
     let resolvedLocationName = ctx.location_name || null;
     let resolvedZoneName = ctx.zone_name || null;
 
@@ -214,9 +214,10 @@ Deno.serve(async (req) => {
       || null;
 
     if (locationId) {
-      const locRecord = await base44.asServiceRole.entities.LocationReference.filter(
+      const locList = await base44.asServiceRole.entities.LocationReference.filter(
         { id: locationId }, null, 1
-      ).catch(() => [])?.[0] || null;
+      ).catch(() => []);
+      const locRecord = locList?.[0] || null;
 
       if (locRecord) {
         const locOwner = locRecord.owner_email;
@@ -225,21 +226,23 @@ Deno.serve(async (req) => {
           const promptLowerEnv = (imagePrompt || '').toLowerCase();
           const envImages = resolveZoneImages(locRecord, promptLowerEnv);
           if (envImages.length > 0) {
-            // Insert env images at the FRONT (env must come before identity refs)
-            referenceImages.unshift(...envImages);
+            envRefs.push(...envImages);
             resolvedLocationName = locRecord.name;
-            console.log(`[recoverSingleImage] ✅ Location refs: "${locRecord.name}" → ${envImages.length} images (inserted at front)`);
+            console.log(`[recoverSingleImage] ✅ Location refs: "${locRecord.name}" → ${envImages.length} images`);
           }
         }
       }
     } else if (ctx.location_reference_images?.length > 0) {
       const storedEnv = cdnFilter(ctx.location_reference_images).slice(0, 4);
-      referenceImages.unshift(...storedEnv);
+      envRefs.push(...storedEnv);
       console.log(`[recoverSingleImage] Using stored location_reference_images: ${storedEnv.length}`);
     }
 
-    const envCount = referenceImages.length - envRefsBefore;
-    console.log(`[recoverSingleImage] Refs assembled: env=${envCount} identity=${Math.min(envRefsBefore, 2)} total=${referenceImages.length}`);
+    // Assemble: env refs FIRST, then identity refs
+    const referenceImages = [...envRefs, ...identityRefs];
+    const envCount = envRefs.length;
+
+    console.log(`[recoverSingleImage] Refs assembled: env=${envCount} identity=${identityRefs.length} total=${referenceImages.length}`);
 
     // ── STEP 5: BUILD GENERATION PROMPT ──────────────────────────────────────
     // If no stored prompt, generate one from context using LLM
@@ -263,56 +266,42 @@ ${recentContext}
 Based on this context, write a vivid image generation prompt (1-3 sentences) describing what photo "${charName}" would have sent. Focus on: their exact appearance, setting/environment, expression and pose. Return ONLY the image prompt, nothing else.`,
       });
 
-      imagePrompt = (typeof promptGuess === 'string' ? promptGuess : promptGuess?.text || '').trim() || null;
-      console.log(`[recoverSingleImage] LLM-generated prompt: "${(imagePrompt || '').substring(0, 80)}"`);
+      imagePrompt = String(promptGuess || '').trim();
     }
 
     if (!imagePrompt) {
-      imagePrompt = `A realistic photo of ${charName}${charDesc ? ` (${charDesc})` : ''}, candid shot, natural lighting.`;
-      console.log(`[recoverSingleImage] Using fallback prompt`);
+      imagePrompt = `${charName} in a realistic candid photo, matching their saved appearance exactly.`;
     }
 
-    // ── STEP 6: BUILD STRUCTURED PROMPT WITH IDENTITY + LOCATION LOCKS ───────
-    const hasEnv = referenceImages.length > envRefsBefore; // env refs are at front
-    const envSlots = referenceImages.length - (subjectCharRecord ? Math.min(referenceImages.length, 2) : 0);
-    const charRefStart = hasEnv ? envSlots + 1 : 1;
-    const charRefEnd = referenceImages.length;
+    // ── STEP 6: BUILD STRUCTURED PROMPT ──────────────────────────────────────
+    const finalPrompt = `
+STRICT SUBJECT RULE:
+The ONLY required subject is "${charName}".
+If the prompt mentions another person only as context, do NOT include that other person unless the prompt explicitly says they are physically present in the image.
 
-    const structuredPrompt = `════════════════════════════════════════════════════════════
-PHOTO RECOVERY — STRICT SUBJECT AND LOCATION ENFORCEMENT
-════════════════════════════════════════════════════════════
-
-PRIMARY SUBJECT: "${charName}"
-⛔ ONLY "${charName}" may appear as the subject of this photo.
-⛔ Do NOT render any other named character from the conversation context.
-⛔ The subject is determined by the PROMPT below — not by who sent the message.
-⛔ If another person was mentioned in conversation, they are NOT in this photo unless the prompt below explicitly names them.
-
-${referenceImages.length > 0 ? `REFERENCE IMAGES:
-${hasEnv ? `Images 1–${envSlots}: LOCATION/ENVIRONMENT reference photos. Use for spatial layout, materials, furniture only. Do NOT use as character identity.
-` : ''}Images ${charRefStart}–${charRefEnd}: FACE IDENTITY PHOTOS for "${charName}". Match ONLY: face structure, skin tone, eyes, hair color/length/style, body type.
-⛔ DO NOT copy pose, background, or clothing from identity photos — face extraction ONLY.
-` : `No reference photos. Generate "${charName}" from text description: ${charDesc || 'a realistic human'}.`}
-${charDesc ? `CHARACTER APPEARANCE LOCK (ABSOLUTE — NON-NEGOTIABLE):
-${charDesc}
-Every trait above is immutable. Do NOT substitute any appearance trait.
-
-` : ''}${hasEnv ? `LOCATION LOCK: "${resolvedLocationName}${resolvedZoneName ? ' → ' + resolvedZoneName : ''}"
-The environment reference images define the physical space. Render the character INSIDE this space.
-⛔ Do NOT invent a generic room — use the reference photos as the spatial blueprint.
-
-` : ''}════════════════════════════════════════════════════════════
-SCENE PROMPT — EVERY WORD IS A MANDATORY VISUAL REQUIREMENT
-════════════════════════════════════════════════════════════
+USER/STORED PHOTO PROMPT:
 ${imagePrompt}
 
-Photorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.
-The character must be physically integrated into the scene — same lighting, same perspective, same floor plane. NOT cut out or composited.`;
+CHARACTER IDENTITY LOCK:
+${charDesc || `Use the reference image(s) to preserve ${charName}'s face, age, body type, hair, skin tone, and overall identity.`}
+
+REFERENCE IMAGE RULES:
+${envCount > 0 ? `Images 1-${envCount}: environment/location reference only. Use for room layout, lighting, furniture, architecture, and spatial logic.` : ''}
+${identityRefs.length > 0 ? `Remaining image(s): ${charName}'s identity reference. Use for face/body identity only. Do not copy background from avatar/reference portraits.` : ''}
+
+LOCATION:
+${resolvedLocationName || ctx.location_name || 'Use the setting described in the prompt.'}
+${resolvedZoneName ? `Zone: ${resolvedZoneName}` : ''}
+
+OUTPUT REQUIREMENTS:
+Photorealistic image. Correct named subject. Correct location. Natural candid composition. No duplicate people. No wrong character substitution. No sender-character contamination.
+`.trim();
+
+    console.log(`[recoverSingleImage] Generating image for "${charName}" with ${referenceImages.length} refs (env=${envCount} identity=${identityRefs.length})`);
 
     // ── STEP 7: GENERATE ─────────────────────────────────────────────────────
-    console.log(`[recoverSingleImage] Generating image | subject="${charName}" | env_refs=${hasEnv ? 'yes' : 'none'} | char_refs=${referenceImages.length - (hasEnv ? envSlots : 0)}`);
     const genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-      prompt: structuredPrompt,
+      prompt: finalPrompt,
       existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
     });
 
@@ -329,13 +318,36 @@ The character must be physically integrated into the scene — same lighting, sa
     await base44.asServiceRole.entities.Message.update(messageId, {
       image_url: genRes.url,
       content: cleanedContent,
+      generation_context: {
+        ...ctx,
+        recovered_at: new Date().toISOString(),
+        resolved_subject_character_id: subjectCharId,
+        resolved_subject_name: charName,
+        resolved_location_name: resolvedLocationName,
+        recovery_reference_count: referenceImages.length,
+        recovery_environment_reference_count: envCount,
+        recovery_identity_reference_count: identityRefs.length,
+        prompt_used_for_recovery: imagePrompt,
+      },
     });
 
     console.log(`[recoverSingleImage] ✓ Image recovered for message ${messageId} | subject="${charName}"`);
-    return Response.json({ success: true, image_url: genRes.url, source: forceRegenerate ? 'regenerated' : 'recovered' });
+    return Response.json({
+      success: true,
+      image_url: genRes.url,
+      source: forceRegenerate ? 'regenerated' : 'recovered',
+      subject: charName,
+      subject_character_id: subjectCharId,
+      location: resolvedLocationName,
+      reference_count: referenceImages.length,
+      environment_reference_count: envCount,
+    });
 
-  } catch (error) {
-    console.error('[recoverSingleImage]', error);
-    return Response.json({ success: false, error: error.message }, { status: 500 });
+  } catch (err) {
+    console.error('[recoverSingleImage] Fatal error:', err);
+    return Response.json({
+      success: false,
+      error: err?.message || 'recoverSingleImage failed',
+    }, { status: 500 });
   }
 });
