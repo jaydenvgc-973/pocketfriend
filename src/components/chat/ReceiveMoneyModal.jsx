@@ -28,6 +28,8 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
   const [result, setResult] = useState(null);
   const [characters, setCharacters] = useState([]);
   const [user, setUser] = useState(null);
+  const [characterBalance, setCharacterBalance] = useState(null);
+  const [loadingBalance, setLoadingBalance] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -59,9 +61,25 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
     setStep(STEP_MODE);
   };
 
-  const handleSelectMode = (selectedMode) => {
+  const handleSelectMode = async (selectedMode) => {
     setMode(selectedMode);
     setStep(STEP_DETAILS);
+    
+    // Load character balance for TAKE mode
+    if (selectedMode === 'take' && selectedCharacter) {
+      setLoadingBalance(true);
+      try {
+        const response = await base44.functions.invoke('getCharacterFinancialSummary', {
+          characterId: selectedCharacter.id,
+        });
+        setCharacterBalance(response.data?.current_balance || 0);
+      } catch (err) {
+        console.error('Failed to load character balance:', err.message);
+        setCharacterBalance(0);
+      } finally {
+        setLoadingBalance(false);
+      }
+    }
   };
 
   const handleDetailsSubmit = () => {
@@ -234,12 +252,20 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
               )}
 
               {mode === 'take' && (
-                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                  <p className="text-xs text-amber-700">
-                    This may affect trust if discovered. Character will see this as a normal transaction.
-                  </p>
-                </div>
+                <>
+                  <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                    <p className="text-xs text-blue-700 font-semibold mb-1">Available in Account</p>
+                    <p className="text-lg font-bold text-blue-600">
+                      {loadingBalance ? '...' : `$${(characterBalance || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-700">
+                      This may affect trust if discovered. Character will see this as a normal transaction.
+                    </p>
+                  </div>
+                </>
               )}
             </div>
           )}
