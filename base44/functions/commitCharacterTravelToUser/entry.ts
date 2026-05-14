@@ -83,34 +83,21 @@ Deno.serve(async (req) => {
     const userSettings = settingsArr?.[0] || {};
 
     // ── STEP 3: Resolve destination = user's current location ─────────────────
-    // Try UserSettings first, then fallback to anchor character's home
+    // CRITICAL: User location must be REAL, not guessed.
+    // If user has no current location, the character should ask where the user is.
+    // Do NOT fake a destination using anchor character homes — that creates false arrivals.
     let destLocationId = userSettings.user_current_location_id || null;
     let destLocationName = userSettings.user_current_location_name || null;
 
-    // FALLBACK: If user has no current location, check anchor character home
+    // If user has no current location, fail visibly and let character respond
     if (!destLocationId || !destLocationName) {
-      const anchorIds = userSettings.home_anchor_character_ids || [];
-      if (anchorIds.length > 0) {
-        const anchorChar = await base44.entities.Character.filter({ id: anchorIds[0] }, null, 1).then(c => c?.[0]);
-        if (anchorChar?.current_home_location_id) {
-          destLocationId = anchorChar.current_home_location_id;
-          const homeLoc = await base44.entities.LocationReference.filter({ id: destLocationId }, null, 1).then(l => l?.[0]);
-          if (homeLoc) {
-            destLocationName = homeLoc.name || 'User anchor location';
-            console.log(`[commitCharacterTravelToUser] User location unknown — fell back to anchor character's home: "${destLocationName}"`);
-          }
-        }
-      }
-    }
-
-    // If still no destination, fail visibly
-    if (!destLocationId || !destLocationName) {
-      console.warn(`[commitCharacterTravelToUser] Cannot commit travel: user location unknown AND no anchor character home available. Character "${character.name}" said they're coming but we cannot resolve where.`);
+      console.warn(`[commitCharacterTravelToUser] Cannot commit travel: user location unknown. Character "${character.name}" promised to come but user is not at a known location. Character should ask where the user is.`);
       return Response.json({
         success: false,
         error: 'Cannot resolve travel destination',
-        reason: 'user_location_unknown_no_fallback',
-        details: 'User must be present at a location or have an anchor character with a home',
+        reason: 'user_location_unknown',
+        details: 'User must be present at a location. Character should ask where you are.',
+        recoveryAction: 'character_asks_location',
       }, { status: 400 });
     }
 

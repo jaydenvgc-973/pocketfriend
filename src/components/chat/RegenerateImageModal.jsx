@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, AlertTriangle, UserX, ThumbsDown, Loader2, PenLine, MapPin, Users, Check, RefreshCw } from "lucide-react";
+import { X, AlertTriangle, UserX, ThumbsDown, Loader2, PenLine, MapPin, Users, Check, RefreshCw, AlertCircle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import { readCache, writeCache, isCacheStale, validateCharacterRoster } from "@/lib/mediaGridCache";
 import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import { lfcRead } from "@/lib/localFirstCache.js";
+import { validateZoneImages } from "@/lib/imageFormatValidator";
 
 const REASONS = [
   {
@@ -547,17 +548,32 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                         >
                           Any zone (auto-detect)
                         </button>
-                        {selectedLocation.zones.filter(z => z.image_urls?.length > 0).map(zone => (
-                          <button
-                            key={zone.zone_name}
-                            onClick={() => setSelectedZone(zone)}
-                            className={`w-full text-left px-3 py-2 rounded-xl border transition-all text-sm ${
-                              selectedZone?.zone_name === zone.zone_name ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
-                            }`}
-                          >
-                            {zone.zone_name}
-                          </button>
-                        ))}
+                        {selectedLocation.zones.filter(z => z.image_urls?.length > 0).map(zone => {
+                          const validation = validateZoneImages(zone);
+                          const hasIssue = validation.diagnostic !== null;
+                          return (
+                            <div key={zone.zone_name} className="space-y-1">
+                              <button
+                                onClick={() => setSelectedZone(zone)}
+                                className={`w-full text-left px-3 py-2 rounded-xl border transition-all text-sm ${
+                                  selectedZone?.zone_name === zone.zone_name ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
+                                }`}
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <span>{zone.zone_name}</span>
+                                  {hasIssue && <AlertCircle className="w-3 h-3 text-amber-400" />}
+                                </div>
+                              </button>
+                              {hasIssue && (
+                                <div className="ml-3 px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-400">
+                                  <p className="font-medium">⚠️ Unsupported image format</p>
+                                  <p className="text-amber-400/70">{validation.diagnostic.message}</p>
+                                  <p className="text-amber-400/60 mt-0.5">Has {validation.supported.length} supported photo(s) available</p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </>
                   ) : (

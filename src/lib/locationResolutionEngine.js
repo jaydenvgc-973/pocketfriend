@@ -16,6 +16,7 @@
 import { isLocationOpen } from '@/lib/locationHoursUtils';
 import { resolveHousingLocationForCharacter } from '@/lib/resolveHousingLocationForCharacter';
 import { isCharacterAsleep as isCharacterAsleepFromUtils } from '@/lib/sleepUtils';
+import { detectUnsupportedFormat } from '@/lib/imageFormatValidator';
 
 /**
  * Main resolution function: determine ONE true current location for a character
@@ -777,6 +778,23 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
   const locName = (locId && locationMap[locId]?.name) || character.resolved_current_location_name;
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  // ── IMAGE MODE: Check for unsupported zone image formats ──────────────────────
+  // If zone has ONLY AVIF/HEIC (no fallback JPEGs), log diagnostic but do NOT fail silently.
+  if (imageMode && locId) {
+    const location = locationMap[locId];
+    if (location?.zones && Array.isArray(location.zones)) {
+      const zone = location.zones.find(z => z.image_urls?.length > 0);
+      if (zone?.image_urls) {
+        const unsupportedCount = zone.image_urls.filter(url => detectUnsupportedFormat(url)).length;
+        const totalCount = zone.image_urls.length;
+        if (unsupportedCount === totalCount && totalCount > 0) {
+          // All images are unsupported formats — diagnostic notice
+          console.warn(`[buildLiveLocationContext] Zone "${zone.zone_name}" at "${locName}" has ONLY unsupported formats (${totalCount}x ${zone.image_urls.map(u => detectUnsupportedFormat(u)).filter(Boolean).join('/')}).\n  Recovery: Admin should re-upload with JPEG/PNG, or use fallback location images.`);
+        }
+      }
+    }
+  }
 
   // ── RABBIT HOLE ───────────────────────────────────────────────────────────
   if (presence === 'rabbit_hole' || character.is_rabbit_hole === true) {
