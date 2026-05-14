@@ -4,7 +4,9 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    let { characterId, conversationId, userMessage, characterReply, playingAsCharacterId, witnessCharacterIds } = await req.json();
+    let { characterId, conversationId, userMessage, characterReply, characterResponse, playingAsCharacterId, witnessCharacterIds } = await req.json();
+    // Normalize: accept both characterReply (Scene) and characterResponse (Chat background tasks) field names
+    characterReply = characterReply || characterResponse || '';
 
     if (!characterId) {
       return Response.json({ error: 'characterId required' }, { status: 400 });
@@ -29,10 +31,12 @@ Deno.serve(async (req) => {
       }
     }
 
+    // LEGACY COMPATIBILITY: filter by id only — owner_email may be missing on legacy characters.
+    // RLS enforces scope server-side. owner_email filter would hide valid legacy records.
     const [targetChar, playingAsChar] = await Promise.all([
-      base44.entities.Character.filter({ id: characterId, owner_email: user.email }).then(r => r[0]),
+      base44.entities.Character.filter({ id: characterId }).then(r => r[0]),
       playingAsCharacterId
-        ? base44.entities.Character.filter({ id: playingAsCharacterId, owner_email: user.email }).then(r => r[0])
+        ? base44.entities.Character.filter({ id: playingAsCharacterId }).then(r => r[0])
         : Promise.resolve(null),
     ]);
 
@@ -71,16 +75,25 @@ Extract any NEW people names mentioned (not yet in your world) from the exchange
         ? `${playingAsChar.name} said: "${userMessage}". I responded: "${characterReply.substring(0, 200)}"`
         : `They said: "${userMessage}". I responded: "${characterReply.substring(0, 200)}"`;
 
-      await base44.entities.Memory.create({
-        character_id: characterId,
-        title: playingAsChar ? `Interaction with ${playingAsChar.name}` : `Conversation moment`,
-        description: targetMemDesc,
-        emotional_impact: 'neutral',
-        timestamp: new Date().toISOString(),
-        source_context: conversationId
-          ? (playingAsChar ? `play_as_${conversationId}_sender_${playingAsCharacterId}` : `conversation_${conversationId}`)
-          : 'scene_interaction',
-      });
+      // DUPLICATE PREVENTION: only write if no memory with same source_context already exists
+      const targetSourceCtx = conversationId
+        ? (playingAsChar ? `play_as_${conversationId}_sender_${playingAsCharacterId}` : `conversation_${conversationId}`)
+        : 'scene_interaction';
+      const recentTargetMems = conversationId
+        ? await base44.entities.Memory.filter({ character_id: characterId, source_context: targetSourceCtx }, '-created_date', 5).catch(() => [])
+        : [];
+      const targetMemExists = recentTargetMems.length > 0 &&
+        (Date.now() - new Date(recentTargetMems[0].created_date || recentTargetMems[0].timestamp || 0).getTime()) < 30000;
+      if (!targetMemExists) {
+        await base44.entities.Memory.create({
+          character_id: characterId,
+          title: playingAsChar ? `Interaction with ${playingAsChar.name}` : `Conversation moment`,
+          description: targetMemDesc,
+          emotional_impact: 'neutral',
+          timestamp: new Date().toISOString(),
+          source_context: targetSourceCtx,
+        });
+      }
 
       // If being addressed by a known active character, update the target's last_interaction_summary for that relationship
       if (playingAsChar) {

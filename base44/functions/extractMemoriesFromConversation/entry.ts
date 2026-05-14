@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.21';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
   try {
@@ -14,10 +14,9 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'conversationId is required' }, { status: 400 });
     }
 
-    // Fetch the conversation
-    const conversation = await base44.entities.Conversation.get ? 
-      null : await base44.entities.Conversation.filter({ id: conversationId }, '-created_date', 1);
-    const convo = Array.isArray(conversation) ? conversation[0] : conversation;
+    // Fetch the conversation — filter by id only (RLS enforces ownership)
+    const convos = await base44.entities.Conversation.filter({ id: conversationId }, '-created_date', 1);
+    const convo = Array.isArray(convos) ? convos[0] : null;
     
     if (!convo) {
       return Response.json({ error: 'Conversation not found' }, { status: 404 });
@@ -82,6 +81,19 @@ Return ONLY a valid JSON array with objects containing: title, description, emot
     const createdMemories = [];
     if (response.memories && Array.isArray(response.memories)) {
       for (const memData of response.memories) {
+        // DUPLICATE PREVENTION: check for existing memory with same source_context + title
+        const existingCheck = await base44.entities.Memory.filter(
+          { character_id: characterId, source_context: conversationId },
+          '-created_date',
+          50
+        );
+        const alreadyExists = existingCheck.some(m =>
+          m.title?.toLowerCase().trim() === memData.title?.toLowerCase().trim()
+        );
+        if (alreadyExists) {
+          console.log(`[extractMemoriesFromConversation] SKIP duplicate memory: "${memData.title}" for char=${characterId}`);
+          continue;
+        }
         const memory = await base44.entities.Memory.create({
           character_id: characterId,
           title: memData.title,

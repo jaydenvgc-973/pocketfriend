@@ -226,8 +226,10 @@ export function gate(characterId, fnName, opts = {}) {
     return false;
   }
 
-  // 1a. Foreground priority check — yield to active user task unless hardTransition
-  if (!hardTransition && !opts.allowInForeground && isForegroundActive()) {
+  // 1a. Foreground priority check — yield to active user task unless hardTransition or explicitly allowed
+  // allowInForeground is used by essential tasks (memoryExtract, activityUpdate) that must run even
+  // while the user is actively chatting — they are triggered BY the foreground action, not competing with it.
+  if (!hardTransition && opts.allowInForeground !== true && isForegroundActive()) {
     console.log(`[SimGate] YIELD ${fnName}(${characterId}) — foreground user task active`);
     return false;
   }

@@ -39,8 +39,15 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'One or both characters not found' }, { status: 404 });
     }
 
-    // Ownership check — both must belong to current user
-    if (sender.owner_email !== user.email || receiver.owner_email !== user.email) {
+    // LEGACY COMPATIBILITY OWNERSHIP CHECK:
+    // Legacy characters may not have owner_email set (created before that field was required).
+    // RLS already enforces scope at the DB layer — only allow the check to block when
+    // owner_email is explicitly set to a DIFFERENT user's email.
+    // Missing owner_email = legacy record = allowed (do not block).
+    const senderEmailMismatch = sender.owner_email && sender.owner_email !== user.email;
+    const receiverEmailMismatch = receiver.owner_email && receiver.owner_email !== user.email;
+    if (senderEmailMismatch || receiverEmailMismatch) {
+      console.warn(`[syncWorldPhoneMemory] Ownership warning — sender=${sender.owner_email || 'unset'} receiver=${receiver.owner_email || 'unset'} user=${user.email}`);
       return Response.json({ error: 'Ownership violation: characters must belong to current user' }, { status: 403 });
     }
 

@@ -26,6 +26,14 @@ const STALE_THRESHOLDS = {
   messages:         2 * 60 * 1000,
   communityEvents: 10 * 60 * 1000,
   roster:          10 * 60 * 1000,
+  achievements:    10 * 60 * 1000,
+  moments:         10 * 60 * 1000,
+  unread:           2 * 60 * 1000,
+  worldContacts:    5 * 60 * 1000,
+  scenes:          15 * 60 * 1000,
+  closet:          15 * 60 * 1000,
+  relationships:   10 * 60 * 1000,
+  profiles:        10 * 60 * 1000,
   generic:          5 * 60 * 1000,
 };
 
@@ -170,6 +178,30 @@ export async function lfcFetch({
 function defaultValidator(data) {
   if (Array.isArray(data)) return data.length > 0;
   return data !== null && data !== undefined;
+}
+
+/**
+ * LAST-KNOWN-GOOD PROTECTION: Read with floor guard.
+ *
+ * Same as lfcRead() but with an extra check: if the cached data is an array
+ * and its length is LESS than floorCount, reject it (treat as stale/partial).
+ * This prevents a partial server refresh from replacing a larger known-good cache.
+ *
+ * Use when you know "at minimum X records should exist" (e.g. character roster).
+ *
+ * @param {string} ownerEmail
+ * @param {string} namespace
+ * @param {number} floorCount - minimum valid array length (default 1)
+ * @returns {{ data: any, loaded_at: number } | null}
+ */
+export function lfcReadWithFloor(ownerEmail, namespace, floorCount = 1) {
+  const cached = lfcRead(ownerEmail, namespace);
+  if (!cached) return null;
+  if (Array.isArray(cached.data) && cached.data.length < floorCount) {
+    console.warn(`[LFC] lfcReadWithFloor: FLOOR GUARD — cached ${namespace} has ${cached.data.length} items (floor=${floorCount}), rejecting partial cache`);
+    return null;
+  }
+  return cached;
 }
 
 /**

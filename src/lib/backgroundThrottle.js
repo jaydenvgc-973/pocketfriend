@@ -128,6 +128,40 @@ export function markScheduleEnforcementFired(characterId) {
   markCooldown(`schedule:${characterId}`);
 }
 
+// ── World Contacts refresh cooldown ────────────────────────────────────────
+// Prevents WorldContactsPopup from re-fetching on every open event.
+const WORLD_CONTACTS_COOLDOWN_MS = 2 * 60 * 1000; // 2 min
+
+export function canRefreshWorldContacts(characterId) {
+  return !isOnCooldown(`worldContacts:${characterId}`, WORLD_CONTACTS_COOLDOWN_MS);
+}
+
+export function markWorldContactsRefreshed(characterId) {
+  markCooldown(`worldContacts:${characterId}`);
+}
+
+// ── Achievement refresh cooldown ────────────────────────────────────────────
+const ACHIEVEMENT_COOLDOWN_MS = 5 * 60 * 1000; // 5 min
+
+export function canRefreshAchievements(ownerEmail) {
+  return !isOnCooldown(`achievements:${ownerEmail}`, ACHIEVEMENT_COOLDOWN_MS);
+}
+
+export function markAchievementsRefreshed(ownerEmail) {
+  markCooldown(`achievements:${ownerEmail}`);
+}
+
+// ── Autonomous narrative cooldown ────────────────────────────────────────────
+const AUTO_NARRATIVE_COOLDOWN_MS = 5 * 60 * 1000; // 5 min
+
+export function canFireAutoNarrative(characterId) {
+  return !isOnCooldown(`autoNarrative:${characterId}`, AUTO_NARRATIVE_COOLDOWN_MS);
+}
+
+export function markAutoNarrativeFired(characterId) {
+  markCooldown(`autoNarrative:${characterId}`);
+}
+
 // ── Diagnostics ──────────────────────────────────────────────────────────────
 export function debugBackgroundThrottle() {
   const now = Date.now();
