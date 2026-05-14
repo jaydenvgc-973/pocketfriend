@@ -1625,7 +1625,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
             <p className="text-[10px] text-muted-foreground/50">Background tasks paused for 45s to prioritize chat</p>
           )}
         </div>
-      ) : isLoadingConvo ? (
+      ) : (isLoadingConvo && messages.length === 0) ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="w-6 h-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
         </div>

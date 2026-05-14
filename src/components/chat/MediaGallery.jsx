@@ -86,6 +86,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   // 'loading' | 'cache' | 'fresh' | 'user_only' | 'empty_warned' | 'error'
   const [charsLoadStatus, setCharsLoadStatus] = useState('loading');
   const [locsLoadStatus, setLocsLoadStatus] = useState('loading');
+  // Diagnostics for the character dropdown failure panel
+  const [charsDiagnostics, setCharsDiagnostics] = useState(null);
 
   // Get current user's email — resolved once on mount, not gated on isOpen
   const [userEmail, setUserEmail] = useState(null);
@@ -187,31 +189,64 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         fetchUnifiedRoster(base44, email)
           .then(roster => {
             const validation = validateCharacterRoster(roster);
+            const serverCount = Array.isArray(roster) ? roster.length : 0;
+            const nowStr = new Date().toISOString();
             if (validation.valid) {
               setAllCharacters(roster);
               writeCache(email, 'characters', roster);
               setCharsLoadStatus('fresh');
+              setCharsDiagnostics({
+                owner_email: email, cache_key: `mg_cache:${email}:characters`,
+                cached_roster_count: cachedChars?.records?.length ?? 0,
+                server_roster_count: serverCount,
+                chat_char_available: !!character?.id,
+                final_dropdown_count: roster.length,
+                fallback_source: 'server',
+                last_successful_load: nowStr,
+              });
             } else if (validation.reason === 'user_only') {
-              // Server returned only the user entity — suspicious partial result.
-              // Keep existing cache if available; surface a visible warning.
-              if (!cachedChars) {
-                // No prior cache — show the user-only list so the UI isn't blank,
-                // but flag that it may be incomplete.
-                setAllCharacters(roster);
-              }
+              if (!cachedChars) setAllCharacters(roster);
               setCharsLoadStatus('user_only');
+              setCharsDiagnostics({
+                owner_email: email, cache_key: `mg_cache:${email}:characters`,
+                cached_roster_count: cachedChars?.records?.length ?? 0,
+                server_roster_count: serverCount,
+                chat_char_available: !!character?.id,
+                final_dropdown_count: cachedChars?.records?.length ?? serverCount,
+                fallback_source: cachedChars ? 'mg_cache' : 'server_user_only',
+                last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : null,
+                warning: 'server_returned_user_only',
+              });
               console.warn('[MediaGallery] Character roster returned user-only — may be incomplete. Not overwriting cache.');
             } else {
-              // Empty result and no prior cache → visible error state
               if (!cachedChars) setCharsLoadStatus('error');
-              else setCharsLoadStatus('cache'); // Keep showing cache, no update needed
+              else setCharsLoadStatus('cache');
+              setCharsDiagnostics({
+                owner_email: email, cache_key: `mg_cache:${email}:characters`,
+                cached_roster_count: cachedChars?.records?.length ?? 0,
+                server_roster_count: 0,
+                chat_char_available: !!character?.id,
+                final_dropdown_count: cachedChars?.records?.length ?? 0,
+                fallback_source: cachedChars ? 'mg_cache' : 'none',
+                last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : null,
+                warning: 'server_returned_empty',
+              });
               console.warn('[MediaGallery] Character roster returned empty — preserving existing cache.');
             }
           })
           .catch(err => {
             console.error('[MediaGallery] Character roster fetch failed:', err?.message);
-            // If we have cache, keep showing it; otherwise surface error
             setCharsLoadStatus(cachedChars ? 'cache' : 'error');
+            setCharsDiagnostics({
+              owner_email: email, cache_key: `mg_cache:${email}:characters`,
+              cached_roster_count: cachedChars?.records?.length ?? 0,
+              server_roster_count: null,
+              chat_char_available: !!character?.id,
+              final_dropdown_count: cachedChars?.records?.length ?? 0,
+              fallback_source: cachedChars ? 'mg_cache' : 'none',
+              last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : null,
+              error: err?.message,
+            });
           })
       );
     } else {
@@ -911,6 +946,23 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                           <p className="font-medium">Character list failed to load.</p>
                           <p className="text-destructive/70">Both cache and server returned no data. This is a load failure, not an empty account.</p>
                           <button onClick={handleDropdownRetry} className="mt-1 px-3 py-1 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive font-medium transition-colors">Retry</button>
+                          {charsDiagnostics && (
+                            <details className="mt-2">
+                              <summary className="cursor-pointer text-[10px] text-destructive/60 hover:text-destructive/80">Show diagnostics</summary>
+                              <div className="mt-1.5 space-y-0.5 font-mono text-[9px] text-destructive/70 bg-destructive/5 rounded-lg p-2">
+                                <p>owner_email: {charsDiagnostics.owner_email ?? '—'}</p>
+                                <p>cache_key: {charsDiagnostics.cache_key ?? '—'}</p>
+                                <p>cached_roster_count: {charsDiagnostics.cached_roster_count ?? 0}</p>
+                                <p>server_roster_count: {charsDiagnostics.server_roster_count ?? 'failed'}</p>
+                                <p>chat_char_available: {String(charsDiagnostics.chat_char_available)}</p>
+                                <p>final_dropdown_count: {charsDiagnostics.final_dropdown_count ?? 0}</p>
+                                <p>fallback_source: {charsDiagnostics.fallback_source ?? 'none'}</p>
+                                <p>last_successful_load: {charsDiagnostics.last_successful_load ?? 'never'}</p>
+                                {charsDiagnostics.error && <p>error: {charsDiagnostics.error}</p>}
+                                {charsDiagnostics.warning && <p>warning: {charsDiagnostics.warning}</p>}
+                              </div>
+                            </details>
+                          )}
                         </div>
                       )}
                       {showCharacterPicker && charsLoadStatus === 'user_only' && (

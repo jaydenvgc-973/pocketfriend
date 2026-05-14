@@ -6,6 +6,7 @@ import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import { readCache, writeCache, isCacheStale, validateCharacterRoster } from "@/lib/mediaGridCache";
 import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
+import { lfcRead } from "@/lib/localFirstCache.js";
 
 const REASONS = [
   {
@@ -70,6 +71,8 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const [userEmail, setUserEmail] = useState(null);
   // Ref so openSubjectPicker always has the email even if state hasn't propagated yet
   const userEmailRef = useRef(null);
+  // Diagnostics for the failure panel
+  const [rosterDiagnostics, setRosterDiagnostics] = useState(null);
 
   useEffect(() => {
     base44.auth.me().then(u => {
@@ -91,6 +94,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       setShowSubjectPicker(false);
       setSelectedSubjectIds([]);
       setRosterRepairDiagnostics([]);
+      setRosterDiagnostics(null);
     }
   }, [isOpen]);
 
@@ -130,29 +134,48 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   // Uses last-known-good cache from mediaGridCache — same rules as Media Grid Image Generator.
   const openSubjectPicker = () => {
     setShowSubjectPicker(true);
+    setRosterDiagnostics(null);
 
     // Use the ref so email is guaranteed available even if state hasn't updated yet
     const email = userEmailRef.current || userEmail;
 
-    // ── STEP 1: Show cache immediately ──────────────────────────────────────
-    const cached = email ? readCache(email, 'characters') : null;
-    if (cached) {
-      setAllCharacters(cached.records);
+    // ── STEP 1a: Show mediaGridCache immediately ─────────────────────────────
+    const mgCached = email ? readCache(email, 'characters') : null;
+    // ── STEP 1b: Fallback to localFirstCache if mediaGridCache is empty ──────
+    const lfCached = (!mgCached && email) ? lfcRead(email, 'characters') : null;
+    const lfCachedRecords = lfCached?.data && Array.isArray(lfCached.data) && lfCached.data.length > 0 ? lfCached.data : null;
+
+    const cached = mgCached; // primary source for cache freshness check
+    const seedRecords = mgCached?.records ?? lfCachedRecords;
+    const seedSource = mgCached ? 'mg_cache' : lfCachedRecords ? 'lfc_cache' : null;
+
+    if (seedRecords) {
+      setAllCharacters(seedRecords);
       setRosterLoadStatus('cache');
-      applyPreSelection(cached.records);
-      // If cache is fresh, no server fetch needed
-      if (!isCacheStale(cached)) return;
+      applyPreSelection(seedRecords);
+      console.log(`[RegenerateModal] Seeded roster from ${seedSource} — ${seedRecords.length} entries`);
+      // If mgCache is fresh, no server fetch needed
+      if (mgCached && !isCacheStale(mgCached)) {
+        setRosterDiagnostics({
+          email, cacheKey: `mg_cache:${email}:characters`,
+          cachedCount: seedRecords.length, serverCount: null,
+          chatCharAvailable: !!(generationContext?.character_id),
+          finalCount: seedRecords.length, fallbackSource: seedSource,
+          lastLoad: new Date(mgCached.loaded_at).toISOString(),
+        });
+        return;
+      }
     }
 
     // ── STEP 2: Fetch from server ────────────────────────────────────────────
     if (!email) {
-      // Email not yet resolved — show error rather than silently showing only user
       setRosterLoadStatus('error');
+      setRosterDiagnostics({ email: null, error: 'email_not_resolved' });
       return;
     }
 
-    setLoadingCharacters(cached ? false : true); // Only show spinner if no cache to show
-    setRosterLoadStatus(cached ? 'cache' : 'loading');
+    setLoadingCharacters(seedRecords ? false : true);
+    setRosterLoadStatus(seedRecords ? 'cache' : 'loading');
 
     // Register foreground task — background systems yield while user is picking subjects
     const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'high');
@@ -164,23 +187,56 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
           console.warn('[RegenerateModal] Roster unresolved people (needs_review):', repairDiagnostics);
         }
         const validation = validateCharacterRoster(roster);
+        const serverCount = Array.isArray(roster) ? roster.length : 0;
+
         if (validation.valid) {
           setAllCharacters(roster);
           writeCache(email, 'characters', roster);
           setRosterLoadStatus('fresh');
           applyPreSelection(roster);
+          setRosterDiagnostics({
+            email, cacheKey: `mg_cache:${email}:characters`,
+            cachedCount: seedRecords?.length ?? 0, serverCount,
+            chatCharAvailable: !!(generationContext?.character_id),
+            finalCount: roster.length, fallbackSource: 'server',
+            lastLoad: new Date().toISOString(),
+          });
         } else if (validation.reason === 'user_only') {
-          if (!cached) setAllCharacters(roster || []);
+          if (!seedRecords) setAllCharacters(roster || []);
           setRosterLoadStatus('user_only');
+          setRosterDiagnostics({
+            email, cacheKey: `mg_cache:${email}:characters`,
+            cachedCount: seedRecords?.length ?? 0, serverCount,
+            chatCharAvailable: !!(generationContext?.character_id),
+            finalCount: seedRecords?.length ?? serverCount, fallbackSource: seedSource || 'server_user_only',
+            lastLoad: new Date().toISOString(), warning: 'server_returned_user_only',
+          });
           console.warn('[RegenerateModal] Roster returned user-only — may be incomplete. Cache preserved.');
         } else {
-          setRosterLoadStatus(cached ? 'cache' : 'error');
+          // Server returned empty — keep seed if available, surface error if not
+          setRosterLoadStatus(seedRecords ? 'cache' : 'error');
+          setRosterDiagnostics({
+            email, cacheKey: `mg_cache:${email}:characters`,
+            cachedCount: seedRecords?.length ?? 0, serverCount: 0,
+            chatCharAvailable: !!(generationContext?.character_id),
+            finalCount: seedRecords?.length ?? 0, fallbackSource: seedSource || 'none',
+            lastLoad: cached?.loaded_at ? new Date(cached.loaded_at).toISOString() : null,
+            warning: 'server_returned_empty',
+          });
           console.warn('[RegenerateModal] Roster returned empty — preserving cache if available.');
         }
       })
       .catch(err => {
         console.error('[RegenerateModal] fetchUnifiedRoster failed:', err?.message);
-        setRosterLoadStatus(cached ? 'cache' : 'error');
+        setRosterLoadStatus(seedRecords ? 'cache' : 'error');
+        setRosterDiagnostics({
+          email, cacheKey: `mg_cache:${email}:characters`,
+          cachedCount: seedRecords?.length ?? 0, serverCount: null,
+          chatCharAvailable: !!(generationContext?.character_id),
+          finalCount: seedRecords?.length ?? 0, fallbackSource: seedSource || 'none',
+          lastLoad: cached?.loaded_at ? new Date(cached.loaded_at).toISOString() : null,
+          error: err?.message,
+        });
       })
       .finally(() => {
         setLoadingCharacters(false);
@@ -324,6 +380,23 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                   <button onClick={handleRosterRetry} className="mt-1 flex items-center gap-1.5 px-3 py-1 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive font-medium transition-colors">
                     <RefreshCw className="w-3 h-3" /> Retry
                   </button>
+                  {rosterDiagnostics && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-[10px] text-destructive/60 hover:text-destructive/80">Show diagnostics</summary>
+                      <div className="mt-1.5 space-y-0.5 font-mono text-[9px] text-destructive/70 bg-destructive/5 rounded-lg p-2">
+                        <p>owner_email: {rosterDiagnostics.email ?? '—'}</p>
+                        <p>cache_key: {rosterDiagnostics.cacheKey ?? '—'}</p>
+                        <p>cached_roster_count: {rosterDiagnostics.cachedCount ?? 0}</p>
+                        <p>server_roster_count: {rosterDiagnostics.serverCount ?? 'failed'}</p>
+                        <p>chat_char_available: {String(rosterDiagnostics.chatCharAvailable)}</p>
+                        <p>final_dropdown_count: {rosterDiagnostics.finalCount ?? 0}</p>
+                        <p>fallback_source: {rosterDiagnostics.fallbackSource ?? 'none'}</p>
+                        <p>last_successful_load: {rosterDiagnostics.lastLoad ?? 'never'}</p>
+                        {rosterDiagnostics.error && <p>error: {rosterDiagnostics.error}</p>}
+                        {rosterDiagnostics.warning && <p>warning: {rosterDiagnostics.warning}</p>}
+                      </div>
+                    </details>
+                  )}
                 </div>
               ) : (
                 <>
