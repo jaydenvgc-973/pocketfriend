@@ -2,6 +2,25 @@ import { useEffect, useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { activateChatSafeMode, escalateChatRetry, resetChatRetry } from "@/lib/simulationGate";
+import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
+
+// Persist recent messages per conversation (last 50) to localStorage.
+// Key: 'chat_msgs:{characterId}' scoped by owner_email.
+function readCachedMessages(ownerEmail, characterId) {
+  try {
+    const lfc = lfcRead(ownerEmail, `chat_msgs:${characterId}`);
+    return lfc?.data ?? null;
+  } catch { return null; }
+}
+
+function writeCachedMessages(ownerEmail, characterId, msgs) {
+  if (!ownerEmail || !characterId || !Array.isArray(msgs) || msgs.length === 0) return;
+  // Only store the 50 most recent messages to keep localStorage usage bounded
+  const recent = [...msgs].sort((a, b) =>
+    new Date(b.created_date || b.timestamp || 0) - new Date(a.created_date || a.timestamp || 0)
+  ).slice(0, 50).reverse(); // oldest first for correct render order
+  lfcWrite(ownerEmail, `chat_msgs:${characterId}`, recent);
+}
 
 /**
  * useChatLoadConvo
@@ -84,6 +103,15 @@ export function useChatLoadConvo({
       setIsLoadingConvo(true);
       const t0 = Date.now();
       console.log(`[CHAT_LOAD] loadConvo START charId=${characterId} chatType=${chatType} t=${t0}`);
+
+      // ── INSTANT CACHE SEED: show cached messages immediately, before any server call ──
+      // This makes chat feel instant on re-open. Server will refresh in the background.
+      const cachedMsgs = readCachedMessages(currentUser.email, characterId);
+      if (cachedMsgs && cachedMsgs.length > 0) {
+        setMessages(cachedMsgs);
+        hasShownMessagesRef.current = true;
+        console.log(`[CHAT_LOAD] Seeded ${cachedMsgs.length} cached messages for instant render`);
+      }
 
       // PART 3 FIX: Proactively activate chat-safe mode on every chat load.
       // Background simulations, presence checks, and scheduled tasks fire on a shared
@@ -208,6 +236,8 @@ export function useChatLoadConvo({
             hasShownMessagesRef.current = true;
             // Clear any lingering soft error once messages load successfully
             setConvoLoadError(null);
+            // Persist to localStorage for instant display on next open
+            writeCachedMessages(currentUser.email, characterId, sorted);
 
             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
             if (unread.length > 0) {

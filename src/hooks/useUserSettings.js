@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
 
 async function fetchAndConsolidate(userEmail) {
   if (!userEmail) return null;
@@ -41,12 +42,30 @@ export function useUserSettings() {
 
   const { data: settings = null, isLoading, isError } = useQuery({
     queryKey,
-    queryFn: () => fetchAndConsolidate(user?.email),
-    staleTime: 5 * 60 * 1000,    // 5 min — settings are stable; mutation invalidates on explicit save
-    refetchOnWindowFocus: false,  // Prevents refetch storm on tab switch
+    // Serve from localStorage immediately — zero wait on mount
+    initialData: () => {
+      if (!user?.email) return undefined;
+      const lfc = lfcRead(user.email, 'settings');
+      return lfc?.data ?? undefined;
+    },
+    initialDataUpdatedAt: () => {
+      if (!user?.email) return undefined;
+      const lfc = lfcRead(user.email, 'settings');
+      return lfc?.loaded_at ?? undefined;
+    },
+    queryFn: async () => {
+      const result = await fetchAndConsolidate(user?.email);
+      // Persist to localStorage on every successful fetch
+      if (result && user?.email) lfcWrite(user.email, 'settings', result);
+      return result;
+    },
+    staleTime: 10 * 60 * 1000,   // 10 min — settings are stable
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
     enabled: !!user?.email,
     retry: 2,
-    retryDelay: (attempt) => attempt * 1500, // 1.5s, 3s — back off on 429s
+    retryDelay: (attempt) => attempt * 1500,
+    placeholderData: (prev) => prev,
   });
 
   const mutation = useMutation({
@@ -65,7 +84,11 @@ export function useUserSettings() {
       }
       return base44.entities.UserSettings.create(data);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onSuccess: (saved) => {
+      // Persist the updated settings to localStorage immediately
+      if (saved && user?.email) lfcWrite(user.email, 'settings', saved);
+      queryClient.invalidateQueries({ queryKey });
+    },
   });
 
   return {

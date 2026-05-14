@@ -22,6 +22,7 @@ import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacte
 import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { usePageContext } from "@/hooks/usePageContext";
+import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -59,17 +60,31 @@ export default function Home() {
   // never shows an empty list from a stale cache when real locations exist.
   const { data: locationsData = [], isLoading: isLocationsLoading, isError: isLocationsError } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
+    // Serve from localStorage immediately — prevents empty dropdown flash on mount
+    initialData: () => {
+      if (!currentUser?.email) return undefined;
+      const lfc = lfcRead(currentUser.email, 'locations');
+      return lfc?.data?.length > 0 ? lfc.data : undefined;
+    },
+    initialDataUpdatedAt: () => {
+      if (!currentUser?.email) return undefined;
+      const lfc = lfcRead(currentUser.email, 'locations');
+      return lfc?.loaded_at ?? undefined;
+    },
     queryFn: async () => {
       const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
       if (!res?.data?.success) throw new Error(res?.data?.error || 'fetchAllLocationsForUser failed');
-      return res?.data?.locations || [];
+      const locs = res?.data?.locations || [];
+      // Persist to localStorage for instant next-load
+      if (locs.length > 0 && currentUser?.email) lfcWrite(currentUser.email, 'locations', locs);
+      return locs;
     },
     enabled: !!currentUser?.email,
-    staleTime: 5 * 60 * 1000,   // 5 min — location data is stable; only changes when user edits locations
-    gcTime: 10 * 60 * 1000,
-    refetchOnMount: false,       // cache is sufficient on re-mount; avoids duplicate calls on navigation
+    staleTime: 10 * 60 * 1000,  // 10 min — location data is very stable
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: false,   // reconnect does not change location data
+    refetchOnReconnect: false,
     retry: 2,
     retryDelay: (attempt) => attempt * 2000,
     placeholderData: (prev) => prev,

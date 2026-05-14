@@ -22,6 +22,8 @@
 const STALE_MS = 10 * 60 * 1000; // 10 minutes
 
 function cacheKey(email, type) {
+  // Use lfc namespace to unify with localFirstCache where possible,
+  // but keep mg_cache prefix for backward compat with existing cached data.
   return `mg_cache:${email}:${type}`;
 }
 

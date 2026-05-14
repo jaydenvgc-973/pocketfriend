@@ -67,6 +67,7 @@ import { useChatLocationShare } from "@/hooks/useChatLocationShare";
 import { useChatBackgroundTasks } from "@/hooks/useChatBackgroundTasks.js";
 import { usePageContext } from "@/hooks/usePageContext";
 import { isGloballyRateLimited, reportRateLimit, activateChatSafeMode, isChatSafeModeActive } from "@/lib/simulationGate";
+import { lfcRead as lfcReadChat } from "@/lib/localFirstCache.js";
 import { resolveCoPresence } from "@/lib/coPresenceResolver";
 import LocationShareTool from "@/components/chat/LocationShareTool";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
@@ -163,6 +164,28 @@ export default function Chat() {
   });
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
+    // Fast seed from localStorage — zero wait, no spinner flash
+    initialData: () => {
+      if (!characterId || !currentUser?.email) return undefined;
+      // Check React Query cache first
+      const rqCache = queryClient.getQueryData(["characters", currentUser.email]);
+      if (Array.isArray(rqCache)) {
+        const found = rqCache.find(c => c.id === characterId);
+        if (found) return found;
+      }
+      // Check localStorage fallback
+      const lfc = lfcReadChat(currentUser.email, 'characters');
+      if (lfc?.data) {
+        const found = lfc.data.find(c => c.id === characterId);
+        if (found) return found;
+      }
+      return undefined;
+    },
+    initialDataUpdatedAt: () => {
+      if (!currentUser?.email) return undefined;
+      const lfc = lfcReadChat(currentUser.email, 'characters');
+      return lfc?.loaded_at ?? undefined;
+    },
     queryFn: async () => {
       if (!characterId || !currentUser?.email) return null;
       const cachedAll = queryClient.getQueryData(["characters", currentUser.email]);

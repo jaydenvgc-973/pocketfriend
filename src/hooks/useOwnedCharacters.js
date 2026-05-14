@@ -59,6 +59,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
+import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
 
 const BOOTSTRAP_COOLDOWN_MS = 8 * 60 * 1000; // 8 minutes
 const MIN_AUTHORITATIVE_COUNT = 2; // A single record is never authoritative for a multi-char account
@@ -160,6 +161,18 @@ export function useOwnedCharacters(
     refetch: refetchRls,
   } = useQuery({
     queryKey: ["characters", email],
+    // Seed React Query cache from localStorage before first server call.
+    // This ensures the UI renders immediately on mount without waiting for the server.
+    initialData: () => {
+      if (!email) return undefined;
+      const lfc = lfcRead(email, 'characters');
+      return lfc?.data?.length > 0 ? lfc.data : undefined;
+    },
+    initialDataUpdatedAt: () => {
+      if (!email) return undefined;
+      const lfc = lfcRead(email, 'characters');
+      return lfc?.loaded_at ?? undefined;
+    },
     queryFn: async () => {
       if (!email) return [];
 
@@ -238,9 +251,13 @@ export function useOwnedCharacters(
 
         // Update snapshot with the merged (larger) result
         writeRlsSnapshotIfGrows(email, merged.map(c => c.id), merged.length);
+        // Persist merged result to localStorage for next page load
+        lfcWrite(email, 'characters', merged);
         return merged;
       }
 
+      // Persist to localStorage so next page load is instant
+      if (freshFiltered.length > 0) lfcWrite(email, 'characters', freshFiltered);
       return freshFiltered;
     },
     enabled: !!email,
@@ -267,10 +284,22 @@ export function useOwnedCharacters(
     isFetching: isFetchingNpc,
   } = useQuery({
     queryKey: ["npc-characters", userId],
+    initialData: () => {
+      if (!email) return undefined;
+      const lfc = lfcRead(email, 'npc-characters');
+      return lfc?.data?.length > 0 ? lfc.data : undefined;
+    },
+    initialDataUpdatedAt: () => {
+      if (!email) return undefined;
+      const lfc = lfcRead(email, 'npc-characters');
+      return lfc?.loaded_at ?? undefined;
+    },
     queryFn: async () => {
       if (!userId) return [];
       const res = await base44.functions.invoke("fetchNPCsForUser", {});
-      return res?.data?.npcs || [];
+      const npcs = res?.data?.npcs || [];
+      if (npcs.length > 0 && email) lfcWrite(email, 'npc-characters', npcs);
+      return npcs;
     },
     enabled: !!userId,
     staleTime: 15 * 60 * 1000,  // 15 min — NPCs don't change frequently
@@ -278,11 +307,11 @@ export function useOwnedCharacters(
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     retry: (failureCount, error) => {
-      if (failureCount >= 2) return false; // Reduced from 3 to 2 — fail faster on 429
+      if (failureCount >= 2) return false;
       const is429 = error?.message?.includes('429') || error?.status === 429 || error?.response?.status === 429;
       return is429 || failureCount < 1;
     },
-    retryDelay: (attemptIndex) => Math.min(5000 * 2 ** attemptIndex, 30000), // Longer backoff
+    retryDelay: (attemptIndex) => Math.min(5000 * 2 ** attemptIndex, 30000),
     placeholderData: (prev) => prev,
   });
 
@@ -426,7 +455,10 @@ export function useOwnedCharacters(
   const npcRegular       = allCharacters.filter(c => resolveTypeLegacy(c) === "npc_regular");
   const travelCompanions = [...activeCreated, ...npcFictitious, ...npcFamilyMembers];
 
-  const isInitialLoading = (isLoadingRls && !rlsCharacters.length) || (isLoadingNpc && !backendNpcs.length);
+  // isInitialLoading is true ONLY when we have nothing to show at all.
+  // If we already have characters (from localStorage initialData or a prior fetch),
+  // we never show the full-page loading spinner — data is usable immediately.
+  const isInitialLoading = (isLoadingRls && !rlsCharacters.length) && (isLoadingNpc && !backendNpcs.length);
   const isRefreshing     = (isFetchingRls || isFetchingNpc) && !isInitialLoading;
 
   return {

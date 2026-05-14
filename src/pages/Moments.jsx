@@ -36,6 +36,9 @@ export default function Moments() {
       ? base44.entities.Character.filter({ status: "active", owner_email: currentUser.email })
       : [],
     enabled: !!currentUser?.email,
+    staleTime: 5 * 60 * 1000,
+    refetchOnMount: false,
+    placeholderData: (prev) => prev,
   });
 
   const { data: unlocked = [], refetch: refetchAchievements } = useQuery({
@@ -79,7 +82,10 @@ export default function Moments() {
       ? base44.entities.CommunityEvent.filter({ is_active: true }, "-start_date", 100)
       : [],
     enabled: !!currentUser?.email,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    placeholderData: (prev) => prev,
   });
 
   // Run retroactive achievement scan once per session when user loads Moments
