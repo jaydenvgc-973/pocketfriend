@@ -16,6 +16,7 @@ import { getCharacterLivePresence, buildLiveLocationContext } from "@/lib/locati
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
 
 import SendMoneyModal from "@/components/chat/SendMoneyModal";
+import FinancialActionsPanel from "@/components/chat/FinancialActionsPanel";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
@@ -1592,12 +1593,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       )}
 
       {showSendMoney && character && (
-        <SendMoneyModal
+        <FinancialActionsPanel
           character={character}
           userBalance={userSettings.user_balance ?? 0}
           isSending={isSendingMoney}
-          onClose={() => setShowSendMoney(false)}
-          onSend={async (amount, reason, direction) => {
+          onSendMoney={async (amount, reason, direction) => {
             setIsSendingMoney(true);
             try {
               await base44.functions.invoke('sendMoneyToCharacter', {
@@ -1614,7 +1614,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
               setIsSendingMoney(false);
             }
           }}
-          characterBalance={characterFinancial?.current_balance ?? 0}
         />
       )}
       {convoLoadError ? (
