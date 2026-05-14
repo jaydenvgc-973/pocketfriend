@@ -219,7 +219,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
     }
   };
 
-  const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null, directLocationImages = null, directLocationName = null) => {
+  const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null, directLocationImages = null, directLocationName = null, subjectData = null) => {
     // HARD VALIDATION: wrong_location reason MUST have a locationId
     if (reason === 'wrong_location' && !manualLocationId) {
       setRegenError('Please select a location to regenerate');
@@ -235,6 +235,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         directLocationImages: directLocationImages || null,
         directZoneName: manualZoneId || null,
         directLocationName: directLocationName || null,
+        // Subject override: passed when user selects "Doesn't look like them" and picks specific subjects
+        intendedSubjectIds: subjectData?.intendedSubjectIds || null,
+        includeUserSubject: subjectData?.includeUser || false,
       });
       if (res?.data?.filtered) {
         // Only shown when provider actually returned a content policy block
@@ -541,6 +544,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               isRegenerating={isRegenerating}
               error={regenError}
               originalPrompt={message.generation_context?.prompt || null}
+              generationContext={message.generation_context || null}
             />
             {!isEditingNarrative && message.content && typeof message.content === 'string' && message.content.trim() && message.content !== '[IMAGE_FAILED]' && (
               message.is_forwarded ? (

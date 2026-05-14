@@ -141,15 +141,32 @@ Deno.serve(async (req) => {
         // Sort by name length descending: "Jordan Smith" before "Jordan"
         const sortedChars = [...allChars].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
 
+        // Phase 1: exact full-name match (most specific — prevents false first-name collisions)
+        let nameMatchChar = null;
         for (const c of sortedChars) {
           if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted') continue;
-          const firstName = c.name.split(' ')[0].toLowerCase();
-          if (firstName.length >= 3 && promptLowerForSubject.includes(firstName)) {
-            subjectCharId = c.id;
-            subjectCharRecord = c;
-            console.log(`[recoverSingleImage] ✅ Prompt names subject: "${c.name}" (id=${c.id})`);
+          if (promptLowerForSubject.includes(c.name.toLowerCase())) {
+            nameMatchChar = c;
+            console.log(`[recoverSingleImage] ✅ Full name match: "${c.name}" (id=${c.id})`);
             break;
           }
+        }
+        // Phase 2: first-name match (fallback — only when no full-name matched)
+        // Require 4+ char first names to avoid matching short names like "Sam", "Kim", "Ana" incorrectly.
+        if (!nameMatchChar) {
+          for (const c of sortedChars) {
+            if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted') continue;
+            const firstName = c.name.split(' ')[0].toLowerCase();
+            if (firstName.length >= 4 && promptLowerForSubject.includes(firstName)) {
+              nameMatchChar = c;
+              console.log(`[recoverSingleImage] ✅ First-name match (4+ chars): "${c.name}" via "${firstName}" (id=${c.id})`);
+              break;
+            }
+          }
+        }
+        if (nameMatchChar) {
+          subjectCharId = nameMatchChar.id;
+          subjectCharRecord = nameMatchChar;
         }
       } catch (nameErr) {
         console.warn(`[recoverSingleImage] Name scan failed (non-blocking): ${nameErr?.message}`);

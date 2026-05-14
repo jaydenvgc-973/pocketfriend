@@ -610,14 +610,25 @@ Deno.serve(async (req) => {
         const promptLowerForName = scenePromptRaw.toLowerCase();
         // Sort by name length descending so "Jordan Smith" matches before "Jordan"
         const sortedChars = [...allChars].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+        // Phase 1: exact full-name match (most collision-safe)
         for (const c of sortedChars) {
           if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted') continue;
-          // Match on first name at minimum to catch "Ethan is at..." patterns
-          const firstName = c.name.split(' ')[0].toLowerCase();
-          if (firstName.length >= 3 && promptLowerForName.includes(firstName)) {
+          if (promptLowerForName.includes(c.name.toLowerCase())) {
             promptNamedCharId = c.id;
-            console.log(`[regenerateImageWithReason] ✅ Prompt names character: "${c.name}" (id=${c.id}) — using as subject`);
+            console.log(`[regenerateImageWithReason] ✅ Prompt names character (full name): "${c.name}" (id=${c.id})`);
             break;
+          }
+        }
+        // Phase 2: first-name match (fallback — 4+ chars to avoid short-name false positives)
+        if (!promptNamedCharId) {
+          for (const c of sortedChars) {
+            if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted') continue;
+            const firstName = c.name.split(' ')[0].toLowerCase();
+            if (firstName.length >= 4 && promptLowerForName.includes(firstName)) {
+              promptNamedCharId = c.id;
+              console.log(`[regenerateImageWithReason] ✅ Prompt names character (first name, 4+ chars): "${c.name}" via "${firstName}" (id=${c.id})`);
+              break;
+            }
           }
         }
       } catch (nameErr) {
