@@ -117,9 +117,9 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end z-50">
-      <div className="w-full max-w-lg bg-card rounded-t-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-lg bg-card rounded-t-2xl shadow-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="sticky top-0 bg-card border-b border-border p-4 flex justify-between items-center">
+        <div className="bg-card border-b border-border p-4 flex justify-between items-center flex-shrink-0">
           <h2 className="text-xl font-bold">Receive Money</h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             ✕
@@ -127,7 +127,7 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
         </div>
 
         {/* Content */}
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-4 overflow-y-auto flex-1">
           {step === STEP_CHARACTER && (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">Select who to receive from</p>
@@ -297,7 +297,7 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
         </div>
 
         {/* Footer */}
-        <div className="sticky bottom-0 bg-card border-t border-border p-4 flex gap-3">
+        <div className="bg-card border-t border-border p-4 flex gap-3 flex-shrink-0">
           {step !== STEP_CHARACTER && (
             <Button variant="outline" onClick={handleBack} className="flex-1">
               Back
