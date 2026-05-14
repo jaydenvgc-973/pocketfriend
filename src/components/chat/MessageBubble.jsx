@@ -37,6 +37,11 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [editedPrompt, setEditedPrompt] = useState('');
   const [imgLoadError, setImgLoadError] = useState(false);
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
   // Normalize image URL to public CDN on initialization
   const normalizeImageUrl = (url) => {
     if (!url || typeof url !== 'string') return url;
@@ -81,6 +86,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
       setImageRetryStatus('recovering');
       base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
         .then(res => {
+          if (!isMountedRef.current) return; // component navigated away — DB write already happened, skip local state
           const url = res?.data?.image_url;
           if (url && url.startsWith('http')) {
             setLocalImageUrl(url);
@@ -90,8 +96,8 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
             setImageRetryFailed(true);
           }
         })
-        .catch(() => setImageRetryFailed(true))
-        .finally(() => { setImageRetrying(false); setImageRetryStatus('idle'); });
+        .catch(() => { if (isMountedRef.current) setImageRetryFailed(true); })
+        .finally(() => { if (isMountedRef.current) { setImageRetrying(false); setImageRetryStatus('idle'); } });
     }, AUTO_LOAD_TIMEOUT_MS);
     return () => clearTimeout(t);
   }, [isWaitingForGeneration, message.id]); // eslint-disable-line

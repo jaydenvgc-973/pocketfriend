@@ -87,13 +87,15 @@ function resolveZoneImages(location, promptLower) {
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const { messageId, forceRegenerate = false } = await req.json();
+    const { messageId, forceRegenerate = false, ownerEmail: callerOwnerEmail } = await req.json();
     if (!messageId) return Response.json({ error: 'messageId required' }, { status: 400 });
 
-    const requestingUser = user.email;
+    // Support both user-session callers (Chat page) and service-role callers (autonomous/scheduled).
+    // For service-role callers, ownerEmail must be passed in the payload.
+    const user = await base44.auth.me().catch(() => null);
+    const requestingUser = user?.email || callerOwnerEmail || null;
+
+    if (!requestingUser) return Response.json({ error: 'Unauthorized — no user session or ownerEmail provided' }, { status: 401 });
 
     // CRITICAL: use .get() not .filter() — filter can return wrong message if ID lookup is fuzzy
     const message = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
