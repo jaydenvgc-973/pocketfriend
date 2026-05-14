@@ -66,6 +66,32 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── TRAVEL ARRIVAL: write authoritative location ───────────────────────
+        // When a character made a travel promise in chat, we committed a ScheduledEvent
+        // of type 'travel_arrival'. On firing, write the arrival to the Character record.
+        if (event.type === 'travel_arrival' && event.primary_character_id) {
+          const payload = event.event_payload || {};
+          const destLocId = payload.destination_location_id;
+          const destLocName = payload.destination_location_name;
+          if (destLocId && destLocName) {
+            const arrivalNow = new Date().toISOString();
+            await base44.asServiceRole.entities.Character.update(event.primary_character_id, {
+              resolved_current_location_id: destLocId,
+              resolved_current_location_name: destLocName,
+              resolved_location_type: 'visit',
+              resolved_presence_status: 'visiting',
+              resolved_source_reason: 'conversation_travel_arrival',
+              resolved_last_updated_at: arrivalNow,
+              travel_status: 'not_traveling',
+              traveling_to_location_id: null,
+              traveling_to_location_name: null,
+              travel_destination_location_id: null,
+              last_arrived_time: arrivalNow,
+            });
+            console.log(`[processScheduledEvents] ✓ Travel arrival: char=${event.primary_character_id} → "${destLocName}"`);
+          }
+        }
+
         // If narrative type, post in chat
         if (event.type !== 'internal' && event.conversation_id && event.primary_character_id) {
           const chars = await base44.asServiceRole.entities.Character.filter({ id: event.primary_character_id });

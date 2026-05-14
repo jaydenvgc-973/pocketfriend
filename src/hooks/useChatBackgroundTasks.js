@@ -141,6 +141,28 @@ export function useChatBackgroundTasks({
     }
 
     // ── TIER 1 — 0ms: lightweight location + activity sync (30s cooldown each) ──
+
+    // ── TRAVEL PROMISE DETECTION (Tier 1, immediate) ──────────────────────────
+    // When the character's response contains a travel commitment to the user
+    // ("I'm on my way", "I'll be there", etc.), commit a real durable travel state.
+    // This is independent of autonomous_travel_enabled — it's conversation-triggered.
+    // 5-min cooldown prevents re-firing on every message when already traveling.
+    if (responseText && !isOnCooldown(characterId, 'travelPromise', 300000)) {
+      const travelPromiseQuick = /\b(i'm|i\s+am)\s+(on\s+my\s+way|coming|heading\s+(over|there|to\s+you)|coming\s+(over|now|right\s+now))\b|\b(i'll|i\s+will)\s+(be\s+(there|over|on\s+my\s+way)|come\s+over|head\s+over)\b|\b(i'm|i\s+am)\s+(getting\s+in\s+the\s+car|headed\s+your\s+way)\b/i;
+      if (travelPromiseQuick.test(responseText)) {
+        safeInvoke('commitCharacterTravelToUser', {
+          characterId,
+          characterResponse: responseText,
+          conversationId: convoId,
+        }, characterId, 'travelPromise').then(res => {
+          if (res?.data?.committed) {
+            console.log(`[Governor] Travel promise committed: "${character?.name}" → "${res.data.destination}" (ETA ${res.data.travelMinutes}min)`);
+            queryClient.invalidateQueries({ queryKey: ['character', characterId] });
+          }
+        });
+      }
+    }
+
     if (!isOnCooldown(characterId, 'activityUpdate', 30000)) {
       safeInvoke('updateCharacterActivityFromMessage', {
         characterId, message: text, responseText, conversationId: convoId,
