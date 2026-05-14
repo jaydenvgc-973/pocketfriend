@@ -74,14 +74,17 @@ Deno.serve(async (req) => {
       characters.some(ch => c.character_ids?.includes(ch.id))
     ).slice(0, 10);
 
-    // 6. Recent image messages — fetch recent messages and filter in memory
-    // Scoped to conversations we own
+    // 6. Recent image messages — SAFE: fetch all recent, then filter in memory by conversation_id
+    // Do NOT use $in operator — fetch broadly then filter client-side
     const allMessages = await base44.entities.Message.filter(
-      { conversation_id: { $in: recentConvos.map(c => c.id) } },
+      { owner_email: user.email },
       '-created_date',
-      50
+      100
     );
-    const imageMessages = allMessages.filter(m => m.image_url || m.generation_context).slice(0, 5);
+    const imageMessages = allMessages
+      .filter(m => recentConvos.some(c => c.id === m.conversation_id))
+      .filter(m => m.image_url || m.generation_context)
+      .slice(0, 5);
 
     // 7. Recent ScheduledEvents — fetch and filter in memory
     const allScheduledEvents = await base44.entities.ScheduledEvent.filter(

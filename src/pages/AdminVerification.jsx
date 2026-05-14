@@ -98,8 +98,8 @@ export default function AdminVerification() {
                       className="w-full px-3 py-2 rounded-md bg-background border border-border text-sm"
                     >
                       <option value="">{dryRunResult?.checks?.test_character_name || 'Auto-select'}</option>
-                      {dryRunResult?.character_roster ? (
-                        dryRunResult.character_roster.map(ch => (
+                      {dryRunResult?.character_roster_sample ? (
+                        dryRunResult.character_roster_sample.map(ch => (
                           <option key={ch.id} value={ch.id}>
                             {ch.name} {ch.is_active_character ? '(active)' : ''}
                           </option>
