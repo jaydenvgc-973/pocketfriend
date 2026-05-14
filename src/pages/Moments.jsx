@@ -65,6 +65,14 @@ export default function Moments() {
     enabled: !!currentUser?.email,
   });
 
+  const { data: userSettings = null } = useQuery({
+    queryKey: ["userSettings", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.UserSettings.filter({ owner_email: currentUser.email }, null, 1).then(r => r[0] || null)
+      : null,
+    enabled: !!currentUser?.email,
+  });
+
   // Run retroactive achievement scan once per session when user loads Moments
   useEffect(() => {
     if (!currentUser?.email || hasScanned.current) return;
@@ -132,7 +140,7 @@ export default function Moments() {
   const unlockedCount = allAchievements.filter(a => unlockedMap[a.id]).length;
 
   return (
-    <div className="min-h-screen bg-background pt-20 pb-20">
+    <div className="min-h-screen bg-background pt-28 pb-20">
       {/* Header */}
        <div className="fixed top-0 left-0 right-0 z-50 bg-background/90 backdrop-blur-xl border-b border-border px-4 pt-6 pb-4">
          <div className="flex items-center justify-between">
@@ -189,7 +197,7 @@ export default function Moments() {
         {/* Calendar */}
         <MomentsCalendar
           characters={characters}
-          userBirthday={currentUser?.birthday || null}
+          userBirthday={userSettings?.user_birthday || null}
         />
 
          {/* Active Arcs — active created characters only (no NPCs) */}
