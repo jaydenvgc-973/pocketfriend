@@ -586,13 +586,40 @@ Deno.serve(async (req) => {
     let charDesc = '';  // text-based identity fallback — passed to buildRegenPrompt
     let charName = ctx.character_name || 'the character';
 
+    // ── PROMPT-NAMED SUBJECT RESOLUTION ──────────────────────────────────────
+    // For dont_like / custom_prompt: the prompt is the AUTHORITY on who the subject is.
+    // If the prompt explicitly names a character (e.g. "Ethan at the gym"), we must load
+    // THAT character's identity — not blindly use whoever was the sender.
+    // This prevents the sender's identity from overriding the actual named subject.
+    let promptNamedCharId = null;
+    if ((reason === 'dont_like' || reason === 'custom_prompt') && scenePromptRaw) {
+      try {
+        const allChars = await base44.asServiceRole.entities.Character.filter(
+          { owner_email: requestingUser }, null, 100
+        ).catch(() => []);
+        const promptLowerForName = scenePromptRaw.toLowerCase();
+        // Sort by name length descending so "Jordan Smith" matches before "Jordan"
+        const sortedChars = [...allChars].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+        for (const c of sortedChars) {
+          if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted') continue;
+          // Match on first name at minimum to catch "Ethan is at..." patterns
+          const firstName = c.name.split(' ')[0].toLowerCase();
+          if (firstName.length >= 3 && promptLowerForName.includes(firstName)) {
+            promptNamedCharId = c.id;
+            console.log(`[regenerateImageWithReason] ✅ Prompt names character: "${c.name}" (id=${c.id}) — using as subject`);
+            break;
+          }
+        }
+      } catch (nameErr) {
+        console.warn(`[regenerateImageWithReason] Prompt name scan failed (non-blocking): ${nameErr?.message}`);
+      }
+    }
+
     // For no_avatar: user explicitly selected who the image was supposed to show.
-    // Override the original character_id resolution entirely with the user's selection.
-    // This prevents the system from defaulting to the active chat character when the user
-    // knows the image was supposed to show a different person.
+    // For dont_like/custom_prompt: use prompt-named character if found, else original.
     const effectiveCharId = (reason === 'no_avatar' && intendedSubjectIds?.length > 0)
-      ? intendedSubjectIds[0]  // primary intended subject
-      : originalCharId;
+      ? intendedSubjectIds[0]
+      : (promptNamedCharId || originalCharId);
 
     if (reason === 'no_avatar' && intendedSubjectIds?.length > 0) {
       console.log(`[regenerateImageWithReason] no_avatar — user-selected intended subjects: ${intendedSubjectIds.join(', ')} | includeUser: ${includeUserSubject}`);
@@ -668,9 +695,22 @@ Deno.serve(async (req) => {
         console.log(`[regenerateImageWithReason] Using stored charRefs: ${charRefs.length}`);
       }
 
-      // If still no refs, continue with text-only identity (do NOT fall back to avatar)
+      // For dont_like / custom_prompt / flawed: use avatar as controlled fallback when no reference_image_urls exist.
+      // The user expects the correct face to appear — avatar is better than generating a random person.
+      // Avatar is stripped of background contamination by the face-only extraction instructions in the prompt.
+      if (charRefs.length === 0 && (reason === 'dont_like' || reason === 'custom_prompt' || reason === 'flawed')) {
+        const charRecordForAvatar = (await base44.asServiceRole.entities.Character.filter({ id: effectiveCharId }, null, 1).catch(() => []))?.[0];
+        if (charRecordForAvatar?.avatar_url) {
+          const avatarPublic = toPublicCDN(charRecordForAvatar.avatar_url);
+          if (isAccessible(avatarPublic) && !avatarPublic.includes('generated_image')) {
+            charRefs = [avatarPublic];
+            console.log(`[regenerateImageWithReason] Avatar fallback for dont_like/flawed: using avatar_url for "${charName}" (face-only extraction enforced in prompt)`);
+          }
+        }
+      }
+
       if (charRefs.length === 0) {
-        console.log(`[regenerateImageWithReason] ℹ️ No reference images for "${charName}" — will generate from text description only (no avatar fallback to prevent contamination)`);
+        console.log(`[regenerateImageWithReason] ℹ️ No reference images for "${charName}" — generating from text description only`);
       }
     }
 
