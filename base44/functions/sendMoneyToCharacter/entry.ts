@@ -6,7 +6,8 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, conversationId, amount, reason } = await req.json();
+    const { characterId, conversationId, amount, reason, direction } = await req.json();
+    const isAnonymous = direction === 'anonymous';
     if (!characterId || !amount || amount <= 0) {
       return Response.json({ error: 'Invalid parameters' }, { status: 400 });
     }
@@ -42,28 +43,47 @@ Deno.serve(async (req) => {
     }
 
     // Log financial transactions
+    // For anonymous sends: use the statement title as description; hide sender identity
     await base44.entities.FinancialTransaction.create({
       character_id: characterId,
       character_name: character.name,
-      sender_id: user.email,
-      sender_type: 'user',
-      sender_name: user.full_name || 'You',
+      sender_id: isAnonymous ? 'anonymous' : user.email,
+      sender_type: isAnonymous ? 'system' : 'user',
+      sender_name: isAnonymous ? null : (user.full_name || 'You'),
       receiver_id: characterId,
       receiver_type: 'character',
       receiver_name: character.name,
       amount,
       direction: 'income',
       transaction_type: 'gift',
-      description: `${user.full_name || 'User'} sent $${amount} to ${character.name}`,
+      description: isAnonymous ? reason : `${user.full_name || 'User'} sent $${amount} to ${character.name}`,
       balance_after: finRecord ? (finRecord.current_balance ?? 0) + amount : amount,
       timestamp: now,
     });
 
-    // Post a visible money-transfer card in the conversation.
-    // FIX: previously this created a plain text message — no card UI appeared in chat.
-    // Now we add a money_transfer field so MessageBubble can render it as a card,
-    // plus keep a text content fallback for the conversation preview.
-    if (conversationId) {
+    // Anonymous sends: create suspicion memory in character if amount is large/unusual
+    if (isAnonymous) {
+      const suspicionScore = amount > 1000 ? 'high' : amount > 200 ? 'medium' : 'low';
+      const memoryText = suspicionScore === 'high'
+        ? `I received a large unexpected deposit: "${reason}" +$${amount}. I don't know where it came from and I'm concerned.`
+        : suspicionScore === 'medium'
+          ? `A payment appeared on my account: "${reason}" +$${amount}. Not sure what it's for.`
+          : `I received "${reason}" +$${amount} — probably just a normal transaction.`;
+      await base44.entities.CharacterMemory.create({
+        character_id: characterId,
+        memory_type: 'event',
+        memory_text: memoryText,
+        memory_summary: `Received ${reason}: +$${amount}`,
+        importance_score: suspicionScore === 'high' ? 7 : suspicionScore === 'medium' ? 4 : 2,
+        confidence_score: 0.8,
+        permanence: 'long_term',
+        owner_email: user.email,
+      }).catch(() => {});
+    }
+
+    // Post a visible money-transfer card in the conversation (only for direct sends).
+    // Anonymous sends do not create a visible card for the user — it's a hidden action.
+    if (conversationId && !isAnonymous) {
       await base44.entities.Message.create({
         conversation_id: conversationId,
         sender_type: 'user',

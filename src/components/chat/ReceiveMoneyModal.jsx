@@ -13,9 +13,12 @@ const STEP_DETAILS = 'details';
 const STEP_CONFIRM = 'confirm';
 const STEP_RESULT = 'result';
 
-export default function ReceiveMoneyModal({ character, onClose }) {
-  const [step, setStep] = useState(STEP_CHARACTER);
-  const [selectedCharacter, setSelectedCharacter] = useState(character || null);
+export default function ReceiveMoneyModal({ character, onClose, conversationCharacterId }) {
+  const [step, setStep] = useState(conversationCharacterId ? STEP_MODE : STEP_CHARACTER);
+  const [selectedCharacter, setSelectedCharacter] = useState(() => {
+    if (conversationCharacterId) return null; // Will be set after characters load
+    return character || null;
+  });
   const [mode, setMode] = useState(null); // 'request' or 'take'
   const [amount, setAmount] = useState('');
   const [title, setTitle] = useState('');
@@ -36,13 +39,20 @@ export default function ReceiveMoneyModal({ character, onClose }) {
           null,
           100
         );
-        setCharacters(chars.filter(c => c.is_active_character || c.character_type === 'npc_fictitious'));
+        const filtered = chars.filter(c => c.is_active_character || c.character_type === 'npc_fictitious');
+        setCharacters(filtered);
+        
+        // Auto-select conversation character if provided
+        if (conversationCharacterId) {
+          const convChar = filtered.find(c => c.id === conversationCharacterId);
+          if (convChar) setSelectedCharacter(convChar);
+        }
       } catch (err) {
         console.error('Failed to load characters:', err.message);
       }
     };
     loadData();
-  }, []);
+  }, [conversationCharacterId]);
 
   const handleSelectCharacter = (char) => {
     setSelectedCharacter(char);

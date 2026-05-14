@@ -44,6 +44,7 @@ export default function FinancialActionsPanel({ character, userBalance, onSendMo
       {showReceive && (
         <ReceiveMoneyModal
           character={character}
+          conversationCharacterId={character?.id}
           onClose={() => setShowReceive(false)}
         />
       )}
