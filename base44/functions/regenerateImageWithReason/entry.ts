@@ -586,6 +586,16 @@ Deno.serve(async (req) => {
     let charDesc = '';  // text-based identity fallback — passed to buildRegenPrompt
     let charName = ctx.character_name || 'the character';
 
+    // ── 3a. DETERMINE SCENE PROMPT (needed for prompt-name scan and zone resolution) ──
+    // Must be declared BEFORE any code that references scenePromptRaw.
+    let scenePromptRaw = originalPrompt;
+    if (reason === 'dont_like' && customPrompt?.trim()) {
+      scenePromptRaw = customPrompt.trim();
+    } else if (reason === 'custom_prompt' && customPrompt?.trim()) {
+      scenePromptRaw = customPrompt.trim();
+    }
+    if (!scenePromptRaw) scenePromptRaw = 'candid natural moment, everyday life';
+
     // ── PROMPT-NAMED SUBJECT RESOLUTION ──────────────────────────────────────
     // For dont_like / custom_prompt: the prompt is the AUTHORITY on who the subject is.
     // If the prompt explicitly names a character (e.g. "Ethan at the gym"), we must load
@@ -828,14 +838,7 @@ Deno.serve(async (req) => {
       return s.trim();
     }
 
-    // ── 3a. DETERMINE SCENE PROMPT (needed for zone resolution) ──────────────
-    let scenePromptRaw = originalPrompt;
-    if (reason === 'dont_like' && customPrompt?.trim()) {
-      scenePromptRaw = customPrompt.trim();
-    } else if (reason === 'custom_prompt' && customPrompt?.trim()) {
-      scenePromptRaw = customPrompt.trim();
-    }
-    if (!scenePromptRaw) scenePromptRaw = 'candid natural moment, everyday life';
+    // scenePromptRaw was declared above before the prompt-name scan — no re-declaration here.
 
     // Apply sanitizer — uses the context-aware minimal-rewrite logic defined above.
     // For no_avatar / flawed / wrong_location: the prompt is the stored original — only
