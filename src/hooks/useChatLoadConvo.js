@@ -112,14 +112,9 @@ export function useChatLoadConvo({
       const t0 = Date.now();
       console.log(`[CHAT_LOAD] loadConvo START charId=${characterId} chatType=${chatType} t=${t0}`);
 
-      // ── INSTANT CACHE SEED: show cached messages immediately, before any server call ──
-      // This makes chat feel instant on re-open. Server will refresh in the background.
-      const cachedMsgs = readCachedMessages(currentUser.email, characterId);
-      if (cachedMsgs && cachedMsgs.length > 0) {
-        setMessages(cachedMsgs);
-        hasShownMessagesRef.current = true;
-        console.log(`[CHAT_LOAD] Seeded ${cachedMsgs.length} cached messages for instant render`);
-      }
+      // NOTE: lfc seed already applied synchronously above (before setTimeout).
+      // Do NOT re-seed here — that would overwrite any messages that arrived
+      // in the 300ms gap between the synchronous seed and this async load.
 
       // PART 3 FIX: Proactively activate chat-safe mode on every chat load.
       // Background simulations, presence checks, and scheduled tasks fire on a shared

@@ -1489,7 +1489,16 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
       // Surgical patch — do NOT broadcast a full characters list refetch on every emotional state change.
       // A broad invalidateQueries(["characters"]) fires a 300-record re-fetch on every message send.
+      // Patch the single-character cache used by Chat.
       queryClient.setQueryData(["character", characterId], (prev) => prev ? { ...prev, emotional_state: emotionalState } : prev);
+      // Also patch the all-characters array cache used by Home and other pages —
+      // avoids stale emotional_state showing there without triggering a full re-fetch.
+      if (currentUser?.email) {
+        queryClient.setQueryData(["characters", currentUser.email], (prev) => {
+          if (!Array.isArray(prev)) return prev;
+          return prev.map(c => c.id === characterId ? { ...c, emotional_state: emotionalState } : c);
+        });
+      }
     }
 
     const prevLevels = {
