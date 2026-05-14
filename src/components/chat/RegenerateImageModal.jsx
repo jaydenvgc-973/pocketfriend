@@ -341,6 +341,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
         || selectedLocation.image_urls
         || [];
     console.log(`[RegenerateModal] LocationConfirm: location="${selectedLocation.name}" (${selectedLocation.id}) | zone="${zoneName}" | directImages=${zoneImages.length}`);
+    // CRITICAL: Pass zoneName (the name string), not the ID, to backend
     onSelect('wrong_location', null, selectedLocation.id, zoneName, zoneImages, selectedLocation.name);
   };
 

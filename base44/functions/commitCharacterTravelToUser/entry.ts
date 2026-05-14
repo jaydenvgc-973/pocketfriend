@@ -83,32 +83,35 @@ Deno.serve(async (req) => {
     const userSettings = settingsArr?.[0] || {};
 
     // ── STEP 3: Resolve destination = user's current location ─────────────────
-    const destLocationId = userSettings.user_current_location_id || null;
-    const destLocationName = userSettings.user_current_location_name || null;
+    // Try UserSettings first, then fallback to anchor character's home
+    let destLocationId = userSettings.user_current_location_id || null;
+    let destLocationName = userSettings.user_current_location_name || null;
 
-    // If user has no active location, we cannot commit a real travel destination.
-    // The character can say they're coming but we can't resolve where. Log and return.
+    // FALLBACK: If user has no current location, check anchor character home
     if (!destLocationId || !destLocationName) {
-      console.log(`[commitCharacterTravelToUser] User has no current location — cannot commit travel destination for "${character.name}"`);
-      // Still write a traveling state pointing "toward user" — vague but durable
-      const now = new Date().toISOString();
-      await base44.entities.Character.update(characterId, {
-        resolved_presence_status: 'traveling',
-        resolved_location_type: 'traveling',
-        resolved_source_reason: 'conversation_travel_promise',
-        resolved_last_updated_at: now,
-        travel_status: 'traveling_to_destination',
-        traveling_to_location_id: null,
-        traveling_to_location_name: 'User location (resolving)',
-        last_location_update_time: now,
-        // CRITICAL: do NOT touch presence_stay_lock — this is character-chosen movement
-      });
+      const anchorIds = userSettings.home_anchor_character_ids || [];
+      if (anchorIds.length > 0) {
+        const anchorChar = await base44.entities.Character.filter({ id: anchorIds[0] }, null, 1).then(c => c?.[0]);
+        if (anchorChar?.current_home_location_id) {
+          destLocationId = anchorChar.current_home_location_id;
+          const homeLoc = await base44.entities.LocationReference.filter({ id: destLocationId }, null, 1).then(l => l?.[0]);
+          if (homeLoc) {
+            destLocationName = homeLoc.name || 'User anchor location';
+            console.log(`[commitCharacterTravelToUser] User location unknown — fell back to anchor character's home: "${destLocationName}"`);
+          }
+        }
+      }
+    }
+
+    // If still no destination, fail visibly
+    if (!destLocationId || !destLocationName) {
+      console.warn(`[commitCharacterTravelToUser] Cannot commit travel: user location unknown AND no anchor character home available. Character "${character.name}" said they're coming but we cannot resolve where.`);
       return Response.json({
-        success: true,
-        committed: true,
-        destination: null,
-        reason: 'user_location_unknown_vague_travel_set',
-      });
+        success: false,
+        error: 'Cannot resolve travel destination',
+        reason: 'user_location_unknown_no_fallback',
+        details: 'User must be present at a location or have an anchor character with a home',
+      }, { status: 400 });
     }
 
     // ── STEP 4: Guard — don't re-commit if already traveling to the same place ─

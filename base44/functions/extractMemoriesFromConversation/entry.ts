@@ -28,13 +28,32 @@ Deno.serve(async (req) => {
       return Response.json({ memories: [] });
     }
 
-    // Get character details
-    const characterId = convo.character_ids?.[0];
-    const character = characterId ? 
+    // ── CHARACTER RECOVERY ─────────────────────────────────────────────────────
+    // First, try character_ids from conversation
+    let characterId = convo.character_ids?.[0];
+    let character = characterId ? 
       await base44.entities.Character.filter({ id: characterId }, null, 1).then(c => c?.[0]) : null;
 
+    // If no character_ids in convo, recover from messages
+    if (!characterId && messages.length > 0) {
+      console.log(`[extractMemoriesFromConversation] character_ids missing from convo, recovering from message history`);
+      // Get all unique character_ids from messages
+      const charIdsFromMsgs = new Set(
+        messages
+          .filter(m => m.character_id && m.sender_type === 'character')
+          .map(m => m.character_id)
+      );
+      if (charIdsFromMsgs.size > 0) {
+        characterId = Array.from(charIdsFromMsgs)[0];
+        character = await base44.entities.Character.filter({ id: characterId }, null, 1).then(c => c?.[0]);
+      }
+    }
+
     if (!character) {
-      return Response.json({ error: 'Character not found' }, { status: 404 });
+      return Response.json({ 
+        error: 'Character not found in conversation or message history', 
+        details: 'Conversation has no character_ids and no character messages found' 
+      }, { status: 404 });
     }
 
     // Build conversation summary for LLM
