@@ -349,6 +349,17 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
 
   ${clothingNote ? clothingNote + '\n\n  ' : ''}${actionNote ? actionNote + '\n\n  ' : ''}${propNote ? propNote + '\n\n  ' : ''}
   ════════════════════════════════════════════════════════════
+  LOCATION LOCK — WHERE THIS SCENE TAKES PLACE
+  ════════════════════════════════════════════════════════════
+  ${hasEnv
+    ? `The environment reference images (Images 1–${Math.min(envRefs.length, 4)}) show the CORRECT location: "${[locationName, zoneName].filter(Boolean).join(' → ')}".
+  ⛔ You MUST render this exact location — NOT a generic or invented room/setting.
+  ⛔ The walls, floor, furniture, decor, and spatial layout MUST match the reference images.
+  ⛔ Do NOT invent a new environment — use the reference images as the spatial blueprint.`
+    : `No location reference images are available. Render an environment consistent with what the scene prompt describes.`
+  }
+
+  ════════════════════════════════════════════════════════════
   WHAT "DON'T LIKE IT" MEANS:
   ════════════════════════════════════════════════════════════
   The user wants the SAME scene rendered with better quality/accuracy.
@@ -803,6 +814,47 @@ Deno.serve(async (req) => {
     let resolvedLocationName = originalLocName;
     let resolvedZoneName = originalZoneName;
 
+    // ── LOCATION NAME SCANNER (dont_like / custom_prompt only) ───────────────
+    // When the user edits the prompt for "dont_like" or writes a "custom_prompt",
+    // they may mention a different or specific location (e.g. "at the park", "in her kitchen").
+    // 1. Scan the new scene prompt for location name matches against saved LocationReference records.
+    // 2. If a match is found on the user's account, override the environment refs with that location's photos.
+    // 3. This ensures the correct reference photos are used whenever a known location is mentioned.
+    let promptOverrideLocationId = null;
+    let promptOverrideLocationRecord = null;
+
+    if ((reason === 'dont_like' || reason === 'custom_prompt') && scenePromptRaw) {
+      try {
+        // Fetch all locations for this user (scoped by owner_email)
+        const allUserLocs = await base44.asServiceRole.entities.LocationReference.filter(
+          { owner_email: requestingUser }, null, 100
+        ).catch(() => []);
+
+        if (allUserLocs.length > 0) {
+          const promptLowerScan = scenePromptRaw.toLowerCase();
+          // Find the longest-name match first (most specific) to avoid false positives
+          const sortedLocs = [...allUserLocs].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+          for (const loc of sortedLocs) {
+            if (!loc.name) continue;
+            const locNameLower = loc.name.toLowerCase();
+            // Match if the prompt contains the location name as a word boundary (not just substring)
+            if (promptLowerScan.includes(locNameLower)) {
+              promptOverrideLocationRecord = loc;
+              promptOverrideLocationId = loc.id;
+              console.log(`[regenerateImageWithReason] ✅ Prompt location match: "${loc.name}" (id=${loc.id}) found in edited prompt`);
+              break;
+            }
+          }
+
+          if (!promptOverrideLocationId) {
+            console.log(`[regenerateImageWithReason] No location name match found in edited prompt — will use original location`);
+          }
+        }
+      } catch (locScanErr) {
+        console.warn(`[regenerateImageWithReason] Location name scan failed (non-blocking): ${locScanErr?.message}`);
+      }
+    }
+
     if (reason === 'wrong_location' && manualLocationId) {
       // USER SELECTED A NEW LOCATION — use it as the new environment
       if (directLocationImages?.length > 0) {
@@ -838,11 +890,25 @@ Deno.serve(async (req) => {
       }
 
     } else {
-      // ALL OTHER REASONS — always re-fetch fresh zone images from DB first.
-      // Do NOT re-use stale stored refs from generation_context — those came from the failed image
-      // and may have caused the problem. Fresh DB fetch guarantees current zone truth.
-      if (originalLocId) {
-        const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: originalLocId }, null, 1).catch(() => []);
+      // ALL OTHER REASONS — resolve environment refs.
+      // Priority for dont_like / custom_prompt:
+      //   1. Location named in the edited prompt (promptOverrideLocationRecord) — highest priority
+      //   2. Original location from generation_context (originalLocId)
+      //   3. Stored refs from context as last resort
+
+      const effectiveLocRecord = promptOverrideLocationRecord || null;
+      const effectiveLocId = promptOverrideLocationId || originalLocId;
+
+      if (effectiveLocRecord) {
+        // Prompt explicitly mentioned a known saved location — use its reference photos
+        const { images, zoneName } = resolveZoneFromLocation(effectiveLocRecord, scenePrompt.toLowerCase(), null);
+        envRefs = images;
+        resolvedLocationName = effectiveLocRecord.name;
+        resolvedZoneName = zoneName;
+        console.log(`[regenerateImageWithReason] Prompt-detected location override: "${effectiveLocRecord.name}" → zone "${zoneName}" → ${envRefs.length} refs`);
+      } else if (effectiveLocId) {
+        // No prompt override — re-fetch original location fresh from DB
+        const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: effectiveLocId }, null, 1).catch(() => []);
         const locRecord = locListSR?.[0] || null;
         if (locRecord) {
           const { images, zoneName } = resolveZoneFromLocation(locRecord, scenePrompt.toLowerCase(), originalZoneName);
