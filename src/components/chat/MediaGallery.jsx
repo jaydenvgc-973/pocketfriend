@@ -211,29 +211,40 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
             const serverCount = Array.isArray(roster) ? roster.length : 0;
             const nowStr = new Date().toISOString();
             if (validation.valid) {
-              setAllCharacters(roster);
-              writeCache(email, 'characters', roster);
+              // Floor protection: never replace a larger cached roster with a smaller server result.
+              // A partial server response (rate limit, filter, etc.) must not shrink the visible list.
+              const existingFloor = cachedChars?.records?.length ?? lfcChars?.data?.length ?? 0;
+              if (roster.length >= existingFloor) {
+                setAllCharacters(roster);
+                writeCache(email, 'characters', roster);
+              }
+              // Always update status to fresh — server confirmed the data is real
               setCharsLoadStatus('fresh');
               setCharsDiagnostics({
                 owner_email: email, cache_key: `mg_cache:${email}:characters`,
-                cached_roster_count: cachedChars?.records?.length ?? 0,
+                cached_roster_count: existingFloor,
                 server_roster_count: serverCount,
                 chat_char_available: !!character?.id,
-                final_dropdown_count: roster.length,
-                fallback_source: 'server',
+                final_dropdown_count: Math.max(roster.length, existingFloor),
+                fallback_source: roster.length >= existingFloor ? 'server' : 'cache_floor_protected',
                 last_successful_load: nowStr,
+                warning: roster.length < existingFloor ? `server_smaller_than_cache(${roster.length}<${existingFloor})_floor_protected` : undefined,
               });
             } else if (validation.reason === 'user_only') {
-              if (!cachedChars) setAllCharacters(roster);
+              // Keep best available cache — mg_cache first, then lfc. Only fall back to server
+              // user_only if no cache exists at all.
+              const bestCacheCount = cachedChars?.records?.length ?? lfcChars?.data?.length ?? 0;
+              if (!cachedChars && !lfcChars?.data?.length) setAllCharacters(roster);
               setCharsLoadStatus('user_only');
               setCharsDiagnostics({
-                owner_email: email, cache_key: `mg_cache:${email}:characters`,
-                cached_roster_count: cachedChars?.records?.length ?? 0,
+                owner_email: email,
+                cache_key: cachedChars ? `mg_cache:${email}:characters` : (lfcChars?.data?.length ? `lfc:${email}:characters` : `mg_cache:${email}:characters`),
+                cached_roster_count: bestCacheCount,
                 server_roster_count: serverCount,
                 chat_char_available: !!character?.id,
-                final_dropdown_count: cachedChars?.records?.length ?? serverCount,
-                fallback_source: cachedChars ? 'mg_cache' : 'server_user_only',
-                last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : null,
+                final_dropdown_count: bestCacheCount || serverCount,
+                fallback_source: cachedChars ? 'mg_cache' : (lfcChars?.data?.length ? 'lfc_cache' : 'server_user_only'),
+                last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : (lfcChars?.loaded_at ? new Date(lfcChars.loaded_at).toISOString() : null),
                 warning: 'server_returned_user_only',
               });
               console.warn('[MediaGallery] Character roster returned user-only — may be incomplete. Not overwriting cache.');
@@ -965,6 +976,24 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       </div>
 
                       {/* Character picker dropdown */}
+                      {showCharacterPicker && charsLoadStatus === 'error' && character && (
+                        // Current chat character fallback — always available even when full roster fails
+                        <div className="rounded-xl border border-border bg-card p-2 mb-1">
+                          <p className="text-[10px] text-muted-foreground px-1 mb-1">Current character (roster load failed):</p>
+                          <button
+                            onClick={() => toggleCharacter(character.id)}
+                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors ${selectedCharacterIds.includes(character.id) ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-secondary'}`}
+                          >
+                            {selectedCharacterIds.includes(character.id) && <Check className="w-3.5 h-3.5 text-primary" />}
+                            {character.avatar_url ? (
+                              <img src={character.avatar_url} alt={character.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
+                            ) : (
+                              <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">{getInitial(character.name)}</div>
+                            )}
+                            <span className="font-medium">{character.name}</span>
+                          </button>
+                        </div>
+                      )}
                       {showCharacterPicker && charsLoadStatus === 'error' && (
                         <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive space-y-1.5">
                           <p className="font-medium">Character list failed to load.</p>
