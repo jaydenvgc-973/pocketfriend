@@ -583,7 +583,8 @@ export default function CharacterClosetPanel({ character }) {
       const updates = { character_closet: newCloset };
       if (currentOutfitUpdate !== null) updates.current_outfit = currentOutfitUpdate;
       await base44.entities.Character.update(character.id, updates);
-      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+      // Surgical patch — closet/outfit changes don't need a full re-fetch
+      queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, ...updates } : prev);
     } catch (error) {
       console.error("Failed to save closet:", error);
     } finally {

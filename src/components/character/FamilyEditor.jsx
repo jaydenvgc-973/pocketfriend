@@ -172,11 +172,17 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
   const [lockedMembers, setLockedMembers] = useState(new Set((character.family_locked_members || []).map(n => n.toLowerCase())));
 
   const saveLocks = async (newMasterLocked, newLockedMembersSet) => {
-    await base44.entities.Character.update(character.id, {
+    const lockData = {
       family_list_locked: newMasterLocked,
       family_locked_members: [...newLockedMembersSet],
-    }).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+    };
+    await base44.entities.Character.update(character.id, lockData).catch(() => {});
+    // Surgical patch — no re-fetch needed for a lock toggle
+    queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, ...lockData } : prev);
+    queryClient.setQueryData(["characters", currentUser?.email], (prev) => {
+      if (!Array.isArray(prev)) return prev;
+      return prev.map(c => c.id === character.id ? { ...c, ...lockData } : c);
+    });
   };
 
   const toggleMasterLock = () => {
@@ -274,7 +280,11 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
 
           await base44.entities.Character.update(character.id, updateData2);
           queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-          queryClient.invalidateQueries({ queryKey: ["characters"] });
+          // Surgical patch — avoid unscoped ["characters"] invalidation which hits all users
+          queryClient.setQueryData(["characters", currentUser?.email], (prev) => {
+            if (!Array.isArray(prev)) return prev;
+            return prev.map(c => c.id === character.id ? { ...c, family_members: valid2, fictional_relationships: updatedRelationships2 } : c);
+          });
           setGeneratingMemberId(null);
           return;
         }
@@ -419,7 +429,11 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         }
 
         queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-        queryClient.invalidateQueries({ queryKey: ["characters"] });
+        // Surgical patch — avoid unscoped ["characters"] invalidation
+        queryClient.setQueryData(["characters", currentUser?.email], (prev) => {
+          if (!Array.isArray(prev)) return prev;
+          return prev.map(c => c.id === character.id ? { ...c, family_members: valid, fictional_relationships: updatedRelationships } : c);
+        });
       }
     } catch (err) {
       console.error('[FamilyEditor] Image generation failed:', err);
@@ -447,7 +461,10 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
             });
           }
           queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-          queryClient.invalidateQueries({ queryKey: ["characters"] });
+          queryClient.setQueryData(["characters", currentUser?.email], (prev) => {
+            if (!Array.isArray(prev)) return prev;
+            return prev.map(c => c.id === character.id ? { ...c, family_members: valid, fictional_relationships: updatedRelationships } : c);
+          });
         }
       } catch (retryErr) {
         console.error('[FamilyEditor] Image generation retry failed:', retryErr);
@@ -480,7 +497,11 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       }
       await base44.entities.Character.update(character.id, updateData);
       queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      // Surgical patch — avoid unscoped ["characters"] invalidation
+      queryClient.setQueryData(["characters", currentUser?.email], (prev) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(c => c.id === character.id ? { ...c, family_members: valid, fictional_relationships: updatedRelationships } : c);
+      });
     } finally {
       setSaving(false);
     }
@@ -489,13 +510,17 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
   const [showAddMenu, setShowAddMenu] = useState(false);
   const addMenuRef = useRef(null);
 
-  // Close add menu on outside click
+  // Close add menu on outside click — only fire when clicking outside the entire menu container
   useEffect(() => {
     const handler = (e) => {
-      if (addMenuRef.current && !addMenuRef.current.contains(e.target)) { setShowAddMenu(false); setShowCharacterPicker(false); }
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target)) {
+        setShowAddMenu(false);
+        setShowCharacterPicker(false);
+      }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    // Use capture=false so inner button clicks resolve first, preventing premature close
+    document.addEventListener("mousedown", handler, false);
+    return () => document.removeEventListener("mousedown", handler, false);
   }, []);
 
   const [showCharacterPicker, setShowCharacterPicker] = useState(false);
