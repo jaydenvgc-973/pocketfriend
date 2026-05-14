@@ -7,6 +7,7 @@ import { filterDashes } from "@/lib/dashFilter";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import MusicPreviewPlayer from "@/components/chat/MusicPreviewPlayer";
 import VideoPreviewCard from "@/components/chat/VideoPreviewCard";
+import { isImageRecoveryDone, markImageRecoveryDone } from "@/lib/backgroundThrottle";
 
 const emotionalColors = {
   calm: "bg-secondary",
@@ -76,12 +77,23 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   // silently wait for the subscription to push the URL. After timeout, escalate to recovery.
   const isWaitingForGeneration = !isUser && !message.is_narrative && !message.location_share && !localImageUrl && message.content === "" && !autoLoadExpired && !imageRetrying;
 
-  // Start the expiry timer only while actively waiting
+  // Start the expiry timer only while actively waiting.
+  // SESSION DEDUP: if this message ID was already recovered this session (module-level Set),
+  // skip the recovery attempt entirely — prevents remount-induced duplicate calls.
   useEffect(() => {
     if (!isWaitingForGeneration) return;
     const t = setTimeout(() => {
       // Before expiring: make one automatic recovery attempt
       setAutoLoadExpired(true);
+
+      // DEDUP GUARD: never call recoverSingleImage twice for the same message in one session
+      if (isImageRecoveryDone(message.id)) {
+        console.log(`[MessageBubble] SKIP auto-recovery — already attempted this session: ${message.id}`);
+        if (isMountedRef.current) setImageRetryFailed(true);
+        return;
+      }
+      markImageRecoveryDone(message.id);
+
       setImageRetrying(true);
       setImageRetryStatus('recovering');
       base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })

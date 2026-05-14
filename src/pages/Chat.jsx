@@ -67,6 +67,7 @@ import { useChatLocationShare } from "@/hooks/useChatLocationShare";
 import { useChatBackgroundTasks } from "@/hooks/useChatBackgroundTasks.js";
 import { usePageContext } from "@/hooks/usePageContext";
 import { isGloballyRateLimited, reportRateLimit, activateChatSafeMode, isChatSafeModeActive } from "@/lib/simulationGate";
+import { registerForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from "@/lib/foregroundPriority";
 import { lfcRead as lfcReadChat } from "@/lib/localFirstCache.js";
 import { resolveCoPresence } from "@/lib/coPresenceResolver";
 import LocationShareTool from "@/components/chat/LocationShareTool";
@@ -376,13 +377,16 @@ export default function Chat() {
   usePageContext({ page: 'chat', characterId });
 
   // Invalidate userSettings on character open so co-presence reads fresh location data.
-  // UserSettings contains user_current_location_id which determines if the user is
-  // co-present with the character. Without this, a 5-min stale cache can make a character
-  // respond as if the user is away even after the user moved to the character's location.
+  // THROTTLED: once per character per 5 min — prevents storm when user rapidly navigates.
+  // UserSettings contains user_current_location_id which determines co-presence.
   useEffect(() => {
-    if (characterId && currentUser?.email) {
-      queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser.email] });
-    }
+    if (!characterId || !currentUser?.email) return;
+    // Use sessionStorage to debounce per-character — cheap check, no module imports needed
+    const key = `settings_invalidated_for_${characterId}_${currentUser.email}`;
+    const last = parseInt(sessionStorage.getItem(key) || '0', 10);
+    if (Date.now() - last < 5 * 60 * 1000) return; // within 5 min — skip
+    sessionStorage.setItem(key, String(Date.now()));
+    queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser.email] });
   }, [characterId, currentUser?.email]); // eslint-disable-line
 
   // Clear per-character cooldowns on character switch so stale state doesn't bleed
@@ -544,6 +548,11 @@ export default function Chat() {
     }
 
     if (isMountedRef.current) setIsTyping(true);
+
+    // Register foreground task for the full LLM response cycle.
+    // This blocks ALL background simulations, presence syncs, and narrative calls
+    // while the user is waiting for a response. Released when LLM responds or fails.
+    const releaseFgTask = registerForegroundTask(FOREGROUND_TASKS.CHAT_MESSAGE_RESPONSE, PRIORITY_LEVELS.CRITICAL);
 
     // callLLMWithRetry is imported from lib/llmUtils.js
 
@@ -1136,6 +1145,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         setCatchupNarrativeText(null);
       }
     } catch (err) {
+      releaseFgTask(); // release on error — background systems can resume
       if (!isMountedRef.current) return;
       setIsTyping(false);
 
@@ -1219,6 +1229,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       return;
     }
 
+    releaseFgTask(); // response received — background systems can resume
     if (isMountedRef.current) setIsTyping(false);
 
     // --- STRICT MESSAGE SEPARATION ---

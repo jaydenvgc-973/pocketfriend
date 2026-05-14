@@ -214,9 +214,13 @@ export default function Home() {
       }
       return base44.entities.Character.delete(id);
     },
-    onSuccess: () => {
+    onSuccess: (_, { id }) => {
       setPendingDelete(null);
-      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      // Surgical cache remove — avoids full 300-record re-fetch just for a delete
+      queryClient.setQueryData(["characters", currentUser?.email], (prev) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.filter(c => c.id !== id);
+      });
     },
   });
 
@@ -236,14 +240,26 @@ export default function Home() {
       }
       return base44.entities.Character.update(id, { status: "moved_away" });
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }),
+    onSuccess: (_, id) => {
+      // Surgical cache patch — mark moved_away without re-fetching
+      queryClient.setQueryData(["characters", currentUser?.email], (prev) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(c => c.id === id ? { ...c, status: "moved_away" } : c);
+      });
+    },
   });
 
   const moveBackMutation = useMutation({
     mutationFn: async (id) => {
       return base44.entities.Character.update(id, { status: "active" });
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }),
+    onSuccess: (_, id) => {
+      // Surgical cache patch — restore active without re-fetching
+      queryClient.setQueryData(["characters", currentUser?.email], (prev) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(c => c.id === id ? { ...c, status: "active" } : c);
+      });
+    },
   });
 
   // Guard: only run the prompt backfill once per default character ID per session.

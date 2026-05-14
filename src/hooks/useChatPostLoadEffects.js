@@ -1,5 +1,8 @@
 import { useEffect } from "react";
 import { base44 } from "@/api/base44Client";
+import { isOnCooldown, markCooldown } from "@/lib/backgroundThrottle";
+import { isForegroundActive } from "@/lib/foregroundPriority";
+import { isGloballyRateLimited } from "@/lib/simulationGate";
 
 /**
  * useChatPostLoadEffects
@@ -56,13 +59,20 @@ export function useChatPostLoadEffects({
       // ── CATCHUP NARRATIVE ────────────────────────────────────────────────────
       // Deferred 3s to avoid competing with initial message render and markThreadRead.
       // Only fires if user has been away 30+ minutes and is still on the same character.
+      // COOLDOWN: 10 min per character — prevents storm on rapid navigation between chats.
       if (isMounted && snapshotCharacterId === characterId && messages.length > 0) {
         const lastUserMsg = [...messages].reverse().find(m => m.sender_type === 'user');
         if (lastUserMsg) {
           const lastTime = new Date(lastUserMsg.timestamp || lastUserMsg.created_date);
-          if ((new Date() - lastTime) / 60000 >= 30) {
+          const catchupCooldownKey = `catchup:${snapshotCharacterId}`;
+          const awayLongEnough = (new Date() - lastTime) / 60000 >= 30;
+          const notOnCooldown = !isOnCooldown(catchupCooldownKey, 10 * 60 * 1000);
+          if (awayLongEnough && notOnCooldown) {
             catchupTimerRef.current = setTimeout(() => {
               if (!isMounted || snapshotCharacterId !== characterId) return;
+              // Skip if foreground task (chat send/image gen) became active during the 3s wait
+              if (isForegroundActive() || isGloballyRateLimited()) return;
+              markCooldown(catchupCooldownKey);
               base44.functions.invoke('generateCatchupNarrative', {
                 characterId: snapshotCharacterId,
                 conversationId,

@@ -60,7 +60,9 @@ export default function Moments() {
       ? base44.entities.Message.filter({}, "-created_date", 500)
       : [],
     enabled: !!currentUser?.email,
-    staleTime: 2 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,      // 5 min — no need to refetch on every Moments open
+    refetchOnMount: false,
+    placeholderData: (prev) => prev, // show last-known-good while refresh runs
   });
 
   const { data: userChallenges = [] } = useQuery({
@@ -69,6 +71,9 @@ export default function Moments() {
       ? base44.entities.UserChallenge.filter({})
       : [],
     enabled: !!currentUser?.email,
+    staleTime: 5 * 60 * 1000,
+    refetchOnMount: false,
+    placeholderData: (prev) => prev,
   });
 
   const { data: userSettings = null } = useQuery({
@@ -77,6 +82,9 @@ export default function Moments() {
       ? base44.entities.UserSettings.filter({ owner_email: currentUser.email }, null, 1).then(r => r[0] || null)
       : null,
     enabled: !!currentUser?.email,
+    staleTime: 5 * 60 * 1000,
+    refetchOnMount: false,
+    placeholderData: (prev) => prev,
   });
 
   const { data: communityEvents = [] } = useQuery({

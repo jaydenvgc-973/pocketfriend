@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
 import { lfcRead, lfcWrite, lfcIsStale } from '@/lib/localFirstCache.js';
+import { isOnCooldown, markCooldown } from '@/lib/backgroundThrottle';
 
 /**
  * useWorldContactsUnread
@@ -9,11 +10,14 @@ import { lfcRead, lfcWrite, lfcIsStale } from '@/lib/localFirstCache.js';
  *
  * PERFORMANCE RULES:
  * 1. Serve from LFC cache immediately — zero API calls on mount if cache is fresh.
- * 2. Fetch all NPC conversations in ONE batch query (not N sequential queries).
- * 3. Subscription-triggered reloads are debounced 8 seconds to prevent storm on active chat.
- * 4. Only re-fetch if LFC cache is stale (>2 min) OR a new message arrived.
- * 5. Never fire N×2 API calls per contact.
+ * 2. Fetch ALL unread NPC messages in ONE batch query — not N per-contact queries.
+ * 3. Subscription-triggered reloads are debounced 10s to prevent storm on active chat.
+ * 4. Only re-fetch if LFC cache is stale (>3 min) OR a new message arrived (force=true).
+ * 5. Module-level cooldown prevents overlapping fetches across remounts.
  */
+
+const REFRESH_COOLDOWN_MS = 3 * 60 * 1000; // 3 min between server fetches
+
 export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = null) {
   const [unreadByContact, setUnreadByContact] = useState({});
   const [globalUnreadCount, setGlobalUnreadCount] = useState(0);
@@ -21,11 +25,11 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
   const isFetchingRef = useRef(false);
 
   const cacheKey = characterId ? `world_contacts_unread:${characterId}` : null;
+  const cooldownKey = characterId ? `wc_unread_fetch:${characterId}` : null;
 
-  const applyCache = useCallback((cached) => {
-    if (!cached) return;
-    setUnreadByContact(cached.byContact || {});
-    setGlobalUnreadCount(cached.total || 0);
+  const applyData = useCallback((byContact, total) => {
+    setUnreadByContact(byContact || {});
+    setGlobalUnreadCount(total || 0);
   }, []);
 
   const loadUnreadCounts = useCallback(async (force = false) => {
@@ -35,65 +39,104 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       return;
     }
     if (isFetchingRef.current) return; // dedupe concurrent fetches
+
+    // LFC cache check — skip server if fresh and not forced
     if (!force && ownerEmail && cacheKey) {
       const cached = lfcRead(ownerEmail, cacheKey);
       if (cached && !lfcIsStale(cached, 'messages')) {
-        applyCache(cached.data);
-        return; // fresh cache — no server call needed
+        const d = cached.data;
+        if (d) { applyData(d.byContact, d.total); return; }
       }
     }
 
+    // Module-level cooldown — prevents rapid refetch storms across remounts
+    if (!force && cooldownKey && isOnCooldown(cooldownKey, REFRESH_COOLDOWN_MS)) {
+      console.log(`[WorldContactsUnread] SKIP fetch — cooldown active for char=${characterId}`);
+      return;
+    }
+
     isFetchingRef.current = true;
+    if (cooldownKey) markCooldown(cooldownKey);
+
     try {
-      // ONE batch query for all NPC conversations for this character
+      // BATCH STRATEGY:
+      // Step 1: Get all NPC conversations for this character in ONE query.
+      // Step 2: Get ALL unread character messages for those conversation IDs in ONE query.
+      // Total: 2 API calls regardless of contact count (was N×2 before).
+
       const allConvos = await base44.entities.Conversation.filter(
-        { type: 'npc', character_ids: [characterId] },
+        { character_ids: [characterId] },
         '-updated_date',
         100
       );
 
-      const byContact = {};
-      let total = 0;
-      const contactNames = new Set(contacts.map(c => c.person_name));
+      if (allConvos.length === 0) {
+        applyData({}, 0);
+        return;
+      }
 
+      // Build a map: conversationId → contactName (from title or participant matching)
+      const convoToContact = {};
       for (const convo of allConvos) {
-        // Match conversation to a contact by title convention
+        // Match by title convention: npc_chat__<ownerId>__<contactName>
         const titleMatch = convo.title?.match(/^npc_chat__[^_]+__(.+)$/);
-        const contactName = titleMatch?.[1];
-        if (!contactName || !contactNames.has(contactName)) continue;
-
-        try {
-          const unreadMsgs = await base44.entities.Message.filter(
-            { conversation_id: convo.id, sender_type: 'character', is_read: false },
-            null,
-            50
-          );
-          byContact[contactName] = unreadMsgs.length;
-          total += unreadMsgs.length;
-        } catch {
-          byContact[contactName] = 0;
+        if (titleMatch?.[1]) {
+          convoToContact[convo.id] = titleMatch[1];
+          continue;
+        }
+        // Fallback: world_phone canonical title
+        const wpMatch = convo.title?.match(/^world_phone::(.+)$/);
+        if (wpMatch) {
+          // Get the other participant's ID and resolve name from contacts
+          const otherIds = (convo.character_ids || []).filter(id => id !== characterId);
+          if (otherIds.length > 0) {
+            const matchedContact = contacts.find(c => c.related_character_id === otherIds[0]);
+            if (matchedContact) convoToContact[convo.id] = matchedContact.person_name;
+          }
         }
       }
 
-      // Fill zeros for contacts with no conversation
-      for (const contact of contacts) {
-        if (!(contact.person_name in byContact)) byContact[contact.person_name] = 0;
+      const convoIds = Object.keys(convoToContact);
+      if (convoIds.length === 0) {
+        // No recognized conversations — zero out all contacts
+        const byContact = Object.fromEntries(contacts.map(c => [c.person_name, 0]));
+        applyData(byContact, 0);
+        return;
       }
 
-      setUnreadByContact(byContact);
-      setGlobalUnreadCount(total);
+      // ONE batch query for all unread messages across all these conversations
+      // We filter sender_type=character + is_read=false, limit 200 to cover all contacts
+      const allUnread = await base44.entities.Message.filter(
+        { sender_type: 'character', is_read: false },
+        null,
+        200
+      );
+
+      // Tally by contact name
+      const byContact = Object.fromEntries(contacts.map(c => [c.person_name, 0]));
+      let total = 0;
+
+      for (const msg of allUnread) {
+        const contactName = convoToContact[msg.conversation_id];
+        if (!contactName) continue;
+        if (!(contactName in byContact)) continue; // not one of our contacts
+        byContact[contactName] = (byContact[contactName] || 0) + 1;
+        total++;
+      }
+
+      applyData(byContact, total);
 
       // Write to LFC so next mount is instant
       if (ownerEmail && cacheKey) {
         lfcWrite(ownerEmail, cacheKey, { byContact, total });
       }
     } catch (err) {
-      // Non-fatal — keep existing state, just log
       console.warn('[useWorldContactsUnread] fetch failed (non-fatal):', err?.message);
+      // Non-fatal — keep existing visible state, don't wipe counts
     } finally {
       isFetchingRef.current = false;
     }
-  }, [characterId, contacts, ownerEmail, cacheKey, applyCache]);
+  }, [characterId, contacts.length, ownerEmail, cacheKey, cooldownKey, applyData]); // eslint-disable-line
 
   useEffect(() => {
     if (!characterId || contacts.length === 0) {
@@ -105,19 +148,19 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
     // Seed from LFC immediately — zero wait
     if (ownerEmail && cacheKey) {
       const cached = lfcRead(ownerEmail, cacheKey);
-      if (cached) applyCache(cached.data);
+      if (cached?.data) applyData(cached.data.byContact, cached.data.total);
     }
 
-    // Load from server (respects cache freshness internally)
+    // Load from server (respects cache freshness + cooldown internally)
     loadUnreadCounts();
 
-    // Debounced subscription — 8s to avoid storm on active chat
+    // Debounced subscription — 10s to avoid storm on active chat
     const unsubscribe = base44.entities.Message.subscribe((event) => {
       if (event.type !== 'create' && event.type !== 'update') return;
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = setTimeout(() => {
-        loadUnreadCounts(true); // force=true to bypass cache on real-time event
-      }, 8000);
+        loadUnreadCounts(true); // force=true: bypass cache on real-time event
+      }, 10000);
     });
 
     return () => {
