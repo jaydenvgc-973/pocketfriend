@@ -25,8 +25,9 @@ Deno.serve(async (req) => {
       testCharacterConfirmed = false,
     } = await req.json();
 
-    // ── PROOF LEVEL ──────────────────────────────────────────────────────────
-    let proofLevel = dryRun ? 'read_only_runtime' : 'mutating_runtime_test';
+    // ── PROOF LEVEL (only mutating_runtime_test AFTER actual write succeeds) ──
+    let proofLevel = 'read_only_runtime';
+    let mutationPerformed = false;
 
     // ── COLLECT REAL RECORDS ─────────────────────────────────────────────────
 
@@ -61,28 +62,38 @@ Deno.serve(async (req) => {
     // 4. User location
     const userHasLocation = !!(userSettings.user_current_location_id && userSettings.user_current_location_name);
 
-    // 5. Chat Cache Status (sample recent conversations)
-    const recentConvos = await base44.entities.Conversation.filter(
-      { character_ids: { $in: characters.map(c => c.id) } },
+    // 5. Chat Cache Status — fetch by owner_email first, then filter in memory
+    // Cannot rely on character_ids filter, so fetch conversations owned by user
+    const allConvos = await base44.entities.Conversation.filter(
+      { owner_email: user.email },
       '-last_message_date',
-      10
+      50
     );
+    // Filter to conversations with our characters
+    const recentConvos = allConvos.filter(c => 
+      characters.some(ch => c.character_ids?.includes(ch.id))
+    ).slice(0, 10);
 
-    // 6. Recent image messages (last 5)
-    const imageMessages = await base44.entities.Message.filter(
-      { image_url: { $exists: true } },
+    // 6. Recent image messages — fetch recent messages and filter in memory
+    // Scoped to conversations we own
+    const allMessages = await base44.entities.Message.filter(
+      { conversation_id: { $in: recentConvos.map(c => c.id) } },
       '-created_date',
-      5
+      50
     );
+    const imageMessages = allMessages.filter(m => m.image_url || m.generation_context).slice(0, 5);
 
-    // 7. Recent ScheduledEvents (last 10)
-    const scheduledEvents = await base44.entities.ScheduledEvent.filter(
-      { primary_character_id: { $in: characters.map(c => c.id) } },
+    // 7. Recent ScheduledEvents — fetch and filter in memory
+    const allScheduledEvents = await base44.entities.ScheduledEvent.filter(
+      { owner_email: user.email },
       '-created_date',
-      10
+      50
     );
+    const scheduledEvents = allScheduledEvents.filter(e =>
+      characters.some(c => e.primary_character_id === c.id)
+    ).slice(0, 10);
 
-    // 8. Recent Memories (last 10)
+    // 8. Recent Memories
     const memories = testChar
       ? await base44.entities.CharacterMemory.filter(
           { character_id: testChar.id },
@@ -91,7 +102,7 @@ Deno.serve(async (req) => {
         )
       : [];
 
-    // 9. Recent LifeEvents (last 10)
+    // 9. Recent LifeEvents
     const lifeEvents = testChar
       ? await base44.entities.LifeEvent.filter(
           { character_id: testChar.id },
@@ -119,7 +130,7 @@ Deno.serve(async (req) => {
 
     const checks = {
       owner_email_present: !!user.email,
-      no_created_by_usage: checkNoCreatedByUsage(characters, memories, lifeEvents),
+      returned_records_do_not_include_created_by: checkReturnedRecordsNoCreatedBy(characters, memories, lifeEvents),
       user_location_known: userHasLocation,
       user_location_id: userSettings.user_current_location_id || 'UNKNOWN',
       user_location_name: userSettings.user_current_location_name || 'UNKNOWN',
@@ -151,8 +162,6 @@ Deno.serve(async (req) => {
     let travelTestResult = null;
     if (runTravelPromiseTest && testCharacterId && testCharacterConfirmed) {
       if (!dryRun) {
-        proofLevel = 'mutating_runtime_test';
-
         // Get character before state
         const beforeArr = await base44.entities.Character.filter(
           { id: testCharacterId, owner_email: user.email },
@@ -193,6 +202,10 @@ Deno.serve(async (req) => {
             }, { status: 400 });
           }
 
+          // MUTATION OCCURRED
+          mutationPerformed = true;
+          proofLevel = 'mutating_runtime_test';
+
           // Get character after state
           const afterArr = await base44.entities.Character.filter(
             { id: testCharacterId, owner_email: user.email },
@@ -203,7 +216,7 @@ Deno.serve(async (req) => {
 
           // Get created ScheduledEvent
           const eventsArr = await base44.entities.ScheduledEvent.filter(
-            { primary_character_id: testCharacterId, source: 'conversation_travel_promise' },
+            { primary_character_id: testCharacterId },
             '-created_date',
             1
           );
@@ -211,6 +224,7 @@ Deno.serve(async (req) => {
 
           travelTestResult = {
             success: true,
+            mutation_applied: true,
             before_record: {
               id: beforeRecord.id,
               name: beforeRecord.name,
@@ -235,25 +249,28 @@ Deno.serve(async (req) => {
               status: scheduledEvent.status,
               trigger_time: scheduledEvent.trigger_time,
               primary_character_id: scheduledEvent.primary_character_id,
-              event_payload: scheduledEvent.event_payload,
+              source: scheduledEvent.source,
             } : null,
-            next_required_action: 'Wait for ScheduledEvent to fire (in ~20 min) or manually call processScheduledEvents to verify arrival',
+            note: 'Travel commitment test COMPLETE. Departure state written to database and will persist. Arrival proof requires separate processScheduledEvents run (not tested here).',
           };
         } catch (err) {
-          travelTestResult = {
-            success: false,
-            error: err.message,
-          };
+          return Response.json({
+            error: 'Travel test execution failed',
+            message: err.message,
+            proof_level: proofLevel,
+          }, { status: 500 });
         }
       } else {
         // Dry run: show what would happen
         travelTestResult = {
           dry_run: true,
-          message: 'Travel test would write travel_status=traveling_to_destination and create ScheduledEvent',
+          would_mutate: true,
+          message: 'Travel test WOULD write: travel_status=traveling_to_destination, traveling_to_location_id, ScheduledEvent with type=travel_arrival',
           would_use_location: {
             id: userSettings.user_current_location_id,
             name: userSettings.user_current_location_name,
           },
+          note: 'Dry run only. Run with dryRun=false to actually commit travel state.',
         };
       }
     }
@@ -262,6 +279,7 @@ Deno.serve(async (req) => {
 
     return Response.json({
       proof_level: proofLevel,
+      mutation_performed: mutationPerformed,
       dryRun,
       timestamp: new Date().toISOString(),
       user: {
@@ -271,7 +289,7 @@ Deno.serve(async (req) => {
       checks,
       travel_promise_test: travelTestResult,
       warnings: generateWarnings(checks, characters),
-      next_steps: generateNextSteps(checks, travelTestResult, dryRun),
+      next_steps: generateNextSteps(checks, travelTestResult, dryRun, mutationPerformed),
     });
 
   } catch (error) {
@@ -282,7 +300,7 @@ Deno.serve(async (req) => {
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 
-function checkNoCreatedByUsage(characters, memories, lifeEvents) {
+function checkReturnedRecordsNoCreatedBy(characters, memories, lifeEvents) {
   const charsWithCreatedBy = characters.filter(c => c.created_by).length;
   const memsWithCreatedBy = memories.filter(m => m.created_by).length;
   const eventsWithCreatedBy = lifeEvents.filter(e => e.created_by).length;
@@ -357,7 +375,7 @@ function generateWarnings(checks, characters) {
   return warnings;
 }
 
-function generateNextSteps(checks, travelTestResult, dryRun) {
+function generateNextSteps(checks, travelTestResult, dryRun, mutationPerformed) {
   const steps = [];
 
   if (!checks.user_location_known) {
@@ -377,7 +395,12 @@ function generateNextSteps(checks, travelTestResult, dryRun) {
   }
 
   if (travelTestResult?.success) {
-    steps.push('✓ Travel promise test PASSED: Verify arrival by waiting 20 min or calling processScheduledEvents manually');
+    steps.push('✓ Travel DEPARTURE committed: Character record updated with travel_status and ScheduledEvent created');
+    steps.push('⏳ ARRIVAL NOT YET TESTED: Requires separate processScheduledEvents call to verify arrival processing. This harness does not test arrival.');
+  }
+
+  if (mutationPerformed) {
+    steps.push('⚠️ PERSISTENCE: Travel state mutations have been written to the database and will persist. No automatic rollback.');
   }
 
   if (dryRun && !travelTestResult?.dry_run) {

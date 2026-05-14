@@ -9,20 +9,32 @@ export default function AdminVerification() {
   const [error, setError] = useState(null);
   const [dryRun, setDryRun] = useState(true);
   const [runTravelTest, setRunTravelTest] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState(null);
   const [selectedCharacterId, setSelectedCharacterId] = useState('');
   const [travelConfirmed, setTravelConfirmed] = useState(false);
 
-  const handleRunVerification = async () => {
+  // Auto-run dry run on mount to get character list
+  React.useEffect(() => {
+    if (!dryRunResult) {
+      handleRunVerification(true);
+    }
+  }, []);
+
+  const handleRunVerification = async (skipCharacterSelection = false) => {
     setIsLoading(true);
     setError(null);
     try {
       const res = await base44.functions.invoke('runAppCompletionVerification', {
-        dryRun,
-        runTravelPromiseTest: runTravelTest,
-        testCharacterId: selectedCharacterId || undefined,
-        testCharacterConfirmed: travelConfirmed,
+        dryRun: skipCharacterSelection ? true : dryRun,
+        runTravelPromiseTest: skipCharacterSelection ? false : runTravelTest,
+        testCharacterId: skipCharacterSelection ? undefined : (selectedCharacterId || undefined),
+        testCharacterConfirmed: skipCharacterSelection ? false : travelConfirmed,
       });
-      setResult(res.data);
+      const resultData = res.data;
+      setResult(resultData);
+      if (skipCharacterSelection) {
+        setDryRunResult(resultData);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -63,13 +75,20 @@ export default function AdminVerification() {
 
             {runTravelTest && (
               <div className="ml-6 space-y-3 bg-secondary/30 p-3 rounded-lg">
-                <input
-                  type="text"
-                  placeholder="Character ID (optional - uses first active character)"
+                <label className="text-xs text-muted-foreground">Select character:</label>
+                <select
                   value={selectedCharacterId}
                   onChange={(e) => setSelectedCharacterId(e.target.value)}
                   className="w-full px-3 py-2 rounded-md bg-background border border-border text-sm"
-                />
+                >
+                  <option value="">{dryRunResult?.checks?.test_character_name || 'Loading...'} (auto-selected)</option>
+                  {dryRunResult?.checks?.character_roster_count > 0 && dryRunResult?.checks?.character_roster_count > 1 ? (
+                    <optgroup label="Or choose another:">
+                      {/* Note: actual character list would come from a full roster fetch */}
+                      <option value="">Load full roster (use auto-selected)</option>
+                    </optgroup>
+                  ) : null}
+                </select>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
