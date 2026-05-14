@@ -160,8 +160,19 @@ Deno.serve(async (req) => {
     // ── OPTIONAL: TRAVEL PROMISE TEST ────────────────────────────────────────
 
     let travelTestResult = null;
+    let travelTestBlockedReason = null;
+
     if (runTravelPromiseTest && testCharacterId && testCharacterConfirmed) {
-      if (!dryRun) {
+      // BLOCK if user location unknown
+      if (!userHasLocation) {
+        travelTestBlockedReason = 'user_location_unknown';
+        travelTestResult = {
+          blocked: true,
+          reason: travelTestBlockedReason,
+          message: 'User location must be set before travel promise test can run',
+          instruction: 'Set user location through the app UI (Travel page or UserSettings) and run again',
+        };
+      } else if (!dryRun) {
         // Get character before state
         const beforeArr = await base44.entities.Character.filter(
           { id: testCharacterId, owner_email: user.email },
@@ -287,9 +298,15 @@ Deno.serve(async (req) => {
         full_name: user.full_name,
       },
       checks,
+      character_roster_sample: characters.slice(0, 50).map(c => ({
+        id: c.id,
+        name: c.name,
+        is_active: c.is_active_character,
+      })),
+      travel_test_blocked_reason: travelTestBlockedReason,
       travel_promise_test: travelTestResult,
       warnings: generateWarnings(checks, characters),
-      next_steps: generateNextSteps(checks, travelTestResult, dryRun, mutationPerformed),
+      next_steps: generateNextSteps(checks, travelTestResult, dryRun, mutationPerformed, travelTestBlockedReason),
     });
 
   } catch (error) {
@@ -375,11 +392,12 @@ function generateWarnings(checks, characters) {
   return warnings;
 }
 
-function generateNextSteps(checks, travelTestResult, dryRun, mutationPerformed) {
+function generateNextSteps(checks, travelTestResult, dryRun, mutationPerformed, travelTestBlockedReason) {
   const steps = [];
 
   if (!checks.user_location_known) {
-    steps.push('REQUIRED: Set user location in UserSettings before running travel promise test');
+    steps.push('REQUIRED: Use the app\'s Travel page or Settings to set your current location first');
+    steps.push('→ Then run this verification again with the travel test enabled');
   }
 
   if (!checks.test_character_available) {

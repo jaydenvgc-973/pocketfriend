@@ -46,7 +46,16 @@ export default function AdminVerification() {
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-4xl mx-auto">
         <h1 className="text-3xl font-bold mb-2">App Completion Verification</h1>
-        <p className="text-muted-foreground mb-8">Runtime proof harness — collects real records and runs checks.</p>
+        <p className="text-muted-foreground mb-4">Runtime proof harness — collects real records and runs checks.</p>
+        <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 mb-8 text-sm text-blue-400">
+          <p className="font-semibold mb-2">Test Sequence:</p>
+          <ol className="list-decimal list-inside space-y-1 text-xs">
+            <li>Run dry run below to check app state</li>
+            <li>If travel test blocked, use app UI to set your current location</li>
+            <li>Return here and enable travel test with dryRun=false</li>
+            <li>Verify before/after character records and ScheduledEvent are created</li>
+          </ol>
+        </div>
 
         {/* Controls */}
         <div className="bg-card rounded-lg p-6 mb-6 border border-border space-y-4">
@@ -75,32 +84,42 @@ export default function AdminVerification() {
 
             {runTravelTest && (
               <div className="ml-6 space-y-3 bg-secondary/30 p-3 rounded-lg">
-                <label className="text-xs text-muted-foreground">Select character:</label>
-                <select
-                  value={selectedCharacterId}
-                  onChange={(e) => setSelectedCharacterId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-md bg-background border border-border text-sm"
-                >
-                  <option value="">{dryRunResult?.checks?.test_character_name || 'Loading...'} (auto-selected)</option>
-                  {dryRunResult?.checks?.character_roster_count > 0 && dryRunResult?.checks?.character_roster_count > 1 ? (
-                    <optgroup label="Or choose another:">
-                      {/* Note: actual character list would come from a full roster fetch */}
-                      <option value="">Load full roster (use auto-selected)</option>
-                    </optgroup>
-                  ) : null}
-                </select>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={travelConfirmed}
-                    onChange={(e) => setTravelConfirmed(e.target.checked)}
-                    disabled={dryRun}
-                    className="w-4 h-4"
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Confirm: {dryRun ? '(disabled in dry run)' : 'I confirm to mutate travel state'}
-                  </span>
-                </label>
+                {result?.travel_test_blocked_reason === 'user_location_unknown' ? (
+                  <div className="px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/30 text-xs text-destructive">
+                    <p className="font-semibold mb-1">⛔ Test blocked: User location unknown</p>
+                    <p className="text-destructive/80">Use the app's Travel page to set your current location, then return here.</p>
+                  </div>
+                ) : (
+                  <>
+                    <label className="text-xs text-muted-foreground">Select character:</label>
+                    <select
+                      value={selectedCharacterId}
+                      onChange={(e) => setSelectedCharacterId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-md bg-background border border-border text-sm"
+                    >
+                      <option value="">{dryRunResult?.checks?.test_character_name || 'Auto-select'}</option>
+                      {dryRunResult?.character_roster ? (
+                        dryRunResult.character_roster.map(ch => (
+                          <option key={ch.id} value={ch.id}>
+                            {ch.name} {ch.is_active_character ? '(active)' : ''}
+                          </option>
+                        ))
+                      ) : null}
+                    </select>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={travelConfirmed}
+                        onChange={(e) => setTravelConfirmed(e.target.checked)}
+                        disabled={dryRun}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        Confirm: {dryRun ? '(disabled in dry run)' : 'I confirm to mutate travel state'}
+                      </span>
+                    </label>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -131,6 +150,13 @@ export default function AdminVerification() {
         {/* Result */}
         {result && (
           <div className="space-y-6">
+            {/* Full JSON Report */}
+            <div className="bg-card rounded-lg p-6 border border-border">
+              <h3 className="font-semibold mb-3">Full JSON Report</h3>
+              <pre className="text-[10px] bg-background p-4 rounded overflow-auto max-h-96 text-muted-foreground">
+                {JSON.stringify(result, null, 2)}
+              </pre>
+            </div>
             {/* Header */}
             <div className="bg-card rounded-lg p-6 border border-border">
               <div className="flex items-center justify-between mb-4">
