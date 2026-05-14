@@ -570,7 +570,17 @@ Deno.serve(async (req) => {
     // as a described_third_party, writing null into generation_context.character_id.
     // The Message entity itself ALWAYS has character_id stamped (set at message creation),
     // so it is the authoritative identity fallback when the context was corrupted.
-    const originalCharId    = ctx.character_id || message.character_id || null;
+    //
+    // NEW: also check generation_context.subjects[0] (structured format from generateImageAsync)
+    const firstStructuredSubjectId = ctx.subjects?.length > 0
+      ? (ctx.subjects.find(s => s.role === 'primary')?.subject_id || ctx.subjects[0]?.subject_id)
+      : null;
+
+    const originalCharId    = firstStructuredSubjectId || ctx.character_id || message.character_id || null;
+
+    if (firstStructuredSubjectId && firstStructuredSubjectId !== ctx.character_id) {
+      console.log(`[regenerateImageWithReason] Using structured subjects[0].subject_id=${firstStructuredSubjectId} (overrides legacy ctx.character_id=${ctx.character_id || 'null'})`);
+    }
     const originalPrompt    = ctx.prompt || '';
     const originalLocId     = ctx.location_id || null;
     const originalZoneName  = ctx.zone_name || null;
@@ -990,6 +1000,34 @@ Deno.serve(async (req) => {
       ...charRefs.slice(0, CHAR_SLOTS),
       ...userRefs.slice(0, USER_SLOTS),
     ].filter(Boolean);
+
+    // ── IDENTITY DISPATCH DIAGNOSTICS ─────────────────────────────────────────
+    // Matches [IdentityAudit] format from generateImageAsync for consistent log tracing.
+    console.log(`[IdentityAudit][regen] ══════════════════════════════════════════════`);
+    console.log(`[IdentityAudit][regen] reason:                  ${reason}`);
+    console.log(`[IdentityAudit][regen] message_id:              ${messageId}`);
+    console.log(`[IdentityAudit][regen] effective_char_id:       ${effectiveCharId || 'null'}`);
+    console.log(`[IdentityAudit][regen] char_name:               ${charName}`);
+    console.log(`[IdentityAudit][regen] char_ref_count:          ${CHAR_SLOTS}`);
+    console.log(`[IdentityAudit][regen] char_ref_source:         ${charRefs.length > 0 ? 'reference_image_urls' : (charDesc ? 'text_description_only' : 'none')}`);
+    console.log(`[IdentityAudit][regen] user_ref_count:          ${USER_SLOTS}`);
+    console.log(`[IdentityAudit][regen] env_ref_count:           ${ENV_SLOTS}`);
+    console.log(`[IdentityAudit][regen] prompt_named_char_id:    ${promptNamedCharId || 'none'}`);
+    console.log(`[IdentityAudit][regen] original_char_id:        ${originalCharId || 'null'}`);
+    console.log(`[IdentityAudit][regen] ctx_had_structured_subj: ${!!firstStructuredSubjectId}`);
+    console.log(`[IdentityAudit][regen] intended_subjects_param: ${intendedSubjectIds?.join(',') || 'none'}`);
+    console.log(`[IdentityAudit][regen] include_user:            ${!!includeUserSubject}`);
+    console.log(`[IdentityAudit][regen] outfit_in_charDesc:      ${charDesc?.includes('Currently wearing:') ?? false}`);
+    console.log(`[IdentityAudit][regen] location_resolved:       ${resolvedLocationName || 'none'}`);
+    console.log(`[IdentityAudit][regen] zone_resolved:           ${resolvedZoneName || 'none'}`);
+    console.log(`[IdentityAudit][regen] subject_source:          ${
+      reason === 'no_avatar' && intendedSubjectIds?.length > 0 ? 'user_picker_selection' :
+      promptNamedCharId ? 'prompt_name_scan' :
+      firstStructuredSubjectId ? 'structured_subjects_array' :
+      ctx.character_id ? 'ctx_character_id_legacy' :
+      'message_character_id_fallback'
+    }`);
+    console.log(`[IdentityAudit][regen] ══════════════════════════════════════════════`);
 
     console.log(`[regenerateImageWithReason] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | reason=${reason} | includeUser=${!!includeUserSubject}`);
 

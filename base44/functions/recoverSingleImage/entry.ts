@@ -127,7 +127,22 @@ Deno.serve(async (req) => {
     // If the prompt names Character A, render Character A — even if Character B sent the message.
     // NEVER default to the sender if the prompt names a different person.
 
-    let subjectCharId = ctx.character_id || message.character_id || null;
+    // RESOLUTION HIERARCHY:
+    // 1. Prompt name-scan (full name first, then first-name ≥4 chars) — HIGHEST PRIORITY
+    // 2. generation_context.subjects[0].subject_id (new structured format from generateImageAsync)
+    // 3. generation_context.character_id (legacy field)
+    // 4. message.character_id (sender — last resort)
+
+    // Read structured subjects first — new format written by generateImageAsync
+    const firstStructuredSubjectId = ctx.subjects?.length > 0
+      ? (ctx.subjects.find(s => s.role === 'primary')?.subject_id || ctx.subjects[0]?.subject_id)
+      : null;
+
+    let subjectCharId = firstStructuredSubjectId || ctx.character_id || message.character_id || null;
+
+    if (firstStructuredSubjectId && firstStructuredSubjectId !== ctx.character_id) {
+      console.log(`[recoverSingleImage] Using structured subjects[0].subject_id=${firstStructuredSubjectId} (overrides legacy ctx.character_id=${ctx.character_id || 'null'})`);
+    }
     let subjectCharRecord = null;
 
     // Parse prompt for explicitly named character — highest priority
@@ -208,16 +223,18 @@ Deno.serve(async (req) => {
       }
 
       // Build text description for identity lock
+      // SYNC: charDesc building must match generateImageAsync and regenerateImageWithReason exactly.
+      // All three functions use the same field set so text-only identity is consistent.
       const descParts = [
         subjectCharRecord.age_range ? `${subjectCharRecord.age_range} years old` : null,
-        subjectCharRecord.gender,
+        subjectCharRecord.gender || null,
         subjectCharRecord.ethnicities?.length > 0 ? subjectCharRecord.ethnicities.join('/') + ' ethnicity' : null,
         subjectCharRecord.appearance_lock?.skin_tone ? `${subjectCharRecord.appearance_lock.skin_tone} skin tone` : null,
         subjectCharRecord.appearance_lock?.hairstyle ? `${subjectCharRecord.appearance_lock.hairstyle} hairstyle` : null,
         subjectCharRecord.appearance_lock?.hair_type ? `${subjectCharRecord.appearance_lock.hair_type} hair` : null,
         subjectCharRecord.appearance_lock?.facial_hair || null,
         subjectCharRecord.appearance_notes || null,
-        subjectCharRecord.avatar_description_text || null,
+        subjectCharRecord.avatar_description_text || null, // vision-analyzed description
       ].filter(Boolean);
       charDesc = descParts.join(', ');
     }
@@ -260,6 +277,31 @@ Deno.serve(async (req) => {
     // Assemble: env refs FIRST, then identity refs
     const referenceImages = [...envRefs, ...identityRefs];
     const envCount = envRefs.length;
+
+    // ── IDENTITY DISPATCH DIAGNOSTICS ─────────────────────────────────────────
+    // Matches [IdentityAudit] format from generateImageAsync for consistent log tracing.
+    console.log(`[IdentityAudit][recover] ══════════════════════════════════════════════`);
+    console.log(`[IdentityAudit][recover] message_id:              ${messageId}`);
+    console.log(`[IdentityAudit][recover] subject_char_id:         ${subjectCharId || 'null'}`);
+    console.log(`[IdentityAudit][recover] subject_char_name:       ${charName}`);
+    console.log(`[IdentityAudit][recover] identity_ref_count:      ${identityRefs.length}`);
+    console.log(`[IdentityAudit][recover] identity_ref_source:     ${
+      identityRefs.length > 0 && subjectCharRecord?.reference_image_urls?.filter(u => !u.includes('generated_image')).length > 0
+        ? 'reference_image_urls'
+        : identityRefs.length > 0 ? 'avatar_url_fallback' : 'none'
+    }`);
+    console.log(`[IdentityAudit][recover] env_ref_count:           ${envCount}`);
+    console.log(`[IdentityAudit][recover] ctx_structured_subj_id: ${firstStructuredSubjectId || 'none'}`);
+    console.log(`[IdentityAudit][recover] ctx_char_id_legacy:      ${ctx.character_id || 'null'}`);
+    console.log(`[IdentityAudit][recover] msg_char_id_fallback:    ${message.character_id || 'null'}`);
+    console.log(`[IdentityAudit][recover] subject_source:          ${
+      subjectCharRecord && imagePrompt
+        ? 'prompt_name_scan' : firstStructuredSubjectId ? 'structured_subjects_array'
+        : ctx.character_id ? 'ctx_character_id_legacy' : 'message_character_id_fallback'
+    }`);
+    console.log(`[IdentityAudit][recover] char_desc_built:         ${!!charDesc}`);
+    console.log(`[IdentityAudit][recover] location_resolved:       ${resolvedLocationName || 'none'}`);
+    console.log(`[IdentityAudit][recover] ══════════════════════════════════════════════`);
 
     console.log(`[recoverSingleImage] Refs assembled: env=${envCount} identity=${identityRefs.length} total=${referenceImages.length}`);
 

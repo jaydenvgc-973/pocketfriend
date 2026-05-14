@@ -136,7 +136,8 @@ export async function resolveCharacterVisualRefs(base44, characterId, allCharact
 
   if (!char) return { refs: [], missing: true, appearanceText: null };
 
-  // Build appearance text for prompt injection — used even when no reference images exist
+  // Build appearance text for prompt injection — used even when no reference images exist.
+  // SYNC: must match the charDesc building logic in generateImageAsync and regenerateImageWithReason.
   const lock = char.appearance_lock || {};
   const appearanceParts = [
     char.age_range ? `${char.age_range} years old` : null,
@@ -147,30 +148,50 @@ export async function resolveCharacterVisualRefs(base44, characterId, allCharact
     lock.hair_type ? `${lock.hair_type} hair` : null,
     lock.facial_hair || null,
     char.appearance_notes || null,
-    char.avatar_description_text || null,
+    char.avatar_description_text || null, // vision-analyzed description from photo upload
   ].filter(Boolean);
   const appearanceText = appearanceParts.length > 0 ? appearanceParts.join(', ') : null;
 
-  // Priority: reference_image_urls ONLY (not avatar as primary, to avoid scene contamination)
-  const allRefs = (char.reference_image_urls || []).filter(
-    url => url && typeof url === 'string' && !url.includes('generated_image')
+  // Priority: reference_image_urls ONLY (not avatar as primary, to avoid scene contamination).
+  // Cap at 2 — consistent with generateImageAsync. More refs = more background contamination.
+  const allRefs = (char.reference_image_urls || [])
+    .filter(url => url && typeof url === 'string' && !url.includes('generated_image'))
+    .slice(0, 2);
+
+  console.log(
+    `[resolveCharacterVisualRefs] id=${char.id} name="${char.name}"` +
+    ` | raw_ref_urls=${(char.reference_image_urls || []).length}` +
+    ` | valid_refs_used=${allRefs.length}` +
+    ` | avatar_present=${!!char.avatar_url}` +
+    ` | appearance_lock_fields=${Object.keys(char.appearance_lock || {}).join(',') || 'none'}` +
+    ` | avatar_description_present=${!!char.avatar_description_text}`
   );
 
   if (allRefs.length > 0) {
-    return { refs: allRefs, missing: false, appearanceText };
+    return { refs: allRefs, missing: false, appearanceText, source: 'reference_image_urls' };
   }
 
-  // Fallback: avatar only if no reference images — still valid, just weaker identity lock
+  // Fallback: avatar_url as controlled last-resort identity anchor.
+  // Face-only extraction is enforced in the prompt — background contamination is minimized.
+  // Better than generating a random person when no reference_image_urls exist.
   if (char.avatar_url) {
-    return { refs: [char.avatar_url], missing: false, appearanceText };
+    console.warn(
+      `[resolveCharacterVisualRefs] ⚠️ No reference_image_urls for "${char.name}" — using avatar_url as last-resort face anchor.` +
+      ` Add reference photos for a stronger identity lock.`
+    );
+    return { refs: [char.avatar_url], missing: false, appearanceText, source: 'avatar_url_fallback' };
   }
 
-  // No images at all — but if we have appearance text, identity can still be described in prompt
+  // No images at all — if appearance text exists, identity can still be text-described in prompt.
+  // This is NOT "missing" — it is a text-only identity path.
   if (appearanceText) {
-    return { refs: [], missing: false, appearanceText };
+    console.log(`[resolveCharacterVisualRefs] No image refs for "${char.name}" — using text description only. Generation will proceed without visual anchoring.`);
+    return { refs: [], missing: false, appearanceText, source: 'text_only' };
   }
 
-  return { refs: [], missing: true, appearanceText: null };
+  // Truly no identity data at all — generation would produce a random person
+  console.error(`[resolveCharacterVisualRefs] ❌ IDENTITY MISSING for "${char.name || char.id}" — no images, no appearance description. Cannot generate identity-locked image.`);
+  return { refs: [], missing: true, appearanceText: null, source: 'none' };
 }
 
 /**

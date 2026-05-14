@@ -66,10 +66,13 @@ function buildCharacterEntry(char, sourceRecordIds = []) {
     created_date: char.created_date || null,
     reference_image_urls: char.reference_image_urls || [],
     appearance_notes: char.appearance_notes || '',
+    avatar_description_text: char.avatar_description_text || null, // vision-analyzed description
     age_range: char.age_range || '',
     gender: char.gender || '',
     ethnicities: char.ethnicities || [],
     appearance_lock: char.appearance_lock || null,
+    character_closet: char.character_closet || [],    // needed for outfit resolution in pickers
+    current_outfit: char.current_outfit || null,       // needed for current outfit fallback
     resolution_source: 'character_entity',
   };
 }

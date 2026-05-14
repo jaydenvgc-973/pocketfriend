@@ -206,7 +206,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     if (!charsFresh) {
       refreshPromises.push(
         fetchUnifiedRoster(base44, email)
-          .then(roster => {
+          .then(({ roster, repairDiagnostics }) => {
+            if (repairDiagnostics?.length > 0) {
+              console.warn('[MediaGallery] Roster unresolved people (needs_review — no creation):', repairDiagnostics);
+            }
             const validation = validateCharacterRoster(roster);
             const serverCount = Array.isArray(roster) ? roster.length : 0;
             const nowStr = new Date().toISOString();

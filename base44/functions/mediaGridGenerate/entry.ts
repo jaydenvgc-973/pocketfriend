@@ -358,14 +358,38 @@ DO:
           return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
         }
 
+        // Build structured subjects array — matches generateImageAsync format.
+        // This allows recoverSingleImage and regenerateImageWithReason to recover
+        // per-person identity for multi-person images using the same resolution path.
+        const structuredSubjects = people.map(p => ({
+          subject_type: p.role === 'user' ? 'user' : 'character',
+          subject_id: p.id,
+          subject_name: p.displayName || null,
+          role: p.role,
+          reference_image_count: p.refCount,
+          reference_images: identityRefs.slice(p.refStart - 1, p.refStart - 1 + p.refCount),
+        }));
+
         const generationContext = {
+          // New structured format — read by recoverSingleImage and regenerateImageWithReason
+          image_type: 'multi',
+          subject_count: structuredSubjects.length,
+          subjects: structuredSubjects,
+          scene_prompt: prompt,
+          original_raw_prompt: prompt,
+
+          // Legacy fields — kept for backward compat
           prompt,
           subjectType: 'multi',
-          selectedPeople: people.map(p => ({ role: p.role, id: p.id })),
+          character_id: people.find(p => p.role === 'primary')?.id || null,
+          selectedPeople: people.map(p => ({ role: p.role, id: p.id, displayName: p.displayName || null })),
           characterReferenceImages: identityRefs,
           locationName,
           zoneName,
+          location_name: locationName,
+          zone_name: zoneName,
           locationReferenceImages: envRefs,
+          location_reference_images: envRefs,
           generatedAt: new Date().toISOString(),
         };
 
