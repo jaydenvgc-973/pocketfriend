@@ -26,7 +26,7 @@ const ANNUAL_OBSERVANCES = [
   { month: 1,  day: 13, name: 'National Rubber Duck Day',    icon: '🦆', category: 'novelty' },
   { month: 1,  day: 14, name: 'National Dress Up Your Pet Day', icon: '🐾', category: 'novelty' },
   { month: 1,  day: 15, name: 'National Strawberry Ice Cream Day', icon: '🍓', category: 'novelty' },
-  { month: 1,  day: 17, name: 'Martin Luther King Jr. Day',  icon: '✊', category: 'holiday' }, // approx 3rd Mon — simplified to fixed
+  // MLK Day — computed dynamically, not hardcoded here
   { month: 1,  day: 21, name: 'Squirrel Appreciation Day',   icon: '🐿️', category: 'novelty' },
   { month: 1,  day: 24, name: 'Belly Laugh Day',             icon: '😂', category: 'novelty' },
   { month: 1,  day: 31, name: 'Gorilla Suit Day',            icon: '🦍', category: 'novelty' },
@@ -41,7 +41,7 @@ const ANNUAL_OBSERVANCES = [
   { month: 2,  day: 7,  name: 'Nat\'l Black HIV/AIDS Awareness Day', icon: '🎗️', category: 'awareness' },
   { month: 2,  day: 10, name: 'National Cream Cheese Brownie Day', icon: '🍫', category: 'novelty' },
   { month: 2,  day: 14, name: "Valentine's Day",             icon: '❤️', category: 'holiday' },
-  { month: 2,  day: 17, name: "Presidents' Day",             icon: '🇺🇸', category: 'holiday' }, // approx
+  // Presidents' Day — computed dynamically, not hardcoded here
   { month: 2,  day: 20, name: 'National Love Your Pet Day',  icon: '🐾', category: 'novelty' },
   { month: 2,  day: 22, name: 'National Margarita Day',      icon: '🍹', category: 'novelty' },
 
@@ -81,11 +81,11 @@ const ANNUAL_OBSERVANCES = [
   { month: 5,  day: 4,  name: 'Star Wars Day',               icon: '⭐', category: 'novelty' },
   { month: 5,  day: 5,  name: 'Cinco de Mayo',               icon: '🎊', category: 'cultural' },
   { month: 5,  day: 8,  name: 'No Socks Day',                icon: '🦶', category: 'novelty' },
-  { month: 5,  day: 10, name: "Mother's Day",                 icon: '💐', category: 'holiday' }, // approx 2nd Sun
+  // Mother's Day — computed dynamically, not hardcoded here
   { month: 5,  day: 19, name: 'National Asian & PI HIV/AIDS Awareness Day', icon: '🎗️', category: 'awareness' },
   { month: 5,  day: 19, name: "National Devil's Food Cake Day", icon: '🍰', category: 'novelty' },
   { month: 5,  day: 21, name: 'National Memo Day',           icon: '📋', category: 'novelty' },
-  { month: 5,  day: 26, name: 'Memorial Day',                icon: '🇺🇸', category: 'holiday' }, // approx last Mon
+  // Memorial Day — computed dynamically, not hardcoded here
   { month: 5,  day: 29, name: 'National Biscuit Day',        icon: '🥐', category: 'novelty' },
   { month: 5,  day: 31, name: "National Selfie Day Eve",     icon: '📸', category: 'novelty' },
 
@@ -93,7 +93,7 @@ const ANNUAL_OBSERVANCES = [
   { month: 6,  day: 1,  name: 'Pride Month Begins',          icon: '🏳️‍🌈', category: 'cultural' },
   { month: 6,  day: 1,  name: "Men's Health Month Begins",   icon: '💪', category: 'awareness' },
   { month: 6,  day: 4,  name: 'National Cheese Day',         icon: '🧀', category: 'novelty' },
-  { month: 6,  day: 15, name: "Father's Day",                icon: '👨‍👧', category: 'holiday' }, // approx 3rd Sun
+  // Father's Day — computed dynamically, not hardcoded here
   { month: 6,  day: 19, name: 'Juneteenth',                  icon: '✊', category: 'holiday' },
   { month: 6,  day: 21, name: 'Summer Solstice',             icon: '☀️', category: 'seasonal' },
   { month: 6,  day: 21, name: 'National Selfie Day',         icon: '📸', category: 'novelty' },
@@ -125,7 +125,7 @@ const ANNUAL_OBSERVANCES = [
   { month: 8,  day: 28, name: 'National Red Wine Day',       icon: '🍷', category: 'novelty' },
 
   // ── SEPTEMBER ────────────────────────────────────────────────────────────────
-  { month: 9,  day: 1,  name: 'Labor Day',                   icon: '⚒️', category: 'holiday' }, // approx 1st Mon
+  // Labor Day — computed dynamically, not hardcoded here
   { month: 9,  day: 5,  name: 'National Cheese Pizza Day',   icon: '🍕', category: 'novelty' },
   { month: 9,  day: 9,  name: 'National HIV/AIDS & Aging Awareness Day', icon: '🎗️', category: 'awareness' },
   { month: 9,  day: 10, name: 'World Suicide Prevention Day', icon: '💚', category: 'awareness' },
@@ -163,7 +163,7 @@ const ANNUAL_OBSERVANCES = [
   { month: 11, day: 14, name: 'World Diabetes Day',          icon: '🎗️', category: 'awareness' },
   { month: 11, day: 19, name: "National Shower with a Friend Day", icon: '🚿', category: 'novelty' },
   { month: 11, day: 20, name: 'Trans Day of Remembrance',    icon: '🏳️‍⚧️', category: 'cultural' },
-  { month: 11, day: 27, name: 'Thanksgiving',                icon: '🦃', category: 'holiday' }, // approx 4th Thu
+  // Thanksgiving — computed dynamically, not hardcoded here
   { month: 11, day: 28, name: 'Black Friday',                icon: '🛍️', category: 'novelty' },
 
   // ── DECEMBER ─────────────────────────────────────────────────────────────────
@@ -179,32 +179,77 @@ const ANNUAL_OBSERVANCES = [
   { month: 12, day: 31, name: "New Year's Eve",              icon: '🥂', category: 'holiday' },
 ];
 
-// Floating holidays (approximate fixed dates for simplicity — good enough for world atmosphere)
-const FLOATING_2026 = [
-  { date: '2026-01-19', name: 'MLK Day',         icon: '✊', category: 'holiday' },
-  { date: '2026-02-16', name: "Presidents' Day", icon: '🇺🇸', category: 'holiday' },
-  { date: '2026-04-05', name: 'Easter',          icon: '🐣', category: 'holiday' },
-  { date: '2026-02-24', name: 'Mardi Gras',      icon: '🎭', category: 'cultural' },
-  { date: '2026-05-10', name: "Mother's Day",    icon: '💐', category: 'holiday' },
-  { date: '2026-05-25', name: 'Memorial Day',    icon: '🇺🇸', category: 'holiday' },
-  { date: '2026-06-21', name: "Father's Day",    icon: '👨‍👧', category: 'holiday' },
-  { date: '2026-09-07', name: 'Labor Day',       icon: '⚒️', category: 'holiday' },
-  { date: '2026-11-26', name: 'Thanksgiving',    icon: '🦃', category: 'holiday' },
-];
+// ── DYNAMIC FLOATING HOLIDAY CALCULATOR ────────────────────────────────────────
+// Computes rule-based holidays for ANY year — no hardcoded static tables.
+// Rules: Rule 8 compliance — floating dates recalculated dynamically per year.
 
-const FLOATING_2025 = [
-  { date: '2025-01-20', name: 'MLK Day',         icon: '✊', category: 'holiday' },
-  { date: '2025-02-17', name: "Presidents' Day", icon: '🇺🇸', category: 'holiday' },
-  { date: '2025-03-04', name: 'Mardi Gras',      icon: '🎭', category: 'cultural' },
-  { date: '2025-04-20', name: 'Easter',          icon: '🐣', category: 'holiday' },
-  { date: '2025-05-12', name: "Mother's Day",    icon: '💐', category: 'holiday' },
-  { date: '2025-05-26', name: 'Memorial Day',    icon: '🇺🇸', category: 'holiday' },
-  { date: '2025-06-15', name: "Father's Day",    icon: '👨‍👧', category: 'holiday' },
-  { date: '2025-09-01', name: 'Labor Day',       icon: '⚒️', category: 'holiday' },
-  { date: '2025-11-27', name: 'Thanksgiving',    icon: '🦃', category: 'holiday' },
-];
+function getNthWeekday(year, month, weekday, n) {
+  // n=1 → first, n=2 → second, etc. weekday: 0=Sun,1=Mon,...,6=Sat
+  const first = new Date(year, month - 1, 1);
+  const offset = (weekday - first.getDay() + 7) % 7;
+  return 1 + offset + (n - 1) * 7;
+}
 
-const FLOATING_BY_YEAR = { 2025: FLOATING_2025, 2026: FLOATING_2026 };
+function getLastWeekday(year, month, weekday) {
+  const last = new Date(year, month, 0); // last day of month
+  const offset = (last.getDay() - weekday + 7) % 7;
+  return last.getDate() - offset;
+}
+
+function calculateEasterDate(year) {
+  // Computus algorithm
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mo = Math.floor((h + l - 7 * m + 114) / 31);
+  const da = ((h + l - 7 * m + 114) % 31) + 1;
+  return { month: mo, day: da };
+}
+
+function getMardiGras(year) {
+  // Mardi Gras = 47 days before Easter
+  const easter = calculateEasterDate(year);
+  const easterDate = new Date(year, easter.month - 1, easter.day);
+  const mg = new Date(easterDate);
+  mg.setDate(mg.getDate() - 47);
+  return { month: mg.getMonth() + 1, day: mg.getDate() };
+}
+
+function getFloatingHolidaysForYear(year) {
+  const fmt = (m, d) => `${year}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  const easter = calculateEasterDate(year);
+  const mardiGras = getMardiGras(year);
+  const mlkDay = getNthWeekday(year, 1, 1, 3);       // 3rd Monday in January
+  const presDay = getNthWeekday(year, 2, 1, 3);       // 3rd Monday in February
+  const mothersDay = getNthWeekday(year, 5, 0, 2);    // 2nd Sunday in May
+  const memorialDay = getLastWeekday(year, 5, 1);     // Last Monday in May
+  const fathersDay = getNthWeekday(year, 6, 0, 3);    // 3rd Sunday in June
+  const laborDay = getNthWeekday(year, 9, 1, 1);      // 1st Monday in September
+  const thanksgiving = getNthWeekday(year, 11, 4, 4); // 4th Thursday in November
+
+  return [
+    { date: fmt(1, mlkDay),       name: 'MLK Day',          icon: '✊',   category: 'holiday' },
+    { date: fmt(2, presDay),      name: "Presidents' Day",  icon: '🇺🇸',  category: 'holiday' },
+    { date: fmt(mardiGras.month, mardiGras.day), name: 'Mardi Gras', icon: '🎭', category: 'cultural' },
+    { date: fmt(easter.month, easter.day),       name: 'Easter',     icon: '🐣', category: 'holiday' },
+    { date: fmt(5, mothersDay),   name: "Mother's Day",     icon: '💐',   category: 'holiday' },
+    { date: fmt(5, memorialDay),  name: 'Memorial Day',     icon: '🇺🇸',  category: 'holiday' },
+    { date: fmt(6, fathersDay),   name: "Father's Day",     icon: '👨‍👧',  category: 'holiday' },
+    { date: fmt(9, laborDay),     name: 'Labor Day',        icon: '⚒️',   category: 'holiday' },
+    { date: fmt(11, thanksgiving),name: 'Thanksgiving',     icon: '🦃',   category: 'holiday' },
+  ];
+}
+
+// Cache computed floating holidays per year (recomputed only when year changes)
+const _floatingCache = {};
+function getFloatingForYear(year) {
+  if (!_floatingCache[year]) _floatingCache[year] = getFloatingHolidaysForYear(year);
+  return _floatingCache[year];
+}
 
 // ── BIRTHDAY PARSER ────────────────────────────────────────────────────────────
 function parseBirthday(bdStr) {
@@ -237,9 +282,9 @@ export default function MomentsCalendar({ characters = [], userBirthday = null }
       .filter(o => o.month === m && o.day === d)
       .map(o => ({ ...o, date: dateStr }));
 
-    // Floating year-specific holidays — skip any already covered by annual
+    // Floating year-specific holidays — dynamically computed for any year
     const annualNames = new Set(annual.map(o => o.name));
-    const floating = (FLOATING_BY_YEAR[year] || [])
+    const floating = getFloatingForYear(year)
       .filter(o => o.date === dateStr && !annualNames.has(o.name));
 
     // Birthdays
