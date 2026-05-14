@@ -190,26 +190,36 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
         const serverCount = Array.isArray(roster) ? roster.length : 0;
 
         if (validation.valid) {
-          setAllCharacters(roster);
-          writeCache(email, 'characters', roster);
+          // Floor protection: never shrink below existing seed count
+          const existingFloor = seedRecords?.length ?? 0;
+          if (roster.length >= existingFloor) {
+            setAllCharacters(roster);
+            writeCache(email, 'characters', roster);
+          }
           setRosterLoadStatus('fresh');
-          applyPreSelection(roster);
+          applyPreSelection(roster.length >= existingFloor ? roster : (seedRecords || roster));
           setRosterDiagnostics({
             email, cacheKey: `mg_cache:${email}:characters`,
-            cachedCount: seedRecords?.length ?? 0, serverCount,
+            cachedCount: existingFloor, serverCount,
             chatCharAvailable: !!(generationContext?.character_id),
-            finalCount: roster.length, fallbackSource: 'server',
+            finalCount: Math.max(roster.length, existingFloor),
+            fallbackSource: roster.length >= existingFloor ? 'server' : 'cache_floor_protected',
             lastLoad: new Date().toISOString(),
+            warning: roster.length < existingFloor ? `server_smaller(${roster.length}<${existingFloor})_floor_protected` : undefined,
           });
         } else if (validation.reason === 'user_only') {
-          if (!seedRecords) setAllCharacters(roster || []);
+          // Keep best available cache — never downgrade to user_only if seed had real characters
+          if (!seedRecords?.length) setAllCharacters(roster || []);
           setRosterLoadStatus('user_only');
           setRosterDiagnostics({
-            email, cacheKey: `mg_cache:${email}:characters`,
+            email,
+            cacheKey: seedRecords ? (mgCached ? `mg_cache:${email}:characters` : `lfc:${email}:characters`) : `mg_cache:${email}:characters`,
             cachedCount: seedRecords?.length ?? 0, serverCount,
             chatCharAvailable: !!(generationContext?.character_id),
-            finalCount: seedRecords?.length ?? serverCount, fallbackSource: seedSource || 'server_user_only',
-            lastLoad: new Date().toISOString(), warning: 'server_returned_user_only',
+            finalCount: seedRecords?.length ?? serverCount,
+            fallbackSource: seedSource || 'server_user_only',
+            lastLoad: cached?.loaded_at ? new Date(cached.loaded_at).toISOString() : new Date().toISOString(),
+            warning: 'server_returned_user_only',
           });
           console.warn('[RegenerateModal] Roster returned user-only — may be incomplete. Cache preserved.');
         } else {
@@ -245,7 +255,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   };
 
   const handleRosterRetry = () => {
-    setAllCharacters([]);
+    // Do NOT clear allCharacters — preserve whatever the user can see while retry runs
     setRosterLoadStatus('idle');
     openSubjectPicker();
   };
@@ -374,9 +384,26 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
               {loadingCharacters ? (
                 <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
               ) : rosterLoadStatus === 'error' ? (
-                <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive space-y-1.5">
-                  <p className="font-medium">Character list failed to load.</p>
-                  <p className="text-destructive/70">Could not fetch your characters. This is a load failure — not an empty account.</p>
+                <>
+                  {/* Current chat character fallback — always usable even when full roster fails */}
+                  {generationContext?.character_id && (
+                    <div className="rounded-xl border border-border bg-card p-2 mb-2">
+                      <p className="text-[10px] text-muted-foreground px-1 mb-1">Character from this image (roster load failed):</p>
+                      <button
+                        onClick={() => toggleSubject(generationContext.character_id)}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${selectedSubjectIds.includes(generationContext.character_id) ? 'bg-primary/10 text-primary border border-primary/30' : 'text-foreground hover:bg-secondary'}`}
+                      >
+                        {selectedSubjectIds.includes(generationContext.character_id) && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                        <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">
+                          {(generationContext.character_name || '?')[0].toUpperCase()}
+                        </div>
+                        <span className="font-medium">{generationContext.character_name || 'Character'}</span>
+                      </button>
+                    </div>
+                  )}
+                  <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive space-y-1.5">
+                    <p className="font-medium">Character list failed to load.</p>
+                    <p className="text-destructive/70">Could not fetch your characters. This is a load failure — not an empty account.</p>
                   <button onClick={handleRosterRetry} className="mt-1 flex items-center gap-1.5 px-3 py-1 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive font-medium transition-colors">
                     <RefreshCw className="w-3 h-3" /> Retry
                   </button>
@@ -398,6 +425,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                     </details>
                   )}
                 </div>
+                </>
               ) : (
                 <>
                   {rosterLoadStatus === 'user_only' && (
