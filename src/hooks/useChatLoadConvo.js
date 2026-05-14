@@ -87,15 +87,23 @@ export function useChatLoadConvo({
     if (isLoadingConvoRef.current) { isLoadingConvoRef.current = false; }
     isMountedRef.current = true;
 
-    // Reset all visible state immediately on character switch
-    setMessages([]);
+    // Reset conversation state on character switch.
+    // CRITICAL: Seed from lfc BEFORE clearing — avoids the 300ms blank window.
+    // If lfc has messages for this character, show them instantly. Server will refresh.
+    const immediateCache = readCachedMessages(currentUser.email, characterId);
+    if (immediateCache && immediateCache.length > 0) {
+      setMessages(immediateCache);
+      hasShownMessagesRef.current = true;
+    } else {
+      setMessages([]);
+    }
     setConversationId(null);
     setIsTyping(false);
     setConvoLoadError(null);
     if (setHasOlderMessages) setHasOlderMessages(false);
     convoIdRef.current = null;
     oldestMsgTimestampRef.current = null;
-    hasShownMessagesRef.current = false;
+    if (!immediateCache?.length) hasShownMessagesRef.current = false;
 
     const loadConvo = async () => {
       isLoadingConvoRef.current = true;

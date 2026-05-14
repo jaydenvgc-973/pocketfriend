@@ -161,6 +161,8 @@ export default function Chat() {
       }
     },
     staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
@@ -1485,7 +1487,9 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
-      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      // Surgical patch — do NOT broadcast a full characters list refetch on every emotional state change.
+      // A broad invalidateQueries(["characters"]) fires a 300-record re-fetch on every message send.
+      queryClient.setQueryData(["character", characterId], (prev) => prev ? { ...prev, emotional_state: emotionalState } : prev);
     }
 
     const prevLevels = {

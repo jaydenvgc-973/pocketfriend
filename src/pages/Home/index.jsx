@@ -38,6 +38,8 @@ export default function Home() {
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   // home_anchor_character_ids: stable IDs of continuity anchor characters (e.g. Ethan, Melody).
@@ -367,13 +369,13 @@ export default function Home() {
         </div>
       </div>
 
-      {isInitialLoading && (
+      {isInitialLoading && allCharacters.length === 0 && (
         <div className="max-w-lg mx-auto px-6 py-6 flex items-center justify-center min-h-[200px]">
           <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
         </div>
       )}
 
-      {!isInitialLoading && (
+      {(!isInitialLoading || allCharacters.length > 0) && (
         <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
 
           {currentUser && (
