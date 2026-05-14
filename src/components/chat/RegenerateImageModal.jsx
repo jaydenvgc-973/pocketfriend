@@ -474,8 +474,19 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
             </div>
           ) : showPromptInput ? (
               <div className="p-4 space-y-3">
-                {promptMode === "dont_like" && originalPrompt && (
-                  <p className="text-[10px] text-muted-foreground/60">Original prompt pre-loaded — edit it below</p>
+                {promptMode === "dont_like" && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] text-muted-foreground/60">Original prompt pre-loaded below. Every word is treated as a mandatory visual requirement — edit to adjust the scene.</p>
+                    {generationContext?.subjects?.length > 0 || generationContext?.character_id ? (
+                      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                        <span className="text-[10px] text-blue-400 font-medium">Subject locked:</span>
+                        <span className="text-[10px] text-blue-300">
+                          {generationContext?.subjects?.map(s => s.subject_name).filter(Boolean).join(' + ') ||
+                           generationContext?.character_name || 'the character in this image'}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
                 )}
                 <textarea
                   value={editPrompt}

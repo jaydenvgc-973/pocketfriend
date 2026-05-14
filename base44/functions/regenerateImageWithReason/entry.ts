@@ -281,7 +281,81 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
 
   // Reason-specific enforcement
   let reasonBlock = '';
-  if (reason === 'flawed') {
+  if (reason === 'dont_like' || reason === 'custom_prompt') {
+    // ── SUBJECT + ELEMENT FIDELITY BLOCK ─────────────────────────────────────
+    // When the user says "Don't like it", they are asking for a re-render of THIS scene
+    // with THIS character doing EXACTLY what was described — not a generic redo.
+    // The system MUST faithfully reproduce every element the user asked for:
+    //   - WHO is the subject (the character named above — NOT a generic person)
+    //   - WHAT they are doing (action, pose, activity as described in the prompt)
+    //   - WHERE it is happening (location/zone as already resolved)
+    //   - WHAT elements appear (objects, clothing, props explicitly mentioned)
+    //
+    // This block enforces "closer attention to prompt" — every noun, verb, and adjective
+    // in the scene description is treated as a mandatory visual requirement.
+
+    // Extract key scene elements from the prompt for explicit enforcement
+    const promptLowerCheck = scenePrompt.toLowerCase();
+
+    // Detect subject type from prompt to enforce identity
+    const hasExplicitSubjectName = charName && charName !== 'the character' && scenePrompt.toLowerCase().includes(charName.toLowerCase().split(' ')[0].toLowerCase());
+
+    // Clothing/accessories explicitly named in prompt
+    const clothingMatches = scenePrompt.match(/\b(wearing|dressed in|has on|in a|with a)\s+([^,.!?]+)/gi) || [];
+    const clothingNote = clothingMatches.length > 0
+      ? `CLOTHING/ACCESSORIES LOCK — MANDATORY:\n  The prompt explicitly describes: "${clothingMatches.slice(0, 3).join('; ')}"\n  ⛔ You MUST render exactly what is described above — no substitutions, no omissions.`
+      : '';
+
+    // Actions explicitly requested
+    const actionMatches = scenePrompt.match(/\b(sitting|standing|lying|holding|eating|drinking|laughing|smiling|looking|walking|running|leaning|reaching|cooking|reading|typing|sleeping|hugging|kissing|posing)[^\s,]*/gi) || [];
+    const actionNote = actionMatches.length > 0
+      ? `ACTION LOCK — MANDATORY:\n  The prompt explicitly describes these actions: ${actionMatches.slice(0, 4).join(', ')}\n  ⛔ The character MUST be performing these exact actions — do not substitute or ignore them.`
+      : '';
+
+    // Props/objects explicitly mentioned
+    const propMatches = scenePrompt.match(/\b(phone|coffee|cup|glass|book|bag|hat|sunglasses|umbrella|laptop|headphones|camera|food|drink|bottle|plate|chair|table|couch|bed|mirror|door|window)[s]?\b/gi) || [];
+    const propNote = propMatches.length > 0
+      ? `PROPS/OBJECTS LOCK — MANDATORY:\n  The prompt explicitly mentions: ${[...new Set(propMatches.map(p => p.toLowerCase()))].slice(0, 5).join(', ')}\n  ⛔ These objects MUST appear in the image — do not omit them.`
+      : '';
+
+    reasonBlock = `
+
+  DONT_LIKE RE-RENDER — STRICT PROMPT FIDELITY MODE:
+  The user is not satisfied with the previous result and wants a better version.
+  This is NOT a license to make a completely different image.
+  This IS an instruction to render the EXACT same scene MORE faithfully.
+
+  ════════════════════════════════════════════════════════════
+  SUBJECT IDENTITY LOCK — WHO IS IN THIS IMAGE
+  ════════════════════════════════════════════════════════════
+  The PRIMARY SUBJECT of this image is: "${charName}"
+  ${hasExplicitSubjectName ? `✅ The prompt explicitly names "${charName.split(' ')[0]}" — this person is the focus.` : `✅ "${charName}" is the character this scene was generated for — they are the subject.`}
+  ⛔ Do NOT generate a generic or random person as the subject
+  ⛔ Do NOT substitute a different person
+  ⛔ "${charName}"'s appearance lock (hair, skin tone, face, body) is ABSOLUTE and IMMUTABLE
+  ⛔ Every identity trait from the reference photos and description above is NON-NEGOTIABLE
+
+  ════════════════════════════════════════════════════════════
+  SCENE PROMPT — READ EVERY WORD AS A MANDATORY VISUAL REQUIREMENT
+  ════════════════════════════════════════════════════════════
+  The scene prompt below describes EXACTLY what must appear in this image.
+  Every noun, verb, adjective, and descriptor is a MANDATORY element.
+  Do NOT:
+  ⛔ Ignore any element that was explicitly described
+  ⛔ Substitute different clothing, objects, or settings
+  ⛔ Skip described actions or poses
+  ⛔ Omit described props or items
+  ⛔ Change the described mood, lighting, or environment tone
+
+  ${clothingNote ? clothingNote + '\n\n  ' : ''}${actionNote ? actionNote + '\n\n  ' : ''}${propNote ? propNote + '\n\n  ' : ''}
+  ════════════════════════════════════════════════════════════
+  WHAT "DON'T LIKE IT" MEANS:
+  ════════════════════════════════════════════════════════════
+  The user wants the SAME scene rendered with better quality/accuracy.
+  Common reasons include: wrong camera angle, character looks off, lighting issues, scene elements missing.
+  FIX these issues while keeping EVERYTHING ELSE identical to what was described.
+  The scene prompt is the AUTHORITY — follow it precisely.`;
+  } else if (reason === 'flawed') {
     reasonBlock = `
 
   FLAWED IMAGE CORRECTION:
