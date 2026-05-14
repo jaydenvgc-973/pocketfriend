@@ -1069,8 +1069,12 @@ Deno.serve(async (req) => {
     if (!message) {
       return Response.json({ error: 'Message not found' }, { status: 404 });
     }
-    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
-    const requestingUser = user.email;
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden.
+    // user may be null for service-role/autonomous callers; ownerEmail param is the fallback.
+    const requestingUser = user?.email || ownerEmail || null;
+    if (!requestingUser) {
+      return Response.json({ error: 'Unauthorized — no user session or ownerEmail provided' }, { status: 401 });
+    }
 
     // ── SANITIZE PROMPT EARLY ─────────────────────────────────────────
     // CLASSIFICATION-FIRST APPROACH:

@@ -239,7 +239,9 @@ export function useChatLoadConvo({
             hasShownMessagesRef.current = true;
             // Clear any lingering soft error once messages load successfully
             setConvoLoadError(null);
-            // Persist to localStorage for instant display on next open
+            // Persist to localStorage for instant display on next open.
+            // This also captures any recovered image_url values that arrived while
+            // the user was away — they'll be visible immediately on next navigation.
             writeCachedMessages(currentUser.email, characterId, sorted);
 
             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);

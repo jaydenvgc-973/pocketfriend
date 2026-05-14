@@ -47,6 +47,9 @@ export default function Moments() {
       ? base44.entities.UserAchievement.filter({ owner_email: currentUser.email }, "-unlocked_at")
       : [],
     enabled: !!currentUser?.email,
+    staleTime: 5 * 60 * 1000,       // 5 min — achievements are stable, don't re-fetch every open
+    refetchOnMount: false,
+    placeholderData: (prev) => prev, // show last-known-good while background refresh runs
   });
 
   // Message entity has no owner_email field — scoping is handled by platform RLS on conversation_id.
@@ -155,9 +158,9 @@ export default function Moments() {
   const unlockedCount = allAchievements.filter(a => unlockedMap[a.id]).length;
 
   return (
-    <div className="min-h-screen bg-background pt-28 pb-20">
+    <div className="min-h-screen bg-background pt-28 pb-20" style={{ paddingTop: 'max(7rem, calc(7rem + env(safe-area-inset-top)))' }}>
       {/* Header */}
-       <div className="fixed top-0 left-0 right-0 z-50 bg-background/90 backdrop-blur-xl border-b border-border px-4 pt-6 pb-4">
+       <div className="fixed top-0 left-0 right-0 z-50 bg-background/90 backdrop-blur-xl border-b border-border px-4 pb-4" style={{ paddingTop: 'max(1.5rem, calc(1.5rem + env(safe-area-inset-top)))' }}>
          <div className="flex items-center justify-between">
            <div>
              <h1 className="text-xl font-bold text-foreground">Moments & Impact</h1>
