@@ -65,17 +65,25 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
     setMode(selectedMode);
     setStep(STEP_DETAILS);
     
-    // Load character balance for TAKE mode
+    // Load character balance for TAKE mode from canonical financial record
     if (selectedMode === 'take' && selectedCharacter) {
       setLoadingBalance(true);
+      setCharacterBalance(null); // Reset to null, not 0
       try {
-        const response = await base44.functions.invoke('getCharacterFinancialSummary', {
-          characterId: selectedCharacter.id,
-        });
-        setCharacterBalance(response.data?.current_balance || 0);
+        const finRecords = await base44.entities.CharacterFinancial.filter(
+          { character_id: selectedCharacter.id },
+          null,
+          1
+        );
+        const finRecord = finRecords?.[0];
+        const balance = finRecord?.current_balance ?? null;
+        setCharacterBalance(balance);
+        
+        // Diagnostic logging
+        console.log(`[TAKE Balance] character=${selectedCharacter.name} | charId=${selectedCharacter.id} | balance=${balance} | hasRecord=${!!finRecord}`);
       } catch (err) {
-        console.error('Failed to load character balance:', err.message);
-        setCharacterBalance(0);
+        console.error('[TAKE Balance] Failed to load:', err.message);
+        setCharacterBalance(null);
       } finally {
         setLoadingBalance(false);
       }
@@ -84,6 +92,20 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
 
   const handleDetailsSubmit = () => {
     if (!amount || !title) return;
+    
+    // Validate TAKE mode has loaded balance and amount doesn't exceed it
+    if (mode === 'take') {
+      if (characterBalance === null) {
+        alert('Balance unavailable. Try again.');
+        return;
+      }
+      const amountNum = parseFloat(amount);
+      if (amountNum > characterBalance) {
+        alert(`Insufficient funds. Character only has $${characterBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} available.`);
+        return;
+      }
+    }
+    
     setStep(STEP_CONFIRM);
   };
 
@@ -253,10 +275,16 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
 
               {mode === 'take' && (
                 <>
-                  <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
-                    <p className="text-xs text-blue-700 font-semibold mb-1">Available in Account</p>
-                    <p className="text-lg font-bold text-blue-600">
-                      {loadingBalance ? '...' : `$${(characterBalance || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  <div className={`p-3 rounded-lg border ${
+                    characterBalance === null
+                      ? 'bg-red-500/10 border-red-500/30'
+                      : 'bg-blue-500/10 border-blue-500/30'
+                  }`}>
+                    <p className={`text-xs font-semibold mb-1 ${characterBalance === null ? 'text-red-700' : 'text-blue-700'}`}>
+                      Available in Account
+                    </p>
+                    <p className={`text-lg font-bold ${characterBalance === null ? 'text-red-600' : 'text-blue-600'}`}>
+                      {loadingBalance ? 'Loading...' : characterBalance === null ? 'Balance unavailable' : `$${characterBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                     </p>
                   </div>
                   <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex gap-2">
@@ -330,13 +358,13 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
             </Button>
           )}
           {step === STEP_DETAILS && (
-            <Button
-              onClick={handleDetailsSubmit}
-              disabled={!amount || !title}
-              className="flex-1"
-            >
-              Review
-            </Button>
+           <Button
+             onClick={handleDetailsSubmit}
+             disabled={!amount || !title || (mode === 'take' && characterBalance === null)}
+             className="flex-1"
+           >
+             Review
+           </Button>
           )}
           {step === STEP_CONFIRM && (
             <Button
