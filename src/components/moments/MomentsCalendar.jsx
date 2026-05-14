@@ -261,7 +261,7 @@ function parseBirthday(bdStr) {
 }
 
 // ── MAIN COMPONENT ─────────────────────────────────────────────────────────────
-export default function MomentsCalendar({ characters = [], userBirthday = null }) {
+export default function MomentsCalendar({ characters = [], userBirthday = null, communityEvents = [] }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [userEvents, setUserEvents] = useState([]);
   const [selectedDay, setSelectedDay] = useState(null);
@@ -304,10 +304,26 @@ export default function MomentsCalendar({ characters = [], userBirthday = null }
       }
     }
 
+    // Community events (from CommunityEvent entity)
+    const community = communityEvents
+      .filter(ev => {
+        if (!ev.start_date) return false;
+        const evDate = ev.start_date.split('T')[0];
+        return evDate === dateStr;
+      })
+      .map(ev => ({
+        name: ev.name,
+        icon: '🏘️',
+        category: 'community',
+        date: dateStr,
+        location: ev.location_name || null,
+        description: ev.description || null,
+      }));
+
     // User-created events
     const custom = userEvents.filter(e => e.date === dateStr);
 
-    return [...annual, ...floating, ...birthdays, ...custom];
+    return [...annual, ...floating, ...birthdays, ...community, ...custom];
   };
 
   const handleDayClick = (date) => {
@@ -459,10 +475,14 @@ export default function MomentsCalendar({ characters = [], userBirthday = null }
                   {selectedEvents.map((ev, i) => {
                     const cat = CATEGORIES[ev.category] || CATEGORIES.user;
                     return (
-                      <li key={i} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${cat.badge}`}>
-                        <span className="text-base leading-none shrink-0">{ev.icon}</span>
-                        <span className="font-medium flex-1">{ev.name}</span>
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full border border-current opacity-70 shrink-0`}>
+                      <li key={i} className={`flex items-start gap-2 px-3 py-2 rounded-lg text-sm ${cat.badge}`}>
+                        <span className="text-base leading-none shrink-0 mt-0.5">{ev.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium">{ev.name}</div>
+                          {ev.location && <div className="text-[10px] opacity-70 truncate">📍 {ev.location}</div>}
+                          {ev.description && <div className="text-[10px] opacity-60 truncate">{ev.description}</div>}
+                        </div>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full border border-current opacity-70 shrink-0 mt-0.5`}>
                           {cat.label}
                         </span>
                       </li>

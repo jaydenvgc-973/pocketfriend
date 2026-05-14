@@ -73,6 +73,15 @@ export default function Moments() {
     enabled: !!currentUser?.email,
   });
 
+  const { data: communityEvents = [] } = useQuery({
+    queryKey: ["communityEvents", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.CommunityEvent.filter({ is_active: true }, "-start_date", 100)
+      : [],
+    enabled: !!currentUser?.email,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // Run retroactive achievement scan once per session when user loads Moments
   useEffect(() => {
     if (!currentUser?.email || hasScanned.current) return;
@@ -198,6 +207,7 @@ export default function Moments() {
         <MomentsCalendar
           characters={characters}
           userBirthday={userSettings?.user_birthday || null}
+          communityEvents={communityEvents}
         />
 
          {/* Active Arcs — active created characters only (no NPCs) */}
