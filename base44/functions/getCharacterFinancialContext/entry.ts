@@ -23,10 +23,10 @@ Deno.serve(async (req) => {
     if (!character_id) return Response.json({ error: 'character_id required' }, { status: 400 });
 
     // Load canonical financial record + recent transactions in parallel
-    // Fetches 15 most recent transactions across ALL charge types (rent, food, venue, payroll, etc.)
+    // Fetches 20 most recent transactions across ALL charge types (rent, food, venue, payroll, etc.)
     const [finRecords, recentTxns] = await Promise.all([
       base44.entities.CharacterFinancial.filter({ character_id }, null, 1),
-      base44.entities.FinancialTransaction.filter({ character_id }, '-timestamp', 15),
+      base44.entities.FinancialTransaction.filter({ character_id }, '-timestamp', 20),
     ]);
 
     const financial = finRecords[0];
@@ -68,14 +68,17 @@ Deno.serve(async (req) => {
     };
 
     // Build readable transaction list — hides raw internal keys (idempotency keys, system codes)
-    // Display title priority: location_name → type label → transaction_type raw
+    // Display title priority: location_name → human description → type label → fallback
     // Hidden metadata (initiated_by, sender identity for hidden transactions) is NOT included
+    const RAW_TYPE_KEYS = new Set(Object.keys(TYPE_LABELS));
     const txnSummaries = recentTxns.map(t => {
-      // Never expose raw idempotency keys (they start with "venue_")
-      const rawDesc = t.description || '';
+      const rawDesc = (t.description || '').trim();
+      // Suppress: idempotency keys and raw transaction type strings used as descriptions
       const isInternalKey = rawDesc.startsWith('venue_') || rawDesc.startsWith('system_') || rawDesc.startsWith('auto_');
+      const isRawTypeKey = RAW_TYPE_KEYS.has(rawDesc.toLowerCase());
+      const usableDesc = (!isInternalKey && !isRawTypeKey && rawDesc.length > 0) ? rawDesc : null;
       const displayTitle = t.location_name
-        || (isInternalKey ? null : rawDesc)
+        || usableDesc
         || TYPE_LABELS[t.transaction_type]
         || t.transaction_type
         || 'Transaction';
@@ -107,6 +110,36 @@ Deno.serve(async (req) => {
         return `  • ${t.title}: ${sign}$${Math.abs(t.amount).toFixed(2)} (${t.category})`;
       }).join('\n');
       contextLines.push(`YOUR RECENT STATEMENT ACTIVITY (across all charge types — rent, food, bills, venue spending, income, transfers):\n${txnLines}\nIMPORTANT: For any "hidden TAKE" or anonymous transfer, you can see the statement title and amount but NOT who initiated it. Do NOT reveal hidden sender identity unless your character has discovered it through in-world means.`);
+    }
+
+    // Build recurring obligations block from CharacterFinancial directly
+    // This covers rent, phone, gym, etc. even if no recent transaction has posted yet
+    const OBLIGATION_TYPE_LABELS = {
+      rent: 'Rent', utilities: 'Utilities', groceries: 'Grocery Budget',
+      gym: 'Gym Membership', childcare: 'Childcare',
+      cell_phone: 'Phone Bill', internet: 'Internet Bill',
+      automotive: 'Car Payment', insurance: 'Insurance',
+      child_support: 'Child Support', subscription: 'Subscription',
+      custom: 'Monthly Expense',
+    };
+    const recurringExpenses = financial.recurring_expenses || [];
+    const otherMonthly = financial.other_monthly_expenses || [];
+    const allObligations = [
+      ...recurringExpenses.map(e => ({
+        label: e.location_name
+          ? `${OBLIGATION_TYPE_LABELS[e.expense_type] || e.expense_type || 'Expense'} (${e.location_name})`
+          : (e.description || OBLIGATION_TYPE_LABELS[e.expense_type] || e.expense_type || 'Monthly Expense'),
+        amount: e.monthly_cost || 0,
+      })),
+      ...otherMonthly.map(e => ({
+        label: e.name || OBLIGATION_TYPE_LABELS[e.type] || e.type || 'Monthly Expense',
+        amount: e.amount || 0,
+      })),
+    ].filter(o => o.amount > 0);
+
+    if (allObligations.length > 0) {
+      const obligationLines = allObligations.map(o => `  • ${o.label}: $${o.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo`).join('\n');
+      contextLines.push(`YOUR MONTHLY OBLIGATIONS (recurring bills you pay each month):\n${obligationLines}`);
     }
 
     contextLines.push(`SUSPICIOUS TRANSACTION RULE: If a transaction amount seems unrealistic for that venue (e.g. $1,000 at McDonald's), you may notice it and react naturally — express confusion, check your account, wonder if something is wrong. Do NOT automatically accuse anyone unless discovery logic supports it.`);

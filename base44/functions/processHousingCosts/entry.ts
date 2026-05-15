@@ -92,6 +92,44 @@ Deno.serve(async (req) => {
           ]
         });
 
+        // Write FinancialTransaction so rent/utilities are visible in character awareness
+        if (rentCost > 0) {
+          await base44.entities.FinancialTransaction.create({
+            character_id: char.id,
+            character_name: char.name,
+            sender_type: 'system',
+            sender_name: 'Housing',
+            receiver_type: 'character',
+            receiver_name: char.name,
+            amount: rentCost,
+            direction: 'expense',
+            transaction_type: 'rent',
+            description: `Rent — ${home.name}`,
+            location_id: home.id,
+            location_name: home.name,
+            balance_after: newBalance,
+            timestamp: paymentDate.toISOString(),
+          }).catch(err => console.warn('[processHousingCosts] rent txn write failed:', err.message));
+        }
+        if (utilityCost > 0) {
+          await base44.entities.FinancialTransaction.create({
+            character_id: char.id,
+            character_name: char.name,
+            sender_type: 'system',
+            sender_name: 'Housing',
+            receiver_type: 'character',
+            receiver_name: char.name,
+            amount: utilityCost,
+            direction: 'expense',
+            transaction_type: 'utilities',
+            description: `Utilities — ${home.name}`,
+            location_id: home.id,
+            location_name: home.name,
+            balance_after: newBalance - (rentCost > 0 ? 0 : 0),
+            timestamp: paymentDate.toISOString(),
+          }).catch(err => console.warn('[processHousingCosts] utilities txn write failed:', err.message));
+        }
+
         results.push({
           character_id: char.id,
           name: char.name,

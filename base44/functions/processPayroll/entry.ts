@@ -193,6 +193,24 @@ Deno.serve(async (req) => {
         income_sources: updatedSources,
       });
 
+      // Write FinancialTransaction so payroll is visible in character awareness
+      await base44.entities.FinancialTransaction.create({
+        character_id: char.id,
+        character_name: char.name,
+        sender_id: 'system',
+        sender_type: 'system',
+        sender_name: 'Payroll',
+        receiver_id: char.id,
+        receiver_type: 'character',
+        receiver_name: char.name,
+        amount: totalBiweeklyPay,
+        direction: 'income',
+        transaction_type: 'payroll',
+        description: `Bi-weekly paycheck`,
+        balance_after: newBalance,
+        timestamp: today.toISOString(),
+      }).catch(err => console.warn('[processPayroll] FinancialTransaction write failed:', err.message));
+
       results.push({
         character_id: char.id,
         name: char.name,
