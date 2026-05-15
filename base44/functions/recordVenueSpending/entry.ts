@@ -136,6 +136,21 @@ Deno.serve(async (req) => {
     const character = chars[0];
     if (!character) return Response.json({ skipped: true, reason: 'Character not found' });
 
+    // ── ACTIVE CREATED CHARACTER GUARD ──────────────────────────────────────
+    const isActiveCreated =
+      character.character_type === 'active_created_character' ||
+      character.is_active_created_character === true ||
+      character.is_active_character === true;
+    if (!isActiveCreated) {
+      return Response.json({
+        skipped: true,
+        reason: 'SIMULATED_ONLY_CHARACTER_TYPE',
+        real_finance_enabled: false,
+        character_name: character.name,
+        character_type: character.character_type || 'unknown',
+      });
+    }
+
     const location = locations[0] || null;
 
     // ── ACTIVE WORKING CHECK ────────────────────────────────────────────────

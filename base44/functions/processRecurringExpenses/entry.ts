@@ -54,6 +54,16 @@ Deno.serve(async (req) => {
     const results = [];
 
     for (const character of characters) {
+      // ── ACTIVE CREATED CHARACTER GUARD ──────────────────────────────────
+      const isActiveCreated =
+        character.character_type === 'active_created_character' ||
+        character.is_active_created_character === true ||
+        character.is_active_character === true;
+      if (!isActiveCreated) {
+        console.log(`[processRecurringExpenses] SKIP ${character.name} (${character.character_type || 'no type'}) — not active_created_character`);
+        continue;
+      }
+
       try {
         const financialRecs = await base44.asServiceRole.entities.CharacterFinancial.filter({
           character_id: character.id,

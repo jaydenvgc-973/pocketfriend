@@ -20,15 +20,20 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Fetch all active characters for this user
-    const characters = await base44.entities.Character.filter(
+    // Fetch ONLY active_created_character types — audit scope matches real finance scope
+    const allActive = await base44.entities.Character.filter(
       { owner_email: user.email, status: 'active' },
       null,
       50
     );
+    const characters = allActive.filter(c =>
+      c.character_type === 'active_created_character' ||
+      c.is_active_created_character === true ||
+      c.is_active_character === true
+    );
 
     if (!characters.length) {
-      return Response.json({ error: 'No active characters found for this user', owner_email: user.email });
+      return Response.json({ error: 'No active_created_character records found for this user', owner_email: user.email });
     }
 
     const INTERNAL_KEY_PREFIXES = ['venue_', 'system_', 'auto_'];
@@ -96,6 +101,7 @@ Deno.serve(async (req) => {
         results.push({
           character_id: char.id,
           name: char.name,
+          character_type: char.character_type || 'unknown',
           owner_email: char.owner_email,
           current_balance: balance,
           awareness_says_not_broke: balance !== null && balance > 0,

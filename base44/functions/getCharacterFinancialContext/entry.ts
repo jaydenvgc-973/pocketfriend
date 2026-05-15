@@ -22,6 +22,27 @@ Deno.serve(async (req) => {
     const { character_id } = await req.json();
     if (!character_id) return Response.json({ error: 'character_id required' }, { status: 400 });
 
+    // ── ACTIVE CREATED CHARACTER GUARD ──────────────────────────────────────
+    // Real financial context (balance, ledger, obligations) applies ONLY to
+    // active_created_character types. All other types get a simulated-only response.
+    const charRecords = await base44.entities.Character.filter({ id: character_id }, null, 1);
+    const char = charRecords[0];
+    if (char) {
+      const isActiveCreated =
+        char.character_type === 'active_created_character' ||
+        char.is_active_created_character === true ||
+        char.is_active_character === true;
+      if (!isActiveCreated) {
+        return Response.json({
+          account_status: 'simulated_only',
+          real_finance_enabled: false,
+          current_balance: null,
+          recent_transactions: [],
+          context_block: 'FINANCIAL MODE: This character is not an active created character. Treat money as narrative belief only. Do not reference a real balance.',
+        });
+      }
+    }
+
     // Load canonical financial record + recent transactions in parallel
     // Fetches 20 most recent transactions across ALL charge types (rent, food, venue, payroll, etc.)
     const [finRecords, recentTxns] = await Promise.all([

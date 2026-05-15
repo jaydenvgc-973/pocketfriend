@@ -6,9 +6,9 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
 
-    // Fetch all active characters
+    // Fetch ONLY active_created_character types — real food charges apply exclusively to them
     const allChars = await base44.asServiceRole.entities.Character.filter(
-      { status: 'active', character_type: 'active' },
+      { status: 'active', character_type: 'active_created_character' },
       null,
       1000
     );

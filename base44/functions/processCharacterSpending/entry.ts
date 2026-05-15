@@ -9,6 +9,25 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // ── ACTIVE CREATED CHARACTER GUARD ──────────────────────────────────────
+    const charRecords = await base44.entities.Character.filter({ id: character_id }, null, 1);
+    const character = charRecords[0];
+    if (character) {
+      const isActiveCreated =
+        character.character_type === 'active_created_character' ||
+        character.is_active_created_character === true ||
+        character.is_active_character === true;
+      if (!isActiveCreated) {
+        return Response.json({
+          skipped: true,
+          reason: 'SIMULATED_ONLY_CHARACTER_TYPE',
+          real_finance_enabled: false,
+          character_name: character.name,
+          character_type: character.character_type || 'unknown',
+        });
+      }
+    }
+
     // Get character financial record
     const financials = await base44.entities.CharacterFinancial.filter({
       character_id
