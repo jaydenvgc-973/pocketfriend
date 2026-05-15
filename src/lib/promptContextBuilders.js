@@ -492,7 +492,7 @@ export async function buildLinkContext(text, messageId = null, conversationId = 
 // ── FINANCIAL AWARENESS CONTEXT ───────────────────────────────────────────────
 
 // Keywords that indicate the conversation is touching finances
-const financeKeywordsRe = /\b(money|cash|afford|balance|broke|rich|spend|spent|payment|pay|paid|charge|charged|bill|bills|bank|account|transfer|transaction|cost|costs|price|expensive|cheap|fund|funds|wallet|income|salary|wage|tip|tips|dollar|dollars|\$\d|receipt|invoice|debt|owe|loan|rent|grocery|groceries|restaurant|bar|eating|dining|shopping|budget|budgeting|financial|finances|save|saving)\b/i;
+const financeKeywordsRe = /\b(money|cash|afford|balance|broke|rich|spend|spent|payment|pay|paid|charge|charged|bill|bills|bank|account|transfer|transaction|cost|costs|price|expensive|cheap|fund|funds|wallet|income|salary|wage|tip|tips|dollar|dollars|\$\d|receipt|invoice|debt|owe|loan|rent|grocery|groceries|restaurant|bar|eating|dining|shopping|budget|budgeting|financial|finances|save|saving|saved|savings|stash|nest egg|how much do you have|how much money|how much have you|to my name|in the bank|in savings|set aside|put away|set away|financially|funds available|what.{0,10}you got|what.{0,10}saved|afford to|can you afford)\b/i;
 
 /**
  * Fetches real financial context for a character and returns an injectable prompt string.
@@ -511,12 +511,39 @@ export async function buildFinancialContext(characterId, userText, recentMsgs) {
   // Only inject when conversation touches financial topics
   const recentContent = (recentMsgs || []).slice(-6).map(m => m.content || '').join(' ');
   const isFinanciallyRelevant = financeKeywordsRe.test(userText) || financeKeywordsRe.test(recentContent);
+
+  console.log('[FINANCIAL_CONTEXT_PROOF] keyword check', {
+    characterId,
+    userText: userText?.slice(0, 120),
+    isFinanciallyRelevant,
+    matchedOnUserText: financeKeywordsRe.test(userText),
+    matchedOnRecentContent: financeKeywordsRe.test(recentContent),
+  });
+
   if (!isFinanciallyRelevant) return '';
 
   try {
     const { base44 } = await import('@/api/base44Client');
     const res = await base44.functions.invoke('getCharacterFinancialContext', { character_id: characterId });
-    return res?.data?.context_block || '';
+    const contextBlock = res?.data?.context_block || '';
+    const balance = res?.data?.current_balance;
+
+    // Append hard instruction so LLM cannot invent a different number
+    const balanceInstruction = typeof balance === 'number'
+      ? `\n\nBALANCE ACCURACY MANDATE: When asked how much money you have, say a number close to $${balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Do NOT invent a lower number. Do NOT say you only have a few hundred if your real balance is higher. If you want to be vague, say "around $${Math.round(balance / 100) * 100 >= 1000 ? (Math.round(balance / 1000) + 'k') : Math.round(balance / 100) * 100}" — but never claim a fraction of your real balance.`
+      : '';
+
+    const finalContext = contextBlock + balanceInstruction;
+
+    console.log('[FINANCIAL_CONTEXT_PROOF] context loaded', {
+      characterId,
+      balance,
+      contextBlockLength: contextBlock.length,
+      contextPreview: contextBlock.slice(0, 500),
+      balanceInstructionAdded: !!balanceInstruction,
+    });
+
+    return finalContext;
   } catch (err) {
     console.warn('[buildFinancialContext] Failed to load financial context:', err?.message);
     return '';
