@@ -99,9 +99,14 @@ export async function generateImageWithUserIdentity(
   
   // Build identity lock note
   const identityLockNote = buildUserIdentityLockNote(userAppearanceData, strictMode);
+
+  // ── CLOSET OUTFIT LOCK — user current_outfit is canonical law ──────────────
+  const userOutfit = currentUser.user_current_outfit || currentUser.current_outfit || null;
+  const userName = currentUser.fictional_world_name || currentUser.full_name || 'User';
+  const outfitLock = buildUserOutfitLockBlock(userOutfit, userName);
   
-  // Enhance prompt with identity constraints
-  const enhancedPrompt = `${prompt}${identityLockNote}`;
+  // Enhance prompt with identity constraints + outfit lock
+  const enhancedPrompt = `${prompt}${identityLockNote}${outfitLock}`;
   
   try {
     const response = await base44.integrations.Core.GenerateImage({
@@ -115,6 +120,63 @@ export async function generateImageWithUserIdentity(
     console.error("[User Identity Generation]", err);
     throw err;
   }
+}
+
+/**
+ * Normalize outfit field — strips N/A, converts bare-torso aliases to canonical string.
+ * Identical to generateImageAsync's inline normalizer.
+ */
+function normalizeOutfitField(val) {
+  if (!val) return null;
+  const t = val.trim();
+  if (/^(n\/?a|none|-)$/i.test(t)) return null;
+  const s = t.replace(/^n\/?a[,\-–]\s*/i, '').trim();
+  if (/^(shirtless|no top|no shirt)$/i.test(s)) return 'No shirt / bare torso';
+  return s || null;
+}
+
+/**
+ * Build canonical outfit text from a user's current_outfit object.
+ * Returns null if no valid outfit fields.
+ */
+function buildUserOutfitText(outfit) {
+  if (!outfit) return null;
+  const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
+    .map(normalizeOutfitField)
+    .filter(Boolean);
+  if (parts.length > 0) return parts.join(', ');
+  if (outfit.full_description) return outfit.full_description.trim();
+  return null;
+}
+
+/**
+ * Build the CLOSET OUTFIT LOCK block for a user.
+ * Identical structure to generateImageAsync's closet lock.
+ */
+function buildUserOutfitLockBlock(outfit, userName = 'User') {
+  const outfitText = buildUserOutfitText(outfit);
+  if (!outfitText) return '';
+  const hasBottoms = /sweatpants|pants|jeans|shorts|joggers|leggings|trousers/i.test(outfitText);
+  const hasShoes = /sneakers|shoes|boots|sandals|loafers|heels/i.test(outfitText);
+  const isBareTorso = /no shirt \/ bare torso/i.test(outfitText);
+  const lines = [
+    '',
+    '🔒 CLOSET OUTFIT LOCK — CANONICAL LAW. OVERRIDES ALL SCENE STYLING.',
+    '════════════════════════════════════════════════════════════',
+    `${userName} OUTFIT — RENDER EXACTLY:`,
+    ...outfitText.split(',').map(s => `  • ${s.trim()}`).filter(Boolean),
+    'NON-NEGOTIABLE:',
+  ];
+  if (isBareTorso) {
+    lines.push('⛔ BARE TORSO — NO shirt, tank top, hoodie, jacket, robe, or any upper-body clothing.');
+    lines.push('✅ Torso must be completely bare and clearly visible.');
+  }
+  if (hasBottoms) lines.push('✅ BOTTOMS VISIBLE — frame mid-thigh or lower to show full pants/shorts.');
+  if (hasShoes) lines.push('✅ SHOES VISIBLE — full-body or 3/4-body framing required. Do not crop feet.');
+  lines.push('⛔ Do NOT add or invent any clothing item not listed above.');
+  lines.push('════════════════════════════════════════════════════════════');
+  lines.push('FAIL: shirt on bare torso | wrong bottoms | shoes cropped | invented outfit');
+  return lines.join('\n');
 }
 
 /**

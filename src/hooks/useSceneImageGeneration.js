@@ -7,40 +7,100 @@ import { buildIdentityLockBlock } from '@/lib/characterIdentityLock';
 import { resolveCurrentOutfit, buildOutfitPromptText } from '@/lib/outfitRotationEngine';
 
 /**
- * Resolve outfit description for a character or user for prompt injection.
- * Returns a string like "wearing: white tee, black joggers, Air Force 1s" or null.
+ * Normalize outfit field values — mirrors the exact logic in generateImageAsync/regenerateImageWithReason.
+ * Converts bare-torso aliases to the canonical model-safe string.
+ * Strips N/A placeholders.
+ */
+function normalizeOutfitField(val) {
+  if (!val) return null;
+  const t = val.trim();
+  if (/^(n\/?a|none|-)$/i.test(t)) return null;
+  const s = t.replace(/^n\/?a[,\-–]\s*/i, '').trim();
+  if (/^(shirtless|no top|no shirt)$/i.test(s)) return 'No shirt / bare torso';
+  return s || null;
+}
+
+/**
+ * Build canonical outfit text from an outfit object.
+ * Identical normalization logic to generateImageAsync's buildOutfitText.
+ */
+function buildCanonicalOutfitText(outfit) {
+  if (!outfit) return null;
+  const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
+    .map(normalizeOutfitField)
+    .filter(Boolean);
+  if (parts.length > 0) return parts.join(', ');
+  if (outfit.full_description) {
+    return outfit.full_description
+      .replace(/^in [^,.]+(,|\.) ?/i, '')
+      .replace(/^a (man|woman|person)[^,.]*(,|\.) ?/i, '')
+      .trim() || outfit.full_description;
+  }
+  return null;
+}
+
+/**
+ * Resolve the canonical outfit text for a person.
+ * Priority: current_outfit (explicit selection) → closet rotation → null.
  */
 function resolveOutfitText(person, locationCategory = null) {
   if (!person) return null;
 
-  // For user: check current_outfit or selected_outfit
+  // For user: current_outfit or selected_outfit wins
   if (person._isUser) {
     const outfit = person.current_outfit || person.selected_outfit || null;
-    if (!outfit) return null;
-    const text = buildOutfitPromptText(outfit);
-    return text ? `wearing: ${text}` : null;
+    return buildCanonicalOutfitText(outfit);
   }
 
-  // For characters: use the rotation engine
+  // For characters: current_outfit ALWAYS wins (canonical law)
+  const current = person.current_outfit;
+  if (current?.outfit_id || current?.label) {
+    const text = buildCanonicalOutfitText(current);
+    if (text) return text;
+  }
+
+  // Fall back to rotation engine if no current_outfit
   const outfit = resolveCurrentOutfit(person, '', locationCategory);
-  const text = buildOutfitPromptText(outfit);
-  return text ? `wearing: ${text}` : null;
+  return buildCanonicalOutfitText(outfit);
 }
 
 /**
- * Build the outfit enforcement block for all visible people in the scene.
+ * Build the CLOSET OUTFIT LOCK block — identical structure to generateImageAsync.
+ * This is the terminal enforcement block injected at end of prompt.
  */
 function buildOutfitEnforcementBlock(people, locationCategory = null) {
-  const lines = [];
+  const resolved = [];
   for (const person of people) {
     const name = person.name || person.full_name || 'Person';
     const outfitText = resolveOutfitText(person, locationCategory);
-    if (outfitText) {
-      lines.push(`${name}: ${outfitText}`);
-    }
+    if (outfitText) resolved.push({ name, outfitText });
   }
-  if (lines.length === 0) return '';
-  return `\n\nOUTFIT IDENTITY LOCK — NON-NEGOTIABLE:\nEach person MUST appear in EXACTLY the outfit listed below. Do NOT invent clothing. Do NOT substitute. Do NOT ignore the outfit.\n${lines.join('\n')}\nThe outfit is part of their identity. It must be visually present and accurate.`;
+  if (resolved.length === 0) return '';
+
+  const lines = [
+    '',
+    '🔒 CLOSET OUTFIT LOCK — CANONICAL LAW. OVERRIDES ALL SCENE STYLING.',
+    '════════════════════════════════════════════════════════════',
+  ];
+  for (const { name, outfitText } of resolved) {
+    const hasBottoms = /sweatpants|pants|jeans|shorts|joggers|leggings|trousers/i.test(outfitText);
+    const hasShoes = /sneakers|shoes|boots|sandals|loafers|heels/i.test(outfitText);
+    const isBareTorso = /no shirt \/ bare torso/i.test(outfitText);
+    lines.push(`${name} OUTFIT — RENDER EXACTLY:`);
+    outfitText.split(',').map(s => s.trim()).filter(Boolean).forEach(item => lines.push(`  • ${item}`));
+    lines.push('NON-NEGOTIABLE:');
+    if (isBareTorso) {
+      lines.push('⛔ BARE TORSO — NO shirt, tank top, hoodie, jacket, robe, or any upper-body clothing.');
+      lines.push('✅ Torso must be completely bare and clearly visible.');
+    }
+    if (hasBottoms) lines.push('✅ BOTTOMS VISIBLE — frame mid-thigh or lower to show full pants/shorts.');
+    if (hasShoes) lines.push('✅ SHOES VISIBLE — full-body or 3/4-body framing required. Do not crop feet.');
+    lines.push('⛔ Do NOT add or invent any clothing item not listed above.');
+    lines.push('');
+  }
+  lines.push('════════════════════════════════════════════════════════════');
+  lines.push('FAIL: shirt on bare torso | wrong bottoms | shoes cropped | invented outfit');
+  return lines.join('\n');
 }
 
 /**

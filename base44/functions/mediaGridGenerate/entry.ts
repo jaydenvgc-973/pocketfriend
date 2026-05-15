@@ -256,6 +256,62 @@ Deno.serve(async (req) => {
 
       const envRefs = (zoneImageUrls || []).map(toPublicCDN).filter(isAccessible).slice(0, 4);
 
+      // ── MULTI-PERSON CLOSET OUTFIT LOCK ──────────────────────────────────
+      function normalizeOutfitFieldMG(val) {
+        if (!val) return null;
+        const t = val.trim();
+        if (/^(n\/?a|none|-)$/i.test(t)) return null;
+        const s = t.replace(/^n\/?a[,\-–]\s*/i, '').trim();
+        if (/^(shirtless|no top|no shirt)$/i.test(s)) return 'No shirt / bare torso';
+        return s || null;
+      }
+      function buildMGOutfitText(outfit) {
+        if (!outfit) return null;
+        const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
+          .map(normalizeOutfitFieldMG).filter(Boolean);
+        if (parts.length > 0) return parts.join(', ');
+        if (outfit.full_description) return outfit.full_description.trim();
+        return null;
+      }
+
+      const multiOutfitLines = [];
+      for (const person of multiPersonSelection.selectedCharacters) {
+        if (!person.id || person.id === 'user') continue;
+        try {
+          const charList = await base44.asServiceRole.entities.Character.filter({ id: person.id }, null, 1).catch(() => []);
+          const charRec = charList?.[0];
+          if (charRec) {
+            const co = charRec.current_outfit;
+            let outfitText = (co?.outfit_id || co?.label) ? buildMGOutfitText(co) : null;
+            if (!outfitText) {
+              const closet = (charRec.character_closet || []).filter(o => o.outfit_id);
+              if (closet.length > 0) outfitText = buildMGOutfitText(closet[0]);
+            }
+            if (outfitText) multiOutfitLines.push({ name: charRec.name, text: outfitText });
+          }
+        } catch {}
+      }
+      let multiClosetLock = '';
+      if (multiOutfitLines.length > 0) {
+        const lockLines = ['', '🔒 CLOSET OUTFIT LOCK — CANONICAL LAW. OVERRIDES ALL SCENE STYLING.', '════════════════════════════════════════════════════════════'];
+        for (const { name, text } of multiOutfitLines) {
+          const isBareTorso = /no shirt \/ bare torso/i.test(text);
+          const hasBottoms = /sweatpants|pants|jeans|shorts|joggers|leggings|trousers/i.test(text);
+          const hasShoes = /sneakers|shoes|boots|sandals|loafers|heels/i.test(text);
+          lockLines.push(`${name} OUTFIT — RENDER EXACTLY:`);
+          text.split(',').map(s => s.trim()).filter(Boolean).forEach(item => lockLines.push(`  • ${item}`));
+          lockLines.push('NON-NEGOTIABLE:');
+          if (isBareTorso) { lockLines.push('⛔ BARE TORSO — NO shirt, tank top, hoodie, jacket, robe, or any upper-body clothing.'); lockLines.push('✅ Torso must be completely bare and clearly visible.'); }
+          if (hasBottoms) lockLines.push('✅ BOTTOMS VISIBLE — frame mid-thigh or lower.');
+          if (hasShoes) lockLines.push('✅ SHOES VISIBLE — full-body or 3/4-body framing required.');
+          lockLines.push('⛔ Do NOT add or invent any clothing item not listed above.'); lockLines.push('');
+        }
+        lockLines.push('════════════════════════════════════════════════════════════');
+        lockLines.push('FAIL: shirt on bare torso | wrong bottoms | shoes cropped | invented outfit');
+        multiClosetLock = lockLines.join('\n');
+        console.log(`[mediaGridGenerate] Multi-person closet lock built for ${multiOutfitLines.length} people`);
+      }
+
       // Use generateImageAsync's unified rules for consistency across all paths
       // Multi-person images must still obey: camera flexibility, selfie rules, time-of-day lighting,
       // zone truth, reference balance (70-80% structure / 20-30% flexibility)
@@ -327,6 +383,7 @@ DO:
   ✓ Change camera angle for new viewpoint
   ✓ Apply time-of-day lighting and fresh shadows
   ✓ Reframe entire scene from new camera position
+${multiClosetLock}
 `;
 
 
@@ -377,6 +434,9 @@ DO:
           subjects: structuredSubjects,
           scene_prompt: prompt,
           original_raw_prompt: prompt,
+
+          // Outfit metadata — stored for audit and regeneration
+          resolved_outfit_metadata: multiOutfitLines,
 
           // Legacy fields — kept for backward compat
           prompt,
