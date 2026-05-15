@@ -489,6 +489,40 @@ export async function buildLinkContext(text, messageId = null, conversationId = 
   }
 }
 
+// ── FINANCIAL AWARENESS CONTEXT ───────────────────────────────────────────────
+
+// Keywords that indicate the conversation is touching finances
+const financeKeywordsRe = /\b(money|cash|afford|balance|broke|rich|spend|spent|payment|pay|paid|charge|charged|bill|bills|bank|account|transfer|transaction|cost|costs|price|expensive|cheap|fund|funds|wallet|income|salary|wage|tip|tips|dollar|dollars|\$\d|receipt|invoice|debt|owe|loan|rent|grocery|groceries|restaurant|bar|eating|dining|shopping|budget|budgeting|financial|finances|save|saving)\b/i;
+
+/**
+ * Fetches real financial context for a character and returns an injectable prompt string.
+ * Only called when message content triggers finance keywords.
+ * Non-blocking — returns empty string on any failure.
+ *
+ * @param {string} characterId
+ * @param {string} userText
+ * @param {object[]} recentMsgs
+ * @returns {Promise<string>}
+ */
+export async function buildFinancialContext(characterId, userText, recentMsgs) {
+  if (!characterId) return '';
+  if (isGloballyRateLimited()) return '';
+
+  // Only inject when conversation touches financial topics
+  const recentContent = (recentMsgs || []).slice(-6).map(m => m.content || '').join(' ');
+  const isFinanciallyRelevant = financeKeywordsRe.test(userText) || financeKeywordsRe.test(recentContent);
+  if (!isFinanciallyRelevant) return '';
+
+  try {
+    const { base44 } = await import('@/api/base44Client');
+    const res = await base44.functions.invoke('getCharacterFinancialContext', { character_id: characterId });
+    return res?.data?.context_block || '';
+  } catch (err) {
+    console.warn('[buildFinancialContext] Failed to load financial context:', err?.message);
+    return '';
+  }
+}
+
 // ── LOCATION RESPONSE VALIDATOR ───────────────────────────────────────────────
 
 /**
