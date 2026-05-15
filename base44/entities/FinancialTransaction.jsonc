@@ -78,6 +78,11 @@
         "simulated_need",
         "scene_purchase",
         "payroll",
+        "character_loan_given",
+        "character_loan_received",
+        "character_loan_repayment",
+        "character_borrow_request",
+        "character_borrow_denied",
         "other"
       ],
       "description": "Category of the financial transaction"
@@ -102,6 +107,28 @@
       "type": "string",
       "format": "date-time",
       "description": "UTC timestamp when the transaction occurred"
+    },
+    "loan_counterpart_id": {
+      "type": "string",
+      "description": "For loans: the character_id of the other party (lender or borrower). Used to track who owes whom."
+    },
+    "loan_counterpart_name": {
+      "type": "string",
+      "description": "Display name of the loan counterpart"
+    },
+    "loan_status": {
+      "type": "string",
+      "enum": [
+        "outstanding",
+        "partially_repaid",
+        "repaid",
+        "forgiven"
+      ],
+      "description": "For loan transactions: current repayment status"
+    },
+    "loan_original_amount": {
+      "type": "number",
+      "description": "Original loan amount (for tracking partial repayments)"
     }
   },
   "required": [

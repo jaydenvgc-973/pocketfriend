@@ -22,26 +22,16 @@ Deno.serve(async (req) => {
     const { character_id } = await req.json();
     if (!character_id) return Response.json({ error: 'character_id required' }, { status: 400 });
 
-    // ── ACTIVE CREATED CHARACTER GUARD ──────────────────────────────────────
-    // Real financial context (balance, ledger, obligations) applies ONLY to
-    // active_created_character types. All other types get a simulated-only response.
+    // ── CHARACTER TYPE CHECK ─────────────────────────────────────────────────
+    // active_created_character → full financial life (autonomous expenses, deep awareness)
+    // other types → lighter awareness: interpersonal transfers only (no autonomous expense context)
     const charRecords = await base44.entities.Character.filter({ id: character_id }, null, 1);
     const char = charRecords[0];
-    if (char) {
-      const isActiveCreated =
-        char.character_type === 'active_created_character' ||
-        char.is_active_created_character === true ||
-        char.is_active_character === true;
-      if (!isActiveCreated) {
-        return Response.json({
-          account_status: 'simulated_only',
-          real_finance_enabled: false,
-          current_balance: null,
-          recent_transactions: [],
-          context_block: 'FINANCIAL MODE: This character is not an active created character. Treat money as narrative belief only. Do not reference a real balance.',
-        });
-      }
-    }
+    const isActiveCreated = !char || (
+      char.character_type === 'active_created_character' ||
+      char.is_active_created_character === true ||
+      char.is_active_character === true
+    );
 
     // Load canonical financial record + recent transactions in parallel
     // Fetches 20 most recent transactions across ALL charge types (rent, food, venue, payroll, etc.)
@@ -107,64 +97,94 @@ Deno.serve(async (req) => {
         title: displayTitle,
         amount: t.direction === 'expense' ? -(t.amount) : t.amount,
         category: TYPE_LABELS[t.transaction_type] || t.transaction_type || 'other',
+        raw_type: t.transaction_type || 'other',
         date: t.timestamp ? t.timestamp.split('T')[0] : null,
       };
     });
 
     // Build the injectable context string
+    // active_created → full context (balance, obligations, all transactions, autonomous spending awareness)
+    // other financially-enabled → lighter context (balance + interpersonal transfers only)
     let contextLines = [];
-    if (balance !== null) {
-      const fmt = balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      contextLines.push(`YOUR REAL ACCOUNT BALANCE: $${fmt}`);
-      if (balance < 500) {
-        contextLines.push(`FINANCIAL STATE: Balance is critically low ($${fmt}). You are aware of this and it affects your decisions.`);
-      } else if (balance < 2000) {
-        contextLines.push(`FINANCIAL STATE: Balance is on the lower side ($${fmt}). You are being careful about spending.`);
-      } else {
-        contextLines.push(`FINANCIAL STATE: You have funds available. You are NOT broke. Do NOT say or imply you have $0 or cannot afford basics.`);
+
+    if (!isActiveCreated) {
+      // ── LIGHTER CONTEXT for non-active-created (financially enabled) ──────
+      // They can send/receive/borrow/lend — show those events only.
+      // Do NOT inject autonomous expense stress, obligations, or recurring bills.
+      if (balance !== null) {
+        const fmt = balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        contextLines.push(`YOUR FINANCIAL RESERVE: $${fmt}`);
+        contextLines.push(`FALSE BROKE RULE: You have money available. Do NOT say you are broke or have $0.`);
       }
+      const interpersonalTypes = new Set(['gift', 'loan', 'repayment', 'character_loan_given', 'character_loan_received', 'character_loan_repayment', 'character_borrow_request', 'character_borrow_denied']);
+      const interpersonalTxns = txnSummaries.filter(t =>
+        interpersonalTypes.has(t.raw_type) ||
+        t.category === 'Gift / Transfer' ||
+        t.title?.toLowerCase().includes('sent') ||
+        t.title?.toLowerCase().includes('loan') ||
+        t.title?.toLowerCase().includes('request')
+      );
+      if (interpersonalTxns.length > 0) {
+        const txnLines = interpersonalTxns.map(t => {
+          const sign = t.amount >= 0 ? '+' : '';
+          return `  • ${t.title}: ${sign}$${Math.abs(t.amount).toFixed(2)}`;
+        }).join('\n');
+        contextLines.push(`RECENT MONEY TRANSFERS INVOLVING YOU:\n${txnLines}`);
+      }
+    } else {
+      // ── FULL CONTEXT for active_created_character ────────────────────────
+      if (balance !== null) {
+        const fmt = balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        contextLines.push(`YOUR REAL ACCOUNT BALANCE: $${fmt}`);
+        if (balance < 500) {
+          contextLines.push(`FINANCIAL STATE: Balance is critically low ($${fmt}). You are aware of this and it affects your decisions.`);
+        } else if (balance < 2000) {
+          contextLines.push(`FINANCIAL STATE: Balance is on the lower side ($${fmt}). You are being careful about spending.`);
+        } else {
+          contextLines.push(`FINANCIAL STATE: You have funds available. You are NOT broke. Do NOT say or imply you have $0 or cannot afford basics.`);
+        }
+      }
+
+      if (txnSummaries.length > 0) {
+        const txnLines = txnSummaries.map(t => {
+          const sign = t.amount >= 0 ? '+' : '';
+          return `  • ${t.title}: ${sign}$${Math.abs(t.amount).toFixed(2)} (${t.category})`;
+        }).join('\n');
+        contextLines.push(`YOUR RECENT STATEMENT ACTIVITY (across all charge types — rent, food, bills, venue spending, income, transfers):\n${txnLines}\nIMPORTANT: For any "hidden TAKE" or anonymous transfer, you can see the statement title and amount but NOT who initiated it. Do NOT reveal hidden sender identity unless your character has discovered it through in-world means.`);
+      }
+
+      // Build recurring obligations block from CharacterFinancial directly
+      const OBLIGATION_TYPE_LABELS = {
+        rent: 'Rent', utilities: 'Utilities', groceries: 'Grocery Budget',
+        gym: 'Gym Membership', childcare: 'Childcare',
+        cell_phone: 'Phone Bill', internet: 'Internet Bill',
+        automotive: 'Car Payment', insurance: 'Insurance',
+        child_support: 'Child Support', subscription: 'Subscription',
+        custom: 'Monthly Expense',
+      };
+      const recurringExpenses = financial.recurring_expenses || [];
+      const otherMonthly = financial.other_monthly_expenses || [];
+      const allObligations = [
+        ...recurringExpenses.map(e => ({
+          label: e.location_name
+            ? `${OBLIGATION_TYPE_LABELS[e.expense_type] || e.expense_type || 'Expense'} (${e.location_name})`
+            : (e.description || OBLIGATION_TYPE_LABELS[e.expense_type] || e.expense_type || 'Monthly Expense'),
+          amount: e.monthly_cost || 0,
+        })),
+        ...otherMonthly.map(e => ({
+          label: e.name || OBLIGATION_TYPE_LABELS[e.type] || e.type || 'Monthly Expense',
+          amount: e.amount || 0,
+        })),
+      ].filter(o => o.amount > 0);
+
+      if (allObligations.length > 0) {
+        const obligationLines = allObligations.map(o => `  • ${o.label}: $${o.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo`).join('\n');
+        contextLines.push(`YOUR MONTHLY OBLIGATIONS (recurring bills you pay each month):\n${obligationLines}`);
+      }
+
+      contextLines.push(`SUSPICIOUS TRANSACTION RULE: If a transaction amount seems unrealistic for that venue (e.g. $1,000 at McDonald's), you may notice it and react naturally — express confusion, check your account, wonder if something is wrong. Do NOT automatically accuse anyone unless discovery logic supports it.`);
+      contextLines.push(`FALSE BROKE RULE: Never say you have $0, are broke, or cannot afford something if your real balance shows otherwise. Your personality may make you frugal or cautious, but you must not be factually wrong about your financial state.`);
     }
-
-    if (txnSummaries.length > 0) {
-      const txnLines = txnSummaries.map(t => {
-        const sign = t.amount >= 0 ? '+' : '';
-        return `  • ${t.title}: ${sign}$${Math.abs(t.amount).toFixed(2)} (${t.category})`;
-      }).join('\n');
-      contextLines.push(`YOUR RECENT STATEMENT ACTIVITY (across all charge types — rent, food, bills, venue spending, income, transfers):\n${txnLines}\nIMPORTANT: For any "hidden TAKE" or anonymous transfer, you can see the statement title and amount but NOT who initiated it. Do NOT reveal hidden sender identity unless your character has discovered it through in-world means.`);
-    }
-
-    // Build recurring obligations block from CharacterFinancial directly
-    // This covers rent, phone, gym, etc. even if no recent transaction has posted yet
-    const OBLIGATION_TYPE_LABELS = {
-      rent: 'Rent', utilities: 'Utilities', groceries: 'Grocery Budget',
-      gym: 'Gym Membership', childcare: 'Childcare',
-      cell_phone: 'Phone Bill', internet: 'Internet Bill',
-      automotive: 'Car Payment', insurance: 'Insurance',
-      child_support: 'Child Support', subscription: 'Subscription',
-      custom: 'Monthly Expense',
-    };
-    const recurringExpenses = financial.recurring_expenses || [];
-    const otherMonthly = financial.other_monthly_expenses || [];
-    const allObligations = [
-      ...recurringExpenses.map(e => ({
-        label: e.location_name
-          ? `${OBLIGATION_TYPE_LABELS[e.expense_type] || e.expense_type || 'Expense'} (${e.location_name})`
-          : (e.description || OBLIGATION_TYPE_LABELS[e.expense_type] || e.expense_type || 'Monthly Expense'),
-        amount: e.monthly_cost || 0,
-      })),
-      ...otherMonthly.map(e => ({
-        label: e.name || OBLIGATION_TYPE_LABELS[e.type] || e.type || 'Monthly Expense',
-        amount: e.amount || 0,
-      })),
-    ].filter(o => o.amount > 0);
-
-    if (allObligations.length > 0) {
-      const obligationLines = allObligations.map(o => `  • ${o.label}: $${o.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo`).join('\n');
-      contextLines.push(`YOUR MONTHLY OBLIGATIONS (recurring bills you pay each month):\n${obligationLines}`);
-    }
-
-    contextLines.push(`SUSPICIOUS TRANSACTION RULE: If a transaction amount seems unrealistic for that venue (e.g. $1,000 at McDonald's), you may notice it and react naturally — express confusion, check your account, wonder if something is wrong. Do NOT automatically accuse anyone unless discovery logic supports it.`);
-    contextLines.push(`FALSE BROKE RULE: Never say you have $0, are broke, or cannot afford something if your real balance shows otherwise. Your personality may make you frugal or cautious, but you must not be factually wrong about your financial state.`);
 
     const contextBlock = contextLines.length > 0
       ? `\n\nFINANCIAL AWARENESS (REAL DATA — NOT INVENTED):\n${contextLines.join('\n\n')}`
