@@ -54,7 +54,7 @@ import { buildEmploymentPromptBlock } from "@/lib/employmentResolver.js";
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import { getLocations } from "@/lib/locationSessionCache";
-import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal.jsx";
+import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
 import ChatMessageList from "@/components/chat/ChatMessageList";
 import { useChatScroll } from "@/hooks/useChatScroll";
 import { useChatLoadConvo } from "@/hooks/useChatLoadConvo";
