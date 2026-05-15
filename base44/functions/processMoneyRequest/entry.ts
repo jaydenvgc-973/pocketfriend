@@ -22,12 +22,11 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Amount must be positive' }, { status: 400 });
     }
 
-    // Fetch character
-    const charArray = await base44.entities.Character.filter(
-      { id: characterId, owner_email: user.email },
-      null,
-      1
-    );
+    // Fetch character — user-scoped first (RLS), fall back to service role for NPCs
+    let charArray = await base44.entities.Character.filter({ id: characterId }, null, 1);
+    if (!charArray?.length) {
+      charArray = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
+    }
 
     if (!charArray || charArray.length === 0) {
       return Response.json({ error: 'Character not found' }, { status: 404 });
@@ -98,11 +97,15 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Deduct from character
-        const newCharBalance = (character.current_balance || 0) - finalAmount;
-        await base44.entities.Character.update(characterId, {
-          current_balance: newCharBalance,
-        });
+        // Deduct from CharacterFinancial (canonical balance source)
+        const finRecs = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: characterId }, null, 1);
+        const finRec = finRecs[0];
+        if (finRec) {
+          await base44.asServiceRole.entities.CharacterFinancial.update(finRec.id, {
+            current_balance: (finRec.current_balance ?? 0) - finalAmount,
+            total_expenses: (finRec.total_expenses ?? 0) + finalAmount,
+          });
+        }
 
         transactionCompleted = true;
       } catch (err) {
@@ -144,10 +147,15 @@ Deno.serve(async (req) => {
           });
         }
 
-        const newCharBalance = (character.current_balance || 0) - finalAmount;
-        await base44.entities.Character.update(characterId, {
-          current_balance: newCharBalance,
-        });
+        // Deduct from CharacterFinancial (canonical balance source)
+        const finRecs2 = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: characterId }, null, 1);
+        const finRec2 = finRecs2[0];
+        if (finRec2) {
+          await base44.asServiceRole.entities.CharacterFinancial.update(finRec2.id, {
+            current_balance: (finRec2.current_balance ?? 0) - finalAmount,
+            total_expenses: (finRec2.total_expenses ?? 0) + finalAmount,
+          });
+        }
 
         transactionCompleted = true;
       } catch (err) {

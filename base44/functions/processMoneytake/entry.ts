@@ -21,12 +21,11 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Amount must be positive' }, { status: 400 });
     }
 
-    // Fetch character
-    const charArray = await base44.entities.Character.filter(
-      { id: characterId, owner_email: user.email },
-      null,
-      1
-    );
+    // Fetch character — user-scoped first (RLS), fall back to service role for NPCs
+    let charArray = await base44.entities.Character.filter({ id: characterId }, null, 1);
+    if (!charArray?.length) {
+      charArray = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
+    }
 
     if (!charArray || charArray.length === 0) {
       return Response.json({ error: 'Character not found' }, { status: 404 });
@@ -34,8 +33,10 @@ Deno.serve(async (req) => {
 
     const character = charArray[0];
 
-    // Check if character has sufficient balance
-    const charBalance = character.current_balance || 0;
+    // Check balance from CharacterFinancial (canonical source of truth)
+    const finRecords = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: characterId }, null, 1);
+    const finRecord = finRecords[0];
+    const charBalance = finRecord ? (finRecord.current_balance ?? 0) : (character.current_balance || 0);
     if (charBalance < amount) {
       return Response.json({
         success: false,
@@ -67,11 +68,14 @@ Deno.serve(async (req) => {
         owner_email: user.email,
       });
 
-      // Update character balance
+      // Update CharacterFinancial (canonical balance source)
       const newCharBalance = charBalance - amount;
-      await base44.entities.Character.update(characterId, {
-        current_balance: newCharBalance,
-      });
+      if (finRecord) {
+        await base44.asServiceRole.entities.CharacterFinancial.update(finRecord.id, {
+          current_balance: newCharBalance,
+          total_expenses: (finRecord.total_expenses ?? 0) + amount,
+        });
+      }
 
       // Update user balance
       const userSettings = await base44.entities.UserSettings.filter(
