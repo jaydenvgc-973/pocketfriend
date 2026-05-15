@@ -44,12 +44,10 @@ function cdnFilter(urls) {
 
 function buildOutfitText(outfit) {
   if (!outfit) return null;
-  // CRITICAL: Prefer individual fields over full_description.
-  // full_description often contains scene/pose/lighting preamble that contaminates the image prompt.
-  // Normalize outfit fields: strip standalone N/A, none, dash; strip "N/A, " prefix (e.g. "N/A, shirtless")
+  // Normalize: strip N/A markers, translate bare-torso language to explicit model-safe instruction
   const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
     .filter(Boolean)
-    .map(p => { const t = p.trim(); return /^(n\/?a|none|-)$/i.test(t) ? null : t.replace(/^n\/?a[,\-–]\s*/i,'').trim()||null; })
+    .map(p => { const t = p.trim(); if(/^(n\/?a|none|-)$/i.test(t)) return null; const s=t.replace(/^n\/?a[,\-–]\s*/i,'').trim(); return /^(shirtless|no top|no shirt)$/i.test(s)?'No shirt / bare torso':(s||null); })
     .filter(Boolean);
   if (parts.length > 0) return parts.join(', ');
   if (outfit.full_description) {
@@ -1014,23 +1012,28 @@ ${prompt}
 Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. Not an illustration.${identityLock}`;
   }
 
-  // ── CLOSET OUTFIT LOCK (final instruction — overrides all scene styling) ──────
-  const charOutfitText = (charDesc || '').match(/Currently wearing:\s*(.+)/)?.[1]?.split('. Currently wearing:')[0]?.trim() || null;
+  // ── CLOSET OUTFIT LOCK ──────
+  const charOutfitText = (charDesc||'').match(/Currently wearing:\s*(.+)/)?.[1]?.split('. Currently wearing:')[0]?.trim()||null;
   let closetLock = '';
   if (charOutfitText || userOutfitText) {
     const hasBottoms = charOutfitText && /sweatpants|pants|jeans|shorts|joggers|leggings|trousers/i.test(charOutfitText);
     const hasShoes = charOutfitText && /sneakers|shoes|boots|sandals|loafers|heels/i.test(charOutfitText);
-    const isShirtless = charOutfitText && /shirtless|no top|no shirt/i.test(charOutfitText);
-    const parts = ['', '🔒 CLOSET OUTFIT LOCK — CANONICAL LAW. OVERRIDES ALL SCENE STYLING. Render EXACTLY.'];
+    const isBareTorso = charOutfitText && /no shirt \/ bare torso|shirtless|no top|no shirt/i.test(charOutfitText);
+    const lines = ['','🔒 CLOSET OUTFIT LOCK — CANONICAL LAW. OVERRIDES ALL SCENE STYLING.','════════════════════════════════════════════════════════════'];
     if (charOutfitText) {
-      parts.push(`${charName} OUTFIT (MANDATORY): "${charOutfitText}"`);
-      if (isShirtless) parts.push(`✅ SHIRTLESS — bare torso, absolutely NO shirt or top added.`);
-      if (hasBottoms) parts.push(`✅ BOTTOMS REQUIRED IN FRAME — camera must show mid-thigh or lower.`);
-      if (hasShoes) parts.push(`✅ SHOES REQUIRED IN FRAME — full or 3/4 body shot mandatory.`);
+      lines.push(`${charName} OUTFIT — RENDER EXACTLY:`);
+      charOutfitText.split(',').map(s=>s.trim()).filter(Boolean).forEach(item=>lines.push(`  • ${item}`));
+      lines.push('');
+      lines.push('NON-NEGOTIABLE:');
+      if (isBareTorso) { lines.push('⛔ BARE TORSO — NO shirt, tank top, hoodie, jacket, robe, or any upper-body clothing whatsoever.'); lines.push('✅ Torso must be completely bare and clearly visible.'); }
+      if (hasBottoms) lines.push('✅ BOTTOMS VISIBLE — frame mid-thigh or lower to show full pants/shorts.');
+      if (hasShoes) lines.push('✅ SHOES VISIBLE — full-body or 3/4-body framing required. Do not crop feet.');
+      lines.push('⛔ Do NOT add or invent any clothing item not listed above.');
     }
-    if (userOutfitText) parts.push(`${userWorldName || 'User'}: "${userOutfitText}" — render exactly.`);
-    parts.push('⛔ Shirt on shirtless = FAIL. ⛔ Wrong pants = FAIL. ⛔ Shoes cropped out = FAIL. ⛔ Invented outfit = FAIL.');
-    closetLock = parts.join('\n');
+    if (userOutfitText) lines.push(`\n${userWorldName||'User'} OUTFIT: ${userOutfitText} — render exactly.`);
+    lines.push('════════════════════════════════════════════════════════════');
+    lines.push('FAIL: shirt on bare torso | wrong bottoms | shoes cropped | invented outfit');
+    closetLock = lines.join('\n');
   }
 
   return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`;

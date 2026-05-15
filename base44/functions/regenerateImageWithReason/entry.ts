@@ -82,7 +82,7 @@ function buildOutfitTextRegen(outfit) {
   if (!outfit) return null;
   const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
     .filter(Boolean)
-    .map(p => { const t = p.trim(); return /^(n\/?a|none|-)$/i.test(t) ? null : t.replace(/^n\/?a[,\-–]\s*/i,'').trim()||null; })
+    .map(p => { const t = p.trim(); if(/^(n\/?a|none|-)$/i.test(t)) return null; const s=t.replace(/^n\/?a[,\-–]\s*/i,'').trim(); return /^(shirtless|no top|no shirt)$/i.test(s)?'No shirt / bare torso':(s||null); })
     .filter(Boolean);
   if (parts.length > 0) return parts.join(', ');
   if (outfit.full_description) {
