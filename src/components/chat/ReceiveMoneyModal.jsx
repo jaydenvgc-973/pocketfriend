@@ -326,7 +326,7 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
                       <p className="text-lg font-bold text-red-400">Balance unavailable</p>
                     ) : (
                       <p className="text-2xl font-bold text-blue-300">
-                        ${characterBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        ${typeof characterBalance === 'number' ? characterBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}
                       </p>
                     )}
                   </div>
@@ -336,7 +336,7 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
                     <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex gap-2">
                       <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
                       <p className="text-xs text-red-400">
-                        Insufficient funds. {selectedCharacter?.name} only has ${characterBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} available.
+                        Insufficient funds. {selectedCharacter?.name} only has ${typeof characterBalance === 'number' ? characterBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'} available.
                       </p>
                     </div>
                   )}
