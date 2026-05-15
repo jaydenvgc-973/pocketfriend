@@ -13,6 +13,9 @@ const STEP_DETAILS = 'details';
 const STEP_CONFIRM = 'confirm';
 const STEP_RESULT = 'result';
 
+// Sentinel value to distinguish "record found but balance is 0" from "no record / failed to load"
+const BALANCE_UNAVAILABLE = 'UNAVAILABLE';
+
 export default function ReceiveMoneyModal({ character, onClose, conversationCharacterId }) {
   const [step, setStep] = useState(conversationCharacterId ? STEP_MODE : STEP_CHARACTER);
   const [selectedCharacter, setSelectedCharacter] = useState(() => {
@@ -28,20 +31,49 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
   const [result, setResult] = useState(null);
   const [characters, setCharacters] = useState([]);
   const [user, setUser] = useState(null);
+  // null = not yet loaded, BALANCE_UNAVAILABLE = failed/no record, number = real balance
   const [characterBalance, setCharacterBalance] = useState(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
+
+  // Load character balance from canonical CharacterFinancial record — same source as CharacterFinancialSummary component
+  const loadCharacterBalance = async (charId, charName) => {
+    setLoadingBalance(true);
+    setCharacterBalance(null);
+    try {
+      const finRecords = await base44.entities.CharacterFinancial.filter(
+        { character_id: charId },
+        null,
+        1
+      );
+      const finRecord = finRecords?.[0];
+      const balance = (finRecord && typeof finRecord.current_balance === 'number')
+        ? finRecord.current_balance
+        : BALANCE_UNAVAILABLE;
+      setCharacterBalance(balance);
+      console.log(`[ReceiveMoneyModal TAKE] char=${charName} | id=${charId} | balance=${balance} | hasRecord=${!!finRecord} | source=CharacterFinancial.current_balance`);
+    } catch (err) {
+      console.error(`[ReceiveMoneyModal TAKE] Balance load failed for ${charName}:`, err.message);
+      setCharacterBalance(BALANCE_UNAVAILABLE);
+    } finally {
+      setLoadingBalance(false);
+    }
+  };
 
   useEffect(() => {
     const loadData = async () => {
       try {
         const me = await base44.auth.me();
         setUser(me);
+        // Load ALL owner_email-scoped characters — no type filter — legacy characters must be included
         const chars = await base44.entities.Character.filter(
           { owner_email: me.email },
           null,
-          100
+          200
         );
-        const filtered = chars.filter(c => c.is_active_character || c.character_type === 'npc_fictitious');
+        // Show all non-deleted characters; filter out only explicitly deleted/merged
+        const filtered = chars.filter(c =>
+          !['deleted', 'soft_deleted', 'merged'].includes(c.status)
+        );
         setCharacters(filtered);
         
         // Auto-select conversation character if provided
@@ -64,50 +96,45 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
   const handleSelectMode = async (selectedMode) => {
     setMode(selectedMode);
     setStep(STEP_DETAILS);
-    
-    // Load character balance for TAKE mode from canonical financial record
     if (selectedMode === 'take' && selectedCharacter) {
-      setLoadingBalance(true);
-      setCharacterBalance(null); // Reset to null, not 0
-      try {
-        const finRecords = await base44.entities.CharacterFinancial.filter(
-          { character_id: selectedCharacter.id },
-          null,
-          1
-        );
-        const finRecord = finRecords?.[0];
-        const balance = finRecord?.current_balance ?? null;
-        setCharacterBalance(balance);
-        
-        // Diagnostic logging
-        console.log(`[TAKE Balance] character=${selectedCharacter.name} | charId=${selectedCharacter.id} | balance=${balance} | hasRecord=${!!finRecord}`);
-      } catch (err) {
-        console.error('[TAKE Balance] Failed to load:', err.message);
-        setCharacterBalance(null);
-      } finally {
-        setLoadingBalance(false);
-      }
+      await loadCharacterBalance(selectedCharacter.id, selectedCharacter.name);
     }
   };
 
   const handleDetailsSubmit = () => {
     if (!amount || !title) return;
     
-    // Validate TAKE mode has loaded balance and amount doesn't exceed it
     if (mode === 'take') {
-      if (characterBalance === null) {
-        alert('Balance unavailable. Try again.');
-        return;
+      // Balance must be a real number — not null (loading) and not BALANCE_UNAVAILABLE (failed)
+      if (characterBalance === null || characterBalance === BALANCE_UNAVAILABLE) {
+        return; // Button already disabled; belt-and-suspenders guard
       }
       const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum <= 0) return;
       if (amountNum > characterBalance) {
-        alert(`Insufficient funds. Character only has $${characterBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} available.`);
+        // Don't alert — show inline. Just guard here.
         return;
       }
     }
     
     setStep(STEP_CONFIRM);
   };
+
+  // Derived: is the entered amount over balance for TAKE mode?
+  const amountExceedsBalance =
+    mode === 'take' &&
+    typeof characterBalance === 'number' &&
+    parseFloat(amount) > characterBalance;
+
+  const balanceIsReady =
+    mode !== 'take' ||
+    (typeof characterBalance === 'number' && !loadingBalance);
+
+  const reviewDisabled =
+    !amount ||
+    !title ||
+    !balanceIsReady ||
+    amountExceedsBalance;
 
   const handleConfirmSubmit = async () => {
     if (!selectedCharacter || !mode || !amount) return;
@@ -156,8 +183,8 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-end z-50">
-      <div className="w-full max-w-lg bg-card rounded-t-2xl shadow-2xl max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50">
+      <div className="w-full max-w-lg bg-card rounded-t-2xl shadow-2xl flex flex-col" style={{ maxHeight: '88vh' }}>
         {/* Header */}
         <div className="bg-card border-b border-border p-4 flex justify-between items-center flex-shrink-0">
           <h2 className="text-xl font-bold">Receive Money</h2>
@@ -275,18 +302,45 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
 
               {mode === 'take' && (
                 <>
+                  {/* Balance card — identical source to CharacterFinancialSummary */}
                   <div className={`p-3 rounded-lg border ${
-                    characterBalance === null
-                      ? 'bg-red-500/10 border-red-500/30'
-                      : 'bg-blue-500/10 border-blue-500/30'
+                    loadingBalance
+                      ? 'bg-secondary/30 border-border'
+                      : characterBalance === BALANCE_UNAVAILABLE
+                        ? 'bg-red-500/10 border-red-500/30'
+                        : 'bg-blue-500/10 border-blue-500/30'
                   }`}>
-                    <p className={`text-xs font-semibold mb-1 ${characterBalance === null ? 'text-red-700' : 'text-blue-700'}`}>
-                      Available in Account
+                    <p className={`text-xs font-semibold mb-1 ${
+                      loadingBalance ? 'text-muted-foreground'
+                      : characterBalance === BALANCE_UNAVAILABLE ? 'text-red-400'
+                      : 'text-blue-400'
+                    }`}>
+                      {selectedCharacter?.name}'s Available Balance
                     </p>
-                    <p className={`text-lg font-bold ${characterBalance === null ? 'text-red-600' : 'text-blue-600'}`}>
-                      {loadingBalance ? 'Loading...' : characterBalance === null ? 'Balance unavailable' : `$${characterBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                    </p>
+                    {loadingBalance ? (
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                        <span className="text-sm text-muted-foreground">Loading account...</span>
+                      </div>
+                    ) : characterBalance === BALANCE_UNAVAILABLE ? (
+                      <p className="text-lg font-bold text-red-400">Balance unavailable</p>
+                    ) : (
+                      <p className="text-2xl font-bold text-blue-300">
+                        ${characterBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    )}
                   </div>
+
+                  {/* Insufficient funds warning */}
+                  {amountExceedsBalance && (
+                    <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-red-400">
+                        Insufficient funds. {selectedCharacter?.name} only has ${characterBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} available.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex gap-2">
                     <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                     <p className="text-xs text-amber-700">
@@ -358,13 +412,13 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
             </Button>
           )}
           {step === STEP_DETAILS && (
-           <Button
-             onClick={handleDetailsSubmit}
-             disabled={!amount || !title || (mode === 'take' && characterBalance === null)}
-             className="flex-1"
-           >
-             Review
-           </Button>
+            <Button
+              onClick={handleDetailsSubmit}
+              disabled={reviewDisabled}
+              className="flex-1"
+            >
+              Review
+            </Button>
           )}
           {step === STEP_CONFIRM && (
             <Button
