@@ -101,25 +101,34 @@ function resolveOutfitCategory(character) {
 
 function resolveCharacterOutfitForPrompt(character) {
   if (!character) return null;
+
+  // PRIORITY 1: current_outfit (WEARING / manually selected) — ALWAYS wins
+  // This is the user's explicit outfit selection. It must never be overridden by rotation.
+  const currentOutfit = character.current_outfit;
+  if (currentOutfit?.outfit_id || currentOutfit?.label) {
+    const text = buildOutfitText(currentOutfit);
+    if (text) {
+      console.log(`[OutfitResolver] P1 current_outfit wins: id=${currentOutfit.outfit_id || 'legacy'} label="${currentOutfit.label}" → "${text.substring(0, 80)}"`);
+      return text;
+    }
+  }
+
+  // PRIORITY 2: Closet rotation by resolved category (only if no current_outfit)
   const closet = character.character_closet || [];
   const outfits = closet.filter(item => item.outfit_id);
-  if (outfits.length === 0) {
-    // No closet — fall back to current_outfit field if set
-    return buildOutfitText(character.current_outfit) || null;
-  }
+  if (outfits.length === 0) return null;
+
   const targetCategory = resolveOutfitCategory(character);
   const chain = OUTFIT_FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
-  const currentOutfitId = character.current_outfit?.outfit_id || null;
   for (const cat of chain) {
     const pool = outfits.filter(o => o.category === cat);
     if (pool.length === 0) continue;
     if (pool.length === 1) return buildOutfitText(pool[0]);
-    // Daily rotation: deterministic by day + character ID, avoid repeating current outfit
     const now = new Date();
     const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
     const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
     let idx = (dayOfYear + idHash) % pool.length;
-    if (pool[idx]?.outfit_id === currentOutfitId && pool.length > 1) idx = (idx + 1) % pool.length;
+    if (pool[idx]?.outfit_id === currentOutfit?.outfit_id && pool.length > 1) idx = (idx + 1) % pool.length;
     return buildOutfitText(pool[idx]);
   }
   return null;
@@ -911,7 +920,7 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
   ✅ Skin tones, highlights, and shadows on the character MUST match the room's time-of-day lighting exactly
   ✅ Character scale must be physically correct relative to the room furniture and camera distance
   ✅ APPEARANCE LOCK (100% ABSOLUTE): ${buildAppearanceLockText(charDesc)} — NON-NEGOTIABLE
-  ✅ OUTFIT ENFORCEMENT (CANONICAL LAW — NON-NEGOTIABLE): ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] ? `"${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1]}". This outfit was resolved from the character's closet. It MUST appear exactly as described. Do NOT substitute, reinterpret, replace, upgrade, modify, or "improve" this outfit. Do NOT add or remove layers. Do NOT change colors, fabrics, or coverage. The generator's job is to RENDER this outfit, not redesign it. The outfit overrides all scene-aesthetic styling, weather suggestions, editorial choices, and AI creativity.` : 'No closet outfit resolved — use clothing naturally appropriate for this character and scene context.'}
+  ✅ OUTFIT ENFORCEMENT: See CLOSET OUTFIT LOCK block below — this is NON-NEGOTIABLE.
   
   ⛔ HARD FAILS:
   ⛔ Character appears cut-out or pasted → FAIL
@@ -1001,7 +1010,18 @@ ${prompt}
 Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. Not an illustration.${identityLock}`;
   }
 
-  return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}`;
+  // ── CLOSET OUTFIT LOCK (final instruction — overrides all scene styling) ──────
+  const charOutfitText = (charDesc || '').match(/Currently wearing:\s*(.+)/)?.[1]?.split('. Currently wearing:')[0]?.trim() || null;
+  let closetLock = '';
+  if (charOutfitText || userOutfitText) {
+    const parts = ['', '🔒 CLOSET OUTFIT LOCK — OVERRIDES ALL SCENE STYLING. Render EXACTLY. No substitutions.'];
+    if (charOutfitText) parts.push(`${charName}: "${charOutfitText}" — every piece, color, pattern, graphic is mandatory. Pants in outfit = three-quarter or full body frame required.`);
+    if (userOutfitText) parts.push(`${userWorldName || 'User'}: "${userOutfitText}" — render exactly.`);
+    parts.push('⛔ Generic clothing replacing closet outfit = FAIL. ⛔ Missing graphics/patterns = FAIL. ⛔ Wrong colors = FAIL. ⛔ Cropped-out bottoms when pants/shoes specified = FAIL.');
+    closetLock = parts.join('\n');
+  }
+
+  return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`;
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
@@ -1623,15 +1643,18 @@ Deno.serve(async (req) => {
     }
 
     // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
-    // SYNC NOTE: The classifySceneContext + sanitizePrompt functions above are
-    // intentionally identical to the inlined versions in regenerateImageWithReason.
-    // Deno functions cannot share local imports — both inline the same code.
-    // If you change the sanitizer here, you MUST update regenerateImageWithReason too.
-    // Any drift between the two sanitizers is a bug.
 
-    // ── THIRD-PARTY PROMPT PREAMBLE ──────────────────────────────────────────
-    // When this is a third-party photo (sender ≠ subject), prepend an explicit hard-block
-    // instruction so the model never defaults to the sender's facial identity.
+    // ── USER OUTFIT RESOLUTION — must happen BEFORE buildPrompt ─────────────
+    // FIX: was previously declared AFTER buildPrompt, causing it to always be undefined.
+    let userOutfitText = null;
+    if (subjectType === 'joint' || subjectType === 'user') {
+      const uoArr = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
+      const uoSett = uoArr?.[0] || {};
+      const uco = uoSett.user_current_outfit;
+      userOutfitText = uco ? (uco.full_description || [uco.top, uco.bottom, uco.shoes, uco.outerwear, uco.accessories].filter(Boolean).join(', ') || null) : null;
+      if (userOutfitText) console.log(`[generateImageAsync] ✅ User outfit pre-buildPrompt: "${userOutfitText.substring(0, 80)}"`);
+    }
+
     let thirdPartyPreamble = '';
     if (isThirdPartyPhoto && !characterId) {
       // Strip any routing prefix from the sanitized prompt to get the raw scene description
@@ -1714,11 +1737,6 @@ All reference images (if any) are environment/location refs only — do NOT trea
     ];
 
     // ── 8. STAGED GENERATION + VALIDATION LOOP (max 3 attempts) ─────────────
-    // PRINCIPLE: Storage is ALWAYS separate from Acceptance.
-    //   - Every generated image is STAGED immediately (never lost).
-    //   - Camera validation controls ACCEPTANCE, not STORAGE.
-    //   - Only the accepted attempt is promoted to final image_url.
-    //   - All attempts (including rejected ones) are preserved in generation_context.attempts[].
 
     let acceptedGenRes = null;
     let acceptedCameraVars = null;
@@ -1727,9 +1745,6 @@ All reference images (if any) are environment/location refs only — do NOT trea
     const MAX_ATTEMPTS = 3;
     const stagedAttempts = []; // all attempts, win or lose
 
-    // ── BUILD STRUCTURED SUBJECTS ARRAY (Part 2 — recovery-safe generation_context) ──
-    // Every subject is explicitly named, typed, and assigned a stable ID.
-    // Failed image recovery and regeneration flows read from this — never from the old raw prompt tags.
     const structuredSubjects = [];
 
     // Subject 1: the character (if resolved)
@@ -1748,15 +1763,8 @@ All reference images (if any) are environment/location refs only — do NOT trea
       });
     }
 
-    // Subject 2: the user (for joint/user images)
-    let userOutfitText = null;
     if (subjectType === 'joint' || subjectType === 'user') {
-      const userSettingsArr = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
-      const userSett = userSettingsArr?.[0] || {};
-      const uco = userSett.user_current_outfit;
-      userOutfitText = uco ? (uco.full_description || [uco.top, uco.bottom, uco.shoes, uco.outerwear, uco.accessories].filter(Boolean).join(', ') || null) : null;
-      if (userOutfitText) console.log(`[generateImageAsync] User outfit resolved: "${userOutfitText.substring(0, 80)}"`);
-      structuredSubjects.push({ subject_type: 'user', subject_id: requestingUser, subject_name: userWorldName || userSett.fictional_world_name || 'user', role: 'primary', reference_image_count: USER_SLOTS, reference_images: userRefs, appearance_lock_snapshot: userSett.appearance_lock || null, outfit_snapshot: userOutfitText || null, appearance_lock_injected: !!(userSett.appearance_lock && Object.keys(userSett.appearance_lock).length > 0), outfit_injected: !!userOutfitText });
+      structuredSubjects.push({ subject_type: 'user', subject_id: requestingUser, subject_name: userWorldName || 'user', role: 'primary', reference_image_count: USER_SLOTS, reference_images: userRefs, outfit_snapshot: userOutfitText || null, outfit_injected: !!userOutfitText });
     }
 
     // Base generation context (shared across all attempts — written once, attempts appended)
