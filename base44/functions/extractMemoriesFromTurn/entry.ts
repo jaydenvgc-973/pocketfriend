@@ -46,10 +46,36 @@ Deno.serve(async (req) => {
     if (targetChar && characterReply) {
       const senderLabel = playingAsChar ? playingAsChar.name : 'someone';
 
+      // Build known people context to reduce false positives at the LLM level
+      const knownPeople = [
+        ...(targetChar.fictional_relationships || []).map(r => r.person_name).filter(Boolean),
+        ...(targetChar.family_members || []).map(m => m.name).filter(Boolean),
+      ];
+      const knownPeopleStr = knownPeople.length > 0
+        ? `Already known people (do NOT flag these): ${knownPeople.join(', ')}`
+        : 'No known people yet.';
+
       const targetMemoryResult = await base44.integrations.Core.InvokeLLM({
         prompt: `You are ${targetChar.name}. ${senderLabel} just said: "${userMessage}" and you replied: "${characterReply}".
 
-Extract any NEW people names mentioned (not yet in your world) from the exchange. Return JSON only.`,
+${knownPeopleStr}
+
+Identify any clearly NEW people (full or partial names that refer to a specific individual) mentioned in this exchange who are NOT already in the known list above.
+
+STRICT RULES — DO NOT flag:
+- Common English words that coincidentally look like names (set, mark, will, may, etc.)
+- Substrings inside larger words (e.g. "Jon" inside "conjunction")
+- Stop words, articles, pronouns
+- Location names, business names, place names
+- The speaking character's own name (${targetChar.name})
+- Very short words (2 chars or less)
+- Names that are clearly possessive references to a place ("Anderson's" used as a bar name)
+- Generic titles without a specific person (e.g. "the doctor", "a friend")
+
+Only flag names that clearly refer to a specific real individual who is NEW.
+If nothing new and clear is detected, return empty people array.
+
+Return JSON only.`,
         response_json_schema: {
           type: "object",
           properties: {

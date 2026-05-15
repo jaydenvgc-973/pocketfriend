@@ -16,6 +16,7 @@ import { base44 } from "@/api/base44Client";
 import { reportRateLimit, isGloballyRateLimited, isChatSafeModeActive, escalateChatRetry, resetChatRetry, getChatRetryState, isRetryPaused, areOptionalSystemsDisabled } from "@/lib/simulationGate";
 import { isForegroundActive, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
+import { filterDetectedMentions } from "@/lib/entityDetectionFilter";
 
 // Per-session cooldown state — keyed by `${characterId}:${taskName}`
 const sessionCooldowns = {};
@@ -112,7 +113,7 @@ export function useChatBackgroundTasks({
     activeCharacter,
     isPhone,
     currentUser,
-    isTyping, // should be false by the time this is called — foreground is done
+    isTyping,
     userMsg,
   }) => {
     if (!characterId || !convoId) return;
@@ -297,9 +298,20 @@ Return ONLY valid JSON, nothing else.`,
           playAsCharacterId: activeCharacter?.id || null,
         }, characterId, 'memoryExtract').then(res => {
           // Backend returns `newPeopleDetected` (not `new_people`) — must match exactly
-          const newPeople = res?.data?.newPeopleDetected || res?.data?.new_people || [];
-          if (newPeople.length > 0) {
-            setNewPeopleDetected(newPeople);
+          const rawPeople = res?.data?.newPeopleDetected || res?.data?.new_people || [];
+          if (rawPeople.length > 0) {
+            // ── PRE-FILTER: check against known characters, user aliases, ignore list ──
+            // Pull the current character list from React Query cache (no extra API call)
+            const cachedChars = queryClient.getQueryData(["characters", currentUser?.email]) || [];
+            const userSettings = queryClient.getQueryData(["userSettings", currentUser?.email]) || {};
+            const { toShow } = filterDetectedMentions(rawPeople, {
+              userSettings,
+              existingCharacters: cachedChars,
+              character,
+            });
+            if (toShow.length > 0) {
+              setNewPeopleDetected(toShow);
+            }
           }
         });
       }
