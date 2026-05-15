@@ -201,6 +201,7 @@ Deno.serve(async (req) => {
       grocery: location_name || location?.name || 'Grocery Store',
     };
 
+    const humanTitle = displayTitleMap[spendingBucket];
     const txn = await base44.asServiceRole.entities.FinancialTransaction.create({
       character_id,
       character_name: character.name,
@@ -209,13 +210,13 @@ Deno.serve(async (req) => {
       sender_name: character.name,
       receiver_id: location_id,
       receiver_type: 'system',
-      receiver_name: displayTitleMap[spendingBucket],
+      receiver_name: humanTitle,
       amount,
       direction: 'expense',
       transaction_type: txnTypeMap[spendingBucket],
-      description: idempotencyKey,     // ← idempotency key stored here for dedup
+      description: idempotencyKey,     // ← kept for dedup lookup (never shown to character)
       location_id,
-      location_name: location_name || location?.name,
+      location_name: location_name || location?.name || humanTitle,  // ← shown to character
       balance_after: balanceAfter,
       timestamp: nowUtc.toISOString(),
     });

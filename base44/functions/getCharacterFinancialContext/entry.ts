@@ -23,9 +23,10 @@ Deno.serve(async (req) => {
     if (!character_id) return Response.json({ error: 'character_id required' }, { status: 400 });
 
     // Load canonical financial record + recent transactions in parallel
+    // Fetches 15 most recent transactions across ALL charge types (rent, food, venue, payroll, etc.)
     const [finRecords, recentTxns] = await Promise.all([
       base44.entities.CharacterFinancial.filter({ character_id }, null, 1),
-      base44.entities.FinancialTransaction.filter({ character_id }, '-timestamp', 10),
+      base44.entities.FinancialTransaction.filter({ character_id }, '-timestamp', 15),
     ]);
 
     const financial = finRecords[0];
@@ -41,13 +42,50 @@ Deno.serve(async (req) => {
 
     const balance = typeof financial.current_balance === 'number' ? financial.current_balance : null;
 
-    // Build readable transaction list for prompt injection
-    const txnSummaries = recentTxns.map(t => ({
-      title: t.location_name || t.description || t.transaction_type,
-      amount: t.direction === 'expense' ? -(t.amount) : t.amount,
-      category: t.transaction_type,
-      date: t.timestamp ? t.timestamp.split('T')[0] : null,
-    }));
+    // Human-readable labels for all known transaction types
+    const TYPE_LABELS = {
+      rent: 'Rent',
+      utilities: 'Utilities',
+      groceries: 'Grocery / Food',
+      gym: 'Gym Membership',
+      childcare: 'Childcare',
+      custom: 'Payment',
+      bar_restaurant: 'Restaurant / Bar',
+      entertainment: 'Entertainment',
+      transport: 'Transport',
+      clothing: 'Clothing',
+      healthcare: 'Healthcare',
+      payroll: 'Paycheck',
+      income: 'Income',
+      gift: 'Gift',
+      loan: 'Loan',
+      repayment: 'Repayment',
+      purchase: 'Purchase',
+      tuition: 'Tuition',
+      simulated_need: 'Personal Expense',
+      scene_purchase: 'Scene Purchase',
+      other: 'Other',
+    };
+
+    // Build readable transaction list — hides raw internal keys (idempotency keys, system codes)
+    // Display title priority: location_name → type label → transaction_type raw
+    // Hidden metadata (initiated_by, sender identity for hidden transactions) is NOT included
+    const txnSummaries = recentTxns.map(t => {
+      // Never expose raw idempotency keys (they start with "venue_")
+      const rawDesc = t.description || '';
+      const isInternalKey = rawDesc.startsWith('venue_') || rawDesc.startsWith('system_') || rawDesc.startsWith('auto_');
+      const displayTitle = t.location_name
+        || (isInternalKey ? null : rawDesc)
+        || TYPE_LABELS[t.transaction_type]
+        || t.transaction_type
+        || 'Transaction';
+      return {
+        title: displayTitle,
+        amount: t.direction === 'expense' ? -(t.amount) : t.amount,
+        category: TYPE_LABELS[t.transaction_type] || t.transaction_type || 'other',
+        date: t.timestamp ? t.timestamp.split('T')[0] : null,
+      };
+    });
 
     // Build the injectable context string
     let contextLines = [];
@@ -66,9 +104,9 @@ Deno.serve(async (req) => {
     if (txnSummaries.length > 0) {
       const txnLines = txnSummaries.map(t => {
         const sign = t.amount >= 0 ? '+' : '';
-        return `  • ${t.title}: ${sign}$${Math.abs(t.amount).toFixed(2)} (${t.category || 'other'})`;
+        return `  • ${t.title}: ${sign}$${Math.abs(t.amount).toFixed(2)} (${t.category})`;
       }).join('\n');
-      contextLines.push(`YOUR RECENT TRANSACTIONS (you are aware of these — do NOT reveal hidden TAKE metadata unless you discovered it):\n${txnLines}`);
+      contextLines.push(`YOUR RECENT STATEMENT ACTIVITY (across all charge types — rent, food, bills, venue spending, income, transfers):\n${txnLines}\nIMPORTANT: For any "hidden TAKE" or anonymous transfer, you can see the statement title and amount but NOT who initiated it. Do NOT reveal hidden sender identity unless your character has discovered it through in-world means.`);
     }
 
     contextLines.push(`SUSPICIOUS TRANSACTION RULE: If a transaction amount seems unrealistic for that venue (e.g. $1,000 at McDonald's), you may notice it and react naturally — express confusion, check your account, wonder if something is wrong. Do NOT automatically accuse anyone unless discovery logic supports it.`);
