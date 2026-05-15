@@ -703,15 +703,19 @@ Deno.serve(async (req) => {
         console.log(`[regenerateImageWithReason] charDesc built: "${charDesc.substring(0, 120)}"`);
 
         // ── OUTFIT INJECTION — CLOSET IS CANONICAL LAW ───────────────────────
-        // Always resolve from closet unless charDesc already has outfit (avoid double injection).
         const alreadyHasOutfitRegen = /Currently wearing:/i.test(charDesc);
         if (!alreadyHasOutfitRegen) {
           const outfitText = resolveOutfitTextFromCharacterRegen(charRecord);
           if (outfitText) {
             charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitText}` : `Currently wearing: ${outfitText}`;
-            console.log(`[regenerateImageWithReason] ✅ Outfit resolved from closet: "${outfitText.substring(0, 80)}"`);
+            // Strip LLM-invented clothing from the scene prompt so it can't compete with closet lock.
+            scenePromptRaw = scenePromptRaw
+              .replace(/,?\s*wearing\s+(?:a\s+)?[^,.]{3,80}(?=\s*[,.]|\s+(?:and|with|who|while|looking|standing|sitting|leaning|facing|near|at|in\s+the))/gi, '')
+              .replace(/,?\s*dressed\s+in\s+[^,.]{3,80}(?=\s*[,.])/gi, '')
+              .replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').trim();
+            console.log(`[regenerateImageWithReason] ✅ Closet outfit: "${outfitText.substring(0, 80)}"`);
           } else {
-            console.log(`[regenerateImageWithReason] ⚠️ No closet outfit for "${charRecord.name}" — no closet data`);
+            console.log(`[regenerateImageWithReason] ⚠️ No closet outfit for "${charRecord.name}" — empty closet`);
           }
         } else {
           console.log(`[regenerateImageWithReason] Outfit already in charDesc — skipping duplicate`);

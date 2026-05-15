@@ -1372,16 +1372,21 @@ Deno.serve(async (req) => {
         // was already sourced from the closet (i.e. charDesc already has it).
         const alreadyHasOutfitInDesc = /Currently wearing:/i.test(charDesc);
         if (!alreadyHasOutfitInDesc) {
-          // Sims-style closet resolution: pick the right outfit for the occasion
           const outfitText = resolveCharacterOutfitForPrompt(charRecord);
           if (outfitText) {
             charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitText}` : `Currently wearing: ${outfitText}`;
-            console.log(`[generateImageAsync] ✅ Outfit resolved from closet: "${outfitText.substring(0, 80)}"`);
+            // Strip LLM-invented clothing from the scene prompt so it can't compete with the closet lock.
+            // Preserves: scene action, location, camera, lighting, character identity description.
+            sanitizedPrompt = sanitizedPrompt
+              .replace(/,?\s*wearing\s+(?:a\s+)?[^,.]{3,80}(?=\s*[,.]|\s+(?:and|with|who|while|looking|standing|sitting|leaning|facing|near|at|in\s+the))/gi, '')
+              .replace(/,?\s*dressed\s+in\s+[^,.]{3,80}(?=\s*[,.])/gi, '')
+              .replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').trim();
+            console.log(`[generateImageAsync] ✅ Closet outfit: "${outfitText.substring(0, 80)}" | prompt after strip: "${sanitizedPrompt.substring(0, 100)}"`);
           } else {
-            console.log(`[generateImageAsync] ⚠️ No closet outfit resolved for "${charRecord.name}" — no closet data, using scene context`);
+            console.log(`[generateImageAsync] ⚠️ No closet outfit for "${charRecord.name}" — empty closet, scene context preserved`);
           }
         } else {
-          console.log(`[generateImageAsync] Outfit already in charDesc — skipping duplicate closet resolution`);
+          console.log(`[generateImageAsync] Outfit already in charDesc — skipping duplicate`);
         }
       }
 
@@ -1601,24 +1606,7 @@ Deno.serve(async (req) => {
     console.log(`[generateImageAsync] FINAL REF URLS:`);
     referenceImages.forEach((url, i) => console.log(`  [${i+1}] ${url}`));
 
-    console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length}`);
-    console.log(`[IdentityAudit] FINAL STATE before generation:`);
-    console.log(`[IdentityAudit]   subject_type:              ${subjectType}`);
-    console.log(`[IdentityAudit]   subject_1_id:              ${characterId || 'null'}`);
-    console.log(`[IdentityAudit]   subject_1_name:            ${charRecord?.name || characterName || 'unknown'}`);
-    console.log(`[IdentityAudit]   subject_1_ref_count:       ${CHAR_SLOTS}`);
-    console.log(`[IdentityAudit]   subject_1_charDesc_present: ${!!charDesc}`);
-    console.log(`[IdentityAudit]   subject_1_appearance_lock:  ${charRecord?.appearance_lock ? Object.keys(charRecord.appearance_lock).join(', ') || 'none' : 'none'}`);
-    console.log(`[IdentityAudit]   subject_1_avatar_fallback: ${charRefs.length > 0 && (charRecord?.reference_image_urls || []).filter(u => !u.includes('generated_image')).length === 0 && !!charRecord?.avatar_url}`);
-    console.log(`[IdentityAudit]   subject_2_id:              ${subjectType === 'joint' || subjectType === 'user' ? requestingUser : 'n/a'}`);
-    console.log(`[IdentityAudit]   subject_2_name:            ${subjectType === 'joint' || subjectType === 'user' ? (userWorldName || 'user') : 'n/a'}`);
-    console.log(`[IdentityAudit]   subject_2_ref_count:       ${USER_SLOTS}`);
-    console.log(`[IdentityAudit]   subject_2_visual_refs_found: ${USER_SLOTS > 0}`);
-    console.log(`[IdentityAudit]   joint_dual_slot_active:    ${subjectType === 'joint'}`);
-    console.log(`[IdentityAudit]   generic_fallback_inserted: false`);
-    console.log(`[IdentityAudit]   appearance_conflicts_detected: (resolved after character fetch)`);
-    console.log(`[IdentityAudit]   generation_context.character_id will be: ${characterId || 'null'}`);
-    console.log(`[IdentityAudit]   message_id: ${messageId}`);
+    console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | char=${charRecord?.name || characterName || 'none'} | outfit_injected=${/Currently wearing:/i.test(charDesc)} | message_id=${messageId}`);
 
 
     // Mutation logging is already done above immediately after sanitization — no duplicate needed here.
