@@ -20,7 +20,7 @@ import BottomNav from "@/components/BottomNav";
 import ChatApprovals from "@/components/chat/ChatApprovals";
 import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
-import NewPersonDetectedModal from "./NewPersonDetectedModal";
+import NewPersonDetectedModal from "./NewPersonDetectedModal.jsx";
 
 export default function ChatPageLayout({
   character,
