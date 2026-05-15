@@ -278,7 +278,7 @@ function getTimeLighting(hour = new Date().getHours()) {
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
-function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime, subjectType, characterId, userWorldName }) {
+function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime, subjectType, characterId, userWorldName, userOutfitText }) {
   // ── IMAGE GENERATION PRIORITY STACK (GOVERNING LAW) ──────────────────────
   // Priority 1: SCENE INTENT — user prompt meaning, emotion, action
   // Priority 2: CHARACTER PRESENCE — who is there and what they are doing
@@ -863,6 +863,7 @@ Extract ONLY: face structure, skin tone, eye shape, nose, mouth, hair color/leng
 ⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.`
   : `Subject 2 Reference Images: NONE — render the user as a realistic human consistent with scene context. Do NOT substitute a child or irrelevant person.`
 }
+✅ SUBJECT 2 OUTFIT ENFORCEMENT: ${userOutfitText ? `"${userOutfitText}". CANONICAL LAW — render exactly this. Do NOT substitute, modify, or reinterpret.` : 'Use clothing appropriate to scene context.'}
 ⛔ Subject 2 MUST look like the person in the reference photos (if provided). Do NOT use a generic face.
 ⛔ Do NOT let Subject 1's appearance overwrite or bleed into Subject 2.
 
@@ -910,7 +911,7 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
   ✅ Skin tones, highlights, and shadows on the character MUST match the room's time-of-day lighting exactly
   ✅ Character scale must be physically correct relative to the room furniture and camera distance
   ✅ APPEARANCE LOCK (100% ABSOLUTE): ${buildAppearanceLockText(charDesc)} — NON-NEGOTIABLE
-  ✅ OUTFIT: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] ? `If the scene prompt specifies clothing, use THAT clothing. If no clothing is described in the scene prompt, default to: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1]}.` : 'Clothing should match what the scene prompt describes, or their personality and context if unspecified.'}
+  ✅ OUTFIT ENFORCEMENT (CANONICAL LAW — NON-NEGOTIABLE): ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] ? `"${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1]}". This outfit was resolved from the character's closet. It MUST appear exactly as described. Do NOT substitute, reinterpret, replace, upgrade, modify, or "improve" this outfit. Do NOT add or remove layers. Do NOT change colors, fabrics, or coverage. The generator's job is to RENDER this outfit, not redesign it. The outfit overrides all scene-aesthetic styling, weather suggestions, editorial choices, and AI creativity.` : 'No closet outfit resolved — use clothing naturally appropriate for this character and scene context.'}
   
   ⛔ HARD FAILS:
   ⛔ Character appears cut-out or pasted → FAIL
@@ -936,7 +937,8 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
 
 USER IDENTITY:
 Images ${userRefStart}–${userEnd} are this exact person's photos.
-Match: face structure, skin tone, hair, body type.`;
+Match: face structure, skin tone, hair, body type.
+✅ USER OUTFIT ENFORCEMENT: ${userOutfitText ? `"${userOutfitText}". CANONICAL LAW — render exactly this. Do NOT substitute or modify.` : 'Use clothing appropriate to scene context.'}`;
   }
 
   if (isSelfieMode) {
@@ -1340,22 +1342,26 @@ Deno.serve(async (req) => {
         ].filter(Boolean);
         charDesc = parts.join(', ');
 
-        // ── OUTFIT RESOLUTION ────────────────────────────────────────────
-        // CRITICAL: Only inject character outfit if the user's prompt did NOT already specify clothing.
-        // If the prompt says "wearing a black snapback and an oversized graphic tee", that is authoritative.
-        // We do NOT override it with character's current outfit (e.g., sleepwear, formal, etc.).
-        const promptHasClothingDescription = /\b(wearing|dressed|clothed|outfit|shirt|pants|shorts|dress|jacket|coat|sweater|t[- ]?shirt|shoes|hat|cap|snapback|hoodie|jeans|skirt|blouse|suit|tie|scarf|vest)\b/i.test(sanitizedPrompt);
-        if (!promptHasClothingDescription) {
+        // ── OUTFIT RESOLUTION — CLOSET IS CANONICAL LAW ──────────────────
+        // The closet is the authoritative visual truth. It ALWAYS wins unless
+        // the prompt itself already contains a resolved closet outfit string
+        // (which happens when charDesc already carries "Currently wearing:").
+        // We do NOT skip closet resolution because the scene prompt mentions
+        // clothing words like "wearing a smile" or incidental garment references.
+        // The ONLY valid skip: prompt explicitly contains a detailed outfit that
+        // was already sourced from the closet (i.e. charDesc already has it).
+        const alreadyHasOutfitInDesc = /Currently wearing:/i.test(charDesc);
+        if (!alreadyHasOutfitInDesc) {
           // Sims-style closet resolution: pick the right outfit for the occasion
           const outfitText = resolveCharacterOutfitForPrompt(charRecord);
           if (outfitText) {
             charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitText}` : `Currently wearing: ${outfitText}`;
-            console.log(`[generateImageAsync] Outfit resolved from closet: "${outfitText.substring(0, 80)}"`);
+            console.log(`[generateImageAsync] ✅ Outfit resolved from closet: "${outfitText.substring(0, 80)}"`);
           } else {
-            console.log(`[generateImageAsync] No closet outfit resolved — prompt clothing or appearance description will be used`);
+            console.log(`[generateImageAsync] ⚠️ No closet outfit resolved for "${charRecord.name}" — no closet data, using scene context`);
           }
         } else {
-          console.log(`[generateImageAsync] Prompt explicitly specifies clothing — closet outfit skipped`);
+          console.log(`[generateImageAsync] Outfit already in charDesc — skipping duplicate closet resolution`);
         }
       }
 
@@ -1665,11 +1671,10 @@ All reference images (if any) are environment/location refs only — do NOT trea
       userRefStart,
       serverHour: serverTime.getHours(),
       serverTime: serverTime.toLocaleTimeString(),
-      // RULE: module-level functions do NOT have access to handler-scope variables via closure.
-      // These must be passed explicitly as parameters.
       subjectType,
       characterId,
       userWorldName,
+      userOutfitText: userOutfitText || null,
     });
 
     // ── 7. CAMERA ENFORCEMENT — EXTRACT PREVIOUS CAMERA STATE ────────────────
@@ -1744,21 +1749,14 @@ All reference images (if any) are environment/location refs only — do NOT trea
     }
 
     // Subject 2: the user (for joint/user images)
+    let userOutfitText = null;
     if (subjectType === 'joint' || subjectType === 'user') {
-      const userSettings = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
-      const userSett = userSettings?.[0] || {};
-      structuredSubjects.push({
-        subject_type: 'user',
-        subject_id: requestingUser,
-        subject_name: userWorldName || userSett.fictional_world_name || 'user',
-        role: subjectType === 'user' ? 'primary' : 'primary',
-        reference_image_count: USER_SLOTS,
-        reference_images: userRefs,
-        appearance_lock_snapshot: userSett.appearance_lock || null,
-        outfit_snapshot: userSett.user_current_outfit?.full_description || null,
-        appearance_lock_injected: !!(userSett.appearance_lock && Object.keys(userSett.appearance_lock).length > 0),
-        outfit_injected: !!(userSett.user_current_outfit?.full_description),
-      });
+      const userSettingsArr = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
+      const userSett = userSettingsArr?.[0] || {};
+      const uco = userSett.user_current_outfit;
+      userOutfitText = uco ? (uco.full_description || [uco.top, uco.bottom, uco.shoes, uco.outerwear, uco.accessories].filter(Boolean).join(', ') || null) : null;
+      if (userOutfitText) console.log(`[generateImageAsync] User outfit resolved: "${userOutfitText.substring(0, 80)}"`);
+      structuredSubjects.push({ subject_type: 'user', subject_id: requestingUser, subject_name: userWorldName || userSett.fictional_world_name || 'user', role: 'primary', reference_image_count: USER_SLOTS, reference_images: userRefs, appearance_lock_snapshot: userSett.appearance_lock || null, outfit_snapshot: userOutfitText || null, appearance_lock_injected: !!(userSett.appearance_lock && Object.keys(userSett.appearance_lock).length > 0), outfit_injected: !!userOutfitText });
     }
 
     // Base generation context (shared across all attempts — written once, attempts appended)

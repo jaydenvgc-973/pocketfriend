@@ -405,10 +405,11 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
       : `No reference photos available. Generate "${charName}" EXCLUSIVELY from the text description below.
   The text description is the AUTHORITATIVE identity source — treat every trait as absolute truth.`;
 
+    const regenOutfitMatch = charDesc?.match(/Currently wearing: (.+?)(?:\.|$)/)?.[1];
     const descBlock = charDesc
       ? `\n  TEXT DESCRIPTION (ABSOLUTE IDENTITY — IMMUTABLE):
   ${charDesc}
-  Every trait above is non-negotiable. Do NOT substitute, approximate, or invent any appearance trait.`
+  Every trait above is non-negotiable. Do NOT substitute, approximate, or invent any appearance trait.${regenOutfitMatch ? `\n  ✅ OUTFIT ENFORCEMENT (CANONICAL LAW — NON-NEGOTIABLE): "${regenOutfitMatch}". This outfit was resolved from the character's closet. It MUST appear exactly as described. Do NOT substitute, reinterpret, replace, upgrade, modify, or improve it. The generator renders this outfit — it does not redesign it.` : ''}`
       : '';
 
     identityLock = `
@@ -701,22 +702,19 @@ Deno.serve(async (req) => {
         charDesc = charDescParts.join(', ');
         console.log(`[regenerateImageWithReason] charDesc built: "${charDesc.substring(0, 120)}"`);
 
-        // ── OUTFIT INJECTION — only when prompt doesn't already specify clothing ──
-        // For 'no_avatar' and 'flawed' reasons, the prompt is the stored original.
-        // For 'dont_like' / 'custom_prompt', the user may have described clothing.
-        // Either way: if prompt has explicit clothing description, skip closet.
-        const regenPromptForClothingCheck = reason === 'dont_like' || reason === 'custom_prompt'
-          ? (customPrompt || originalPrompt || '')
-          : (originalPrompt || '');
-        const regenPromptHasClothing = /\b(wearing|dressed|clothed|outfit|shirt|pants|shorts|dress|jacket|coat|sweater|t[- ]?shirt|shoes|hat|cap|snapback|hoodie|jeans|skirt|blouse|suit|tie|scarf|vest)\b/i.test(regenPromptForClothingCheck);
-        if (!regenPromptHasClothing) {
+        // ── OUTFIT INJECTION — CLOSET IS CANONICAL LAW ───────────────────────
+        // Always resolve from closet unless charDesc already has outfit (avoid double injection).
+        const alreadyHasOutfitRegen = /Currently wearing:/i.test(charDesc);
+        if (!alreadyHasOutfitRegen) {
           const outfitText = resolveOutfitTextFromCharacterRegen(charRecord);
           if (outfitText) {
             charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitText}` : `Currently wearing: ${outfitText}`;
-            console.log(`[regenerateImageWithReason] Outfit resolved from closet: "${outfitText.substring(0, 80)}"`);
+            console.log(`[regenerateImageWithReason] ✅ Outfit resolved from closet: "${outfitText.substring(0, 80)}"`);
+          } else {
+            console.log(`[regenerateImageWithReason] ⚠️ No closet outfit for "${charRecord.name}" — no closet data`);
           }
         } else {
-          console.log(`[regenerateImageWithReason] Prompt specifies clothing — closet outfit skipped`);
+          console.log(`[regenerateImageWithReason] Outfit already in charDesc — skipping duplicate`);
         }
       }
 
