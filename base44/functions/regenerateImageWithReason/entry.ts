@@ -80,7 +80,10 @@ function selectCameraPosition(prompt = '') {
 
 function buildOutfitTextRegen(outfit) {
   if (!outfit) return null;
-  const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories].filter(Boolean);
+  const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
+    .filter(Boolean)
+    .map(p => { const t = p.trim(); return /^(n\/?a|none|-)$/i.test(t) ? null : t.replace(/^n\/?a[,\-–]\s*/i,'').trim()||null; })
+    .filter(Boolean);
   if (parts.length > 0) return parts.join(', ');
   if (outfit.full_description) {
     return outfit.full_description

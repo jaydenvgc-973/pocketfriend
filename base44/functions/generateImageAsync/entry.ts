@@ -46,7 +46,11 @@ function buildOutfitText(outfit) {
   if (!outfit) return null;
   // CRITICAL: Prefer individual fields over full_description.
   // full_description often contains scene/pose/lighting preamble that contaminates the image prompt.
-  const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories].filter(Boolean);
+  // Normalize outfit fields: strip standalone N/A, none, dash; strip "N/A, " prefix (e.g. "N/A, shirtless")
+  const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
+    .filter(Boolean)
+    .map(p => { const t = p.trim(); return /^(n\/?a|none|-)$/i.test(t) ? null : t.replace(/^n\/?a[,\-–]\s*/i,'').trim()||null; })
+    .filter(Boolean);
   if (parts.length > 0) return parts.join(', ');
   if (outfit.full_description) {
     const stripped = outfit.full_description
@@ -1014,10 +1018,18 @@ Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. No
   const charOutfitText = (charDesc || '').match(/Currently wearing:\s*(.+)/)?.[1]?.split('. Currently wearing:')[0]?.trim() || null;
   let closetLock = '';
   if (charOutfitText || userOutfitText) {
-    const parts = ['', '🔒 CLOSET OUTFIT LOCK — OVERRIDES ALL SCENE STYLING. Render EXACTLY. No substitutions.'];
-    if (charOutfitText) parts.push(`${charName}: "${charOutfitText}" — every piece, color, pattern, graphic is mandatory. Pants in outfit = three-quarter or full body frame required.`);
+    const hasBottoms = charOutfitText && /sweatpants|pants|jeans|shorts|joggers|leggings|trousers/i.test(charOutfitText);
+    const hasShoes = charOutfitText && /sneakers|shoes|boots|sandals|loafers|heels/i.test(charOutfitText);
+    const isShirtless = charOutfitText && /shirtless|no top|no shirt/i.test(charOutfitText);
+    const parts = ['', '🔒 CLOSET OUTFIT LOCK — CANONICAL LAW. OVERRIDES ALL SCENE STYLING. Render EXACTLY.'];
+    if (charOutfitText) {
+      parts.push(`${charName} OUTFIT (MANDATORY): "${charOutfitText}"`);
+      if (isShirtless) parts.push(`✅ SHIRTLESS — bare torso, absolutely NO shirt or top added.`);
+      if (hasBottoms) parts.push(`✅ BOTTOMS REQUIRED IN FRAME — camera must show mid-thigh or lower.`);
+      if (hasShoes) parts.push(`✅ SHOES REQUIRED IN FRAME — full or 3/4 body shot mandatory.`);
+    }
     if (userOutfitText) parts.push(`${userWorldName || 'User'}: "${userOutfitText}" — render exactly.`);
-    parts.push('⛔ Generic clothing replacing closet outfit = FAIL. ⛔ Missing graphics/patterns = FAIL. ⛔ Wrong colors = FAIL. ⛔ Cropped-out bottoms when pants/shoes specified = FAIL.');
+    parts.push('⛔ Shirt on shirtless = FAIL. ⛔ Wrong pants = FAIL. ⛔ Shoes cropped out = FAIL. ⛔ Invented outfit = FAIL.');
     closetLock = parts.join('\n');
   }
 
@@ -1381,12 +1393,12 @@ Deno.serve(async (req) => {
               .replace(/,?\s*wearing\s+(?:a\s+)?[^,.]{3,80}(?=\s*[,.]|\s+(?:and|with|who|while|looking|standing|sitting|leaning|facing|near|at|in\s+the))/gi, '')
               .replace(/,?\s*dressed\s+in\s+[^,.]{3,80}(?=\s*[,.])/gi, '')
               .replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').trim();
-            console.log(`[generateImageAsync] ✅ Closet outfit: "${outfitText.substring(0, 80)}" | prompt after strip: "${sanitizedPrompt.substring(0, 100)}"`);
+                    console.log(`[generateImageAsync] ✅ Closet outfit: "${outfitText.substring(0, 80)}"`);
           } else {
-            console.log(`[generateImageAsync] ⚠️ No closet outfit for "${charRecord.name}" — empty closet, scene context preserved`);
+                    console.log(`[generateImageAsync] ⚠️ No closet outfit — empty closet`);
           }
         } else {
-          console.log(`[generateImageAsync] Outfit already in charDesc — skipping duplicate`);
+          console.log(`[generateImageAsync] Outfit already in charDesc — skipping`);
         }
       }
 
