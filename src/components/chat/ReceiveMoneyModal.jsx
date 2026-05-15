@@ -182,23 +182,74 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
     }
   };
 
+  // Footer buttons — computed outside JSX for clarity
+  const footerButtons = (
+    <div
+      className="flex gap-3 p-4 border-t border-border bg-card flex-shrink-0"
+      style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)' }}
+    >
+      {step !== STEP_CHARACTER && (
+        <Button variant="outline" onClick={handleBack} className="flex-1">
+          Back
+        </Button>
+      )}
+      {step === STEP_DETAILS && (
+        <Button
+          onClick={handleDetailsSubmit}
+          disabled={reviewDisabled}
+          className="flex-1"
+        >
+          Review
+        </Button>
+      )}
+      {step === STEP_CONFIRM && (
+        <Button
+          onClick={handleConfirmSubmit}
+          disabled={isProcessing}
+          className="flex-1"
+        >
+          {isProcessing ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Processing...
+            </>
+          ) : mode === 'take' ? 'Confirm TAKE' : 'Send Request'}
+        </Button>
+      )}
+      {step === STEP_RESULT && (
+        <Button onClick={handleBack} className="flex-1">
+          {result?.success ? 'Done' : 'Try Again'}
+        </Button>
+      )}
+      {step === STEP_CHARACTER && (
+        <Button variant="outline" onClick={onClose} className="flex-1">
+          Cancel
+        </Button>
+      )}
+    </div>
+  );
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50">
-      <div className="w-full max-w-lg bg-card rounded-t-2xl shadow-2xl flex flex-col" style={{ maxHeight: '88vh' }}>
-        {/* Header */}
-        <div className="bg-card border-b border-border p-4 flex justify-between items-center flex-shrink-0">
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
+      {/* Modal: fixed bottom sheet — header + scrollable body + pinned footer */}
+      <div
+        className="w-full max-w-lg bg-card rounded-t-2xl shadow-2xl flex flex-col"
+        style={{ maxHeight: 'calc(100dvh - 70px)', minHeight: '300px' }}
+      >
+        {/* ── FIXED HEADER ── */}
+        <div className="flex-shrink-0 bg-card rounded-t-2xl border-b border-border px-4 py-3 flex justify-between items-center">
           <h2 className="text-xl font-bold">Receive Money</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1">
             ✕
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-4 space-y-4 overflow-y-auto flex-1">
+        {/* ── SCROLLABLE BODY ── flex-1 + overflow-y-auto keeps content inside, never pushing footer */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {step === STEP_CHARACTER && (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">Select who to receive from</p>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
+              <div className="space-y-2">
                 {characters.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No characters available</p>
                 ) : (
@@ -282,7 +333,7 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
                       placeholder="Add context or emotional framing..."
-                      className="mt-1 h-24"
+                      className="mt-1 h-20"
                     />
                   </div>
                   <div>
@@ -302,7 +353,6 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
 
               {mode === 'take' && (
                 <>
-                  {/* Balance card — identical source to CharacterFinancialSummary */}
                   <div className={`p-3 rounded-lg border ${
                     loadingBalance
                       ? 'bg-secondary/30 border-border'
@@ -331,7 +381,6 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
                     )}
                   </div>
 
-                  {/* Insufficient funds warning */}
                   {amountExceedsBalance && (
                     <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex gap-2">
                       <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
@@ -376,13 +425,7 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
           )}
 
           {step === STEP_RESULT && (
-            <div
-              className={`p-4 rounded-lg border flex gap-3 ${
-                result?.success
-                  ? 'bg-green-500/10 border-green-500/30'
-                  : 'bg-red-500/10 border-red-500/30'
-              }`}
-            >
+            <div className={`p-4 rounded-lg border flex gap-3 ${result?.success ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
               {result?.success ? (
                 <Check className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
               ) : (
@@ -392,9 +435,7 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
                 {result?.success ? (
                   <div>
                     <div className="font-semibold text-green-700">{result.message}</div>
-                    {result.outcome && (
-                      <div className="text-xs text-green-600 mt-1">{result.outcome}</div>
-                    )}
+                    {result.outcome && <div className="text-xs text-green-600 mt-1">{result.outcome}</div>}
                   </div>
                 ) : (
                   <div className="font-semibold text-red-700">{result?.error || 'Transaction failed'}</div>
@@ -404,44 +445,8 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
           )}
         </div>
 
-        {/* Footer */}
-        <div className="bg-card border-t border-border p-4 flex gap-3 flex-shrink-0">
-          {step !== STEP_CHARACTER && (
-            <Button variant="outline" onClick={handleBack} className="flex-1">
-              Back
-            </Button>
-          )}
-          {step === STEP_DETAILS && (
-            <Button
-              onClick={handleDetailsSubmit}
-              disabled={reviewDisabled}
-              className="flex-1"
-            >
-              Review
-            </Button>
-          )}
-          {step === STEP_CONFIRM && (
-            <Button
-              onClick={handleConfirmSubmit}
-              disabled={isProcessing}
-              className="flex-1"
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                'Confirm'
-              )}
-            </Button>
-          )}
-          {step === STEP_RESULT && (
-            <Button onClick={handleBack} className="flex-1">
-              {result?.success ? 'Done' : 'Try Again'}
-            </Button>
-          )}
-        </div>
+        {/* ── PINNED FOOTER — always visible, never inside scroll body ── */}
+        {footerButtons}
       </div>
     </div>
   );
