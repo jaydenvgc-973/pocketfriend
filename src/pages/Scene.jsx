@@ -1152,13 +1152,11 @@ export default function Scene() {
       const privateNote = privateTarget ? `\nNOTE: ${displayName} pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond.` : "";
 
       // SPEAKER SELECTION: Only dialogue-eligible characters may respond.
-      // This is the SOLE source of truth for who speaks — it must drive BOTH charSummaries AND npcInstruction.
-      // displayCharacters (full scene roster) is intentionally NOT used here — it is for image generation only.
+      // CRITICAL: broughtCharacters ALWAYS respond — they traveled here with the user.
+      // selectedNpcs respond only when explicitly picked from "Who's Here".
       const dialogueEligible = privateTarget
         ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
-        : selectedNpcs.length > 0
-          ? selectedNpcs
-          : [];
+        : [...broughtCharacters, ...selectedNpcs].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
 
       // charSummaries MUST come from dialogueEligible, not displayCharacters.
       // Passing the full roster as "People present" causes the LLM to override the npcInstruction gate.
@@ -1271,7 +1269,7 @@ Return JSON:
       }
 
       if (responseList.length === 0) {
-        const hasAnyone = knownChars.length > 0 || selectedNpcs.length > 0;
+        const hasAnyone = dialogueEligible.length > 0;
         setMessages(prev => [...prev, {
           id: Date.now().toString(),
           sender: "narrative",
