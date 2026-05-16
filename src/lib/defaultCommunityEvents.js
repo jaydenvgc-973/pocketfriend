@@ -8,17 +8,17 @@
  *
  * Rules:
  *   - NO character presence, NO private homes, NO residential locations
- *   - Public / semi-public venues only (bars, parks, libraries, clinics, community centers, etc.)
+ *   - Public / semi-public venues only for SYSTEM events
+ *   - User-created events can use ANY location (including residential)
  *   - Dates are always relative to "today" so they remain upcoming
  *   - Rotates by day-of-week so the ordering shifts naturally each day
  *   - Used as FALLBACK ONLY when the DB produces fewer than 4 real CommunityEvent records
  *
- * Real App Location Injection (1-in-10 rule):
- *   - buildDefaultCommunityEvents(appLocations) accepts an optional array of LocationReference records
- *   - Non-residential public locations are eligible for injection into system/default events
- *   - Target: at least 1 in every 10 displayed default events references a real app location
- *   - Private/residential locations are NEVER used for system events
- *   - buildDefaultCommunityEvents.lastProof contains diagnostic info about eligibility
+ * Real app location injection:
+ *   - buildDefaultCommunityEvents(appLocations?) accepts an optional LocationReference array
+ *   - At least 1 of every 10 default events will use a real public/semi-public app location
+ *   - Residential categories are excluded from system event injection
+ *   - Returns proof via buildDefaultCommunityEventsWithProof(appLocations)
  */
 
 export const EVENT_TYPE_ICONS = {
@@ -35,30 +35,22 @@ export const EVENT_TYPE_ICONS = {
   other:            '📌',
 };
 
-// ── RESIDENTIAL CATEGORY EXCLUSION LIST ────────────────────────────────────
-// These location categories are considered private/residential and must NOT be
-// used for system-generated community events.
+// ── RESIDENTIAL CATEGORIES (excluded from system/default event injection) ──────
 const RESIDENTIAL_CATEGORIES = new Set([
-  'residential', 'home', 'private_home', 'apartment', 'house', 'condo',
-  'private', 'temporary_housing', 'shelter_private', 'halfway_house',
+  'home', 'hotel', 'shelter', 'jail', 'prison',
+  'detention_center', 'correctional_facility', 'juvenile_detention',
+  'halfway_house', 'holding_cell',
 ]);
 
-/**
- * Returns true if a LocationReference record is eligible for system community events.
- * Excludes residential/private locations. No character presence check — data only.
- */
-function isPublicEligible(loc) {
-  if (!loc || !loc.id) return false;
-  const cat = (loc.category || loc.location_type || loc.type || '').toLowerCase();
-  if (RESIDENTIAL_CATEGORIES.has(cat)) return false;
-  // Also exclude if name contains home/apartment/residence keywords
-  const nameLower = (loc.name || '').toLowerCase();
-  if (/\b(apartment|apt|residence|home|house|condo|suite \d|unit \d)\b/.test(nameLower)) return false;
-  return true;
-}
+// Public/semi-public categories eligible for system event injection
+const PUBLIC_CATEGORIES = new Set([
+  'social', 'outdoor', 'food_drink', 'medical', 'education',
+  'grocery', 'religion', 'government', 'public', 'business',
+  'school', 'community', 'gym', 'workplace', 'generic',
+]);
 
 // ── STATIC TEMPLATE ─────────────────────────────────────────────────────────
-// daysFromNow and hour/minute are resolved at call time by buildDefaultCommunityEvents().
+// daysFromNow and hour/minute are resolved at call time.
 const EVENT_TEMPLATES = [
   {
     id: 'def_openmic',
@@ -171,72 +163,140 @@ const EVENT_TEMPLATES = [
 ];
 
 /**
+ * Extract eligible public/semi-public locations from an app LocationReference array.
+ * Excludes residential, confinement, and private categories.
+ * Does NOT query character presence or homes.
+ *
+ * @param {Array} appLocations - LocationReference records
+ * @returns {{ eligible: Array, totalLoaded: number, residentialExcluded: number }}
+ */
+function extractPublicLocations(appLocations = []) {
+  const totalLoaded = appLocations.length;
+  let residentialExcluded = 0;
+  const eligible = [];
+
+  for (const loc of appLocations) {
+    if (!loc.name) continue;
+    const cat = loc.category || 'generic';
+    if (RESIDENTIAL_CATEGORIES.has(cat) || loc.is_confinement_facility) {
+      residentialExcluded++;
+      continue;
+    }
+    // Also exclude locations whose names suggest they are personal homes
+    const nameLower = (loc.name || '').toLowerCase();
+    const isPersonalHome = /\b(apartment|apt|house|home|condo|townhouse|unit|suite|residence|flat)\b/.test(nameLower) &&
+      /\b(s|'s)\b/.test(nameLower); // e.g. "Jayden's Apartment"
+    if (isPersonalHome) {
+      residentialExcluded++;
+      continue;
+    }
+    if (PUBLIC_CATEGORIES.has(cat)) {
+      eligible.push(loc);
+    }
+  }
+
+  return { eligible, totalLoaded, residentialExcluded };
+}
+
+/**
  * Build resolved default events with real ISO start_date values.
+ * Optionally injects real app locations — at least 1 per 10 events.
  * Rotates by day of week so order feels fresh each day.
  *
- * @param {Array} appLocations – optional array of LocationReference records from the app DB
- * @returns {Array} Array of event objects compatible with both CommunityEventsStrip and MomentsCalendar
+ * @param {Array} appLocations - Optional LocationReference array from the app
+ * @returns {Array} Event objects compatible with CommunityEventsStrip and MomentsCalendar
  */
 export function buildDefaultCommunityEvents(appLocations = []) {
+  return buildDefaultCommunityEventsWithProof(appLocations).events;
+}
+
+/**
+ * Build default events AND return proof of real location injection.
+ *
+ * @param {Array} appLocations - Optional LocationReference array
+ * @returns {{ events: Array, proof: Object }}
+ */
+export function buildDefaultCommunityEventsWithProof(appLocations = []) {
   const now = new Date();
   const dayOfWeek = now.getDay();
   const thisYear = now.getFullYear();
   const thisMonth = now.getMonth();
   const today = now.getDate();
 
-  // ── REAL APP LOCATION INJECTION (1-in-10 rule) ──────────────────────────
-  const totalLocations = appLocations.length;
-  const residentialCount = appLocations.filter(l => !isPublicEligible(l)).length;
-  const eligibleLocations = appLocations.filter(isPublicEligible);
+  // Extract eligible public locations from real app data
+  const { eligible, totalLoaded, residentialExcluded } = extractPublicLocations(appLocations);
 
-  // Rotate eligible locations so different ones get picked each day
-  const rotatedEligible = eligibleLocations.length > 0
-    ? [...eligibleLocations.slice(dayOfWeek % eligibleLocations.length), ...eligibleLocations.slice(0, dayOfWeek % eligibleLocations.length)]
-    : [];
+  // Rotate templates by day-of-week
+  const offset = dayOfWeek % EVENT_TEMPLATES.length;
+  const rotated = [...EVENT_TEMPLATES.slice(offset), ...EVENT_TEMPLATES.slice(0, offset)];
 
-  // Build events array first (unrotated) so we can inject at index 0 (every 10th slot)
-  const events = EVENT_TEMPLATES.map((tmpl, idx) => {
+  // Determine injection slots: at least 1 per 10 events
+  // e.g. 12 events → inject at index 0 and 10
+  const injectionSlots = new Set();
+  if (eligible.length > 0) {
+    for (let i = 0; i < rotated.length; i += 10) {
+      injectionSlots.add(i);
+    }
+  }
+
+  const injectedAt = []; // proof tracking
+  let eligibleIndex = 0;
+
+  const events = rotated.map((tmpl, idx) => {
     const dt = new Date(thisYear, thisMonth, today + tmpl.offsetDays, tmpl.hour, tmpl.minute, 0);
-    const base = {
+
+    let locationName = tmpl.location_name;
+    let locationId = null;
+    let locationCategory = null;
+    let usedRealLocation = false;
+
+    if (injectionSlots.has(idx) && eligible.length > 0) {
+      const realLoc = eligible[eligibleIndex % eligible.length];
+      eligibleIndex++;
+      locationName = realLoc.name;
+      locationId = realLoc.id;
+      locationCategory = realLoc.category || null;
+      usedRealLocation = true;
+      injectedAt.push({
+        eventIndex: idx,
+        eventName: tmpl.name,
+        locationId: realLoc.id,
+        locationName: realLoc.name,
+        locationCategory: realLoc.category,
+      });
+    }
+
+    return {
       id: tmpl.id,
       name: tmpl.name,
       event_type: tmpl.event_type,
-      location_name: tmpl.location_name,
-      location_id: null,
+      location_name: locationName,
+      location_id: locationId || undefined,
+      location_category: locationCategory || undefined,
       start_date: dt.toISOString(),
       vibe: tmpl.vibe,
       description: tmpl.description,
       is_active: true,
       source: 'system',
       _isDefault: true,
+      _usedRealLocation: usedRealLocation,
       _icon: EVENT_TYPE_ICONS[tmpl.event_type] || '📌',
     };
-
-    // Inject a real app location at every 10th position (index 0, 10, 20, ...)
-    // Uses modulo so even with 12 templates we inject at index 0 and index 10 if eligible
-    if (rotatedEligible.length > 0 && idx % 10 === 0) {
-      const pick = rotatedEligible[Math.floor(idx / 10) % rotatedEligible.length];
-      return {
-        ...base,
-        location_id: pick.id,
-        location_name: pick.name,
-        _realLocationInjected: true,
-        _realLocationCategory: pick.category || pick.location_type || null,
-      };
-    }
-
-    return base;
   });
 
-  // Proof object attached to function (diagnostic use)
-  buildDefaultCommunityEvents._lastProof = {
-    totalLocationsLoaded: totalLocations,
-    residentialExcluded: residentialCount,
-    eligiblePublicLocations: eligibleLocations.map(l => ({ id: l.id, name: l.name, category: l.category || l.location_type })),
-    injectedEvents: events.filter(e => e._realLocationInjected).map(e => ({ id: e.id, name: e.name, location_name: e.location_name, location_id: e.location_id })),
+  const proof = {
+    totalAppLocationsLoaded: totalLoaded,
+    residentialExcluded,
+    eligiblePublicLocations: eligible.map(l => ({ id: l.id, name: l.name, category: l.category })),
+    eligibleCount: eligible.length,
+    totalDefaultEvents: events.length,
+    injectionSlots: [...injectionSlots],
+    realLocationsInjectedCount: injectedAt.length,
+    injectedAt,
+    summary: eligible.length > 0
+      ? `${injectedAt.length} of ${events.length} default events use a real app location (eligible: ${eligible.length} public locations from ${totalLoaded} total, ${residentialExcluded} residential excluded)`
+      : `No eligible public app locations found (${totalLoaded} total, ${residentialExcluded} residential excluded) — all defaults use static venue names`,
   };
 
-  // Rotate by day-of-week so it feels fresh
-  const offset = dayOfWeek % events.length;
-  return [...events.slice(offset), ...events.slice(0, offset)];
+  return { events, proof };
 }

@@ -1,11 +1,15 @@
 import React, { useRef, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { Calendar, MapPin } from 'lucide-react';
 import { buildDefaultCommunityEvents, EVENT_TYPE_ICONS } from '@/lib/defaultCommunityEvents';
 
 export default function CommunityEventsStrip({ currentUser }) {
   const scrollRef = useRef(null);
+  const queryClient = useQueryClient();
+
+  // Reuse already-cached locations (loaded by Home page) — no extra fetch
+  const appLocations = queryClient.getQueryData(['locationReferences', currentUser?.email]) || [];
 
   // Source 1: Global/system DB-backed community events (no owner filter — system-wide)
   const { data: globalDbEvents = [] } = useQuery({
@@ -51,10 +55,9 @@ export default function CommunityEventsStrip({ currentUser }) {
     merged.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
 
     // Layer 3: Static defaults — only if DB layers are sparse
+    // Pass appLocations so real public venues are injected (≥1 per 10 events)
     if (merged.length < 4) {
-      // Pass no locations here — CommunityEventsStrip does not load LocationReference records.
-      // Real location injection for system events is handled by Moments.jsx where locations are loaded.
-      for (const e of buildDefaultCommunityEvents([])) {
+      for (const e of buildDefaultCommunityEvents(appLocations)) {
         if (seenIds.has(e.id)) continue;
         seenIds.add(e.id);
         merged.push(e);
@@ -62,7 +65,7 @@ export default function CommunityEventsStrip({ currentUser }) {
     }
 
     return merged.slice(0, 10);
-  }, [globalDbEvents, userDbEvents]);
+  }, [globalDbEvents, userDbEvents, appLocations]);
 
   return (
     <div className="pt-4 border-t border-border">

@@ -89,7 +89,7 @@ export default function Moments() {
   });
 
   const { data: appLocations = [] } = useQuery({
-    queryKey: ["locationReferences", currentUser?.email],
+    queryKey: ['locationReferences', currentUser?.email],
     queryFn: async () => {
       const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
       return res?.data?.locations || [];
@@ -114,7 +114,7 @@ export default function Moments() {
 
   // Merge DB events with shared default events (same source used by CommunityEventsStrip)
   // Defaults fill in only when DB has fewer than 4 events, to match strip behavior exactly.
-  // Pass appLocations so default events can inject real public app locations (1-in-10 rule).
+  // Pass appLocations so at least 1/10 default events use a real public app location.
   const communityEvents = useMemo(() => {
     if (dbCommunityEvents.length >= 4) return dbCommunityEvents;
     const dbIds = new Set(dbCommunityEvents.map(e => e.id));
@@ -248,7 +248,7 @@ export default function Moments() {
           characters={characters}
           userBirthday={userSettings?.user_birthday || null}
           communityEvents={communityEvents}
-          locations={appLocations}
+          appLocations={appLocations}
           onEventCreated={() => {
             // Invalidate so Homepage CommunityEventsStrip re-fetches and shows the new event
             queryClient.invalidateQueries({ queryKey: ['communityEvents'] });
