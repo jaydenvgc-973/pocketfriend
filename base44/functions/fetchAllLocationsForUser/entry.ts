@@ -91,14 +91,6 @@ Deno.serve(async (req) => {
     const seen = new Set();
     const combined = [];
     
-    // DEBUG: Check for CGV Jail in ownedLocations
-    const cgvJailInOwned = ownedLocations.find(l => l.name?.includes('CGV Jail'));
-    if (cgvJailInOwned) {
-      console.log(`[fetchAllLocationsForUser] Found CGV Jail in ownedLocations: ${cgvJailInOwned.id}`);
-    } else {
-      console.warn(`[fetchAllLocationsForUser] CGV Jail NOT found in ownedLocations (total owned: ${ownedLocations.length})`);
-    }
-
     for (const loc of [...ownedLocations, ...sharedLocations]) {
       if (!seen.has(loc.id)) {
         seen.add(loc.id);
@@ -135,16 +127,20 @@ Deno.serve(async (req) => {
     }
 
     // ── LAYER: character-specific locations (scope === 'character_specific') ───
-    // These are already included if they're owned by this user (Query 1).
-    // The character-specific check here is a safety pass for any that slipped through.
+    // Only apply character ownership checks to character-specific locations.
+    // Account-global locations (including jail/prison) are ALWAYS kept if they passed Query 1+2.
     const charSpecificInCombined = combined.filter(loc => {
       const isCharSpecific = loc.location_type === 'character_specific' || loc.scope === 'character_specific';
-      if (!isCharSpecific) return true; // not char-specific — keep as-is
-      // char-specific: keep only if it belongs to one of this user's characters
+      
+      // Account-global and shared locations: always keep (they passed ownership checks in Query 1+2)
+      if (!isCharSpecific) return true;
+      
+      // Character-specific: only keep if it belongs to one of this user's characters
       if (loc.owner_character_id && userCharacterIds.has(loc.owner_character_id)) return true;
       if (loc.assigned_character_id && userCharacterIds.has(loc.assigned_character_id)) return true;
       if (loc.character_id && userCharacterIds.has(loc.character_id)) return true;
       if (loc.resident_character_ids?.some(id => userCharacterIds.has(id))) return true;
+      
       // char-specific but not linked to this user's characters — exclude
       return false;
     });
@@ -165,31 +161,6 @@ Deno.serve(async (req) => {
     }
 
     // Sort alphabetically
-    charSpecificInCombined.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
-    // ── PERMANENT LEGACY VISIBILITY PROTECTION ──────────────────────────────
-    // CGV Jail (6a08671ebbb557348262d2e4) MUST be permanently visible.
-    // If missing from results despite being owned by this user, restore it immediately.
-    // This prevents future regressions where filtering logic might hide legacy records.
-    const permanentLegacyLocations = ['6a08671ebbb557348262d2e4']; // CGV Jail ID
-    for (const legacyId of permanentLegacyLocations) {
-      const inResults = charSpecificInCombined.find(l => l.id === legacyId);
-      if (!inResults) {
-        try {
-          const legacyRecord = await base44.asServiceRole.entities.LocationReference.filter(
-            { id: legacyId },
-            null,
-            1
-          );
-          if (legacyRecord && legacyRecord.length > 0 && legacyRecord[0].owner_email === user.email) {
-            charSpecificInCombined.push(legacyRecord[0]);
-            console.log(`[fetchAllLocationsForUser] Restored legacy location ${legacyRecord[0].name} (${legacyId})`);
-          }
-        } catch (e) {
-          console.warn(`[fetchAllLocationsForUser] Failed to restore legacy location ${legacyId}:`, e.message);
-        }
-      }
-    }
     charSpecificInCombined.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     return Response.json({
