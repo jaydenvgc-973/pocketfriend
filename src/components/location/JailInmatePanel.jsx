@@ -4,6 +4,7 @@ import { X, Plus, UserX, AlertTriangle, Calendar, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
+import GroupedCharacterSelector from './GroupedCharacterSelector';
 
 const CONFINEMENT_STATUSES = [
   { value: 'pretrial', label: 'Pretrial / Awaiting Trial' },
@@ -21,12 +22,7 @@ function InmateForm({ allCharacters, existingInmateIds, onAdd, onCancel }) {
   const [sentenceDays, setSentenceDays] = useState('');
   const [releaseDate, setReleaseDate] = useState('');
   const [notes, setNotes] = useState('');
-  const [charSearch, setCharSearch] = useState('');
-
-  const available = allCharacters.filter(c =>
-    !existingInmateIds.has(c.id) &&
-    (!charSearch || (c.name || '').toLowerCase().includes(charSearch.toLowerCase()))
-  );
+  const available = allCharacters.filter(c => !existingInmateIds.has(c.id));
 
   const canAdd = selectedCharId && charges.trim() && bookingDate;
 
@@ -50,34 +46,21 @@ function InmateForm({ allCharacters, existingInmateIds, onAdd, onCancel }) {
     <div className="border border-border rounded-xl p-4 space-y-4 bg-secondary/20">
       <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Book / Confine Character</p>
 
-      {/* Character search */}
+      {/* Character selector */}
       <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Select Character</label>
-        <Input
-          value={charSearch}
-          onChange={e => setCharSearch(e.target.value)}
+        <label className="text-xs text-muted-foreground mb-2 block">Select Character</label>
+        <GroupedCharacterSelector
+          allCharacters={available}
+          selectedIds={selectedCharId ? [selectedCharId] : []}
+          onSelect={(charId, isSelected) => {
+            if (isSelected) {
+              setSelectedCharId(charId);
+            } else {
+              setSelectedCharId('');
+            }
+          }}
           placeholder="Search characters..."
-          className="h-8 text-xs rounded-lg mb-2"
         />
-        <div className="max-h-40 overflow-y-auto rounded-lg border border-border bg-card">
-          {available.map(c => (
-            <button
-              key={c.id}
-              onClick={() => setSelectedCharId(c.id)}
-              className={`w-full flex items-center gap-2 p-2 text-left transition-colors hover:bg-secondary ${selectedCharId === c.id ? 'bg-primary/10 border-l-2 border-primary' : ''}`}
-            >
-              <CharacterAvatar character={c} size="sm" />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-foreground truncate">{c.name}</p>
-                <p className="text-[10px] text-muted-foreground capitalize">{c.character_type?.replace(/_/g, ' ') || 'character'}</p>
-              </div>
-              {selectedCharId === c.id && <span className="text-xs text-primary font-medium">✓</span>}
-            </button>
-          ))}
-          {available.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-3">No characters available</p>
-          )}
-        </div>
       </div>
 
       {/* Charges */}

@@ -21,6 +21,7 @@ import LocationDescriptionGenerator from "@/components/location/LocationDescript
 import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
 import JailInmatePanel from "@/components/location/JailInmatePanel";
 import UniformsEditor from "@/components/location/UniformsEditor";
+import GroupedCharacterSelector from "@/components/location/GroupedCharacterSelector";
 import { Link } from "react-router-dom";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
@@ -1003,180 +1004,92 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       {form.location_type !== 'shared' && (form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison') && (
         <div className="space-y-3">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
-          <div className="space-y-2">
-            {form.worker_character_ids?.length > 0 ? (
-              <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card p-2">
-                {form.worker_character_ids.map((workerId, idx) => {
-                     const worker = allCharacters.find(c => c.id === workerId);
-                     const npcWorker = !worker ? allCharacters.find(n => n.id === workerId) : null;
-                    const workerName = worker?.name || npcWorker?.name || workerId;
-                  return (
-                    <div key={idx} className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">
-                      <div className="flex items-center gap-2 justify-between">
-                        <div className="flex items-center gap-2">
-                          {worker ? <CharacterAvatar character={worker} size="sm" /> : (
-                            <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center text-xs font-semibold text-muted-foreground flex-shrink-0">{workerName[0]?.toUpperCase()}</div>
-                          )}
-                          <span className="text-sm font-medium text-foreground">{workerName}</span>
-                          {npcWorker && <span className="text-xs text-muted-foreground/60 bg-secondary px-1.5 py-0.5 rounded">NPC</span>}
-                        </div>
-                        <button onClick={() => update("worker_character_ids", form.worker_character_ids.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+
+          {/* Current workers */}
+          {form.worker_character_ids?.length > 0 && (
+            <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card p-2">
+              {form.worker_character_ids.map((workerId, idx) => {
+                const worker = allCharacters.find(c => c.id === workerId);
+                const workerName = worker?.name || workerId;
+                return (
+                  <div key={idx} className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">
+                    <div className="flex items-center gap-2 justify-between">
+                      <div className="flex items-center gap-2">
+                        {worker ? <CharacterAvatar character={worker} size="sm" /> : (
+                          <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center text-xs font-semibold text-muted-foreground flex-shrink-0">{workerName[0]?.toUpperCase()}</div>
+                        )}
+                        <span className="text-sm font-medium text-foreground">{workerName}</span>
                       </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Type</label>
-                          <select value={form.worker_pay_type[workerId] || 'hourly'} onChange={(e) => update("worker_pay_type", { ...form.worker_pay_type, [workerId]: e.target.value })} className="text-xs px-2 py-1.5 bg-input border border-border rounded text-foreground">
-                            <option value="hourly">Hourly</option>
-                            <option value="annual">Annual</option>
-                          </select>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Rate</label>
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs">$</span>
-                            <Input type="number" value={form.worker_pay_rates[workerId] || 0} onChange={(e) => update("worker_pay_rates", { ...form.worker_pay_rates, [workerId]: parseFloat(e.target.value) || 0 })} className="h-8 text-xs flex-1" placeholder="15" />
-                          </div>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Position</label>
-                          <PositionInput category={form.category} value={form.worker_job_titles[workerId] || ''} onChange={(val) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: val })} />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-border">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift Start</label>
-                          <Input type="time" value={form.worker_shifts?.[workerId]?.start || '09:00'} onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], start: e.target.value } })} className="h-8 text-xs" />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift End</label>
-                          <Input type="time" value={form.worker_shifts?.[workerId]?.end || '17:00'} onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], end: e.target.value } })} className="h-8 text-xs" />
-                        </div>
-                      </div>
-                      <div className="pt-1 border-t border-border">
-                        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Work Days</label>
-                        <div className="flex gap-1 flex-wrap">
-                          {['Su','Mo','Tu','We','Th','Fr','Sa'].map((d, i) => {
-                            const shiftDays = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
-                            const active = shiftDays.includes(i);
-                            return (
-                              <button key={i} type="button" onClick={() => {
-                                const cur = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
-                                const newDays = active ? cur.filter(x => x !== i) : [...cur, i].sort();
-                                update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], days: newDays } });
-                              }}
-                                className={`w-7 h-7 rounded-full text-[10px] font-medium border transition-colors ${active ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>{d}</button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground italic">No workers added yet.</p>
-            )}
-          </div>
-          <div className="space-y-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card p-1">
-            {activeChars.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">Active Characters</p>}
-            {activeChars.map(char => {
-              const alreadyWorker = form.worker_character_ids?.includes(char.id);
-              const tooYoung = isWorkerTooYoung(char.id, form.category);
-              const avail = getWorkerAvailabilityV2(char, allLocations, editingLocation?.id);
-              return (
-                <button key={char.id} onClick={() => { if (!alreadyWorker && !tooYoung) update("worker_character_ids", [...(form.worker_character_ids || []), char.id]); }} disabled={alreadyWorker || tooYoung}
-                  className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}>
-                  <CharacterAvatar character={char} size="sm" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <p className="text-sm text-foreground font-medium">{char.name}</p>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${
-                        avail.status === 'at_work' ? 'bg-orange-500/20 text-orange-400' :
-                        avail.status === 'between_shifts' ? 'bg-blue-500/20 text-blue-400' :
-                        avail.status === 'unavailable_sleeping' ? 'bg-purple-500/20 text-purple-400' :
-                        'bg-green-500/20 text-green-400'
-                      }`}>
-                        {getAvailabilityLabel(avail)}
-                      </span>
-                    </div>
-                    {tooYoung && <p className="text-xs text-destructive">Too young to work here</p>}
-                    {!tooYoung && avail.allJobs.map((job, i) => (
-                      <div key={i} className="mt-1 text-xs">
-                        <p className={`font-medium ${avail.isOnShiftNow && avail.allJobs[0]?.name === job.name ? 'text-orange-400' : 'text-foreground'}`}>
-                          {job.title ? `${job.title} @ ` : ''}{job.name}
-                        </p>
-                        {job.shift && <p className="text-muted-foreground text-[10px]">{job.shift}</p>}
-                      </div>
-                    ))}
-                    {avail.jobCount === 0 && <p className="text-xs text-green-400 font-medium mt-0.5">No other jobs</p>}
-                  </div>
-                  {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
-                </button>
-              );
-            })}
-            {npcFictitious.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Characters</p>}
-            {npcFictitious.map(npc => {
-              const alreadyWorker = form.worker_character_ids?.includes(npc.id);
-              const npcAge = getNPCAge(npc.name);
-              let tooYoung = false;
-              if (npcAge !== null) {
-                if (npcAge < 16) tooYoung = true;
-                if ((form.category === 'social' || form.category === 'food_drink') && npcAge < 21) tooYoung = true;
-              }
-              const avail = getWorkerAvailabilityV2(npc, allLocations, editingLocation?.id);
-              return (
-                <button key={npc.id} onClick={() => { if (!alreadyWorker && !tooYoung) update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]); }} disabled={alreadyWorker || tooYoung}
-                  className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}>
-                  <CharacterAvatar character={npc} size="sm" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm text-foreground font-medium">{npc.name}</span>
-                      {!tooYoung && <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${avail.status === 'at_work' ? 'bg-orange-500/20 text-orange-400' : 'bg-green-500/20 text-green-400'}`}>
-                        {avail.status === 'at_work' ? '🕐 At Work' : '✓ Available'}
-                      </span>}
-                    </div>
-                    {tooYoung && <p className="text-xs text-destructive">Too young</p>}
-                    {!tooYoung && avail.allJobs.map((job, i) => (
-                      <div key={i} className="mt-0.5 text-xs">
-                        <p className="text-foreground font-medium">{job.title ? `${job.title} @ ` : ''}{job.name}</p>
-                        {job.shift && <p className="text-muted-foreground text-[10px]">{job.shift}</p>}
-                      </div>
-                    ))}
-                  </div>
-                  {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
-                </button>
-              );
-            })}
-            {/* For jail_prison: also show npc_regular and npc_family_member */}
-            {form.category === 'jail_prison' && (() => {
-              const extraNpcs = allNpcsForJail.filter(n =>
-                (n.character_type === 'npc_regular' || n.character_type === 'npc_family_member') &&
-                !activeChars.find(a => a.id === n.id) &&
-                !npcFictitious.find(f => f.id === n.id)
-              );
-              if (extraNpcs.length === 0) return null;
-              return (
-                <>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Regular / Family</p>
-                  {extraNpcs.map(npc => {
-                    const alreadyWorker = form.worker_character_ids?.includes(npc.id);
-                    return (
-                      <button key={npc.id} onClick={() => { if (!alreadyWorker) update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]); }} disabled={alreadyWorker}
-                        className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                        <CharacterAvatar character={npc} size="sm" />
-                        <div className="flex-1 min-w-0">
-                          <span className="text-sm text-foreground font-medium">{npc.name}</span>
-                          <p className="text-[10px] text-muted-foreground capitalize">{npc.character_type?.replace(/_/g, ' ')}</p>
-                        </div>
-                        {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
+                      <button onClick={() => update("worker_character_ids", form.worker_character_ids.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
+                        <X className="w-3.5 h-3.5" />
                       </button>
-                    );
-                  })}
-                </>
-              );
-            })()}
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground uppercase tracking-wider">Type</label>
+                        <select value={form.worker_pay_type[workerId] || 'hourly'} onChange={(e) => update("worker_pay_type", { ...form.worker_pay_type, [workerId]: e.target.value })} className="text-xs px-2 py-1.5 bg-input border border-border rounded text-foreground">
+                          <option value="hourly">Hourly</option>
+                          <option value="annual">Annual</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground uppercase tracking-wider">Rate</label>
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs">$</span>
+                          <Input type="number" value={form.worker_pay_rates[workerId] || 0} onChange={(e) => update("worker_pay_rates", { ...form.worker_pay_rates, [workerId]: parseFloat(e.target.value) || 0 })} className="h-8 text-xs flex-1" placeholder="15" />
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground uppercase tracking-wider">Position</label>
+                        <PositionInput category={form.category} value={form.worker_job_titles[workerId] || ''} onChange={(val) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: val })} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-border">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift Start</label>
+                        <Input type="time" value={form.worker_shifts?.[workerId]?.start || '09:00'} onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], start: e.target.value } })} className="h-8 text-xs" />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift End</label>
+                        <Input type="time" value={form.worker_shifts?.[workerId]?.end || '17:00'} onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], end: e.target.value } })} className="h-8 text-xs" />
+                      </div>
+                    </div>
+                    <div className="pt-1 border-t border-border">
+                      <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Work Days</label>
+                      <div className="flex gap-1 flex-wrap">
+                        {['Su','Mo','Tu','We','Th','Fr','Sa'].map((d, i) => {
+                          const shiftDays = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
+                          const active = shiftDays.includes(i);
+                          return (
+                            <button key={i} type="button" onClick={() => {
+                              const cur = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
+                              const newDays = active ? cur.filter(x => x !== i) : [...cur, i].sort();
+                              update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], days: newDays } });
+                            }}
+                              className={`w-7 h-7 rounded-full text-[10px] font-medium border transition-colors ${active ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>{d}</button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Add workers selector */}
+          <div>
+            <label className="text-xs text-muted-foreground mb-2 block">Add Workers</label>
+            <GroupedCharacterSelector
+              allCharacters={allCharacters.filter(c => !form.worker_character_ids?.includes(c.id))}
+              selectedIds={[]}
+              onSelect={(charId, isSelected) => {
+                if (isSelected) {
+                  update("worker_character_ids", [...(form.worker_character_ids || []), charId]);
+                }
+              }}
+              placeholder="Search to add workers..."
+            />
           </div>
         </div>
       )}
