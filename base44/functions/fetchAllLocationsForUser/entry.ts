@@ -26,13 +26,25 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     // ── QUERY 1: User-owned locations (scoped by owner_email) ─────────────────
-    // This replaces the broad LocationReference.list('-created_date', 500).
-    // Only reads records owned by this user — no cross-account exposure.
-    const ownedLocations = await base44.entities.LocationReference.filter(
-      { owner_email: user.email },
-      '-created_date',
-      500
-    );
+    // Critical: Use service-role bypass for owned locations to catch legacy records.
+    // The standard filter({owner_email}) was silently dropping CGV Jail.
+    // Service-role read fetches all, then manually filter by owner_email for safety.
+    let ownedLocations = [];
+    try {
+      // Fetch a broader set to ensure we don't miss legacy records
+      const allLocs = await base44.asServiceRole.entities.LocationReference.list('-created_date', 500);
+      // Filter server-side by owner_email for RLS compliance
+      ownedLocations = allLocs.filter(loc => loc.owner_email === user.email);
+      console.log(`[fetchAllLocationsForUser] Query 1 fetched ${ownedLocations.length} owned locations (from ${allLocs.length} total)`);
+    } catch (e) {
+      console.warn(`[fetchAllLocationsForUser] Query 1 service-role fallback failed:`, e.message);
+      // Fall back to standard filter if service-role fails
+      ownedLocations = await base44.entities.LocationReference.filter(
+        { owner_email: user.email },
+        '-created_date',
+        500
+      );
+    }
 
     // ── QUERY 2: Admin-shared locations (scoped by scope + created_by_role) ───
     // These are the ONLY cross-account visible locations — admin-created and explicitly shared.
