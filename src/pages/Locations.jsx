@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -20,6 +20,7 @@ import SavedPlaces from "@/components/location/SavedPlaces";
 import LocationDescriptionGenerator from "@/components/location/LocationDescriptionGenerator";
 import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
 import JailInmatePanel from "@/components/location/JailInmatePanel";
+import UniformsEditor from "@/components/location/UniformsEditor";
 import { Link } from "react-router-dom";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
@@ -558,6 +559,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     worker_job_titles: editingLocation?.worker_job_titles || {},
     worker_shifts: editingLocation?.worker_shifts || {},
     inmates: editingLocation?.inmates || [],
+    correctional_attire: editingLocation?.correctional_attire || {},
   });
   const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
   const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
@@ -1186,6 +1188,18 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           allCharacters={[...activeChars, ...allNpcsForJail].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)}
           onChange={(inmates) => update('inmates', inmates)}
         />
+      )}
+
+      {/* ── UNIFORMS (Jail/Prison only) ── */}
+      {form.category === 'jail_prison' && (
+        <div className="space-y-2">
+          <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Facility Uniforms</label>
+          <p className="text-xs text-muted-foreground">Define uniforms per role. Confined inmates and assigned staff get their role uniform. Visitors keep normal clothing.</p>
+          <UniformsEditor
+            location={{ ...form, correctional_attire: form.correctional_attire }}
+            onUpdate={(updates) => update('correctional_attire', updates.correctional_attire)}
+          />
+        </div>
       )}
 
       {/* ── OWNER ── */}

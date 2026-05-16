@@ -3,7 +3,6 @@ import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
 import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
-import UniformsEditor from "./UniformsEditor";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -385,10 +384,15 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
         </>
       )}
 
-      {cat === 'jail_prison' && (
+      {cat === 'jail_prison' && (location.inmates?.length > 0 || (location.worker_character_ids || []).length > 0) && (
         <>
-          <SectionHeader icon={Shirt} label="Facility Uniforms" />
-          <UniformsEditor location={location} onUpdate={handleUniformUpdate} />
+          <SectionHeader icon={Shirt} label="Facility" />
+          {(location.inmates || []).filter(i => i.confinement_status !== 'released').length > 0 && (
+            <DetailRow label="Active inmates" value={(location.inmates || []).filter(i => i.confinement_status !== 'released').length} />
+          )}
+          {(location.worker_character_ids || []).length > 0 && (
+            <DetailRow label="Staff assigned" value={(location.worker_character_ids || []).length} />
+          )}
         </>
       )}
 

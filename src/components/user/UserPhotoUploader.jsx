@@ -54,24 +54,55 @@ export default function UserPhotoUploader({ referenceImages = [], generatedAvata
     }
   };
 
+  const [lastProof, setLastProof] = useState(null);
+
   const handleGenerate = async () => {
     if (referenceImages.length === 0 || generatedAvatars.length >= MAX_AVATARS) return;
     setGenerating(true);
+    setLastProof(null);
     try {
-      const count = referenceImages.length;
-      const weightPct = Math.round(100 / count);
-      const weightingNote = count === 1
-        ? `There is 1 reference image — use it as the sole source of truth (100% influence).`
-        : `There are ${count} reference images. Each image contributes EQUALLY to this result: ${referenceImages.map((_, i) => `Image ${i + 1}: ${weightPct}%`).join(', ')}. You MUST blend facial features, hair texture, face shape, body type, skin tone, and identity cues from ALL ${count} images evenly. Do NOT rely on one image and ignore the others. Do NOT copy-paste from a single reference.`;
+      // Always re-fetch the live user to get the most up-to-date reference image list,
+      // preventing stale-prop bugs where recently uploaded images are not yet in referenceImages.
+      const liveUser = await base44.auth.me();
+      const liveImages = liveUser?.reference_image_urls || [];
+      const imagesToUse = liveImages.length > 0 ? liveImages : referenceImages;
 
-      const prompt = `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Natural light, authentic skin texture with visible pores, real hair strands, natural imperfections. Must look like an unmanipulated photograph.\n\n🎯 MANDATORY MULTI-IMAGE IDENTITY BLENDING: ${weightingNote}\n\nYou MUST synthesize the person's exact facial structure, bone structure, eye shape, nose shape, lip shape, skin tone, hair type and texture, and every distinguishing physical identity cue from ALL provided reference images at the specified weights. The result must represent the same person as seen across ALL reference photos — not just one of them.\n\n❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, CGI, 3D render, plastic, doll-like, porcelain, glossy, uncanny valley, airbrushed, stylized, fake, filtered, or any non-photographic aesthetic. This must look like a real, unmanipulated photograph of the actual person across all reference photos.\n\n[PROOF: ${count} reference image(s) loaded. Weight per image: ${weightPct}%]`;
+      if (imagesToUse.length === 0) return;
+
+      const count = imagesToUse.length;
+      // Use exact decimal weights, not rounded, for accuracy
+      const weightEach = parseFloat((100 / count).toFixed(2));
+      const weightList = imagesToUse.map((url, i) => `Image ${i + 1} [${url.slice(-24)}]: ${weightEach}%`).join('\n');
+
+      const weightingNote = count === 1
+        ? `1 reference image provided. Use it as the sole source of truth (100% influence).`
+        : `${count} reference images provided. Each image MUST contribute equally:\n${weightList}\n\nYou MUST blend facial features, hair texture, face shape, body type, skin tone, and all identity cues from ALL ${count} images at ${weightEach}% each. Do NOT use only one image. Do NOT ignore any of the provided images.`;
+
+      const proof = {
+        imageCount: count,
+        weightPerImage: `${weightEach}%`,
+        imageUrls: imagesToUse.map((u, i) => `Image ${i + 1}: ${u}`),
+      };
+      setLastProof(proof);
+
+      const prompt = [
+        `📸 STYLE: Ultra-photorealistic, cinematic, professional RAW photo. Natural light, authentic skin texture, real hair, natural imperfections. Must look like an unmanipulated photograph of a real person.`,
+        ``,
+        `🎯 MULTI-IMAGE IDENTITY BLENDING (MANDATORY):`,
+        weightingNote,
+        ``,
+        `Synthesize this person's exact facial structure, bone structure, eye shape, nose shape, lip shape, skin tone, hair type and texture from ALL ${count} provided reference image(s). The result must be the same person visible across all references.`,
+        ``,
+        `❌ FORBIDDEN: illustration, painting, digital art, anime, cartoon, CGI, 3D render, airbrushed, stylized, or any non-photographic look.`,
+        ``,
+        `[GENERATION PROOF — ${count} image(s) at ${weightEach}% each]`,
+      ].join('\n');
 
       const genRes = await base44.integrations.Core.GenerateImage({
         prompt,
-        existing_image_urls: referenceImages,
+        existing_image_urls: imagesToUse,
       });
-      const user = await base44.auth.me();
-      const current = user.generated_avatar_urls || [];
+      const current = liveUser.generated_avatar_urls || [];
       await base44.auth.updateMe({ generated_avatar_urls: [...current, genRes.url] });
       queryClient.invalidateQueries({ queryKey: ["user"] });
     } finally {
@@ -172,6 +203,19 @@ export default function UserPhotoUploader({ referenceImages = [], generatedAvata
               <><Wand2 className="w-4 h-4" />Generate Avatar ({generatedAvatars.length}/{MAX_AVATARS})</>
             )}
           </Button>
+        )}
+
+        {lastProof && (
+          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 space-y-1 text-xs">
+            <p className="text-[10px] font-semibold text-primary uppercase tracking-wider">Generation Proof</p>
+            <p className="text-muted-foreground">Images used: <span className="text-foreground font-medium">{lastProof.imageCount}</span></p>
+            <p className="text-muted-foreground">Weight per image: <span className="text-foreground font-medium">{lastProof.weightPerImage}</span></p>
+            <div className="space-y-0.5 mt-1">
+              {lastProof.imageUrls.map((u, i) => (
+                <p key={i} className="text-[10px] text-muted-foreground/70 truncate">{u}</p>
+              ))}
+            </div>
+          </div>
         )}
 
         {generatedAvatars.length >= MAX_AVATARS && (
