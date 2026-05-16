@@ -101,39 +101,34 @@ function resolveOutfitCategory(character) {
   return 'daily_casual';
 }
 
+// Returns { text, source, name, category }. P1: current_outfit wins if label/id present. P2: closet rotation.
 function resolveCharacterOutfitForPrompt(character) {
-  if (!character) return null;
-
-  // PRIORITY 1: current_outfit (WEARING / manually selected) — ALWAYS wins
-  // This is the user's explicit outfit selection. It must never be overridden by rotation.
-  const currentOutfit = character.current_outfit;
-  if (currentOutfit?.outfit_id || currentOutfit?.label) {
-    const text = buildOutfitText(currentOutfit);
-    if (text) {
-      console.log(`[OutfitResolver] P1 current_outfit wins: id=${currentOutfit.outfit_id || 'legacy'} label="${currentOutfit.label}" → "${text.substring(0, 80)}"`);
-      return text;
-    }
+  if (!character) return { text: null, source: 'no_character', name: null, category: null };
+  const co = character.current_outfit;
+  if (co?.outfit_id || co?.label) {
+    const t = buildOutfitText(co);
+    if (t) { console.log(`[OutfitResolver] ✅ P1 current_outfit WINS: label="${co.label}" id="${co.outfit_id}" cat="${co.category}" → "${t.substring(0,120)}"`); return { text: t, source: 'current_outfit', name: co.label || co.outfit_id || 'active', category: co.category || null }; }
+    if (co.full_description?.trim()) { const fd = co.full_description.trim(); console.log(`[OutfitResolver] ✅ P1 current_outfit full_description: "${fd.substring(0,80)}"`); return { text: fd, source: 'current_outfit_full_desc', name: co.label || 'active', category: co.category || null }; }
+    console.warn(`[OutfitResolver] ⚠️ P1 current_outfit (label="${co.label}" id="${co.outfit_id}") all fields empty — falling to P2`);
   }
-
-  // PRIORITY 2: Closet rotation by resolved category (only if no current_outfit)
-  const closet = character.character_closet || [];
-  const outfits = closet.filter(item => item.outfit_id);
-  if (outfits.length === 0) return null;
-
+  const outfits = (character.character_closet || []).filter(item => item.outfit_id);
+  if (!outfits.length) { console.warn(`[OutfitResolver] ⚠️ P2: no closet outfits`); return { text: null, source: 'no_closet', name: null, category: null }; }
   const targetCategory = resolveOutfitCategory(character);
+  console.log(`[OutfitResolver] P2 closet rotation: category="${targetCategory}" presence="${character?.resolved_presence_status || 'unknown'}"`);
   const chain = OUTFIT_FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
   for (const cat of chain) {
     const pool = outfits.filter(o => o.category === cat);
-    if (pool.length === 0) continue;
-    if (pool.length === 1) return buildOutfitText(pool[0]);
-    const now = new Date();
-    const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+    if (!pool.length) continue;
+    if (pool.length === 1) { const t = buildOutfitText(pool[0]); return { text: t, source: 'closet_rotation', name: pool[0].label || cat, category: cat }; }
+    const dayOfYear = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
     const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
     let idx = (dayOfYear + idHash) % pool.length;
-    if (pool[idx]?.outfit_id === currentOutfit?.outfit_id && pool.length > 1) idx = (idx + 1) % pool.length;
-    return buildOutfitText(pool[idx]);
+    if (pool[idx]?.outfit_id === co?.outfit_id && pool.length > 1) idx = (idx + 1) % pool.length;
+    const t = buildOutfitText(pool[idx]);
+    console.log(`[OutfitResolver] P2 rotation: cat="${cat}" → "${(t||'null').substring(0,80)}"`);
+    return { text: t, source: 'closet_rotation', name: pool[idx].label || cat, category: cat };
   }
-  return null;
+  return { text: null, source: 'closet_chain_miss', name: null, category: targetCategory };
 }
 
 // ── ZONE RESOLUTION ────────────────────────────────────────────────────────────
@@ -1019,20 +1014,21 @@ Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. No
     const hasBottoms = charOutfitText && /sweatpants|pants|jeans|shorts|joggers|leggings|trousers/i.test(charOutfitText);
     const hasShoes = charOutfitText && /sneakers|shoes|boots|sandals|loafers|heels/i.test(charOutfitText);
     const isBareTorso = charOutfitText && /no shirt \/ bare torso|shirtless|no top|no shirt/i.test(charOutfitText);
-    const lines = ['','🔒 CLOSET OUTFIT LOCK — CANONICAL LAW. OVERRIDES ALL SCENE STYLING.','════════════════════════════════════════════════════════════'];
+    const lines = ['','🔒 CLOSET OUTFIT LOCK — CANONICAL WORLD-STATE LAW. ABSOLUTE OVERRIDE OF ALL SCENE STYLING.','════════════════════════════════════════════════════════════','This is the character\'s ACTIVE WARDROBE STATE. It is world-state truth — NOT a suggestion.','Scene styling, cinematic prompts, and aesthetic descriptors CANNOT override wardrobe state.','⛔ Do NOT use clothing from the scene prompt if it conflicts with this lock.','⛔ Do NOT add, remove, or modify any clothing item relative to this list.',''];
     if (charOutfitText) {
-      lines.push(`${charName} OUTFIT — RENDER EXACTLY:`);
+      lines.push(`${charName} OUTFIT — RENDER EXACTLY AS LISTED:`);
       charOutfitText.split(',').map(s=>s.trim()).filter(Boolean).forEach(item=>lines.push(`  • ${item}`));
       lines.push('');
-      lines.push('NON-NEGOTIABLE:');
+      lines.push('NON-NEGOTIABLE ENFORCEMENT:');
       if (isBareTorso) { lines.push('⛔ BARE TORSO — NO shirt, tank top, hoodie, jacket, robe, or any upper-body clothing whatsoever.'); lines.push('✅ Torso must be completely bare and clearly visible.'); }
       if (hasBottoms) lines.push('✅ BOTTOMS VISIBLE — frame mid-thigh or lower to show full pants/shorts.');
       if (hasShoes) lines.push('✅ SHOES VISIBLE — full-body or 3/4-body framing required. Do not crop feet.');
       lines.push('⛔ Do NOT add or invent any clothing item not listed above.');
+      lines.push('⛔ Do NOT substitute a different style of the same item.');
     }
     if (userOutfitText) lines.push(`\n${userWorldName||'User'} OUTFIT: ${userOutfitText} — render exactly.`);
     lines.push('════════════════════════════════════════════════════════════');
-    lines.push('FAIL: shirt on bare torso | wrong bottoms | shoes cropped | invented outfit');
+    lines.push('FAIL: wrong clothing | added clothing | removed clothing | invented outfit | outfit from scene prompt');
     closetLock = lines.join('\n');
   }
 
@@ -1385,23 +1381,26 @@ Deno.serve(async (req) => {
         // clothing words like "wearing a smile" or incidental garment references.
         // The ONLY valid skip: prompt explicitly contains a detailed outfit that
         // was already sourced from the closet (i.e. charDesc already has it).
+        // ── OUTFIT RESOLUTION — current_outfit is CANONICAL WARDROBE WORLD-STATE ──
+        // P1: current_outfit always wins. P2: closet rotation by context. Never skipped silently.
         const alreadyHasOutfitInDesc = /Currently wearing:/i.test(charDesc);
         if (!alreadyHasOutfitInDesc) {
-          const outfitText = resolveCharacterOutfitForPrompt(charRecord);
-          if (outfitText) {
-            charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitText}` : `Currently wearing: ${outfitText}`;
-            // Strip LLM-invented clothing from the scene prompt so it can't compete with the closet lock.
-            // Preserves: scene action, location, camera, lighting, character identity description.
+          const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord);
+          console.log(`[OutfitDiagnostic] char="${charRecord.name}" source="${resolvedOutfit.source}" name="${resolvedOutfit.name}" cat="${resolvedOutfit.category}" locked=${!!resolvedOutfit.text} raw_label="${charRecord.current_outfit?.label||'null'}" raw_id="${charRecord.current_outfit?.outfit_id||'null'}" raw_top="${charRecord.current_outfit?.top||'null'}"`);
+          if (resolvedOutfit.text) {
+            charDesc = charDesc ? `${charDesc}. Currently wearing: ${resolvedOutfit.text}` : `Currently wearing: ${resolvedOutfit.text}`;
+            // Strip only ad-hoc clothing phrases from scene prompt — preserves scene action/location.
+            // Only strips when match contains a garment word to avoid clobbering "wearing a smile" etc.
             sanitizedPrompt = sanitizedPrompt
-              .replace(/,?\s*wearing\s+(?:a\s+)?[^,.]{3,80}(?=\s*[,.]|\s+(?:and|with|who|while|looking|standing|sitting|leaning|facing|near|at|in\s+the))/gi, '')
+              .replace(/,?\s*wearing\s+(?:a\s+)?(?:[a-z][a-z\s]{4,60})(?=\s*[,.]|\s+(?:and|with|who|while|looking|standing|sitting|leaning|facing|near|at|in\s+the))/gi, (m) => /shirt|pants|jeans|shorts|dress|suit|jacket|hoodie|tee|top|blouse|skirt|coat|sweater|polo|chinos|slacks|uniform|apron|outfit/i.test(m) ? '' : m)
               .replace(/,?\s*dressed\s+in\s+[^,.]{3,80}(?=\s*[,.])/gi, '')
               .replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').trim();
-                    console.log(`[generateImageAsync] ✅ Closet outfit: "${outfitText.substring(0, 80)}"`);
+            console.log(`[generateImageAsync] ✅ Outfit lock injected: source="${resolvedOutfit.source}" name="${resolvedOutfit.name}" → "${resolvedOutfit.text.substring(0, 80)}"`);
           } else {
-                    console.log(`[generateImageAsync] ⚠️ No closet outfit — empty closet`);
+            console.warn(`[generateImageAsync] ⚠️ No outfit resolved for ${charRecord.name} — source="${resolvedOutfit.source}". Character renders without wardrobe constraint.`);
           }
         } else {
-          console.log(`[generateImageAsync] Outfit already in charDesc — skipping`);
+          console.log(`[generateImageAsync] Outfit already in charDesc — skipping re-resolution`);
         }
       }
 
