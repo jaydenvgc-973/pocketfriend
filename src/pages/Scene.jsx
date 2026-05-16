@@ -186,22 +186,6 @@ export default function Scene() {
   const isAdmin = currentUser?.role === 'admin';
   const isVGCTowers = location?.name === 'VGC Towers';
 
-  // VALID PRESENCE STATES that indicate real physical presence
-  const VALID_PRESENCE_STATES = new Set(['home', 'social_visit', 'work', 'school', 'hospital', 'supervised', null, undefined, '']);
-
-  // Helper: is a character truly present at this location right now?
-  const isAuthoritativelyPresent = (char) => {
-    // GATE 1: resolved_current_location_id must match exactly
-    if (char.resolved_current_location_id && char.resolved_current_location_id !== locationId) {
-      return false; // LOCATION_MISMATCH — they are somewhere else
-    }
-    // GATE 2: If sleeping, exclude from public/social scenes (only home scenes show sleepers)
-    if (isCharacterAsleep(char) && !isHomeLocation) return false;
-    // GATE 3: in_transit means not arrived yet
-    if (char.presence_state === 'in_transit') return false;
-    return true;
-  };
-
   // Active characters home at a home location
   const homeResidents = isHomeLocation
     ? characters.filter(c => c.current_home_location_id === location.id)
@@ -560,6 +544,19 @@ export default function Scene() {
   const firstImage = location?.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0]
     || location?.image_urls?.[0]
     || null;
+
+  // Pre-seed brought characters into selectedNpcIds so they start selected (dot visible, respond to messages).
+  // Runs once when broughtCharacters resolve. User can deselect them individually from Who's Here.
+  useEffect(() => {
+    if (broughtCharacters.length === 0) return;
+    setSelectedNpcIds(prev => {
+      const existing = prev || [];
+      const broughtIds = broughtCharacters.map(c => c.id);
+      const merged = [...new Set([...existing, ...broughtIds])];
+      if (merged.length === existing.length && merged.every(id => existing.includes(id))) return prev;
+      return merged;
+    });
+  }, [broughtCharacters.map(c => c.id).join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close NPC dropdown on outside click
   useEffect(() => {
@@ -1151,20 +1148,21 @@ export default function Scene() {
 
       const privateNote = privateTarget ? `\nNOTE: ${displayName} pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond.` : "";
 
-      // SPEAKER SELECTION: Only dialogue-eligible characters may respond.
-      // CRITICAL: broughtCharacters ALWAYS respond — they traveled here with the user.
-      // selectedNpcs respond only when explicitly picked from "Who's Here".
+      // SPEAKER SELECTION: Build dialogueEligible from selectedNpcIds only.
+      // Brought characters show up in Who's Here and can be selected/deselected like any other character.
+      // After selection, they respond ONLY when their ID is in selectedNpcIds (same rule as all others).
+      const selectedCharIds = selectedNpcIds || [];
       const dialogueEligible = privateTarget
         ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
-        : [...broughtCharacters, ...selectedNpcs].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+        : selectedCharIds.length > 0
+          ? [...broughtCharacters.filter(c => selectedCharIds.includes(c.id)),
+             ...selectedNpcs]
+            .filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)
+          : [];
 
-      // charSummaries MUST come from dialogueEligible, not displayCharacters.
-      // Passing the full roster as "People present" causes the LLM to override the npcInstruction gate.
       const charSummaries = dialogueEligible.map(c =>
         `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`
       ).join("; ");
-
-      const knownChars = dialogueEligible.filter(c => !c.isNpc);
 
       const eligibleKnownChars = dialogueEligible.filter(c => !c.isNpc);
       const eligibleNpcList = dialogueEligible
@@ -1173,10 +1171,9 @@ export default function Scene() {
         .join(", ");
 
       const npcInstruction = `IMPORTANT: Only these people may respond — no one else, ever:
-- Companions who traveled here with the user: ${eligibleKnownChars.map(c => c.name).join(", ") || "none"}
-- NPCs explicitly selected by the user to talk to: ${eligibleNpcList || "none"}
-Residents, location owners, and employees who are merely present but NOT in the above lists must NOT respond.
-If no one is listed, return an empty responses array. Do NOT invent responses from ambient strangers, unselected residents, or unselected staff.${privateNote}`;
+- Selected characters: ${[...eligibleKnownChars.map(c => c.name), ...(eligibleNpcList ? [eligibleNpcList] : [])].join(", ") || "none"}
+Residents, owners, and employees who are present but NOT selected must NOT respond.
+If no one is listed, return an empty responses array. Do NOT invent responses from unselected people.${privateNote}`;
 
       const memSection = eligibleKnownChars.filter(c => crossMem[c.id]).map(c => `[${c.name}'s memory]\n${crossMem[c.id]}`).join('\n\n');
 
@@ -1191,9 +1188,9 @@ If no one is listed, return an empty responses array. Do NOT invent responses fr
 
       const responses = await base44.integrations.Core.InvokeLLM({
         prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).
-
+${eligibleKnownChars.filter(c => broughtCharacters.find(b => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter(c => broughtCharacters.find(b => b.id === c.id)).map(c => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}
 People present: ${displayName}, ${charSummaries || "no one they know"}
-${memSection ? `\n=== CROSS-PAGE MEMORY (Chat/Text/Scene/GroupChat) — use this for continuity, do NOT act like strangers ===\n${memSection}\n===` : ''}
+${memSection ? `\n=== CROSS-PAGE MEMORY — use for continuity, do NOT act like strangers ===\n${memSection}\n===` : ''}
 
 Recent scene conversation:
 ${conversationHistory}
@@ -1438,7 +1435,9 @@ Return JSON:
   const locationClosed = isLocationOpen(location) === false;
 
   const renderNpc = (npc) => {
-    const isSelected = selectedNpcs.some(s => s.id === npc.id);
+    // Check against raw selectedNpcIds (which now also contains brought character IDs when selected)
+    // Brought characters start pre-selected (their IDs are seeded into selectedNpcIds on mount)
+    const isSelected = (selectedNpcIds || []).includes(npc.id);
     return (
       <button
         key={npc.id}
