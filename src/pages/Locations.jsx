@@ -45,13 +45,7 @@ const ZONE_PRESETS = {
   public: ["Main Area", "Entrance", "Information Desk", "Hallway", "Bathroom"],
   generic: ["Main Area", "Entrance", "Back Area", "Bathroom"],
   other: ["Main Area", "Entrance", "Back Area", "Bathroom"],
-  jail: ["Cellblock", "Intake", "Visiting Area", "Exercise Yard", "Cafeteria", "Medical", "Administrative", "Holding Area"],
-  prison: ["Cellblock A", "Cellblock B", "Yard", "Dining Hall", "Library", "Medical", "Administrative", "Visiting Area"],
-  detention_center: ["Intake", "Holding Cells", "Intake Processing", "Waiting Area", "Administrative"],
-  holding_cell: ["Cell", "Waiting Area", "Administrative Area"],
-  correctional_facility: ["Work Area", "Residential", "Dining", "Educational", "Medical", "Administrative"],
-  juvenile_detention: ["Residential Unit", "School Room", "Recreation Area", "Medical", "Administrative", "Intake"],
-  halfway_house: ["Residential", "Common Area", "Office", "Meeting Room", "Entrance"],
+  jail_prison: ["Cellblock", "Intake", "Visiting Area", "Exercise Yard", "Cafeteria", "Medical", "Administrative", "Holding Area"],
 };
 
 const CATEGORIES = [
@@ -289,13 +283,7 @@ const SUBTYPE_OPTIONS = {
   public: ["museum", "art_gallery", "theater", "cinema", "concert_venue", "sports_arena", "stadium", "community_center"],
   government: ["government_office", "police_station", "courthouse", "city_hall", "park_ranger_station"],
   community: ["community_center", "drop_in_center", "after_school_program", "daycare", "youth_center", "resource_hub"],
-  jail: ["county_jail", "city_jail", "regional_jail"],
-  prison: ["state_prison", "federal_prison", "maximum_security", "medium_security", "minimum_security"],
-  detention_center: ["pretrial_detention", "adult_detention", "immigration_detention"],
-  holding_cell: ["police_holding", "court_holding"],
-  correctional_facility: ["work_camp", "boot_camp"],
-  juvenile_detention: ["juvenile_detention_center", "youth_detention"],
-  halfway_house: ["residential_reentry", "community_supervision"],
+  jail_prison: ["jail", "prison", "detention_center", "holding_cell", "correctional_facility", "juvenile_detention", "halfway_house", "confinement_facility", "pretrial_detention", "adult_detention", "immigration_detention"],
 };
 
 function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "" }) {
@@ -1410,14 +1398,19 @@ export default function Locations() {
     const scopeValue = formData.is_shared ? 'shared' : 'account_global';
     
     // ── AUTO-SET CONFINEMENT FLAGS ────────────────────────────────────────────
-    // If the category is a confinement type, automatically set is_confinement_facility
-    // and the corresponding confinement_type field
-    const CONFINEMENT_CATEGORIES = ['jail', 'prison', 'detention_center', 'holding_cell', 'correctional_facility', 'juvenile_detention', 'halfway_house'];
+    // If the category is jail_prison, automatically set is_confinement_facility
+    // and the corresponding confinement_type from the selected subtype
     let confinementData = {};
-    if (CONFINEMENT_CATEGORIES.includes(formData.category)) {
+    if (formData.category === 'jail_prison' && formData.subtype && formData.subtype.length > 0) {
       confinementData = {
         is_confinement_facility: true,
-        confinement_type: formData.category,
+        confinement_type: formData.subtype[0], // use first selected subtype as confinement_type
+      };
+    } else if (formData.category === 'jail_prison') {
+      // Default to 'jail' if no subtype selected
+      confinementData = {
+        is_confinement_facility: true,
+        confinement_type: 'jail',
       };
     }
     
