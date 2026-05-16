@@ -91,7 +91,9 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
     });
     onLocationUpdate?.();
   };
-  const catDef = CATEGORIES.find(c => c.value === location.category) || CATEGORIES[CATEGORIES.length - 1];
+  const catDef = CATEGORIES.find(c => c.value === location.category);
+  const unsupportedCategory = !catDef && location.category;
+  const resolvedCatDef = catDef || { value: location.category, label: location.category, icon: MapPin, emoji: "❓" };
   const zones = location.zones || [];
   const totalImages = zones.reduce((sum, z) => sum + (z.image_urls?.length || 0), 0);
 
@@ -105,11 +107,16 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
     >
       <div className="flex items-center gap-3 p-4">
         <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 text-lg">
-          {catDef.emoji}
+          {resolvedCatDef.emoji}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground truncate">{location.name}</p>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            {unsupportedCategory && (
+              <span className="text-[10px] text-amber-400 bg-amber-400/10 border border-amber-400/20 px-1.5 py-0.5 rounded-full font-medium">
+                ⚠ Unsupported category: {unsupportedCategory}
+              </span>
+            )}
             {location.location_type === "global" ? (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Globe className="w-3 h-3" /> Global
@@ -1309,7 +1316,18 @@ export default function Locations() {
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
       const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
-      return res?.data?.locations || [];
+      const locs = res?.data?.locations || [];
+      // ── JAIL VISIBILITY DIAGNOSTIC ─────────────────────────────────────────
+      // Trace every jail_prison record through the pipeline. Log visible and excluded.
+      const jailRecs = locs.filter(l => l.category === 'jail_prison');
+      const nonJailRecs = locs.filter(l => l.category !== 'jail_prison');
+      console.log(`[LOCATIONS-PIPELINE] fetchAllLocationsForUser returned ${locs.length} total records`);
+      console.log(`[LOCATIONS-PIPELINE] jail_prison records in response: ${jailRecs.length}`);
+      jailRecs.forEach(j => console.log(`[LOCATIONS-PIPELINE]   ✅ JAIL INCLUDED: "${j.name}" id=${j.id} scope=${j.scope} location_type=${j.location_type} owner_email=${j.owner_email}`));
+      if (jailRecs.length === 0) {
+        console.error(`[LOCATIONS-PIPELINE] ❌ DIAGNOSTIC FAILURE: 0 jail_prison records returned from fetchAllLocationsForUser. Records exist in DB but are absent from API response. Check fetchAllLocationsForUser filtering logic.`);
+      }
+      return locs;
     },
     enabled: !!currentUser?.email,
     staleTime: 30000, // 30 seconds — prevents stale-cache empty flash on navigation
@@ -1599,22 +1617,70 @@ export default function Locations() {
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
+      const beforeSearch = allFiltered.length;
       allFiltered = allFiltered.filter(l =>
         l.name?.toLowerCase().includes(q) ||
         l.category?.toLowerCase().includes(q) ||
         l.description?.toLowerCase().includes(q)
       );
+      // Diagnostic: report any jail records hidden by search filter
+      const jailsAfterSearch = allFiltered.filter(l => l.category === 'jail_prison');
+      const jailsBeforeSearch = locations.filter(l => l.category === 'jail_prison' && (
+        l.name?.toLowerCase().includes(q) ||
+        l.category?.toLowerCase().includes(q) ||
+        l.description?.toLowerCase().includes(q)
+      ));
+      if (locations.some(l => l.category === 'jail_prison') && jailsAfterSearch.length === 0) {
+        console.warn(`[LOCATIONS-FILTER] Search query "${q}" hid all jail_prison records. Search does match category "jail_prison" — check if jail records lack name/description matching the query.`);
+      }
+    }
+
+    // ── JAIL VISIBILITY DIAGNOSTIC ─────────────────────────────────────────
+    // Before applying tab filters, confirm jails are in allFiltered
+    const jailsInFiltered = allFiltered.filter(l => l.category === 'jail_prison');
+    if (locations.some(l => l.category === 'jail_prison') && jailsInFiltered.length === 0) {
+      console.error(`[LOCATIONS-FILTER] ❌ DIAGNOSTIC: jail_prison records present in locations[] but absent after search filter. Search query: "${searchQuery}"`);
     }
 
     if (filter === "global") {
-      return { all: allFiltered.filter(l => l.location_type === "global" && !isCharacterHome(l)) };
+      const result = allFiltered.filter(l => l.location_type === "global" && !isCharacterHome(l));
+      const jailsInResult = result.filter(l => l.category === 'jail_prison');
+      if (jailsInFiltered.length > 0 && jailsInResult.length === 0) {
+        jailsInFiltered.forEach(j => {
+          const isChar = isCharacterHome(j);
+          const isGlobal = j.location_type === "global";
+          console.error(`[LOCATIONS-FILTER] ❌ jail "${j.name}" EXCLUDED from "global" tab: location_type="${j.location_type}" (isGlobal=${isGlobal}), isCharacterHome=${isChar}`);
+        });
+      }
+      return { all: result };
     } else if (filter === "character_specific") {
-      return { all: allFiltered.filter(isCharacterHome) };
+      const result = allFiltered.filter(isCharacterHome);
+      const jailsInResult = result.filter(l => l.category === 'jail_prison');
+      if (jailsInFiltered.length > 0 && jailsInResult.length === 0) {
+        console.warn(`[LOCATIONS-FILTER] jail_prison records not shown under "character_specific" tab — this is expected if jails have no character assignment. Switch to "all" or "global" tab to see them.`);
+      }
+      return { all: result };
+    }
+
+    const globalResult = allFiltered.filter(l => !isCharacterHome(l));
+    const charResult = allFiltered.filter(isCharacterHome);
+    const jailsInGlobal = globalResult.filter(l => l.category === 'jail_prison');
+    const jailsInChar = charResult.filter(l => l.category === 'jail_prison');
+    if (jailsInFiltered.length > 0) {
+      console.log(`[LOCATIONS-FILTER] "all" tab: ${jailsInGlobal.length} jail(s) in global section, ${jailsInChar.length} jail(s) in character section`);
+      jailsInGlobal.forEach(j => console.log(`[LOCATIONS-FILTER]   ✅ JAIL VISIBLE (global): "${j.name}"`));
+      jailsInChar.forEach(j => console.log(`[LOCATIONS-FILTER]   ✅ JAIL VISIBLE (character): "${j.name}"`));
+      if (jailsInGlobal.length === 0 && jailsInChar.length === 0) {
+        console.error(`[LOCATIONS-FILTER] ❌ DIAGNOSTIC: jail records in allFiltered but not in global or character groups. isCharacterHome logic may be incorrectly classifying them.`);
+        jailsInFiltered.forEach(j => {
+          console.error(`[LOCATIONS-FILTER]   jail "${j.name}" isCharacterHome=${isCharacterHome(j)} location_type="${j.location_type}"`);
+        });
+      }
     }
 
     return {
-      global: allFiltered.filter(l => !isCharacterHome(l)),
-      characterSpecific: allFiltered.filter(isCharacterHome),
+      global: globalResult,
+      characterSpecific: charResult,
     };
   };
 
