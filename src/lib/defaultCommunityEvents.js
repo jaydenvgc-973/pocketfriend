@@ -300,15 +300,24 @@ const EVENT_TEMPLATES = [
  * Extract eligible public/semi-public locations from a LocationReference array.
  * Jail/confinement and residential are always excluded.
  * Also excludes personal home names (e.g. "Jayden's Apartment").
+ * CRITICAL: Apply name-based confinement failsafe — any location name containing
+ * jail/prison/detention/etc. is ALWAYS excluded even if category/flag is wrong.
  */
 function extractPublicLocations(appLocations = []) {
   const totalLoaded = appLocations.length;
   let residentialExcluded = 0;
   const eligible = [];
 
+  // Name-based confinement failsafe: locations whose names contain these are ALWAYS excluded
+  const CONFINEMENT_NAME_FRAGMENTS = [
+    'jail', 'prison', 'detention', 'correctional', 'holding cell',
+    'juvenile detention', 'halfway house', 'confinement',
+  ];
+
   for (const loc of appLocations) {
     if (!loc.name) continue;
     const cat = loc.category || 'generic';
+    const nameLower = (loc.name || '').toLowerCase();
 
     // Hard exclude: residential, confinement, jail — never a community event venue
     if (EXCLUDED_CATEGORIES.has(cat) || loc.is_confinement_facility) {
@@ -316,8 +325,13 @@ function extractPublicLocations(appLocations = []) {
       continue;
     }
 
+    // Hard exclude: confinement name fragments (failsafe for wrongly-categorized records)
+    if (CONFINEMENT_NAME_FRAGMENTS.some(frag => nameLower.includes(frag))) {
+      residentialExcluded++;
+      continue;
+    }
+
     // Hard exclude: personal home names
-    const nameLower = (loc.name || '').toLowerCase();
     const isPersonalHome =
       /\b(apartment|apt|house|home|condo|townhouse|unit|suite|residence|flat)\b/.test(nameLower) &&
       /('s|s')\b/.test(nameLower);
@@ -365,7 +379,7 @@ function hasTier3Fragment(loc, excludeFragments) {
  * Tier system (hard priority, not additive — tier1 ALWAYS beats tier2+):
  *   tier1: name/subtype/keywords match tier1_name_keywords → base score 1000
  *   tier2: category in tier2_categories → score = (list length - index) * 10 (max 50)
- *   tier3_penalty: name contains tier3_exclude fragment → score -= 20 (still usable as last resort)
+ *   tier3_penalty: name contains tier3_exclude fragment → score -= 200 (heavy penalty but not disqualifying)
  *
  * Within the same tier, higher score wins. Equal scores → alphabetical for stability.
  *
@@ -376,6 +390,7 @@ function scoreCandidate(loc, tmpl, eventDate, rules) {
   if (!hoursCheck.isOpen) return null; // closed = disqualified
 
   const locCat = loc.category || 'generic';
+  const locNameLower = (loc.name || '').toLowerCase();
   const scoreBreakdown = {
     tier1Match: false,
     tier2CategoryScore: 0,
@@ -422,7 +437,7 @@ function scoreCandidate(loc, tmpl, eventDate, rules) {
     score,
     hoursCheck,
     scoreBreakdown,
-    nameLower: (loc.name || '').toLowerCase(),
+    nameLower: locNameLower,
     subtypes: loc.subtype || [],
     keywords: loc.keywords || [],
     category: locCat,
