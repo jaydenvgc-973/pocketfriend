@@ -1005,17 +1005,26 @@ export default function MemoryReelCreator() {
                       </div>
                     )}
 
-                    {/* ComfyUI stub warning */}
+                    {/* ComfyUI execution/workflow failure */}
                     {comfyuiStub.length > 0 && (
                       <div className="rounded-xl border border-zinc-600/40 bg-zinc-800/30 px-3 py-3 space-y-1.5">
                         <div className="flex items-center gap-2">
                           <AlertTriangle className="w-4 h-4 text-zinc-400 flex-shrink-0" />
-                          <p className="text-xs font-semibold text-zinc-300">ComfyUI workflow not yet implemented</p>
+                          <p className="text-xs font-semibold text-zinc-300">ComfyUI animation failed on server</p>
                         </div>
                         <p className="text-[10px] text-zinc-400/80 leading-relaxed">
-                          A ComfyUI server URL is configured but the AnimateDiff workflow bridge is not yet filled in.
-                          This is the architecture stub phase. Clips are static slides until the workflow is implemented.
+                          The ComfyUI server was reachable but animation failed. Check the clip error details below — the server's exact error is recorded. 
+                          Common causes: missing model files (<span className="font-mono">v1-5-pruned-emaonly.ckpt</span>, <span className="font-mono">mm_sd_v15_v2.ckpt</span>), 
+                          missing custom nodes (<span className="font-mono">ComfyUI-AnimateDiff-Evolved</span>, <span className="font-mono">ComfyUI-VideoHelperSuite</span>), 
+                          or wrong model filenames (override via secrets <span className="font-mono">COMFYUI_CHECKPOINT</span> / <span className="font-mono">COMFYUI_MOTION_MODULE</span>).
                         </p>
+                        {clips.filter(c => c.status === 'COMFYUI_BRIDGE_STUB' || c.status === 'comfyui_failed' || c.status === 'WORKFLOW_REJECTED' || c.status === 'EXECUTION_ERROR').map((clip, idx) => (
+                          clip.error ? (
+                            <div key={idx} className="mt-1 px-2 py-1 bg-zinc-900/60 rounded text-[10px] font-mono text-zinc-400 break-all">
+                              {clip.error.slice(0, 300)}
+                            </div>
+                          ) : null
+                        ))}
                       </div>
                     )}
 

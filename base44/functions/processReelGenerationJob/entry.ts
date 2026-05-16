@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
       animationProvider = {
         id: 'comfyui_external',
         ready: true,
-        reason: `ComfyUI external provider configured. Server: ${comfyuiServerUrl}. Bridge stub active — workflow implementation pending.`,
+        reason: `ComfyUI external provider configured. Server: ${comfyuiServerUrl}. Real HTTP bridge active. Required models: checkpoint=${Deno.env.get('COMFYUI_CHECKPOINT') || 'v1-5-pruned-emaonly.ckpt'}, motion_module=${Deno.env.get('COMFYUI_MOTION_MODULE') || 'mm_sd_v15_v2.ckpt'}. Required custom nodes: ComfyUI-AnimateDiff-Evolved, ComfyUI-VideoHelperSuite.`,
       };
     }
 
@@ -207,25 +207,267 @@ Deno.serve(async (req) => {
             const charId = msgRecord?.character_id || null;
             const charAppearance = charId ? characterAppearanceCache[charId] : null;
 
-            // Dynamic import is not available in Deno Deploy — inline the bridge logic directly
-            // (lib/ files cannot be imported into functions/ in this environment)
+            // ── REAL COMFYUI BRIDGE (inlined — Deno Deploy cannot import local lib/ files) ──
+            // Canonical reference: lib/comfyuiBridge.js — keep in sync with changes here.
             const bridgeResult = await (async () => {
-              if (!comfyuiServerUrl) {
+              const base = comfyuiServerUrl.replace(/\/$/, '');
+              const authHeaders = { 'Content-Type': 'application/json' };
+              if (comfyuiApiKey) authHeaders['Authorization'] = `Bearer ${comfyuiApiKey}`;
+
+              // ── Model names (overridable via secrets) ──────────────────────
+              const checkpoint = Deno.env.get('COMFYUI_CHECKPOINT') || 'v1-5-pruned-emaonly.ckpt';
+              const motionModule = Deno.env.get('COMFYUI_MOTION_MODULE') || 'mm_sd_v15_v2.ckpt';
+              const timeoutMs = 300000; // 5 minutes
+
+              // ── STEP 1: Health check ───────────────────────────────────────
+              try {
+                const healthRes = await fetch(`${base}/system_stats`, {
+                  headers: authHeaders,
+                  signal: AbortSignal.timeout(10000),
+                });
+                if (!healthRes.ok) {
+                  const text = await healthRes.text().catch(() => '');
+                  return {
+                    success: false, videoUrl: null, error: 'SERVER_UNREACHABLE', server_error: text || null,
+                    diagnostic: `ComfyUI server at ${base} returned HTTP ${healthRes.status} on health check. Response: ${text?.slice(0, 200)}`,
+                  };
+                }
+              } catch (err) {
                 return {
-                  success: false, videoUrl: null, error: 'COMFYUI_NOT_CONFIGURED',
-                  diagnostic: 'No COMFYUI_SERVER_URL set.',
+                  success: false, videoUrl: null, error: 'SERVER_UNREACHABLE', server_error: err.message,
+                  diagnostic: `ComfyUI server at ${base} is not reachable: ${err.message}. Check COMFYUI_SERVER_URL and that the server is running with --listen.`,
                 };
               }
-              // ── STUB: workflow not yet implemented ─────────────────────────
-              // Replace this return with real ComfyUI API calls when server is ready.
-              // See lib/comfyuiBridge.js for the full implementation template.
+
+              // ── STEP 2: Download source image and upload to ComfyUI ────────
+              let uploadedFilename = null;
+              try {
+                const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
+                if (!imgRes.ok) {
+                  return {
+                    success: false, videoUrl: null, error: 'SOURCE_IMAGE_FETCH_FAILED', server_error: null,
+                    diagnostic: `Could not download source image. HTTP ${imgRes.status}.`,
+                  };
+                }
+                const imgBlob = await imgRes.blob();
+                const imgAb = await imgBlob.arrayBuffer();
+                const ct = imgRes.headers.get('content-type') || 'image/jpeg';
+                const ext = ct.includes('png') ? '.png' : ct.includes('webp') ? '.webp' : '.jpg';
+                const fname = `reel_src_${Date.now()}${ext}`;
+
+                const form = new FormData();
+                form.append('image', new Blob([imgAb], { type: ct }), fname);
+                form.append('type', 'input');
+                form.append('overwrite', 'true');
+                const upHeaders = comfyuiApiKey ? { Authorization: `Bearer ${comfyuiApiKey}` } : {};
+                const upRes = await fetch(`${base}/upload/image`, {
+                  method: 'POST', headers: upHeaders, body: form,
+                  signal: AbortSignal.timeout(30000),
+                });
+                if (!upRes.ok) {
+                  const text = await upRes.text().catch(() => '');
+                  return {
+                    success: false, videoUrl: null, error: 'IMAGE_UPLOAD_FAILED', server_error: text || null,
+                    diagnostic: `Failed to upload source image to ComfyUI. HTTP ${upRes.status}. Response: ${text?.slice(0, 200)}`,
+                  };
+                }
+                const upData = await upRes.json();
+                uploadedFilename = upData.name || fname;
+              } catch (err) {
+                return {
+                  success: false, videoUrl: null, error: 'IMAGE_UPLOAD_FAILED', server_error: err.message,
+                  diagnostic: `Image upload to ComfyUI failed: ${err.message}`,
+                };
+              }
+
+              // ── STEP 3: Build AnimateDiff workflow and submit ──────────────
+              // Workflow uses AnimateDiff-Evolved (Kosinkadink fork).
+              // Required custom nodes on server: ComfyUI-AnimateDiff-Evolved, ComfyUI-VideoHelperSuite.
+              // Required models: checkpoint (SD 1.5), motion module (AnimateDiff).
+              // denoise=0.5 preserves ~50% of source image — balances identity vs motion.
+              const workflow = {
+                '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: checkpoint } },
+                '2': { class_type: 'CLIPTextEncode', inputs: {
+                  text: 'cinematic portrait, subtle motion, breathing, eye blink, photorealistic, 4k, highly detailed, same person, same face',
+                  clip: ['1', 1],
+                }},
+                '3': { class_type: 'CLIPTextEncode', inputs: {
+                  text: 'different person, different face, blur, distortion, morphing, warping, ugly, deformed, extra limbs, cartoonish',
+                  clip: ['1', 1],
+                }},
+                '4': { class_type: 'LoadImage', inputs: { image: uploadedFilename, upload: 'image' } },
+                '5': { class_type: 'ADE_AnimateDiffLoaderWithContext', inputs: {
+                  model_name: motionModule,
+                  beta_schedule: 'sqrt_linear (AnimateDiff)',
+                }},
+                '6': { class_type: 'ADE_UseEvolvedSampling', inputs: {
+                  model: ['1', 0],
+                  m_models: ['5', 0],
+                }},
+                '7': { class_type: 'VAEEncode', inputs: { pixels: ['4', 0], vae: ['1', 2] } },
+                '8': { class_type: 'RepeatLatentBatch', inputs: { samples: ['7', 0], amount: 16 } },
+                '9': { class_type: 'KSampler', inputs: {
+                  model: ['6', 0],
+                  positive: ['2', 0],
+                  negative: ['3', 0],
+                  latent_image: ['8', 0],
+                  seed: Math.floor(Math.random() * 2147483647),
+                  steps: 20,
+                  cfg: 7.5,
+                  sampler_name: 'euler_ancestral',
+                  scheduler: 'karras',
+                  denoise: 0.5,
+                }},
+                '10': { class_type: 'VAEDecode', inputs: { samples: ['9', 0], vae: ['1', 2] } },
+                '11': { class_type: 'VHS_VideoCombine', inputs: {
+                  images: ['10', 0],
+                  frame_rate: 12,
+                  loop_count: 0,
+                  filename_prefix: 'reel_animatediff',
+                  format: 'video/h264-mp4',
+                  pingpong: false,
+                  save_output: true,
+                }},
+              };
+
+              let promptId = null;
+              try {
+                const promptRes = await fetch(`${base}/prompt`, {
+                  method: 'POST',
+                  headers: authHeaders,
+                  body: JSON.stringify({ prompt: workflow }),
+                  signal: AbortSignal.timeout(30000),
+                });
+                if (!promptRes.ok) {
+                  const text = await promptRes.text().catch(() => '');
+                  let serverError = text;
+                  try {
+                    const p = JSON.parse(text);
+                    if (p.error) serverError = `${p.error.message || ''}${p.error.details ? ' — ' + p.error.details : ''}`;
+                    if (p.node_errors && Object.keys(p.node_errors).length > 0) {
+                      serverError += ' | Node errors: ' + Object.entries(p.node_errors).map(([id, e]) => `Node ${id}: ${JSON.stringify(e)}`).join('; ');
+                    }
+                  } catch (_) {}
+                  return {
+                    success: false, videoUrl: null, error: 'WORKFLOW_REJECTED', server_error: serverError,
+                    diagnostic:
+                      `ComfyUI rejected the workflow (HTTP ${promptRes.status}). ` +
+                      `This usually means a model file is missing or a required custom node is not installed. ` +
+                      `Required: checkpoint="${checkpoint}", motion_module="${motionModule}". ` +
+                      `Override filenames via secrets COMFYUI_CHECKPOINT / COMFYUI_MOTION_MODULE. ` +
+                      `Required custom nodes: ComfyUI-AnimateDiff-Evolved, ComfyUI-VideoHelperSuite. ` +
+                      `Server error: ${serverError?.slice(0, 400)}`,
+                  };
+                }
+                const pd = await promptRes.json();
+                promptId = pd.prompt_id;
+                if (!promptId) {
+                  return {
+                    success: false, videoUrl: null, error: 'NO_PROMPT_ID', server_error: JSON.stringify(pd),
+                    diagnostic: `ComfyUI accepted workflow but returned no prompt_id. Response: ${JSON.stringify(pd).slice(0, 200)}`,
+                  };
+                }
+              } catch (err) {
+                return {
+                  success: false, videoUrl: null, error: 'WORKFLOW_SUBMIT_FAILED', server_error: err.message,
+                  diagnostic: `Workflow submission failed: ${err.message}`,
+                };
+              }
+
+              // ── STEP 4: Poll /history/{prompt_id} ─────────────────────────
+              const deadline = Date.now() + timeoutMs;
+              let outputFilename = null, outputSubfolder = '', outputType = 'output', pollError = null;
+              while (Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, 4000));
+                try {
+                  const hRes = await fetch(`${base}/history/${promptId}`, { headers: authHeaders, signal: AbortSignal.timeout(10000) });
+                  if (!hRes.ok) { pollError = `HTTP ${hRes.status}`; continue; }
+                  const hData = await hRes.json();
+                  const entry = hData[promptId];
+                  if (!entry) continue;
+
+                  // Check for server-side execution error
+                  if (entry.status?.status_str === 'error') {
+                    const msgs = entry.status?.messages || [];
+                    const errMsg = msgs.find(m => m[0] === 'execution_error')?.[1] || {};
+                    return {
+                      success: false, videoUrl: null, error: 'EXECUTION_ERROR',
+                      server_error: JSON.stringify(errMsg).slice(0, 400),
+                      diagnostic:
+                        `ComfyUI execution error during generation. ` +
+                        `Node: ${errMsg.node_type || 'unknown'} (ID: ${errMsg.node_id || '?'}). ` +
+                        `Error: ${errMsg.exception_message || JSON.stringify(errMsg).slice(0, 200)}.`,
+                    };
+                  }
+
+                  // Find video output
+                  for (const nodeOut of Object.values(entry.outputs || {})) {
+                    const vids = nodeOut.videos || nodeOut.gifs || [];
+                    const found = vids.find(v => v.filename && /\.(mp4|gif|webm)$/i.test(v.filename));
+                    if (found) {
+                      outputFilename = found.filename;
+                      outputSubfolder = found.subfolder || '';
+                      outputType = found.type || 'output';
+                      break;
+                    }
+                  }
+                  if (outputFilename) break;
+                } catch (pollErr) { pollError = pollErr.message; }
+              }
+
+              if (!outputFilename) {
+                return {
+                  success: false, videoUrl: null, error: 'TIMEOUT_NO_OUTPUT', server_error: pollError || null,
+                  diagnostic: `ComfyUI timed out after ${Math.round(timeoutMs / 1000)}s. prompt_id=${promptId}. ${pollError ? 'Last poll error: ' + pollError : 'No video output found in history.'}`,
+                };
+              }
+
+              // ── STEP 5: Fetch video bytes from ComfyUI ────────────────────
+              let videoBytes = null, videoContentType = 'video/mp4';
+              try {
+                const viewUrl = `${base}/view?filename=${encodeURIComponent(outputFilename)}&subfolder=${encodeURIComponent(outputSubfolder)}&type=${encodeURIComponent(outputType)}`;
+                const vRes = await fetch(viewUrl, {
+                  headers: comfyuiApiKey ? { Authorization: `Bearer ${comfyuiApiKey}` } : {},
+                  signal: AbortSignal.timeout(60000),
+                });
+                if (!vRes.ok) {
+                  const text = await vRes.text().catch(() => '');
+                  return {
+                    success: false, videoUrl: null, error: 'VIDEO_FETCH_FAILED', server_error: text || null,
+                    diagnostic: `ComfyUI generated video (${outputFilename}) but download failed. HTTP ${vRes.status}.`,
+                  };
+                }
+                videoContentType = vRes.headers.get('content-type') || 'video/mp4';
+                videoBytes = new Uint8Array(await vRes.arrayBuffer());
+              } catch (err) {
+                return {
+                  success: false, videoUrl: null, error: 'VIDEO_FETCH_FAILED', server_error: err.message,
+                  diagnostic: `Video download from ComfyUI failed: ${err.message}`,
+                };
+              }
+
+              // ── STEP 6: Upload video to Base44 storage ────────────────────
+              let publicVideoUrl = null;
+              try {
+                const videoBlob = new Blob([videoBytes], { type: videoContentType });
+                const uploadResult = await base44.integrations.Core.UploadFile({ file: videoBlob });
+                publicVideoUrl = uploadResult?.file_url || null;
+                if (!publicVideoUrl) {
+                  return {
+                    success: false, videoUrl: null, error: 'STORAGE_UPLOAD_FAILED', server_error: null,
+                    diagnostic: `ComfyUI video generated but Base44 storage returned no file_url. Result: ${JSON.stringify(uploadResult)}`,
+                  };
+                }
+              } catch (err) {
+                return {
+                  success: false, videoUrl: null, error: 'STORAGE_UPLOAD_FAILED', server_error: err.message,
+                  diagnostic: `ComfyUI video generated but Base44 storage upload failed: ${err.message}`,
+                };
+              }
+
               return {
-                success: false, videoUrl: null, error: 'COMFYUI_BRIDGE_STUB',
-                diagnostic:
-                  `ComfyUI server is configured at ${comfyuiServerUrl} but the AnimateDiff ` +
-                  `workflow bridge is not yet implemented. This is the architecture stub. ` +
-                  `Next step: implement workflow JSON + polling in this block. ` +
-                  `Source image preserved as static slide.`,
+                success: true, videoUrl: publicVideoUrl, error: null, server_error: null,
+                diagnostic: `ComfyUI animation complete. prompt_id=${promptId}. Output: ${outputFilename}. Public URL stored.`,
               };
             })();
 
