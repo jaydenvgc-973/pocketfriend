@@ -135,35 +135,34 @@ Deno.serve(async (req) => {
           // second image, which confuses the model and causes identity replacement.
 
           const motionOptions = [
-            'subtle breathing, gentle eye blink, camera slowly pushing in',
-            'soft hair movement from a light breeze, natural body stillness, camera holds steady',
-            'head turns slightly, eyes shift gently to the side, camera drifts left',
-            'slight natural smile, ambient light shifts softly, camera slow pull-back',
-            'weight shifts slightly, hand moves naturally, environment has gentle ambient motion',
+            'subtle chest rise-and-fall breathing, gentle eye blink, soft eyelid flutter',
+            'hair strands shift from a barely perceptible breeze, body completely still',
+            'eyes track slowly left then return forward, head micro-turns by 5 degrees',
+            'corners of mouth relax into a barely visible exhale, ambient light shimmer on skin',
+            'shoulder weight shifts 2–3 degrees, fingers rest naturally, background depth breathes',
           ];
           const motion = motionOptions[i % motionOptions.length];
 
           const charId = msgRecord?.character_id || null;
           const charAppearance = charId ? characterAppearanceCache[charId] : null;
 
-          // Build verbal identity anchor from appearance fingerprint.
-          // This goes INTO the prompt — not as a second image reference.
           const identityAnchor = charAppearance?.fingerprint
-            ? `The person in this photo: ${charAppearance.fingerprint}.`
+            ? `Subject identity locked to: ${charAppearance.fingerprint}.`
             : '';
 
-          // PROMPT STRUCTURE: open with "animate this exact photo" so the model
-          // treats the source image as the foundation frame, not inspiration.
-          // Identity anchor reinforces who NOT to replace.
-          // Motion instruction is minimal and placed LAST.
+          // SOURCE-FRAME ANIMATION PROTOCOL:
+          // Frame 1 = the uploaded image, pixel-exact. No regeneration. No reinterpretation.
+          // The model must treat the attached image as the literal starting frame and apply
+          // ONLY physics-based motion (breathing, micro-movement) on top of existing pixels.
+          // Identity, face, clothing, background = frozen. Only motion vectors applied.
           const animPrompt = [
-            `Animate this exact photo into a short video clip. The photo IS the first frame.`,
-            `Do NOT recast, replace, or reinterpret the person in this image.`,
-            `Preserve exactly: their face, eyes, nose, lips, skin tone, hair color, hair texture, beard, body type, age, clothing, and background.`,
+            `IMAGE-TO-VIDEO: The attached image is frame 1. Do not regenerate it. Do not reinterpret it. Do not replace the person.`,
+            `The person photographed in the source image is the ONLY subject. Their face, skin tone, hair, eyes, body shape, clothing, and background must remain pixel-consistent with the source image throughout every frame of the video.`,
+            `This is NOT a creative reinterpretation. This is NOT an AI recreation. This is physical animation of the exact photographed person.`,
+            `Apply ONLY: ${motion}. These are subtle physics-based motions layered on top of the frozen source frame.`,
             identityAnchor,
-            `The animated subject must be visually identical to the person in the source photo — not a similar person, not a generic AI person.`,
-            `Motion only: ${motion}.`,
-            `No scene changes. No new characters. No location changes. Vertical 9:16. Smooth cinematic motion. Memory reel style.`,
+            `FORBIDDEN: generating a new person, replacing the face, changing skin tone, changing hair, changing clothing, changing the background, adding new characters, changing the scene. Any deviation from the source image appearance is a failure.`,
+            `Output: vertical 9:16, smooth, cinematic, 4 seconds. Memory reel style.`,
           ].filter(Boolean).join(' ');
 
           // ONLY the source image as existing_image_urls — this is the frame the model animates FROM.
@@ -183,10 +182,10 @@ Deno.serve(async (req) => {
             // Retry once with even stronger source-frame emphasis
             try {
               const retryPrompt = [
-                `This is an image-to-video animation task. Start from this exact image as frame 1.`,
-                `Do NOT generate a new person. Do NOT change the face, skin, hair, body, or clothing.`,
+                `IMAGE-TO-VIDEO RETRY: The attached image is the source frame. Do not replace the person. Do not reinterpret.`,
+                `Preserve: face, skin, hair, eyes, body, clothing, background. Apply only micro-motion: ${motion}.`,
                 identityAnchor,
-                `Animate only: ${motion}. The subject must look exactly like the person in the photo. Vertical 9:16.`,
+                `The output video must show the exact photographed individual — not a similar person, not an AI recreation. Vertical 9:16.`,
               ].filter(Boolean).join(' ');
 
               const retryResult = await base44.integrations.Core.GenerateVideo({
@@ -220,9 +219,10 @@ Deno.serve(async (req) => {
             const motion = ['subtle breathing motion and eye blink', 'soft ambient motion', 'gentle camera push-in'][i % 3];
 
             const fallbackPrompt = [
-              `Animate this exact photo. Do not change the person. Do not recast them.`,
+              `IMAGE-TO-VIDEO FALLBACK: Source image = frame 1. Do not generate a new person. Do not change appearance.`,
+              `Apply only physical micro-motion: ${motion}. Preserve: face, skin, hair, body, clothing, background exactly as photographed.`,
               identityAnchor,
-              `Motion: ${motion}. Vertical 9:16. No scene changes.`,
+              `Vertical 9:16. 4 seconds. The output must show the same individual as in the source photo.`,
             ].filter(Boolean).join(' ');
 
             const retryResult = await base44.integrations.Core.GenerateVideo({
