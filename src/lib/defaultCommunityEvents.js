@@ -9,18 +9,21 @@
  * Rules:
  *   - NO character presence, NO private homes, NO residential locations
  *   - Public / semi-public venues only for SYSTEM events
+ *   - Jail/confinement facilities are NEVER eligible for community events
  *   - User-created events can use ANY location (including residential)
  *   - Dates are always relative to "today" so they remain upcoming
  *   - Rotates by day-of-week so the ordering shifts naturally each day
  *   - Used as FALLBACK ONLY when the DB produces fewer than 4 real CommunityEvent records
  *
- * Real app location injection (smart matching):
- *   - buildDefaultCommunityEvents(appLocations?) accepts an optional LocationReference array
- *   - At least 1 of every 10 default events will use a real public/semi-public app location
- *   - Residential categories are excluded from system event injection
- *   - Matched by event type → preferred location categories (semantic affinity)
- *   - Location must be OPEN at the event time (operating_hours check)
- *   - Returns proof via buildDefaultCommunityEventsWithProof(appLocations)
+ * Real app location injection — HARD VENUE INTENT RULES:
+ *   - Each event template may declare `venueIntent` tiers:
+ *       tier1_must_match: location name/subtype/keywords must contain these terms
+ *                         → if any open tier1 location exists, it WINS. No exceptions.
+ *       tier2_preferred_categories: categories considered before fallback
+ *       tier3_exclude_name_fragments: locations whose names contain these are skipped unless no other option
+ *   - Category affinity is secondary; hard name matching is primary for coffeehouse/café events.
+ *   - Operating hours are mandatory — a closed location is never chosen.
+ *   - Full per-candidate proof is returned (score, tier, open/closed, why winner was chosen).
  */
 
 export const EVENT_TYPE_ICONS = {
@@ -37,11 +40,11 @@ export const EVENT_TYPE_ICONS = {
   other:            '📌',
 };
 
-// ── RESIDENTIAL CATEGORIES (excluded from system/default event injection) ──────
-const RESIDENTIAL_CATEGORIES = new Set([
-  'home', 'hotel', 'shelter', 'jail', 'prison',
-  'detention_center', 'correctional_facility', 'juvenile_detention',
-  'halfway_house', 'holding_cell',
+// ── CONFINEMENT / RESIDENTIAL CATEGORIES — never eligible for community events ──
+const EXCLUDED_CATEGORIES = new Set([
+  'home', 'hotel', 'shelter',
+  'jail', 'prison', 'detention_center', 'correctional_facility',
+  'juvenile_detention', 'halfway_house', 'holding_cell',
 ]);
 
 // Public/semi-public categories eligible for system event injection
@@ -51,65 +54,83 @@ const PUBLIC_CATEGORIES = new Set([
   'school', 'community', 'gym', 'workplace', 'generic',
 ]);
 
-/**
- * Semantic affinity: maps event_type + template keywords → preferred location categories
- * More specific = higher priority. First matching category wins.
- */
-const EVENT_TYPE_CATEGORY_AFFINITY = {
-  // event_type → ordered list of preferred location categories
-  social:           ['food_drink', 'social', 'community', 'public', 'generic'],
-  entertainment:    ['social', 'food_drink', 'community', 'public', 'generic'],
-  fitness:          ['gym', 'outdoor', 'community', 'public', 'generic'],
-  educational:      ['education', 'community', 'public', 'generic'],
-  cultural:         ['community', 'social', 'education', 'public', 'generic'],
-  health_awareness: ['medical', 'community', 'public', 'generic'],
-  support:          ['medical', 'community', 'public', 'generic'],
-  celebration:      ['social', 'food_drink', 'community', 'public', 'generic'],
-  resource_fair:    ['community', 'public', 'generic'],
-  other:            ['community', 'public', 'generic'],
+// ── VENUE INTENT RULES ────────────────────────────────────────────────────────
+// Per-template: define hard matching tiers so coffee events always go to cafés, etc.
+//
+// tier1_name_keywords: location name OR subtype[] OR keywords[] must contain at least one
+//                      of these strings (lowercase) → HARD WINNER if open
+// tier1_category:      location category must be one of these (only used together with
+//                      tier1_name_keywords — both checks must pass for a tier1 match)
+// tier2_categories:    preferred categories when no tier1 match exists
+// tier3_exclude_name_fragments: exclude locations whose names contain these strings
+//                               unless they are the absolute last option
+//
+// If NO tier1 open match exists → fall back to tier2 category matching → then generic
+// A bar/grill/nightclub is in tier3_exclude for coffeehouse events.
+const VENUE_INTENT_RULES = {
+  def_coffeemeetup: {
+    tier1_name_keywords: ['coffee', 'café', 'cafe', 'bean', 'brew', 'espresso', 'roast', 'roastery'],
+    tier2_categories: ['food_drink', 'social', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: ['bar', 'grill', 'lounge', 'nightclub', 'club', 'tavern', 'pub'],
+  },
+  def_yoga: {
+    tier1_name_keywords: ['park', 'yoga', 'fitness', 'wellness'],
+    tier2_categories: ['gym', 'outdoor', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: ['bar', 'grill', 'nightclub', 'club', 'lounge'],
+  },
+  def_bookclub: {
+    tier1_name_keywords: ['library', 'bookstore', 'book', 'literary'],
+    tier2_categories: ['education', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: ['bar', 'grill', 'nightclub', 'club'],
+  },
+  def_healthfair: {
+    tier1_name_keywords: ['clinic', 'health', 'medical', 'wellness', 'center', 'community'],
+    tier2_categories: ['medical', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: ['bar', 'grill', 'nightclub', 'lounge', 'club'],
+  },
+  def_artexhibit: {
+    tier1_name_keywords: ['gallery', 'art', 'studio', 'museum', 'exhibit'],
+    tier2_categories: ['community', 'social', 'education', 'public', 'generic'],
+    tier3_exclude_name_fragments: ['bar', 'grill', 'nightclub'],
+  },
+  def_openmic: {
+    tier1_name_keywords: ['lounge', 'bar', 'venue', 'stage', 'loft', 'café', 'cafe', 'coffee'],
+    tier2_categories: ['social', 'food_drink', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: [],
+  },
+  def_karaoke: {
+    tier1_name_keywords: ['karaoke', 'lounge', 'bar', 'venue'],
+    tier2_categories: ['social', 'food_drink', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: [],
+  },
+  def_gamenight: {
+    tier1_name_keywords: ['bar', 'games', 'social', 'lounge', 'arcade'],
+    tier2_categories: ['social', 'food_drink', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: [],
+  },
+  def_supportgroup: {
+    tier1_name_keywords: ['wellness', 'center', 'clinic', 'community', 'health', 'support'],
+    tier2_categories: ['medical', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: ['bar', 'grill', 'nightclub', 'lounge'],
+  },
+  def_foodpantry: {
+    tier1_name_keywords: ['community', 'church', 'hall', 'center', 'pantry', 'ministry'],
+    tier2_categories: ['community', 'religion', 'public', 'generic'],
+    tier3_exclude_name_fragments: ['bar', 'grill', 'nightclub', 'lounge', 'club'],
+  },
+  def_poetry: {
+    tier1_name_keywords: ['bookstore', 'book', 'library', 'café', 'cafe', 'coffee'],
+    tier2_categories: ['education', 'community', 'social', 'public', 'generic'],
+    tier3_exclude_name_fragments: ['bar', 'grill', 'nightclub', 'club'],
+  },
+  def_ballroom: {
+    tier1_name_keywords: ['ballroom', 'venue', 'event', 'hall', 'lounge'],
+    tier2_categories: ['social', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: [],
+  },
 };
-
-/**
- * Extra name-based keyword hints for finer semantic matching within a category.
- * If the event name contains any keyword, prefer locations whose names contain matching terms.
- */
-const EVENT_NAME_KEYWORDS = {
-  coffee:   ['coffee', 'café', 'cafe', 'roast', 'bean', 'brew'],
-  karaoke:  ['karaoke', 'lounge', 'bar'],
-  poetry:   ['bookstore', 'book', 'library', 'café', 'cafe', 'lounge'],
-  yoga:     ['park', 'gym', 'community', 'fitness'],
-  fitness:  ['gym', 'park', 'fitness', 'community'],
-  health:   ['clinic', 'health', 'medical', 'community', 'center'],
-  art:      ['gallery', 'art', 'studio', 'community'],
-  book:     ['library', 'bookstore', 'book', 'café', 'cafe'],
-  game:     ['bar', 'games', 'community', 'social', 'café', 'cafe'],
-  music:    ['lounge', 'bar', 'venue', 'studio'],
-  open_mic: ['lounge', 'bar', 'café', 'cafe', 'community', 'venue'],
-};
-
-/**
- * Determine keyword hints for an event name.
- * Returns an array of preferred name substrings (lowercase).
- */
-function getNameKeywordsForEvent(eventName) {
-  const nameLower = eventName.toLowerCase();
-  if (nameLower.includes('coffee') || nameLower.includes('coffeehouse')) return EVENT_NAME_KEYWORDS.coffee;
-  if (nameLower.includes('karaoke')) return EVENT_NAME_KEYWORDS.karaoke;
-  if (nameLower.includes('poetry') || nameLower.includes('poem')) return EVENT_NAME_KEYWORDS.poetry;
-  if (nameLower.includes('yoga')) return EVENT_NAME_KEYWORDS.yoga;
-  if (nameLower.includes('fitness') || nameLower.includes('workout')) return EVENT_NAME_KEYWORDS.fitness;
-  if (nameLower.includes('health') || nameLower.includes('testing') || nameLower.includes('screening')) return EVENT_NAME_KEYWORDS.health;
-  if (nameLower.includes('art') || nameLower.includes('exhibit') || nameLower.includes('gallery')) return EVENT_NAME_KEYWORDS.art;
-  if (nameLower.includes('book') || nameLower.includes('reading') || nameLower.includes('library')) return EVENT_NAME_KEYWORDS.book;
-  if (nameLower.includes('game')) return EVENT_NAME_KEYWORDS.game;
-  if (nameLower.includes('music') || nameLower.includes('open mic')) return EVENT_NAME_KEYWORDS.music;
-  return [];
-}
 
 // ── OPERATING HOURS CHECK ─────────────────────────────────────────────────────
-/**
- * Parse "HH:MM" string → total minutes from midnight
- */
 function timeStrToMinutes(t) {
   if (!t || typeof t !== 'string') return null;
   const [h, m] = t.split(':').map(Number);
@@ -119,12 +140,8 @@ function timeStrToMinutes(t) {
 
 /**
  * Check if a location is open at the given Date using its operating_hours array.
- * operating_hours items: { day_of_week?: number, open_time: "HH:MM", close_time: "HH:MM" }
  * If no operating_hours are configured, assume open (safe default).
- *
- * @param {Object} location - LocationReference record
- * @param {Date} eventDate - Date object for the event
- * @returns {{ isOpen: boolean, reason: string, matchedHours: object|null }}
+ * Returns { isOpen, reason, matchedHours }
  */
 function checkLocationOpenAt(location, eventDate) {
   const hours = location.operating_hours;
@@ -132,14 +149,16 @@ function checkLocationOpenAt(location, eventDate) {
     return { isOpen: true, reason: 'No operating hours configured — assumed open', matchedHours: null };
   }
 
-  const dayOfWeek = eventDate.getDay(); // 0=Sun, 6=Sat
+  const dayOfWeek = eventDate.getDay();
   const eventMinutes = eventDate.getHours() * 60 + eventDate.getMinutes();
 
-  // Find a matching hours entry for this day
-  // Some entries may have day_of_week; if omitted we treat it as applying to all days
   const matchingEntry = hours.find(h => h.day_of_week === undefined || h.day_of_week === dayOfWeek);
   if (!matchingEntry) {
-    return { isOpen: false, reason: `No hours entry for day ${dayOfWeek} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]})`, matchedHours: null };
+    return {
+      isOpen: false,
+      reason: `No hours entry for day ${dayOfWeek} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]})`,
+      matchedHours: null,
+    };
   }
 
   const openMin = timeStrToMinutes(matchingEntry.open_time);
@@ -149,10 +168,9 @@ function checkLocationOpenAt(location, eventDate) {
     return { isOpen: true, reason: 'Operating hours present but unparseable — assumed open', matchedHours: matchingEntry };
   }
 
-  // Handle midnight-spanning ranges (e.g. open 20:00, close 02:00)
   let isOpen;
   if (closeMin <= openMin) {
-    // Spans midnight
+    // spans midnight
     isOpen = eventMinutes >= openMin || eventMinutes < closeMin;
   } else {
     isOpen = eventMinutes >= openMin && eventMinutes < closeMin;
@@ -166,8 +184,7 @@ function checkLocationOpenAt(location, eventDate) {
   return { isOpen, reason, matchedHours: matchingEntry };
 }
 
-// ── STATIC TEMPLATE ─────────────────────────────────────────────────────────
-// daysFromNow and hour/minute are resolved at call time.
+// ── STATIC TEMPLATES ──────────────────────────────────────────────────────────
 const EVENT_TEMPLATES = [
   {
     id: 'def_openmic',
@@ -280,12 +297,9 @@ const EVENT_TEMPLATES = [
 ];
 
 /**
- * Extract eligible public/semi-public locations from an app LocationReference array.
- * Excludes residential, confinement, and private categories.
- * Does NOT query character presence or homes.
- *
- * @param {Array} appLocations - LocationReference records
- * @returns {{ eligible: Array, totalLoaded: number, residentialExcluded: number }}
+ * Extract eligible public/semi-public locations from a LocationReference array.
+ * Jail/confinement and residential are always excluded.
+ * Also excludes personal home names (e.g. "Jayden's Apartment").
  */
 function extractPublicLocations(appLocations = []) {
   const totalLoaded = appLocations.length;
@@ -295,18 +309,23 @@ function extractPublicLocations(appLocations = []) {
   for (const loc of appLocations) {
     if (!loc.name) continue;
     const cat = loc.category || 'generic';
-    if (RESIDENTIAL_CATEGORIES.has(cat) || loc.is_confinement_facility) {
+
+    // Hard exclude: residential, confinement, jail — never a community event venue
+    if (EXCLUDED_CATEGORIES.has(cat) || loc.is_confinement_facility) {
       residentialExcluded++;
       continue;
     }
-    // Also exclude locations whose names suggest they are personal homes
+
+    // Hard exclude: personal home names
     const nameLower = (loc.name || '').toLowerCase();
-    const isPersonalHome = /\b(apartment|apt|house|home|condo|townhouse|unit|suite|residence|flat)\b/.test(nameLower) &&
-      /('s|s')\b/.test(nameLower); // e.g. "Jayden's Apartment"
+    const isPersonalHome =
+      /\b(apartment|apt|house|home|condo|townhouse|unit|suite|residence|flat)\b/.test(nameLower) &&
+      /('s|s')\b/.test(nameLower);
     if (isPersonalHome) {
       residentialExcluded++;
       continue;
     }
+
     if (PUBLIC_CATEGORIES.has(cat)) {
       eligible.push(loc);
     }
@@ -316,84 +335,171 @@ function extractPublicLocations(appLocations = []) {
 }
 
 /**
- * Pick the best real location for a given event template from the eligible list.
- * Scoring:
- *   +3  location category matches affinity preference (higher if earlier in affinity list)
- *   +2  location name contains a keyword hint for the event
- *   +0  location is open at event time (required: location must be open OR have no hours)
- *   -∞  location is CLOSED at event time (disqualify)
+ * Check whether a location matches the tier1 hard name/subtype/keywords requirement.
+ * Checks: location.name, location.subtype[], location.keywords[]
+ * Returns true if ANY field contains ANY of the tier1 terms (case-insensitive).
+ */
+function matchesTier1(loc, tier1Keywords) {
+  if (!tier1Keywords || tier1Keywords.length === 0) return false;
+  const nameLower = (loc.name || '').toLowerCase();
+  const subtypes = (loc.subtype || []).map(s => s.toLowerCase());
+  const keywords = (loc.keywords || []).map(k => k.toLowerCase());
+  const searchFields = [nameLower, ...subtypes, ...keywords].join(' ');
+  return tier1Keywords.some(kw => searchFields.includes(kw));
+}
+
+/**
+ * Check whether a location name contains any tier3 "exclude" fragment.
+ * These are locations that are plausible fallbacks but should only be used
+ * if nothing better exists.
+ */
+function hasTier3Fragment(loc, excludeFragments) {
+  if (!excludeFragments || excludeFragments.length === 0) return false;
+  const nameLower = (loc.name || '').toLowerCase();
+  return excludeFragments.some(frag => nameLower.includes(frag));
+}
+
+/**
+ * Score a single open location candidate against the event template.
  *
- * Returns { location, hoursCheck, score, rejectedCandidates } or null if none eligible.
+ * Tier system (hard priority, not additive — tier1 ALWAYS beats tier2+):
+ *   tier1: name/subtype/keywords match tier1_name_keywords → base score 1000
+ *   tier2: category in tier2_categories → score = (list length - index) * 10 (max 50)
+ *   tier3_penalty: name contains tier3_exclude fragment → score -= 20 (still usable as last resort)
  *
- * @param {Object} tmpl - Event template
- * @param {Date} eventDate - Resolved event Date
- * @param {Array} eligible - Filtered public LocationReference records
- * @returns {{ location: Object, hoursCheck: Object, score: number, rejectedCandidates: Array }|null}
+ * Within the same tier, higher score wins. Equal scores → alphabetical for stability.
+ *
+ * Returns { location, tier, score, hoursCheck, scoreBreakdown }
+ */
+function scoreCandidate(loc, tmpl, eventDate, rules) {
+  const hoursCheck = checkLocationOpenAt(loc, eventDate);
+  if (!hoursCheck.isOpen) return null; // closed = disqualified
+
+  const locCat = loc.category || 'generic';
+  const scoreBreakdown = {
+    tier1Match: false,
+    tier2CategoryScore: 0,
+    tier3Penalty: 0,
+    finalScore: 0,
+    tier: 3,
+  };
+
+  let score = 0;
+  let tier = 3;
+
+  // ── TIER 1: hard name/subtype/keyword match ──────────────────────────────
+  if (rules?.tier1_name_keywords?.length > 0 && matchesTier1(loc, rules.tier1_name_keywords)) {
+    score = 1000;
+    tier = 1;
+    scoreBreakdown.tier1Match = true;
+  }
+
+  // ── TIER 2: category affinity (only contributes if not already tier1) ────
+  const tier2Cats = rules?.tier2_categories || ['community', 'public', 'generic'];
+  const catIdx = tier2Cats.indexOf(locCat);
+  if (catIdx !== -1) {
+    const catScore = Math.max(1, tier2Cats.length - catIdx) * 10;
+    scoreBreakdown.tier2CategoryScore = catScore;
+    if (tier > 1) {
+      score += catScore;
+      tier = 2;
+    }
+  }
+
+  // ── TIER 3 PENALTY: bar/grill/nightclub for a coffee event etc. ──────────
+  if (rules?.tier3_exclude_name_fragments?.length > 0 && hasTier3Fragment(loc, rules.tier3_exclude_name_fragments)) {
+    const penalty = -200;
+    scoreBreakdown.tier3Penalty = penalty;
+    score += penalty; // can go negative, still better than nothing if truly no other option
+  }
+
+  scoreBreakdown.finalScore = score;
+  scoreBreakdown.tier = tier;
+
+  return {
+    location: loc,
+    tier,
+    score,
+    hoursCheck,
+    scoreBreakdown,
+    nameLower: (loc.name || '').toLowerCase(),
+    subtypes: loc.subtype || [],
+    keywords: loc.keywords || [],
+    category: locCat,
+  };
+}
+
+/**
+ * Pick the best real location for a given event template.
+ * Uses hard venue intent rules (VENUE_INTENT_RULES) keyed by template id.
+ * Falls back to generic affinity if no rules defined for the template.
+ *
+ * Returns { location, tier, score, hoursCheck, scoreBreakdown, allCandidates, rejectedClosed }
+ * or null if no open eligible location exists.
  */
 function pickBestLocation(tmpl, eventDate, eligible) {
   if (!eligible.length) return null;
 
-  const affinity = EVENT_TYPE_CATEGORY_AFFINITY[tmpl.event_type] || ['community', 'public', 'generic'];
-  const nameKeywords = getNameKeywordsForEvent(tmpl.name);
-  const rejectedCandidates = [];
+  const rules = VENUE_INTENT_RULES[tmpl.id] || null;
+  const rejectedClosed = [];
+  const scoredOpen = [];
 
-  // Score each eligible location
-  const scored = eligible.map(loc => {
-    const hoursCheck = checkLocationOpenAt(loc, eventDate);
-    if (!hoursCheck.isOpen) {
-      rejectedCandidates.push({
+  for (const loc of eligible) {
+    const result = scoreCandidate(loc, tmpl, eventDate, rules);
+    if (!result) {
+      rejectedClosed.push({
         locationId: loc.id,
         locationName: loc.name,
         category: loc.category,
-        rejectedReason: hoursCheck.reason,
+        subtype: loc.subtype || [],
+        keywords: loc.keywords || [],
+        rejectedReason: checkLocationOpenAt(loc, eventDate).reason,
       });
-      return null;
+    } else {
+      scoredOpen.push(result);
     }
+  }
 
-    let score = 0;
-    const locCat = loc.category || 'generic';
-    const locNameLower = (loc.name || '').toLowerCase();
+  if (!scoredOpen.length) return null;
 
-    // Category affinity score: higher if earlier in the preference list
-    const affinityIdx = affinity.indexOf(locCat);
-    if (affinityIdx !== -1) {
-      score += Math.max(1, affinity.length - affinityIdx); // max for first match
-    }
+  // Sort: highest score first, then alphabetically for stability
+  scoredOpen.sort((a, b) => b.score - a.score || a.nameLower.localeCompare(b.nameLower));
 
-    // Name keyword bonus
-    if (nameKeywords.length > 0) {
-      const hasKeyword = nameKeywords.some(kw => locNameLower.includes(kw));
-      if (hasKeyword) score += 2;
-    }
+  const winner = scoredOpen[0];
 
-    return { location: loc, hoursCheck, score };
-  }).filter(Boolean);
-
-  if (!scored.length) return null;
-
-  // Sort by descending score, then alphabetically for stability
-  scored.sort((a, b) => b.score - a.score || a.location.name.localeCompare(b.location.name));
-
-  return { ...scored[0], rejectedCandidates };
+  return {
+    location: winner.location,
+    tier: winner.tier,
+    score: winner.score,
+    hoursCheck: winner.hoursCheck,
+    scoreBreakdown: winner.scoreBreakdown,
+    allCandidates: scoredOpen.map(c => ({
+      locationId: c.location.id,
+      locationName: c.location.name,
+      category: c.category,
+      subtype: c.subtypes,
+      keywords: c.keywords,
+      tier: c.tier,
+      score: c.score,
+      scoreBreakdown: c.scoreBreakdown,
+      hoursReason: c.hoursCheck.reason,
+    })),
+    rejectedClosed,
+  };
 }
 
+// ── PUBLIC API ────────────────────────────────────────────────────────────────
+
 /**
- * Build resolved default events with real ISO start_date values.
- * Optionally injects smart-matched real app locations — at least 1 per 10 events.
- * Rotates by day of week so order feels fresh each day.
- *
- * @param {Array} appLocations - Optional LocationReference array from the app
- * @returns {Array} Event objects compatible with CommunityEventsStrip and MomentsCalendar
+ * Build default community events. Optionally injects real app locations using
+ * hard venue intent rules (coffeehouse → café/coffee, not bar).
  */
 export function buildDefaultCommunityEvents(appLocations = []) {
   return buildDefaultCommunityEventsWithProof(appLocations).events;
 }
 
 /**
- * Build default events AND return full proof of real location injection with diagnostics.
- *
- * @param {Array} appLocations - Optional LocationReference array
- * @returns {{ events: Array, proof: Object }}
+ * Build default events AND return full proof with per-candidate diagnostics.
  */
 export function buildDefaultCommunityEventsWithProof(appLocations = []) {
   const now = new Date();
@@ -402,22 +508,25 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
   const thisMonth = now.getMonth();
   const today = now.getDate();
 
-  // Extract eligible public locations from real app data
   const { eligible, totalLoaded, residentialExcluded } = extractPublicLocations(appLocations);
 
   // Rotate templates by day-of-week
   const offset = dayOfWeek % EVENT_TEMPLATES.length;
   const rotated = [...EVENT_TEMPLATES.slice(offset), ...EVENT_TEMPLATES.slice(0, offset)];
 
-  // Determine injection slots: at least 1 per 10 events
+  // Injection slots: at least 1 per 10 events
+  // Additionally: always attempt injection for the coffeemeetup template specifically
   const injectionSlots = new Set();
   if (eligible.length > 0) {
     for (let i = 0; i < rotated.length; i += 10) {
       injectionSlots.add(i);
     }
+    // Always try to inject a real location for coffeemeetup regardless of slot
+    const coffeeIdx = rotated.findIndex(t => t.id === 'def_coffeemeetup');
+    if (coffeeIdx !== -1) injectionSlots.add(coffeeIdx);
   }
 
-  const proofEntries = []; // full per-slot diagnostics
+  const proofEntries = [];
 
   const events = rotated.map((tmpl, idx) => {
     const dt = new Date(thisYear, thisMonth, today + tmpl.offsetDays, tmpl.hour, tmpl.minute, 0);
@@ -439,43 +548,55 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
 
         slotProof = {
           slot: idx,
+          eventId: tmpl.id,
           eventName: tmpl.name,
           eventType: tmpl.event_type,
           eventTime: dt.toISOString(),
+          venueIntentRules: VENUE_INTENT_RULES[tmpl.id] || null,
           chosenLocation: pick.location.name,
           chosenLocationId: pick.location.id,
           chosenCategory: pick.location.category,
-          operatingHours: pick.location.operating_hours || [],
+          chosenSubtype: pick.location.subtype || [],
+          chosenKeywords: pick.location.keywords || [],
+          chosenOperatingHours: pick.location.operating_hours || [],
           isOpen: pick.hoursCheck.isOpen,
           hoursReason: pick.hoursCheck.reason,
+          tier: pick.tier,
           score: pick.score,
-          selectionReason: `Best semantic match (score ${pick.score}) for event_type="${tmpl.event_type}", event name="${tmpl.name}"`,
-          rejectedCandidates: pick.rejectedCandidates,
+          scoreBreakdown: pick.scoreBreakdown,
+          selectionReason: `Tier ${pick.tier} match, score ${pick.score} — won against ${pick.allCandidates.length - 1} other open candidates`,
+          allCandidates: pick.allCandidates,
+          rejectedClosed: pick.rejectedClosed,
           usedRealLocation: true,
         };
       } else {
-        // No open eligible location — fall back to static name
+        // No open eligible location — use static fallback
+        const allClosed = eligible.map(loc => ({
+          locationId: loc.id,
+          locationName: loc.name,
+          category: loc.category,
+          subtype: loc.subtype || [],
+          keywords: loc.keywords || [],
+          rejectedReason: checkLocationOpenAt(loc, dt).reason,
+        }));
+
         slotProof = {
           slot: idx,
+          eventId: tmpl.id,
           eventName: tmpl.name,
           eventType: tmpl.event_type,
           eventTime: dt.toISOString(),
+          venueIntentRules: VENUE_INTENT_RULES[tmpl.id] || null,
           chosenLocation: tmpl.location_name,
           chosenLocationId: null,
           chosenCategory: null,
-          operatingHours: [],
           isOpen: null,
           hoursReason: null,
+          tier: null,
           score: null,
-          selectionReason: `No open eligible app location found for this event — using static fallback "${tmpl.location_name}"`,
-          rejectedCandidates: pickBestLocation(tmpl, dt, eligible) === null
-            ? eligible.map(loc => ({
-                locationId: loc.id,
-                locationName: loc.name,
-                category: loc.category,
-                rejectedReason: checkLocationOpenAt(loc, dt).reason,
-              }))
-            : [],
+          selectionReason: `No open eligible app location — using static fallback "${tmpl.location_name}"`,
+          allCandidates: [],
+          rejectedClosed: allClosed,
           usedRealLocation: false,
         };
       }
@@ -503,7 +624,13 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
   const proof = {
     totalAppLocationsLoaded: totalLoaded,
     residentialExcluded,
-    eligiblePublicLocations: eligible.map(l => ({ id: l.id, name: l.name, category: l.category })),
+    eligiblePublicLocations: eligible.map(l => ({
+      id: l.id,
+      name: l.name,
+      category: l.category,
+      subtype: l.subtype || [],
+      keywords: l.keywords || [],
+    })),
     eligibleCount: eligible.length,
     totalDefaultEvents: events.length,
     injectionSlots: [...injectionSlots],
@@ -511,11 +638,10 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
     staticFallbackCount: proofEntries.filter(p => !p.usedRealLocation).length,
     proofEntries,
     summary: eligible.length > 0
-      ? `${proofEntries.filter(p => p.usedRealLocation).length} of ${events.length} default events use a real app location (eligible: ${eligible.length} public locations from ${totalLoaded} total, ${residentialExcluded} residential excluded)`
-      : `No eligible public app locations found (${totalLoaded} total, ${residentialExcluded} residential excluded) — all defaults use static venue names`,
+      ? `${proofEntries.filter(p => p.usedRealLocation).length} of ${events.length} default events use a real app location. Eligible: ${eligible.length} public (${totalLoaded} total, ${residentialExcluded} residential/confinement excluded).`
+      : `No eligible public app locations (${totalLoaded} total, ${residentialExcluded} residential/confinement excluded) — all defaults use static venue names.`,
   };
 
-  // Expose last proof for debugging (module-level, non-blocking)
   buildDefaultCommunityEventsWithProof._lastProof = proof;
 
   return { events, proof };
