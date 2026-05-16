@@ -76,6 +76,60 @@ Deno.serve(async (req) => {
         const totalCost = rentCost + utilityCost;
         const newBalance = financial.current_balance - totalCost;
 
+        // ── RENT CREDIT: credit goes to the location owner (if one exists) ──
+        // If no owner is assigned, credit the user account as rental income.
+        // If owner is NPC, skip credit (NPC financial system not supported).
+        const ownerCharId = home.owner_character_id || null;
+        const ownerIsNpc = home.owner_is_npc === true;
+
+        if (rentCost > 0) {
+          if (ownerCharId && !ownerIsNpc) {
+            // Credit the owner character's financial account
+            const ownerFinancials = await base44.entities.CharacterFinancial.filter({
+              character_id: ownerCharId
+            }).catch(() => []);
+            if (ownerFinancials[0]) {
+              const ownerFin = ownerFinancials[0];
+              const ownerNewBalance = Math.round((ownerFin.current_balance + rentCost) * 100) / 100;
+              await base44.entities.CharacterFinancial.update(ownerFin.id, {
+                current_balance: ownerNewBalance,
+                total_income: Math.round((ownerFin.total_income + rentCost) * 100) / 100,
+              }).catch(err => console.warn('[processHousingCosts] owner credit update failed:', err.message));
+              await base44.entities.FinancialTransaction.create({
+                character_id: ownerCharId,
+                character_name: home.owner_character_name || ownerCharId,
+                sender_id: char.id,
+                sender_type: 'character',
+                sender_name: char.name,
+                receiver_id: ownerCharId,
+                receiver_type: 'character',
+                receiver_name: home.owner_character_name || ownerCharId,
+                amount: rentCost,
+                direction: 'income',
+                transaction_type: 'rent',
+                description: `Rental income — ${home.name} (tenant: ${char.name})`,
+                location_id: home.id,
+                location_name: home.name,
+                balance_after: ownerNewBalance,
+                timestamp: paymentDate.toISOString(),
+              }).catch(err => console.warn('[processHousingCosts] owner rent income txn failed:', err.message));
+            }
+          } else if (!ownerCharId && !ownerIsNpc) {
+            // No owner assigned — credit the authenticated user's balance as rental income
+            const userSettings = await base44.entities.UserSettings.filter({
+              owner_email: user.email
+            }).catch(() => []);
+            if (userSettings[0] && userSettings[0].user_balance !== undefined) {
+              const us = userSettings[0];
+              await base44.entities.UserSettings.update(us.id, {
+                user_balance: Math.round((us.user_balance + rentCost) * 100) / 100,
+              }).catch(err => console.warn('[processHousingCosts] user balance rental income update failed:', err.message));
+              console.log(`[processHousingCosts] Rental income +$${rentCost} → user account (no owner assigned for ${home.name})`);
+            }
+          }
+          // NPC owner: skip credit silently — NPC finances not supported
+        }
+
         // Update financial record
         const updatedExpenses = financial.recurring_expenses || [];
         await base44.entities.CharacterFinancial.update(financial.id, {

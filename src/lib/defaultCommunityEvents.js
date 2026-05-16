@@ -14,10 +14,12 @@
  *   - Rotates by day-of-week so the ordering shifts naturally each day
  *   - Used as FALLBACK ONLY when the DB produces fewer than 4 real CommunityEvent records
  *
- * Real app location injection:
+ * Real app location injection (smart matching):
  *   - buildDefaultCommunityEvents(appLocations?) accepts an optional LocationReference array
  *   - At least 1 of every 10 default events will use a real public/semi-public app location
  *   - Residential categories are excluded from system event injection
+ *   - Matched by event type → preferred location categories (semantic affinity)
+ *   - Location must be OPEN at the event time (operating_hours check)
  *   - Returns proof via buildDefaultCommunityEventsWithProof(appLocations)
  */
 
@@ -48,6 +50,121 @@ const PUBLIC_CATEGORIES = new Set([
   'grocery', 'religion', 'government', 'public', 'business',
   'school', 'community', 'gym', 'workplace', 'generic',
 ]);
+
+/**
+ * Semantic affinity: maps event_type + template keywords → preferred location categories
+ * More specific = higher priority. First matching category wins.
+ */
+const EVENT_TYPE_CATEGORY_AFFINITY = {
+  // event_type → ordered list of preferred location categories
+  social:           ['food_drink', 'social', 'community', 'public', 'generic'],
+  entertainment:    ['social', 'food_drink', 'community', 'public', 'generic'],
+  fitness:          ['gym', 'outdoor', 'community', 'public', 'generic'],
+  educational:      ['education', 'community', 'public', 'generic'],
+  cultural:         ['community', 'social', 'education', 'public', 'generic'],
+  health_awareness: ['medical', 'community', 'public', 'generic'],
+  support:          ['medical', 'community', 'public', 'generic'],
+  celebration:      ['social', 'food_drink', 'community', 'public', 'generic'],
+  resource_fair:    ['community', 'public', 'generic'],
+  other:            ['community', 'public', 'generic'],
+};
+
+/**
+ * Extra name-based keyword hints for finer semantic matching within a category.
+ * If the event name contains any keyword, prefer locations whose names contain matching terms.
+ */
+const EVENT_NAME_KEYWORDS = {
+  coffee:   ['coffee', 'café', 'cafe', 'roast', 'bean', 'brew'],
+  karaoke:  ['karaoke', 'lounge', 'bar'],
+  poetry:   ['bookstore', 'book', 'library', 'café', 'cafe', 'lounge'],
+  yoga:     ['park', 'gym', 'community', 'fitness'],
+  fitness:  ['gym', 'park', 'fitness', 'community'],
+  health:   ['clinic', 'health', 'medical', 'community', 'center'],
+  art:      ['gallery', 'art', 'studio', 'community'],
+  book:     ['library', 'bookstore', 'book', 'café', 'cafe'],
+  game:     ['bar', 'games', 'community', 'social', 'café', 'cafe'],
+  music:    ['lounge', 'bar', 'venue', 'studio'],
+  open_mic: ['lounge', 'bar', 'café', 'cafe', 'community', 'venue'],
+};
+
+/**
+ * Determine keyword hints for an event name.
+ * Returns an array of preferred name substrings (lowercase).
+ */
+function getNameKeywordsForEvent(eventName) {
+  const nameLower = eventName.toLowerCase();
+  if (nameLower.includes('coffee') || nameLower.includes('coffeehouse')) return EVENT_NAME_KEYWORDS.coffee;
+  if (nameLower.includes('karaoke')) return EVENT_NAME_KEYWORDS.karaoke;
+  if (nameLower.includes('poetry') || nameLower.includes('poem')) return EVENT_NAME_KEYWORDS.poetry;
+  if (nameLower.includes('yoga')) return EVENT_NAME_KEYWORDS.yoga;
+  if (nameLower.includes('fitness') || nameLower.includes('workout')) return EVENT_NAME_KEYWORDS.fitness;
+  if (nameLower.includes('health') || nameLower.includes('testing') || nameLower.includes('screening')) return EVENT_NAME_KEYWORDS.health;
+  if (nameLower.includes('art') || nameLower.includes('exhibit') || nameLower.includes('gallery')) return EVENT_NAME_KEYWORDS.art;
+  if (nameLower.includes('book') || nameLower.includes('reading') || nameLower.includes('library')) return EVENT_NAME_KEYWORDS.book;
+  if (nameLower.includes('game')) return EVENT_NAME_KEYWORDS.game;
+  if (nameLower.includes('music') || nameLower.includes('open mic')) return EVENT_NAME_KEYWORDS.music;
+  return [];
+}
+
+// ── OPERATING HOURS CHECK ─────────────────────────────────────────────────────
+/**
+ * Parse "HH:MM" string → total minutes from midnight
+ */
+function timeStrToMinutes(t) {
+  if (!t || typeof t !== 'string') return null;
+  const [h, m] = t.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+/**
+ * Check if a location is open at the given Date using its operating_hours array.
+ * operating_hours items: { day_of_week?: number, open_time: "HH:MM", close_time: "HH:MM" }
+ * If no operating_hours are configured, assume open (safe default).
+ *
+ * @param {Object} location - LocationReference record
+ * @param {Date} eventDate - Date object for the event
+ * @returns {{ isOpen: boolean, reason: string, matchedHours: object|null }}
+ */
+function checkLocationOpenAt(location, eventDate) {
+  const hours = location.operating_hours;
+  if (!hours || hours.length === 0) {
+    return { isOpen: true, reason: 'No operating hours configured — assumed open', matchedHours: null };
+  }
+
+  const dayOfWeek = eventDate.getDay(); // 0=Sun, 6=Sat
+  const eventMinutes = eventDate.getHours() * 60 + eventDate.getMinutes();
+
+  // Find a matching hours entry for this day
+  // Some entries may have day_of_week; if omitted we treat it as applying to all days
+  const matchingEntry = hours.find(h => h.day_of_week === undefined || h.day_of_week === dayOfWeek);
+  if (!matchingEntry) {
+    return { isOpen: false, reason: `No hours entry for day ${dayOfWeek} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]})`, matchedHours: null };
+  }
+
+  const openMin = timeStrToMinutes(matchingEntry.open_time);
+  const closeMin = timeStrToMinutes(matchingEntry.close_time);
+
+  if (openMin === null || closeMin === null) {
+    return { isOpen: true, reason: 'Operating hours present but unparseable — assumed open', matchedHours: matchingEntry };
+  }
+
+  // Handle midnight-spanning ranges (e.g. open 20:00, close 02:00)
+  let isOpen;
+  if (closeMin <= openMin) {
+    // Spans midnight
+    isOpen = eventMinutes >= openMin || eventMinutes < closeMin;
+  } else {
+    isOpen = eventMinutes >= openMin && eventMinutes < closeMin;
+  }
+
+  const hhmm = (m) => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+  const reason = isOpen
+    ? `Open ${matchingEntry.open_time}–${matchingEntry.close_time} on day ${dayOfWeek}; event at ${hhmm(eventMinutes)}`
+    : `Closed — hours ${matchingEntry.open_time}–${matchingEntry.close_time} on day ${dayOfWeek}; event at ${hhmm(eventMinutes)}`;
+
+  return { isOpen, reason, matchedHours: matchingEntry };
+}
 
 // ── STATIC TEMPLATE ─────────────────────────────────────────────────────────
 // daysFromNow and hour/minute are resolved at call time.
@@ -185,7 +302,7 @@ function extractPublicLocations(appLocations = []) {
     // Also exclude locations whose names suggest they are personal homes
     const nameLower = (loc.name || '').toLowerCase();
     const isPersonalHome = /\b(apartment|apt|house|home|condo|townhouse|unit|suite|residence|flat)\b/.test(nameLower) &&
-      /\b(s|'s)\b/.test(nameLower); // e.g. "Jayden's Apartment"
+      /('s|s')\b/.test(nameLower); // e.g. "Jayden's Apartment"
     if (isPersonalHome) {
       residentialExcluded++;
       continue;
@@ -199,8 +316,70 @@ function extractPublicLocations(appLocations = []) {
 }
 
 /**
+ * Pick the best real location for a given event template from the eligible list.
+ * Scoring:
+ *   +3  location category matches affinity preference (higher if earlier in affinity list)
+ *   +2  location name contains a keyword hint for the event
+ *   +0  location is open at event time (required: location must be open OR have no hours)
+ *   -∞  location is CLOSED at event time (disqualify)
+ *
+ * Returns { location, hoursCheck, score, rejectedCandidates } or null if none eligible.
+ *
+ * @param {Object} tmpl - Event template
+ * @param {Date} eventDate - Resolved event Date
+ * @param {Array} eligible - Filtered public LocationReference records
+ * @returns {{ location: Object, hoursCheck: Object, score: number, rejectedCandidates: Array }|null}
+ */
+function pickBestLocation(tmpl, eventDate, eligible) {
+  if (!eligible.length) return null;
+
+  const affinity = EVENT_TYPE_CATEGORY_AFFINITY[tmpl.event_type] || ['community', 'public', 'generic'];
+  const nameKeywords = getNameKeywordsForEvent(tmpl.name);
+  const rejectedCandidates = [];
+
+  // Score each eligible location
+  const scored = eligible.map(loc => {
+    const hoursCheck = checkLocationOpenAt(loc, eventDate);
+    if (!hoursCheck.isOpen) {
+      rejectedCandidates.push({
+        locationId: loc.id,
+        locationName: loc.name,
+        category: loc.category,
+        rejectedReason: hoursCheck.reason,
+      });
+      return null;
+    }
+
+    let score = 0;
+    const locCat = loc.category || 'generic';
+    const locNameLower = (loc.name || '').toLowerCase();
+
+    // Category affinity score: higher if earlier in the preference list
+    const affinityIdx = affinity.indexOf(locCat);
+    if (affinityIdx !== -1) {
+      score += Math.max(1, affinity.length - affinityIdx); // max for first match
+    }
+
+    // Name keyword bonus
+    if (nameKeywords.length > 0) {
+      const hasKeyword = nameKeywords.some(kw => locNameLower.includes(kw));
+      if (hasKeyword) score += 2;
+    }
+
+    return { location: loc, hoursCheck, score };
+  }).filter(Boolean);
+
+  if (!scored.length) return null;
+
+  // Sort by descending score, then alphabetically for stability
+  scored.sort((a, b) => b.score - a.score || a.location.name.localeCompare(b.location.name));
+
+  return { ...scored[0], rejectedCandidates };
+}
+
+/**
  * Build resolved default events with real ISO start_date values.
- * Optionally injects real app locations — at least 1 per 10 events.
+ * Optionally injects smart-matched real app locations — at least 1 per 10 events.
  * Rotates by day of week so order feels fresh each day.
  *
  * @param {Array} appLocations - Optional LocationReference array from the app
@@ -211,7 +390,7 @@ export function buildDefaultCommunityEvents(appLocations = []) {
 }
 
 /**
- * Build default events AND return proof of real location injection.
+ * Build default events AND return full proof of real location injection with diagnostics.
  *
  * @param {Array} appLocations - Optional LocationReference array
  * @returns {{ events: Array, proof: Object }}
@@ -231,7 +410,6 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
   const rotated = [...EVENT_TEMPLATES.slice(offset), ...EVENT_TEMPLATES.slice(0, offset)];
 
   // Determine injection slots: at least 1 per 10 events
-  // e.g. 12 events → inject at index 0 and 10
   const injectionSlots = new Set();
   if (eligible.length > 0) {
     for (let i = 0; i < rotated.length; i += 10) {
@@ -239,8 +417,7 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
     }
   }
 
-  const injectedAt = []; // proof tracking
-  let eligibleIndex = 0;
+  const proofEntries = []; // full per-slot diagnostics
 
   const events = rotated.map((tmpl, idx) => {
     const dt = new Date(thisYear, thisMonth, today + tmpl.offsetDays, tmpl.hour, tmpl.minute, 0);
@@ -249,21 +426,60 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
     let locationId = null;
     let locationCategory = null;
     let usedRealLocation = false;
+    let slotProof = null;
 
     if (injectionSlots.has(idx) && eligible.length > 0) {
-      const realLoc = eligible[eligibleIndex % eligible.length];
-      eligibleIndex++;
-      locationName = realLoc.name;
-      locationId = realLoc.id;
-      locationCategory = realLoc.category || null;
-      usedRealLocation = true;
-      injectedAt.push({
-        eventIndex: idx,
-        eventName: tmpl.name,
-        locationId: realLoc.id,
-        locationName: realLoc.name,
-        locationCategory: realLoc.category,
-      });
+      const pick = pickBestLocation(tmpl, dt, eligible);
+
+      if (pick) {
+        locationName = pick.location.name;
+        locationId = pick.location.id;
+        locationCategory = pick.location.category || null;
+        usedRealLocation = true;
+
+        slotProof = {
+          slot: idx,
+          eventName: tmpl.name,
+          eventType: tmpl.event_type,
+          eventTime: dt.toISOString(),
+          chosenLocation: pick.location.name,
+          chosenLocationId: pick.location.id,
+          chosenCategory: pick.location.category,
+          operatingHours: pick.location.operating_hours || [],
+          isOpen: pick.hoursCheck.isOpen,
+          hoursReason: pick.hoursCheck.reason,
+          score: pick.score,
+          selectionReason: `Best semantic match (score ${pick.score}) for event_type="${tmpl.event_type}", event name="${tmpl.name}"`,
+          rejectedCandidates: pick.rejectedCandidates,
+          usedRealLocation: true,
+        };
+      } else {
+        // No open eligible location — fall back to static name
+        slotProof = {
+          slot: idx,
+          eventName: tmpl.name,
+          eventType: tmpl.event_type,
+          eventTime: dt.toISOString(),
+          chosenLocation: tmpl.location_name,
+          chosenLocationId: null,
+          chosenCategory: null,
+          operatingHours: [],
+          isOpen: null,
+          hoursReason: null,
+          score: null,
+          selectionReason: `No open eligible app location found for this event — using static fallback "${tmpl.location_name}"`,
+          rejectedCandidates: pickBestLocation(tmpl, dt, eligible) === null
+            ? eligible.map(loc => ({
+                locationId: loc.id,
+                locationName: loc.name,
+                category: loc.category,
+                rejectedReason: checkLocationOpenAt(loc, dt).reason,
+              }))
+            : [],
+          usedRealLocation: false,
+        };
+      }
+      if (slotProof) proofEntries.push(slotProof);
     }
 
     return {
@@ -291,12 +507,16 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
     eligibleCount: eligible.length,
     totalDefaultEvents: events.length,
     injectionSlots: [...injectionSlots],
-    realLocationsInjectedCount: injectedAt.length,
-    injectedAt,
+    realLocationsInjectedCount: proofEntries.filter(p => p.usedRealLocation).length,
+    staticFallbackCount: proofEntries.filter(p => !p.usedRealLocation).length,
+    proofEntries,
     summary: eligible.length > 0
-      ? `${injectedAt.length} of ${events.length} default events use a real app location (eligible: ${eligible.length} public locations from ${totalLoaded} total, ${residentialExcluded} residential excluded)`
+      ? `${proofEntries.filter(p => p.usedRealLocation).length} of ${events.length} default events use a real app location (eligible: ${eligible.length} public locations from ${totalLoaded} total, ${residentialExcluded} residential excluded)`
       : `No eligible public app locations found (${totalLoaded} total, ${residentialExcluded} residential excluded) — all defaults use static venue names`,
   };
+
+  // Expose last proof for debugging (module-level, non-blocking)
+  buildDefaultCommunityEventsWithProof._lastProof = proof;
 
   return { events, proof };
 }
