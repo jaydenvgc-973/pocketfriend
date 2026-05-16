@@ -70,11 +70,18 @@ const CATEGORIES = [
   { value: "jail_prison", label: "Jail / Prison", icon: MapPin, emoji: "🔒" },
 ];
 
-function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {} }) {
+function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {}, onLocationUpdate }) {
   const isShared = location.scope === 'shared' || location.location_type === 'shared';
   const isAdmin = currentUser?.role === 'admin';
   const canEdit = !isShared || isAdmin;
   const [expanded, setExpanded] = useState(false);
+
+  const handleUniformSave = async (updatedLocation) => {
+    await base44.entities.LocationReference.update(updatedLocation.id, {
+      correctional_attire: updatedLocation.correctional_attire,
+    });
+    onLocationUpdate?.();
+  };
   const catDef = CATEGORIES.find(c => c.value === location.category) || CATEGORIES[CATEGORIES.length - 1];
   const zones = location.zones || [];
   const totalImages = zones.reduce((sum, z) => sum + (z.image_urls?.length || 0), 0);
@@ -217,7 +224,7 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
             exit={{ height: 0, opacity: 0 }}
             className="border-t border-border overflow-hidden"
           >
-            <LocationDetailPanel location={location} characters={characters} currentUserId={currentUser?.id} currentUserEmail={currentUser?.email} />
+            <LocationDetailPanel location={location} characters={characters} currentUserId={currentUser?.id} currentUserEmail={currentUser?.email} onLocationUpdate={handleUniformSave} />
                     {isShared && !isAdmin && (
                       <div className="mx-4 mb-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
                         <p className="text-xs text-amber-400">🔒 This is a shared location. Only admins can edit it. Your characters can visit but cannot be permanently assigned here.</p>
@@ -1644,7 +1651,7 @@ export default function Locations() {
 
   const renderLocationCard = (loc) => (
     <React.Fragment key={loc.id}>
-      <LocationCard location={loc} onDelete={handleDelete} onEdit={handleEdit} characters={characters} currentUser={currentUser} />
+      <LocationCard location={loc} onDelete={handleDelete} onEdit={handleEdit} characters={characters} currentUser={currentUser} onLocationUpdate={() => queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] })} />
       {inlineEditId === loc.id && (
         <LocationForm
           key={`edit-${loc.id}`}

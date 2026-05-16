@@ -8,12 +8,14 @@
  *   - Location    → from locationResolutionEngine
  *   - Activity    → from character.current_activity
  *   - Time of day → from system clock
+ *   - Jail uniform → from jailUniformResolver (only applied when confined/staff)
  *
  * Output: { outfit, category, reason, description }
  * All consumers (image gen, narrative, profile, scene) use this single result.
  */
 
 import { resolveTargetCategory, buildOutfitPromptText } from './outfitRotationEngine.js';
+import { buildJailUniformOutfitContext } from './jailUniformResolver.js';
 
 /**
  * Build a context object from a character's current app state.
@@ -199,6 +201,13 @@ export function pickOutfitFromCloset(character, targetCategory) {
  * Safe to call from anywhere — profile, scene, chat, image gen, narrative.
  * Always reads existing app state; never writes.
  *
+ * PRIORITY:
+ * 1. Jail/prison uniform (if confined inmate or assigned staff)
+ * 2. Manual override (set today)
+ * 3. Context-based category (work, sleep, water venue, etc.)
+ * 4. Closet outfit
+ * 5. Fallback
+ *
  * @param {object} character - Full character record
  * @param {object} locationMap - Map of locationId → location record
  * @returns {{ outfit, category, reason, description, source }} resolved state
@@ -210,7 +219,18 @@ export function resolveCharacterOutfit(character, locationMap = {}) {
   const closet = character.character_closet || [];
   const hasCloset = closet.some(item => item.outfit_id);
 
-  // If manual override set today, use it as-is
+  // PRIORITY 1: Check for jail/prison uniform (confined inmate or assigned staff)
+  const currentLocationId = character.resolved_current_location_id || character.current_home_location_id;
+  const currentLocation = currentLocationId ? locationMap[currentLocationId] : null;
+
+  if (currentLocation?.category === 'jail_prison') {
+    const jailUniformOutfit = buildJailUniformOutfitContext(character, currentLocation, {});
+    if (jailUniformOutfit.source === 'jail_uniform') {
+      return jailUniformOutfit;
+    }
+  }
+
+  // PRIORITY 2: Manual override set today
   if (context.manual_override && character.current_outfit?.label) {
     return {
       outfit: character.current_outfit,
@@ -221,6 +241,7 @@ export function resolveCharacterOutfit(character, locationMap = {}) {
     };
   }
 
+  // PRIORITY 3: Context-based category
   const targetCategory = resolveCategoryFromContext(context);
 
   if (!hasCloset) {
@@ -235,6 +256,7 @@ export function resolveCharacterOutfit(character, locationMap = {}) {
     };
   }
 
+  // PRIORITY 4: Closet outfit
   const outfit = pickOutfitFromCloset(character, targetCategory);
 
   const reasonMap = {

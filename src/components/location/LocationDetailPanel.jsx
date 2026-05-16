@@ -1,8 +1,9 @@
-import { Home, Briefcase, GraduationCap, Dumbbell, ShoppingCart, Heart, User, Users, DollarSign, Clock, ArrowRight } from "lucide-react";
+import { Home, Briefcase, GraduationCap, Dumbbell, ShoppingCart, Heart, User, Users, DollarSign, Clock, ArrowRight, Shirt } from "lucide-react";
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
 import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
+import UniformsEditor from "./UniformsEditor";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -24,11 +25,17 @@ function SectionHeader({ icon: Icon, label }) {
   );
 }
 
-export default function LocationDetailPanel({ location, characters = [], allLocations = [], onResidentsChanged = null, currentUserId = null, currentUserEmail = null }) {
+export default function LocationDetailPanel({ location, characters = [], allLocations = [], onResidentsChanged = null, currentUserId = null, currentUserEmail = null, onLocationUpdate = null }) {
   const [confirmMove, setConfirmMove] = useState(null);
   const [isMoving, setIsMoving] = useState(false);
 
   if (!location) return null;
+
+  const handleUniformUpdate = (updates) => {
+    if (onLocationUpdate) {
+      onLocationUpdate({ ...location, ...updates });
+    }
+  };
 
   const cat = location.category || 'generic';
   const totalUtilities = location.utility_costs
@@ -375,6 +382,13 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
           {(location.owner_character_name || location.owner_npc_name) && (
             <DetailRow label={location.owner_role || 'operator'} value={location.owner_is_npc ? location.owner_npc_name : location.owner_character_name} />
           )}
+        </>
+      )}
+
+      {cat === 'jail_prison' && (
+        <>
+          <SectionHeader icon={Shirt} label="Facility Uniforms" />
+          <UniformsEditor location={location} onUpdate={handleUniformUpdate} />
         </>
       )}
 
