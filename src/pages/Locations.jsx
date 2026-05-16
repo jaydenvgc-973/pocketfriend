@@ -464,15 +464,18 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     enabled: !!currentUser?.email,
   });
 
-  // ALL NPCs via service-role backend (same source as Settings — catches service-created records RLS can't see)
+  // ALL NPCs via direct RLS query (same as main character list to ensure consistency)
   const { data: allNpcsRaw = [] } = useQuery({
-    queryKey: ['locationFormNpcs', currentUser?.id],
+    queryKey: ['locationFormNpcs', currentUser?.email],
     queryFn: async () => {
-      if (!currentUser?.id) return [];
-      const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      return res?.data?.npcs || [];
+      if (!currentUser?.email) return [];
+      const npcChars = await base44.entities.Character.filter({
+        owner_email: currentUser.email,
+        character_type: { $in: ['npc_fictitious', 'npc_family_member'] },
+      });
+      return npcChars.filter(c => c.status !== 'deleted' && c.status !== 'moved_away');
     },
-    enabled: !!currentUser?.id,
+    enabled: !!currentUser?.email,
   });
 
   // Merge and deduplicate into allCharacters (used by workers, owner picker, etc.)
