@@ -17,7 +17,7 @@ import TroubleshootingPanelHome from "@/components/home/TroubleshootingPanelHome
 
 import InviteOutModal from "@/components/home/InviteOutModal";
 import NPCContactPanel from "@/components/home/NPCContactPanel";
-import CommunityEventsStrip from "@/components/home/CommunityEventsStrip";
+import CommunityEventsStrip from "@/components/home/CommunityEventsStrip.jsx";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
@@ -428,7 +428,19 @@ export default function Home() {
             />
           ) : null}
 
-          {currentUser && <CommunityEventsStrip currentUser={currentUser} />}
+          {currentUser && (
+            <CommunityEventsStrip
+              currentUser={currentUser}
+              characters={[
+                ...(defaultChar ? [defaultChar] : []),
+                ...activeCustomChars,
+                ...allCharacters.filter(c =>
+                  ['npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type) &&
+                  c.status === 'active' && !c.is_test_character && !c.diagnostic_only
+                ),
+              ]}
+            />
+          )}
           
           <div>
             {showPerformanceWarning && (

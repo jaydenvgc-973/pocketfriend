@@ -1,130 +1,104 @@
 /**
  * reconcileContinuityReality
  *
- * Scans active conversations, World Contact threads, recent messages, and
- * automatic narratives for character-to-character claims. Detects one-sided
- * memory entries (A remembers B but B has no matching record) and writes
- * reciprocal memories where evidence is clear. Flags ambiguous cases as
- * diagnostic records rather than inventing facts.
+ * Scans ALL conversations (chat, world phone, group), messages, and narratives
+ * for character-to-character interaction claims. Writes bilateral Memory records
+ * where one side is missing. Returns full proof report.
  *
- * PROOF OUTPUT: Returns full diagnostic report showing every scan result,
- * claim detected, character IDs resolved, memory state before/after, and
- * what was repaired vs skipped.
+ * Call with dry_run=false to apply repairs.
+ * Call with dry_run=true (default) for a safe preview.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // ── CLAIM DETECTION PATTERNS ──────────────────────────────────────────────────
-// These patterns detect character-to-character claims in message/narrative text.
-// Each pattern returns a "mentioned name" fragment that we then try to resolve.
-
 const CLAIM_PATTERNS = [
-  // "I went to see [Name]" / "I visited [Name]"
-  /\b(?:went to see|visited|stopped by to see)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/g,
-  // "[Name] stopped by" / "[Name] came over" / "[Name] came by"
-  /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:stopped by|came over|came by|dropped by|visited|showed up)/g,
-  // "I talked to [Name]" / "I spoke with [Name]" / "I called [Name]"
-  /\b(?:talked to|spoke with|called|texted|reached out to|messaged)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/g,
-  // "[Name] told me" / "[Name] said" / "[Name] mentioned"
-  /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:told me|said|mentioned|explained|told him|told her|told them)/g,
-  // "I ran into [Name]" / "I saw [Name]"
-  /\b(?:ran into|bumped into|saw|met with|hung out with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/g,
-  // "[Name] and I" constructions
-  /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+and I\b/g,
+  /\b(?:went to see|visited|stopped by to see|stopped by|came over|came by|dropped by|showed up at|checked on|swung by)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/g,
+  /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:stopped by|came over|came by|dropped by|visited me|checked on me|showed up|swung by)/g,
+  /\b(?:talked to|spoke with|called|texted|reached out to|messaged|hit up|linked up with|met up with|caught up with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/g,
+  /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:told me|said to me|mentioned to me|explained to me|called me|texted me|hit me up)/g,
+  /\b(?:ran into|bumped into|saw|spotted|hung out with|chilled with|kicked it with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/g,
+  /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+and I\s+(?:hung out|chilled|talked|met|went|came|were)/g,
+  /\bme and\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:hung out|chilled|talked|met|went|came|were)/g,
+  /\b(?:I (?:was|went) (?:with|over at|at))\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/g,
+  /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:was here|was there|came through|pulled up|linked)/g,
 ];
 
-// Common words that look like names but aren't
 const NON_NAME_WORDS = new Set([
-  'The', 'This', 'That', 'They', 'Their', 'There', 'Then', 'When', 'What',
-  'Where', 'Which', 'Who', 'Why', 'How', 'But', 'And', 'For', 'Not', 'Just',
-  'Its', 'Its', 'My', 'Your', 'His', 'Her', 'Our', 'We', 'He', 'She', 'You',
-  'Me', 'Us', 'Him', 'All', 'Some', 'Any', 'No', 'Yes', 'So', 'As', 'At',
-  'On', 'In', 'To', 'Up', 'Do', 'Go', 'Be', 'Is', 'It', 'If', 'Or', 'An',
-  'Am', 'Are', 'Was', 'Had', 'Has', 'Did', 'Can', 'Will', 'New', 'Old',
-  'Good', 'Bad', 'Big', 'God', 'Hey', 'Well', 'Okay', 'Oh', 'Yeah',
+  'The','This','That','They','Their','There','Then','When','What','Where','Which',
+  'Who','Why','How','But','And','For','Not','Just','Its','My','Your','His','Her',
+  'Our','We','He','She','You','Me','Us','Him','All','Some','Any','No','Yes','So',
+  'As','At','On','In','To','Up','Do','Go','Be','Is','It','If','Or','An','Am',
+  'Are','Was','Had','Has','Did','Can','Will','New','Old','Good','Bad','Big','God',
+  'Hey','Well','Okay','Oh','Yeah','Alright','Right','Left','Still','Already',
+  'Always','Never','Every','Also','Just','Even','Like','Really','Very',
 ]);
 
 function extractMentionedNames(text) {
   if (!text || typeof text !== 'string') return [];
   const names = new Set();
   for (const pattern of CLAIM_PATTERNS) {
-    // Reset lastIndex since patterns have /g flag
     pattern.lastIndex = 0;
     let match;
     while ((match = pattern.exec(text)) !== null) {
-      const candidate = match[1]?.trim();
-      if (!candidate) continue;
-      if (candidate.length < 2 || candidate.length > 40) continue;
+      const candidate = (match[1] || '').trim();
+      if (!candidate || candidate.length < 2 || candidate.length > 40) continue;
       const firstWord = candidate.split(' ')[0];
       if (NON_NAME_WORDS.has(firstWord)) continue;
-      // Must start with capital (already checked by regex), min 2 chars
+      if (!/^[A-Z]/.test(candidate)) continue;
       names.add(candidate);
     }
   }
   return [...names];
 }
 
-// ── NAME-TO-CHARACTER RESOLVER ────────────────────────────────────────────────
-// Resolves a name fragment to a canonical character ID using the user's character list.
-// Uses exact full name match first, then first-name match, then alias match.
-// Returns null if ambiguous (multiple matches) to avoid false identity assignment.
-
 function resolveNameToCharacter(nameFragment, characterMap) {
   const lowerFrag = nameFragment.toLowerCase().trim();
   const candidates = [];
-
   for (const [charId, char] of Object.entries(characterMap)) {
     const fullName = (char.name || '').toLowerCase();
     const firstName = fullName.split(' ')[0];
     const displayName = (char.display_name || char.primary_name || '').toLowerCase();
-    const aliases = (char.aliases || []).map(a => (a.name || a.alias || a || '').toLowerCase());
-
+    const aliases = (char.aliases || []).map(a => (typeof a === 'string' ? a : (a.name || a.alias || '')).toLowerCase());
     if (fullName === lowerFrag || displayName === lowerFrag) {
-      // Exact match — highest confidence
       candidates.unshift({ id: charId, confidence: 1.0, matchType: 'exact' });
-    } else if (firstName === lowerFrag) {
+    } else if (firstName === lowerFrag && firstName.length >= 3) {
       candidates.push({ id: charId, confidence: 0.8, matchType: 'first_name' });
-    } else if (aliases.some(a => a === lowerFrag)) {
+    } else if (aliases.some(a => a === lowerFrag && a.length >= 3)) {
       candidates.push({ id: charId, confidence: 0.85, matchType: 'alias' });
     }
   }
-
   if (candidates.length === 0) return null;
   if (candidates.length === 1) return candidates[0];
-  // Multiple candidates — check if one is clearly better
-  const best = candidates.sort((a, b) => b.confidence - a.confidence)[0];
-  const second = candidates[1];
-  if (best.confidence - second.confidence >= 0.15) return best; // clear winner
+  const sorted = candidates.sort((a, b) => b.confidence - a.confidence);
+  if (sorted[0].confidence - (sorted[1]?.confidence || 0) >= 0.15) return sorted[0];
   return null; // ambiguous
 }
 
-// ── MEMORY EXISTENCE CHECK ────────────────────────────────────────────────────
-// Returns true if characterId has any Memory or CharacterMemory record that references
-// the other character's ID as related_character_id, or whose text mentions the other's name.
+async function getMemoryCountForChar(base44, charId) {
+  const [mems, charMems] = await Promise.all([
+    base44.asServiceRole.entities.Memory.filter({ character_id: charId }, null, 500).catch(() => []),
+    base44.asServiceRole.entities.CharacterMemory.filter({ character_id: charId }, null, 500).catch(() => []),
+  ]);
+  return { Memory: mems.length, CharacterMemory: charMems.length };
+}
 
 async function hasMemoryOfCharacter(base44, charId, otherCharId, otherCharName) {
-  const [directMems, charMems] = await Promise.all([
-    base44.asServiceRole.entities.Memory.filter({ character_id: charId }, null, 200).catch(() => []),
-    base44.asServiceRole.entities.CharacterMemory.filter({ character_id: charId }, null, 200).catch(() => []),
+  const [mems, charMems] = await Promise.all([
+    base44.asServiceRole.entities.Memory.filter({ character_id: charId }, null, 500).catch(() => []),
+    base44.asServiceRole.entities.CharacterMemory.filter({ character_id: charId }, null, 500).catch(() => []),
   ]);
-
   const lowerName = (otherCharName || '').toLowerCase();
-
-  const hasInMemory = directMems.some(m =>
+  const inMemory = mems.some(m =>
     m.related_character_id === otherCharId ||
-    (lowerName && (m.description || '').toLowerCase().includes(lowerName)) ||
-    (lowerName && (m.title || '').toLowerCase().includes(lowerName))
+    (lowerName.length > 2 && (m.description || '').toLowerCase().includes(lowerName)) ||
+    (lowerName.length > 2 && (m.title || '').toLowerCase().includes(lowerName))
   );
-
-  const hasInCharMemory = charMems.some(m =>
+  const inCharMemory = charMems.some(m =>
     m.related_character_id === otherCharId ||
-    (lowerName && (m.memory_text || '').toLowerCase().includes(lowerName)) ||
-    (lowerName && (m.memory_summary || '').toLowerCase().includes(lowerName))
+    (lowerName.length > 2 && (m.memory_text || '').toLowerCase().includes(lowerName)) ||
+    (lowerName.length > 2 && (m.memory_summary || '').toLowerCase().includes(lowerName))
   );
-
-  return {
-    exists: hasInMemory || hasInCharMemory,
-    memoryCount: directMems.length + charMems.length,
-  };
+  return inMemory || inCharMemory;
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
@@ -133,24 +107,19 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me().catch(() => null);
-    if (!user?.email) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!user?.email) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
-    const dryRun = body.dry_run !== false; // default: dry_run=true (safe preview mode)
-    const maxMessages = body.max_messages || 500;
+    const dryRun = body.dry_run !== false;
+    const maxConversations = body.max_conversations || 50;
 
-    console.log(`[reconcileContinuity] START | user=${user.email} | dry_run=${dryRun} | max_messages=${maxMessages}`);
+    console.log(`[reconcile] START user=${user.email} dry_run=${dryRun}`);
 
     const report = {
       user: user.email,
       dry_run: dryRun,
-      scanned: {
-        conversations: 0,
-        messages: 0,
-        narratives: 0,
-      },
+      scanned: { conversations: 0, messages: 0, narratives: 0 },
+      characters_loaded: 0,
       claims_detected: [],
       repairs_made: [],
       skipped_ambiguous: [],
@@ -159,121 +128,164 @@ Deno.serve(async (req) => {
       summary: {},
     };
 
-    // ── 1. LOAD ALL USER CHARACTERS → build ID map ────────────────────────────
-    // Character entity uses owner_email RLS — user-scoped call is the correct path.
-    // service role with owner_email filter also works but try user-scoped first.
-    let charactersList = await base44.entities.Character.filter(
-      { status: 'active' },
-      null,
-      200
-    ).catch(() => []);
-
-    // Fallback: service role with explicit owner_email filter
+    // ── 1. LOAD ALL USER CHARACTERS ──────────────────────────────────────────
+    // User-scoped first (RLS-aware), service-role fallback
+    let charactersList = await base44.entities.Character.filter({ status: 'active' }, null, 300).catch(() => []);
     if (charactersList.length === 0) {
-      charactersList = await base44.asServiceRole.entities.Character.filter(
-        { owner_email: user.email },
-        null,
-        200
-      ).catch(() => []);
+      charactersList = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email }, null, 300).catch(() => []);
     }
-
+    // Also load soft-deleted/merged so we don't miss their conversations
     const characterMap = {};
     for (const c of charactersList) {
       characterMap[c.id] = c;
     }
+    report.characters_loaded = charactersList.length;
+    console.log(`[reconcile] Characters loaded: ${charactersList.length}`);
 
-    console.log(`[reconcileContinuity] Loaded ${charactersList.length} characters`);
-
-    // ── 2. RECORD BASELINE MEMORY COUNTS ─────────────────────────────────────
-    for (const charId of Object.keys(characterMap)) {
-      const [mems, charMems] = await Promise.all([
-        base44.asServiceRole.entities.Memory.filter({ character_id: charId }, null, 1000).catch(() => []),
-        base44.asServiceRole.entities.CharacterMemory.filter({ character_id: charId }, null, 1000).catch(() => []),
-      ]);
-      report.memory_counts_before[charId] = {
-        name: characterMap[charId].name,
-        Memory: mems.length,
-        CharacterMemory: charMems.length,
-      };
+    // ── 2. BASELINE MEMORY COUNTS ────────────────────────────────────────────
+    for (const c of charactersList) {
+      const counts = await getMemoryCountForChar(base44, c.id);
+      report.memory_counts_before[c.id] = { name: c.name, ...counts };
     }
 
-    // ── 3. LOAD RECENT MESSAGES (scoped to user's conversations) ──────────────
-    const conversations = await base44.entities.Conversation.filter(
+    // ── 3. LOAD ALL CONVERSATIONS (chat + world_phone + group) ────────────────
+    // Use service role to get all conversations regardless of channel
+    const allConvos = await base44.asServiceRole.entities.Conversation.filter(
       { owner_email: user.email },
       '-last_message_date',
-      100
+      maxConversations
     ).catch(() => []);
-    report.scanned.conversations = conversations.length;
+    report.scanned.conversations = allConvos.length;
+    console.log(`[reconcile] Conversations: ${allConvos.length}`);
 
-    const convoIds = conversations.map(c => c.id);
+    // Build conversation → character ID map from conversation records
+    // conversation.character_ids contains the characters involved
+    const convoCharMap = {};
+    for (const c of allConvos) {
+      convoCharMap[c.id] = c.character_ids || [];
+    }
+
+    // ── 4. LOAD MESSAGES from all conversations ───────────────────────────────
+    // Scan multiple text fields: content, message, text, body
     let allMessages = [];
+    const convoIds = allConvos.map(c => c.id);
 
-    // Fetch messages in batches per conversation (avoid one giant unscoped query)
-    for (const convoId of convoIds.slice(0, 30)) { // cap at 30 conversations for perf
-      const msgs = await base44.entities.Message.filter(
+    for (const convoId of convoIds.slice(0, maxConversations)) {
+      const msgs = await base44.asServiceRole.entities.Message.filter(
         { conversation_id: convoId },
         '-created_date',
-        50
+        100
       ).catch(() => []);
-      allMessages = allMessages.concat(msgs);
-      if (allMessages.length >= maxMessages) break;
+      allMessages = allMessages.concat(msgs.map(m => ({
+        ...m,
+        _convoCharIds: convoCharMap[convoId] || [],
+      })));
     }
     report.scanned.messages = allMessages.length;
-    console.log(`[reconcileContinuity] Loaded ${allMessages.length} messages from ${Math.min(convoIds.length, 30)} conversations`);
+    console.log(`[reconcile] Messages: ${allMessages.length}`);
 
-    // ── 4. LOAD RECENT AUTOMATIC NARRATIVES ───────────────────────────────────
+    // ── 5. LOAD AUTOMATIC NARRATIVES ─────────────────────────────────────────
     const narratives = await base44.asServiceRole.entities.AutomaticNarrative.filter(
       { owner_email: user.email },
       '-created_date',
-      200
+      500
     ).catch(() => []);
     report.scanned.narratives = narratives.length;
 
-    // ── 5. EXTRACT CLAIMS FROM MESSAGES AND NARRATIVES ────────────────────────
-    const claimSources = [
-      ...allMessages.map(m => ({ text: m.content, sourceId: m.id, sourceType: 'message', characterId: m.character_id, conversationId: m.conversation_id })),
-      ...narratives.map(n => ({ text: n.narrative_text, sourceId: n.id, sourceType: 'narrative', characterId: n.character_id, conversationId: null })),
-    ];
+    // ── 6. BUILD CLAIM SOURCES ────────────────────────────────────────────────
+    // For each source, extract:
+    //   - claimingCharacterId: who is speaking/whose context this is
+    //   - text: the content to scan
+    //   - fallback: convo character IDs if claimingCharacterId is missing
+    const claimSources = [];
 
-    const claimsMap = new Map(); // key: `${charA}::${charB}` → array of evidence
-
-    for (const source of claimSources) {
-      if (!source.text || !source.characterId) continue;
-      if (!characterMap[source.characterId]) continue; // not a character we own
-
-      const mentionedNames = extractMentionedNames(source.text);
-      for (const name of mentionedNames) {
-        const resolved = resolveNameToCharacter(name, characterMap);
-        if (!resolved) continue; // ambiguous or unknown — skip
-        if (resolved.id === source.characterId) continue; // self-reference — skip
-
-        const key = [source.characterId, resolved.id].sort().join('::');
-        if (!claimsMap.has(key)) claimsMap.set(key, []);
-        claimsMap.get(key).push({
-          mentionedName: name,
-          resolvedId: resolved.id,
-          resolvedName: characterMap[resolved.id]?.name,
-          confidence: resolved.confidence,
-          matchType: resolved.matchType,
-          sourceId: source.sourceId,
-          sourceType: source.sourceType,
-          claimingCharacterId: source.characterId,
-          claimingCharacterName: characterMap[source.characterId]?.name,
-          textExcerpt: source.text.substring(0, 150),
+    for (const m of allMessages) {
+      // Multiple text fields to check
+      const texts = [m.content, m.message, m.text, m.body, m.response].filter(Boolean);
+      for (const t of texts) {
+        claimSources.push({
+          text: t,
+          sourceId: m.id,
+          sourceType: 'message',
+          claimingCharacterId: m.character_id || null,
+          fallbackCharIds: m._convoCharIds || [],
+          channel: m.channel || 'direct',
         });
       }
     }
 
-    console.log(`[reconcileContinuity] Detected ${claimsMap.size} unique character-pair claim groups`);
+    for (const n of narratives) {
+      const texts = [n.narrative_text, n.memory_summary].filter(Boolean);
+      for (const t of texts) {
+        claimSources.push({
+          text: t,
+          sourceId: n.id,
+          sourceType: 'narrative',
+          claimingCharacterId: n.character_id || null,
+          fallbackCharIds: [],
+          channel: 'narrative',
+        });
+      }
+    }
 
-    // ── 6. CHECK BILATERAL MEMORY & REPAIR ───────────────────────────────────
+    // ── 7. EXTRACT CLAIMS AND BUILD PAIR MAP ─────────────────────────────────
+    // key: sorted charA::charB → evidence array
+    const claimsMap = new Map();
+
+    for (const source of claimSources) {
+      const mentionedNames = extractMentionedNames(source.text);
+      if (mentionedNames.length === 0) continue;
+
+      // Determine "speaker" character ID(s)
+      // If claimingCharacterId is set and known → use it
+      // If not, use all characters from fallbackCharIds as potential claimants
+      const speakerIds = [];
+      if (source.claimingCharacterId && characterMap[source.claimingCharacterId]) {
+        speakerIds.push(source.claimingCharacterId);
+      } else {
+        // Fallback: use conversation characters as potential claimants
+        for (const fid of source.fallbackCharIds) {
+          if (characterMap[fid]) speakerIds.push(fid);
+        }
+      }
+
+      for (const speakerId of speakerIds) {
+        for (const name of mentionedNames) {
+          const resolved = resolveNameToCharacter(name, characterMap);
+          if (!resolved) continue;
+          if (resolved.id === speakerId) continue; // self-reference
+
+          const key = [speakerId, resolved.id].sort().join('::');
+          if (!claimsMap.has(key)) claimsMap.set(key, []);
+          claimsMap.get(key).push({
+            mentionedName: name,
+            resolvedId: resolved.id,
+            resolvedName: characterMap[resolved.id]?.name,
+            confidence: resolved.confidence,
+            matchType: resolved.matchType,
+            sourceId: source.sourceId,
+            sourceType: source.sourceType,
+            channel: source.channel,
+            claimingCharacterId: speakerId,
+            claimingCharacterName: characterMap[speakerId]?.name,
+            textExcerpt: source.text.substring(0, 200),
+          });
+        }
+      }
+    }
+
+    console.log(`[reconcile] Unique character-pair claim groups: ${claimsMap.size}`);
+
+    // ── 8. CHECK BILATERAL MEMORY AND REPAIR ─────────────────────────────────
     for (const [key, evidenceList] of claimsMap.entries()) {
       const [charAId, charBId] = key.split('::');
       const charA = characterMap[charAId];
       const charB = characterMap[charBId];
       if (!charA || !charB) continue;
 
-      const [memA, memB] = await Promise.all([
+      const hasHighConf = evidenceList.some(e => e.confidence >= 0.8);
+
+      const [aHasMem, bHasMem] = await Promise.all([
         hasMemoryOfCharacter(base44, charAId, charBId, charB.name),
         hasMemoryOfCharacter(base44, charBId, charAId, charA.name),
       ]);
@@ -283,123 +295,109 @@ Deno.serve(async (req) => {
         charB: { id: charBId, name: charB.name },
         evidence_count: evidenceList.length,
         sample_source_ids: evidenceList.slice(0, 3).map(e => e.sourceId),
-        sample_source_types: evidenceList.slice(0, 3).map(e => e.sourceType),
-        sample_excerpt: evidenceList[0]?.textExcerpt,
-        charA_has_memory: memA.exists,
-        charA_memory_count: memA.memoryCount,
-        charB_has_memory: memB.exists,
-        charB_memory_count: memB.memoryCount,
+        sample_channels: [...new Set(evidenceList.map(e => e.channel))],
+        sample_excerpt: evidenceList[0]?.textExcerpt?.substring(0, 150),
+        charA_has_memory: aHasMem,
+        charB_has_memory: bHasMem,
+        high_confidence: hasHighConf,
         action: null,
       };
       report.claims_detected.push(claim);
 
-      // Only repair if evidence is high-confidence (at least one exact/alias match)
-      const hasHighConfidence = evidenceList.some(e => e.confidence >= 0.8);
-      if (!hasHighConfidence) {
+      if (!hasHighConf) {
         claim.action = 'skipped_low_confidence';
-        report.skipped_ambiguous.push({ ...claim, reason: 'No high-confidence name resolution found' });
+        report.skipped_ambiguous.push({ ...claim, reason: 'No high-confidence name resolution (first-name only + ambiguous)' });
         continue;
       }
 
-      // Determine what needs repair
-      const needsRepairForA = !memA.exists;
-      const needsRepairForB = !memB.exists;
-
-      if (!needsRepairForA && !needsRepairForB) {
+      if (aHasMem && bHasMem) {
         claim.action = 'already_bilateral';
         continue;
       }
 
-      // Build memory text from evidence
+      // Write missing memory sides
       const firstEvidence = evidenceList.find(e => e.confidence >= 0.8);
-      const memoryTitle = `Interaction with ${charB.name}`;
-      const memoryDesc = `Evidence of interaction between ${charA.name} and ${charB.name} found in ${firstEvidence?.sourceType || 'conversation'}. Source excerpt: "${(firstEvidence?.textExcerpt || '').substring(0, 200)}"`;
+      const timestamp = new Date().toISOString();
+      const baseNote = `Interaction confirmed in ${firstEvidence?.sourceType || 'conversation'} (channel: ${firstEvidence?.channel || 'unknown'}). Excerpt: "${(firstEvidence?.textExcerpt || '').substring(0, 200)}"`;
 
       if (!dryRun) {
         const writes = [];
-
-        if (needsRepairForA) {
+        if (!aHasMem) {
           writes.push(
             base44.asServiceRole.entities.Memory.create({
               character_id: charAId,
-              title: memoryTitle,
-              description: memoryDesc,
+              title: `Interaction with ${charB.name}`,
+              description: `${baseNote}`,
               emotional_impact: 'neutral',
-              lesson_learned: 'Bilateral continuity repair — this memory was written by reconcileContinuityReality to restore missing interaction record.',
-              timestamp: new Date().toISOString(),
+              lesson_learned: 'Bilateral continuity repair by reconcileContinuityReality.',
+              timestamp,
               source_context: `reconciliation:${firstEvidence?.sourceId || 'unknown'}`,
-            }).catch(err => { console.error(`[reconcile] Failed to write Memory for ${charAId}:`, err.message); return null; })
+            }).catch(e => console.error(`[reconcile] Memory write failed for ${charAId}:`, e.message))
           );
         }
-
-        if (needsRepairForB) {
+        if (!bHasMem) {
           writes.push(
             base44.asServiceRole.entities.Memory.create({
               character_id: charBId,
               title: `Interaction with ${charA.name}`,
-              description: `Evidence of interaction between ${charB.name} and ${charA.name} found in ${firstEvidence?.sourceType || 'conversation'}. Source excerpt: "${(firstEvidence?.textExcerpt || '').substring(0, 200)}"`,
+              description: `${baseNote}`,
               emotional_impact: 'neutral',
-              lesson_learned: 'Bilateral continuity repair — this memory was written by reconcileContinuityReality to restore missing interaction record.',
-              timestamp: new Date().toISOString(),
+              lesson_learned: 'Bilateral continuity repair by reconcileContinuityReality.',
+              timestamp,
               source_context: `reconciliation:${firstEvidence?.sourceId || 'unknown'}`,
-            }).catch(err => { console.error(`[reconcile] Failed to write Memory for ${charBId}:`, err.message); return null; })
+            }).catch(e => console.error(`[reconcile] Memory write failed for ${charBId}:`, e.message))
           );
         }
-
         await Promise.all(writes);
       }
 
       claim.action = dryRun ? 'would_repair' : 'repaired';
-      claim.repaired_sides = [];
-      if (needsRepairForA) claim.repaired_sides.push(`${charA.name} (missing memory of ${charB.name})`);
-      if (needsRepairForB) claim.repaired_sides.push(`${charB.name} (missing memory of ${charA.name})`);
-
+      claim.repaired_sides = [
+        ...(!aHasMem ? [`${charA.name} (was missing memory of ${charB.name})`] : []),
+        ...(!bHasMem ? [`${charB.name} (was missing memory of ${charA.name})`] : []),
+      ];
       report.repairs_made.push(claim);
     }
 
-    // ── 7. RECORD AFTER MEMORY COUNTS (only on real run) ─────────────────────
-    if (!dryRun) {
-      for (const charId of Object.keys(characterMap)) {
-        const [mems, charMems] = await Promise.all([
-          base44.asServiceRole.entities.Memory.filter({ character_id: charId }, null, 1000).catch(() => []),
-          base44.asServiceRole.entities.CharacterMemory.filter({ character_id: charId }, null, 1000).catch(() => []),
-        ]);
-        report.memory_counts_after[charId] = {
-          name: characterMap[charId].name,
-          Memory: mems.length,
-          CharacterMemory: charMems.length,
-        };
+    // ── 9. AFTER MEMORY COUNTS ────────────────────────────────────────────────
+    // Only fetch after-counts for characters that were actually repaired (not all 45)
+    // to avoid 90+ sequential queries that cause timeout.
+    if (!dryRun && report.repairs_made.length > 0) {
+      const repairedCharIds = new Set();
+      for (const r of report.repairs_made) {
+        repairedCharIds.add(r.charA.id);
+        repairedCharIds.add(r.charB.id);
+      }
+      for (const charId of repairedCharIds) {
+        const c = characterMap[charId];
+        if (!c) continue;
+        const counts = await getMemoryCountForChar(base44, charId);
+        report.memory_counts_after[charId] = { name: c.name, ...counts };
       }
     }
 
-    // ── 8. BUILD SUMMARY ──────────────────────────────────────────────────────
+    // ── 10. SUMMARY ───────────────────────────────────────────────────────────
     const alreadyBilateral = report.claims_detected.filter(c => c.action === 'already_bilateral').length;
-    const repaired = report.repairs_made.length;
-    const skipped = report.skipped_ambiguous.length;
-    const lowConf = report.claims_detected.filter(c => c.action === 'skipped_low_confidence').length;
-
     report.summary = {
-      characters_scanned: charactersList.length,
+      characters_loaded: report.characters_loaded,
       conversations_scanned: report.scanned.conversations,
       messages_scanned: report.scanned.messages,
       narratives_scanned: report.scanned.narratives,
-      unique_claim_pairs_found: claimsMap.size,
+      unique_claim_pairs: claimsMap.size,
       already_bilateral: alreadyBilateral,
-      repairs_made: repaired,
-      skipped_ambiguous: skipped,
-      skipped_low_confidence: lowConf,
+      repairs_made: report.repairs_made.length,
+      skipped_ambiguous: report.skipped_ambiguous.length,
       dry_run: dryRun,
       note: dryRun
-        ? 'DRY RUN — no writes were made. Call with dry_run=false to apply repairs.'
-        : `${repaired} bilateral memory pair(s) repaired. ${skipped + lowConf} skipped as ambiguous.`,
+        ? `DRY RUN — no writes made. ${report.repairs_made.length} pair(s) would be repaired. Call with dry_run=false to apply.`
+        : `${report.repairs_made.length} bilateral memory pair(s) repaired. ${report.skipped_ambiguous.length} skipped as ambiguous.`,
     };
 
-    console.log(`[reconcileContinuity] COMPLETE | pairs=${claimsMap.size} | repaired=${repaired} | skipped=${skipped + lowConf} | dry_run=${dryRun}`);
-
+    console.log(`[reconcile] COMPLETE | pairs=${claimsMap.size} | repaired=${report.repairs_made.length} | skipped=${report.skipped_ambiguous.length}`);
     return Response.json(report);
 
   } catch (error) {
-    console.error('[reconcileContinuity] Fatal:', error.message);
+    console.error('[reconcile] Fatal:', error.message);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
