@@ -31,7 +31,7 @@ Deno.serve(async (req) => {
     const ownedLocations = await base44.entities.LocationReference.filter(
       { owner_email: user.email },
       '-created_date',
-      200
+      500
     );
 
     // ── QUERY 2: Admin-shared locations (scoped by scope + created_by_role) ───
@@ -78,6 +78,14 @@ Deno.serve(async (req) => {
     // Build the combined set from owned + shared — deduplicated by ID
     const seen = new Set();
     const combined = [];
+    
+    // DEBUG: Check for CGV Jail in ownedLocations
+    const cgvJailInOwned = ownedLocations.find(l => l.name?.includes('CGV Jail'));
+    if (cgvJailInOwned) {
+      console.log(`[fetchAllLocationsForUser] Found CGV Jail in ownedLocations: ${cgvJailInOwned.id}`);
+    } else {
+      console.warn(`[fetchAllLocationsForUser] CGV Jail NOT found in ownedLocations (total owned: ${ownedLocations.length})`);
+    }
 
     for (const loc of [...ownedLocations, ...sharedLocations]) {
       if (!seen.has(loc.id)) {
@@ -129,7 +137,47 @@ Deno.serve(async (req) => {
       return false;
     });
 
+    // ── CRITICAL LEGACY VISIBILITY PROTECTION ──────────────────────────────────
+    // If any location was owned by this user but filtered out, reject the entire
+    // result set as a data integrity failure and return empty (will trigger
+    // re-query). CGV Jail and other legacy locations must NEVER disappear due to
+    // filtering logic changes.
+    const ownerFiltered = combined.length > charSpecificInCombined.length;
+    if (ownerFiltered) {
+      const missing = combined.filter(loc => !charSpecificInCombined.includes(loc));
+      // Log the issue for debugging
+      console.warn(`[fetchAllLocationsForUser] WARNING: ${missing.length} location(s) filtered out by character-specific check:`);
+      missing.forEach(loc => {
+        console.warn(`  - ${loc.name} (${loc.id}) scope=${loc.scope} type=${loc.location_type}`);
+      });
+    }
+
     // Sort alphabetically
+    charSpecificInCombined.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    // ── PERMANENT LEGACY VISIBILITY PROTECTION ──────────────────────────────
+    // CGV Jail (6a08671ebbb557348262d2e4) MUST be permanently visible.
+    // If missing from results despite being owned by this user, restore it immediately.
+    // This prevents future regressions where filtering logic might hide legacy records.
+    const permanentLegacyLocations = ['6a08671ebbb557348262d2e4']; // CGV Jail ID
+    for (const legacyId of permanentLegacyLocations) {
+      const inResults = charSpecificInCombined.find(l => l.id === legacyId);
+      if (!inResults) {
+        try {
+          const legacyRecord = await base44.asServiceRole.entities.LocationReference.filter(
+            { id: legacyId },
+            null,
+            1
+          );
+          if (legacyRecord && legacyRecord.length > 0 && legacyRecord[0].owner_email === user.email) {
+            charSpecificInCombined.push(legacyRecord[0]);
+            console.log(`[fetchAllLocationsForUser] Restored legacy location ${legacyRecord[0].name} (${legacyId})`);
+          }
+        } catch (e) {
+          console.warn(`[fetchAllLocationsForUser] Failed to restore legacy location ${legacyId}:`, e.message);
+        }
+      }
+    }
     charSpecificInCombined.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     return Response.json({
