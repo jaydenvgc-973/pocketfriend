@@ -1077,7 +1077,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             </div>
           )}
 
-          {/* Add workers selector */}
+          {/* Add workers selector — card-style rows with avatars, no checkboxes */}
           <div>
             <label className="text-xs text-muted-foreground mb-2 block">Add Workers</label>
             <GroupedCharacterSelector

@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from "react";
-import { Search, ChevronDown } from "lucide-react";
+import { Search, Check } from "lucide-react";
+import CharacterAvatar from "@/components/chat/CharacterAvatar";
 
 /**
- * Grouped character selector showing active_created, npc_fictitious, npc_family_member
- * Sorted alphabetically within each group.
+ * Grouped character selector with avatars (no checkboxes).
+ * Matches TravelCharacterSelector pattern: click row to select/deselect.
  */
 export default function GroupedCharacterSelector({
   allCharacters = [],
@@ -12,68 +13,70 @@ export default function GroupedCharacterSelector({
   placeholder = "Search characters...",
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [expandedGroups, setExpandedGroups] = useState({
-    active_created: true,
-    npc_fictitious: true,
-    npc_family_member: true,
-  });
 
   // Group and sort characters
-  const grouped = useMemo(() => {
-    const groups = {
-      active_created: [],
-      npc_fictitious: [],
-      npc_family_member: [],
-    };
+  const { activeCreated, npcFictitious, npcFamily } = useMemo(() => {
+    const active = allCharacters
+      .filter(c => (c.character_type || "active_created_character") === "active_created_character")
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    
+    const fictitious = allCharacters
+      .filter(c => c.character_type === "npc_fictitious")
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    
+    const family = allCharacters
+      .filter(c => c.character_type === "npc_family_member")
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
-    allCharacters.forEach((char) => {
-      const type = char.character_type || "active_created_character";
-      if (type === "active_created_character") {
-        groups.active_created.push(char);
-      } else if (type === "npc_fictitious") {
-        groups.npc_fictitious.push(char);
-      } else if (type === "npc_family_member") {
-        groups.npc_family_member.push(char);
-      }
-    });
-
-    // Sort each group alphabetically
-    Object.keys(groups).forEach((key) => {
-      groups[key].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    });
-
-    return groups;
+    return { activeCreated: active, npcFictitious: fictitious, npcFamily: family };
   }, [allCharacters]);
 
-  // Filter by search
-  const filtered = useMemo(() => {
-    if (!searchQuery.trim()) return grouped;
+  // Filter by search across all groups
+  const q = searchQuery.toLowerCase();
+  const filterChars = (chars) =>
+    chars.filter(c => (c.name || "").toLowerCase().includes(q));
 
-    const q = searchQuery.toLowerCase();
-    const filtered = {};
-    Object.keys(grouped).forEach((groupKey) => {
-      filtered[groupKey] = grouped[groupKey].filter((char) =>
-        (char.name || "").toLowerCase().includes(q)
-      );
-    });
-    return filtered;
-  }, [grouped, searchQuery]);
+  const filteredActive = filterChars(activeCreated);
+  const filteredFictitious = filterChars(npcFictitious);
+  const filteredFamily = filterChars(npcFamily);
 
-  const toggleGroup = (groupKey) => {
-    setExpandedGroups((prev) => ({
-      ...prev,
-      [groupKey]: !prev[groupKey],
-    }));
-  };
+  const renderCharRow = (char) => {
+    const isSelected = selectedIds.includes(char.id);
+    const charTypeName =
+      char.character_type === "active_created_character"
+        ? "Active Created"
+        : char.character_type === "npc_fictitious"
+        ? "NPC Fictitious"
+        : "NPC Family Member";
 
-  const groupLabels = {
-    active_created: "Active Created Characters",
-    npc_fictitious: "NPC Fictitious",
-    npc_family_member: "NPC Family Members",
+    return (
+      <button
+        key={char.id}
+        onClick={() => onSelect(char.id, !isSelected)}
+        className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
+          isSelected
+            ? "bg-primary/10 border-primary/40"
+            : "bg-card border-border hover:border-primary/30"
+        }`}
+      >
+        <CharacterAvatar character={char} size="md" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-foreground">{char.name}</p>
+          <p className="text-xs text-muted-foreground">{charTypeName}</p>
+        </div>
+        <div
+          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+            isSelected ? "bg-primary border-primary" : "border-border"
+          }`}
+        >
+          {isSelected && <Check className="w-3.5 h-3.5 text-white" />}
+        </div>
+      </button>
+    );
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
         <input
@@ -85,71 +88,45 @@ export default function GroupedCharacterSelector({
         />
       </div>
 
-      <div className="space-y-2 max-h-80 overflow-y-auto">
-        {Object.keys(filtered).map((groupKey) => {
-          const chars = filtered[groupKey];
-          if (chars.length === 0) return null;
-
-          const isExpanded = expandedGroups[groupKey];
-
-          return (
-            <div key={groupKey} className="border border-border/50 rounded-lg overflow-hidden">
-              <button
-                onClick={() => toggleGroup(groupKey)}
-                className="w-full flex items-center gap-2 px-3 py-2 bg-secondary/40 hover:bg-secondary/60 transition-colors text-xs font-medium text-foreground"
-              >
-                <ChevronDown
-                  className={`w-3.5 h-3.5 transition-transform ${
-                    isExpanded ? "rotate-0" : "-rotate-90"
-                  }`}
-                />
-                {groupLabels[groupKey]} ({chars.length})
-              </button>
-
-              {isExpanded && (
-                <div className="bg-card/40 space-y-0 border-t border-border/20">
-                  {chars.map((char) => {
-                    const isSelected = selectedIds.includes(char.id);
-                    return (
-                      <button
-                        key={char.id}
-                        onClick={() => onSelect(char.id, !isSelected)}
-                        className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors border-b border-border/10 last:border-b-0 ${
-                          isSelected
-                            ? "bg-primary/10 text-primary"
-                            : "hover:bg-secondary/30 text-foreground"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => {}}
-                          className="w-4 h-4 rounded accent-primary cursor-pointer"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{char.name}</p>
-                          <p className="text-xs text-muted-foreground capitalize">
-                            {char.character_type === "active_created_character"
-                              ? "Active Created"
-                              : char.character_type === "npc_fictitious"
-                              ? "NPC Fictitious"
-                              : "NPC Family Member"}
-                          </p>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {Object.values(filtered).every((group) => group.length === 0) && (
-          <div className="text-center py-4">
-            <p className="text-xs text-muted-foreground">No characters found</p>
+      <div className="space-y-4 max-h-80 overflow-y-auto">
+        {/* Active Created Characters */}
+        {filteredActive.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
+              Active Created Characters
+            </p>
+            <div className="space-y-2">{filteredActive.map(renderCharRow)}</div>
           </div>
         )}
+
+        {/* NPC Fictitious */}
+        {filteredFictitious.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
+              NPC Fictitious
+            </p>
+            <div className="space-y-2">{filteredFictitious.map(renderCharRow)}</div>
+          </div>
+        )}
+
+        {/* NPC Family Members */}
+        {filteredFamily.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
+              NPC Family Members
+            </p>
+            <div className="space-y-2">{filteredFamily.map(renderCharRow)}</div>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {filteredActive.length === 0 &&
+          filteredFictitious.length === 0 &&
+          filteredFamily.length === 0 && (
+            <p className="text-xs text-muted-foreground text-center py-4">
+              No characters found
+            </p>
+          )}
       </div>
     </div>
   );
