@@ -247,16 +247,20 @@ export default function Scene() {
 
   // Workers: ONLY if they have a valid resolved presence at this location (not just assignment)
   // HARD RULE: isCharacterAtWork checks schedule; PLUS we require resolved presence if set
-  const workerCharacters = location
-    ? characters.filter(c => {
-        if (characterIds.includes(c.id)) return false;
-        if (isCharacterAsleep(c)) return false;
-        if (!isCharacterAtWork(c, location)) return false;
-        // If resolved_current_location_id is set to somewhere else, they are NOT here
-        if (c.resolved_current_location_id && c.resolved_current_location_id !== locationId) return false;
-        return true;
-      })
-    : [];
+  const workerCharacters = (() => {
+    if (!location) return [];
+    const onShift = characters.filter(c => {
+      if (characterIds.includes(c.id)) return false;
+      if (isCharacterAsleep(c)) return false;
+      if (!isCharacterAtWork(c, location)) return false;
+      if (c.resolved_current_location_id && c.resolved_current_location_id !== locationId) return false;
+      return true;
+    });
+    // JAIL SCENE CAP: max 4 real scheduled staff loaded into a jail/prison scene at once.
+    // Runtime display cap ONLY — does not affect assignments, payroll, or schedules.
+    if (location.is_confinement_facility || location.category === 'jail_prison') return onShift.slice(0, 4);
+    return onShift;
+  })();
 
   // VGC Towers NPC characters distributed to this location (authoritative presence)
   // These are Character entity records with resolved_current_location_id === locationId
@@ -1013,20 +1017,11 @@ export default function Scene() {
   };
 
   // Generate a focused image for food, drinks, or "show me X"
-  const generateFocusedImage = async (prompt) => {
+  const generateFocusedImage = (prompt) => {
     if (isGeneratingImage) return;
     setIsGeneratingImage(true);
-    try {
-      const result = await base44.integrations.Core.GenerateImage({
-        prompt: `${prompt} Photorealistic, high quality, close-up detail.`,
-        existing_image_urls: firstImage ? [firstImage] : undefined,
-      });
-      setSceneImage(result.url);
-    } catch {
-      // ignore
-    } finally {
-      setIsGeneratingImage(false);
-    }
+    base44.integrations.Core.GenerateImage({ prompt: `${prompt} Photorealistic, high quality, close-up detail.`, existing_image_urls: firstImage ? [firstImage] : undefined })
+      .then(r => setSceneImage(r.url)).catch(() => {}).finally(() => setIsGeneratingImage(false));
   };
 
   // Detect if a message/action should trigger an image update OR a purchase intent
