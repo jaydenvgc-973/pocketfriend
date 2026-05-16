@@ -843,7 +843,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                       c.name?.trim().toLowerCase() === fam.name?.trim().toLowerCase()
                     );
                     const resolvedAvatar = matchedChar?.avatar_url || fam.photo_url || fam.avatar_url || null;
-                    console.log(`[LOCATION-FAM] name="${fam.name}" | matchedChar=${matchedChar?.id || 'none'} | photo_url=${fam.photo_url || 'none'} | resolvedAvatar=${resolvedAvatar ? resolvedAvatar.substring(0,60) : 'INITIALS FALLBACK'}`);
                     return (
                     <div key={`fam-${idx}`} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
                       {resolvedAvatar ? (
