@@ -7,6 +7,17 @@
  * - Static slides are kept as-is with no AI replacement.
  * - Validation checks that clip_results length == selected_image_ids length.
  * - If validation fails, status is set to "failed" with validation_notes.
+ *
+ * PROVIDER ARCHITECTURE:
+ * - Default provider: Base44 GenerateVideo (always active, no identity guarantee)
+ * - Experimental provider: ComfyUI External Server (feature-flagged, requires external GPU server)
+ *   Flag: job.use_experimental_identity_animation === true
+ *   Requires secrets: COMFYUI_SERVER_URL, optionally COMFYUI_API_KEY
+ *   If flag is true but secrets are not set, fails visibly — does NOT silently fall back
+ *   and pretend identity was preserved. The diagnostic is written to validation_notes.
+ *
+ * Base44 has no local GPU runtime. ComfyUI cannot run inside Base44.
+ * The ComfyUI provider is a bridge to an external server you must host yourself.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
@@ -37,6 +48,50 @@ Deno.serve(async (req) => {
     const selectedImageUrls = job.selected_image_urls || [];
     const clipResults = [];
     const warnings = [];
+
+    // ── PROVIDER RESOLUTION ───────────────────────────────────────────────────
+    // Resolve which animation provider to use for this job.
+    // This is done ONCE per job, not per clip.
+    const useExperimentalIdentityAnimation = job.use_experimental_identity_animation === true;
+    const comfyuiServerUrl = Deno.env.get('COMFYUI_SERVER_URL') || null;
+    const comfyuiApiKey = Deno.env.get('COMFYUI_API_KEY') || null;
+
+    // Provider descriptor: { id, ready, reason }
+    let animationProvider;
+    if (!useExperimentalIdentityAnimation) {
+      animationProvider = {
+        id: 'base44_generate_video',
+        ready: true,
+        reason: 'Default Base44 GenerateVideo provider. useExperimentalIdentityAnimation=false.',
+      };
+    } else if (!comfyuiServerUrl) {
+      animationProvider = {
+        id: 'comfyui_external',
+        ready: false,
+        reason: 'COMFYUI_NOT_CONFIGURED: useExperimentalIdentityAnimation=true but COMFYUI_SERVER_URL secret is not set. ' +
+          'ComfyUI is an external GPU server that must be hosted by you (e.g. RunPod, Vast.ai, local GPU machine). ' +
+          'Base44 has no local GPU runtime — ComfyUI, AnimateDiff, Wan 2.2, IP-Adapter FaceID, and ControlNet ' +
+          'cannot run inside Base44. No identity-preserving animation was attempted. ' +
+          'All animated clips will fall back to static slides with this error recorded. ' +
+          'To enable: set COMFYUI_SERVER_URL in your dashboard secrets.',
+      };
+    } else {
+      animationProvider = {
+        id: 'comfyui_external',
+        ready: true,
+        reason: `ComfyUI external provider configured. Server: ${comfyuiServerUrl}. Bridge stub active — workflow implementation pending.`,
+      };
+    }
+
+    console.log(`[ReelJob] Animation provider: ${animationProvider.id} | ready=${animationProvider.ready} | ${animationProvider.reason}`);
+
+    // Record provider selection on the job immediately so UI can surface it
+    await base44.entities.ReelGenerationJob.update(job.id, {
+      animation_provider: animationProvider.id,
+      animation_provider_ready: animationProvider.ready,
+      animation_provider_reason: animationProvider.reason,
+      updated_at: new Date().toISOString(),
+    });
 
     // ── STEP 1: PREPARING ────────────────────────────────────────────────────
     await base44.entities.ReelGenerationJob.update(job.id, {
@@ -128,6 +183,99 @@ Deno.serve(async (req) => {
       let identityValidation = null;
 
       if (shouldAnimate && imageUrl) {
+        // ── COMFYUI EXPERIMENTAL PROVIDER BRANCH ─────────────────────────────
+        // If the experimental flag is set, attempt ComfyUI first.
+        // If ComfyUI is not configured or fails, the clip becomes a static slide
+        // with a visible diagnostic. We do NOT silently fall through to Base44
+        // GenerateVideo and claim identity was preserved — that would be dishonest.
+        if (animationProvider.id === 'comfyui_external') {
+          if (!animationProvider.ready) {
+            // Server not configured — fail visibly, do not animate
+            clipType = 'static';
+            clipStatus = 'comfyui_not_configured';
+            clipError = animationProvider.reason;
+            warnings.push(
+              `Clip ${i + 1}: ComfyUI experimental provider selected but not configured. ` +
+              `No identity-preserving animation attempted. Static slide used. ` +
+              `Diagnostic: ${animationProvider.reason}`
+            );
+          } else {
+            // Server URL exists — call the bridge stub
+            // The stub currently always returns success=false with COMFYUI_BRIDGE_STUB error
+            // until the workflow implementation is filled in.
+            // This is intentional — we must not claim success without a real result.
+            const charId = msgRecord?.character_id || null;
+            const charAppearance = charId ? characterAppearanceCache[charId] : null;
+
+            // Dynamic import is not available in Deno Deploy — inline the bridge logic directly
+            // (lib/ files cannot be imported into functions/ in this environment)
+            const bridgeResult = await (async () => {
+              if (!comfyuiServerUrl) {
+                return {
+                  success: false, videoUrl: null, error: 'COMFYUI_NOT_CONFIGURED',
+                  diagnostic: 'No COMFYUI_SERVER_URL set.',
+                };
+              }
+              // ── STUB: workflow not yet implemented ─────────────────────────
+              // Replace this return with real ComfyUI API calls when server is ready.
+              // See lib/comfyuiBridge.js for the full implementation template.
+              return {
+                success: false, videoUrl: null, error: 'COMFYUI_BRIDGE_STUB',
+                diagnostic:
+                  `ComfyUI server is configured at ${comfyuiServerUrl} but the AnimateDiff ` +
+                  `workflow bridge is not yet implemented. This is the architecture stub. ` +
+                  `Next step: implement workflow JSON + polling in this block. ` +
+                  `Source image preserved as static slide.`,
+              };
+            })();
+
+            if (bridgeResult.success && bridgeResult.videoUrl) {
+              // ComfyUI returned a video — validate identity before accepting
+              // (identity validation runs below in the shared block)
+              clipUrl = bridgeResult.videoUrl;
+              clipType = 'animated';
+              clipStatus = 'comfyui_pending_validation';
+            } else {
+              clipType = 'static';
+              clipStatus = bridgeResult.error || 'comfyui_failed';
+              clipError = bridgeResult.diagnostic;
+              warnings.push(`Clip ${i + 1} [comfyui_external]: ${bridgeResult.diagnostic}`);
+            }
+          }
+
+          // Record identity_validation as null — ComfyUI path does not run Base44 identity check
+          // unless it actually returned a video URL above
+          if (clipType !== 'animated') {
+            clipResults.push({
+              image_id: imageId,
+              image_url: imageUrl,
+              clip_url: null,
+              clip_type: 'static',
+              status: clipStatus,
+              error: clipError,
+              caption,
+              animate: shouldAnimate,
+              identity_validation: null,
+              animation_provider: animationProvider.id,
+              subject_identity: {
+                media_id: imageId,
+                source_image_url: imageUrl,
+                linked_character_id: msgRecord?.character_id || null,
+                identity_confidence: 'not_attempted',
+              },
+            });
+            const pct = 15 + Math.round(((i + 1) / selectedImageUrls.length) * 55);
+            await base44.entities.ReelGenerationJob.update(job.id, {
+              clip_results: clipResults,
+              progress_percent: pct,
+              updated_at: new Date().toISOString(),
+            });
+            continue; // skip Base44 GenerateVideo block entirely for this clip
+          }
+          // If ComfyUI returned a URL, fall through to identity validation below
+          // (the identity validation block is shared — it will validate clipUrl)
+        }
+
         // ── IDENTITY VALIDATION HELPER ────────────────────────────────────────
         // Uses vision LLM to compare the source image against the generated video's first frame.
         // Returns { preserved: bool, confidence: 'high'|'medium'|'low', reason: string }
@@ -319,6 +467,7 @@ If preserved=false, drift_detected must be true. If the video appears to show a 
         caption,
         animate: shouldAnimate,
         identity_validation: identityValidation || null,
+        animation_provider: animationProvider.id,
         // Strong identity reference metadata
         subject_identity: {
           media_id: imageId,

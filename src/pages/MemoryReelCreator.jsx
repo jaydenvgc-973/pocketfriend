@@ -968,23 +968,75 @@ export default function MemoryReelCreator() {
                 </button>
               </div>
 
+              {/* Provider diagnostic panel */}
               {(() => {
+                const provider = activeJob?.animation_provider || 'base44_generate_video';
+                const providerReady = activeJob?.animation_provider_ready !== false;
+                const providerReason = activeJob?.animation_provider_reason || null;
                 const driftRejected = clips.filter(c => c.status === 'identity_drift_rejected');
-                if (driftRejected.length === 0) return null;
+                const comfyuiNotConfigured = clips.filter(c => c.status === 'comfyui_not_configured' || c.status === 'COMFYUI_NOT_CONFIGURED');
+                const comfyuiStub = clips.filter(c => c.status === 'COMFYUI_BRIDGE_STUB' || c.status === 'comfyui_failed');
+
                 return (
-                  <div className="rounded-xl border border-amber-500/40 bg-amber-500/8 px-3 py-3 space-y-1.5">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                      <p className="text-xs font-semibold text-amber-400">
-                        {driftRejected.length} clip{driftRejected.length !== 1 ? 's' : ''} could not be animated
+                  <div className="space-y-2">
+                    {/* Provider badge */}
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/40 border border-border">
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${provider === 'comfyui_external' ? (providerReady ? 'bg-amber-400' : 'bg-zinc-500') : 'bg-blue-400'}`} />
+                      <p className="text-[10px] text-muted-foreground flex-1">
+                        Animation provider: <span className="text-foreground font-medium">
+                          {provider === 'comfyui_external' ? 'ComfyUI External (experimental)' : 'Base44 GenerateVideo (default)'}
+                        </span>
                       </p>
                     </div>
-                    <p className="text-[10px] text-amber-300/80 leading-relaxed">
-                      Animation failed because the video provider generated a different person instead of animating the source image subject. These clips were rejected and kept as static slides to preserve identity accuracy. The Memory Reel Creator requires that the original photographed person is preserved — a video showing a different face is not an acceptable result.
-                    </p>
+
+                    {/* ComfyUI not configured warning */}
+                    {(comfyuiNotConfigured.length > 0 || (provider === 'comfyui_external' && !providerReady)) && (
+                      <div className="rounded-xl border border-zinc-600/40 bg-zinc-800/30 px-3 py-3 space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-zinc-400 flex-shrink-0" />
+                          <p className="text-xs font-semibold text-zinc-300">ComfyUI server not configured</p>
+                        </div>
+                        <p className="text-[10px] text-zinc-400/80 leading-relaxed">
+                          Identity-preserving animation requires an external ComfyUI server with GPU (AnimateDiff + IP-Adapter FaceID). 
+                          Base44 has no local GPU runtime — these models cannot run inside Base44. 
+                          No identity animation was attempted. Clips are static slides.
+                          To enable: set <span className="font-mono text-zinc-300">COMFYUI_SERVER_URL</span> in your dashboard secrets.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* ComfyUI stub warning */}
+                    {comfyuiStub.length > 0 && (
+                      <div className="rounded-xl border border-zinc-600/40 bg-zinc-800/30 px-3 py-3 space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-zinc-400 flex-shrink-0" />
+                          <p className="text-xs font-semibold text-zinc-300">ComfyUI workflow not yet implemented</p>
+                        </div>
+                        <p className="text-[10px] text-zinc-400/80 leading-relaxed">
+                          A ComfyUI server URL is configured but the AnimateDiff workflow bridge is not yet filled in.
+                          This is the architecture stub phase. Clips are static slides until the workflow is implemented.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Identity drift rejection warning */}
+                    {driftRejected.length > 0 && (
+                      <div className="rounded-xl border border-amber-500/40 bg-amber-500/8 px-3 py-3 space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                          <p className="text-xs font-semibold text-amber-400">
+                            {driftRejected.length} clip{driftRejected.length !== 1 ? 's' : ''} rejected — identity drift detected
+                          </p>
+                        </div>
+                        <p className="text-[10px] text-amber-300/80 leading-relaxed">
+                          The animation provider generated a different person instead of animating the source image subject. These clips were rejected and kept as static slides. A video showing a different face is not an acceptable result.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
+
               <p className="text-[10px] text-muted-foreground/60 text-center">
                 {clips.length} image{clips.length !== 1 ? "s" : ""} · {clips.filter(c => c.clip_type === 'animated').length} animated · source-locked
               </p>
