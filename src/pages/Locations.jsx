@@ -1305,13 +1305,14 @@ export default function Locations() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: locations = [] } = useQuery({
+  const { data: locations = [], isLoading: locationsLoading } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
       const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
+    staleTime: 30000, // 30 seconds — prevents stale-cache empty flash on navigation
   });
 
   const { data: characters = [] } = useQuery({
@@ -1692,7 +1693,13 @@ export default function Locations() {
           <SavedPlaces currentUser={currentUser} onLocationSelect={() => {}} />
         ) : (
           <>
-            {locations.length === 0 && !showAddForm && (
+            {locationsLoading && (
+              <div className="text-center py-10">
+                <div className="w-6 h-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin mx-auto" />
+                <p className="text-xs text-muted-foreground mt-2">Loading locations...</p>
+              </div>
+            )}
+            {!locationsLoading && locations.length === 0 && !showAddForm && (
               <div className="text-center py-10 space-y-3">
                 <MapPin className="w-10 h-10 text-muted-foreground/40 mx-auto" />
                 <div>
