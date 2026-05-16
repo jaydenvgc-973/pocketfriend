@@ -37,8 +37,8 @@ import Scene from './pages/Scene';
 import Moments from './pages/Moments';
 import MemoryReelCreator from './pages/MemoryReelCreator';
 import Locations from './pages/Locations';
-import JailSelectorProof from './pages/JailSelectorProof';
-import JailInmateProof from './pages/JailInmateProof';
+
+
 import Finance from './pages/Finance';
 import EditCharacterTraits from './pages/EditCharacterTraits';
 import EditCharacterReligion from './pages/EditCharacterReligion';
@@ -97,8 +97,8 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/moments" element={<Moments />} />
       <Route path="/memory-reel" element={<MemoryReelCreator />} />
       <Route path="/locations" element={<Locations />} />
-      <Route path="/jail-proof" element={<JailSelectorProof />} />
-      <Route path="/jail-inmate-proof" element={<JailInmateProof />} />
+
+
       <Route path="/edit-character-relationships" element={<EditCharacterRelationships />} />
       <Route path="/edit-character-traits" element={<EditCharacterTraits />} />
       <Route path="/edit-character-religion" element={<EditCharacterReligion />} />
