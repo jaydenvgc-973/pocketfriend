@@ -429,17 +429,7 @@ export default function Home() {
           ) : null}
 
           {currentUser && (
-            <CommunityEventsStrip
-              currentUser={currentUser}
-              characters={[
-                ...(defaultChar ? [defaultChar] : []),
-                ...activeCustomChars,
-                ...allCharacters.filter(c =>
-                  ['npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type) &&
-                  c.status === 'active' && !c.is_test_character && !c.diagnostic_only
-                ),
-              ]}
-            />
+            <CommunityEventsStrip currentUser={currentUser} />
           )}
           
           <div>
