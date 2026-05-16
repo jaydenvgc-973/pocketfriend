@@ -968,6 +968,23 @@ export default function MemoryReelCreator() {
                 </button>
               </div>
 
+              {(() => {
+                const driftRejected = clips.filter(c => c.status === 'identity_drift_rejected');
+                if (driftRejected.length === 0) return null;
+                return (
+                  <div className="rounded-xl border border-amber-500/40 bg-amber-500/8 px-3 py-3 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                      <p className="text-xs font-semibold text-amber-400">
+                        {driftRejected.length} clip{driftRejected.length !== 1 ? 's' : ''} could not be animated
+                      </p>
+                    </div>
+                    <p className="text-[10px] text-amber-300/80 leading-relaxed">
+                      Animation failed because the video provider generated a different person instead of animating the source image subject. These clips were rejected and kept as static slides to preserve identity accuracy. The Memory Reel Creator requires that the original photographed person is preserved — a video showing a different face is not an acceptable result.
+                    </p>
+                  </div>
+                );
+              })()}
               <p className="text-[10px] text-muted-foreground/60 text-center">
                 {clips.length} image{clips.length !== 1 ? "s" : ""} · {clips.filter(c => c.clip_type === 'animated').length} animated · source-locked
               </p>

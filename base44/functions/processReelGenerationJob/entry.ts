@@ -125,129 +125,173 @@ Deno.serve(async (req) => {
       let clipType = 'static';
       let clipStatus = 'static';
       let clipError = null;
+      let identityValidation = null;
 
       if (shouldAnimate && imageUrl) {
+        // ── IDENTITY VALIDATION HELPER ────────────────────────────────────────
+        // Uses vision LLM to compare the source image against the generated video's first frame.
+        // Returns { preserved: bool, confidence: 'high'|'medium'|'low', reason: string }
+        async function validateIdentityPreservation(sourceImageUrl, generatedVideoUrl) {
+          try {
+            const validationResult = await base44.integrations.Core.InvokeLLM({
+              prompt: `You are a forensic identity validator for a video animation system. Your job is to determine whether the person in a SOURCE IMAGE is the SAME PERSON shown in the GENERATED VIDEO.
+
+Compare these two media items:
+1. SOURCE IMAGE: ${sourceImageUrl}
+2. GENERATED VIDEO (first frame check): ${generatedVideoUrl}
+
+Evaluate STRICTLY for identity preservation:
+- Is the face the same person? (bone structure, eyes, nose, mouth shape)
+- Is the skin tone identical or very close?
+- Is the hair color, texture, and style the same?
+- Is the body type/build consistent?
+- Is the clothing the same?
+- Is the background/setting consistent?
+
+IMPORTANT: This is NOT about artistic quality. This is about whether the VIDEO shows the SAME REAL PERSON as the SOURCE IMAGE, not a reinterpretation or recreation.
+
+Return a JSON object with:
+{
+  "preserved": true or false,
+  "confidence": "high" | "medium" | "low",
+  "face_match": true or false,
+  "skin_tone_match": true or false,
+  "hair_match": true or false,
+  "clothing_match": true or false,
+  "background_match": true or false,
+  "reason": "brief explanation of what matches or what changed",
+  "drift_detected": true or false
+}
+
+If preserved=false, drift_detected must be true. If the video appears to show a completely different person, set preserved=false and confidence=high.`,
+              file_urls: [sourceImageUrl, generatedVideoUrl],
+              response_json_schema: {
+                type: 'object',
+                properties: {
+                  preserved: { type: 'boolean' },
+                  confidence: { type: 'string' },
+                  face_match: { type: 'boolean' },
+                  skin_tone_match: { type: 'boolean' },
+                  hair_match: { type: 'boolean' },
+                  clothing_match: { type: 'boolean' },
+                  background_match: { type: 'boolean' },
+                  reason: { type: 'string' },
+                  drift_detected: { type: 'boolean' },
+                },
+              },
+            });
+            return validationResult;
+          } catch (valErr) {
+            // Validation itself failed — cannot confirm identity, treat as unverified
+            return { preserved: false, confidence: 'low', reason: `Validation error: ${valErr.message}`, drift_detected: true };
+          }
+        }
+
+        const motionOptions = [
+          'subtle chest rise-and-fall breathing, gentle eye blink, soft eyelid flutter',
+          'hair strands shift from a barely perceptible breeze, body completely still',
+          'eyes track slowly left then return forward, head micro-turns by 5 degrees',
+          'corners of mouth relax into a barely visible exhale, ambient light shimmer on skin',
+          'shoulder weight shifts 2–3 degrees, fingers rest naturally, background depth breathes',
+        ];
+        const motion = motionOptions[i % motionOptions.length];
+
+        const charId = msgRecord?.character_id || null;
+        const charAppearance = charId ? characterAppearanceCache[charId] : null;
+        const identityAnchor = charAppearance?.fingerprint
+          ? `Subject identity locked to: ${charAppearance.fingerprint}.`
+          : '';
+
+        const animPrompt = [
+          `IMAGE-TO-VIDEO: The attached image is frame 1. Do not regenerate it. Do not reinterpret it. Do not replace the person.`,
+          `The person photographed in the source image is the ONLY subject. Their face, skin tone, hair, eyes, body shape, clothing, and background must remain pixel-consistent with the source image throughout every frame of the video.`,
+          `This is NOT a creative reinterpretation. This is NOT an AI recreation. This is physical animation of the exact photographed person.`,
+          `Apply ONLY: ${motion}. These are subtle physics-based motions layered on top of the frozen source frame.`,
+          identityAnchor,
+          `FORBIDDEN: generating a new person, replacing the face, changing skin tone, changing hair, changing clothing, changing the background. Any deviation from the source image appearance is a failure.`,
+          `Output: vertical 9:16, smooth, cinematic, 4 seconds.`,
+        ].filter(Boolean).join(' ');
+
+        let identityValidation = null;
+        let attemptsMade = 0;
+
+        // ── ATTEMPT 1 ─────────────────────────────────────────────────────────
         try {
-          // SOURCE-LOCK: The source image IS the video. existing_image_urls must contain
-          // ONLY the source image as the first (and sole) entry. The video model treats
-          // the first image as the literal first frame to animate FROM.
-          // Avatar/reference goes into the text prompt as a verbal anchor — NOT as a
-          // second image, which confuses the model and causes identity replacement.
-
-          const motionOptions = [
-            'subtle chest rise-and-fall breathing, gentle eye blink, soft eyelid flutter',
-            'hair strands shift from a barely perceptible breeze, body completely still',
-            'eyes track slowly left then return forward, head micro-turns by 5 degrees',
-            'corners of mouth relax into a barely visible exhale, ambient light shimmer on skin',
-            'shoulder weight shifts 2–3 degrees, fingers rest naturally, background depth breathes',
-          ];
-          const motion = motionOptions[i % motionOptions.length];
-
-          const charId = msgRecord?.character_id || null;
-          const charAppearance = charId ? characterAppearanceCache[charId] : null;
-
-          const identityAnchor = charAppearance?.fingerprint
-            ? `Subject identity locked to: ${charAppearance.fingerprint}.`
-            : '';
-
-          // SOURCE-FRAME ANIMATION PROTOCOL:
-          // Frame 1 = the uploaded image, pixel-exact. No regeneration. No reinterpretation.
-          // The model must treat the attached image as the literal starting frame and apply
-          // ONLY physics-based motion (breathing, micro-movement) on top of existing pixels.
-          // Identity, face, clothing, background = frozen. Only motion vectors applied.
-          const animPrompt = [
-            `IMAGE-TO-VIDEO: The attached image is frame 1. Do not regenerate it. Do not reinterpret it. Do not replace the person.`,
-            `The person photographed in the source image is the ONLY subject. Their face, skin tone, hair, eyes, body shape, clothing, and background must remain pixel-consistent with the source image throughout every frame of the video.`,
-            `This is NOT a creative reinterpretation. This is NOT an AI recreation. This is physical animation of the exact photographed person.`,
-            `Apply ONLY: ${motion}. These are subtle physics-based motions layered on top of the frozen source frame.`,
-            identityAnchor,
-            `FORBIDDEN: generating a new person, replacing the face, changing skin tone, changing hair, changing clothing, changing the background, adding new characters, changing the scene. Any deviation from the source image appearance is a failure.`,
-            `Output: vertical 9:16, smooth, cinematic, 4 seconds. Memory reel style.`,
-          ].filter(Boolean).join(' ');
-
-          // ONLY the source image as existing_image_urls — this is the frame the model animates FROM.
-          // Do NOT add avatar as second reference — it confuses model identity and causes actor replacement.
           const result = await base44.integrations.Core.GenerateVideo({
             prompt: animPrompt,
             duration: 4,
             aspect_ratio: '9:16',
             existing_image_urls: [imageUrl],
           });
+          attemptsMade++;
 
           if (result?.url) {
-            clipUrl = result.url;
-            clipType = 'animated';
-            clipStatus = 'success';
-          } else {
-            // Retry once with even stronger source-frame emphasis
-            try {
+            // Validate identity before accepting
+            identityValidation = await validateIdentityPreservation(imageUrl, result.url);
+            if (identityValidation.preserved) {
+              clipUrl = result.url;
+              clipType = 'animated';
+              clipStatus = 'success';
+              console.log(`[ReelJob] Clip ${i+1}: identity PRESERVED (confidence=${identityValidation.confidence}). Accepted.`);
+            } else {
+              // Identity drifted — try once more with stronger prompt
+              console.warn(`[ReelJob] Clip ${i+1}: identity DRIFT detected on attempt 1. Reason: ${identityValidation.reason}. Retrying.`);
+              warnings.push(`Clip ${i + 1}: attempt 1 drifted identity (${identityValidation.reason}) — retrying.`);
+
               const retryPrompt = [
-                `IMAGE-TO-VIDEO RETRY: The attached image is the source frame. Do not replace the person. Do not reinterpret.`,
-                `Preserve: face, skin, hair, eyes, body, clothing, background. Apply only micro-motion: ${motion}.`,
+                `IMAGE-TO-VIDEO STRICT: The attached image IS the subject. Do NOT generate a new person. Do NOT change the face, skin color, hair, body type, or clothing.`,
+                `The subject in the output video must be visually identical to the person in the attached image — same face structure, same eyes, same nose, same mouth, same skin tone, same hair.`,
                 identityAnchor,
-                `The output video must show the exact photographed individual — not a similar person, not an AI recreation. Vertical 9:16.`,
+                `Apply only this minimal motion: ${motion}. No identity changes. No actor replacement. The photo subject must animate, not be replaced. Vertical 9:16.`,
               ].filter(Boolean).join(' ');
 
-              const retryResult = await base44.integrations.Core.GenerateVideo({
-                prompt: retryPrompt,
-                duration: 4,
-                aspect_ratio: '9:16',
-                existing_image_urls: [imageUrl],
-              });
+              let retryUrl = null;
+              try {
+                const retryResult = await base44.integrations.Core.GenerateVideo({
+                  prompt: retryPrompt,
+                  duration: 4,
+                  aspect_ratio: '9:16',
+                  existing_image_urls: [imageUrl],
+                });
+                attemptsMade++;
+                retryUrl = retryResult?.url || null;
+              } catch (_) {}
 
-              if (retryResult?.url) {
-                clipUrl = retryResult.url;
-                clipType = 'animated';
-                clipStatus = 'success_retry';
+              if (retryUrl) {
+                const retryValidation = await validateIdentityPreservation(imageUrl, retryUrl);
+                if (retryValidation.preserved) {
+                  clipUrl = retryUrl;
+                  clipType = 'animated';
+                  clipStatus = 'success_retry';
+                  identityValidation = retryValidation;
+                  console.log(`[ReelJob] Clip ${i+1}: retry identity PRESERVED. Accepted.`);
+                } else {
+                  // Both attempts drifted — fail this clip visibly, do NOT accept the video
+                  clipType = 'static';
+                  clipStatus = 'identity_drift_rejected';
+                  clipError = `Animation failed: generated video did not preserve the source person. ${retryValidation.reason}`;
+                  identityValidation = retryValidation;
+                  warnings.push(`WARN: Clip ${i + 1}: identity drift on both attempts — video rejected. The animation provider generated a different person instead of animating the source image subject. Using static slide. Details: ${retryValidation.reason}`);
+                  console.error(`[ReelJob] Clip ${i+1}: identity drift on BOTH attempts. Rejecting video. Reason: ${retryValidation.reason}`);
+                }
               } else {
+                // Retry returned no URL
                 clipType = 'static';
-                clipStatus = 'fallback_no_url';
-                warnings.push(`Clip ${i + 1}: animation returned no URL after retry — static slide used.`);
+                clipStatus = 'identity_drift_rejected';
+                clipError = `Animation failed: attempt 1 drifted identity and retry returned no video.`;
+                warnings.push(`WARN: Clip ${i + 1}: identity drift on attempt 1, retry returned no video — static slide used.`);
               }
-            } catch (retryErr) {
-              clipType = 'static';
-              clipStatus = 'fallback_no_url';
-              warnings.push(`Clip ${i + 1}: animation retry also failed — static slide used.`);
             }
+          } else {
+            clipType = 'static';
+            clipStatus = 'fallback_no_url';
+            warnings.push(`Clip ${i + 1}: animation returned no URL — static slide used.`);
           }
         } catch (err) {
-          // First attempt failed — retry with maximally minimal prompt to reduce model confusion
-          try {
-            const charId = msgRecord?.character_id || null;
-            const charAppearance = charId ? characterAppearanceCache[charId] : null;
-            const identityAnchor = charAppearance?.fingerprint ? `Person: ${charAppearance.fingerprint}.` : '';
-            const motion = ['subtle breathing motion and eye blink', 'soft ambient motion', 'gentle camera push-in'][i % 3];
-
-            const fallbackPrompt = [
-              `IMAGE-TO-VIDEO FALLBACK: Source image = frame 1. Do not generate a new person. Do not change appearance.`,
-              `Apply only physical micro-motion: ${motion}. Preserve: face, skin, hair, body, clothing, background exactly as photographed.`,
-              identityAnchor,
-              `Vertical 9:16. 4 seconds. The output must show the same individual as in the source photo.`,
-            ].filter(Boolean).join(' ');
-
-            const retryResult = await base44.integrations.Core.GenerateVideo({
-              prompt: fallbackPrompt,
-              duration: 4,
-              aspect_ratio: '9:16',
-              existing_image_urls: [imageUrl],
-            });
-
-            if (retryResult?.url) {
-              clipUrl = retryResult.url;
-              clipType = 'animated';
-              clipStatus = 'success_retry';
-            } else {
-              clipType = 'static';
-              clipStatus = 'fallback_error';
-              clipError = err.message;
-              warnings.push(`Clip ${i + 1}: animation failed after retry — static slide used (${err.message}).`);
-            }
-          } catch (_retryErr) {
-            clipType = 'static';
-            clipStatus = 'fallback_error';
-            clipError = err.message;
-            warnings.push(`Clip ${i + 1}: animation failed — static slide used (${err.message}).`);
-          }
+          clipType = 'static';
+          clipStatus = 'fallback_error';
+          clipError = err.message;
+          warnings.push(`Clip ${i + 1}: animation failed — static slide used (${err.message}).`);
         }
       } else if (shouldAnimate && !imageUrl) {
         // Missing source image — do not animate; do not invent a person
@@ -274,6 +318,7 @@ Deno.serve(async (req) => {
         error: clipError,
         caption,
         animate: shouldAnimate,
+        identity_validation: identityValidation || null,
         // Strong identity reference metadata
         subject_identity: {
           media_id: imageId,
@@ -342,6 +387,12 @@ Deno.serve(async (req) => {
         validationPassed = false;
         validationNotes.push(`FAIL: Animated clip missing source image_url reference.`);
       }
+    }
+
+    // Rule 4: identity drift rejections are flagged — not a hard fail but must be surfaced
+    const driftCount = clipResults.filter(c => c.status === 'identity_drift_rejected').length;
+    if (driftCount > 0) {
+      validationNotes.push(`WARN: ${driftCount} clip(s) rejected due to identity drift — the video provider did not preserve the source person. These clips were kept as static slides.`);
     }
 
     if (warnings.length > 0) {
