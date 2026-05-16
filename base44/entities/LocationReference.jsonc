@@ -141,15 +141,10 @@
         "school",
         "community",
         "generic",
-        "jail",
-        "prison",
-        "detention_center",
-        "correctional_facility",
-        "juvenile_detention",
-        "halfway_house",
-        "holding_cell"
+        "jail_prison"
       ],
-      "default": "generic"
+      "default": "generic",
+      "description": "Top-level category. Confinement facilities use jail_prison; venue type detail is in subtype/confinement_type."
     },
     "is_confinement_facility": {
       "type": "boolean",
@@ -166,6 +161,10 @@
         "juvenile_detention",
         "halfway_house",
         "holding_cell",
+        "confinement_facility",
+        "pretrial_detention",
+        "adult_detention",
+        "immigration_detention",
         "house_arrest_residence"
       ],
       "description": "Specific type of confinement facility. Only set when is_confinement_facility is true."
@@ -178,11 +177,11 @@
         "medium",
         "maximum"
       ],
-      "description": "Security classification of this confinement facility (only when is_confinement_facility is true)."
+      "description": "Security classification of this confinement facility."
     },
     "confinement_jurisdiction": {
       "type": "string",
-      "description": "Government body/county that operates this confinement facility (e.g. 'Cook County', 'State of Illinois')"
+      "description": "Government body/county that operates this confinement facility."
     },
     "confinement_capacity": {
       "type": "integer",
@@ -216,24 +215,78 @@
       "description": "Mandatory institutional attire for this confinement facility. Overrides character wardrobe when is_jailed is true.",
       "properties": {
         "uniform_description": {
-          "type": "string",
-          "description": "Text description of the inmate uniform (e.g. 'orange jumpsuit, white undershirt')"
+          "type": "string"
         },
         "uniform_image_url": {
-          "type": "string",
-          "description": "Reference image URL for the uniform"
+          "type": "string"
         },
         "uniform_color": {
-          "type": "string",
-          "description": "Primary color of the uniform (e.g. 'orange', 'gray', 'blue')"
+          "type": "string"
         },
         "classification_variants": {
           "type": "object",
-          "description": "Optional per-classification attire overrides (e.g. minimum_security, maximum_security, medical_unit)",
           "additionalProperties": {
             "type": "string"
           }
         }
+      }
+    },
+    "inmates": {
+      "type": "array",
+      "default": [],
+      "description": "Characters currently confined or previously confined at this facility.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "character_id": {
+            "type": "string"
+          },
+          "character_name": {
+            "type": "string"
+          },
+          "charges": {
+            "type": "string"
+          },
+          "booking_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "confinement_status": {
+            "type": "string",
+            "enum": [
+              "pretrial",
+              "sentenced",
+              "held",
+              "work_release",
+              "solitary",
+              "released"
+            ]
+          },
+          "sentence_days": {
+            "type": "integer"
+          },
+          "expected_release_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "actual_release_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "confined_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "character_id",
+          "character_name",
+          "charges",
+          "booking_date"
+        ]
       }
     },
     "subtype": {
@@ -242,7 +295,7 @@
         "type": "string"
       },
       "default": [],
-      "description": "Location subtypes (e.g. ['coffee', 'cafe'] for a coffee shop, ['park', 'outdoor'] for a park, ['bar', 'lounge'] for a bar)"
+      "description": "Location subtypes (e.g. ['coffee', 'cafe'] for a coffee shop, ['jail'] for a jail facility)"
     },
     "features": {
       "type": "array",
@@ -377,7 +430,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Keywords for event matching (e.g. ['coffee', 'espresso', 'bean'] for a coffee shop)"
+      "description": "Keywords for event matching"
     },
     "zones": {
       "type": "array",

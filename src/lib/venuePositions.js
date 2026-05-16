@@ -62,8 +62,23 @@ export const VENUE_POSITIONS = {
     'manager', 'groundskeeper', 'maintenance staff', 'recreation coordinator', 'security',
     'ranger', 'facilities attendant'
   ],
-  home: [], // homes don't have positions
-  generic: [], // generic locations don't have standard positions
+  home: [],
+  generic: [],
+  jail_prison: [
+    'warden', 'deputy warden', 'captain', 'lieutenant', 'sergeant', 'correctional officer',
+    'senior correctional officer', 'guard', 'transport officer', 'intake officer',
+    'booking officer', 'classification officer', 'case manager', 'counselor',
+    'medical staff', 'nurse', 'doctor', 'mental health clinician', 'chaplain',
+    'administrative staff', 'records clerk', 'kitchen staff', 'maintenance',
+  ],
+  government: [
+    'official', 'administrator', 'clerk', 'officer', 'detective', 'dispatcher',
+    'records clerk', 'receptionist', 'coordinator', 'manager', 'director',
+  ],
+  community: [
+    'director', 'coordinator', 'case manager', 'counselor', 'advocate', 'receptionist',
+    'volunteer coordinator', 'program staff', 'outreach worker', 'administrative assistant',
+  ],
 };
 
 /**

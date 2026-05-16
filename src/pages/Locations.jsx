@@ -19,6 +19,7 @@ import LocationDetailPanel from "@/components/location/LocationDetailPanel";
 import SavedPlaces from "@/components/location/SavedPlaces";
 import LocationDescriptionGenerator from "@/components/location/LocationDescriptionGenerator";
 import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
+import JailInmatePanel from "@/components/location/JailInmatePanel";
 import { Link } from "react-router-dom";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
@@ -367,7 +368,7 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, location
   );
 }
 
-const WORK_CATEGORIES = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government', 'community'];
+const WORK_CATEGORIES = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government', 'community', 'jail_prison'];
 const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
 function formatShift(shift) {
@@ -542,6 +543,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     worker_pay_type: editingLocation?.worker_pay_type || {},
     worker_job_titles: editingLocation?.worker_job_titles || {},
     worker_shifts: editingLocation?.worker_shifts || {},
+    inmates: editingLocation?.inmates || [],
   });
   const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
   const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
@@ -982,7 +984,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       )}
 
       {/* ── WORKERS ── */}
-      {form.location_type !== 'shared' && (form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community') && (
+      {form.location_type !== 'shared' && (form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison') && (
         <div className="space-y-3">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
           <div className="space-y-2">
@@ -1133,6 +1135,15 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             })}
           </div>
         </div>
+      )}
+
+      {/* ── INMATES (Jail/Prison only) ── */}
+      {form.category === 'jail_prison' && (
+        <JailInmatePanel
+          inmates={form.inmates || []}
+          allCharacters={allCharacters}
+          onChange={(inmates) => update('inmates', inmates)}
+        />
       )}
 
       {/* ── OWNER ── */}
@@ -1525,6 +1536,48 @@ export default function Locations() {
       if (charId.startsWith('npc__')) continue;
       base44.functions.invoke('syncLocationJobToCharacter', { locationId, characterId: charId, syncType: isEducation ? 'education' : 'work' }).catch(() => {});
     }
+
+    // ── INMATE CONFINEMENT SYNC ─────────────────────────────────────────────────
+    // For jail_prison locations, write confinement state back to each inmate's Character record.
+    if (formData.category === 'jail_prison') {
+      const inmates = formData.inmates || [];
+      for (const inmate of inmates) {
+        if (!inmate.character_id) continue;
+        const isReleased = inmate.confinement_status === 'released';
+        if (isReleased) {
+          // Clear confinement on release
+          base44.entities.Character.update(inmate.character_id, {
+            is_jailed: false,
+            incarceration_facility_id: null,
+            incarceration_facility_name: null,
+            incarceration_status: 'released',
+            resolved_current_location_id: null,
+            resolved_current_location_name: null,
+            resolved_location_type: null,
+            resolved_presence_status: null,
+            resolved_source_reason: 'released_from_confinement',
+          }).catch(() => {});
+        } else {
+          // Set/enforce confinement
+          base44.entities.Character.update(inmate.character_id, {
+            is_jailed: true,
+            incarceration_facility_id: locationId,
+            incarceration_facility_name: formData.name,
+            incarceration_status: inmate.confinement_status || 'sentenced',
+            jail_sentence_days: inmate.sentence_days || null,
+            jail_release_date: inmate.expected_release_date ? new Date(inmate.expected_release_date).toISOString() : null,
+            jailed_at: inmate.confined_at || new Date().toISOString(),
+            pending_charges: inmate.charges ? [inmate.charges] : [],
+            resolved_current_location_id: locationId,
+            resolved_current_location_name: formData.name,
+            resolved_location_type: 'incarcerated',
+            resolved_presence_status: 'incarcerated',
+            resolved_source_reason: 'confined_by_user',
+          }).catch(() => {});
+        }
+      }
+    }
+
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     setShowAddForm(false);
