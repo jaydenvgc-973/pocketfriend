@@ -4,8 +4,24 @@ import { base44 } from '@/api/base44Client';
 import { Calendar, MapPin } from 'lucide-react';
 import { buildDefaultCommunityEvents, EVENT_TYPE_ICONS } from '@/lib/defaultCommunityEvents';
 
-export default function CommunityEventsStrip({ currentUser, appLocations = [] }) {
+export default function CommunityEventsStrip({ currentUser }) {
   const scrollRef = useRef(null);
+
+  // Subscribe reactively to the locations query so this component re-renders
+  // when Home finishes loading locations. Using queryClient.getQueryData() was
+  // a non-reactive read — it read once on mount and never updated.
+  const { data: appLocations = [] } = useQuery({
+    queryKey: ['locationReferences', currentUser?.email],
+    queryFn: async () => {
+      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
+      return res?.data?.locations || [];
+    },
+    enabled: !!currentUser?.email,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
 
   // Source 1: Global/system DB-backed community events (no owner filter — system-wide)
   const { data: globalDbEvents = [] } = useQuery({
@@ -27,23 +43,28 @@ export default function CommunityEventsStrip({ currentUser, appLocations = [] })
   });
 
   const displayEvents = useMemo(() => {
-    // Debug: log eligible locations for coffeehouse matching
-    if (appLocations.length > 0) {
-      const coffeeRelated = appLocations.filter(l => {
-        const n = (l.name || '').toLowerCase();
-        return n.includes('coffee') || n.includes('café') || n.includes('cafe') || n.includes('bean') || n.includes('brew');
-      });
-      if (coffeeRelated.length > 0) {
-        console.log('[COMMUNITY_STRIP] appLocations loaded:', appLocations.length, '| coffee-eligible:', coffeeRelated.map(l => `${l.name}(${l.category})`));
-      }
-    }
     const cutoff = new Date(Date.now() - 12 * 60 * 60 * 1000);
     const seenIds = new Set();
     const merged = [];
 
-    // Layer 1: Global/system DB records
+    // Confinement name fragments — events at these locations must never appear in the community strip
+    const CONFINEMENT_NAME_FRAGMENTS = [
+      'jail', 'prison', 'detention', 'correctional', 'holding cell',
+      'juvenile detention', 'halfway house', 'cgv jail',
+    ];
+    const isConfinementVenue = (locationName) => {
+      if (!locationName) return false;
+      const lower = locationName.toLowerCase();
+      return CONFINEMENT_NAME_FRAGMENTS.some(f => lower.includes(f));
+    };
+
+    // Layer 1: Global/system DB records — skip confinement venues
     for (const e of globalDbEvents) {
       if (!e.start_date || new Date(e.start_date) < cutoff) continue;
+      if (isConfinementVenue(e.location_name)) {
+        console.warn('[COMMUNITY_STRIP] Skipped DB event with confinement venue:', e.name, '→', e.location_name);
+        continue;
+      }
       if (seenIds.has(e.id)) continue;
       seenIds.add(e.id);
       merged.push(e);
