@@ -7,7 +7,9 @@
  * a subsequent re-read (simulating a refresh).
  *
  * Does NOT require any speaking_character_id — tests the minimal creation path.
- * Cleans up the test record afterward unless keep=true is passed.
+ * Cleanup: hard deletes the test record by default (keep=false).
+ * Pass keep=true to preserve the record for manual inspection.
+ * Hard delete is used — not soft delete — so residue never contaminates duplicate checks.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
@@ -111,12 +113,32 @@ Deno.serve(async (req) => {
       types: nonDeleted.map(c => c.character_type),
     });
 
-    // ── CLEANUP ──────────────────────────────────────────────────────────────
+    // ── CLEANUP — hard delete by default ────────────────────────────────────
+    // Hard delete prevents test residue from polluting duplicate checks or future diagnostics.
+    // soft_deleted records still appear in unfiltered queries and can cause false positives.
     if (!keep && createdId) {
-      await base44.asServiceRole.entities.Character.update(createdId, { status: 'soft_deleted' });
-      result.cleanup = `Record ${createdId} soft-deleted. Pass keep=true to preserve it.`;
+      try {
+        await base44.asServiceRole.entities.Character.delete(createdId);
+        result.cleanup = { method: 'hard_delete', id: createdId, status: 'DELETED', note: 'Record permanently removed. Pass keep=true to preserve for inspection.' };
+      } catch (delErr) {
+        // Hard delete failed — fall back to diagnostic marker (not soft_deleted status)
+        // so it is excluded from roster queries but visibly flagged as test residue.
+        await base44.asServiceRole.entities.Character.update(createdId, {
+          status: 'diagnostic_deleted',
+          diagnostic_test: true,
+          exclude_from_roster: true,
+          exclude_from_homepage: true,
+        }).catch(() => {});
+        result.cleanup = {
+          method: 'diagnostic_marker_fallback',
+          id: createdId,
+          status: 'FALLBACK',
+          hard_delete_error: delErr.message,
+          note: 'Hard delete failed. Record marked diagnostic_deleted + exclude_from_roster=true. This is test residue, not a real character.',
+        };
+      }
     } else if (keep) {
-      result.cleanup = `Record ${createdId} kept as requested.`;
+      result.cleanup = { method: 'kept', id: createdId, note: 'Record preserved as requested (keep=true).' };
     }
 
     // ── OVERALL RESULT ────────────────────────────────────────────────────────
@@ -129,8 +151,19 @@ Deno.serve(async (req) => {
     return Response.json(result);
 
   } catch (error) {
+    // Emergency cleanup on unexpected error — attempt hard delete first
     if (createdId && !keep) {
-      await base44.asServiceRole.entities.Character.update(createdId, { status: 'soft_deleted' }).catch(() => {});
+      try {
+        await base44.asServiceRole.entities.Character.delete(createdId);
+      } catch {
+        // Hard delete unavailable — apply diagnostic exclusion marker
+        await base44.asServiceRole.entities.Character.update(createdId, {
+          status: 'diagnostic_deleted',
+          diagnostic_test: true,
+          exclude_from_roster: true,
+          exclude_from_homepage: true,
+        }).catch(() => {});
+      }
     }
     return Response.json({ ...result, overall: 'ERROR', error: error.message }, { status: 500 });
   }
