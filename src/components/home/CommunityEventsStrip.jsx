@@ -1,15 +1,11 @@
 import React, { useRef, useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { Calendar, MapPin } from 'lucide-react';
 import { buildDefaultCommunityEvents, EVENT_TYPE_ICONS } from '@/lib/defaultCommunityEvents';
 
-export default function CommunityEventsStrip({ currentUser }) {
+export default function CommunityEventsStrip({ currentUser, appLocations = [] }) {
   const scrollRef = useRef(null);
-  const queryClient = useQueryClient();
-
-  // Reuse already-cached locations (loaded by Home page) — no extra fetch
-  const appLocations = queryClient.getQueryData(['locationReferences', currentUser?.email]) || [];
 
   // Source 1: Global/system DB-backed community events (no owner filter — system-wide)
   const { data: globalDbEvents = [] } = useQuery({
@@ -31,6 +27,16 @@ export default function CommunityEventsStrip({ currentUser }) {
   });
 
   const displayEvents = useMemo(() => {
+    // Debug: log eligible locations for coffeehouse matching
+    if (appLocations.length > 0) {
+      const coffeeRelated = appLocations.filter(l => {
+        const n = (l.name || '').toLowerCase();
+        return n.includes('coffee') || n.includes('café') || n.includes('cafe') || n.includes('bean') || n.includes('brew');
+      });
+      if (coffeeRelated.length > 0) {
+        console.log('[COMMUNITY_STRIP] appLocations loaded:', appLocations.length, '| coffee-eligible:', coffeeRelated.map(l => `${l.name}(${l.category})`));
+      }
+    }
     const cutoff = new Date(Date.now() - 12 * 60 * 60 * 1000);
     const seenIds = new Set();
     const merged = [];
@@ -54,14 +60,13 @@ export default function CommunityEventsStrip({ currentUser }) {
 
     merged.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
 
-    // Layer 3: Static defaults — only if DB layers are sparse
-    // Pass appLocations so real public venues are injected (≥1 per 10 events)
-    if (merged.length < 4) {
-      for (const e of buildDefaultCommunityEvents(appLocations)) {
-        if (seenIds.has(e.id)) continue;
-        seenIds.add(e.id);
-        merged.push(e);
-      }
+    // Layer 3: Smart-matched defaults — always injected, deduped by id.
+    // These fill in gaps AND ensure correctly matched events (e.g., Coffeehouse Meetup → Velvet Bean).
+    // Pass real appLocations so tier1 venue intent matching (coffee → café) works.
+    for (const e of buildDefaultCommunityEvents(appLocations)) {
+      if (seenIds.has(e.id)) continue;
+      seenIds.add(e.id);
+      merged.push(e);
     }
 
     return merged.slice(0, 10);

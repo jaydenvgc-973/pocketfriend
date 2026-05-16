@@ -540,6 +540,30 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
     if (injectionSlots.has(idx) && eligible.length > 0) {
       const pick = pickBestLocation(tmpl, dt, eligible);
 
+      // DEBUG: log proof for coffeehouse events
+      if (tmpl.id === 'def_coffeemeetup' && pick) {
+        console.log('[COFFEEHOUSE_PROOF]', {
+          eventName: tmpl.name,
+          eventTime: dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          chosenLocation: pick.location.name,
+          chosenCategory: pick.location.category,
+          chosenSubtype: pick.location.subtype,
+          chosenKeywords: pick.location.keywords,
+          chosenTier: pick.tier,
+          chosenScore: pick.score,
+          openHours: pick.hoursCheck.reason,
+          allCandidates: pick.allCandidates.slice(0, 3).map(c => ({
+            name: c.locationName,
+            category: c.category,
+            subtype: c.subtype,
+            keywords: c.keywords,
+            tier: c.tier,
+            score: c.score,
+          })),
+          rejectedClosed: pick.rejectedClosed.map(r => ({ name: r.locationName, reason: r.rejectedReason })),
+        });
+      }
+
       if (pick) {
         locationName = pick.location.name;
         locationId = pick.location.id;

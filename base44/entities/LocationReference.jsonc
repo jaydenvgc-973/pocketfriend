@@ -170,6 +170,47 @@
       ],
       "description": "Specific type of confinement facility. Only set when is_confinement_facility is true."
     },
+    "confinement_security_level": {
+      "type": "string",
+      "enum": [
+        "minimum",
+        "low",
+        "medium",
+        "maximum"
+      ],
+      "description": "Security classification of this confinement facility (only when is_confinement_facility is true)."
+    },
+    "confinement_jurisdiction": {
+      "type": "string",
+      "description": "Government body/county that operates this confinement facility (e.g. 'Cook County', 'State of Illinois')"
+    },
+    "confinement_capacity": {
+      "type": "integer",
+      "description": "Maximum inmate capacity"
+    },
+    "allows_visitation": {
+      "type": "boolean",
+      "default": true,
+      "description": "True if visitors are allowed at this facility"
+    },
+    "visitation_hours": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "day_of_week": {
+            "type": "integer"
+          },
+          "open_time": {
+            "type": "string"
+          },
+          "close_time": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Visiting hours (only when allows_visitation is true)"
+    },
     "correctional_attire": {
       "type": "object",
       "description": "Mandatory institutional attire for this confinement facility. Overrides character wardrobe when is_jailed is true.",
@@ -200,7 +241,8 @@
       "items": {
         "type": "string"
       },
-      "default": []
+      "default": [],
+      "description": "Location subtypes (e.g. ['coffee', 'cafe'] for a coffee shop, ['park', 'outdoor'] for a park, ['bar', 'lounge'] for a bar)"
     },
     "features": {
       "type": "array",
@@ -334,7 +376,8 @@
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "description": "Keywords for event matching (e.g. ['coffee', 'espresso', 'bean'] for a coffee shop)"
     },
     "zones": {
       "type": "array",

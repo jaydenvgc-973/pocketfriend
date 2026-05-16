@@ -429,7 +429,7 @@ export default function Home() {
           ) : null}
 
           {currentUser && (
-            <CommunityEventsStrip currentUser={currentUser} />
+            <CommunityEventsStrip currentUser={currentUser} appLocations={locationsData} />
           )}
           
           <div>
