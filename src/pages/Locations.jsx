@@ -51,6 +51,13 @@ const ZONE_PRESETS = {
   jail_prison: ["Cellblock", "Intake", "Visiting Area", "Exercise Yard", "Cafeteria", "Medical", "Administrative", "Holding Area"],
 };
 
+// Allowed character types for assignment in location selectors (workers, residents, inmates)
+const ALLOWED_ASSIGNABLE_CHARACTER_TYPES = [
+  'active_created_character',
+  'npc_fictitious',
+  'npc_family_member',
+];
+
 const CATEGORIES = [
   { value: "home", label: "Home", icon: Home, emoji: "🏠" },
   { value: "hotel", label: "Hotel (Temp)", icon: Home, emoji: "🏨" },
@@ -362,7 +369,8 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, location
             category={category}
             subtype={subtype}
             locationDescription={locationDescription}
-            hasExistingImage={false}
+            hasExistingImage={imgCount > 0}
+            existingZoneImageUrls={zone.image_urls || []}
             onGenerate={handleGeneratedImage}
           />
         </div>
@@ -481,15 +489,15 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const activeChars = rlsActiveChars
     .filter(c => c.status !== 'deleted' && c.status !== 'moved_away')
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
-  // For jail_prison: show ALL character types except deleted/merged
-  // For other locations: npc_fictitious only
-  const npcFictitious = allNpcsRaw
-    .filter(c => c.character_type === 'npc_fictitious' && c.status !== 'deleted' && c.status !== 'moved_away')
+  
+  // All assignable NPCs (npc_fictitious + npc_family_member)
+  const assignableNpcs = allNpcsRaw
+    .filter(c => ALLOWED_ASSIGNABLE_CHARACTER_TYPES.includes(c.character_type) && c.status !== 'deleted' && c.status !== 'moved_away')
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
-  // Full NPC roster (all types) — used for jail/prison pickers
-  const allNpcsForJail = allNpcsRaw
-    .filter(c => c.status !== 'deleted' && c.status !== 'moved_away' && c.status !== 'merged' && !c.diagnostic_only)
+  // All assignable characters for workers, residents, inmates (no filtering by type)
+  const allAssignableCharacters = [...activeChars, ...assignableNpcs]
+    .filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i) // deduplicate
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
   // Compute initialWorkerIds: merge location's explicit worker_character_ids with characters whose employment fields point to this location
@@ -953,10 +961,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                   )}
 
                   {/* NPC Fictitious */}
-                  {filteredNpcFict.length > 0 && (
+                  {filteredNpcFict.filter(c => c.character_type === 'npc_fictitious').length > 0 && (
                     <>
-                      <SectionHeader label="NPC Fictitious" count={filteredNpcFict.length} />
-                      {filteredNpcFict.map(npc => {
+                      <SectionHeader label="NPC Fictitious" count={filteredNpcFict.filter(c => c.character_type === 'npc_fictitious').length} />
+                      {filteredNpcFict.filter(c => c.character_type === 'npc_fictitious').map(npc => {
                         const alreadyResident = form.resident_character_ids?.includes(npc.id);
                         return (
                           <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), npc.id]); }} disabled={alreadyResident}
@@ -1081,7 +1089,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           <div>
             <label className="text-xs text-muted-foreground mb-2 block">Add Workers</label>
             <GroupedCharacterSelector
-              allCharacters={allCharacters.filter(c => !form.worker_character_ids?.includes(c.id))}
+              allCharacters={allAssignableCharacters.filter(c => !form.worker_character_ids?.includes(c.id) && ALLOWED_ASSIGNABLE_CHARACTER_TYPES.includes(c.character_type))}
               selectedIds={[]}
               onSelect={(charId, isSelected) => {
                 if (isSelected) {
@@ -1098,7 +1106,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       {form.category === 'jail_prison' && (
         <JailInmatePanel
           inmates={form.inmates || []}
-          allCharacters={[...activeChars, ...allNpcsForJail].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)}
+          allCharacters={allAssignableCharacters}
           onChange={(inmates) => update('inmates', inmates)}
         />
       )}
@@ -1145,8 +1153,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                  <span className="text-sm text-foreground">{c.name}</span>
                </button>
              ))}
-             {npcFictitious.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Fictitious</p>}
-             {npcFictitious.map(npc => (
+             {assignableNpcs.filter(c => c.character_type === 'npc_fictitious').length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Fictitious</p>}
+             {assignableNpcs.filter(c => c.character_type === 'npc_fictitious').map(npc => (
                <button key={npc.id} onClick={() => update("owner_character_id", npc.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === npc.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
                  <CharacterAvatar character={npc} size="sm" />
                  <span className="text-sm text-foreground">{npc.name}</span>

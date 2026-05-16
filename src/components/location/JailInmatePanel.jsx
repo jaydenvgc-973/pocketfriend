@@ -46,7 +46,7 @@ function InmateForm({ allCharacters, existingInmateIds, onAdd, onCancel }) {
     <div className="border border-border rounded-xl p-4 space-y-4 bg-secondary/20">
       <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Book / Confine Character</p>
 
-      {/* Character selector — card-style rows with avatars, no checkboxes */}
+      {/* Character selector — card-style rows with avatars, no checkboxes, all assignable types */}
       <div>
         <label className="text-xs text-muted-foreground mb-2 block">Select Character</label>
         <GroupedCharacterSelector
@@ -59,7 +59,7 @@ function InmateForm({ allCharacters, existingInmateIds, onAdd, onCancel }) {
               setSelectedCharId('');
             }
           }}
-          placeholder="Search characters..."
+          placeholder="Search characters to confine..."
         />
       </div>
 
