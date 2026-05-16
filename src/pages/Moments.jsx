@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,6 +13,7 @@ import ChallengesSection from "@/components/moments/ChallengesSection";
 import TroubleshootingPanelMoments from "@/components/moments/TroubleshootingPanelMoments";
 import MomentsCalendar from "@/components/moments/MomentsCalendar";
 import { ACHIEVEMENTS, CATEGORY_LABELS } from "@/lib/achievements";
+import { buildDefaultCommunityEvents } from "@/lib/defaultCommunityEvents";
 
 const CATEGORIES = Object.keys(CATEGORY_LABELS);
 
@@ -87,10 +88,10 @@ export default function Moments() {
     placeholderData: (prev) => prev,
   });
 
-  const { data: communityEvents = [] } = useQuery({
+  const { data: dbCommunityEvents = [] } = useQuery({
     queryKey: ["communityEvents", currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.CommunityEvent.filter({ is_active: true }, "-start_date", 100)
+      ? base44.entities.CommunityEvent.filter({ is_active: true }, "start_date", 100)
       : [],
     enabled: !!currentUser?.email,
     staleTime: 10 * 60 * 1000,
@@ -98,6 +99,15 @@ export default function Moments() {
     refetchOnMount: false,
     placeholderData: (prev) => prev,
   });
+
+  // Merge DB events with shared default events (same source used by CommunityEventsStrip)
+  // Defaults fill in only when DB has fewer than 4 events, to match strip behavior exactly.
+  const communityEvents = useMemo(() => {
+    if (dbCommunityEvents.length >= 4) return dbCommunityEvents;
+    const dbIds = new Set(dbCommunityEvents.map(e => e.id));
+    const defaults = buildDefaultCommunityEvents().filter(e => !dbIds.has(e.id));
+    return [...dbCommunityEvents, ...defaults];
+  }, [dbCommunityEvents]);
 
   // Run retroactive achievement scan once per session when user loads Moments
   useEffect(() => {

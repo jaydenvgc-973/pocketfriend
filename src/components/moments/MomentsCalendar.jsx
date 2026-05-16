@@ -268,6 +268,9 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
   const [selectedDay, setSelectedDay] = useState(null);
   const [panelMode, setPanelMode] = useState('view');
   const [eventName, setEventName] = useState('');
+  const [eventTime, setEventTime] = useState('');
+  const [eventLocation, setEventLocation] = useState('');
+  const [eventType, setEventType] = useState('personal');
   const [addToCommunity, setAddToCommunity] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -331,7 +334,19 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
       }
     }
 
-    // Community events (from CommunityEvent entity)
+    // Community events (from CommunityEvent entity + shared defaults)
+    // Category mapping: map CommunityEvent event_type to calendar category correctly
+    const EVENT_TYPE_TO_CATEGORY = {
+      social: 'community', cultural: 'cultural', support: 'community',
+      health_awareness: 'community', entertainment: 'community',
+      fitness: 'community', educational: 'community', celebration: 'community',
+      resource_fair: 'community', personal: 'user', other: 'community',
+    };
+    const EVENT_TYPE_TO_ICON = {
+      entertainment: '🎤', fitness: '🧘', educational: '📚', cultural: '🎨',
+      health_awareness: '❤️', social: '☕', support: '🤝', celebration: '✨',
+      resource_fair: '🏠', personal: '📅', other: '📌',
+    };
     const community = communityEvents
       .filter(ev => {
         if (!ev.start_date) return false;
@@ -340,11 +355,12 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
       })
       .map(ev => ({
         name: ev.name,
-        icon: '🏘️',
-        category: 'community',
+        icon: ev._icon || EVENT_TYPE_TO_ICON[ev.event_type] || '🏘️',
+        category: EVENT_TYPE_TO_CATEGORY[ev.event_type] || 'community',
         date: dateStr,
         location: ev.location_name || null,
         description: ev.description || null,
+        time: ev.start_date ? new Date(ev.start_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : null,
       }));
 
     // User-created events
@@ -364,7 +380,13 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
     if (!selectedDay || !eventName.trim() || addToCommunity === null || saving) return;
     setSaving(true);
     const dateStr = format(selectedDay, 'yyyy-MM-dd');
-    const startIso = `${dateStr}T00:00:00.000Z`;
+    // Build ISO datetime from date + optional time input
+    let startIso;
+    if (eventTime) {
+      startIso = `${dateStr}T${eventTime}:00.000`;
+    } else {
+      startIso = `${dateStr}T00:00:00.000`;
+    }
     try {
       const me = await base44.auth.me();
       if (!me?.email) throw new Error('Not authenticated');
@@ -376,7 +398,8 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
         is_active: true,
         source: 'user_calendar',
         show_on_community_strip: addToCommunity,
-        event_type: 'personal',
+        event_type: eventType || 'personal',
+        location_name: eventLocation.trim() || null,
         vibe: 'social',
         participations_count: 0,
       });
@@ -386,10 +409,13 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
         date: dateStr,
         name: eventName.trim(),
         icon: '📅',
-        category: 'user',
+        category: eventType === 'personal' ? 'user' : 'community',
         addedToCommunity: addToCommunity,
       }]);
       setEventName('');
+      setEventTime('');
+      setEventLocation('');
+      setEventType('personal');
       setAddToCommunity(null);
       setPanelMode('view');
       // Notify parent (Moments page) to invalidate communityEvents query so Homepage strip refreshes
@@ -405,6 +431,9 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
     setSelectedDay(null);
     setPanelMode('view');
     setEventName('');
+    setEventTime('');
+    setEventLocation('');
+    setEventType('personal');
     setAddToCommunity(null);
   };
 
@@ -532,6 +561,7 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
                         <span className="text-base leading-none shrink-0 mt-0.5">{ev.icon}</span>
                         <div className="flex-1 min-w-0">
                           <div className="font-medium">{ev.name}</div>
+                          {ev.time && <div className="text-[10px] opacity-70">🕐 {ev.time}</div>}
                           {ev.location && <div className="text-[10px] opacity-70 truncate">📍 {ev.location}</div>}
                           {ev.description && <div className="text-[10px] opacity-60 truncate">{ev.description}</div>}
                         </div>
@@ -551,17 +581,49 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
 
           {/* Add mode */}
           {panelMode === 'add' && (
-            <div>
+            <div className="space-y-2">
               <input
                 type="text"
-                placeholder="Event name..."
+                placeholder="Event name…"
                 value={eventName}
                 onChange={e => setEventName(e.target.value)}
-                className="w-full px-3 py-2 bg-input border border-border rounded-lg text-foreground text-sm mb-3 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                className="w-full px-3 py-2 bg-input border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
                 autoFocus
               />
-              <p className="text-xs text-muted-foreground mb-2">Add to Homepage Community Event strip?</p>
-              <div className="flex gap-2 mb-3">
+              <div className="flex gap-2">
+                <input
+                  type="time"
+                  value={eventTime}
+                  onChange={e => setEventTime(e.target.value)}
+                  className="flex-1 px-3 py-2 bg-input border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+                <select
+                  value={eventType}
+                  onChange={e => setEventType(e.target.value)}
+                  className="flex-1 px-3 py-2 bg-input border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
+                >
+                  <option value="personal">Personal</option>
+                  <option value="social">Social</option>
+                  <option value="entertainment">Entertainment</option>
+                  <option value="cultural">Cultural</option>
+                  <option value="fitness">Fitness</option>
+                  <option value="educational">Educational</option>
+                  <option value="health_awareness">Health</option>
+                  <option value="support">Support</option>
+                  <option value="celebration">Celebration</option>
+                  <option value="resource_fair">Resource Fair</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <input
+                type="text"
+                placeholder="Location (optional)…"
+                value={eventLocation}
+                onChange={e => setEventLocation(e.target.value)}
+                className="w-full px-3 py-2 bg-input border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
+              />
+              <p className="text-xs text-muted-foreground pt-1">Add to Homepage Community Activity strip?</p>
+              <div className="flex gap-2">
                 {[true, false].map(val => (
                   <button
                     key={String(val)}
@@ -576,7 +638,7 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
                   </button>
                 ))}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 pt-1">
                 <Button size="sm" onClick={handleAddEvent} disabled={!eventName.trim() || addToCommunity === null || saving} className="h-8 flex-1">
                   {saving ? <><Loader2 className="w-3 h-3 animate-spin mr-1" />Saving…</> : 'Save'}
                 </Button>
