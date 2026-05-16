@@ -450,27 +450,46 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       .map(m => `${(m.role === "sent" || m.role === "user") ? character.name : selectedContact.person_name}: ${m.content}`)
       .join("\n");
 
-    let characterHardFacts = "";
-    let characterMemoryContext = "";
+    // ── CANONICAL CONTEXT: load contact's FULL canonical system prompt ──────────
+    // ROOT CAUSE FIX: was loading owner character (character.id) instead of the CONTACT.
+    // Was also ignoring ctxData.systemPrompt and building an ad-hoc flat prompt instead.
+    // Now: contact's full canonical identity (personality, memories, relationships, hard facts)
+    // is loaded via buildCanonicalCharacterContext for the CONTACT's character ID.
+    let contactSystemPrompt = null;
+    let contactHardFacts = "";
     try {
-      const ctxRes = await base44.functions.invoke("buildCanonicalCharacterContext", {
-        characterId: character.id,
-        interactionContext: "world_contacts",
-        topKMemories: 8,
-      });
-      const ctxData = ctxRes?.data || ctxRes;
-      if (ctxData?.hardFacts) characterHardFacts = ctxData.hardFacts;
-      if (ctxData?.memories?.length > 0) {
-        const relevantMems = ctxData.memories
-          .filter(m => m.description?.toLowerCase().includes(selectedContact.person_name?.toLowerCase()))
-          .slice(0, 4);
-        if (relevantMems.length > 0) {
-          characterMemoryContext = `\nYOUR SHARED HISTORY WITH ${character.name} (from their memory):\n${relevantMems.map(m => `- ${m.title}: ${m.description}`).join("\n")}\n`;
-        }
+      if (contactId) {
+        const ctxRes = await base44.functions.invoke("buildCanonicalCharacterContext", {
+          characterId: contactId,           // ← THE CONTACT, not the owner
+          interactionContext: "world_contacts",
+          topKMemories: 10,
+        });
+        const ctxData = ctxRes?.data || ctxRes;
+        if (ctxData?.systemPrompt) contactSystemPrompt = ctxData.systemPrompt;
+        if (ctxData?.hardFacts) contactHardFacts = ctxData.hardFacts;
       }
-    } catch { /* non-blocking */ }
+    } catch { /* non-blocking — fall through to flat prompt */ }
 
-    const prompt = `You are ${selectedContact.person_name}. ${character.name} just texted you on their phone.
+    // Build the LLM prompt: use canonical system prompt if available, else flat fallback
+    let prompt;
+    if (contactSystemPrompt) {
+      // Full canonical identity is already in contactSystemPrompt. Just add conversation context.
+      prompt = `${contactSystemPrompt}
+
+════════════════════════════════════════
+CURRENT SITUATION — WORLD CONTACTS / PHONE
+════════════════════════════════════════
+${character.name} just texted you on your phone. This is a real-time text exchange.
+MODE: TEXT MESSAGING. Keep responses short like real texts. 1-3 sentences max. Natural, unscripted.
+Do NOT use bullet points. Do NOT start with your name. Do NOT say "I'm an AI".
+
+Conversation so far (${character.name} texted you):
+${historyStr}
+${imageAnalysisContext}
+Reply as ${selectedContact.person_name}:`;
+    } else {
+      // Flat fallback for unlinked contacts (no character record to load canonical context from)
+      prompt = `You are ${selectedContact.person_name}. ${character.name} just texted you on their phone.
 
 ABOUT YOU (${selectedContact.person_name}):
 - Your relationship to ${character.name}: ${selectedContact.relationship_type || "acquaintance"}
@@ -479,17 +498,17 @@ ABOUT YOU (${selectedContact.person_name}):
 - How you feel about ${character.name}: ${selectedContact.emotional_impact || ""}
 - Your history together: ${selectedContact.history_summary || "You have shared history."}
 - Last time you two talked: ${selectedContact.last_interaction_summary || ""}
-${characterMemoryContext}
-WHAT YOU KNOW ABOUT ${character.name} RIGHT NOW:
-${characterHardFacts || `${character.name} is living their life. You know them well.`}
+${contactHardFacts ? `\nCURRENT FACTS:\n${contactHardFacts}\n` : ''}
+WHAT YOU KNOW ABOUT ${character.name}: They know you. You know them. Respond naturally.
 
-This is a text conversation between you and ${character.name}. You are NOT an AI.
-Respond naturally in short conversational texts. Do NOT use bullet points. Do NOT start with your name. Do NOT address ${character.name} by name every message.
+This is a text conversation. You are NOT an AI. Short natural texts only.
+Do NOT use bullet points. Do NOT start with your name.
 
-Conversation so far (${character.name} texted you):
+Conversation so far:
 ${historyStr}
 ${imageAnalysisContext}
 Reply as ${selectedContact.person_name}:`;
+    }
 
     let npcText = "...";
     try {
@@ -587,11 +606,19 @@ Reply as ${selectedContact.person_name}:`;
           ]);
         });
     }
-    // Memory sync — non-blocking, runs regardless of bilateral sync outcome
-    base44.functions.invoke('syncGroupChatMemories', {
-      conversationId: convoId,
-      source: 'world_phone',
-    }).catch(() => {});
+    // ── BILATERAL MEMORY: write durable Memory records to BOTH characters ─────
+    // ROOT CAUSE FIX: syncGroupChatMemories only writes group chat context, not bilateral
+    // character Memory records. syncWorldPhoneMemory writes to both character IDs durably
+    // so Chat, Scene, Profile, and relationship logic can all retrieve the interaction.
+    if (selectedContact.related_character_id) {
+      base44.functions.invoke('syncWorldPhoneMemory', {
+        senderCharacterId: character.id,
+        receiverCharacterId: selectedContact.related_character_id,
+        messageContent: text,
+        context: 'world_phone',
+        conversationId: convoId,
+      }).catch(err => console.warn('[WorldPhone] syncWorldPhoneMemory failed (non-blocking):', err.message));
+    }
   };
 
   const handleKeyDown = (e) => {

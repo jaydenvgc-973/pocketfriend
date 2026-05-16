@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus, X, Calendar } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ChevronLeft, ChevronRight, Plus, X, Calendar, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { base44 } from '@/api/base44Client';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, subMonths } from 'date-fns';
 
 // ── CATEGORY CONFIG ────────────────────────────────────────────────────────────
@@ -261,13 +262,39 @@ function parseBirthday(bdStr) {
 }
 
 // ── MAIN COMPONENT ─────────────────────────────────────────────────────────────
-export default function MomentsCalendar({ characters = [], userBirthday = null, communityEvents = [] }) {
+export default function MomentsCalendar({ characters = [], userBirthday = null, communityEvents = [], onEventCreated }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [userEvents, setUserEvents] = useState([]);
+  const [userEvents, setUserEvents] = useState([]); // mirrors persisted CommunityEvent records owned by user
   const [selectedDay, setSelectedDay] = useState(null);
   const [panelMode, setPanelMode] = useState('view');
   const [eventName, setEventName] = useState('');
   const [addToCommunity, setAddToCommunity] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  // ── LOAD PERSISTED USER EVENTS ─────────────────────────────────────────────
+  // User-created events are stored as CommunityEvent records with source='user'.
+  // Load them on mount so they survive navigation and refresh.
+  useEffect(() => {
+    base44.auth.me().then(me => {
+      if (!me?.email) return;
+      base44.entities.CommunityEvent.filter(
+        { owner_email: me.email, is_active: true },
+        '-created_date',
+        200
+      ).then(records => {
+        // Only show user-created events in the calendar's userEvents slot
+        const userOwned = records.filter(r => r.source === 'user' || r.source === 'user_calendar');
+        setUserEvents(userOwned.map(r => ({
+          id: r.id,
+          date: r.start_date?.split('T')[0] || '',
+          name: r.name,
+          icon: '📅',
+          category: 'user',
+          addedToCommunity: r.show_on_community_strip !== false,
+        })));
+      }).catch(() => {});
+    }).catch(() => {});
+  }, []);
 
   const year = currentMonth.getFullYear();
 
@@ -333,19 +360,45 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
     setAddToCommunity(null);
   };
 
-  const handleAddEvent = () => {
-    if (!selectedDay || !eventName.trim() || addToCommunity === null) return;
+  const handleAddEvent = async () => {
+    if (!selectedDay || !eventName.trim() || addToCommunity === null || saving) return;
+    setSaving(true);
     const dateStr = format(selectedDay, 'yyyy-MM-dd');
-    setUserEvents(prev => [...prev, {
-      date: dateStr,
-      name: eventName.trim(),
-      icon: '📅',
-      category: 'user',
-      addedToCommunity: addToCommunity,
-    }]);
-    setEventName('');
-    setAddToCommunity(null);
-    setPanelMode('view');
+    const startIso = `${dateStr}T00:00:00.000Z`;
+    try {
+      const me = await base44.auth.me();
+      if (!me?.email) throw new Error('Not authenticated');
+      // Persist to CommunityEvent entity — owner_email scoped, durable across navigation
+      const created = await base44.entities.CommunityEvent.create({
+        name: eventName.trim(),
+        owner_email: me.email,
+        start_date: startIso,
+        is_active: true,
+        source: 'user_calendar',
+        show_on_community_strip: addToCommunity,
+        event_type: 'personal',
+        vibe: 'social',
+        participations_count: 0,
+      });
+      // Update local state immediately for instant feedback
+      setUserEvents(prev => [...prev, {
+        id: created.id,
+        date: dateStr,
+        name: eventName.trim(),
+        icon: '📅',
+        category: 'user',
+        addedToCommunity: addToCommunity,
+      }]);
+      setEventName('');
+      setAddToCommunity(null);
+      setPanelMode('view');
+      // Notify parent (Moments page) to invalidate communityEvents query so Homepage strip refreshes
+      if (onEventCreated) onEventCreated();
+    } catch (err) {
+      console.error('[MomentsCalendar] Failed to save event:', err.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const closePanel = () => {
@@ -524,8 +577,8 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
                 ))}
               </div>
               <div className="flex gap-2">
-                <Button size="sm" onClick={handleAddEvent} disabled={!eventName.trim() || addToCommunity === null} className="h-8 flex-1">
-                  Save
+                <Button size="sm" onClick={handleAddEvent} disabled={!eventName.trim() || addToCommunity === null || saving} className="h-8 flex-1">
+                  {saving ? <><Loader2 className="w-3 h-3 animate-spin mr-1" />Saving…</> : 'Save'}
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => selectedEvents.length > 0 ? setPanelMode('view') : closePanel()} className="h-8">
                   Cancel

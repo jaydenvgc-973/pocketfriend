@@ -10,56 +10,43 @@ export default function CommunityEventsStrip({ currentUser }) {
     queryKey: ['communityEvents', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
+      // Fetch both shared community events AND user-owned events (user_calendar source).
+      // The calendar writes with owner_email + source='user_calendar'.
+      // This is the SAME entity and the SAME query key used by MomentsCalendar — one source of truth.
       const result = await base44.entities.CommunityEvent.filter(
         { owner_email: currentUser.email, is_active: true },
         '-start_date',
-        10
+        50
       );
-      return result.filter(e => new Date(e.start_date) >= new Date(Date.now() - 24*60*60*1000));
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      return result.filter(e => {
+        if (!e.start_date) return false;
+        // Show user-created events regardless of community strip toggle — they were explicitly created
+        // Show community events that are active and not expired
+        const isPast = new Date(e.start_date) < cutoff;
+        if (isPast) return false;
+        // For user-created events: only show on strip if show_on_community_strip !== false
+        if (e.source === 'user_calendar' || e.source === 'user') {
+          return e.show_on_community_strip !== false;
+        }
+        return true;
+      });
     },
     enabled: !!currentUser?.email,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 2 * 60 * 1000, // 2 min — needs to be fresher than Moments (which invalidates on create)
     gcTime: 15 * 60 * 1000,
   });
 
-  // Fallback events when no backend events exist
-  const fallbackEvents = [
-    {
-      id: 'fallback-1',
-      name: 'Open Mic Night',
-      event_type: 'entertainment',
-      location_name: 'Downtown Coffee House',
-      start_date: new Date(Date.now() + 3*24*60*60*1000).toISOString(),
-      vibe: 'social',
-      participations_count: 3,
-    },
-    {
-      id: 'fallback-2',
-      name: 'Community Yoga',
-      event_type: 'fitness',
-      location_name: 'Riverside Park',
-      start_date: new Date(Date.now() + 1*24*60*60*1000).toISOString(),
-      vibe: 'quiet',
-      participations_count: 8,
-    },
-    {
-      id: 'fallback-3',
-      name: 'Book Club',
-      event_type: 'educational',
-      location_name: 'Library Community Room',
-      start_date: new Date(Date.now() + 7*24*60*60*1000).toISOString(),
-      vibe: 'social',
-      participations_count: 5,
-    },
-  ];
-
-  const displayEvents = events.length > 0 ? events : fallbackEvents;
+  const displayEvents = events;
 
   return (
     <div className="pt-4 border-t border-border">
       <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
         Community Activity
       </h3>
+      {displayEvents.length === 0 && (
+        <p className="text-xs text-muted-foreground/60 italic">No upcoming events. Add one from Moments.</p>
+      )}
       <div
         ref={scrollRef}
         className="flex gap-2 overflow-x-auto scrollbar-hide pb-2"

@@ -225,6 +225,10 @@ export default function Moments() {
           characters={characters}
           userBirthday={userSettings?.user_birthday || null}
           communityEvents={communityEvents}
+          onEventCreated={() => {
+            // Invalidate so Homepage CommunityEventsStrip re-fetches and shows the new event
+            queryClient.invalidateQueries({ queryKey: ['communityEvents'] });
+          }}
         />
 
          {/* Active Arcs — active created characters only (no NPCs) */}

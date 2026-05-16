@@ -18,14 +18,31 @@
         "health_awareness",
         "resource_fair",
         "entertainment",
+        "personal",
         "other"
       ],
       "default": "social",
       "description": "Category of event"
     },
+    "source": {
+      "type": "string",
+      "enum": [
+        "system",
+        "community",
+        "user_calendar",
+        "user"
+      ],
+      "default": "community",
+      "description": "Where this event originated. user_calendar = created by user from Moments calendar."
+    },
+    "show_on_community_strip": {
+      "type": "boolean",
+      "default": true,
+      "description": "When source=user_calendar, controls whether this event appears on the Homepage Community Activity strip."
+    },
     "location_id": {
       "type": "string",
-      "description": "ID of the location where event is held"
+      "description": "ID of the location where event is held (optional for user-created calendar events)"
     },
     "location_name": {
       "type": "string",
@@ -72,7 +89,7 @@
         "type": "string"
       },
       "default": [],
-      "description": "Types of people who typically attend (e.g., 'LGBTQ+', 'families', 'artists')"
+      "description": "Types of people who typically attend"
     },
     "vibe": {
       "type": "string",
@@ -87,11 +104,7 @@
     },
     "owner_email": {
       "type": "string",
-      "description": "User account that created/manages this event"
-    },
-    "created_by": {
-      "type": "string",
-      "description": "Email of creator"
+      "description": "User account that created/manages this event. Required for user_calendar events."
     },
     "participations_count": {
       "type": "integer",
@@ -106,7 +119,6 @@
   },
   "required": [
     "name",
-    "location_id",
     "start_date"
   ]
 }
