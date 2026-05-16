@@ -78,6 +78,7 @@
         "simulated_need",
         "scene_purchase",
         "payroll",
+        "location_operating_cost",
         "character_loan_given",
         "character_loan_received",
         "character_loan_repayment",
@@ -85,7 +86,7 @@
         "character_borrow_denied",
         "other"
       ],
-      "description": "Category of the financial transaction"
+      "description": "Category of the financial transaction. 'location_operating_cost' = business owner charged for monthly operating costs (distinct from payroll, rent, utilities)."
     },
     "description": {
       "type": "string",

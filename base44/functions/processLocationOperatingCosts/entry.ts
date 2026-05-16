@@ -3,28 +3,30 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 /**
  * processLocationOperatingCosts
  *
- * Computes and charges the TOTAL operating cost for each business/commercial location:
- *   operating cost = rent/lease + utilities + maintenance (operating_cost field) + staff payroll
+ * Charges business/commercial location OWNERS for their monthly operating costs:
+ *   total = base operating_cost (rent/lease/overhead) + utilities + staff payroll estimate
  *
- * Payment rules:
- *   - If the location has an owner_character_id, that character's financial account is charged.
- *   - If owner_is_npc is true, NPC finances are not supported — log and skip payment.
- *   - If there is no owner, log as "unassigned-owner" — do NOT transfer to the user, do NOT error.
- *   - Residential rent paid by tenants → credit goes to the owner if one exists, else to user as rental income.
+ * THIS FUNCTION:
+ *   - Handles BUSINESS/COMMERCIAL locations only.
+ *   - Does NOT handle residential rent (that is processHousingCosts).
+ *   - Does NOT pay workers (that is processPayroll).
+ *   - Does NOT touch user balance — business no-owner cases are skipped entirely.
  *
- * Staff payroll component:
- *   - worker_character_ids + worker_pay_rates + worker_shifts are read from LocationReference.
- *   - Total staff cost = sum of (hourly_rate * weekly_hours * (WEEKS_PER_MONTH)) for each worker.
+ * Owner rules:
+ *   - owner_character_id exists and owner_is_npc=false → charge that character
+ *   - owner_is_npc=true → skip + log (NPC finances not supported)
+ *   - No owner → skip + log as "skipped_no_owner" — user account is NOT touched
  *
- * This function charges OWNER accounts for operating a location.
- * It does NOT charge tenants — that is processHousingCosts's job.
- * It does NOT pay workers — that is processPayroll's job.
+ * Idempotency:
+ *   - billing_period = "YYYY-MM" (monthly)
+ *   - Checks FinancialTransaction for existing location_operating_cost txn for this location+period
+ *   - If already charged this period, skips without double-charging
  *
+ * Trigger: admin-only, manual or scheduled automation. NEVER called on page load.
  * Security: admin-only endpoint.
  */
 
 const WEEKS_PER_MONTH = 4.33;
-const BIWEEKLY_WEEKS = 2;
 
 function timeToMinutes(t) {
   if (!t) return null;
@@ -45,7 +47,6 @@ function calcWeeklyHoursForWorker(char, location) {
       return (mins / 60) * shift.days.length;
     }
   }
-  // Character-level fallback
   if (char.work_start_time && char.work_end_time && Array.isArray(char.work_days) && char.work_days.length > 0) {
     const start = timeToMinutes(char.work_start_time);
     const end = timeToMinutes(char.work_end_time);
@@ -58,8 +59,8 @@ function calcWeeklyHoursForWorker(char, location) {
   return null;
 }
 
-// Residential categories — these are not business locations, skip from this function
-const RESIDENTIAL_CATEGORIES = new Set([
+// Residential + confinement categories — excluded from this function entirely
+const SKIP_CATEGORIES = new Set([
   'home', 'hotel', 'shelter', 'jail', 'prison',
   'detention_center', 'correctional_facility', 'juvenile_detention',
   'halfway_house', 'holding_cell',
@@ -71,18 +72,23 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Admin-only
+    // Admin-only — prevents accidental charges during testing or page loads
     if (user.role !== 'admin') {
       return Response.json({ error: 'Forbidden: Admin access required' }, { status: 403 });
     }
 
+    const { dry_run = false } = await req.json().catch(() => ({}));
+
     const now = new Date();
+    // billing_period = "YYYY-MM" — idempotency key
+    const billingPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
     const results = [];
 
     // Load all locations (service role — covers all accounts)
     const allLocations = await base44.asServiceRole.entities.LocationReference.list('-created_date', 500);
 
-    // Load all characters (for staff payroll calculation)
+    // Load all characters for staff payroll calculation
     const allCharacters = await base44.asServiceRole.entities.Character.filter({ status: 'active' });
     const charMap = Object.fromEntries(allCharacters.map(c => [c.id, c]));
 
@@ -93,24 +99,43 @@ Deno.serve(async (req) => {
       if (f.character_id) financialsByChar[f.character_id] = f;
     }
 
+    // Load recent operating cost transactions for idempotency checks
+    // transaction_type = 'location_operating_cost' is the distinct label for this function
+    const recentOpTxns = await base44.asServiceRole.entities.FinancialTransaction.filter(
+      { transaction_type: 'location_operating_cost' },
+      '-timestamp',
+      2000
+    ).catch(() => []);
+
+    // Index by "location_id|billing_period" for O(1) lookup
+    const chargedThisPeriod = new Set();
+    for (const txn of recentOpTxns) {
+      if (txn.location_id && txn.timestamp) {
+        const period = txn.timestamp.substring(0, 7);
+        chargedThisPeriod.add(`${txn.location_id}|${period}`);
+      }
+    }
+
     for (const loc of allLocations) {
-      // Skip residential locations — housing costs are handled by processHousingCosts
       const cat = loc.category || 'generic';
-      if (RESIDENTIAL_CATEGORIES.has(cat) || loc.is_confinement_facility) continue;
+
+      // Skip residential/confinement — those are handled by processHousingCosts
+      if (SKIP_CATEGORIES.has(cat) || loc.is_confinement_facility) continue;
+
+      // ── NO OWNER: log and skip — do NOT touch user account ──────────────
       if (!loc.owner_character_id && !loc.owner_is_npc) {
-        // No owner assigned — log as unassigned and skip
         results.push({
           location_id: loc.id,
           location_name: loc.name,
           category: cat,
           status: 'skipped_no_owner',
-          reason: 'No owner_character_id assigned to this business location. Operating costs not charged.',
+          reason: 'No owner_character_id assigned. Operating costs not charged. User account not touched.',
           total_cost: 0,
         });
         continue;
       }
 
-      // NPC-owned locations — NPC financial system not supported
+      // ── NPC OWNER: log and skip ──────────────────────────────────────────
       if (loc.owner_is_npc) {
         results.push({
           location_id: loc.id,
@@ -118,30 +143,45 @@ Deno.serve(async (req) => {
           category: cat,
           status: 'skipped_npc_owner',
           owner_npc_name: loc.owner_npc_name || 'Unknown NPC',
-          reason: 'NPC-owned location. NPC financial accounts not supported. Operating costs not charged.',
+          reason: 'NPC-owned location. NPC financial accounts not supported. Not charged.',
+          total_cost: 0,
+        });
+        continue;
+      }
+
+      const ownerCharId = loc.owner_character_id;
+      const ownerCharName = loc.owner_character_name || ownerCharId;
+
+      // ── IDEMPOTENCY CHECK: skip if already charged this billing period ───
+      const idempotencyKey = `${loc.id}|${billingPeriod}`;
+      if (chargedThisPeriod.has(idempotencyKey)) {
+        results.push({
+          location_id: loc.id,
+          location_name: loc.name,
+          category: cat,
+          status: 'skipped_already_charged',
+          billing_period: billingPeriod,
+          owner_character_id: ownerCharId,
+          owner_character_name: ownerCharName,
+          reason: `Operating costs already charged for ${billingPeriod}`,
           total_cost: 0,
         });
         continue;
       }
 
       // ── Compute operating cost components ──────────────────────────────
-      const ownerCharId = loc.owner_character_id;
-      const ownerCharName = loc.owner_character_name || ownerCharId;
+      const baseCost = loc.operating_cost || 0;
 
-      // 1. Base operating cost (rent/lease/general overhead)
-      const baseCost = (loc.operating_cost || 0);
-
-      // 2. Utilities
       const utilities = loc.utility_costs
         ? Object.values(loc.utility_costs).reduce((s, v) => s + (v || 0), 0)
         : 0;
 
-      // 3. Staff payroll (monthly estimate for workers assigned to this location)
+      // Staff payroll component: estimated monthly cost of all assigned workers
+      // NOTE: processPayroll pays the workers. This charges the owner the equivalent cost.
+      // They are separate, correctly labeled transactions — not duplicates.
       let staffPayroll = 0;
       const staffBreakdown = [];
-      const workerIds = loc.worker_character_ids || [];
-
-      for (const workerId of workerIds) {
+      for (const workerId of (loc.worker_character_ids || [])) {
         const char = charMap[workerId];
         if (!char) continue;
         const hourlyRate = loc.worker_pay_rates?.[workerId] ?? null;
@@ -175,6 +215,21 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      if (dry_run) {
+        results.push({
+          location_id: loc.id,
+          location_name: loc.name,
+          category: cat,
+          status: 'dry_run',
+          owner_character_id: ownerCharId,
+          owner_character_name: ownerCharName,
+          components: { base_operating_cost: baseCost, utilities, staff_payroll: staffPayroll, staff_breakdown: staffBreakdown },
+          total_cost: totalCost,
+          billing_period: billingPeriod,
+        });
+        continue;
+      }
+
       // ── Charge the owner's financial account ───────────────────────────
       const ownerFinancial = financialsByChar[ownerCharId];
       if (!ownerFinancial) {
@@ -183,7 +238,7 @@ Deno.serve(async (req) => {
           location_name: loc.name,
           category: cat,
           status: 'skipped_no_financial_record',
-          reason: `Owner character (${ownerCharName}) has no CharacterFinancial record. Cannot charge.`,
+          reason: `Owner (${ownerCharName}) has no CharacterFinancial record. Cannot charge.`,
           owner_character_id: ownerCharId,
           owner_character_name: ownerCharName,
           total_cost: totalCost,
@@ -198,7 +253,7 @@ Deno.serve(async (req) => {
         total_expenses: Math.round((ownerFinancial.total_expenses + totalCost) * 100) / 100,
       });
 
-      // Write labeled FinancialTransaction for full auditability
+      // Write labeled transaction — type 'location_operating_cost' is the idempotency anchor
       await base44.asServiceRole.entities.FinancialTransaction.create({
         character_id: ownerCharId,
         character_name: ownerCharName,
@@ -208,8 +263,8 @@ Deno.serve(async (req) => {
         receiver_name: ownerCharName,
         amount: totalCost,
         direction: 'expense',
-        transaction_type: 'other',
-        description: `Operating costs — ${loc.name} (base: $${baseCost}, utilities: $${utilities.toFixed(2)}, staff payroll: $${staffPayroll.toFixed(2)})`,
+        transaction_type: 'location_operating_cost',
+        description: `Business operating costs — ${loc.name} | base: $${baseCost} | utilities: $${utilities.toFixed(2)} | staff payroll: $${staffPayroll.toFixed(2)} | period: ${billingPeriod}`,
         location_id: loc.id,
         location_name: loc.name,
         balance_after: newBalance,
@@ -223,6 +278,7 @@ Deno.serve(async (req) => {
         status: 'charged',
         owner_character_id: ownerCharId,
         owner_character_name: ownerCharName,
+        billing_period: billingPeriod,
         components: {
           base_operating_cost: baseCost,
           utilities,
@@ -235,12 +291,16 @@ Deno.serve(async (req) => {
     }
 
     const summary = {
-      total_locations: allLocations.length,
+      billing_period: billingPeriod,
+      dry_run,
+      total_locations_scanned: allLocations.length,
       charged: results.filter(r => r.status === 'charged').length,
       skipped_no_owner: results.filter(r => r.status === 'skipped_no_owner').length,
       skipped_npc_owner: results.filter(r => r.status === 'skipped_npc_owner').length,
       skipped_zero_cost: results.filter(r => r.status === 'skipped_zero_cost').length,
+      skipped_already_charged: results.filter(r => r.status === 'skipped_already_charged').length,
       skipped_no_financial_record: results.filter(r => r.status === 'skipped_no_financial_record').length,
+      dry_run_preview: results.filter(r => r.status === 'dry_run').length,
     };
 
     return Response.json({ success: true, summary, results });
