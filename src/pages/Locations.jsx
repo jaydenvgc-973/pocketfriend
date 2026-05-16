@@ -72,13 +72,7 @@ const CATEGORIES = [
   { value: "government", label: "Government", icon: MapPin, emoji: "🏛️" },
   { value: "public", label: "Public", icon: MapPin, emoji: "🗺️" },
   { value: "generic", label: "Generic", icon: MapPin, emoji: "📍" },
-  { value: "jail", label: "Jail", icon: MapPin, emoji: "🔒" },
-  { value: "prison", label: "Prison", icon: MapPin, emoji: "🔐" },
-  { value: "detention_center", label: "Detention Center", icon: MapPin, emoji: "⚖️" },
-  { value: "holding_cell", label: "Holding Cell", icon: MapPin, emoji: "🚪" },
-  { value: "correctional_facility", label: "Correctional Facility", icon: MapPin, emoji: "📋" },
-  { value: "juvenile_detention", label: "Juvenile Detention", icon: MapPin, emoji: "👥" },
-  { value: "halfway_house", label: "Halfway House", icon: MapPin, emoji: "🏠" },
+  { value: "jail_prison", label: "Jail / Prison", icon: MapPin, emoji: "🔒" },
 ];
 
 function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {} }) {
