@@ -14,20 +14,21 @@ export default function GroupedCharacterSelector({
 }) {
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Group and sort characters
+  // Group and sort characters — legacy characters (no character_type) fall into active_created_character
   const { activeCreated, npcFictitious, npcFamily } = useMemo(() => {
-    const active = allCharacters
-      .filter(c => (c.character_type || "active_created_character") === "active_created_character")
-      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    
-    const fictitious = allCharacters
-      .filter(c => c.character_type === "npc_fictitious")
-      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    
-    const family = allCharacters
-      .filter(c => c.character_type === "npc_family_member")
-      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-
+    const active = [];
+    const fictitious = [];
+    const family = [];
+    allCharacters.forEach(c => {
+      const type = c.character_type || "active_created_character";
+      if (type === "npc_fictitious") fictitious.push(c);
+      else if (type === "npc_family_member") family.push(c);
+      else active.push(c); // active_created_character + any legacy/unknown type
+    });
+    const byName = (a, b) => (a.name || "").localeCompare(b.name || "");
+    active.sort(byName);
+    fictitious.sort(byName);
+    family.sort(byName);
     return { activeCreated: active, npcFictitious: fictitious, npcFamily: family };
   }, [allCharacters]);
 

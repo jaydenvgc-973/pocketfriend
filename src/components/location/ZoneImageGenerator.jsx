@@ -24,12 +24,17 @@ export default function ZoneImageGenerator({
       const subtypeStr = Array.isArray(subtype) ? subtype.join(", ") : subtype;
 
       const continuityInstruction = existingZoneImageUrls && existingZoneImageUrls.length > 0
-        ? `\nVISUAL CONTINUITY REQUIREMENT: This zone already has existing reference images. Generate a new view of THE SAME SPACE from a different camera angle/position. The new image must:
-- Show the same room/zone identity (same furniture, layout, materials, color palette, lighting style)
-- Be a different viewpoint or angle of that same space (e.g., from across the room, from the doorway, from another corner)
-- Preserve all the continuity markers visible in the reference images
-- NOT redesign the room or create a completely different space
-- Maintain the same overall atmosphere and functional layout`
+        ? `\nCRITICAL VISUAL CONTINUITY REQUIREMENT — READ CAREFULLY:
+The reference images show the EXACT same room/zone that already exists. You MUST generate a new photograph of THAT SAME ROOM from the OPPOSITE END of the room — a full 180-degree camera rotation from the reference image perspective.
+
+MANDATORY RULES:
+- If the reference shows the room looking toward the far wall → your image must be taken standing at that far wall looking back toward where the camera was
+- The new image must preserve EVERY detail: same cabinets, countertops, flooring material, lighting fixtures, furniture pieces, color palette, wall colors, appliances, layout — all identical
+- This is NOT a redesign. This is NOT a new room. This is the SAME ROOM from the complete opposite direction
+- Camera placement must be physically impossible to confuse with the reference — opposite corner, opposite wall, opposite end of the room
+- Preserve room identity: if it is a kitchen, it must still clearly be the same kitchen; if a living room, the same living room
+- Do NOT change any furniture, colors, materials, or room identity
+- The viewer should immediately recognize this as the same space from a completely different vantage point`
         : "";
 
       const prompt = `Generate a realistic, detailed photograph of a ${zoneName} in a ${category} ${subtypeStr ? `(${subtypeStr})` : ""}.

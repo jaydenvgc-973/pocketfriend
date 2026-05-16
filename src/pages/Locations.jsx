@@ -836,7 +836,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                   })}
                   {form.resident_family_members?.map((fam, idx) => {
                     // Resolve avatar: match by name against character entities first, then use embedded photo_url
-                    const matchedChar = [...activeChars, ...npcFictitious].find(c =>
+                    const matchedChar = [...activeChars, ...assignableNpcs].find(c =>
                       c.name?.trim().toLowerCase() === fam.name?.trim().toLowerCase()
                     );
                     const resolvedAvatar = matchedChar?.avatar_url || fam.photo_url || fam.avatar_url || null;
@@ -888,7 +888,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             const userId = currentUser?.id;
             const playerMatchesSearch = !q || worldName.toLowerCase().includes(q);
             const filteredActive = activeChars.filter(c => !q || (c.display_name || c.name || '').toLowerCase().includes(q));
-            const filteredNpcFict = npcFictitious.filter(c => !q || (c.display_name || c.name || '').toLowerCase().includes(q));
+            const filteredNpcFict = assignableNpcs.filter(c => c.character_type === 'npc_fictitious' && (!q || (c.display_name || c.name || '').toLowerCase().includes(q)));
             const filteredNpcFamily = npcFamilyChars.filter(c => !q || (c.name || '').toLowerCase().includes(q));
 
             const SectionHeader = ({ label, count }) => (
@@ -1089,7 +1089,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           <div>
             <label className="text-xs text-muted-foreground mb-2 block">Add Workers</label>
             <GroupedCharacterSelector
-              allCharacters={allAssignableCharacters.filter(c => !form.worker_character_ids?.includes(c.id) && ALLOWED_ASSIGNABLE_CHARACTER_TYPES.includes(c.character_type))}
+              allCharacters={allAssignableCharacters.filter(c => !form.worker_character_ids?.includes(c.id))}
               selectedIds={[]}
               onSelect={(charId, isSelected) => {
                 if (isSelected) {
