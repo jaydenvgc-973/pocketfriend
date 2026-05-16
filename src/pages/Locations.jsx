@@ -45,6 +45,13 @@ const ZONE_PRESETS = {
   public: ["Main Area", "Entrance", "Information Desk", "Hallway", "Bathroom"],
   generic: ["Main Area", "Entrance", "Back Area", "Bathroom"],
   other: ["Main Area", "Entrance", "Back Area", "Bathroom"],
+  jail: ["Cellblock", "Intake", "Visiting Area", "Exercise Yard", "Cafeteria", "Medical", "Administrative", "Holding Area"],
+  prison: ["Cellblock A", "Cellblock B", "Yard", "Dining Hall", "Library", "Medical", "Administrative", "Visiting Area"],
+  detention_center: ["Intake", "Holding Cells", "Intake Processing", "Waiting Area", "Administrative"],
+  holding_cell: ["Cell", "Waiting Area", "Administrative Area"],
+  correctional_facility: ["Work Area", "Residential", "Dining", "Educational", "Medical", "Administrative"],
+  juvenile_detention: ["Residential Unit", "School Room", "Recreation Area", "Medical", "Administrative", "Intake"],
+  halfway_house: ["Residential", "Common Area", "Office", "Meeting Room", "Entrance"],
 };
 
 const CATEGORIES = [
@@ -65,6 +72,13 @@ const CATEGORIES = [
   { value: "government", label: "Government", icon: MapPin, emoji: "🏛️" },
   { value: "public", label: "Public", icon: MapPin, emoji: "🗺️" },
   { value: "generic", label: "Generic", icon: MapPin, emoji: "📍" },
+  { value: "jail", label: "Jail", icon: MapPin, emoji: "🔒" },
+  { value: "prison", label: "Prison", icon: MapPin, emoji: "🔐" },
+  { value: "detention_center", label: "Detention Center", icon: MapPin, emoji: "⚖️" },
+  { value: "holding_cell", label: "Holding Cell", icon: MapPin, emoji: "🚪" },
+  { value: "correctional_facility", label: "Correctional Facility", icon: MapPin, emoji: "📋" },
+  { value: "juvenile_detention", label: "Juvenile Detention", icon: MapPin, emoji: "👥" },
+  { value: "halfway_house", label: "Halfway House", icon: MapPin, emoji: "🏠" },
 ];
 
 function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {} }) {
@@ -281,6 +295,13 @@ const SUBTYPE_OPTIONS = {
   public: ["museum", "art_gallery", "theater", "cinema", "concert_venue", "sports_arena", "stadium", "community_center"],
   government: ["government_office", "police_station", "courthouse", "city_hall", "park_ranger_station"],
   community: ["community_center", "drop_in_center", "after_school_program", "daycare", "youth_center", "resource_hub"],
+  jail: ["county_jail", "city_jail", "regional_jail"],
+  prison: ["state_prison", "federal_prison", "maximum_security", "medium_security", "minimum_security"],
+  detention_center: ["pretrial_detention", "adult_detention", "immigration_detention"],
+  holding_cell: ["police_holding", "court_holding"],
+  correctional_facility: ["work_camp", "boot_camp"],
+  juvenile_detention: ["juvenile_detention_center", "youth_detention"],
+  halfway_house: ["residential_reentry", "community_supervision"],
 };
 
 function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "" }) {
@@ -1393,10 +1414,24 @@ export default function Locations() {
     let locationId;
     const isAdmin = currentUser?.role === 'admin';
     const scopeValue = formData.is_shared ? 'shared' : 'account_global';
+    
+    // ── AUTO-SET CONFINEMENT FLAGS ────────────────────────────────────────────
+    // If the category is a confinement type, automatically set is_confinement_facility
+    // and the corresponding confinement_type field
+    const CONFINEMENT_CATEGORIES = ['jail', 'prison', 'detention_center', 'holding_cell', 'correctional_facility', 'juvenile_detention', 'halfway_house'];
+    let confinementData = {};
+    if (CONFINEMENT_CATEGORIES.includes(formData.category)) {
+      confinementData = {
+        is_confinement_facility: true,
+        confinement_type: formData.category,
+      };
+    }
+    
     const enrichedFields = {
       scope: scopeValue,
       location_type: formData.is_shared ? 'shared' : formData.location_type,
       created_by_role: isAdmin ? 'admin' : (currentUser?.role || 'user'),
+      ...confinementData,
     };
 
     // ── PRESERVE UI SCHEDULE TRUTH ──────────────────────────────────────────
