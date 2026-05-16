@@ -52,7 +52,9 @@ export default function CommunityEventsStrip({ currentUser }) {
 
     // Layer 3: Static defaults — only if DB layers are sparse
     if (merged.length < 4) {
-      for (const e of buildDefaultCommunityEvents()) {
+      // Pass no locations here — CommunityEventsStrip does not load LocationReference records.
+      // Real location injection for system events is handled by Moments.jsx where locations are loaded.
+      for (const e of buildDefaultCommunityEvents([])) {
         if (seenIds.has(e.id)) continue;
         seenIds.add(e.id);
         merged.push(e);

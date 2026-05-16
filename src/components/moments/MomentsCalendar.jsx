@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, X, Calendar, Loader2 } from 'lucide-re
 import { Button } from '@/components/ui/button';
 import { base44 } from '@/api/base44Client';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, subMonths } from 'date-fns';
+import LocationSelectorForEvent from './LocationSelectorForEvent';
 
 // ── CATEGORY CONFIG ────────────────────────────────────────────────────────────
 const CATEGORIES = {
@@ -262,14 +263,14 @@ function parseBirthday(bdStr) {
 }
 
 // ── MAIN COMPONENT ─────────────────────────────────────────────────────────────
-export default function MomentsCalendar({ characters = [], userBirthday = null, communityEvents = [], onEventCreated }) {
+export default function MomentsCalendar({ characters = [], userBirthday = null, communityEvents = [], appLocations = [], onEventCreated }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [userEvents, setUserEvents] = useState([]); // mirrors persisted CommunityEvent records owned by user
   const [selectedDay, setSelectedDay] = useState(null);
   const [panelMode, setPanelMode] = useState('view');
   const [eventName, setEventName] = useState('');
   const [eventTime, setEventTime] = useState('');
-  const [eventLocation, setEventLocation] = useState('');
+  const [eventLocation, setEventLocation] = useState(null); // { location_id, location_name, location_category, custom_location }
   const [eventType, setEventType] = useState('personal');
   const [addToCommunity, setAddToCommunity] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -399,7 +400,8 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
         source: 'user_calendar',
         show_on_community_strip: addToCommunity,
         event_type: eventType || 'personal',
-        location_name: eventLocation.trim() || null,
+        location_id: eventLocation?.location_id || null,
+        location_name: eventLocation?.location_name || null,
         vibe: 'social',
         participations_count: 0,
       });
@@ -414,7 +416,7 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
       }]);
       setEventName('');
       setEventTime('');
-      setEventLocation('');
+      setEventLocation(null);
       setEventType('personal');
       setAddToCommunity(null);
       setPanelMode('view');
@@ -432,7 +434,7 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
     setPanelMode('view');
     setEventName('');
     setEventTime('');
-    setEventLocation('');
+    setEventLocation(null);
     setEventType('personal');
     setAddToCommunity(null);
   };
@@ -615,12 +617,10 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
                   <option value="other">Other</option>
                 </select>
               </div>
-              <input
-                type="text"
-                placeholder="Location (optional)…"
+              <LocationSelectorForEvent
+                locations={appLocations}
                 value={eventLocation}
-                onChange={e => setEventLocation(e.target.value)}
-                className="w-full px-3 py-2 bg-input border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
+                onChange={setEventLocation}
               />
               <p className="text-xs text-muted-foreground pt-1">Add to Homepage Community Activity strip?</p>
               <div className="flex gap-2">

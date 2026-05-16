@@ -88,6 +88,18 @@ export default function Moments() {
     placeholderData: (prev) => prev,
   });
 
+  const { data: appLocations = [] } = useQuery({
+    queryKey: ["locationReferences", currentUser?.email],
+    queryFn: async () => {
+      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
+      return res?.data?.locations || [];
+    },
+    enabled: !!currentUser?.email,
+    staleTime: 10 * 60 * 1000,
+    refetchOnMount: false,
+    placeholderData: (prev) => prev,
+  });
+
   const { data: dbCommunityEvents = [] } = useQuery({
     queryKey: ["communityEvents", currentUser?.email],
     queryFn: () => currentUser?.email
@@ -102,12 +114,13 @@ export default function Moments() {
 
   // Merge DB events with shared default events (same source used by CommunityEventsStrip)
   // Defaults fill in only when DB has fewer than 4 events, to match strip behavior exactly.
+  // Pass appLocations so default events can inject real public app locations (1-in-10 rule).
   const communityEvents = useMemo(() => {
     if (dbCommunityEvents.length >= 4) return dbCommunityEvents;
     const dbIds = new Set(dbCommunityEvents.map(e => e.id));
-    const defaults = buildDefaultCommunityEvents().filter(e => !dbIds.has(e.id));
+    const defaults = buildDefaultCommunityEvents(appLocations).filter(e => !dbIds.has(e.id));
     return [...dbCommunityEvents, ...defaults];
-  }, [dbCommunityEvents]);
+  }, [dbCommunityEvents, appLocations]);
 
   // Run retroactive achievement scan once per session when user loads Moments
   useEffect(() => {
@@ -235,6 +248,7 @@ export default function Moments() {
           characters={characters}
           userBirthday={userSettings?.user_birthday || null}
           communityEvents={communityEvents}
+          locations={appLocations}
           onEventCreated={() => {
             // Invalidate so Homepage CommunityEventsStrip re-fetches and shows the new event
             queryClient.invalidateQueries({ queryKey: ['communityEvents'] });
