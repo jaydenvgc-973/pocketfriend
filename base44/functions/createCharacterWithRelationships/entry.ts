@@ -44,8 +44,21 @@ Deno.serve(async (req) => {
     }
 
     // Safe defaults for all fields that may be absent in older payloads
+    // CRITICAL: character_type has NO default. If caller omits it, fail visibly.
+    // Defaulting to 'active' silently stamps npc_fictitious characters as wrong type.
+    if (!characterData.character_type) {
+      return Response.json({
+        error: 'character_type is required. Must be one of: active_created_character, npc_fictitious, npc_family_member, npc_regular. No default is applied — caller must explicitly declare the type.',
+      }, { status: 400 });
+    }
+    const CANONICAL_CHARACTER_TYPES = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'];
+    if (!CANONICAL_CHARACTER_TYPES.includes(characterData.character_type)) {
+      return Response.json({
+        error: `Invalid character_type: "${characterData.character_type}". Must be one of: ${CANONICAL_CHARACTER_TYPES.join(', ')}. Simplified or legacy names (e.g. "active", "npc") are not accepted.`,
+      }, { status: 400 });
+    }
     const SAFE_DEFAULTS = {
-      character_type: 'active',
+      // character_type intentionally omitted — validated and required above
       status: 'active',
       visibility_scope: 'account_private',
       aliases: [],

@@ -28,16 +28,11 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 1: Check if a Character record already exists for this family member ──
-    const [byOwner, byCreated] = await Promise.all([
-      base44.asServiceRole.entities.Character.filter({ owner_email: user.email, name: name.trim() }),
-      base44.asServiceRole.entities.Character.filter({ created_by: user.email, name: name.trim() }),
-    ]);
-    const seen = new Set();
-    const existing = [...byOwner, ...byCreated].filter(c => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
-      return c.status !== 'deleted' && c.status !== 'soft_deleted';
-    });
+    // CRITICAL: owner_email is the sole ownership source of truth. created_by is FORBIDDEN.
+    const byOwner = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email, name: name.trim() });
+    const existing = byOwner.filter(c =>
+      c.status !== 'deleted' && c.status !== 'soft_deleted'
+    );
 
     let npc;
 
@@ -47,13 +42,18 @@ Deno.serve(async (req) => {
       const updates = {};
       if (photo_url && !npc.avatar_url) updates.avatar_url = photo_url;
       if (age_at_creation != null && !npc.age) updates.age = age_at_creation;
+
+      // CRITICAL: character_type is IMMUTABLE from this function.
+      // npc_fictitious records must NEVER be silently converted to npc_family_member
+      // by finding a same-name match. The user's existing npc_fictitious record
+      // is a separate classification. Only update non-type fields here.
+      // If the record already IS npc_family_member, no change needed.
+      // If it is npc_fictitious, npc_regular, or active_created_character:
+      //   → Do NOT mutate its type. Log the conflict for diagnostics.
       if (npc.character_type !== 'npc_family_member') {
-        // Only patch character_type if it's an uncategorized NPC type, never downgrade active characters
-        const upgradeableTypes = ['npc_fictitious', 'npc_fictitious_person', 'npc_regular'];
-        if (upgradeableTypes.includes(npc.character_type)) {
-          updates.character_type = 'npc_family_member';
-        }
+        console.warn(`[createFamilyNPCCharacter] CONFLICT: Existing record "${npc.name}" (${npc.id}) has character_type="${npc.character_type}". NOT converting to npc_family_member — character_type is immutable. Linking relationship only.`);
       }
+
       if (Object.keys(updates).length > 0) {
         await base44.asServiceRole.entities.Character.update(npc.id, updates);
       }

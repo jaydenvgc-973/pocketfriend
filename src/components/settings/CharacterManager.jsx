@@ -60,15 +60,15 @@ export default function CharacterManager() {
   
   // Split characters by character_type field (matches Settings.jsx logic)
   const activeCharacters = characterItems
-    .filter(item => (item.data.character_type === 'active' || !item.data.character_type) && item.data.status !== 'moved_away')
+    .filter(item => item.data.character_type === 'active_created_character' && item.data.status !== 'moved_away')
     .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
   
   const npcCharacters = characterItems
-    .filter(item => item.data.character_type === 'npc' && item.data.status !== 'moved_away')
+    .filter(item => item.data.character_type === 'npc_fictitious' && item.data.status !== 'moved_away')
     .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
   
   const familyCharacters = characterItems
-    .filter(item => item.data.character_type === 'family_npc' && item.data.status !== 'moved_away')
+    .filter(item => item.data.character_type === 'npc_family_member' && item.data.status !== 'moved_away')
     .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
   
   const movedAwayCharacters = characterItems
@@ -485,11 +485,13 @@ export default function CharacterManager() {
               // User explicitly categorized it
               sections[category].items.push({ item, index, itemKey });
             } else if (item.type === 'character') {
-              // Auto-organize characters by character_type field (active, npc, family_npc, moved_away)
-              if (itemData.character_type === 'npc') {
+              // Auto-organize characters by canonical character_type field
+              if (itemData.character_type === 'npc_fictitious') {
                 sections.npc_fictional.items.push({ item, index, itemKey });
-              } else if (itemData.character_type === 'family_npc') {
+              } else if (itemData.character_type === 'npc_family_member') {
                 sections.npc_family.items.push({ item, index, itemKey });
+              } else if (itemData.character_type === 'npc_regular') {
+                sections.npc_fictional.items.push({ item, index, itemKey });
               } else if (itemData.status === 'moved_away') {
                 sections.inactive.items.push({ item, index, itemKey });
               } else {
