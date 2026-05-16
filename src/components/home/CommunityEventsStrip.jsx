@@ -9,31 +9,48 @@ export default function CommunityEventsStrip({ currentUser }) {
   const { data: events = [] } = useQuery({
     queryKey: ['communityEvents', currentUser?.email],
     queryFn: async () => {
-      if (!currentUser?.email) return [];
-      // Fetch both shared community events AND user-owned events (user_calendar source).
-      // The calendar writes with owner_email + source='user_calendar'.
-      // This is the SAME entity and the SAME query key used by MomentsCalendar — one source of truth.
-      const result = await base44.entities.CommunityEvent.filter(
-        { owner_email: currentUser.email, is_active: true },
-        '-start_date',
-        50
-      );
       const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      return result.filter(e => {
-        if (!e.start_date) return false;
-        // Show user-created events regardless of community strip toggle — they were explicitly created
-        // Show community events that are active and not expired
-        const isPast = new Date(e.start_date) < cutoff;
-        if (isPast) return false;
-        // For user-created events: only show on strip if show_on_community_strip !== false
-        if (e.source === 'user_calendar' || e.source === 'user') {
-          return e.show_on_community_strip !== false;
-        }
-        return true;
-      });
+
+      // Query 1: Global/system/community events — no owner_email filter.
+      // These are the original pre-existing strip events. Must never be filtered out.
+      const globalQuery = base44.entities.CommunityEvent.filter(
+        { is_active: true },
+        '-start_date',
+        100
+      ).catch(() => []);
+
+      // Query 2: User-created calendar events — owner_email scoped.
+      // These are additive. Only shown on strip when show_on_community_strip !== false.
+      const userQuery = currentUser?.email
+        ? base44.entities.CommunityEvent.filter(
+            { owner_email: currentUser.email, is_active: true },
+            '-start_date',
+            50
+          ).catch(() => [])
+        : Promise.resolve([]);
+
+      const [globalEvents, userEvents] = await Promise.all([globalQuery, userQuery]);
+
+      // Merge: global events first, then user-created additions.
+      // Dedup by id in case a user-created event also appears in the global query.
+      const seenIds = new Set();
+      const merged = [];
+
+      for (const e of [...globalEvents, ...userEvents]) {
+        if (!e.start_date) continue;
+        if (new Date(e.start_date) < cutoff) continue;
+        // For user-created events: respect show_on_community_strip flag
+        if ((e.source === 'user_calendar' || e.source === 'user') && e.show_on_community_strip === false) continue;
+        if (seenIds.has(e.id)) continue;
+        seenIds.add(e.id);
+        merged.push(e);
+      }
+
+      // Sort by start_date ascending (soonest first)
+      return merged.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
     },
-    enabled: !!currentUser?.email,
-    staleTime: 2 * 60 * 1000, // 2 min — needs to be fresher than Moments (which invalidates on create)
+    enabled: true, // always run — global events don't require auth
+    staleTime: 2 * 60 * 1000,
     gcTime: 15 * 60 * 1000,
   });
 
@@ -44,9 +61,6 @@ export default function CommunityEventsStrip({ currentUser }) {
       <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
         Community Activity
       </h3>
-      {displayEvents.length === 0 && (
-        <p className="text-xs text-muted-foreground/60 italic">No upcoming events. Add one from Moments.</p>
-      )}
       <div
         ref={scrollRef}
         className="flex gap-2 overflow-x-auto scrollbar-hide pb-2"
