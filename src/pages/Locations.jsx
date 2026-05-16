@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -479,8 +479,15 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const activeChars = rlsActiveChars
     .filter(c => c.status !== 'deleted' && c.status !== 'moved_away')
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
+  // For jail_prison: show ALL character types except deleted/merged
+  // For other locations: npc_fictitious only
   const npcFictitious = allNpcsRaw
     .filter(c => c.character_type === 'npc_fictitious' && c.status !== 'deleted' && c.status !== 'moved_away')
+    .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
+
+  // Full NPC roster (all types) — used for jail/prison pickers
+  const allNpcsForJail = allNpcsRaw
+    .filter(c => c.status !== 'deleted' && c.status !== 'moved_away' && c.status !== 'merged' && !c.diagnostic_only)
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
   // Compute initialWorkerIds: merge location's explicit worker_character_ids with characters whose employment fields point to this location
@@ -1140,6 +1147,34 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 </button>
               );
             })}
+            {/* For jail_prison: also show npc_regular and npc_family_member */}
+            {form.category === 'jail_prison' && (() => {
+              const extraNpcs = allNpcsForJail.filter(n =>
+                (n.character_type === 'npc_regular' || n.character_type === 'npc_family_member') &&
+                !activeChars.find(a => a.id === n.id) &&
+                !npcFictitious.find(f => f.id === n.id)
+              );
+              if (extraNpcs.length === 0) return null;
+              return (
+                <>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Regular / Family</p>
+                  {extraNpcs.map(npc => {
+                    const alreadyWorker = form.worker_character_ids?.includes(npc.id);
+                    return (
+                      <button key={npc.id} onClick={() => { if (!alreadyWorker) update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]); }} disabled={alreadyWorker}
+                        className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                        <CharacterAvatar character={npc} size="sm" />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm text-foreground font-medium">{npc.name}</span>
+                          <p className="text-[10px] text-muted-foreground capitalize">{npc.character_type?.replace(/_/g, ' ')}</p>
+                        </div>
+                        {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
+                      </button>
+                    );
+                  })}
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1148,7 +1183,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       {form.category === 'jail_prison' && (
         <JailInmatePanel
           inmates={form.inmates || []}
-          allCharacters={allCharacters}
+          allCharacters={[...activeChars, ...allNpcsForJail].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)}
           onChange={(inmates) => update('inmates', inmates)}
         />
       )}

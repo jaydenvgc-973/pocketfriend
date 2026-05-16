@@ -58,8 +58,16 @@ export default function UserPhotoUploader({ referenceImages = [], generatedAvata
     if (referenceImages.length === 0 || generatedAvatars.length >= MAX_AVATARS) return;
     setGenerating(true);
     try {
+      const count = referenceImages.length;
+      const weightPct = Math.round(100 / count);
+      const weightingNote = count === 1
+        ? `There is 1 reference image — use it as the sole source of truth (100% influence).`
+        : `There are ${count} reference images. Each image contributes EQUALLY to this result: ${referenceImages.map((_, i) => `Image ${i + 1}: ${weightPct}%`).join(', ')}. You MUST blend facial features, hair texture, face shape, body type, skin tone, and identity cues from ALL ${count} images evenly. Do NOT rely on one image and ignore the others. Do NOT copy-paste from a single reference.`;
+
+      const prompt = `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Natural light, authentic skin texture with visible pores, real hair strands, natural imperfections. Must look like an unmanipulated photograph.\n\n🎯 MANDATORY MULTI-IMAGE IDENTITY BLENDING: ${weightingNote}\n\nYou MUST synthesize the person's exact facial structure, bone structure, eye shape, nose shape, lip shape, skin tone, hair type and texture, and every distinguishing physical identity cue from ALL provided reference images at the specified weights. The result must represent the same person as seen across ALL reference photos — not just one of them.\n\n❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, CGI, 3D render, plastic, doll-like, porcelain, glossy, uncanny valley, airbrushed, stylized, fake, filtered, or any non-photographic aesthetic. This must look like a real, unmanipulated photograph of the actual person across all reference photos.\n\n[PROOF: ${count} reference image(s) loaded. Weight per image: ${weightPct}%]`;
+
       const genRes = await base44.integrations.Core.GenerateImage({
-        prompt: "📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Natural light, authentic skin texture with visible pores, real hair strands, natural imperfections. Must look like an unmanipulated photograph.\n\n🎯 MANDATORY FACE REPLICATION: The provided reference photos are the definitive and sole source of truth for this person's face. You MUST copy their exact facial structure, bone structure, eye shape, nose shape, lip shape, skin tone, and every distinguishing facial feature directly from the reference images. Do NOT invent, approximate, or generate a new face — replicate the reference face with absolute precision. Their face in this output must be indistinguishable from their face in the reference photos. Failure to match the reference face exactly is a critical failure.\n\n❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, CGI, 3D render, plastic, doll-like, porcelain, glossy, uncanny valley, airbrushed, stylized, fake, filtered, or any non-photographic aesthetic. This must look like a real, unmanipulated photograph of the actual person shown in the reference photos.",
+        prompt,
         existing_image_urls: referenceImages,
       });
       const user = await base44.auth.me();
