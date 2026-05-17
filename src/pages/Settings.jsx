@@ -233,8 +233,8 @@ export default function Settings() {
           </div>
           <div className="flex items-center justify-between">
             <div>
-              <Label className="text-sm text-foreground">Autonomous Travel</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">When off, characters only move based on schedules, needs, and personality — not random wandering. VGC Towers travel is unaffected.</p>
+              <Label className="text-sm text-foreground">Forced Travel</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">When enabled, the system aggressively pushes characters into additional movement cycles based on needs and world stimulation. When disabled, characters still travel naturally for schedules, commitments, promises, relationships, work, meetings, invitations, and real-world reasons.</p>
             </div>
             <Switch
               checked={settings.autonomous_travel_enabled !== false}

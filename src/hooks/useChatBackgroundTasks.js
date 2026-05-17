@@ -143,22 +143,27 @@ export function useChatBackgroundTasks({
 
     // ── TIER 1 — 0ms: lightweight location + activity sync (30s cooldown each) ──
 
-    // ── TRAVEL PROMISE DETECTION (Tier 1, immediate) ──────────────────────────
-    // When the character's response contains a travel commitment to the user
-    // ("I'm on my way", "I'll be there", etc.), commit a real durable travel state.
-    // This is independent of autonomous_travel_enabled — it's conversation-triggered.
-    // 5-min cooldown prevents re-firing on every message when already traveling.
-    if (responseText && !isOnCooldown(characterId, 'travelPromise', 300000)) {
-      const travelPromiseQuick = /\b(i'm|i\s+am)\s+(on\s+my\s+way|coming|heading\s+(over|there|to\s+you)|coming\s+(over|now|right\s+now))\b|\b(i'll|i\s+will)\s+(be\s+(there|over|on\s+my\s+way)|come\s+over|head\s+over)\b|\b(i'm|i\s+am)\s+(getting\s+in\s+the\s+car|headed\s+your\s+way)\b/i;
-      if (travelPromiseQuick.test(responseText)) {
-        safeInvoke('commitCharacterTravelToUser', {
+    // ── COMMITMENT DETECTION (Tier 1, immediate) ──────────────────────────────
+    // Detects travel directives, travel promises, and communication promises in the
+    // character's response. Creates durable CharacterCommitment + ScheduledEvent records.
+    // Independent of autonomous_travel_enabled ("Forced Travel") — that only controls
+    // random needs-based wandering, never explicit commitments.
+    // 3-min cooldown prevents re-firing on every message.
+    if (responseText && !isOnCooldown(characterId, 'commitmentDetect', 180000)) {
+      const commitmentQuickCheck = /\b(i'?m?\s*(on\s+my\s+way|heading|coming|leaving|walking\s+in|pulling\s+up|almost\s+there)|i'?ll?\s*(text|call|message|come|be\s+there|stop\s+by|swing\s+by|drop\s+by|meet\s+you|reach\s+out|check\s+in|let\s+you\s+know)|(talk|speak|chat)\s+(to\s+you\s+)?later)\b/i;
+      if (commitmentQuickCheck.test(responseText)) {
+        safeInvoke('detectAndScheduleCommitments', {
           characterId,
-          characterResponse: responseText,
+          characterName: character?.name || '',
+          messageContent: responseText,
           conversationId: convoId,
-        }, characterId, 'travelPromise').then(res => {
-          if (res?.data?.committed) {
-            console.log(`[Governor] Travel promise committed: "${character?.name}" → "${res.data.destination}" (ETA ${res.data.travelMinutes}min)`);
-            queryClient.invalidateQueries({ queryKey: ['character', characterId] });
+          recipientType: 'user',
+        }, characterId, 'commitmentDetect').then(res => {
+          if (res?.data?.detected) {
+            console.log(`[Governor] Commitment(s) scheduled for "${character?.name}": ${(res.data.commitment_types || []).join(', ')}`);
+            if (res.data.commitment_types?.includes('travel_directive')) {
+              queryClient.invalidateQueries({ queryKey: ['character', characterId] });
+            }
           }
         });
       }

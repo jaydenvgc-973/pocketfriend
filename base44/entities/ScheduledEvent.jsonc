@@ -46,19 +46,31 @@
       "type": "string",
       "enum": [
         "narrative",
-        "internal"
+        "internal",
+        "travel_arrival",
+        "communication_promise"
       ],
       "default": "narrative",
-      "description": "narrative = shown to user in chat; internal = updates character state only"
+      "description": "narrative = shown to user in chat; internal = updates character state only; travel_arrival = character arrives at destination; communication_promise = character sends promised text/call"
     },
     "source": {
       "type": "string",
       "enum": [
         "chat",
         "simulation",
-        "narrator"
+        "narrator",
+        "commitment"
       ],
       "description": "Where this event was created from"
+    },
+    "event_payload": {
+      "type": "object",
+      "description": "Type-specific payload data. For travel_arrival: {destination_location_id, destination_location_name, commitment_id}. For communication_promise: {commitment_id, promised_action, recipient_type, recipient_character_id}.",
+      "additionalProperties": true
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email for scoping"
     }
   },
   "required": [

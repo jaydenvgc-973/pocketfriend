@@ -66,30 +66,91 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── COMMUNICATION PROMISE FOLLOW-THROUGH ──────────────────────────────
+        // When a character promised to text/call, fire the actual message at the scheduled time.
+        if (event.type === 'communication_promise' && event.primary_character_id) {
+          const payload = event.event_payload || {};
+          const charId = payload.character_id || event.primary_character_id;
+          const charName = payload.character_name || (event.character_names || [])[0] || '';
+          const promisedAction = payload.promised_action || 'message';
+          const convId = event.conversation_id;
+
+          if (convId && charId) {
+            // Generate the follow-through message text via LLM
+            let followThroughText = promisedAction === 'call'
+              ? `Hey, calling you like I said I would. 📞`
+              : `Hey, checking in like I promised.`;
+
+            try {
+              const genRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
+                prompt: `You are ${charName}. You promised earlier to ${promisedAction} someone. Now is the time you said you would. Write a short, natural 1-2 sentence follow-through message. Do NOT reference that a promise was made — just send the message naturally as if checking in. Be brief and authentic to how ${charName} would speak. Return only the message text, no quotes.`,
+              });
+              if (genRes && typeof genRes === 'string' && genRes.length > 3) {
+                followThroughText = genRes.trim();
+              }
+            } catch {}
+
+            await base44.asServiceRole.entities.Message.create({
+              conversation_id: convId,
+              sender_type: 'character',
+              character_id: charId,
+              character_name: charName,
+              content: followThroughText,
+              timestamp: new Date().toISOString(),
+            });
+
+            await base44.asServiceRole.entities.Conversation.update(convId, {
+              last_message_preview: followThroughText.substring(0, 100),
+              last_message_date: new Date().toISOString(),
+            });
+
+            // Mark commitment as completed
+            if (payload.commitment_id) {
+              await base44.asServiceRole.entities.CharacterCommitment.update(payload.commitment_id, {
+                status: 'completed',
+                completion_result: `Followed through with: "${followThroughText.substring(0, 100)}"`,
+              }).catch(() => {});
+            }
+
+            console.log(`[processScheduledEvents] ✓ Communication promise fired: char=${charId} convo=${convId}`);
+          }
+        }
+
         // ── TRAVEL ARRIVAL: write authoritative location ───────────────────────
         // When a character made a travel promise in chat, we committed a ScheduledEvent
         // of type 'travel_arrival'. On firing, write the arrival to the Character record.
         if (event.type === 'travel_arrival' && event.primary_character_id) {
-          const payload = event.event_payload || {};
-          const destLocId = payload.destination_location_id;
-          const destLocName = payload.destination_location_name;
+          const travelPayload = event.event_payload || {};
+          const destLocId = travelPayload.destination_location_id;
+          const destLocName = travelPayload.destination_location_name;
+          const arrivalNow = new Date().toISOString();
+          // Always clear traveling state on arrival, even if exact location id is absent
+          const locationUpdate = {
+            resolved_location_type: 'visit',
+            resolved_presence_status: 'visiting',
+            resolved_source_reason: 'conversation_travel_arrival',
+            resolved_last_updated_at: arrivalNow,
+            travel_status: 'not_traveling',
+            traveling_to_location_id: null,
+            traveling_to_location_name: null,
+            travel_destination_location_id: null,
+            last_arrived_time: arrivalNow,
+          };
           if (destLocId && destLocName) {
-            const arrivalNow = new Date().toISOString();
-            await base44.asServiceRole.entities.Character.update(event.primary_character_id, {
-              resolved_current_location_id: destLocId,
-              resolved_current_location_name: destLocName,
-              resolved_location_type: 'visit',
-              resolved_presence_status: 'visiting',
-              resolved_source_reason: 'conversation_travel_arrival',
-              resolved_last_updated_at: arrivalNow,
-              travel_status: 'not_traveling',
-              traveling_to_location_id: null,
-              traveling_to_location_name: null,
-              travel_destination_location_id: null,
-              last_arrived_time: arrivalNow,
-            });
-            console.log(`[processScheduledEvents] ✓ Travel arrival: char=${event.primary_character_id} → "${destLocName}"`);
+            locationUpdate.resolved_current_location_id = destLocId;
+            locationUpdate.resolved_current_location_name = destLocName;
           }
+          await base44.asServiceRole.entities.Character.update(event.primary_character_id, locationUpdate);
+
+          // Mark commitment as completed
+          if (travelPayload.commitment_id) {
+            await base44.asServiceRole.entities.CharacterCommitment.update(travelPayload.commitment_id, {
+              status: 'completed',
+              travel_arrived_at: arrivalNow,
+              completion_result: destLocName ? `Arrived at ${destLocName}` : 'Arrived at destination',
+            }).catch(() => {});
+          }
+          console.log(`[processScheduledEvents] ✓ Travel arrival: char=${event.primary_character_id} → "${destLocName || 'destination'}"`);
         }
 
         // If narrative type, post in chat

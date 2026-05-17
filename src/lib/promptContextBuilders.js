@@ -550,6 +550,71 @@ export async function buildFinancialContext(characterId, userText, recentMsgs) {
   }
 }
 
+// ── ACTIVE COMMITMENTS CONTEXT BUILDER ───────────────────────────────────────
+
+/**
+ * Builds a context block from active CharacterCommitment records.
+ * Injected into the LLM system prompt so the character cannot contradict
+ * an active travel directive, travel promise, or communication promise.
+ *
+ * This is the enforcement layer that prevents "I'm on my way" + no movement.
+ *
+ * @param {string} characterId
+ * @returns {Promise<string>}
+ */
+export async function buildCommitmentsContext(characterId) {
+  if (!characterId) return '';
+  try {
+    const { base44 } = await import('@/api/base44Client');
+    const active = await base44.entities.CharacterCommitment.filter(
+      { character_id: characterId, status: 'active' },
+      '-created_at',
+      5
+    );
+    const inProgress = await base44.entities.CharacterCommitment.filter(
+      { character_id: characterId, status: 'in_progress' },
+      '-created_at',
+      5
+    );
+    const all = [...(active || []), ...(inProgress || [])];
+    if (!all.length) return '';
+
+    const lines = all.map(c => {
+      const due = c.scheduled_execute_at ? new Date(c.scheduled_execute_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : c.promised_time_window || 'soon';
+      if (c.commitment_type === 'travel_directive') {
+        return `• ACTIVE TRAVEL DIRECTIVE: You said you are ON YOUR WAY / HEADING THERE RIGHT NOW. You are currently in transit. You cannot claim you are at the destination yet. You cannot claim you are still at home or elsewhere. Arrival expected: ${due}.`;
+      }
+      if (c.commitment_type === 'travel_promise') {
+        return `• ACTIVE TRAVEL PROMISE: You promised to come over / visit / meet up. Due: ${due} (${c.promised_time_window || ''}). You must follow through or explain why you cannot.`;
+      }
+      if (c.commitment_type === 'communication_promise') {
+        return `• ACTIVE COMMUNICATION PROMISE: You promised to ${c.promised_action || 'reach out'}. Due: ${due} (${c.promised_time_window || ''}). The system will send this automatically at the scheduled time.`;
+      }
+      return null;
+    }).filter(Boolean);
+
+    if (!lines.length) return '';
+
+    return `\n\n════════════════════════════════════
+ACTIVE COMMITMENTS — WORLD-STATE LAW
+These are real commitments you made that are currently active.
+You CANNOT contradict these. You CANNOT make excuses to avoid them unless you are jailed, under house arrest, or facing a genuine emergency that you must visibly acknowledge.
+"My head is spinning" or "I got confused" are NOT valid reasons to violate a commitment.
+════════════════════════════════════
+${lines.join('\n')}
+
+COMMITMENT ENFORCEMENT RULES:
+1. If you have an ACTIVE TRAVEL DIRECTIVE, you are physically in transit. Do not claim you are somewhere you are not yet.
+2. If you have an ACTIVE TRAVEL PROMISE, acknowledge it naturally if it comes up. Do not pretend you never said it.
+3. If you have an ACTIVE COMMUNICATION PROMISE, the system will execute it automatically. You do not need to re-promise.
+4. If something genuinely blocks you (jail, emergency, medical), say it clearly. Do not make vague excuses.
+5. "Forced Travel" toggle being off does NOT block commitments — it only stops random wandering.
+════════════════════════════════════`;
+  } catch {
+    return '';
+  }
+}
+
 // ── LOCATION RESPONSE VALIDATOR ───────────────────────────────────────────────
 
 /**
