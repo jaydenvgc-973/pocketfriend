@@ -51,14 +51,15 @@ export function isCharacterConfined(character) {
 }
 
 /**
- * Check if current local app time is within allowed messaging hours (9 AM - 9 PM)
- * Uses local timezone (browser-based)
+ * Check if current time is within allowed messaging hours (9 AM - 9 PM)
+ * Always uses EST (America/New_York) — the app's standard timezone.
  */
 export function isWithinMessagingHours() {
-  const now = new Date();
-  const hours = now.getHours(); // 0-23 in browser's local timezone
+  // Get current hour in EST/EDT (America/New_York handles daylight saving automatically)
+  const nowEST = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false });
+  const estHour = parseInt(nowEST, 10); // 0-23
   // 9 AM (9) through 8:59 PM (20:59) = hours 9-20 inclusive
-  return hours >= 9 && hours < 21;
+  return estHour >= 9 && estHour < 21;
 }
 
 /**
