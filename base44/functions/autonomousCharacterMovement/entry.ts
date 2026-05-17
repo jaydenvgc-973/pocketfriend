@@ -820,6 +820,135 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ── TIER 6.5: ACTIVE COMMITMENT CHECK ────────────────────────────────
+        // Priority order: hard obligations (work/school/jail already handled above) →
+        //   active promises/directives → social context → personality → needs-based wandering.
+        //
+        // If a character has an active travel_directive or travel_promise, that commitment
+        // takes priority over needs-driven random movement. Needs cannot override a confirmed
+        // meetup, a "I'm on my way" directive, or a scheduled obligation.
+        //
+        // RULES:
+        //   - travel_directive (active/in_progress): character already said they are on the way.
+        //     Route to destination immediately — do NOT let needs divert them.
+        //   - travel_promise (active): character promised to come over/visit.
+        //     Route to destination if the scheduled time is within the next 60 minutes.
+        //   - communication_promise: no location change — handled by processScheduledEvents.
+        //   - All existing hard restrictions still apply (jail, sleep, critical energy already
+        //     handled in higher tiers) — commitments do NOT bypass those.
+        {
+          let commitmentHandled = false;
+          try {
+            const activeCommitments = await base44.asServiceRole.entities.CharacterCommitment.filter(
+              { character_id: char.id },
+              '-created_at',
+              10
+            );
+            const liveCommitments = (activeCommitments || []).filter(c =>
+              c.status === 'active' || c.status === 'in_progress'
+            );
+
+            // Priority 1: Travel directives — "I'm on my way" / "heading there now"
+            const directive = liveCommitments.find(c => c.commitment_type === 'travel_directive');
+            if (directive && directive.destination_location_id) {
+              const destLoc = userLocations.find(l => l.id === directive.destination_location_id);
+              if (destLoc) {
+                if (char.resolved_current_location_id !== destLoc.id) {
+                  // Route to commitment destination — this character said they are on the way
+                  const commitPayload = {
+                    resolved_current_location_id:   destLoc.id,
+                    resolved_current_location_name: destLoc.name,
+                    resolved_presence_status:       'visiting',
+                    resolved_location_type:         'visit',
+                    resolved_source_reason:         'commitment_travel_directive',
+                    last_arrived_time:              nowET.toISOString(),
+                    travel_status:                  'not_traveling',
+                    travel_destination_location_id: null,
+                    traveling_to_location_id:       null,
+                    traveling_to_location_name:     null,
+                  };
+                  try {
+                    await base44.entities.Character.update(char.id, commitPayload);
+                  } catch {
+                    await base44.asServiceRole.entities.Character.update(char.id, commitPayload);
+                  }
+                  // Mark commitment as completed now that they've arrived
+                  await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
+                    status: 'completed',
+                    travel_arrived_at: nowET.toISOString(),
+                    completion_result: `Arrived at ${destLoc.name}`,
+                  }).catch(() => {});
+                  totalMoved++;
+                  moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_TRAVEL_DIRECTIVE] "${directive.promised_action || 'on the way'}"`);
+                  console.log(`[autonomousMovement] ✓ ${char.name}: COMMITMENT DIRECTIVE → ${destLoc.name}`);
+                } else {
+                  // Already there — mark completed
+                  await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
+                    status: 'completed',
+                    travel_arrived_at: nowET.toISOString(),
+                    completion_result: `Already at ${destLoc.name}`,
+                  }).catch(() => {});
+                  console.log(`[autonomousMovement] ${char.name}: COMMITMENT DIRECTIVE — already at destination ${destLoc.name}`);
+                }
+                commitmentHandled = true;
+              }
+            }
+
+            // Priority 2: Travel promises that are due within 60 minutes
+            if (!commitmentHandled) {
+              const nowMs = nowET.getTime();
+              const promise = liveCommitments.find(c => {
+                if (c.commitment_type !== 'travel_promise') return false;
+                if (!c.destination_location_id) return false;
+                if (!c.scheduled_execute_at) return false;
+                const dueMs = new Date(c.scheduled_execute_at).getTime();
+                return dueMs - nowMs <= 60 * 60 * 1000 && dueMs > nowMs - 10 * 60 * 1000; // within next 60 min or up to 10 min overdue
+              });
+              if (promise && promise.destination_location_id) {
+                const destLoc = userLocations.find(l => l.id === promise.destination_location_id);
+                if (destLoc && char.resolved_current_location_id !== destLoc.id) {
+                  const promisePayload = {
+                    resolved_current_location_id:   destLoc.id,
+                    resolved_current_location_name: destLoc.name,
+                    resolved_presence_status:       'visiting',
+                    resolved_location_type:         'visit',
+                    resolved_source_reason:         'commitment_travel_promise',
+                    last_arrived_time:              nowET.toISOString(),
+                    travel_status:                  'not_traveling',
+                    travel_destination_location_id: null,
+                    traveling_to_location_id:       null,
+                    traveling_to_location_name:     null,
+                  };
+                  try {
+                    await base44.entities.Character.update(char.id, promisePayload);
+                  } catch {
+                    await base44.asServiceRole.entities.Character.update(char.id, promisePayload);
+                  }
+                  await base44.asServiceRole.entities.CharacterCommitment.update(promise.id, {
+                    status: 'in_progress',
+                    travel_started_at: nowET.toISOString(),
+                  }).catch(() => {});
+                  totalMoved++;
+                  moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_TRAVEL_PROMISE] due ${promise.promised_time_window || 'soon'}`);
+                  console.log(`[autonomousMovement] ✓ ${char.name}: COMMITMENT PROMISE → ${destLoc.name}`);
+                  commitmentHandled = true;
+                }
+              }
+            }
+          } catch (commitErr) {
+            // Non-fatal — if commitment lookup fails, fall through to normal needs-based movement
+            console.warn(`[autonomousMovement] ${char.name}: commitment check failed (non-fatal) — ${commitErr.message}`);
+          }
+
+          if (commitmentHandled) {
+            if (totalMoved >= MAX_MOVES_PER_RUN) {
+              return Response.json({ success: true, users_processed: Object.keys(byUser).length, characters_moved: totalMoved, moves: moveLog, blocked_with_reason: blockedLog, skipped: skippedLog.length, capped: true, timestamp: new Date().toISOString() });
+            }
+            continue;
+          }
+        }
+        // END TIER 6.5
+
         // ── READ FULL NEEDS + DECIDE IF MOVEMENT IS REQUIRED ─────────────────
         const top = highestUrgencyEntry(vals);
 
