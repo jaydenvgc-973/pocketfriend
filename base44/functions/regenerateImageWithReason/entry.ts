@@ -156,33 +156,216 @@ function resolveOutfitTextFromCharacterRegen(character) {
   return null;
 }
 
-// ── PROMPT BUILDER ────────────────────────────────────────────────────────────
+// ── SEALED SUBJECT BUNDLE BUILDER ────────────────────────────────────────────
+// Shared by buildMultiSubjectRegenPrompt. Builds one self-contained block per subject
+// with identity key, role declaration, reference image slots, appearance lock,
+// outfit lock, and explicit cross-assignment prohibition.
+// SYNC: keep in structural parity with mediaGridGenerate's buildSubjectBundle.
+
+function buildRegenSubjectBundle(p, envCount) {
+  const startIdx = envCount + p.refStart;
+  const endIdx   = envCount + p.refStart + p.refCount - 1;
+  const isUser   = p.subjectRole === 'user';
+  const nameDisplay = p.displayName || (isUser ? 'User / My Persona' : 'the character');
+  const firstName   = p.firstName  || nameDisplay.split(/\s+/)[0];
+
+  const lines = [];
+  lines.push(`╔══════════════════════════════════════════════════════════╗`);
+  lines.push(`║ SUBJECT BUNDLE — SEALED — DO NOT MIX WITH OTHER SUBJECTS ║`);
+  lines.push(`╚══════════════════════════════════════════════════════════╝`);
+  lines.push(`SUBJECT KEY:   ${p.subjectKey}`);
+  lines.push(`SUBJECT ROLE:  ${isUser ? 'USER / WORLD PERSONA (the authenticated user of this app)' : `CHARACTER (stable ID: ${p.id})`}`);
+  lines.push(`DISPLAY NAME:  "${nameDisplay}"`);
+
+  if (isUser) {
+    lines.push(`IDENTITY NOTE: "${firstName}" is the current authenticated user / world persona.`);
+    lines.push(`  ⛔ Do NOT infer gender from the name "${firstName}" — use ONLY reference images and appearance lock below.`);
+    lines.push(`  ⛔ Do NOT replace this person with a generic event participant, stock photo, or crowd member.`);
+    lines.push(`  ⛔ Do NOT render this person as female unless appearance lock explicitly states female.`);
+    lines.push(`  ⛔ This is a real specific person with locked visual identity — NOT a generic named person.`);
+  } else {
+    lines.push(`IDENTITY NOTE: "${firstName}" is a specific saved character with a locked visual identity.`);
+    lines.push(`  ⛔ Do NOT substitute a generic person. Do NOT infer appearance beyond refs and appearance lock.`);
+  }
+
+  lines.push(``);
+  if (p.refCount > 0) {
+    lines.push(`REFERENCE IMAGES: Images ${startIdx}–${endIdx}`);
+    lines.push(`  These images show THIS SUBJECT'S FACE AND BODY ONLY.`);
+    lines.push(`  ✅ Use ONLY for: face structure, skin tone, hair, body type`);
+    lines.push(`  ⛔ IGNORE: background, pose, clothing, lighting in these reference photos`);
+    lines.push(`  ⛔ These refs belong EXCLUSIVELY to "${nameDisplay}" — do NOT apply to any other subject`);
+  } else {
+    lines.push(`REFERENCE IMAGES: None — generate "${nameDisplay}" from text description and appearance lock only.`);
+    lines.push(`  ⛔ Do NOT invent appearance beyond what is described below.`);
+  }
+
+  // Appearance lock block
+  const al = p.appearanceLock || {};
+  const alParts = [
+    al.gender      ? `Gender presentation: ${al.gender}` : null,
+    al.skinTone    ? `Skin tone: ${al.skinTone}` : null,
+    al.hairStyle   ? `Hair: ${al.hairStyle}` : null,
+    al.facialHair  ? `Facial hair: ${al.facialHair}` : null,
+    al.bodyType    ? `Body/aesthetic: ${al.bodyType}` : null,
+    al.height      ? `Height: ${al.height}` : null,
+    al.age         ? `Age: ${al.age}` : null,
+    al.customKeywords ? `Additional: ${al.customKeywords}` : null,
+    al.rawText     ? `Full description: ${al.rawText}` : null,
+  ].filter(Boolean);
+
+  if (alParts.length > 0) {
+    lines.push(``);
+    lines.push(`APPEARANCE LOCK (for "${nameDisplay}" ONLY — immutable):`);
+    alParts.forEach(a => lines.push(`  • ${a}`));
+    lines.push(`  ⛔ These appearance traits belong EXCLUSIVELY to "${nameDisplay}".`);
+    lines.push(`  ⛔ Do NOT apply these height/body/skin/hair values to any other subject.`);
+  }
+
+  // Outfit lock block
+  lines.push(``);
+  if (p.outfitText) {
+    const isBareTorso = /no shirt \/ bare torso/i.test(p.outfitText);
+    const hasBottoms  = /sweatpants|pants|jeans|shorts|joggers|leggings|trousers/i.test(p.outfitText);
+    const hasShoes    = /sneakers|shoes|boots|sandals|loafers|heels/i.test(p.outfitText);
+    lines.push(`CLOSET OUTFIT LOCK (for "${nameDisplay}" ONLY — canonical law):`);
+    p.outfitText.split(',').map(s => s.trim()).filter(Boolean).forEach(item => lines.push(`  • ${item}`));
+    lines.push(`  ⛔ This outfit is assigned EXCLUSIVELY to "${nameDisplay}".`);
+    lines.push(`  ⛔ Do NOT apply this outfit to any other subject in this scene.`);
+    lines.push(`  ⛔ Do NOT invent clothing from the event name or scene theme — use ONLY what is listed.`);
+    lines.push(`  ⛔ Do NOT swap, modify, or substitute any item.`);
+    if (isBareTorso) { lines.push(`  ⛔ BARE TORSO — NO shirt/tank/hoodie/jacket/robe on "${nameDisplay}".`); lines.push(`  ✅ Torso must be completely bare.`); }
+    if (hasBottoms)  lines.push(`  ✅ BOTTOMS VISIBLE — frame mid-thigh or lower for "${nameDisplay}".`);
+    if (hasShoes)    lines.push(`  ✅ SHOES VISIBLE — full or 3/4-body framing for "${nameDisplay}".`);
+  } else {
+    lines.push(`CLOSET OUTFIT: No outfit on file for "${nameDisplay}".`);
+    lines.push(`  ⛔ Do NOT invent clothing from the event name or theme.`);
+    lines.push(`  Use contextually neutral attire appropriate to the scene.`);
+  }
+
+  lines.push(``);
+  lines.push(`CROSS-ASSIGNMENT PROHIBITION (absolute):`);
+  lines.push(`  ⛔ "${nameDisplay}"'s outfit MUST NOT be rendered on any other subject.`);
+  lines.push(`  ⛔ "${nameDisplay}"'s height, body type, and skin tone MUST NOT be applied to any other subject.`);
+  lines.push(`  ⛔ "${nameDisplay}"'s reference images MUST NOT influence any other subject's appearance.`);
+
+  return lines.join('\n');
+}
+
+// ── PROMPT BUILDER — MULTI-SUBJECT (sealed bundle format) ────────────────────
+// Used when ctx.subjects has 2+ subjects (user + character, or multiple characters).
+// Identical bundle structure to mediaGridGenerate so both initial generation and all
+// regen paths (dont_like, custom_prompt, flawed, no_avatar, wrong_location) use the
+// same cross-assignment prohibition rules.
+
+function buildMultiSubjectRegenPrompt({
+  scenePrompt, locationName, zoneName, envRefs,
+  subjectBundles,   // array of resolved bundle objects
+  reason,
+}) {
+  const envCount = Math.min(envRefs.length, 4);
+  const totalSubjects = subjectBundles.length;
+
+  // Build NAME REFERENCE KEY
+  const nameKeyLines = [`[NAME REFERENCE KEY — SELECTED SUBJECTS]`];
+  nameKeyLines.push(`Every name in the scene prompt maps to exactly one sealed subject bundle below.`);
+  nameKeyLines.push(`Do NOT infer any appearance, gender, outfit, or body from a name alone.`);
+  nameKeyLines.push(`Do NOT assign any subject's attributes to a different subject.`);
+  nameKeyLines.push(``);
+  for (const b of subjectBundles) {
+    const isUser = b.subjectRole === 'user';
+    const nameDisplay = b.displayName || (isUser ? 'User / My Persona' : 'the character');
+    const firstName   = b.firstName  || nameDisplay.split(/\s+/)[0];
+    const roleDesc = isUser
+      ? `Current authenticated user / world persona (role: user, stable key: "__user__") — visual identity ONLY from user reference images and user appearance lock`
+      : `Saved character (role: character, Character ID: ${b.id}) — visual identity ONLY from character reference images and character appearance lock`;
+    nameKeyLines.push(`"${firstName}" / "${nameDisplay}" → ${roleDesc}`);
+  }
+  nameKeyLines.push(`[END NAME REFERENCE KEY]`);
+  const nameRefKey = nameKeyLines.join('\n');
+
+  const subjectBundleBlocks = subjectBundles.map(b => buildRegenSubjectBundle(b, envCount)).join('\n\n');
+
+  // Reason-specific block (simplified for multi-subject — focuses on correct-render intent)
+  let reasonBlock = '';
+  if (reason === 'dont_like' || reason === 'custom_prompt') {
+    reasonBlock = `\n\n════════════════════════════════════════════════════════════
+RE-RENDER — STRICT PROMPT FIDELITY MODE:
+Render the EXACT same scene MORE faithfully. Every noun, verb, and descriptor in the scene prompt is mandatory.
+Subject bundles above define WHO appears — sealed bundles OVERRIDE any scene-implied appearance.
+⛔ Do NOT invent clothing, appearance, or identity from the scene context or event name.
+⛔ Do NOT substitute any subject with a generic person or crowd participant.`;
+  } else if (reason === 'flawed') {
+    reasonBlock = `\n\nFLAWED IMAGE CORRECTION: Re-render with MAXIMUM fidelity. Fix body proportions, face/hair/skin tone, existing objects only. Every sealed bundle above is non-negotiable.`;
+  } else if (reason === 'no_avatar') {
+    reasonBlock = `\n\nIDENTITY CORRECTION: The previous image did not look like the correct person(s). Each subject bundle above contains the AUTHORITATIVE identity. Match every trait PRECISELY. Do NOT generate a generic or approximate person for any subject.`;
+  } else if (reason === 'wrong_location') {
+    reasonBlock = `\n\nLOCATION CORRECTION: Environment has been corrected. Images 1–${envCount} show the CORRECT location. Reproduce with EXACT fidelity using existing furniture only.`;
+  }
+
+  const cameraPos = selectCameraPosition(scenePrompt);
+
+  return `════════════════════════════════════════════════════════════
+IMAGE GENERATION PRIORITY STACK (GOVERNING LAW)
+════════════════════════════════════════════════════════════
+Priority 1: SCENE INTENT — user prompt meaning, emotion, action
+Priority 2: CHARACTER PRESENCE — who is there and what they are doing
+Priority 3: CAMERA POSITION — angle, distance, framing
+Priority 4: ZONE IDENTITY — room type and style
+Priority 5: REFERENCE IMAGE — guidance for identity only, not scene replication
+
+CAMERA POSITION: ${cameraPos}
+INTENSITY BALANCING: When closeness + nighttime + private setting + minimal clothing co-occur, do NOT maximize all signals at once.
+
+════════════════════════════════════════════════════════════
+CORE SCENE PROMPT:
+════════════════════════════════════════════════════════════
+${scenePrompt}
+
+Photorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.
+
+════════════════════════════════════════════════════════════
+${nameRefKey}
+════════════════════════════════════════════════════════════
+
+${envCount > 0 ? `════════════════════════════════════════════════════════════
+ENVIRONMENT — IMAGES 1–${envCount} (70–80% structural truth, 20–30% dynamic flexibility)
+════════════════════════════════════════════════════════════
+✅ PRESERVE: walls, floor, furniture, fixtures, objects, architecture, layout
+✓ REGENERATE: lighting (time-of-day), camera angle, framing, perspective
+⛔ Do NOT invent replacement furniture or duplicate existing objects
+
+` : ''}════════════════════════════════════════════════════════════
+SEALED SUBJECT BUNDLES — READ EACH BUNDLE INDEPENDENTLY
+ATTRIBUTES FROM ONE BUNDLE MUST NEVER BE APPLIED TO ANOTHER BUNDLE
+════════════════════════════════════════════════════════════
+
+${subjectBundleBlocks}
+
+════════════════════════════════════════════════════════════
+GLOBAL CROSS-ASSIGNMENT PROHIBITION — ABSOLUTE LAW
+════════════════════════════════════════════════════════════
+This scene contains ${totalSubjects} distinct subjects. Each has a sealed bundle above.
+⛔ NEVER swap outfits between subjects — each outfit belongs to exactly one person.
+⛔ NEVER swap height or body type between subjects.
+⛔ NEVER apply one subject's reference images to render a different subject.
+⛔ NEVER invent clothing from the event name, scene theme, or crowd context for any subject.
+⛔ NEVER replace any named subject with a generic crowd participant or stock photo person.
+✅ Each subject must be rendered using ONLY their own sealed bundle.${reasonBlock}
+
+════════════════════════════════════════════════════════════
+UNIFIED COMPOSITION RULE
+════════════════════════════════════════════════════════════
+ONE COHESIVE SCENE. All subjects are naturally integrated — same lighting, same floor plane, same perspective.
+Do NOT: paste subjects over background | disconnect from room perspective | invent props
+DO: move camera | change angle | apply time-of-day lighting | reframe from new camera position
+`;
+}
+
+// ── PROMPT BUILDER — SINGLE SUBJECT (original format, preserved) ──────────────
+// Used when the image has only one subject (no multi-person context in ctx.subjects).
 
 function buildRegenPrompt({ scenePrompt, charName, charDesc, locationName, zoneName, envRefs, charRefs, userRefs, includeUser, reason }) {
-  // ── IMAGE GENERATION PRIORITY STACK (GOVERNING LAW) ──────────────────────
-  // Priority 1: SCENE INTENT — user prompt meaning, emotion, action
-  // Priority 2: CHARACTER PRESENCE — who is there and what they are doing
-  // Priority 3: CAMERA POSITION — angle, distance, framing
-  // Priority 4: ZONE IDENTITY — room type and style
-  // Priority 5: REFERENCE IMAGE — guidance only, not replication
-  // Priority 6: SAFETY SANITIZATION — minimal, non-destructive
-  //
-  // CRITICAL: Lower priority NEVER overrides higher priority.
-  // CONFLICT RESOLUTION: scene intent → camera realism → zone identity → relax reference constraints
-  // ANTI-FLAT RULE: slightly imperfect room + correct emotion/camera = VALID. Perfect room + static camera = FAILED.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // ── INTENSITY BALANCING ───────────────────────────────────────────────────
-  // When multiple high-intensity signals co-occur (closeness + nighttime + private setting + minimal clothing),
-  // do NOT maximize all signals simultaneously — balance them to stay below filter threshold while preserving the moment.
-  // Rules:
-  //   - Reduce camera proximity slightly when physical contact + minimal clothing are both present
-  //   - Soften physical contact wording (e.g. "close to" instead of "pressed against")
-  //   - Imply environment rather than labeling it directly (e.g. avoid stacking "night" + "bedroom" + "alone" + "intimate")
-  //   - Keep emotional tone without labeling it as "intimate" or "sensual"
-  // Goal: preserve the visual/emotional moment while keeping overall intensity balanced.
-  // ─────────────────────────────────────────────────────────────────────────
-
    const hasEnv  = envRefs.length > 0;
    const hasChar = charRefs.length > 0;
    const hasUser = (userRefs || []).length > 0;
@@ -206,13 +389,6 @@ STRUCTURAL TRUTH & DYNAMIC FLEXIBILITY — CAMERA ADAPTS TO ROOM
 CAMERA POSITION (MANDATORY — MUST DIFFER FROM REFERENCE):
 ${cameraPos}
 
-This camera angle MUST be visibly different from reference images.
-
-CRITICAL: If the character's requested action requires an existing object (table, couch, bed, counter, stove):
-✅ Use THAT existing object from images 1–${envEnd}
-✅ Move the camera to frame the object correctly
-⛔ Do NOT duplicate, invent, or replace the object
-
 REFERENCE HIERARCHY:
 - 70–80% STRUCTURAL TRUTH: room layout, furniture identity, materials, zone identity
 - 20–30% DYNAMIC FLEXIBILITY: camera angle, framing, lighting (time-based)
@@ -223,7 +399,6 @@ REFERENCE HIERARCHY:
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
     preamble += `Images 1–${envEnd}: ROOM ENVIRONMENT — 70–80% STRUCTURAL TRUTH
 Photographs of "${place}". PRESERVE: walls, floor, furniture identity, rug, curtains, lighting fixtures, decor, layout.
-The room structure is TRUE — the viewpoint and lighting will change with new camera position.
 
 `;
   }
@@ -231,17 +406,15 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
      preamble += `Images ${charStart}–${charEnd}: FACE-CROP IDENTITY PHOTOS — FACE ONLY — "${charName}".
   Match ONLY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
   ⛔ ABSOLUTE PROHIBITION: Background, room, walls, lighting, furniture, pose, clothing in these photos MUST BE COMPLETELY IGNORED.
-  ⛔ DO NOT USE AS SCENE BACKGROUND — room comes from zone images only.
   ⛔ Treat as face texture samples ONLY.
 
   `;
   }
   if (hasUser && includeUser) {
     preamble += `Images ${userStart}–${userEnd}: FACE-CROP IDENTITY PHOTOS — FACE ONLY — USER / MY PERSONA.
-  These are photos of the user (the person who owns this app). Match ONLY: face structure, skin tone, hair, body type.
+  Match ONLY: face structure, skin tone, hair, body type.
   ⛔ ABSOLUTE PROHIBITION: Background, pose, clothing, lighting from these photos MUST BE COMPLETELY IGNORED.
-  ⛔ DO NOT treat these as a scene template — face identity ONLY transfers.
-  The user must appear as a distinct person from "${charName}" — do NOT merge their appearances.
+  The user must appear as a DISTINCT person from "${charName}" — do NOT merge their appearances.
 
   `;
   }
@@ -255,164 +428,62 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
   ════════════════════════════════════════════════════════════
   STRUCTURAL TRUTH — "${place}" — 70–80% IDENTITY, 20–30% DYNAMIC
   ════════════════════════════════════════════════════════════
-
-  PRESERVE (70–80% structural truth):
-   ✅ Furniture types, colors, shapes, structural placement
-   ✅ Wall color, floor type, rug, curtains
-   ✅ All lighting fixtures and lamps
-   ✅ Wall art and shelves in relative positions
-   ✅ Room layout, windows, doors, architecture
-
-  REGENERATE (20–30% dynamic flexibility):
-   ✓ Camera position (MUST differ from reference image viewpoint)
-   ✓ Camera angle (MUST be new perspective)
-   ✓ Lighting (NO light source from reference images — generate fresh)
-   ✓ Composition (MUST be reframed from new camera viewpoint)
-   ✓ Depth of field and focus
-
-  ════════════════════════════════════════════════════════════
-  EXISTING OBJECTS FIRST — NO DUPLICATION
-  ════════════════════════════════════════════════════════════
-  CRITICAL: Use EXISTING furniture from images 1–${envEnd} FIRST.
-  If an object needs framing, MOVE THE CAMERA — do NOT invent or duplicate.
-  NEVER create a second table, couch, bed, stove, or counter when one exists.
-  If unframed, adjust camera angle/placement/position. Room truth stays fixed.
-
-  NO OBJECT INVENTION — Every object must come from images 1–${envEnd}.
-  NO STATIC BACKGROUND LOCK — Recompose the entire scene from the new camera position.`;
+  PRESERVE: Furniture types/colors/shapes, wall color, floor type, rug, curtains, lighting fixtures, layout.
+  REGENERATE: Camera position (MUST differ), camera angle, fresh lighting, new framing.
+  CRITICAL: Use EXISTING furniture — MOVE THE CAMERA rather than inventing new objects.
+  NEVER create a second table, couch, bed, stove, or counter when one exists.`;
   }
 
-  // Reason-specific enforcement
   let reasonBlock = '';
   if (reason === 'dont_like' || reason === 'custom_prompt') {
-    // ── SUBJECT + ELEMENT FIDELITY BLOCK ─────────────────────────────────────
-    // When the user says "Don't like it", they are asking for a re-render of THIS scene
-    // with THIS character doing EXACTLY what was described — not a generic redo.
-    // The system MUST faithfully reproduce every element the user asked for:
-    //   - WHO is the subject (the character named above — NOT a generic person)
-    //   - WHAT they are doing (action, pose, activity as described in the prompt)
-    //   - WHERE it is happening (location/zone as already resolved)
-    //   - WHAT elements appear (objects, clothing, props explicitly mentioned)
-    //
-    // This block enforces "closer attention to prompt" — every noun, verb, and adjective
-    // in the scene description is treated as a mandatory visual requirement.
-
-    // Extract key scene elements from the prompt for explicit enforcement
-    const promptLowerCheck = scenePrompt.toLowerCase();
-
-    // Detect subject type from prompt to enforce identity
-    const hasExplicitSubjectName = charName && charName !== 'the character' && scenePrompt.toLowerCase().includes(charName.toLowerCase().split(' ')[0].toLowerCase());
-
-    // Clothing/accessories explicitly named in prompt
     const clothingMatches = scenePrompt.match(/\b(wearing|dressed in|has on|in a|with a)\s+([^,.!?]+)/gi) || [];
     const clothingNote = clothingMatches.length > 0
-      ? `CLOTHING/ACCESSORIES LOCK — MANDATORY:\n  The prompt explicitly describes: "${clothingMatches.slice(0, 3).join('; ')}"\n  ⛔ You MUST render exactly what is described above — no substitutions, no omissions.`
+      ? `CLOTHING LOCK: The prompt explicitly describes: "${clothingMatches.slice(0, 3).join('; ')}" — render exactly.`
       : '';
-
-    // Actions explicitly requested
     const actionMatches = scenePrompt.match(/\b(sitting|standing|lying|holding|eating|drinking|laughing|smiling|looking|walking|running|leaning|reaching|cooking|reading|typing|sleeping|hugging|kissing|posing)[^\s,]*/gi) || [];
     const actionNote = actionMatches.length > 0
-      ? `ACTION LOCK — MANDATORY:\n  The prompt explicitly describes these actions: ${actionMatches.slice(0, 4).join(', ')}\n  ⛔ The character MUST be performing these exact actions — do not substitute or ignore them.`
-      : '';
-
-    // Props/objects explicitly mentioned
-    const propMatches = scenePrompt.match(/\b(phone|coffee|cup|glass|book|bag|hat|sunglasses|umbrella|laptop|headphones|camera|food|drink|bottle|plate|chair|table|couch|bed|mirror|door|window)[s]?\b/gi) || [];
-    const propNote = propMatches.length > 0
-      ? `PROPS/OBJECTS LOCK — MANDATORY:\n  The prompt explicitly mentions: ${[...new Set(propMatches.map(p => p.toLowerCase()))].slice(0, 5).join(', ')}\n  ⛔ These objects MUST appear in the image — do not omit them.`
+      ? `ACTION LOCK: The prompt describes these actions: ${actionMatches.slice(0, 4).join(', ')} — render exactly.`
       : '';
 
     reasonBlock = `
 
   DONT_LIKE RE-RENDER — STRICT PROMPT FIDELITY MODE:
-  The user is not satisfied with the previous result and wants a better version.
-  This is NOT a license to make a completely different image.
-  This IS an instruction to render the EXACT same scene MORE faithfully.
-
-  ════════════════════════════════════════════════════════════
-  SUBJECT IDENTITY LOCK — WHO IS IN THIS IMAGE
-  ════════════════════════════════════════════════════════════
-  The PRIMARY SUBJECT of this image is: "${charName}"
-  ${hasExplicitSubjectName ? `✅ The prompt explicitly names "${charName.split(' ')[0]}" — this person is the focus.` : `✅ "${charName}" is the character this scene was generated for — they are the subject.`}
-  ⛔ Do NOT generate a generic or random person as the subject
-  ⛔ Do NOT substitute a different person
-  ⛔ "${charName}"'s appearance lock (hair, skin tone, face, body) is ABSOLUTE and IMMUTABLE
-  ⛔ Every identity trait from the reference photos and description above is NON-NEGOTIABLE
-
-  ════════════════════════════════════════════════════════════
-  SCENE PROMPT — READ EVERY WORD AS A MANDATORY VISUAL REQUIREMENT
-  ════════════════════════════════════════════════════════════
-  The scene prompt below describes EXACTLY what must appear in this image.
-  Every noun, verb, adjective, and descriptor is a MANDATORY element.
-  Do NOT:
-  ⛔ Ignore any element that was explicitly described
-  ⛔ Substitute different clothing, objects, or settings
-  ⛔ Skip described actions or poses
-  ⛔ Omit described props or items
-  ⛔ Change the described mood, lighting, or environment tone
-
-  ${clothingNote ? clothingNote + '\n\n  ' : ''}${actionNote ? actionNote + '\n\n  ' : ''}${propNote ? propNote + '\n\n  ' : ''}
-  ════════════════════════════════════════════════════════════
-  LOCATION LOCK — WHERE THIS SCENE TAKES PLACE
-  ════════════════════════════════════════════════════════════
-  ${hasEnv
-    ? `The environment reference images (Images 1–${Math.min(envRefs.length, 4)}) show the CORRECT location: "${[locationName, zoneName].filter(Boolean).join(' → ')}".
-  ⛔ You MUST render this exact location — NOT a generic or invented room/setting.
-  ⛔ The walls, floor, furniture, decor, and spatial layout MUST match the reference images.
-  ⛔ Do NOT invent a new environment — use the reference images as the spatial blueprint.`
-    : `No location reference images are available. Render an environment consistent with what the scene prompt describes.`
-  }
-
-  ════════════════════════════════════════════════════════════
-  WHAT "DON'T LIKE IT" MEANS:
-  ════════════════════════════════════════════════════════════
-  The user wants the SAME scene rendered with better quality/accuracy.
-  Common reasons include: wrong camera angle, character looks off, lighting issues, scene elements missing.
-  FIX these issues while keeping EVERYTHING ELSE identical to what was described.
-  The scene prompt is the AUTHORITY — follow it precisely.`;
+  Render the EXACT same scene MORE faithfully. Every noun, verb, and adjective is a mandatory visual requirement.
+  ⛔ Do NOT generate a generic or random person — "${charName}" is the subject.
+  ⛔ "${charName}"'s appearance lock is ABSOLUTE and IMMUTABLE.
+  ${clothingNote}
+  ${actionNote}
+  ${hasEnv ? `Location lock: environment refs (Images 1–${Math.min(envRefs.length, 4)}) show the CORRECT location. Match walls/floor/furniture exactly.` : 'No env refs — render environment consistent with scene prompt.'}`;
   } else if (reason === 'flawed') {
     reasonBlock = `
 
-  FLAWED IMAGE CORRECTION:
-  The previous image had rendering failures (body morphing, wrong room, furniture errors, texture glitches, object duplication).
-  Re-render with MAXIMUM fidelity. Every constraint above is non-negotiable.
-  Correct: body proportions, furniture exact match (no duplication), correct face/hair/skin tone, anatomically correct hands/fingers, existing objects only.`;
+  FLAWED IMAGE CORRECTION: Re-render with MAXIMUM fidelity.
+  Correct: body proportions, correct face/hair/skin tone, anatomically correct hands/fingers, existing objects only.`;
   } else if (reason === 'no_avatar') {
-     const subjectList = [];
-     if (hasChar) subjectList.push(`"${charName}" (Images ${charStart}–${charEnd})`);
-     if (hasUser && includeUser) subjectList.push(`User / My Persona (Images ${userStart}–${userEnd})`);
      reasonBlock = `
 
-  IDENTITY CORRECTION — ${subjectList.length > 0 ? subjectList.join(' and ') : `"${charName}"`}:
+  IDENTITY CORRECTION — "${charName}"${hasUser && includeUser ? ' and User / My Persona' : ''}:
   The previous image did not look like the correct person(s). Fix all identity references with MAXIMUM PRECISION.
-  ${hasChar ? `"${charName}" reference images: ${charStart}–${charEnd}. Match face structure, skin tone, hair, body type PRECISELY.` : ''}
-  ${hasUser && includeUser ? `User persona reference images: ${userStart}–${userEnd}. Match face structure, skin tone, hair, body type PRECISELY.` : ''}
-  Each person's appearance traits are ABSOLUTE TRUTH — NEVER approximate or substitute.
-  ⛔ Do NOT generate a generic, approximate, or randomly generated person for ANY subject.
-  ⛔ Do NOT let one subject's appearance bleed into or overwrite the other.`;
+  ${hasChar ? `"${charName}" refs: Images ${charStart}–${charEnd}. Match face structure, skin tone, hair, body type PRECISELY.` : ''}
+  ${hasUser && includeUser ? `User persona refs: Images ${userStart}–${userEnd}. Match PRECISELY.` : ''}
+  ⛔ Do NOT generate a generic person for ANY subject.
+  ⛔ Do NOT let one subject's appearance bleed into the other.`;
   } else if (reason === 'wrong_location') {
     reasonBlock = `
 
-  LOCATION CORRECTION:
-  The environment has been corrected. Reference images 1–${envEnd} show the CORRECT room.
-  Reproduce this room with EXACT fidelity. Use EXISTING furniture only — NO DUPLICATION or INVENTION.
-  The previous room was wrong — do NOT replicate it. Preserve all furniture from images 1–${envEnd}.`;
+  LOCATION CORRECTION: Images 1–${envEnd} show the CORRECT room.
+  Reproduce with EXACT fidelity. Use EXISTING furniture only — NO DUPLICATION or INVENTION.`;
   }
 
   let identityLock = '';
-  // Identity lock fires for ALL saved-character images — with OR without reference photos.
-  // charDesc (appearance_lock text) is the fallback identity source when no photos exist.
   if (hasChar || charDesc) {
     const refBlock = hasChar
-      ? `Images ${charStart}–${charEnd} are FACE-CROP REFERENCE PHOTOS. Use them for face structure and features ONLY.
-  Match PRECISELY: face bone structure, eyes, skin tone, hair color/length/style, body type.`
-      : `No reference photos available. Generate "${charName}" EXCLUSIVELY from the text description below.
-  The text description is the AUTHORITATIVE identity source — treat every trait as absolute truth.`;
+      ? `Images ${charStart}–${charEnd} are FACE-CROP REFERENCE PHOTOS. Match PRECISELY: face structure, eyes, skin tone, hair, body type.`
+      : `No reference photos. Generate "${charName}" EXCLUSIVELY from text description below.`;
 
     const regenOutfitMatch = charDesc?.match(/Currently wearing: (.+?)(?:\.|$)/)?.[1];
     const descBlock = charDesc
-      ? `\n  TEXT DESCRIPTION (ABSOLUTE IDENTITY — IMMUTABLE):
-  ${charDesc}
-  Every trait above is non-negotiable. Do NOT substitute, approximate, or invent any appearance trait.${regenOutfitMatch ? `\n  ✅ OUTFIT ENFORCEMENT (CANONICAL LAW — NON-NEGOTIABLE): "${regenOutfitMatch}". This outfit was resolved from the character's closet. It MUST appear exactly as described. Do NOT substitute, reinterpret, replace, upgrade, modify, or improve it. The generator renders this outfit — it does not redesign it.` : ''}`
+      ? `\n  TEXT DESCRIPTION (ABSOLUTE IDENTITY — IMMUTABLE):\n  ${charDesc}\n  Every trait is non-negotiable.${regenOutfitMatch ? `\n  ✅ OUTFIT ENFORCEMENT (CANONICAL LAW): "${regenOutfitMatch}" — render exactly, do NOT substitute.` : ''}`
       : '';
 
     identityLock = `
@@ -421,37 +492,20 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
   ${refBlock}${descBlock}
 
   APPEARANCE LOCK (100% ABSOLUTE TRUTH):
-  ✅ Hair: Match hairstyle, length, texture, and color exactly — from photos if available, from text description otherwise
-  ✅ Facial hair: Match exact facial hair state (clean-shaven, stubble, beard, etc.) — non-negotiable
-  ✅ Skin tone: Match exact skin tone — non-negotiable
-  ✅ Body type: Match exact body structure and proportions — non-negotiable
-  ✅ Ethnicity and gender: Match exactly as described — non-negotiable
-
-  ⛔ Do NOT generate a generic, approximate, or random person
-  ⛔ Do NOT invent appearance traits not present in photos or description
-  ⛔ Do NOT override appearance traits from the character record
-  ⛔ THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS
-  ⛔ CRITICAL: The character must look PHYSICALLY PRESENT inside the room — integrated with the room's perspective, depth, and lighting. NOT cut out. NOT composited. NOT overlaid on a background. ONE UNIFIED SCENE.
-  ⛔ If the character looks pasted or floating — the generation has FAILED. Redo with full integration.`;
+  ✅ Hair, facial hair, skin tone, body type, ethnicity, gender — match exactly, non-negotiable.
+  ⛔ Do NOT generate a generic or random person.
+  ⛔ Character must look PHYSICALLY PRESENT in the room — integrated with lighting and perspective. NOT cut out or composited.`;
   }
 
-  // User identity lock — added when user is a subject in the regenerated image
   if (hasUser && includeUser) {
     identityLock += `
 
   USER IDENTITY — "My Persona / Me":
-  ${hasUser
-    ? `Images ${userStart}–${userEnd} are FACE-CROP REFERENCE PHOTOS of the user (the app owner).
-  Match PRECISELY: face bone structure, eyes, skin tone, hair color/length/style, body type.
-  ⛔ ABSOLUTE PROHIBITION: Background, pose, clothing, lighting from these photos MUST BE COMPLETELY IGNORED.
-  ⛔ DO NOT use these photos as a scene template — only face identity transfers.`
-    : `No user reference photos available. Generate the user as a realistic person consistent with scene context.`
-  }
-
-  ✅ The user must appear as a DISTINCT person from "${charName}" — different face, different identity
-  ⛔ Do NOT merge or blend the user's appearance with the character's appearance
-  ⛔ Do NOT generate a generic placeholder for the user when reference photos exist
-  ⛔ BOTH subjects must be physically integrated into the same scene — same lighting, same floor plane, same perspective`;
+  ${hasUser ? `Images ${userStart}–${userEnd} are FACE-CROP REFERENCE PHOTOS. Match PRECISELY: face structure, skin tone, hair, body type.
+  ⛔ Background, pose, clothing from these photos MUST BE IGNORED.` : `No user refs. Generate as realistic person consistent with scene context.`}
+  ✅ User must appear DISTINCT from "${charName}" — different face, different identity.
+  ⛔ Do NOT merge user appearance with character appearance.
+  ⛔ BOTH subjects must be physically integrated — same lighting, same floor plane, same perspective.`;
   }
 
   return `${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${reasonBlock}${identityLock}`;
@@ -1057,7 +1111,7 @@ Deno.serve(async (req) => {
     const USER_SLOTS = Math.min(userRefs.length, 3);
     const needsUserRefsForRegen = needsUserRefs; // already resolved above
 
-    const referenceImages = [
+    let referenceImages = [
       ...envRefs.slice(0, ENV_SLOTS),
       ...charRefs.slice(0, CHAR_SLOTS),
       ...userRefs.slice(0, USER_SLOTS),
@@ -1096,18 +1150,201 @@ Deno.serve(async (req) => {
     console.log(`[regenerateImageWithReason] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | reason=${reason} | includeUser=${!!includeUserSubject}`);
 
     // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
-    const finalPrompt = buildRegenPrompt({
-      scenePrompt,
-      charName,
-      charDesc,
-      locationName: resolvedLocationName,
-      zoneName: resolvedZoneName,
-      envRefs: envRefs.slice(0, ENV_SLOTS),
-      charRefs: charRefs.slice(0, CHAR_SLOTS),
-      userRefs: userRefs.slice(0, USER_SLOTS),
-      includeUser: needsUserRefsForRegen && USER_SLOTS > 0,
-      reason,
-    });
+    // Detect multi-subject context: use sealed bundle prompt when 2+ subjects present.
+    // Single-subject images (most chat images) still use the compact single-subject format.
+    //
+    // Multi-subject detection: ctx.subjects array (set by mediaGridGenerate for all multi-person images)
+    // has 2+ entries, OR the original image explicitly included the user persona alongside a character.
+    const ctxSubjects = ctx.subjects || [];
+    const isMultiSubjectRegen = ctxSubjects.length >= 2 ||
+      (ctxSubjects.length === 1 && needsUserRefs && (ctx.subject_type === 'multi' || ctx.image_type === 'multi'));
+
+    let finalPrompt;
+
+    if (isMultiSubjectRegen) {
+      // ── MULTI-SUBJECT PATH: build sealed per-subject bundles ────────────────
+      // Re-resolve each subject's outfit and appearance lock fresh from DB.
+      // This ensures the outfit stored at generation time is used — not re-derived from
+      // a stale prompt or context field that may have drifted.
+      console.log(`[regenerateImageWithReason] MULTI-SUBJECT regen: ${ctxSubjects.length} subjects in ctx — using sealed bundle prompt`);
+
+      // Helpers inlined (Deno cannot import local lib)
+      function normalizeOutfitFieldRegen(val) {
+        if (!val) return null;
+        const t = val.trim();
+        if (/^(n\/?a|none|-)$/i.test(t)) return null;
+        const s = t.replace(/^n\/?a[,\-–]\s*/i, '').trim();
+        if (/^(shirtless|no top|no shirt)$/i.test(s)) return 'No shirt / bare torso';
+        return s || null;
+      }
+      function buildOutfitTextBundle(outfit) {
+        if (!outfit) return null;
+        const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
+          .map(normalizeOutfitFieldRegen).filter(Boolean);
+        if (parts.length > 0) return parts.join(', ');
+        if (outfit.full_description) return outfit.full_description.trim();
+        return null;
+      }
+
+      // Build bundles — one per subject
+      const subjectBundles = [];
+      let refCursor = 1; // 1-based, after env refs
+
+      // ── Process character subjects from ctx.subjects ──────────────────────
+      for (const s of ctxSubjects) {
+        if (s.subject_type === 'user' || s.subject_id === '__user__') continue; // handled separately below
+
+        const sid = s.subject_id;
+        if (!sid) continue;
+
+        // Resolve outfit and appearance from DB
+        let outfitText = null;
+        let appearanceLock = null;
+        let subjectDisplayName = s.subject_name || charName || 'the character';
+
+        try {
+          let rec = null;
+          const recListUser = await base44.entities.Character.filter({ id: sid }, null, 1).catch(() => []);
+          rec = recListUser?.[0] || null;
+          if (!rec) {
+            const recListSR = await base44.asServiceRole.entities.Character.filter({ id: sid }, null, 1).catch(() => []);
+            rec = recListSR?.[0] || null;
+          }
+          if (rec) {
+            subjectDisplayName = rec.name || subjectDisplayName;
+            // Outfit: prefer stored outfit metadata from ctx, then re-resolve from record
+            const storedMeta = (ctx.resolved_outfit_metadata || []).find(m => m.subjectType === 'character' && m.name === rec.name);
+            if (storedMeta?.text) {
+              outfitText = storedMeta.text;
+            } else {
+              const co = rec.current_outfit;
+              outfitText = (co?.outfit_id || co?.label) ? buildOutfitTextBundle(co) : null;
+              if (!outfitText) {
+                const closet = (rec.character_closet || []).filter(o => o.outfit_id);
+                if (closet.length > 0) outfitText = buildOutfitTextBundle(closet[0]);
+              }
+            }
+            // Appearance lock
+            const al = rec.appearance_lock || {};
+            appearanceLock = {
+              gender: rec.gender || null,
+              skinTone: al.skin_tone || null,
+              hairStyle: al.hairstyle || al.hair_type || null,
+              facialHair: al.facial_hair || null,
+              bodyType: al.overall_aesthetic || null,
+              height: al.height_display || null,
+              age: rec.age_range || (rec.age ? `${rec.age}` : null),
+              customKeywords: (al.custom_keywords || []).join(', ') || null,
+              rawText: charDesc || null,
+            };
+          }
+        } catch (bundleErr) {
+          console.warn(`[regenerateImageWithReason] Bundle resolution for char ${sid}: ${bundleErr?.message}`);
+        }
+
+        // Ref slots for this subject
+        const subjectRefs = cdnFilter(s.reference_images || charRefs || []).slice(0, 2);
+        subjectBundles.push({
+          subjectKey: `character_${sid}`,
+          subjectRole: 'character',
+          id: sid,
+          displayName: subjectDisplayName,
+          firstName: subjectDisplayName.split(/\s+/)[0],
+          refStart: refCursor,
+          refCount: subjectRefs.length,
+          outfitText,
+          appearanceLock,
+          _refs: subjectRefs,
+        });
+        refCursor += subjectRefs.length;
+      }
+
+      // ── Process user/persona subject ───────────────────────────────────────
+      if (needsUserRefs && userRefs.length > 0) {
+        let userOutfitText = null;
+        let userAppearanceLock = null;
+        let userPersonaDisplayName = 'User / My Persona';
+
+        try {
+          const settingsList = await base44.asServiceRole.entities.UserSettings.filter(
+            { owner_email: requestingUser }, null, 1
+          ).catch(() => []);
+          const sett = settingsList?.[0] || null;
+          userPersonaDisplayName = sett?.fictional_world_name || userPersonaDisplayName;
+          // Outfit: prefer stored metadata from ctx, then re-resolve from settings
+          const storedUserMeta = (ctx.resolved_outfit_metadata || []).find(m => m.subjectType === 'user');
+          if (storedUserMeta?.text) {
+            userOutfitText = storedUserMeta.text;
+          } else {
+            const uco = sett?.user_current_outfit;
+            userOutfitText = uco ? buildOutfitTextBundle(uco) || uco.full_description?.trim() || null : null;
+          }
+          const ual = sett?.appearance_lock || {};
+          userAppearanceLock = {
+            gender: sett?.user_gender || null,
+            skinTone: ual.skin_tone || null,
+            hairStyle: ual.hairstyle || ual.hair_type || null,
+            bodyType: ual.overall_aesthetic || null,
+            height: ual.height_display || null,
+            customKeywords: (ual.custom_keywords || []).join(', ') || null,
+          };
+        } catch (userBundleErr) {
+          console.warn(`[regenerateImageWithReason] User bundle resolution: ${userBundleErr?.message}`);
+        }
+
+        subjectBundles.push({
+          subjectKey: '__user__',
+          subjectRole: 'user',
+          id: '__user__',
+          displayName: userPersonaDisplayName,
+          firstName: userPersonaDisplayName.split(/\s+/)[0],
+          refStart: refCursor,
+          refCount: userRefs.slice(0, USER_SLOTS).length,
+          outfitText: userOutfitText,
+          appearanceLock: userAppearanceLock,
+          _refs: userRefs.slice(0, USER_SLOTS),
+        });
+        refCursor += userRefs.slice(0, USER_SLOTS).length;
+      }
+
+      // Assemble reference images in bundle order: env → char bundles → user bundle
+      const bundleRefs = subjectBundles.flatMap(b => b._refs || []);
+      const multiReferences = [
+        ...envRefs.slice(0, ENV_SLOTS),
+        ...bundleRefs,
+      ].filter(Boolean);
+
+      console.log(`[regenerateImageWithReason] Multi-subject bundles: ${subjectBundles.length} | refs: env=${ENV_SLOTS} subjects=${bundleRefs.length}`);
+
+      finalPrompt = buildMultiSubjectRegenPrompt({
+        scenePrompt,
+        locationName: resolvedLocationName,
+        zoneName: resolvedZoneName,
+        envRefs: envRefs.slice(0, ENV_SLOTS),
+        subjectBundles,
+        reason,
+      });
+
+      // Override referenceImages with bundle-ordered refs for this path
+      // (reassigned before the generate loop below)
+      referenceImages.length = 0;
+      multiReferences.forEach(r => referenceImages.push(r));
+
+    } else {
+      // ── SINGLE-SUBJECT PATH: original compact format ─────────────────────
+      finalPrompt = buildRegenPrompt({
+        scenePrompt,
+        charName,
+        charDesc,
+        locationName: resolvedLocationName,
+        zoneName: resolvedZoneName,
+        envRefs: envRefs.slice(0, ENV_SLOTS),
+        charRefs: charRefs.slice(0, CHAR_SLOTS),
+        userRefs: userRefs.slice(0, USER_SLOTS),
+        includeUser: needsUserRefsForRegen && USER_SLOTS > 0,
+        reason,
+      });
+    }
 
     // ── 7. CAMERA ENFORCEMENT — INLINED HELPERS ───────────────────────────────
     // Cannot import local lib in Deno — inline camera validation logic
