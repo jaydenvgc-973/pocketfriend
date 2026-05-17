@@ -595,8 +595,9 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
         }));
 
         const generationContext = {
-          // Schema version — allows future migrations to detect context format
           generation_context_version: 2,
+          context_origin: 'media_grid',
+          schema_written_at: new Date().toISOString(),
 
           // New structured format — read by recoverSingleImage and regenerateImageWithReason
           image_type: 'multi',

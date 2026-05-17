@@ -1623,11 +1623,7 @@ Deno.serve(async (req) => {
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | char=${charRecord?.name || characterName || 'none'} | outfit_injected=${/Currently wearing:/i.test(charDesc)} | message_id=${messageId}`);
 
 
-    // Mutation logging is already done above immediately after sanitization — no duplicate needed here.
-
     // ── 5b. APPLY APPEARANCE LOCK VALIDATION ─────────────────────────────────
-    // Now that charRecord is resolved, validate sanitizedPrompt against appearance_lock.
-    // This must happen AFTER character resolution so we have the real lock data.
     const appearanceLockCorrections = [];
     if (charRecord?.appearance_lock && sanitizedPrompt) {
       const { prompt: correctedPrompt, corrections } = validatePromptAgainstAppearanceLock(
@@ -1748,8 +1744,6 @@ All reference images (if any) are environment/location refs only — do NOT trea
     const stagedAttempts = []; // all attempts, win or lose
 
     const structuredSubjects = [];
-
-    // Subject 1: the character (if resolved)
     if (charRecord || characterId) {
       structuredSubjects.push({
         subject_type: 'character',
@@ -1764,23 +1758,33 @@ All reference images (if any) are environment/location refs only — do NOT trea
         outfit_injected: /Currently wearing:/i.test(charDesc),
       });
     }
-
     if (subjectType === 'joint' || subjectType === 'user') {
       structuredSubjects.push({ subject_type: 'user', subject_id: requestingUser, subject_name: userWorldName || 'user', role: 'primary', reference_image_count: USER_SLOTS, reference_images: userRefs, outfit_snapshot: userOutfitText || null, outfit_injected: !!userOutfitText });
     }
 
-    // Base generation context (shared across all attempts — written once, attempts appended)
+    // Fingerprints MUST be defined before baseGenerationContext
+    const structuredSubjectsWithFingerprints = structuredSubjects.map(s => ({ ...s, subject_fingerprint: `${s.subject_id}:${s.reference_image_count}` }));
+
+    const charOutfitSnap = charDesc?.match(/Currently wearing:\s*(.+?)(?:\.|$)/)?.[1] || null;
+    const resolvedOutfitMetadata = [
+      ...(charOutfitSnap ? [{ subjectType: 'character', name: charRecord?.name || characterName || null, text: charOutfitSnap.trim(), source: 'closet' }] : []),
+      ...(userOutfitText ? [{ subjectType: 'user', name: userWorldName || 'user', text: userOutfitText, source: 'user_current_outfit' }] : []),
+    ];
+
     const baseGenerationContext = {
-      // Structured identity (new format — used by regenerate/recovery flows)
+      generation_context_version: 2,
+      context_origin: 'chat_image',
+      schema_written_at: new Date().toISOString(),
       image_type: subjectType === 'joint' ? 'joint' : subjectType === 'user' ? 'user' : 'character',
-      subject_count: structuredSubjects.length,
+      subject_count: structuredSubjectsWithFingerprints.length,
       subjects: structuredSubjectsWithFingerprints,
       scene_prompt: sanitizedPrompt,
       original_raw_prompt: prompt,
+      resolved_outfit_metadata: resolvedOutfitMetadata,
+      user_outfit_text: userOutfitText || null,
+      user_outfit_source: userOutfitText ? 'user_current_outfit' : null,
       background_extras_allowed: /\b(pool party|club|concert|bar|beach|festival|mall|airport|restaurant|crowd)\b/i.test(sanitizedPrompt),
       appearance_lock_corrections: appearanceLockCorrections.length > 0 ? appearanceLockCorrections : undefined,
-
-      // Legacy fields — kept for backward compat with existing regenerate/media grid flows
       prompt,
       character_id: characterId || null,
       character_reference_images: charRefs,
@@ -1791,19 +1795,12 @@ All reference images (if any) are environment/location refs only — do NOT trea
       location_reference_images: envRefs.slice(0, 4),
       subject_type: subjectType,
       generated_at: new Date().toISOString(),
-      camera_variables: null, // filled after acceptance
-      attempts: [],           // staging log — all attempts stored here
+      camera_variables: null,
+      attempts: [],
     };
 
-    // ── DISPATCH LOG — logged once before loop, updated on camera override ─────
-    // RULE: promptHasExplicitTime and timeLighting are local to buildPrompt — do NOT reference here.
-    // Only log variables that are declared in this handler scope.
-    console.log(`[generateImageAsync] ── PROVIDER DISPATCH ──`);
-    console.log(`  raw prompt:             ${rawPromptForSanitize.substring(0, 200)}${rawPromptForSanitize.length > 200 ? '…' : ''}`);
-    console.log(`  sanitized prompt:       ${sanitizedPrompt.substring(0, 200)}${sanitizedPrompt.length > 200 ? '…' : ''}`);
-    console.log(`  server_hour:                          ${serverTime.getHours()}`);
-    console.log(`  env_refs_count:                       ${ENV_SLOTS}`);
-    console.log(`  char refs: ${CHAR_SLOTS} | env refs: ${ENV_SLOTS} | user refs: ${USER_SLOTS}`);
+    console.log(`[generateImageAsync] ── PROVIDER DISPATCH ── env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} hour=${serverTime.getHours()}`);
+    console.log(`  prompt: ${sanitizedPrompt.substring(0, 200)}${sanitizedPrompt.length > 200 ? '…' : ''}`);
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       // Log final assembled provider prompt for this attempt (capped at 400 chars)
