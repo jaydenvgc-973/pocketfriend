@@ -73,6 +73,7 @@ import { lfcRead as lfcReadChat } from "@/lib/localFirstCache.js";
 import { resolveCoPresence } from "@/lib/coPresenceResolver";
 import LocationShareTool from "@/components/chat/LocationShareTool";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
+import { isCharacterConfined, canCharacterRespond, getConfinementNotice } from "@/lib/confinementMessagingEngine";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -498,6 +499,28 @@ export default function Chat() {
         console.log(`[SYSTEM-MSG] Text mode status message persisted: "${sysMsg}" | id=${persistedSysMsg.id}`);
       }
 
+      // Confinement block for Text/Phone mode
+      if (isCharacterConfined(character)) {
+        const confinementCheck = canCharacterRespond(character);
+        if (!confinementCheck.allowed) {
+          const noticeMsg = await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: 'character',
+            character_id: characterId,
+            character_name: character.name,
+            content: getConfinementNotice(),
+            is_narrative: false,
+            is_read: true,
+            timestamp: new Date().toISOString(),
+          });
+          if (noticeMsg?.id) {
+            setMessages(prev => prev.some(m => m.id === noticeMsg.id) ? prev : [...prev, noticeMsg]);
+          }
+          if (isMountedRef.current) setIsTyping(false);
+          return;
+        }
+      }
+
       if (getCharacterStatus(character) === 'asleep') {
         console.log(`[TIMING] TEXT blocked — character is asleep. Scheduling wake-up reply.`);
         
@@ -527,6 +550,31 @@ export default function Chat() {
           console.error('[WAKE-REPLY] Failed to schedule wake-up event:', err.message);
         });
 
+        return;
+      }
+    }
+
+    // ── CONFINEMENT MESSAGING LAYER ───────────────────────────────────────────
+    // Confined characters (jailed/imprisoned/incarcerated/house arrest) can only
+    // receive/respond between 9 AM and 9 PM. Outside those hours, show a notice
+    // instead of getting a response.
+    if (isCharacterConfined(character)) {
+      const confinementCheck = canCharacterRespond(character);
+      if (!confinementCheck.allowed) {
+        const noticeMsg = await base44.entities.Message.create({
+          conversation_id: convoId,
+          sender_type: 'character',
+          character_id: characterId,
+          character_name: character.name,
+          content: getConfinementNotice(),
+          is_narrative: false,
+          is_read: true,
+          timestamp: new Date().toISOString(),
+        });
+        if (noticeMsg?.id) {
+          setMessages(prev => prev.some(m => m.id === noticeMsg.id) ? prev : [...prev, noticeMsg]);
+        }
+        if (isMountedRef.current) setIsTyping(false);
         return;
       }
     }

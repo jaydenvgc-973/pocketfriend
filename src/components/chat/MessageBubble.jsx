@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
+import { isCharacterConfined, getConfinementLabel } from "@/lib/confinementMessagingEngine";
 import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward, MapPin, Pencil, Check } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { filterDashes } from "@/lib/dashFilter";
@@ -17,7 +18,7 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded, onLocationSignal }) {
+export default function MessageBubble({ message, character, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded, onLocationSignal }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
   const playingAsLabel = isUser && message.played_as_character_name ? message.played_as_character_name : null;
@@ -299,6 +300,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         )}
         {isUser && !isNarrative && playingAsLabel && (
           <span className="text-xs text-amber-400/80 mr-3 mb-1 font-medium">{playingAsLabel}</span>
+        )}
+        {!isUser && !isNarrative && message.character_id && isCharacterConfined(character) && (
+          <span className="text-xs text-orange-400/80 ml-3 mb-1 font-medium italic">{getConfinementLabel()}</span>
         )}
 
         {/* Delete button */}

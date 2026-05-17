@@ -87,6 +87,7 @@ export default function ChatMessageList({
             <MessageBubble
               key={msg.id}
               message={msg}
+              character={character}
               onReact={onReact}
               onDelete={onDelete}
               onDeleteImage={onDeleteImage}
