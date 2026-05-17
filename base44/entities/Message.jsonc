@@ -112,6 +112,7 @@
       "description": "Emoji reactions to this message",
       "items": {
         "type": "object",
+        "additionalProperties": true,
         "properties": {
           "emoji": {
             "type": "string"
@@ -131,9 +132,13 @@
     },
     "generation_context": {
       "type": "object",
-      "description": "Stored generation metadata for image messages \u2014 used to power accurate regeneration",
+      "description": "Stored generation metadata for image messages \u2014 used to power accurate regeneration. additionalProperties MUST remain true. Removing it silently strips all structured subject bundle fields (subjects, image_type, resolved_outfit_metadata etc.) on every DB write, causing regeneration to silently fall back to legacy single-subject behavior. This is a HARD SYSTEM REQUIREMENT.",
       "additionalProperties": true,
       "properties": {
+        "generation_context_version": {
+          "type": "number",
+          "description": "Schema version. 2 = modern sealed subject bundle format. Absence = legacy flat-only context."
+        },
         "prompt": {
           "type": "string",
           "description": "The original user-facing scene prompt (without system instructions)"
@@ -175,7 +180,7 @@
         },
         "subjects": {
           "type": "array",
-          "description": "Structured per-subject identity data for multi-person and joint images",
+          "description": "Structured per-subject identity data for multi-person and joint images. MUST persist with additionalProperties:true on items.",
           "items": {
             "type": "object",
             "additionalProperties": true,
@@ -200,6 +205,23 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "subject_fingerprint": {
+                "type": "string",
+                "description": "Identity checksum: stable_id:ref_count. Used by regen/video systems to detect missing or swapped subject bundles."
+              },
+              "appearance_lock_snapshot": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "outfit_snapshot": {
+                "type": "string"
+              },
+              "appearance_lock_injected": {
+                "type": "boolean"
+              },
+              "outfit_injected": {
+                "type": "boolean"
               }
             }
           }
@@ -212,10 +234,24 @@
         },
         "resolved_outfit_metadata": {
           "type": "array",
-          "description": "Per-subject outfit metadata used at generation time",
+          "description": "Per-subject outfit metadata used at generation time. Each entry: { subjectType, name, text, source }",
           "items": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "properties": {
+              "subjectType": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            }
           }
         },
         "user_outfit_text": {
@@ -226,13 +262,55 @@
         },
         "camera_variables": {
           "type": "object",
-          "additionalProperties": true
+          "additionalProperties": true,
+          "properties": {
+            "distance": {
+              "type": "string"
+            },
+            "angle": {
+              "type": "string"
+            },
+            "height": {
+              "type": "string"
+            },
+            "framing": {
+              "type": "string"
+            },
+            "lens_style": {
+              "type": "string"
+            }
+          }
         },
         "attempts": {
           "type": "array",
+          "description": "All generation attempts (accepted and rejected) for audit and camera enforcement.",
           "items": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "properties": {
+              "attempt_index": {
+                "type": "number"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "generated_image_url": {
+                "type": "string"
+              },
+              "camera": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "status": {
+                "type": "string"
+              },
+              "rejection_reason": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              }
+            }
           }
         },
         "accepted_attempt_index": {

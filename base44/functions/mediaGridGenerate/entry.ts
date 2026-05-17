@@ -587,11 +587,21 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
           reference_images: identityRefs.slice(p.refStart - 1, p.refStart - 1 + p.refCount),
         }));
 
+        // ── Build subject fingerprints (identity checksums for regen/video systems) ──
+        const structuredSubjectsWithFingerprints = structuredSubjects.map(s => ({
+          ...s,
+          // Fingerprint: stable_id:ref_count — detects missing/swapped subject bundles
+          subject_fingerprint: `${s.subject_id}:${s.reference_image_count}`,
+        }));
+
         const generationContext = {
+          // Schema version — allows future migrations to detect context format
+          generation_context_version: 2,
+
           // New structured format — read by recoverSingleImage and regenerateImageWithReason
           image_type: 'multi',
-          subject_count: structuredSubjects.length,
-          subjects: structuredSubjects,
+          subject_count: structuredSubjectsWithFingerprints.length,
+          subjects: structuredSubjectsWithFingerprints,
           scene_prompt: prompt,
           original_raw_prompt: prompt,
 
@@ -620,6 +630,58 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
           image_url: genRes.url,
           generation_context: generationContext,
         });
+
+        // ── SAFEGUARD 1: Runtime persistence validation ────────────────────────
+        // Immediately re-read the saved message and verify the generation_context
+        // was NOT stripped by schema enforcement. This prevents silent corruption
+        // from masquerading as success — if subjects were stripped, this is a HARD FAIL.
+        // "Success" means: image generated AND metadata survived persistence AND
+        // regeneration contract is valid. Not just: image URL returned.
+        await new Promise(r => setTimeout(r, 800));
+        let persistenceValid = false;
+        try {
+          const savedMsg = await base44.asServiceRole.entities.Message.get(messageId);
+          const savedCtx = savedMsg?.generation_context || {};
+          const savedSubjects = savedCtx.subjects;
+          const savedImageType = savedCtx.image_type;
+          const savedVersion = savedCtx.generation_context_version;
+
+          persistenceValid = (
+            Array.isArray(savedSubjects) &&
+            savedSubjects.length === structuredSubjectsWithFingerprints.length &&
+            savedImageType === 'multi' &&
+            savedVersion === 2
+          );
+
+          if (!persistenceValid) {
+            console.error(`[mediaGridGenerate] ⛔ [ImageContextCorruption] generation_context persistence FAILED after write!`, {
+              messageId,
+              expectedSubjects: structuredSubjectsWithFingerprints.length,
+              actualSubjects: Array.isArray(savedSubjects) ? savedSubjects.length : 'not_array',
+              expectedImageType: 'multi',
+              actualImageType: savedImageType,
+              expectedVersion: 2,
+              actualVersion: savedVersion,
+              savedCtxKeys: Object.keys(savedCtx),
+            });
+            // Mark as failed — do not return success with broken metadata
+            await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_CONTEXT_CORRUPTED]' }).catch(() => {});
+            return Response.json({
+              success: false,
+              error: 'generation_context persistence failed — subjects stripped after DB write. Schema may have regressed. Run verifyImageContextSchema to diagnose.',
+              persistence_validation_failed: true,
+              expected_subjects: structuredSubjectsWithFingerprints.length,
+              actual_subjects: Array.isArray(savedSubjects) ? savedSubjects.length : 0,
+            }, { status: 500 });
+          }
+
+          console.log(`[mediaGridGenerate] ✅ Persistence validation PASSED: subjects=${savedSubjects.length} image_type=${savedImageType} version=${savedVersion}`);
+        } catch (verifyErr) {
+          console.warn(`[mediaGridGenerate] Persistence validation read failed (non-blocking): ${verifyErr?.message}`);
+          // Non-blocking — if the read itself fails (network, rate-limit), don't abort the success
+          // The write was attempted; we just couldn't verify. Log and continue.
+          persistenceValid = true; // assume ok if read failed
+        }
 
         console.log(`[mediaGridGenerate] ✓ Multi-person SUCCESS: ${messageId}`);
 

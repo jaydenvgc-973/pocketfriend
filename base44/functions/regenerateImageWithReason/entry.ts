@@ -1149,6 +1149,58 @@ Deno.serve(async (req) => {
 
     console.log(`[regenerateImageWithReason] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | reason=${reason} | includeUser=${!!includeUserSubject}`);
 
+    // ── SAFEGUARD: NO SILENT DOWNGRADE RULE ──────────────────────────────────
+    // If the original image was a multi-subject image (image_type=multi OR subject_count>1
+    // OR subjects.length>1), we MUST NOT silently downgrade to single-subject regeneration.
+    //
+    // Downgrade happens when:
+    //   - ctx.subjects is missing (schema stripped it before fix)
+    //   - ctx.image_type is 'multi' but subjects array is empty
+    //   - subject_count > 1 but subjects array has < 2 entries
+    //
+    // If the sealed identity bundle is broken for a multi-subject image: FAIL VISIBLY.
+    // Do NOT improvise. Do NOT infer subjects from prompt text. Do NOT degrade to single-character.
+    // Identity drift from group → single is worse than a visible error.
+    //
+    // LEGACY CONTRACT: single-character images (no subjects array, image_type='character') are
+    // explicitly allowed to use the legacy single-subject path. This is not a downgrade — it is
+    // the correct path for images that were never multi-subject.
+    const declaredAsMulti = ctx.image_type === 'multi' || ctx.subject_type === 'multi' || (ctx.subject_count && ctx.subject_count > 1);
+    const hasSubjectBundle = Array.isArray(ctx.subjects) && ctx.subjects.length >= 2;
+    const hasLegacySubjectBundle = Array.isArray(ctx.subjects) && ctx.subjects.length === 1;
+
+    if (declaredAsMulti && !hasSubjectBundle) {
+      // This is a multi-subject image with a broken/missing subject bundle.
+      // BLOCK regeneration — do not silently degrade to single-subject.
+      console.error(`[regenerateImageWithReason] ⛔ NO SILENT DOWNGRADE BLOCKED:`);
+      console.error(`  image_type=${ctx.image_type} | subject_type=${ctx.subject_type} | subject_count=${ctx.subject_count}`);
+      console.error(`  subjects=${JSON.stringify(ctx.subjects)}`);
+      console.error(`  This was a multi-subject image. Cannot safely regenerate without the sealed subject bundle.`);
+      console.error(`  The schema may have been temporarily regressed and stripped the subjects array.`);
+      console.error(`  Run verifyImageContextSchema to confirm schema is healthy before retrying.`);
+
+      return Response.json({
+        success: false,
+        final_generation_allowed: false,
+        error: [
+          'REGEN BLOCKED: Original multi-subject metadata missing or corrupted.',
+          `Declared as multi-subject (image_type=${ctx.image_type}, subject_count=${ctx.subject_count}) but subjects array has ${ctx.subjects?.length ?? 0} entries.`,
+          'Cannot safely regenerate without the sealed identity bundle — identity drift would occur.',
+          'This likely means the generation_context was written before the schema fix or the schema has regressed.',
+          'Run verifyImageContextSchema to confirm schema health.',
+          'If you need to regenerate this image, re-generate it fresh via Media Grid (which will write a correct subjects bundle).',
+        ].join(' '),
+        diagnostic: {
+          image_type: ctx.image_type,
+          subject_type: ctx.subject_type,
+          subject_count: ctx.subject_count,
+          subjects_array_length: ctx.subjects?.length ?? null,
+          generation_context_version: ctx.generation_context_version ?? null,
+          schema_check_function: 'verifyImageContextSchema',
+        },
+      }, { status: 422 });
+    }
+
     // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
     // Detect multi-subject context: use sealed bundle prompt when 2+ subjects present.
     // Single-subject images (most chat images) still use the compact single-subject format.

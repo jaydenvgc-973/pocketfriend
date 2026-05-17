@@ -1774,7 +1774,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       // Structured identity (new format — used by regenerate/recovery flows)
       image_type: subjectType === 'joint' ? 'joint' : subjectType === 'user' ? 'user' : 'character',
       subject_count: structuredSubjects.length,
-      subjects: structuredSubjects,
+      subjects: structuredSubjectsWithFingerprints,
       scene_prompt: sanitizedPrompt,
       original_raw_prompt: prompt,
       background_extras_allowed: /\b(pool party|club|concert|bar|beach|festival|mall|airport|restaurant|crowd)\b/i.test(sanitizedPrompt),
