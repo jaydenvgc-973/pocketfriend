@@ -52,6 +52,50 @@ const REASONS = [
   },
 ];
 
+/**
+ * parseMediaGridSubjects
+ *
+ * Parses bracket-tagged subject roles from a Media Grid prompt.
+ * Only names explicitly tagged as [user] or [character] are valid image subjects.
+ * All other names from surrounding app data (relationships, history, etc.) are ignored.
+ *
+ * Returns:
+ *   { userSubjects: string[], characterSubjects: string[], allTaggedNames: Set<string> }
+ *
+ * Example prompt: "[user] Jayden and [character] Ethan at Central Park"
+ *   → userSubjects: ["Jayden"]
+ *   → characterSubjects: ["Ethan"]
+ *   → allTaggedNames: Set { "jayden", "ethan" }
+ */
+function parseMediaGridSubjects(prompt) {
+  if (!prompt) return { userSubjects: [], characterSubjects: [], allTaggedNames: new Set() };
+
+  const userSubjects = [];
+  const characterSubjects = [];
+
+  // Match [user] <Name> — capture the word(s) after the tag up to "and", comma, "at", or end
+  const userPattern = /\[user\]\s+([A-Za-z][A-Za-z\s'-]{0,30}?)(?=\s+and\b|\s*,|\s+at\b|\s+in\b|$)/gi;
+  let m;
+  while ((m = userPattern.exec(prompt)) !== null) {
+    const name = m[1].trim();
+    if (name) userSubjects.push(name);
+  }
+
+  // Match [character] <Name>
+  const charPattern = /\[character\]\s+([A-Za-z][A-Za-z\s'-]{0,30}?)(?=\s+and\b|\s*,|\s+at\b|\s+in\b|$)/gi;
+  while ((m = charPattern.exec(prompt)) !== null) {
+    const name = m[1].trim();
+    if (name) characterSubjects.push(name);
+  }
+
+  const allTaggedNames = new Set([
+    ...userSubjects.map(n => n.toLowerCase()),
+    ...characterSubjects.map(n => n.toLowerCase()),
+  ]);
+
+  return { userSubjects, characterSubjects, allTaggedNames };
+}
+
 export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRegenerating, error, originalPrompt, generationContext }) {
   const [editPrompt, setEditPrompt] = useState("");
   const [showPromptInput, setShowPromptInput] = useState(false);
@@ -106,28 +150,55 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     }
   }, [originalPrompt, promptMode, isOpen]);
 
-  // Pre-select subjects from generation_context using canonical_person_id only.
-  // Every roster entry at this point has a real Character.id — no synthetic IDs.
+  // Pre-select subjects from generation_context AND from bracket-tagged prompt roles.
+  // [user] subjects → always pre-select __user__ (never search Character records)
+  // [character] subjects → match by ID from context first, then by name in roster
   const applyPreSelection = (roster) => {
     const ctx = generationContext || {};
-    const preSelected = [];
+    const preSelected = new Set();
+
+    // ── Step 1: Parse bracket-tagged roles from the source prompt ────────────
+    const { userSubjects, characterSubjects } = parseMediaGridSubjects(originalPrompt || '');
+
+    // [user] tagged → always maps to __user__, never Character lookup
+    if (userSubjects.length > 0) {
+      preSelected.add('__user__');
+    }
+
+    // [character] tagged → resolve by name in roster
+    characterSubjects.forEach(name => {
+      const nameLower = name.toLowerCase();
+      const match = roster.find(r =>
+        !r.is_user &&
+        (r.name?.toLowerCase() === nameLower ||
+         r.name?.toLowerCase().startsWith(nameLower) ||
+         nameLower.startsWith(r.name?.toLowerCase() || '~~~'))
+      );
+      if (match) preSelected.add(match.canonical_person_id || match.id);
+    });
+
+    // ── Step 2: Also apply generation_context IDs as fallback ────────────────
     if (ctx.subjects?.length > 0) {
       ctx.subjects.forEach(s => {
-        if (s.subject_id) {
+        if (s.subject_type === 'user' || s.subject_id === '__user__') {
+          preSelected.add('__user__');
+        } else if (s.subject_id) {
           const rosterEntry = roster.find(r => r.id === s.subject_id || r.source_record_ids?.includes(s.subject_id));
           const canonicalId = rosterEntry?.canonical_person_id || s.subject_id;
-          if (canonicalId) preSelected.push(canonicalId);
+          if (canonicalId) preSelected.add(canonicalId);
         }
       });
-    } else if (ctx.character_id) {
+    } else if (ctx.character_id && characterSubjects.length === 0) {
+      // Legacy single-character context — only apply if no bracket-parsed characters
       const rosterEntry = roster.find(r => r.id === ctx.character_id || r.source_record_ids?.includes(ctx.character_id));
       const canonicalId = rosterEntry?.canonical_person_id || ctx.character_id;
-      if (canonicalId) preSelected.push(canonicalId);
+      if (canonicalId) preSelected.add(canonicalId);
     }
     if (ctx.subject_type === 'user' || ctx.isUserSubject) {
-      preSelected.push('__user__');
+      preSelected.add('__user__');
     }
-    setSelectedSubjectIds(preSelected.length > 0 ? preSelected : []);
+
+    setSelectedSubjectIds(preSelected.size > 0 ? Array.from(preSelected) : []);
   };
 
   // Pre-select subjects from generation_context when opening subject picker.
@@ -438,25 +509,57 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                       </button>
                     </div>
                   )}
-                  {rosterRepairDiagnostics.length > 0 && (
-                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-400 space-y-1 mb-1">
-                      <p className="font-semibold">Some people need review before they can be selected:</p>
-                      {rosterRepairDiagnostics.map((f, i) => (
-                        <p key={i} className="text-amber-400/80">• <span className="font-medium">{f.name}</span> — {f.failure_reason || 'Confidence too low to auto-resolve'}</p>
-                      ))}
-                    </div>
-                  )}
+                  {(() => {
+                    // Only surface repair diagnostics for names that are explicitly
+                    // bracket-tagged as [character] in the source prompt.
+                    // [user] subjects are NEVER Character records — never show warnings for them.
+                    // Names not in the prompt at all (e.g. "Miller (Previous Owner)") are ignored.
+                    const { characterSubjects, allTaggedNames } = parseMediaGridSubjects(originalPrompt || '');
+                    const hasPromptSubjects = allTaggedNames.size > 0;
+
+                    const relevantDiagnostics = rosterRepairDiagnostics.filter(f => {
+                      if (!f.name) return false;
+                      const nameLower = f.name.trim().toLowerCase();
+                      // If the prompt has explicit bracket tags, only show warnings for [character] tagged names
+                      if (hasPromptSubjects) {
+                        return characterSubjects.some(n => n.toLowerCase() === nameLower || nameLower.startsWith(n.toLowerCase()));
+                      }
+                      // No bracket tags in prompt — fall back to showing all (legacy behavior)
+                      return true;
+                    });
+
+                    if (relevantDiagnostics.length === 0) return null;
+                    return (
+                      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-400 space-y-1 mb-1">
+                        <p className="font-semibold">Some people need review before they can be selected:</p>
+                        {relevantDiagnostics.map((f, i) => (
+                          <p key={i} className="text-amber-400/80">• <span className="font-medium">{f.name}</span> — {f.failure_reason || 'Confidence too low to auto-resolve'}</p>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   <div className="max-h-56 overflow-y-auto space-y-1">
-                     {/* User entry */}
-                    <button
-                      onClick={() => toggleSubject('__user__')}
-                      className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-sm text-left ${selectedSubjectIds.includes('__user__') ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'}`}
-                    >
-                      {selectedSubjectIds.includes('__user__') && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
-                      <Users className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
-                      <span className="font-medium">Me / My persona</span>
-                      <span className="text-[10px] text-muted-foreground ml-auto">(You)</span>
-                    </button>
+                     {/* User entry — always shown first, label includes world persona name if known */}
+                     {(() => {
+                       const userRosterEntry = allCharacters.find(c => c.is_user) ||
+                         { name: parseMediaGridSubjects(originalPrompt || '').userSubjects[0] || 'My persona' };
+                       const userPersonaName = userRosterEntry?.world_name || userRosterEntry?.name || 'My persona';
+                       const isUserSelected = selectedSubjectIds.includes('__user__');
+                       return (
+                         <button
+                           onClick={() => toggleSubject('__user__')}
+                           className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-sm text-left ${isUserSelected ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'}`}
+                         >
+                           {isUserSelected && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                           <Users className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+                           <span className="font-medium">Me / My persona</span>
+                           {userPersonaName && userPersonaName !== 'My persona' && (
+                             <span className="text-[10px] text-muted-foreground/70 ml-1">— {userPersonaName}</span>
+                           )}
+                           <span className="text-[10px] text-muted-foreground ml-auto">(You)</span>
+                         </button>
+                       );
+                     })()}
                     {/* Characters — every entry is a resolved canonical Character.id at this point */}
                     {[...allCharacters.filter(c => !c.is_user)]
                       .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
