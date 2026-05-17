@@ -589,6 +589,14 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   // Source-of-truth model: use exactly what the user selected. No guessing.
   const handleGenerate = async (subjectType) => {
     if (!character || !conversationId) return;
+
+    // SUBJECT VALIDATION: At least one subject must be selected from the "Add people" dropdown.
+    // The sender toggle (character/user tab) only sets WHO SENDS — it never auto-assigns subjects.
+    if (selectedCharacterIds.length === 0) {
+      setGenerateError('Select at least one person to appear in the image using "Add people to image".');
+      return;
+    }
+
     const promptText = referenceImageMode === "image_only"
       ? (prompt.trim() || "realistic candid photo, match the visual style and composition of the reference image")
       : (prompt.trim() || "candid natural moment, everyday life");
@@ -868,16 +876,20 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         throw new Error(genRes?.data?.error || 'Image generation failed.');
       }
 
-      // Memory note
+      // Memory note — stored on the SENDER's record, not the subject's.
+      // If the user is the sender, no character memory record is created (user has no character_id).
       const envNote = selectedLocation ? ` at ${selectedLocation.name}${selectedZone ? ` → ${selectedZone}` : ''}` : '';
-      base44.entities.Memory.create({
-        character_id: character.id,
-        title: `Sent a photo`,
-        description: `Sent a photo${envNote}. Prompt: "${promptText.substring(0, 80)}".`,
-        emotional_impact: 'positive',
-        timestamp: new Date().toISOString(),
-        source_context: `gallery_generated_${newMsg.id}`,
-      }).catch(() => {});
+      const senderCharId = effectiveSubjectType === 'user' ? null : resolvedCharacterId;
+      if (senderCharId) {
+        base44.entities.Memory.create({
+          character_id: senderCharId,
+          title: `Sent a photo`,
+          description: `Sent a photo${envNote}. Prompt: "${promptText.substring(0, 80)}".`,
+          emotional_impact: 'positive',
+          timestamp: new Date().toISOString(),
+          source_context: `gallery_generated_${newMsg.id}`,
+        }).catch(() => {});
+      }
 
       setPrompt("");
       setReferenceImageUrl(null);
@@ -932,33 +944,42 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                 {character && conversationId && (
                   <div className="flex-shrink-0 overflow-y-auto border-b border-border bg-primary/5 mx-6 mt-4 mb-2 p-4 space-y-3 rounded-xl" style={{ maxHeight: '50vh' }}>
                     {/* Tab switcher */}
-                    <div className="flex items-center gap-2 mb-2">
-                      <button
-                        onClick={() => setGenerationTab("character")}
-                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${generationTab === "character" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
-                      >
-                        {character.name}
-                      </button>
-                      <button
-                        onClick={() => setGenerationTab("user")}
-                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${generationTab === "user" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
-                      >
-                        {userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || "You"}
-                      </button>
+                    {/* Sender toggle — chooses WHO SENDS the image, NOT who appears in it */}
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Sender</p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setGenerationTab("character")}
+                          className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${generationTab === "character" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
+                        >
+                          {character.name}
+                        </button>
+                        <button
+                          onClick={() => setGenerationTab("user")}
+                          className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${generationTab === "user" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
+                        >
+                          {userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || "You"}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-primary" />
                       <p className="text-sm font-medium text-foreground">
-                        {generationTab === "character" ? `Generate a photo from ${character.name}` : `Generate a photo of ${userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || "you"}`}
+                        {generationTab === "character"
+                          ? `Generate a photo from ${character.name}`
+                          : `Generate a photo from ${userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || "you"}`}
                       </p>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {generationTab === "character" ? `${character.name} will "send" it in the chat and remember it.` : "Generate and send a photo of yourself in the chat."}
+                      {generationTab === "character"
+                        ? `${character.name} will send it in the chat and remember it.`
+                        : `${userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || "You"} will send it in the chat and remember it.`}
                     </p>
 
-                    {/* Character selector */}
+                    {/* Subject selector — chooses WHO APPEARS IN the image (separate from sender) */}
                     <div className="space-y-2">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Who appears in the image <span className="text-destructive">*</span></p>
                       <div className="flex items-center gap-2 flex-wrap">
                         {/* Character picker button */}
                         <button
@@ -966,7 +987,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                           className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs transition-colors ${selectedCharacterIds.length > 0 ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-primary/40'}`}
                         >
                           <Users className="w-3.5 h-3.5" />
-                          {selectedCharacterIds.length > 0 ? `${selectedCharacterIds.length} selected` : 'Add people'}
+                          {selectedCharacterIds.length > 0 ? `${selectedCharacterIds.length} subject${selectedCharacterIds.length !== 1 ? 's' : ''} selected` : 'Add people to image'}
                           <ChevronDown className="w-3 h-3" />
                         </button>
 
@@ -1261,7 +1282,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                     {generateError && <p className="text-xs text-destructive">{generateError}</p>}
                     <button
                       onClick={() => handleGenerate(generationTab === "user" ? "user" : "character")}
-                      disabled={(!prompt.trim() && !selectedLocation && !referenceImageUrl) || isGenerating}
+                      disabled={selectedCharacterIds.length === 0 || isGenerating}
                       className="sticky bottom-0 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 mt-auto"
                     >
                       {isGenerating ? (
