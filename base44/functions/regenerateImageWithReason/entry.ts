@@ -801,6 +801,50 @@ Deno.serve(async (req) => {
           console.warn(`[regenerateImageWithReason] World-self Character fallback lookup failed: ${fallbackErr?.message}`);
         }
       }
+
+      // ── USER REFS MISSING — VISIBLE FAILURE GATE ─────────────────────────────
+      // If the user/persona was selected as a subject AND we have zero visual references after
+      // exhausting all sources (UserSettings, world-self Character), we MUST NOT silently
+      // generate a random-looking person and call it a likeness repair.
+      //
+      // For 'no_avatar' (explicit likeness repair): block entirely — the whole purpose of this
+      // path is to correct "doesn't look like them". Without refs, there is nothing to correct with.
+      //
+      // For other reasons (dont_like, flawed, etc.): the user may not care about user-likeness;
+      // continue but include the warning in the response so the UI can surface it.
+      if (userRefs.length === 0 && userSelectedAsSubject) {
+        const missingRefSubjects = ['user/persona'];
+        const selectedSubjectRoles = [
+          ...(userSelectedAsSubject ? ['user'] : []),
+          ...(intendedCharacterIds.length > 0 ? ['character'] : []),
+        ];
+        const diagnosticPayload = {
+          status: 'warning_missing_user_refs',
+          selected_subject_roles: selectedSubjectRoles,
+          user_selected_as_subject: true,
+          user_ref_count: 0,
+          character_ref_count: charRefs.length,
+          missing_reference_subjects: missingRefSubjects,
+          message: 'Your persona does not have visual reference photos yet. Add or select reference photos before regenerating for accurate likeness.',
+        };
+        console.warn(`[regenerateImageWithReason] ⚠️ user_ref_count=0 with userSelectedAsSubject=true — user/persona has no visual references`);
+        if (reason === 'no_avatar') {
+          // Block: likeness repair path — no refs = cannot correct likeness
+          console.warn(`[regenerateImageWithReason] BLOCKING no_avatar regen: user selected as subject but has zero visual reference photos`);
+          return Response.json({
+            ...diagnosticPayload,
+            status: 'blocked_missing_user_refs',
+            final_generation_allowed: false,
+            success: false,
+            error: diagnosticPayload.message,
+          });
+        }
+        // Non-likeness reasons: attach warning to response but allow generation to continue
+        // The warning will be surfaced by the UI after generation completes.
+        console.warn(`[regenerateImageWithReason] WARNING (non-blocking for reason="${reason}"): user selected as subject but has zero visual reference photos — continuing without user refs`);
+        // Store warning for later — attach to success response
+        req.__userRefWarning = diagnosticPayload;
+      }
     }
 
     // ── CLASSIFICATION-FIRST SANITIZER ────────────────────────────────────────
@@ -1240,13 +1284,37 @@ Deno.serve(async (req) => {
 
     console.log(`[regenerateImageWithReason] ✓ SUCCESS: ${messageId} | camera: ${acceptedCameraVars?.distance} ${acceptedCameraVars?.angle}`);
 
-    return Response.json({
+    // ── BUILD FINAL RESPONSE ──────────────────────────────────────────────────
+    const selectedSubjectRoles = [
+      ...(userSelectedAsSubject ? ['user'] : []),
+      ...(intendedCharacterIds.length > 0 ? ['character'] : []),
+    ];
+    const missingReferenceSubjects = [];
+    if (userSelectedAsSubject && userRefs.length === 0) missingReferenceSubjects.push('user/persona');
+    if (intendedCharacterIds.length > 0 && charRefs.length === 0) missingReferenceSubjects.push(charName || 'character');
+
+    const successResponse = {
       success: true,
       image_url: genRes.url,
       messageId,
       reason,
       cameraVariables: acceptedCameraVars,
-    });
+      // Identity proof fields — always included so the UI can show what refs were actually used
+      selected_subject_roles: selectedSubjectRoles,
+      user_selected_as_subject: userSelectedAsSubject,
+      user_ref_count: userRefs.length,
+      character_ref_count: charRefs.length,
+      missing_reference_subjects: missingReferenceSubjects,
+      final_generation_allowed: true,
+    };
+
+    // If a user-refs warning was set (non-no_avatar paths), surface it in the response
+    if (req.__userRefWarning) {
+      successResponse.user_ref_warning = req.__userRefWarning.message;
+      successResponse.status = 'warning_missing_user_refs';
+    }
+
+    return Response.json(successResponse);
 
   } catch (error) {
     // CRITICAL: Always produce a string message — never return undefined/null as error

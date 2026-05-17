@@ -244,6 +244,11 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         setRegenError(res.data.error || 'Content policy block — try a different scene description.');
         return;
       }
+      // Blocked: user/persona selected as subject but has no visual reference photos
+      if (res?.data?.status === 'blocked_missing_user_refs') {
+        setRegenError(res.data.message || res.data.error || 'Your persona does not have visual reference photos yet. Add or select reference photos before regenerating for accurate likeness.');
+        return;
+      }
       if (res?.data?.success === false) {
         // Accurate error from backend — display as-is, not re-labeled
         setRegenError(res.data.error || 'Regeneration failed. Please try again.');
