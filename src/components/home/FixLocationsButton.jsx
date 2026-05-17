@@ -106,7 +106,7 @@ export default function FixLocationsButton({ currentUserEmail }) {
           </div>
 
           {/* Summary counts */}
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="grid grid-cols-4 gap-2 text-center">
             <div className="bg-secondary rounded-xl py-2">
               <p className="text-base font-bold text-primary">{preview.to_write_count ?? 0}</p>
               <p className="text-[10px] text-muted-foreground">To repair</p>
@@ -116,12 +116,31 @@ export default function FixLocationsButton({ currentUserEmail }) {
               <p className="text-[10px] text-muted-foreground">No change</p>
             </div>
             <div className="bg-secondary rounded-xl py-2">
+              <p className={`text-base font-bold ${(preview.valid_skipped_count ?? 0) > 0 ? 'text-green-400' : 'text-foreground'}`}>
+                {preview.valid_skipped_count ?? 0}
+              </p>
+              <p className="text-[10px] text-muted-foreground">Valid (kept)</p>
+            </div>
+            <div className="bg-secondary rounded-xl py-2">
               <p className={`text-base font-bold ${(preview.flagged_count ?? 0) > 0 ? 'text-amber-400' : 'text-foreground'}`}>
                 {preview.flagged_count ?? 0}
               </p>
               <p className="text-[10px] text-muted-foreground">Flagged</p>
             </div>
           </div>
+
+          {/* Valid states preserved */}
+          {(preview.valid_skipped_count ?? 0) > 0 && (
+            <div className="space-y-1 max-h-28 overflow-y-auto">
+              <p className="text-[10px] font-semibold text-green-400 uppercase tracking-wider">Valid states preserved (not corrected):</p>
+              {preview.valid_skipped_items?.map((r, i) => (
+                <div key={i} className="text-[10px] bg-green-500/10 border border-green-500/20 rounded-lg px-2 py-1.5">
+                  <p className="font-medium text-green-400">{r.character_name}</p>
+                  <p className="text-muted-foreground">{r.detail}</p>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Corrections preview */}
           {preview.corrections_preview?.length > 0 && (

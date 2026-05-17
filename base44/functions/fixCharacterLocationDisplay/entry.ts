@@ -42,9 +42,19 @@ function isLocationOpen(location, nowET) {
   return true;
 }
 
+// All categories where a character may validly sleep
 const VALID_SLEEP_CATEGORIES = new Set(['home', 'hotel', 'shelter', 'generic']);
+// Outdoor/public categories valid for sleeping when character is homeless
+const HOMELESS_SLEEP_CATEGORIES = new Set(['outdoor', 'public', 'park', 'community']);
+// All confinement facility categories — these are LOCKED states, never corrected
+const CONFINEMENT_CATEGORIES = new Set(['jail_prison']);
+
 function isValidSleepLocation(loc) {
   return loc && VALID_SLEEP_CATEGORIES.has(loc.category || '');
+}
+
+function isConfinementLocation(loc) {
+  return loc && (loc.is_confinement_facility === true || CONFINEMENT_CATEGORIES.has(loc.category || ''));
 }
 
 // ── SHIFT CHECK ────────────────────────────────────────────────────────────────
@@ -119,14 +129,117 @@ function isCharacterSleeping(char) {
 }
 
 // ── INLINE RESOLVER ────────────────────────────────────────────────────────────
-// Returns the correct resolved state for a character.
-// CRITICAL: autonomous_needs_driven and autonomous_movement visits at CLOSED or
-// non-sleep locations are NEVER preserved — they always fall through to home.
+// Returns the correct resolved state for a character, OR a VALID_STATE sentinel
+// when the character is in a locked/valid state that must never be overridden.
+//
+// VALID STATE GUARDS (checked before all resolver layers):
+//   1. Jail/Prison confinement — locked until release
+//   2. Hotel/shelter sleep — valid temporary housing sleep
+//   3. Outdoor/public sleep — valid for homeless characters
+//   4. Rabbit-hole home — character home not in location map (valid unlisted home)
 function resolveCharacterLocation(char, locationMap) {
   const nowET = getNowET();
   const todayET = nowET.toISOString().slice(0, 10);
 
-  // LAYER 0: Sleep lock — sleeping characters go home
+  // ══ GUARD 1: JAIL/PRISON CONFINEMENT ══════════════════════════════════════
+  // is_jailed is the authoritative confinement flag. The character is LOCKED
+  // at the incarceration facility until explicitly released. Never route home.
+  if (char.is_jailed === true) {
+    const facilityId = char.incarceration_facility_id || char.resolved_current_location_id || null;
+    const facilityLoc = facilityId ? locationMap[facilityId] : null;
+    const facilityName = facilityLoc?.name || char.incarceration_facility_name || 'Confinement Facility';
+    return {
+      _valid_state: true,
+      _valid_reason: 'jail_confinement_locked',
+      resolved_current_location_id: facilityId,
+      resolved_current_location_name: facilityName,
+      resolved_location_type: 'incarcerated',
+      resolved_presence_status: 'incarcerated',
+      resolved_source_reason: 'confined_by_user',
+    };
+  }
+
+  // Also check: character is at a confinement location by resolved fields (even without is_jailed flag)
+  const currentResolvedLoc = char.resolved_current_location_id ? locationMap[char.resolved_current_location_id] : null;
+  if (currentResolvedLoc && isConfinementLocation(currentResolvedLoc)) {
+    return {
+      _valid_state: true,
+      _valid_reason: 'at_confinement_facility',
+      resolved_current_location_id: char.resolved_current_location_id,
+      resolved_current_location_name: currentResolvedLoc.name,
+      resolved_location_type: char.resolved_location_type || 'incarcerated',
+      resolved_presence_status: char.resolved_presence_status || 'incarcerated',
+      resolved_source_reason: char.resolved_source_reason || 'confinement_facility_presence',
+    };
+  }
+
+  // ══ GUARD 2: HOTEL/SHELTER SLEEP — valid temporary housing sleep ══════════
+  // Characters assigned to hotel/shelter as temporary housing may sleep there.
+  // This is NOT a contradiction — do not re-route to a permanent home.
+  const tempHousingId = char.temporary_housing_location_id || null;
+  const tempHousingLoc = tempHousingId ? locationMap[tempHousingId] : null;
+  if (isCharacterSleeping(char) && tempHousingLoc && (tempHousingLoc.category === 'hotel' || tempHousingLoc.category === 'shelter')) {
+    return {
+      _valid_state: true,
+      _valid_reason: 'sleeping_at_temporary_housing',
+      resolved_current_location_id: tempHousingId,
+      resolved_current_location_name: tempHousingLoc.name,
+      resolved_location_type: 'temporary_housing',
+      resolved_presence_status: 'sleeping',
+      resolved_source_reason: 'temporary_housing_sleep',
+    };
+  }
+
+  // ══ GUARD 3: OUTDOOR/PUBLIC SLEEP for homeless characters ═════════════════
+  // Homeless characters (is_homeless=true or housing_context indicates unsheltered)
+  // may legitimately sleep at outdoor/public/park locations. Valid — do not re-route.
+  const isHomeless = char.is_homeless === true || char.housing_context === 'homeless_unsheltered';
+  if (isCharacterSleeping(char) && isHomeless && char.resolved_current_location_id) {
+    const currentSleepLoc = locationMap[char.resolved_current_location_id];
+    if (currentSleepLoc && HOMELESS_SLEEP_CATEGORIES.has(currentSleepLoc.category || '')) {
+      return {
+        _valid_state: true,
+        _valid_reason: 'homeless_outdoor_sleep',
+        resolved_current_location_id: char.resolved_current_location_id,
+        resolved_current_location_name: currentSleepLoc.name,
+        resolved_location_type: char.resolved_location_type || 'visit',
+        resolved_presence_status: 'sleeping',
+        resolved_source_reason: 'homeless_sleep_location',
+      };
+    }
+  }
+
+  // ══ GUARD 4: RABBIT-HOLE HOME — home not in location map ══════════════════
+  // If the character's home ID is set but NOT in the location map, the home
+  // is an unlisted/rabbit-hole residence. This is valid — do not mark as unresolved
+  // or force correction. The character is simply "home" at an unlisted location.
+  const homeId = char.temporary_housing_location_id || char.current_home_location_id || char.home_location_id || null;
+  if (homeId && !locationMap[homeId]) {
+    // Home exists (ID set) but not loaded in location map — rabbit-hole valid state
+    const resolvedLocInMap = char.resolved_current_location_id ? locationMap[char.resolved_current_location_id] : null;
+    // Only protect if the character is resolved TO their home (or unresolved) — not if they're at a valid open location
+    const isAtHomeOrUnresolved = !char.resolved_current_location_id
+      || char.resolved_current_location_id === homeId
+      || char.resolved_presence_status === 'home'
+      || char.resolved_presence_status === 'sleeping'
+      || !resolvedLocInMap; // resolved loc also not in map
+    if (isAtHomeOrUnresolved) {
+      return {
+        _valid_state: true,
+        _valid_reason: 'rabbit_hole_home_not_in_location_map',
+        resolved_current_location_id: char.resolved_current_location_id || homeId,
+        resolved_current_location_name: char.resolved_current_location_name || 'Home (unlisted)',
+        resolved_location_type: char.resolved_location_type || 'home',
+        resolved_presence_status: char.resolved_presence_status || 'home',
+        resolved_source_reason: 'rabbit_hole_home_valid',
+      };
+    }
+  }
+
+  // ══ LAYER 0: Sleep lock — sleeping characters go home ══════════════════════
+  // Only reached when none of the guards above matched.
+  // At this point: not jailed, not at confinement, not temp-housing sleep,
+  // not outdoor-homeless sleep, not rabbit-hole. Standard sleep = go home.
   const sleepHomeId = char.temporary_housing_location_id || char.current_home_location_id || char.home_location_id || null;
   const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
 
@@ -284,6 +397,19 @@ function buildStaleFieldClear() {
 function detectContradiction(char, resolverResult, locationMap) {
   const nowET = getNowET();
 
+  // VALID STATE: resolver returned a guard sentinel — skip without any correction
+  // These states (jail, temp-housing sleep, homeless outdoor sleep, rabbit-hole home)
+  // are valid under current rules and must never be corrected.
+  if (resolverResult._valid_state === true) {
+    return {
+      action: 'SKIP_VALID',
+      detail: `Valid state preserved: ${resolverResult._valid_reason} — no correction needed`,
+      before: null,
+      after: null,
+      changedFields: [],
+    };
+  }
+
   // TRAVEL PROTECTION: active travel with valid open destination — skip
   if (char.travel_status && char.travel_status !== 'not_traveling' && char.travel_destination_location_id) {
     const destLoc = locationMap[char.travel_destination_location_id];
@@ -406,9 +532,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const toWrite  = results.filter(r => !['NO_CHANGE', 'SKIP_TRAVEL', 'FLAG_TRAVEL_DESTINATION'].includes(r.action));
-    const noChange = results.filter(r => r.action === 'NO_CHANGE');
-    const flagged  = results.filter(r => r.action === 'FLAG_TRAVEL_DESTINATION');
+    const toWrite   = results.filter(r => !['NO_CHANGE', 'SKIP_TRAVEL', 'SKIP_VALID', 'FLAG_TRAVEL_DESTINATION'].includes(r.action));
+    const noChange  = results.filter(r => r.action === 'NO_CHANGE');
+    const skipValid = results.filter(r => r.action === 'SKIP_VALID');
+    const flagged   = results.filter(r => r.action === 'FLAG_TRAVEL_DESTINATION');
 
     // DRY RUN — return preview only
     if (!confirmWrite) {
@@ -420,13 +547,15 @@ Deno.serve(async (req) => {
         pagination: { page, page_size: pageSize, total_pages: totalPages, total_corrections: toWrite.length },
         to_write_count: toWrite.length,
         no_change_count: noChange.length,
+        valid_skipped_count: skipValid.length,
+        valid_skipped_items: skipValid.map(r => ({ character_name: r.character_name, detail: r.detail })),
         flagged_count: flagged.length,
         travel_protected_count,
         travel_flagged_count,
         internal_family_count: internalFamilyFiles.length,
         flagged_items: flagged,
         corrections_preview: pageCorrections,
-        summary: { to_write_count: toWrite.length, no_change_count: noChange.length, flagged_count: flagged.length, travel_protected_count, travel_flagged_count, internal_family_count: internalFamilyFiles.length },
+        summary: { to_write_count: toWrite.length, no_change_count: noChange.length, valid_skipped_count: skipValid.length, flagged_count: flagged.length, travel_protected_count, travel_flagged_count, internal_family_count: internalFamilyFiles.length },
       });
     }
 
@@ -487,11 +616,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[FIX_LOCATIONS] WRITE complete | written=${written.length}`);
+    console.log(`[FIX_LOCATIONS] WRITE complete | written=${written.length} | valid_skipped=${skipValid.length}`);
     return Response.json({
       dry_run: false,
       corrected_count: written.length,
       corrections: written,
+      valid_skipped_count: skipValid.length,
+      valid_skipped_items: skipValid.map(r => ({ character_name: r.character_name, detail: r.detail })),
       flagged_count: flagged.length,
       flagged_items: flagged,
       travel_protected_count,
@@ -500,8 +631,8 @@ Deno.serve(async (req) => {
       no_change_count: noChange.length,
       write_errors: writeErrors,
       summary: written.length === 0 && flagged.length === 0
-        ? 'Location check complete. No contradictions found.'
-        : `${written.length} contradiction${written.length !== 1 ? 's' : ''} repaired.${flagged.length > 0 ? ` ${flagged.length} travel issue${flagged.length !== 1 ? 's' : ''} flagged.` : ''}`,
+        ? `Location check complete. No contradictions found.${skipValid.length > 0 ? ` ${skipValid.length} valid state(s) preserved (jail, temp housing, rabbit-hole home).` : ''}`
+        : `${written.length} contradiction${written.length !== 1 ? 's' : ''} repaired.${skipValid.length > 0 ? ` ${skipValid.length} valid state(s) preserved.` : ''}${flagged.length > 0 ? ` ${flagged.length} travel issue${flagged.length !== 1 ? 's' : ''} flagged.` : ''}`,
     });
 
   } catch (error) {

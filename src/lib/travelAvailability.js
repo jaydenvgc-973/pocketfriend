@@ -11,6 +11,20 @@ const NPC_TYPES = ['npc', 'family_npc', 'background', 'promoted_npc', 'npc_ficti
 export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (!character) return { available: false, reason: { iconType: 'out', message: 'Unknown status', color: 'text-muted-foreground' }, availableAt: null };
 
+  // JAIL/PRISON CONFINEMENT: hard block — confined characters cannot travel until released.
+  // This mirrors how "at work" and "asleep" block travel — jail is a locked presence state.
+  if (character.is_jailed === true) {
+    const facilityName = character.incarceration_facility_name || 'a confinement facility';
+    const releaseDate = character.jail_release_date
+      ? new Date(character.jail_release_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : null;
+    return {
+      available: false,
+      reason: { iconType: 'out', message: `${character.name} is incarcerated at ${facilityName} and cannot travel.`, color: 'text-red-400' },
+      availableAt: releaseDate ? `Expected release: ${releaseDate}` : 'Not available until released',
+    };
+  }
+
   // NPCs (standalone or family-embedded) are always available for travel —
   // they have no jobs, school, or strict schedules to block them.
   // Only sleep can block an NPC, handled below via isCharacterAsleep.
