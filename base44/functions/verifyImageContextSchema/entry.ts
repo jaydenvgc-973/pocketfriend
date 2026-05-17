@@ -28,6 +28,9 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const REQUIRED_FIELDS = [
+  'generation_context_version',
+  'context_origin',
+  'schema_written_at',
   'image_type',
   'subject_count',
   'subjects',
@@ -39,7 +42,6 @@ const REQUIRED_FIELDS = [
   'camera_variables',
   'attempts',
   'accepted_attempt_index',
-  'generation_context_version',
 ];
 
 Deno.serve(async (req) => {
@@ -64,6 +66,8 @@ Deno.serve(async (req) => {
     // Full generation_context with all required new fields
     generation_context: {
       generation_context_version: 2,
+      context_origin: 'schema_probe',
+      schema_written_at: new Date().toISOString(),
       image_type: 'multi',
       subject_count: 2,
       subjects: [

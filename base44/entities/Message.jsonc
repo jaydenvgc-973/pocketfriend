@@ -139,6 +139,14 @@
           "type": "number",
           "description": "Schema version. 2 = modern sealed subject bundle format. Absence = legacy flat-only context."
         },
+        "context_origin": {
+          "type": "string",
+          "description": "Which generation pathway created this context: chat_image | media_grid | regenerate | recovery"
+        },
+        "schema_written_at": {
+          "type": "string",
+          "description": "ISO timestamp when this generation_context was written. Used to detect stale or pre-fix contexts."
+        },
         "prompt": {
           "type": "string",
           "description": "The original user-facing scene prompt (without system instructions)"
