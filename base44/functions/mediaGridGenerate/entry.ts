@@ -274,12 +274,23 @@ Deno.serve(async (req) => {
         return null;
       }
 
+      // ── Resolve outfits for ALL subjects — characters AND user/persona ────
+      // Each subject's closet is the canonical wardrobe truth.
+      // Event/theme in prompt MUST NOT override closet unless prompt explicitly describes clothing.
       const multiOutfitLines = [];
+
+      // 1. Character outfits — resolve from closet hierarchy (current_outfit → closet rotation)
       for (const person of multiPersonSelection.selectedCharacters) {
         if (!person.id || person.id === 'user') continue;
         try {
-          const charList = await base44.asServiceRole.entities.Character.filter({ id: person.id }, null, 1).catch(() => []);
-          const charRec = charList?.[0];
+          // Two-step lookup: user-scoped first (RLS), then service-role with ownership check
+          let charRec = null;
+          const charListUser = await base44.entities.Character.filter({ id: person.id }, null, 1).catch(() => []);
+          charRec = charListUser?.[0] || null;
+          if (!charRec) {
+            const charListSR = await base44.asServiceRole.entities.Character.filter({ id: person.id }, null, 1).catch(() => []);
+            charRec = charListSR?.[0] || null;
+          }
           if (charRec) {
             const co = charRec.current_outfit;
             let outfitText = (co?.outfit_id || co?.label) ? buildMGOutfitText(co) : null;
@@ -287,9 +298,40 @@ Deno.serve(async (req) => {
               const closet = (charRec.character_closet || []).filter(o => o.outfit_id);
               if (closet.length > 0) outfitText = buildMGOutfitText(closet[0]);
             }
-            if (outfitText) multiOutfitLines.push({ name: charRec.name, text: outfitText });
+            const outfitSource = (co?.outfit_id || co?.label) ? 'current_outfit' : (charRec.character_closet?.length > 0 ? 'closet_rotation' : 'no_closet');
+            console.log(`[mediaGridGenerate] Character outfit: "${charRec.name}" source="${outfitSource}" text="${(outfitText||'none').substring(0,80)}"`);
+            if (outfitText) multiOutfitLines.push({ subjectType: 'character', name: charRec.name, text: outfitText, source: outfitSource });
           }
-        } catch {}
+        } catch (charErr) {
+          console.warn(`[mediaGridGenerate] Character outfit resolution failed for ${person.id}: ${charErr?.message}`);
+        }
+      }
+
+      // 2. User/persona outfit — resolve from UserSettings.user_current_outfit
+      // This is the user-side equivalent of the character closet. It MUST be resolved here
+      // for multi-person mode — the event/theme (e.g. "AIDS Walk") must NOT invent clothing.
+      if (multiPersonSelection.includeUser) {
+        try {
+          const requestingUserEmail = user?.email;
+          if (requestingUserEmail) {
+            const settingsList = await base44.asServiceRole.entities.UserSettings.filter(
+              { owner_email: requestingUserEmail }, null, 1
+            ).catch(() => []);
+            const sett = settingsList?.[0] || null;
+            const uco = sett?.user_current_outfit;
+            const userOutfitText = uco ? buildMGOutfitText(uco) || uco.full_description?.trim() || null : null;
+            const userPersonaName = sett?.fictional_world_name || 'User / My Persona';
+            const userOutfitSource = uco ? 'user_current_outfit' : 'no_outfit';
+            console.log(`[mediaGridGenerate] User outfit: name="${userPersonaName}" source="${userOutfitSource}" text="${(userOutfitText||'none').substring(0,80)}"`);
+            if (userOutfitText) {
+              multiOutfitLines.push({ subjectType: 'user', name: userPersonaName, text: userOutfitText, source: userOutfitSource });
+            } else {
+              console.warn(`[mediaGridGenerate] ⚠️ No user_current_outfit in UserSettings for ${requestingUserEmail} — user subject renders without wardrobe constraint`);
+            }
+          }
+        } catch (userOutfitErr) {
+          console.warn(`[mediaGridGenerate] User outfit resolution failed: ${userOutfitErr?.message}`);
+        }
       }
       let multiClosetLock = '';
       if (multiOutfitLines.length > 0) {
@@ -356,15 +398,22 @@ ${envRefs.length > 0 ? `ENVIRONMENT (70–80% structural truth, 20–30% dynamic
 SELECTED PEOPLE (100% identity lock from reference photos):
 
 ${people.map(p => {
-  // Use displayName if the frontend enriched it — fall back to role label
-  const nameLabel = p.displayName || (p.role === 'user' ? 'User' : p.role.replace(/_/g, ' ').toUpperCase());
-  const firstName = p.firstName || nameLabel.split(/\s+/)[0];
-  const startIdx = envRefs.length + p.refStart;
-  const endIdx = envRefs.length + p.refStart + p.refCount - 1;
-  return `${nameLabel} (ID: ${p.id}): Images ${startIdx}–${endIdx}
-  When this scene refers to "${firstName}" or "${nameLabel}", this IS that person — use these reference images.
-  ✅ MATCH EXACTLY: face structure, skin tone, hair, body type, age
-  ⛔ Do NOT: substitute a generic person, distort, or invent a new body`;
+const nameLabel = p.displayName || (p.role === 'user' ? 'User' : p.role.replace(/_/g, ' ').toUpperCase());
+const firstName = p.firstName || nameLabel.split(/\s+/)[0];
+const startIdx = envRefs.length + p.refStart;
+const endIdx = envRefs.length + p.refStart + p.refCount - 1;
+// Look up resolved outfit for this subject
+const subjectOutfitEntry = multiOutfitLines.find(o =>
+o.subjectType === (p.role === 'user' ? 'user' : 'character') &&
+(p.role === 'user' ? true : o.name === (p.displayName || ''))
+);
+const outfitLockLine = subjectOutfitEntry?.text
+? `\n  🔒 OUTFIT LOCK (CANONICAL LAW — OVERRIDES EVENT/THEME STYLING): "${subjectOutfitEntry.text}"\n  ⛔ Do NOT invent clothing from the event name or scene theme. Use ONLY what is listed above.\n  ⛔ Do NOT modify, add to, or substitute this outfit — render it exactly.`
+: `\n  ⚠️ No closet outfit resolved — event/theme must NOT invent clothing. Use contextually neutral attire.`;
+return `${nameLabel} (ID: ${p.id}): Images ${startIdx}–${endIdx}
+When this scene refers to "${firstName}" or "${nameLabel}", this IS that person — use these reference images.
+✅ MATCH EXACTLY: face structure, skin tone, hair, body type, age
+⛔ Do NOT: substitute a generic person, distort, or invent a new body${outfitLockLine}`;
 }).join('\n\n')}
 
 ════════════════════════════════════════════════════════════
@@ -436,7 +485,10 @@ ${multiClosetLock}
           original_raw_prompt: prompt,
 
           // Outfit metadata — stored for audit and regeneration
+          // Each entry: { subjectType: 'character'|'user', name, text, source }
           resolved_outfit_metadata: multiOutfitLines,
+          user_outfit_text: multiOutfitLines.find(o => o.subjectType === 'user')?.text || null,
+          user_outfit_source: multiOutfitLines.find(o => o.subjectType === 'user')?.source || null,
 
           // Legacy fields — kept for backward compat
           prompt,
