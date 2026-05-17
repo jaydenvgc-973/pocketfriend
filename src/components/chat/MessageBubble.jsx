@@ -35,6 +35,18 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenError, setRegenError] = useState(null);
+
+  // ── CORRUPTED METADATA DETECTION ─────────────────────────────────────────
+  // A multi-subject image where subjects[] is missing/empty is UNSAFE to regenerate.
+  // Regenerating it would silently produce a single-character image — identity drift.
+  // Rule: if image_type/subject_type/subject_count declares multi but subjects[] is missing → corrupted.
+  // Legacy single-subject images (no image_type, no subjects[]) are SAFE — legacy_single_valid path.
+  const genCtx = message.generation_context || {};
+  const declaredAsMulti = genCtx.image_type === 'multi' || genCtx.subject_type === 'multi' || (genCtx.subject_count && genCtx.subject_count > 1);
+  const hasSubjectBundle = Array.isArray(genCtx.subjects) && genCtx.subjects.length >= 2;
+  const isCorruptedMultiContext = declaredAsMulti && !hasSubjectBundle;
+  // Persistence unverified: image generated but context couldn't be confirmed
+  const isPersistenceUnverified = message.content === '[IMAGE_CONTEXT_UNVERIFIED]';
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [editedPrompt, setEditedPrompt] = useState('');
   const [imgLoadError, setImgLoadError] = useState(false);
@@ -118,10 +130,10 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   // Also covers imgLoadError: URL exists but the image itself failed to render in the browser
   // Exclude location_share messages — they have empty content but are not image placeholders
   const isLocationShare = !!message.location_share;
-  const isImageFailed = !isUser && !isNarrative && !isLocationShare && ((!localImageUrl && message.content === '[IMAGE_FAILED]') || imgLoadError);
+  const isImageFailed = !isUser && !isNarrative && !isLocationShare && ((!localImageUrl && (message.content === '[IMAGE_FAILED]' || message.content === '[IMAGE_CONTEXT_UNVERIFIED]')) || imgLoadError);
   // isImagePlaceholder = show the placeholder card (spinner or action buttons)
   // Do NOT show if we're passively waiting for generation (isWaitingForGeneration handles that separately)
-  const isImagePlaceholder = !isUser && !isNarrative && !isLocationShare && !isWaitingForGeneration && ((!localImageUrl && (message.content === "" || message.content === '[IMAGE_FAILED]')) || imgLoadError);
+  const isImagePlaceholder = !isUser && !isNarrative && !isLocationShare && !isWaitingForGeneration && ((!localImageUrl && (message.content === "" || message.content === '[IMAGE_FAILED]' || message.content === '[IMAGE_CONTEXT_UNVERIFIED]')) || imgLoadError);
 
   const handleImageRetry = async (forceRegenerate = false) => {
     // If the URL already exists but just failed to load in the browser (imgLoadError),
@@ -441,8 +453,11 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                   <>
                     <ImageIcon className={`w-7 h-7 ${isImageFailed ? "text-destructive/40" : "text-muted-foreground/50"}`} />
                     <p className="text-xs text-muted-foreground text-center">
-                      {isImageFailed ? "Photo failed to load" : "Photo incoming"}
+                      {isPersistenceUnverified ? "Image generated — context unverified" : isImageFailed ? "Photo failed to load" : "Photo incoming"}
                     </p>
+                    {isPersistenceUnverified && (
+                      <p className="text-[10px] text-amber-400/80 text-center">Metadata couldn't be confirmed. Regenerate to ensure full identity lock.</p>
+                    )}
                     {showPromptEditor ? (
                       <div className="w-full mt-1 flex flex-col gap-1.5" onClick={e => e.stopPropagation()}>
                         <textarea
@@ -511,9 +526,20 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                 />
                 {showImageDelete && (
                   <div className="absolute inset-0 bg-black/40 rounded-t-2xl flex items-center justify-center gap-2">
-                    {/* Show regenerate for character-sent images OR any app-generated image (has generation_context).
-                        User-sent Media Grid images have generation_context and must also support regeneration. */}
-                    {(!isUser || message.generation_context) && (
+                    {/* Corrupted multi-subject context warning — block unsafe regen */}
+                    {isCorruptedMultiContext ? (
+                      <div className="absolute inset-0 bg-black/70 rounded-t-2xl flex flex-col items-center justify-center gap-1 px-3 text-center">
+                        <span className="text-amber-400 text-xs font-semibold">⚠️ Metadata corrupted</span>
+                        <span className="text-white/70 text-[10px] leading-snug">This was a multi-person image but identity data is missing. Regenerating would produce the wrong result.</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setShowRegenModal(true); }}
+                          className="mt-1 px-3 py-1 rounded-lg bg-primary/80 text-white text-[10px] font-semibold"
+                          title="Generate Fresh (safe)"
+                        >
+                          Generate Fresh Instead
+                        </button>
+                      </div>
+                    ) : (!isUser || message.generation_context) && (
                       <button
                         onClick={(e) => { e.stopPropagation(); setShowRegenModal(true); }}
                         className="p-2 rounded-full bg-white/20 text-white hover:bg-white/30 transition-colors"
@@ -550,6 +576,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               error={regenError}
               originalPrompt={message.generation_context?.prompt || null}
               generationContext={message.generation_context || null}
+              isCorruptedContext={isCorruptedMultiContext}
             />
             {!isEditingNarrative && message.content && typeof message.content === 'string' && message.content.trim() && message.content !== '[IMAGE_FAILED]' && (
               message.is_forwarded ? (

@@ -96,7 +96,7 @@ function parseMediaGridSubjects(prompt) {
   return { userSubjects, characterSubjects, allTaggedNames };
 }
 
-export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRegenerating, error, originalPrompt, generationContext }) {
+export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRegenerating, error, originalPrompt, generationContext, isCorruptedContext = false }) {
   const [editPrompt, setEditPrompt] = useState("");
   const [showPromptInput, setShowPromptInput] = useState(false);
   const [promptMode, setPromptMode] = useState(null); // 'dont_like' | 'custom_prompt'
@@ -756,6 +756,14 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                     );
                   })}
                 </div>
+                {isCorruptedContext && (
+                  <div className="mx-4 mb-2 px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/5">
+                    <p className="text-xs text-amber-400 font-semibold">⚠️ Identity metadata corrupted</p>
+                    <p className="text-[10px] text-amber-400/70 mt-0.5 leading-snug">
+                      This was a multi-person image but the identity bundle is missing. Most options below will produce a single-character result. Use "Generate Fresh Instead" via Media Grid for a safe re-generation.
+                    </p>
+                  </div>
+                )}
                 {error && (
                   <p className="text-xs text-destructive text-center px-4 pb-2">{error}</p>
                 )}
