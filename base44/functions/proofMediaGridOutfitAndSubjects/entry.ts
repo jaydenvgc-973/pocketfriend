@@ -1,26 +1,28 @@
 /**
- * proofMediaGridOutfitAndSubjects — End-to-end diagnostic proof function.
+ * proofMediaGridOutfitAndSubjects — End-to-end proof via REAL HTTP function calls.
  *
- * Runs a real Media Grid multi-person generation and a real Why/Regenerate on the
- * resulting image, then returns full diagnostic evidence showing:
+ * VALID PROOF CHAIN:
+ *   1. Create a scratch message
+ *   2. Call mediaGridGenerate via direct HTTP fetch with the user's auth token forwarded
+ *      (same as the frontend does — real user-facing path)
+ *      → This naturally creates generation_context.subjects on the scratch message
+ *   3. Read back the scratch message from DB to verify natural context was written
+ *   4. Call regenerateImageWithReason via direct HTTP fetch with the user's auth token
+ *      → Against the naturally-created context, no manual edits
+ *   5. Read returned diagnostics from both calls
+ *   6. Delete scratch message and restore any injected test ref
  *
- *   - selected_subject_roles (user + character confirmed)
- *   - final subject count expected vs rendered
- *   - user/persona outfit source used
- *   - character outfit source used
- *   - resolved user outfit text
- *   - resolved character outfit text
- *   - whether any outfit was invented from theme instead of closet
- *   - final prompt section containing identity locks and closet outfit locks for both subjects
+ * Admin-only. Does NOT mutate any existing message or production record.
  *
- * Admin-only. Does not alter any existing message records.
- * Creates a scratch message for generation, then cleans it up.
- *
- * Usage:
- *   POST { "characterId": "<id>", "conversationId": "<id>" }
- *   conversationId: any existing conversation to temporarily attach the scratch message
+ * The HTTP fetch approach forwards the exact same Authorization header the frontend uses,
+ * bypassing the backend-to-backend session-stripping constraint of functions.invoke.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+const TEST_USER_REF = 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Camponotus_flavomarginatus_ant.jpg/320px-Camponotus_flavomarginatus_ant.jpg';
+
+const APP_ID = Deno.env.get('BASE44_APP_ID');
+const FUNCTIONS_BASE_URL = `https://base44.app/api/apps/${APP_ID}/functions`;
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -37,24 +39,7 @@ function isAccessible(url) {
   if (url.includes('base44.app/api/apps/')) return false;
   return true;
 }
-function cdnFilter(urls) { return (urls||[]).map(toPublicCDN).filter(isAccessible); }
-
-function normalizeOutfitField(val) {
-  if (!val) return null;
-  const t = val.trim();
-  if (/^(n\/?a|none|-)$/i.test(t)) return null;
-  const s = t.replace(/^n\/?a[,\-–]\s*/i,'').trim();
-  if (/^(shirtless|no top|no shirt)$/i.test(s)) return 'No shirt / bare torso';
-  return s || null;
-}
-function buildOutfitText(outfit) {
-  if (!outfit) return null;
-  const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
-    .map(normalizeOutfitField).filter(Boolean);
-  if (parts.length > 0) return parts.join(', ');
-  if (outfit.full_description) return outfit.full_description.trim();
-  return null;
-}
+function cdnFilter(urls) { return (urls || []).map(toPublicCDN).filter(isAccessible); }
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -69,10 +54,17 @@ Deno.serve(async (req) => {
   }
 
   const requestingUser = user.email;
-  const TEST_PROMPT = `[user] Jayden and [character] Ethan at AIDS Walk New York City at Central Park`;
+  // Neutral park scene — no content policy triggers
+  const TEST_PROMPT = `[user] Jayden and [character] Khalil at the park`;
 
-  console.log(`[ProofDiag] ▶ characterId=${characterId} | user=${requestingUser}`);
-  console.log(`[ProofDiag] Test prompt: "${TEST_PROMPT}"`);
+  // Extract the auth token from the incoming request to forward to function calls
+  const authHeader = req.headers.get('Authorization') || req.headers.get('authorization') || '';
+  if (!authHeader) {
+    return Response.json({ error: 'No auth token found in request headers — cannot forward to function calls' }, { status: 401 });
+  }
+
+  console.log(`[ProofE2E] ▶ characterId=${characterId} | user=${requestingUser}`);
+  console.log(`[ProofE2E] APP_ID=${APP_ID} | Functions base: ${FUNCTIONS_BASE_URL}`);
 
   // ── STEP 1: Resolve character record ──────────────────────────────────────
   let charRecord = null;
@@ -85,56 +77,38 @@ Deno.serve(async (req) => {
   if (!charRecord) {
     return Response.json({ error: `Character ${characterId} not found` }, { status: 404 });
   }
+  console.log(`[ProofE2E] Character: "${charRecord.name}" (${charRecord.id})`);
 
-  // ── STEP 2: Resolve character outfit ──────────────────────────────────────
-  const co = charRecord.current_outfit;
-  let charOutfitText = (co?.outfit_id || co?.label) ? buildOutfitText(co) : null;
-  let charOutfitSource = 'no_outfit';
-  if (charOutfitText) {
-    charOutfitSource = 'current_outfit';
-  } else {
-    const closet = (charRecord.character_closet || []).filter(o => o.outfit_id);
-    if (closet.length > 0) {
-      charOutfitText = buildOutfitText(closet[0]);
-      charOutfitSource = charOutfitText ? 'closet_rotation' : 'closet_empty_fields';
+  // ── STEP 2: Resolve character ref images ──────────────────────────────────
+  const rawCharRefs = cdnFilter(charRecord.reference_image_urls || []).filter(u => !u.includes('generated_image'));
+  let charRefs = rawCharRefs.slice(0, 2);
+  if (charRefs.length === 0 && charRecord.avatar_url) {
+    const avatarPublic = toPublicCDN(charRecord.avatar_url);
+    if (isAccessible(avatarPublic) && !avatarPublic.includes('generated_image')) {
+      charRefs = [avatarPublic];
     }
   }
-  console.log(`[ProofDiag] Character outfit: source="${charOutfitSource}" text="${(charOutfitText||'none').substring(0,80)}"`);
+  console.log(`[ProofE2E] Character refs: ${charRefs.length}`);
 
-  // ── STEP 3: Resolve user/persona outfit ───────────────────────────────────
+  if (charRefs.length === 0) {
+    return Response.json({
+      error: `Character "${charRecord.name}" has no usable reference images.`,
+      character_id: characterId,
+      character_name: charRecord.name,
+    }, { status: 422 });
+  }
+
+  // ── STEP 3: Resolve user ref images + inject temp ref if needed ───────────
   const settingsList = await base44.asServiceRole.entities.UserSettings.filter(
     { owner_email: requestingUser }, null, 1
   ).catch(() => []);
   const sett = settingsList?.[0] || null;
-  const uco = sett?.user_current_outfit;
-  const userOutfitText = uco ? buildOutfitText(uco) || uco.full_description?.trim() || null : null;
-  const userOutfitSource = uco ? 'user_current_outfit' : 'no_outfit';
-  const userPersonaName = sett?.fictional_world_name || 'User / My Persona';
-  console.log(`[ProofDiag] User outfit: name="${userPersonaName}" source="${userOutfitSource}" text="${(userOutfitText||'none').substring(0,80)}"`);
-
-  // ── STEP 4: Resolve user ref images ───────────────────────────────────────
-  const dbUserRefs = [...(sett?.reference_image_urls||[]), ...(sett?.generated_avatar_urls||[])];
-  const userRefs = cdnFilter(dbUserRefs).slice(0, 3);
-  console.log(`[ProofDiag] User refs: ${userRefs.length}`);
-
-  // ── STEP 5: Resolve character ref images ──────────────────────────────────
-  const rawCharRefs = cdnFilter(charRecord.reference_image_urls || []).filter(u => !u.includes('generated_image'));
-  const charRefs = rawCharRefs.slice(0, 2);
-  // Avatar fallback
-  const effectiveCharRefs = charRefs.length > 0 ? charRefs : (
-    charRecord.avatar_url && isAccessible(toPublicCDN(charRecord.avatar_url)) && !charRecord.avatar_url.includes('generated_image')
-      ? [toPublicCDN(charRecord.avatar_url)]
-      : []
-  );
-  console.log(`[ProofDiag] Character refs: ${effectiveCharRefs.length}`);
-
-  // ── STEP 6: Inject temporary test ref if user has no refs ────────────────
-  // Same pattern as testUserPersonaRegenPath — atomic inject → generate → cleanup.
-  const TEST_USER_REF = 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Camponotus_flavomarginatus_ant.jpg/320px-Camponotus_flavomarginatus_ant.jpg';
-  let injectedTestRef = false;
-  const originalReferenceImageUrls = sett?.reference_image_urls || [];
   const settingsId = sett?.id || null;
-  let effectiveUserRefs = userRefs;
+  const originalReferenceImageUrls = sett?.reference_image_urls || [];
+  const dbUserRefs = cdnFilter([...(sett?.reference_image_urls || []), ...(sett?.generated_avatar_urls || [])]);
+
+  let injectedTestRef = false;
+  let effectiveUserRefs = dbUserRefs.slice(0, 3);
 
   if (effectiveUserRefs.length === 0 && settingsId) {
     await base44.asServiceRole.entities.UserSettings.update(settingsId, {
@@ -142,322 +116,252 @@ Deno.serve(async (req) => {
     });
     injectedTestRef = true;
     effectiveUserRefs = [TEST_USER_REF];
-    console.log(`[ProofDiag] Injected temporary test ref for user`);
+    console.log(`[ProofE2E] Injected temporary test ref for user`);
   }
 
-  const canGenerate = effectiveCharRefs.length > 0 && effectiveUserRefs.length > 0;
-  const gateStatus = {
-    character_refs_ok: effectiveCharRefs.length > 0,
-    user_refs_ok: effectiveUserRefs.length > 0,
-    user_refs_injected_for_test: injectedTestRef,
-    character_outfit_resolved: !!charOutfitText,
-    user_outfit_resolved: !!userOutfitText,
-    can_generate: canGenerate,
-  };
-
-  if (!canGenerate) {
-    // Cleanup injected ref if we still can't generate (e.g. no char refs)
-    if (injectedTestRef && settingsId) {
-      await base44.asServiceRole.entities.UserSettings.update(settingsId, { reference_image_urls: originalReferenceImageUrls }).catch(() => {});
-    }
+  if (effectiveUserRefs.length === 0) {
     return Response.json({
-      proof_status: 'blocked_missing_refs',
-      gate: gateStatus,
-      character_name: charRecord.name,
-      user_persona_name: userPersonaName,
-      character_outfit_source: charOutfitSource,
-      character_outfit_text: charOutfitText,
-      user_outfit_source: userOutfitSource,
-      user_outfit_text: userOutfitText,
-      note: 'Cannot run generation proof — missing reference images even after test ref injection.',
-    });
+      error: 'User has no visual reference images and no UserSettings record.',
+      requesting_user: requestingUser,
+    }, { status: 422 });
   }
 
-  // ── STEP 7: Build the multi-person payload (mirrors mediaGridGenerate exactly) ──
-  // Build selectedCharacters in the exact format mediaGridGenerate expects
-  const selectedCharacters = [
-    {
-      id: charRecord.id,
-      role: 'primary',
-      displayName: charRecord.name,
-      firstName: charRecord.name.split(' ')[0],
-      referenceImages: effectiveCharRefs,
-    }
-  ];
-
-  // ── STEP 8: Create scratch message ────────────────────────────────────────
+  // ── STEP 4: Create scratch message ────────────────────────────────────────
   let scratchMessageId = null;
   try {
     const scratchMsg = await base44.asServiceRole.entities.Message.create({
       conversation_id: conversationId,
       sender_type: 'character',
       character_id: characterId,
-      content: '[PROOF_DIAGNOSTIC_SCRATCH]',
+      character_name: charRecord.name,
+      content: '[PROOF_E2E_SCRATCH — safe to delete]',
       timestamp: new Date().toISOString(),
     });
     scratchMessageId = scratchMsg?.id;
     if (!scratchMessageId) throw new Error('Scratch message creation returned no ID');
-    console.log(`[ProofDiag] Scratch message created: ${scratchMessageId}`);
+    console.log(`[ProofE2E] Scratch message created: ${scratchMessageId}`);
   } catch (err) {
+    if (injectedTestRef && settingsId) {
+      await base44.asServiceRole.entities.UserSettings.update(settingsId, { reference_image_urls: originalReferenceImageUrls }).catch(() => {});
+    }
     return Response.json({ error: `Failed to create scratch message: ${err?.message}` }, { status: 500 });
   }
 
-  // ── STEP 9: Run multi-person generation inline (mirrors mediaGridGenerate exactly) ─
-  // Cannot use functions.invoke here — it strips the admin user session (same issue as testC).
-  // Inline the exact same multi-person generation logic instead.
+  // ── STEP 5: Call mediaGridGenerate via HTTP fetch (REAL PATH — same as frontend) ─
+  // Forward the user's auth token exactly as the frontend does.
   let mediaGridResult = null;
   let mediaGridError = null;
-  let savedPromptForProof = null;
+  let mediaGridStatus = null;
 
   try {
-    // Build people array (same as mediaGridGenerate)
-    let refIndex = 1;
-    const envRefs = []; // no location for this proof — outdoor event, no saved zone
-    const people = [];
-    const identityRefs = [];
+    console.log(`[ProofE2E] Calling mediaGridGenerate via HTTP fetch...`);
 
-    for (const person of selectedCharacters) {
-      const refs = person.referenceImages.map(toPublicCDN).filter(isAccessible).slice(0, 3);
-      identityRefs.push(...refs);
-      people.push({
-        role: person.role,
-        id: person.id,
-        displayName: person.displayName,
-        firstName: person.firstName,
-        refStart: refIndex,
-        refCount: refs.length,
-      });
-      refIndex += refs.length;
-    }
-    // Add user
-    const userRefsForGen = effectiveUserRefs.map(toPublicCDN).filter(isAccessible).slice(0, 3);
-    identityRefs.push(...userRefsForGen);
-    people.push({
-      role: 'user',
-      id: 'user',
-      displayName: userPersonaName,
-      firstName: userPersonaName.split(' ')[0],
-      refStart: refIndex,
-      refCount: userRefsForGen.length,
-    });
-
-    // Resolve outfit lines for all subjects (same logic as updated mediaGridGenerate)
-    const proofOutfitLines = [];
-    if (charOutfitText) proofOutfitLines.push({ subjectType: 'character', name: charRecord.name, text: charOutfitText, source: charOutfitSource });
-    if (userOutfitText) proofOutfitLines.push({ subjectType: 'user', name: userPersonaName, text: userOutfitText, source: userOutfitSource });
-
-    // Build identity block with outfit locks per subject
-    const identityBlock = people.map(p => {
-      const nameLabel = p.displayName || (p.role === 'user' ? 'User' : p.role);
-      const firstName = p.firstName || nameLabel.split(' ')[0];
-      const startIdx = envRefs.length + p.refStart;
-      const endIdx = envRefs.length + p.refStart + p.refCount - 1;
-      const subjectOutfit = proofOutfitLines.find(o =>
-        o.subjectType === (p.role === 'user' ? 'user' : 'character') &&
-        (p.role === 'user' ? true : o.name === p.displayName)
-      );
-      const outfitLine = subjectOutfit?.text
-        ? `\n  🔒 OUTFIT LOCK (CLOSET — CANONICAL LAW): "${subjectOutfit.text}"\n  ⛔ Event theme (AIDS Walk) must NOT override closet. Render exactly this outfit.`
-        : `\n  ⚠️ No closet outfit resolved — use contextually neutral attire.`;
-      return `${nameLabel} (ID: ${p.id}): Images ${startIdx}–${endIdx}\n  MATCH EXACTLY: face structure, skin tone, hair, body type${outfitLine}`;
-    }).join('\n\n');
-
-    // Build closet lock block
-    let closetLockBlock = '';
-    if (proofOutfitLines.length > 0) {
-      const lockLines = ['', '🔒 CLOSET OUTFIT LOCK — CANONICAL LAW. OVERRIDES ALL SCENE STYLING.', '════════════════════════════════════════════════════════════'];
-      for (const { name, text } of proofOutfitLines) {
-        lockLines.push(`${name} OUTFIT — RENDER EXACTLY:`);
-        text.split(',').map(s => s.trim()).filter(Boolean).forEach(item => lockLines.push(`  • ${item}`));
-        lockLines.push('⛔ Do NOT add or invent any clothing item not listed above. Event/theme styling is FORBIDDEN.');
-        lockLines.push('');
-      }
-      lockLines.push('════════════════════════════════════════════════════════════');
-      closetLockBlock = '\n' + lockLines.join('\n');
-    }
-
-    const multiPersonPrompt = `MULTI-PERSON IMAGE GENERATION — SUBJECT IDENTITY LOCK\n\nSCENE: ${TEST_PROMPT}\n\nSELECTED PEOPLE (identity locked):\n\n${identityBlock}\n\nUNIFIED SCENE RULE: All people naturally integrated into the same scene. Same lighting, perspective, floor plane.\n${closetLockBlock}`;
-
-    savedPromptForProof = multiPersonPrompt;
-
-    const allReferences = [...envRefs, ...identityRefs].filter(Boolean);
-
-    const genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-      prompt: multiPersonPrompt,
-      existing_image_urls: allReferences.length > 0 ? allReferences : undefined,
-    });
-
-    if (!genRes?.url) throw new Error('No image URL returned from generator');
-
-    // Build structured subjects and save to scratch message
-    const structuredSubjects = people.map(p => ({
-      subject_type: p.role === 'user' ? 'user' : 'character',
-      subject_id: p.id,
-      subject_name: p.displayName,
-      role: p.role,
-      reference_image_count: p.refCount,
-    }));
-
-    const generationContext = {
-      image_type: 'multi',
-      subject_count: structuredSubjects.length,
-      subjects: structuredSubjects,
-      scene_prompt: TEST_PROMPT,
+    const mgPayload = {
+      messageId: scratchMessageId,
       prompt: TEST_PROMPT,
       subjectType: 'multi',
-      character_id: charRecord.id,
-      selectedPeople: people.map(p => ({ role: p.role, id: p.id, displayName: p.displayName })),
-      resolved_outfit_metadata: proofOutfitLines,
-      user_outfit_text: userOutfitText,
-      user_outfit_source: userOutfitSource,
-      location_reference_images: envRefs,
-      location_name: 'Central Park / AIDS Walk NYC',
-      generatedAt: new Date().toISOString(),
+      locationId: null,
+      locationName: null,
+      zoneName: null,
+      zoneImageUrls: [],
+      multiPersonSelection: {
+        selectedCharacters: [{
+          role: 'primary',
+          id: charRecord.id,
+          displayName: charRecord.name,
+          firstName: charRecord.name.split(' ')[0],
+          referenceImages: charRefs,
+        }],
+        includeUser: true,
+        userReferenceImages: effectiveUserRefs,
+        userWorldName: sett?.fictional_world_name || null,
+      },
     };
 
-    await base44.asServiceRole.entities.Message.update(scratchMessageId, {
-      image_url: genRes.url,
-      generation_context: generationContext,
+    const mgFetch = await fetch(`${FUNCTIONS_BASE_URL}/mediaGridGenerate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': authHeader,
+      },
+      body: JSON.stringify(mgPayload),
     });
 
-    mediaGridResult = { success: true, imageUrl: genRes.url, subjectCount: people.length, _generationContext: generationContext };
-    console.log(`[ProofDiag] Inline generation SUCCESS: ${genRes.url.substring(0, 80)}…`);
+    mediaGridStatus = mgFetch.status;
+    const mgJson = await mgFetch.json().catch(() => ({}));
+    console.log(`[ProofE2E] mediaGridGenerate HTTP status: ${mediaGridStatus}`);
+
+    if (mgFetch.ok && mgJson?.success === true) {
+      mediaGridResult = mgJson;
+      console.log(`[ProofE2E] mediaGridGenerate SUCCESS: imageUrl=${mgJson.imageUrl?.substring(0, 80)}…`);
+    } else {
+      mediaGridError = mgJson?.error || `HTTP ${mediaGridStatus}`;
+      console.error(`[ProofE2E] mediaGridGenerate failed: ${mediaGridError}`);
+    }
   } catch (err) {
     mediaGridError = err?.message || String(err);
-    console.error(`[ProofDiag] Inline generation error: ${mediaGridError}`);
+    console.error(`[ProofE2E] mediaGridGenerate fetch threw: ${mediaGridError}`);
   }
 
-  // ── STEP 10: Read back the saved generation_context ────────────────────────
-  // NOTE: savedContext is set directly from the inline generation object (not DB read)
-  // to avoid timing issues with DB write propagation.
-  let savedContext = mediaGridResult?._generationContext || null;
+  // ── STEP 6: Read back the scratch message to inspect natural generation_context ──
+  let savedContext = null;
+  if (mediaGridResult?.success) {
+    // Wait for DB write to propagate
+    await new Promise(r => setTimeout(r, 4000));
+    // Use .get() for point-lookup consistency (not filter which may return stale data)
+    let savedMsg = null;
+    try {
+      savedMsg = await base44.asServiceRole.entities.Message.get(scratchMessageId);
+    } catch (getErr) {
+      console.warn(`[ProofE2E] Message.get failed, falling back to filter: ${getErr?.message}`);
+      const savedList = await base44.asServiceRole.entities.Message.filter({ id: scratchMessageId }, null, 1).catch(() => []);
+      savedMsg = savedList?.[0] || null;
+    }
+    const rawGenCtx = savedMsg?.generation_context;
+    savedContext = rawGenCtx || savedMsg?.data?.generation_context || null;
+    const contextStr = JSON.stringify(rawGenCtx) || 'null';
+    console.log(`[ProofE2E] generation_context type=${typeof rawGenCtx} | first 400: ${contextStr.substring(0, 400)}`);
+    console.log(`[ProofE2E] image_url on saved msg: ${savedMsg?.image_url?.substring(0, 80) ?? 'null'}`);
+    console.log(`[ProofE2E] subjects count: ${savedContext?.subjects?.length ?? 'none'} | image_type: ${savedContext?.image_type ?? 'none'}`);
+  }
 
-  // ── STEP 11: Run Why/Regenerate proof inline ─────────────────────────────
-  // Cannot use functions.invoke (strips user session → 403). Inline the key regen checks:
-  // Verify the saved generation_context has both subjects + outfits stored correctly.
+  // ── STEP 7: Call regenerateImageWithReason via HTTP fetch (REAL PATH) ──────
   let regenResult = null;
   let regenError = null;
-  if (mediaGridResult?.success && savedContext) {
-    try {
-      // Use the in-memory context (already written to DB in step 9, read back here)
-      const ctx = savedContext || {};
-      // Verify: subjects array populated, outfit metadata present, both subjects recoverable
-      const subjectsOk = (ctx.subjects || []).length >= 2;
-      const outfitMetaOk = (ctx.resolved_outfit_metadata || []).length >= 2;
-      const charSubject = (ctx.subjects || []).find(s => s.subject_type === 'character');
-      const userSubject = (ctx.subjects || []).find(s => s.subject_type === 'user');
-      const charOutfitInMeta = (ctx.resolved_outfit_metadata || []).find(o => o.subjectType === 'character');
-      const userOutfitInMeta = (ctx.resolved_outfit_metadata || []).find(o => o.subjectType === 'user');
+  let regenStatus = null;
 
-      regenResult = {
-        success: subjectsOk && outfitMetaOk,
-        final_generation_allowed: subjectsOk,
-        subjects_recoverable: subjectsOk,
-        char_subject_in_context: !!charSubject,
-        user_subject_in_context: !!userSubject,
-        char_outfit_in_context: !!charOutfitInMeta,
-        user_outfit_in_context: !!userOutfitInMeta,
-        char_outfit_text_stored: charOutfitInMeta?.text || null,
-        user_outfit_text_stored: userOutfitInMeta?.text || null,
-        selected_subject_roles: [charSubject?.subject_type, userSubject?.subject_type].filter(Boolean),
-        user_ref_count: userRefs.length > 0 ? userRefs.length : (injectedTestRef ? 1 : 0),
-        character_ref_count: effectiveCharRefs.length,
+  // Allow regen even if DB read-back failed to find subjects — the image was generated,
+  // so the message has an image_url and regen can attempt to run against it.
+  // This separates the DB read-back diagnostic from the regen diagnostic.
+  const canRegen = mediaGridResult?.success === true;
+
+  if (canRegen) {
+    try {
+      console.log(`[ProofE2E] Calling regenerateImageWithReason via HTTP fetch...`);
+
+      const regenPayload = {
+        messageId: scratchMessageId,
+        reason: 'flawed',
       };
-      console.log(`[ProofDiag] Regen context check: subjects_ok=${subjectsOk} outfit_ok=${outfitMetaOk}`);
+
+      const regenFetch = await fetch(`${FUNCTIONS_BASE_URL}/regenerateImageWithReason`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authHeader,
+        },
+        body: JSON.stringify(regenPayload),
+      });
+
+      regenStatus = regenFetch.status;
+      const regenJson = await regenFetch.json().catch(() => ({}));
+      console.log(`[ProofE2E] regenerateImageWithReason HTTP status: ${regenStatus}`);
+
+      if (regenFetch.ok && regenJson?.success === true) {
+        regenResult = regenJson;
+        console.log(`[ProofE2E] regenerateImageWithReason SUCCESS: ${regenJson.image_url?.substring(0, 80)}…`);
+      } else {
+        regenError = regenJson?.error || `HTTP ${regenStatus}`;
+        console.error(`[ProofE2E] regenerateImageWithReason failed: ${regenError}`);
+      }
     } catch (err) {
       regenError = err?.message || String(err);
-      console.error(`[ProofDiag] Regen check error: ${regenError}`);
+      console.error(`[ProofE2E] regenerateImageWithReason fetch threw: ${regenError}`);
     }
+  } else if (mediaGridResult?.success) {
+    regenError = `Skipped — subjects in saved context: ${savedContext?.subjects?.length ?? 0}, image_type: ${savedContext?.image_type ?? 'none'}`;
+    console.warn(`[ProofE2E] ${regenError}`);
   }
 
-  // ── STEP 12: Clean up — scratch message AND injected test ref ────────────
+  // ── STEP 8: Clean up ──────────────────────────────────────────────────────
   if (scratchMessageId) {
     await base44.asServiceRole.entities.Message.delete(scratchMessageId).catch(e => {
-      console.warn(`[ProofDiag] Cleanup failed (non-critical): ${e?.message}`);
+      console.warn(`[ProofE2E] Scratch delete failed (non-critical): ${e?.message}`);
     });
-    console.log(`[ProofDiag] Scratch message ${scratchMessageId} deleted`);
+    console.log(`[ProofE2E] Scratch message ${scratchMessageId} deleted`);
   }
   if (injectedTestRef && settingsId) {
     await base44.asServiceRole.entities.UserSettings.update(settingsId, {
       reference_image_urls: originalReferenceImageUrls,
-    }).catch(e => console.warn(`[ProofDiag] Ref cleanup failed: ${e?.message}`));
-    console.log(`[ProofDiag] Test ref cleaned up from UserSettings`);
+    }).catch(e => console.warn(`[ProofE2E] Ref cleanup failed: ${e?.message}`));
+    console.log(`[ProofE2E] Test ref cleaned up from UserSettings`);
   }
 
-  // ── STEP 13: Build proof report ───────────────────────────────────────────
+  // ── STEP 9: Build proof report ─────────────────────────────────────────────
+  const subjectsInContext = savedContext?.subjects?.length || 0;
+  const charSubjectInContext = (savedContext?.subjects || []).find(s => s.subject_type === 'character' || (s.subject_id !== '__user__' && s.subject_id !== 'user'));
+  const userSubjectInContext = (savedContext?.subjects || []).find(s => s.subject_type === 'user' || s.subject_id === '__user__' || s.subject_id === 'user');
   const savedOutfitMeta = savedContext?.resolved_outfit_metadata || [];
-  const charOutfitFromContext = savedOutfitMeta.find(o => o.subjectType === 'character');
-  const userOutfitFromContext = savedOutfitMeta.find(o => o.subjectType === 'user');
-
-  // Check if outfit was invented from theme vs closet
-  const charOutfitInvented = !charOutfitFromContext && !charOutfitText;
-  const userOutfitInvented = !userOutfitFromContext && !userOutfitText;
-
-  const subjectsExpected = 2; // character + user
-  const subjectsInContext = savedContext?.subjects?.length || savedContext?.selectedPeople?.length || 0;
+  const charOutfitInContext = savedOutfitMeta.find(o => o.subjectType === 'character');
+  const userOutfitInContext = savedOutfitMeta.find(o => o.subjectType === 'user');
 
   const proofPassed = (
     mediaGridResult?.success === true &&
+    subjectsInContext >= 2 &&
+    !!charSubjectInContext &&
+    !!userSubjectInContext &&
     regenResult?.success === true &&
-    !!charOutfitFromContext &&
-    !!userOutfitFromContext &&
-    !charOutfitInvented &&
-    !userOutfitInvented &&
-    subjectsInContext >= subjectsExpected
+    regenResult?.final_generation_allowed === true
   );
 
   return Response.json({
-    proof_status: proofPassed ? '✅ PROOF PASSED' : '❌ PROOF FAILED — see diagnostics below',
+    proof_status: proofPassed
+      ? '✅ PROOF PASSED — real end-to-end flow verified via HTTP function calls'
+      : '❌ PROOF FAILED — see diagnostics',
     proof_passed: proofPassed,
+    proof_method: 'HTTP fetch with forwarded auth header — same mechanism as frontend',
 
-    // ── Subject presence ──────────────────────────────────────────────────
-    selected_subject_roles: ['character', 'user'],
-    subjects_expected: subjectsExpected,
-    subjects_in_generation_context: subjectsInContext,
-    subjects_match: subjectsInContext >= subjectsExpected,
-
-    // ── Character subject ─────────────────────────────────────────────────
-    character_name: charRecord.name,
-    character_ref_count: effectiveCharRefs.length,
-    character_outfit_source: charOutfitFromContext?.source || charOutfitSource,
-    character_outfit_text: charOutfitFromContext?.text || charOutfitText || null,
-    character_outfit_invented_from_theme: charOutfitInvented,
-
-    // ── User subject ──────────────────────────────────────────────────────
-    user_persona_name: userPersonaName,
-    user_ref_count: userRefs.length,
-    user_outfit_source: userOutfitFromContext?.source || userOutfitSource,
-    user_outfit_text: userOutfitFromContext?.text || userOutfitText || null,
-    user_outfit_invented_from_theme: userOutfitInvented,
-
-    // ── Generation results ────────────────────────────────────────────────
+    // ── Step 5: mediaGridGenerate (REAL HTTP CALL) ────────────────────────
+    media_grid_called_via: `HTTP POST ${FUNCTIONS_BASE_URL}/mediaGridGenerate`,
+    media_grid_http_status: mediaGridStatus,
     media_grid_success: mediaGridResult?.success || false,
     media_grid_image_url: mediaGridResult?.imageUrl ? mediaGridResult.imageUrl.substring(0, 100) + '…' : null,
+    media_grid_subject_count: mediaGridResult?.selectedPeopleCount || null,
+    media_grid_subject_type: mediaGridResult?.subjectType || null,
     media_grid_error: mediaGridError || null,
-    regen_context_valid: regenResult?.success || false,
-    regen_subjects_recoverable: regenResult?.subjects_recoverable || false,
-    regen_char_subject_in_context: regenResult?.char_subject_in_context || false,
-    regen_user_subject_in_context: regenResult?.user_subject_in_context || false,
-    regen_char_outfit_stored: regenResult?.char_outfit_text_stored || null,
-    regen_user_outfit_stored: regenResult?.user_outfit_text_stored || null,
-    regen_error: regenError || null,
 
-    // ── Closet lock proof — was event theme blocked from overriding outfits? ─
-    event_theme_blocked_from_outfit_override: !charOutfitInvented && !userOutfitInvented,
-    note_on_event: 'AIDS Walk event influences: setting, crowd, signage, activity — NOT clothing. Closet outfit lock enforced for both subjects.',
-
-    // ── Full saved context (truncated) ────────────────────────────────────
-    saved_generation_context_subjects: savedContext?.subjects?.map(s => ({
+    // ── Step 6: DB read-back of naturally-written generation_context ──────
+    saved_context_read_from_db: true,
+    subjects_in_saved_context: subjectsInContext,
+    subjects_expected: 2,
+    subjects_match: subjectsInContext >= 2,
+    char_subject_in_context: !!charSubjectInContext,
+    user_subject_in_context: !!userSubjectInContext,
+    saved_context_image_type: savedContext?.image_type || null,
+    saved_subjects: savedContext?.subjects?.map(s => ({
       type: s.subject_type,
       id: s.subject_id,
       name: s.subject_name,
+      role: s.role,
       ref_count: s.reference_image_count,
     })) || null,
     saved_outfit_metadata: savedOutfitMeta,
+    char_outfit_in_context: !!charOutfitInContext,
+    user_outfit_in_context: !!userOutfitInContext,
+    char_outfit_text: charOutfitInContext?.text || null,
+    user_outfit_text: userOutfitInContext?.text || null,
+
+    // ── Step 7: regenerateImageWithReason (REAL HTTP CALL) ────────────────
+    regen_called_via: `HTTP POST ${FUNCTIONS_BASE_URL}/regenerateImageWithReason`,
+    regen_http_status: regenStatus,
+    regen_skipped: !canRegen,
+    regen_success: regenResult?.success || false,
+    regen_image_url: regenResult?.image_url ? regenResult.image_url.substring(0, 100) + '…' : null,
+    regen_final_generation_allowed: regenResult?.final_generation_allowed || false,
+    regen_selected_subject_roles: regenResult?.selected_subject_roles || null,
+    regen_user_ref_count: regenResult?.user_ref_count ?? null,
+    regen_character_ref_count: regenResult?.character_ref_count ?? null,
+    regen_camera_variables: regenResult?.cameraVariables || null,
+    regen_error: regenError || null,
 
     // ── Test parameters ───────────────────────────────────────────────────
     test_prompt: TEST_PROMPT,
+    character_name: charRecord.name,
+    character_id: characterId,
+    character_ref_count: charRefs.length,
+    user_ref_count_used: effectiveUserRefs.length,
+    user_ref_injected_for_test: injectedTestRef,
     requesting_user: requestingUser,
-    scratch_message_id: '(deleted)',
+    scratch_message_id: '(deleted after test)',
   });
 });

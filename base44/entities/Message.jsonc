@@ -132,6 +132,7 @@
     "generation_context": {
       "type": "object",
       "description": "Stored generation metadata for image messages \u2014 used to power accurate regeneration",
+      "additionalProperties": true,
       "properties": {
         "prompt": {
           "type": "string",
@@ -163,7 +164,129 @@
         },
         "subject_type": {
           "type": "string",
-          "description": "character | user | joint"
+          "description": "character | user | joint | multi"
+        },
+        "image_type": {
+          "type": "string",
+          "description": "character | user | joint | multi"
+        },
+        "subject_count": {
+          "type": "number"
+        },
+        "subjects": {
+          "type": "array",
+          "description": "Structured per-subject identity data for multi-person and joint images",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "subject_type": {
+                "type": "string"
+              },
+              "subject_id": {
+                "type": "string"
+              },
+              "subject_name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "reference_image_count": {
+                "type": "number"
+              },
+              "reference_images": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "scene_prompt": {
+          "type": "string"
+        },
+        "original_raw_prompt": {
+          "type": "string"
+        },
+        "resolved_outfit_metadata": {
+          "type": "array",
+          "description": "Per-subject outfit metadata used at generation time",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "user_outfit_text": {
+          "type": "string"
+        },
+        "user_outfit_source": {
+          "type": "string"
+        },
+        "camera_variables": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "accepted_attempt_index": {
+          "type": "number"
+        },
+        "subjectType": {
+          "type": "string"
+        },
+        "selectedPeople": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "characterReferenceImages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "locationName": {
+          "type": "string"
+        },
+        "zoneName": {
+          "type": "string"
+        },
+        "locationReferenceImages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "generatedAt": {
+          "type": "string"
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "user_reference_images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "background_extras_allowed": {
+          "type": "boolean"
+        },
+        "appearance_lock_corrections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
         }
       }
     },
