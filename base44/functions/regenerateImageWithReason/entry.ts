@@ -650,14 +650,21 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── ROLE-AWARE SUBJECT SEPARATION ────────────────────────────────────────
+    // intendedSubjectIds may contain '__user__' (user/world persona) AND real Character IDs.
+    // '__user__' is NEVER a Character.id — it must be separated before any Character lookup.
+    // Passing '__user__' to Character.filter would cause a 500 (no record found → broken path).
+    const userSelectedAsSubject = !!(includeUserSubject || intendedSubjectIds?.includes('__user__'));
+    const intendedCharacterIds = (intendedSubjectIds || []).filter(id => id !== '__user__');
+
     // For no_avatar: user explicitly selected who the image was supposed to show.
     // For dont_like/custom_prompt: use prompt-named character if found, else original.
-    const effectiveCharId = (reason === 'no_avatar' && intendedSubjectIds?.length > 0)
-      ? intendedSubjectIds[0]
+    const effectiveCharId = (reason === 'no_avatar' && intendedCharacterIds.length > 0)
+      ? intendedCharacterIds[0]
       : (promptNamedCharId || originalCharId);
 
-    if (reason === 'no_avatar' && intendedSubjectIds?.length > 0) {
-      console.log(`[regenerateImageWithReason] no_avatar — user-selected intended subjects: ${intendedSubjectIds.join(', ')} | includeUser: ${includeUserSubject}`);
+    if (reason === 'no_avatar') {
+      console.log(`[regenerateImageWithReason] no_avatar — intended char subjects: [${intendedCharacterIds.join(', ')}] | userSelectedAsSubject: ${userSelectedAsSubject} | includeUserSubject param: ${includeUserSubject}`);
     }
 
     if (effectiveCharId) {
@@ -752,7 +759,13 @@ Deno.serve(async (req) => {
 
     // ── 2b. RESOLVE USER IDENTITY REFS ───────────────────────────────────────
     let userRefs = [];
-    const needsUserRefs = ctx.subject_type === 'user' || ctx.subject_type === 'joint' || (reason === 'no_avatar' && includeUserSubject);
+    // needsUserRefs fires when:
+    //   - original image was a user/joint subject (from stored context)
+    //   - user explicitly selected '__user__' in the repair picker (userSelectedAsSubject)
+    //   - caller explicitly passed includeUserSubject=true (legacy param)
+    const needsUserRefs = ctx.subject_type === 'user' || ctx.subject_type === 'joint'
+      || userSelectedAsSubject
+      || (reason === 'no_avatar' && includeUserSubject);
     if (needsUserRefs) {
       // Use user refs from generation_context (the ORIGINAL saved refs)
       if (ctx.user_reference_images?.length > 0) {
@@ -1020,8 +1033,10 @@ Deno.serve(async (req) => {
     console.log(`[IdentityAudit][regen] prompt_named_char_id:    ${promptNamedCharId || 'none'}`);
     console.log(`[IdentityAudit][regen] original_char_id:        ${originalCharId || 'null'}`);
     console.log(`[IdentityAudit][regen] ctx_had_structured_subj: ${!!firstStructuredSubjectId}`);
-    console.log(`[IdentityAudit][regen] intended_subjects_param: ${intendedSubjectIds?.join(',') || 'none'}`);
-    console.log(`[IdentityAudit][regen] include_user:            ${!!includeUserSubject}`);
+    console.log(`[IdentityAudit][regen] intended_subjects_raw:   ${intendedSubjectIds?.join(',') || 'none'}`);
+    console.log(`[IdentityAudit][regen] intended_char_ids:       ${intendedCharacterIds.join(',') || 'none'}`);
+    console.log(`[IdentityAudit][regen] user_selected_as_subj:  ${userSelectedAsSubject}`);
+    console.log(`[IdentityAudit][regen] include_user_param:      ${!!includeUserSubject}`);
     console.log(`[IdentityAudit][regen] outfit_in_charDesc:      ${charDesc?.includes('Currently wearing:') ?? false}`);
     console.log(`[IdentityAudit][regen] location_resolved:       ${resolvedLocationName || 'none'}`);
     console.log(`[IdentityAudit][regen] zone_resolved:           ${resolvedZoneName || 'none'}`);
