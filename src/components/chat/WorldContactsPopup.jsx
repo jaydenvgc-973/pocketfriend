@@ -261,17 +261,23 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         }).catch(e => console.warn(`[WorldContacts] Pre-fetch canonical context failed: ${e.message}`));
       }
 
-      // ── ENSURE BILATERAL RELATIONSHIP: if receiver doesn't have sender in their list, add it ──
-      // This fixes the one-way contacts problem: A has B but B doesn't have A.
-      // syncWorldPhoneMemory handles this at message-send time, but we also trigger it
-      // at contact-select time so B's list is populated before any message is sent.
+      // ── ENSURE BILATERAL AWARENESS: if B doesn't have A in their list, create a neutral link ──
+      // Uses ensureBilateralCharacterAwareness — NEVER syncWorldPhoneMemory.
+      // Opening a contact is NOT an interaction. It must not create memory, last_interaction_summary,
+      // score progression, or any fake interaction artifact.
+      // ensureBilateralCharacterAwareness only creates a neutral awareness entry (awareness_only=true)
+      // if one is missing — existing entries are left completely unchanged.
       if (contactId && character.id && contactId !== character.id) {
-        base44.functions.invoke('syncWorldPhoneMemory', {
-          senderCharacterId: character.id,
-          receiverCharacterId: contactId,
-          messageContent: `[contact_opened — relationship bootstrap]`,
-          context: 'world_phone_bootstrap',
-          conversationId: conversationId || null,
+        base44.functions.invoke('ensureBilateralCharacterAwareness', {
+          characterAId: character.id,
+          characterBId: contactId,
+        }).then(res => {
+          const d = res?.data;
+          if (d) {
+            console.log(
+              `[WorldContacts] Bilateral awareness | A=${d.characterA?.name} (${d.characterA?.character_type}) | B=${d.characterB?.name} (${d.characterB?.character_type}) | entries_created=${d.entries_created} | memory_written=${d.memory_written} | score_progression=${d.score_progression}`
+            );
+          }
         }).catch(() => {}); // non-blocking, best-effort
       }
 

@@ -51,47 +51,36 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Ownership violation: characters must belong to current user' }, { status: 403 });
     }
 
-    const contextLabel = (context || 'world_phone').replace('_bootstrap', '');
-    const isBootstrap = (context || '').includes('bootstrap');
+    const contextLabel = context || 'world_phone';
     const timestamp = new Date().toISOString();
     const sourceCtx = conversationId ? `${contextLabel}_${conversationId}` : contextLabel;
 
-    // Bootstrap calls only create/update fictional_relationships — no Memory records written.
-    // They exist solely to ensure bilateral relationship entries exist before first message.
-    if (!isBootstrap) {
-      // Write memory for SENDER — includes the full exchange (sent + received)
-      const senderMemory = base44.entities.Memory.create({
-        character_id: senderCharacterId,
-        title: `${contextLabel.replace(/_/g, ' ')} with ${receiver.name}`,
-        description: `Exchange with ${receiver.name} via ${contextLabel.replace(/_/g, ' ')}: ${messageContent.substring(0, 400)}`,
-        emotional_impact: 'neutral',
-        timestamp,
-        source_context: `${sourceCtx}_sender`,
-      });
+    // Write memory for SENDER — includes the full exchange (sent + received)
+    const senderMemory = base44.entities.Memory.create({
+      character_id: senderCharacterId,
+      title: `${contextLabel.replace(/_/g, ' ')} with ${receiver.name}`,
+      description: `Exchange with ${receiver.name} via ${contextLabel.replace(/_/g, ' ')}: ${messageContent.substring(0, 400)}`,
+      emotional_impact: 'neutral',
+      timestamp,
+      source_context: `${sourceCtx}_sender`,
+    });
 
-      // Write memory for RECEIVER — they know both what was said to them AND what they replied
-      const receiverMemory = base44.entities.Memory.create({
-        character_id: receiverCharacterId,
-        title: `${contextLabel.replace(/_/g, ' ')} from ${sender.name}`,
-        description: `Exchange with ${sender.name} via ${contextLabel.replace(/_/g, ' ')}: ${messageContent.substring(0, 400)}`,
-        emotional_impact: 'neutral',
-        timestamp,
-        source_context: `${sourceCtx}_receiver`,
-      });
+    // Write memory for RECEIVER — they know both what was said to them AND what they replied
+    const receiverMemory = base44.entities.Memory.create({
+      character_id: receiverCharacterId,
+      title: `${contextLabel.replace(/_/g, ' ')} from ${sender.name}`,
+      description: `Exchange with ${sender.name} via ${contextLabel.replace(/_/g, ' ')}: ${messageContent.substring(0, 400)}`,
+      emotional_impact: 'neutral',
+      timestamp,
+      source_context: `${sourceCtx}_receiver`,
+    });
 
-      await Promise.all([senderMemory, receiverMemory]);
-      console.log(`[syncWorldPhoneMemory] Memory written | sender=${sender.name} (${senderCharacterId}) ↔ receiver=${receiver.name} (${receiverCharacterId}) | context=${contextLabel}`);
-    } else {
-      console.log(`[syncWorldPhoneMemory] Bootstrap only — relationship check, no memory written | ${sender.name} ↔ ${receiver.name}`);
-    }
+    await Promise.all([senderMemory, receiverMemory]);
 
-    // Update last_interaction_summary on both sides of the fictional_relationships
-    // Sender → Receiver relationship
+    // Update last_interaction_summary on both sides — only for real exchanges, never for bootstrap
     const senderRels = sender.fictional_relationships || [];
     const senderRelIdx = senderRels.findIndex(r => r.related_character_id === receiverCharacterId);
-    const senderInteractionSummary = isBootstrap
-      ? `Known contact via world phone`
-      : `Sent a ${contextLabel.replace(/_/g, ' ')} message: "${messageContent.substring(0, 100)}"`;
+    const senderInteractionSummary = `Sent a ${contextLabel.replace(/_/g, ' ')} message: "${messageContent.substring(0, 100)}"`;
 
     if (senderRelIdx >= 0) {
       const updatedSenderRels = senderRels.map((r, i) =>
@@ -99,7 +88,6 @@ Deno.serve(async (req) => {
       );
       await base44.entities.Character.update(senderCharacterId, { fictional_relationships: updatedSenderRels });
     } else {
-      // Auto-create relationship entry for sender → receiver
       await base44.entities.Character.update(senderCharacterId, {
         fictional_relationships: [
           ...senderRels,
@@ -119,12 +107,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Receiver → Sender relationship
     const receiverRels = receiver.fictional_relationships || [];
     const receiverRelIdx = receiverRels.findIndex(r => r.related_character_id === senderCharacterId);
-    const receiverInteractionSummary = isBootstrap
-      ? `Known contact via world phone`
-      : `${sender.name} reached out via ${contextLabel.replace(/_/g, ' ')}: "${messageContent.substring(0, 100)}"`;
+    const receiverInteractionSummary = `${sender.name} reached out via ${contextLabel.replace(/_/g, ' ')}: "${messageContent.substring(0, 100)}"`;
 
     if (receiverRelIdx >= 0) {
       const updatedReceiverRels = receiverRels.map((r, i) =>
@@ -132,7 +117,6 @@ Deno.serve(async (req) => {
       );
       await base44.entities.Character.update(receiverCharacterId, { fictional_relationships: updatedReceiverRels });
     } else {
-      // Auto-create relationship entry for receiver → sender
       await base44.entities.Character.update(receiverCharacterId, {
         fictional_relationships: [
           ...receiverRels,
@@ -152,7 +136,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log(`[syncWorldPhoneMemory] Complete | ${sender.name} (${senderCharacterId}) ↔ ${receiver.name} (${receiverCharacterId}) | context=${contextLabel} | bootstrap=${isBootstrap}`);
+    console.log(`[syncWorldPhoneMemory] Complete | ${sender.name} (${senderCharacterId}) ↔ ${receiver.name} (${receiverCharacterId}) | context=${contextLabel}`);
 
     return Response.json({
       success: true,
@@ -161,8 +145,7 @@ Deno.serve(async (req) => {
       receiver: receiver.name,
       receiver_id: receiverCharacterId,
       context: contextLabel,
-      bootstrap: isBootstrap,
-      memory_written: !isBootstrap,
+      memory_written: true,
       relationship_synced: true,
     });
 
