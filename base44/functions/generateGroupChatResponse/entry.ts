@@ -304,6 +304,23 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
 - Do NOT assume or reference anything about the user's family unless they've told you directly in this conversation.
 - Vary your sentence structure and tone — do not repeat the same pattern as prior messages.`;
 
+      // Build idempotency key for this character's reply to this user message
+      const groupReplyIdempotencyKey = `group_chat::${character.id}::${conversation.id}::${message.id}`;
+
+      // ── DUPLICATE BLOCK: check if reply already saved for this source message ──
+      const existingGroupReply = await base44.asServiceRole.entities.Message.filter({
+        conversation_id: conversation.id,
+        sender_type: 'character',
+        character_id: character.id,
+        source_message_id: message.id,
+      }, null, 1).catch(() => []);
+
+      if (existingGroupReply.length > 0) {
+        console.log(`[GROUP-CHAT] IDEMPOTENT: reply already saved for char=${character.name} source_msg=${message.id}`);
+        debugLog.push({ character: character.name, status: 'IDEMPOTENT', reason: 'duplicate_blocked' });
+        continue;
+      }
+
       let responseText = '';
       try {
         const response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt, add_context_from_internet: false });
@@ -320,7 +337,19 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
           owner_email: character.owner_email,
           fallback_text: `[group_chat_llm_failure] ${err.message?.substring(0, 60)}`,
         }).catch(() => {});
-        continue; // Skip this character — no fallback message saved
+        // ── RECOVERY TRIGGER: re-attempt with same prompt after exponential backoff ──
+        base44.functions.invoke('triggerRecoveryBackground', {
+          conversation_id: conversation.id,
+          character_id: character.id,
+          owner_email: character.owner_email,
+          channel: 'group',
+          source_message_id: message.id,
+          prompt: fullPrompt,
+          character_name: character.name,
+          blocking_stage: 'group_chat_llm_failure',
+          failure_count: 0,
+        }).catch(() => {});
+        continue; // Skip this character — no fallback message saved, recovery fires in background
       }
 
       await base44.entities.Message.create({
@@ -331,6 +360,13 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
         content: responseText,
         emotional_state: character.emotional_state || 'calm',
         timestamp: new Date().toISOString(),
+        // ── IDEMPOTENCY + RECOVERY CLASSIFICATION ─────────────────────────────
+        source_message_id: message.id,
+        reply_to_message_id: message.id,
+        idempotency_key: groupReplyIdempotencyKey,
+        recovery_signal: false,     // real LLM response — eligible for memory
+        memory_eligible: true,
+        relationship_eligible: true,
       });
 
       const newCount = independentCount + 1;

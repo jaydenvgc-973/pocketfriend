@@ -30,6 +30,7 @@ import NarrativeDiagnosticPanel from "@/components/settings/NarrativeDiagnosticP
 import SupportAssistant from "@/components/settings/SupportAssistant.jsx";
 import AdminIssueReportViewer from "@/components/settings/AdminIssueReportViewer";
 import HomeAnchorsEditor from "@/components/settings/HomeAnchorsEditor";
+import RecoverySignalGlossary from "@/components/settings/RecoverySignalGlossary";
 import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
 
 export default function Settings() {
@@ -491,6 +492,12 @@ export default function Settings() {
         </div>
         <StorageBackup />
         <CommonQuestions />
+
+        {/* Recovery Signal Glossary — explains disguised system error messages */}
+        <div className="pt-4 border-t border-border space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Message Recovery Signals</p>
+          <RecoverySignalGlossary />
+        </div>
 
         {/* Support Assistant — available to all users, scoped to their owner_email */}
         <div className="pt-4 border-t border-border space-y-2">

@@ -1503,6 +1503,10 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           reply_to_message_id: sourceMessageId || userMsg?.id || null,
           generation_lock_id: lockId || null,
           channel: isPhone ? 'phone' : 'direct',
+          // ── TEXT RESPONSE CLASSIFICATION — real LLM response ─────────────────
+          recovery_signal: false,
+          memory_eligible: true,
+          relationship_eligible: true,
         });
       } catch (err) {
         console.error('[createTextMessage] Network error saving message:', err.message);
@@ -1537,7 +1541,9 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       : null;
 
     if (msgType === "text_only") {
-      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", idempotencyOpts);
+      // CRITICAL: Never save a hardcoded fallback string as character dialogue.
+      // If responseText is empty after a successful LLM call, save "..." (minimal safe token) not a fake apology.
+      primaryTextMsg = await createTextMessage(responseText || "...", idempotencyOpts);
       if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
 
     } else if (msgType === "image_only") {
@@ -1547,7 +1553,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           await createImageMessage(imagePrompts[i], 300 + i * 800);
         }
       } else {
-        primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", idempotencyOpts);
+        primaryTextMsg = await createTextMessage(responseText || "...", idempotencyOpts);
       }
 
     } else if (msgType === "text_then_image") {
@@ -1572,7 +1578,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
 
     } else {
-      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", idempotencyOpts);
+      primaryTextMsg = await createTextMessage(responseText || "...", idempotencyOpts);
     }
 
     // Create location share card if flagged

@@ -30,11 +30,6 @@ Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
 
   try {
-    const user = await base44.auth.me();
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const body = await req.json().catch(() => ({}));
     const {
       conversation_id,
@@ -48,13 +43,27 @@ Deno.serve(async (req) => {
       failure_count = 0,
     } = body;
 
+    // Auth: allow both user-session callers AND service-role backend callers
+    // (Group Chat, sendProactiveMessageForCharacter, etc. call this without user session)
+    let callerEmail = owner_email;
+    if (!callerEmail) {
+      try {
+        const user = await base44.auth.me();
+        callerEmail = user?.email;
+      } catch { /* service-role caller — callerEmail stays null, use owner_email from body */ }
+    }
+    // Require either caller email OR explicit owner_email in body
+    if (!callerEmail && !owner_email) {
+      return Response.json({ error: 'owner_email required for service-role callers' }, { status: 400 });
+    }
+
     if (!conversation_id || !character_id || !prompt) {
       return Response.json({
         error: 'conversation_id, character_id, and prompt required',
       }, { status: 400 });
     }
 
-    const effectiveEmail = owner_email || user.email;
+    const effectiveEmail = owner_email || callerEmail;
     if (!effectiveEmail) {
       return Response.json({
         error: 'Cannot determine owner email for recovery scope',

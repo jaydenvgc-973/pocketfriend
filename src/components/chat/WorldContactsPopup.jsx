@@ -731,6 +731,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       .join("\n");
 
     // STEP 6: Assemble full prompt — SAME structure as Chat's fullPrompt.
+    // Hoisted so the catch block can pass it to triggerRecoveryBackground.
     const fullPrompt = `${systemPromptForContact}${memoryContext}
 ${imageAnalysisContext}
 
@@ -779,8 +780,8 @@ Respond ONLY with valid JSON in this exact format:
       console.error(`[WorldContacts] LLM call failed: ${e.message}`);
       
       // ── CIRCUIT BREAKER: do NOT save generic fallback as a Message ────────────
-      // Record durable fallback state and trigger background recovery.
-      // npcText left empty — UI will show reconnecting state instead.
+      // Record durable fallback state and trigger background recovery with full prompt.
+      // npcText left null — UI will show reconnecting state instead.
       npcText = null; // null = do NOT save anything
       const { handleFallbackResponse } = await import('@/lib/chatFallbackIntegration');
       await handleFallbackResponse({
@@ -790,8 +791,11 @@ Respond ONLY with valid JSON in this exact format:
         base44,
         character: contactCharRecordRef.current,
         setRecoveringState: (val) => setIsTyping(val),
-        errorReason: 'llm_failure',
+        errorReason: e?.message?.includes('429') ? 'rate_limit' : e?.message?.includes('timeout') ? 'timeout' : 'llm_failure',
         errorStage: 'world_contacts_generation',
+        originalPrompt: fullPrompt,         // REQUIRED: full prompt for recovery re-attempt
+        sourceMessageId: savedUserMsg?.id,  // REQUIRED: user message for idempotency
+        channel: 'world_phone',
       });
     }
 
@@ -839,11 +843,15 @@ Respond ONLY with valid JSON in this exact format:
       timestamp: new Date().toISOString(),
       channel: "world_phone",
       sync_status: "pending",
-      // ── DUPLICATE PREVENTION METADATA ────────────────────────────────────────
+      // ── IDEMPOTENCY + DUPLICATE PREVENTION ────────────────────────────────────
       reply_to_message_id: savedUserMsg.id,
       source_message_id: savedUserMsg.id,
       generation_attempt_id: generationAttemptId,
       response_status: "complete",
+      // ── TEXT RESPONSE CLASSIFICATION ─────────────────────────────────────────
+      recovery_signal: false,     // real LLM response — eligible for memory/relationship
+      memory_eligible: true,
+      relationship_eligible: true,
     });
 
     // Mark lock as saved — prevents any concurrent path from re-saving
