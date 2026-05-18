@@ -240,13 +240,23 @@ Deno.serve(async (req) => {
 
     // ────────────────────────────────────────────────────────────────────────
     // ACTION: cleanup
-    // Scans all locked conversations for stale locks older than 2 min.
+    // Scans conversations with active generation locks for stale entries.
+    // SCOPE RULE: Must be scoped by owner_email if provided, otherwise bounded
+    // batch of recent conversations only — never a global "{}" scan.
     // ────────────────────────────────────────────────────────────────────────
     if (action === 'cleanup') {
-      // Scan conversations with active locks (up to 100)
+      // Scope by owner_email if provided — never scan globally without constraint
+      const cleanupFilter = effectiveEmail
+        ? { owner_email: effectiveEmail }
+        : {}; // Service-role scheduled cleanup: bounded to 50 most-recently-updated only
+
+      const batchLimit = effectiveEmail ? 200 : 50; // tighter bound for unscoped service-role runs
+
       const allConvos = await base44.asServiceRole.entities.Conversation.filter(
-        {}, '-updated_date', 100
+        cleanupFilter, '-updated_date', batchLimit
       ).catch(() => []);
+
+      console.log(`[generationLock] cleanup scope=owner_email:${effectiveEmail || 'service_role_bounded'} batch=${batchLimit} candidates=${allConvos.length}`);
 
       let cleaned = 0;
       for (const c of allConvos) {

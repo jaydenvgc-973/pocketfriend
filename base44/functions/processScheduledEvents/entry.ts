@@ -103,13 +103,26 @@ Deno.serve(async (req) => {
               continue; // Skip saving the fallback text
             }
 
+            // ── IDEMPOTENCY KEY for scheduled communication_promise ─────────────
+            // Format: owner_email? + character_id + channel + scheduled_event_id + time_bucket
+            const schedTimeBucket = new Date().toISOString().substring(0, 13); // YYYY-MM-DDTHH
+            const schedIdempotencyKey = `comm_promise::${charId}::direct::${event.id}::${schedTimeBucket}`;
+
             await base44.asServiceRole.entities.Message.create({
               conversation_id: convId,
               sender_type: 'character',
               character_id: charId,
               character_name: charName,
+              sender_character_id: charId,
+              receiver_character_id: null,
               content: followThroughText,
               timestamp: new Date().toISOString(),
+              channel: 'direct',
+              // ── IDEMPOTENCY FIELDS ──────────────────────────────────────────
+              idempotency_key: schedIdempotencyKey,
+              source_message_id: null,   // scheduled — no user source message
+              reply_to_message_id: null, // scheduled — not a reply
+              generation_lock_id: null,
             });
 
             await base44.asServiceRole.entities.Conversation.update(convId, {
@@ -172,14 +185,24 @@ Deno.serve(async (req) => {
           const character = chars[0];
 
           if (character) {
+            const narrativeTimeBucket = new Date().toISOString().substring(0, 13);
+            const narrativeIdempotencyKey = `narrative::${event.primary_character_id}::${event.id}::${narrativeTimeBucket}`;
             await base44.asServiceRole.entities.Message.create({
               conversation_id: event.conversation_id,
               sender_type: 'character',
               character_id: event.primary_character_id,
               character_name: character.name,
+              sender_character_id: event.primary_character_id,
+              receiver_character_id: null,
               content: event.description,
               is_narrative: true,
               timestamp: new Date().toISOString(),
+              channel: 'direct',
+              // ── IDEMPOTENCY FIELDS ──────────────────────────────────────────
+              idempotency_key: narrativeIdempotencyKey,
+              source_message_id: null,
+              reply_to_message_id: null,
+              generation_lock_id: null,
             });
 
             await base44.asServiceRole.entities.Conversation.update(event.conversation_id, {

@@ -260,15 +260,41 @@ RULES:
       conversationId = newConvo.id;
     }
 
-    // Create message
+    // ── IDEMPOTENCY KEY for autonomous/proactive (no user source message) ─────
+    // Format: owner_email + character_id + channel + trigger_type + time_bucket (hour)
+    const timeBucket = now.toISOString().substring(0, 13); // YYYY-MM-DDTHH
+    const idempotencyKey = `proactive::${char.owner_email}::${char.id}::direct::${timeBucket}`;
+
+    // Check for existing proactive message in this hour (prevents duplicate sends on retry)
+    const existingThisHour = await base44.entities.Message.filter({
+      conversation_id: conversationId,
+      sender_type: 'character',
+      character_id: char.id,
+      idempotency_key: idempotencyKey,
+    }, null, 1).catch(() => []);
+
+    if (existingThisHour.length > 0) {
+      console.log(`[sendProactiveMessageForCharacter] IDEMPOTENT: message already sent this hour for char=${char.id} key=${idempotencyKey}`);
+      return Response.json({ success: false, reason: 'already_sent_this_hour', idempotency_key: idempotencyKey });
+    }
+
+    // Create message with full idempotency fields
     const msg = await base44.entities.Message.create({
       conversation_id: conversationId,
       sender_type: 'character',
       character_id: char.id,
       character_name: char.name,
+      sender_character_id: char.id,
+      receiver_character_id: null, // user receiver
       content: messageContent,
       emotional_state: char.emotional_state || 'calm',
       timestamp: now.toISOString(),
+      channel: 'direct',
+      // ── IDEMPOTENCY FIELDS ────────────────────────────────────────────────
+      idempotency_key: idempotencyKey,
+      source_message_id: null,   // autonomous — no user source message
+      reply_to_message_id: null, // autonomous — not a reply
+      generation_lock_id: null,  // proactive path does not use generation lock
     });
 
     return Response.json({

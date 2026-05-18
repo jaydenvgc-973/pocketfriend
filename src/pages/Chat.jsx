@@ -1331,78 +1331,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         });
       }
       return;
-
-      // CONVERSATION CONTINUITY RULE:
-      // For retryable failures (rate-limit, network, timeout): silently retry once after a short delay.
-      // For non-retryable failures: inject a character-native fallback response so the
-      // conversation stream never shows a system error banner.
-      // The "Response failed" banner is replaced by character social presence in all cases.
-
-      if (isRetryable) {
-        // Silent retry once — show "Responding…" state during retry window
-        setIsTyping(true);
-        const retryDelay = isRateLimit ? 5000 : 3000;
-        console.log(`[sendMessage] Retryable error — retrying in ${retryDelay}ms`);
-        await new Promise(r => setTimeout(r, retryDelay));
-        if (!isMountedRef.current) return;
-        try {
-          // Re-invoke the LLM with the same prompt (fullPrompt is in scope)
-          const retryResponse = await callLLMWithRetry(fullPrompt);
-          const retryObj = parseCharacterResponse(retryResponse);
-          const retryText = retryObj.text_content?.trim() || "";
-          if (retryText) {
-            setIsTyping(false);
-            if (isMountedRef.current) {
-              const retryMsg = await base44.entities.Message.create({
-                conversation_id: conversationIdRef.current || conversationId,
-                sender_type: "character",
-                character_id: characterId,
-                character_name: character.name,
-                content: retryText,
-                emotional_state: character.emotional_state || "calm",
-                is_read: true,
-                timestamp: new Date().toISOString(),
-              });
-              if (retryMsg?.id) {
-                setMessages(prev => prev.some(m => m.id === retryMsg.id) ? prev : [...prev, retryMsg]);
-              }
-            }
-            return;
-          }
-        } catch (retryErr) {
-          console.warn('[sendMessage] Retry also failed:', retryErr?.message);
-        }
-        if (isMountedRef.current) setIsTyping(false);
-      }
-
-      // All failure paths — inject a character-native fallback instead of error banner.
-      // The character remains socially present even when the backend is unstable.
-      const fallbacks = [
-        "Sorry, got pulled away for a sec — what were you saying?",
-        "Give me a moment, something came up on my end.",
-        "Hey sorry — I'm here, just had a second. What's up?",
-        "My bad, got distracted. Say that again?",
-        "Sorry, lost you for a second — I'm back.",
-      ];
-      const fallbackText = fallbacks[Math.floor(Math.random() * fallbacks.length)];
-      const convoIdForFallback = conversationIdRef.current || conversationId;
-      if (convoIdForFallback && isMountedRef.current) {
-        base44.entities.Message.create({
-          conversation_id: convoIdForFallback,
-          sender_type: "character",
-          character_id: characterId,
-          character_name: character.name,
-          content: fallbackText,
-          emotional_state: character.emotional_state || "calm",
-          is_read: true,
-          timestamp: new Date().toISOString(),
-        }).then(fallbackMsg => {
-          if (fallbackMsg?.id && isMountedRef.current) {
-            setMessages(prev => prev.some(m => m.id === fallbackMsg.id) ? prev : [...prev, fallbackMsg]);
-          }
-        }).catch(() => {});
-      }
-      return;
     }
 
     releaseFgTask();
@@ -1544,7 +1472,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       return imgMsg;
     };
 
-    const createTextMessage = async (textContent) => {
+    const createTextMessage = async (textContent, { sourceMessageId = null, lockId = null } = {}) => {
       if (!textContent?.trim()) return null;
       const navigatedAway = !isMountedRef.current;
       let txtMsg;
@@ -1554,10 +1482,17 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           sender_type: "character",
           character_id: characterId,
           character_name: character.name,
+          sender_character_id: characterId,
+          receiver_character_id: null, // user is receiver — no character id
           content: textContent,
           emotional_state: emotionalState,
           is_read: navigatedAway ? false : true,
           timestamp: new Date().toISOString(),
+          // ── IDEMPOTENCY FIELDS ───────────────────────────────────────────────
+          source_message_id: sourceMessageId || userMsg?.id || null,
+          reply_to_message_id: sourceMessageId || userMsg?.id || null,
+          generation_lock_id: lockId || null,
+          channel: isPhone ? 'phone' : 'direct',
         });
       } catch (err) {
         console.error('[createTextMessage] Network error saving message:', err.message);
@@ -1584,8 +1519,10 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
     let primaryTextMsg = null;
 
+    const idempotencyOpts = { sourceMessageId: userMsg?.id || null };
+
     if (msgType === "text_only") {
-      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", idempotencyOpts);
       if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
 
     } else if (msgType === "image_only") {
@@ -1595,11 +1532,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           await createImageMessage(imagePrompts[i], 300 + i * 800);
         }
       } else {
-        primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+        primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", idempotencyOpts);
       }
 
     } else if (msgType === "text_then_image") {
-      primaryTextMsg = await createTextMessage(responseText || "");
+      primaryTextMsg = await createTextMessage(responseText || "", idempotencyOpts);
       if (imagePrompts.length > 0) {
         await createImageMessage(imagePrompts[0], 800);
         for (let i = 1; i < imagePrompts.length; i++) {
@@ -1616,11 +1553,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         }
       }
       await new Promise(r => setTimeout(r, 600));
-      primaryTextMsg = await createTextMessage(responseText || "");
+      primaryTextMsg = await createTextMessage(responseText || "", idempotencyOpts);
       if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
 
     } else {
-      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", idempotencyOpts);
     }
 
     // Create location share card if flagged
