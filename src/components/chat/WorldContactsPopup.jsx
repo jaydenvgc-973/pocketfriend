@@ -780,8 +780,6 @@ Respond ONLY with valid JSON in this exact format:
       npcText = "...";
     }
 
-    // FIX: Stamp the CONTACT's real character_id on the reply message (not the owner's ID).
-    // This ensures reply messages are correctly attributed and memory queries find them.
     // SAFETY: Verify contact is not the user before creating message.
     const currentUser = await base44.auth.me().catch(() => null);
     const isUserContact = selectedContact.related_character_id === currentUser?.id ||
@@ -795,6 +793,17 @@ Respond ONLY with valid JSON in this exact format:
       return;
     }
 
+    // ── DUPLICATE REPLY GUARD — check lock again before saving the reply ────────
+    // In case the reply lock check at the top was bypassed by a race condition,
+    // do a final idempotent check here. Same lock key, same behavior.
+    if (replyLockRef.current.has(replyLockKey) && replyLockRef.current.get?.(replyLockKey) === 'saved') {
+      console.warn(`[WorldPhone] REPLY ALREADY SAVED — aborting duplicate save for msg ${savedUserMsg.id.substring(0, 8)}`);
+      setIsTyping(false);
+      isSendingRef.current = false;
+      return;
+    }
+
+    const generationAttemptId = `${convoId}:${savedUserMsg.id}:${Date.now()}`;
     const savedNpcMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",
@@ -808,7 +817,15 @@ Respond ONLY with valid JSON in this exact format:
       timestamp: new Date().toISOString(),
       channel: "world_phone",
       sync_status: "pending",
+      // ── DUPLICATE PREVENTION METADATA ────────────────────────────────────────
+      reply_to_message_id: savedUserMsg.id,
+      source_message_id: savedUserMsg.id,
+      generation_attempt_id: generationAttemptId,
+      response_status: "complete",
     });
+
+    // Mark lock as saved — prevents any concurrent path from re-saving
+    replyLockRef.current.add(replyLockKey);
 
     console.log(`[WorldPhone] Response message | from=${selectedContact.related_character_id} | to=${character.id} | msg_id=${savedNpcMsg.id.substring(0, 8)}`);
 

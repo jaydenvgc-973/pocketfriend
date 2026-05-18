@@ -1385,7 +1385,7 @@ Deno.serve(async (req) => {
         // P1: current_outfit always wins. P2: closet rotation by context. Never skipped silently.
         const alreadyHasOutfitInDesc = /Currently wearing:/i.test(charDesc);
         if (!alreadyHasOutfitInDesc) {
-          const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord);
+          const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord, sanitizedPrompt.toLowerCase());
           console.log(`[OutfitDiagnostic] char="${charRecord.name}" source="${resolvedOutfit.source}" name="${resolvedOutfit.name}" cat="${resolvedOutfit.category}" locked=${!!resolvedOutfit.text} raw_label="${charRecord.current_outfit?.label||'null'}" raw_id="${charRecord.current_outfit?.outfit_id||'null'}" raw_top="${charRecord.current_outfit?.top||'null'}"`);
           if (resolvedOutfit.text) {
             charDesc = charDesc ? `${charDesc}. Currently wearing: ${resolvedOutfit.text}` : `Currently wearing: ${resolvedOutfit.text}`;

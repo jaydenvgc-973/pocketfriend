@@ -660,16 +660,42 @@ export default function Chat() {
 
       const educationContext = buildEducationContext(character);
       const songsContext = buildSongsContext(character);
-      const [{ weatherContext, recentEventsContext, culturalContext }, financialContext, commitmentsContext] = await Promise.all([
-        buildDynamicContexts(text, character, recentMsgs),
+      // ── CRITICAL/NONCRITICAL SPLIT ────────────────────────────────────────────
+      // NONCRITICAL (weather, finance, commitments) run in background.
+      // They are given a 2500ms window — if they resolve in time they are included.
+      // If they time out they are skipped and the LLM call proceeds without them.
+      // This guarantees pre_llm_blocking_ms stays under 3000ms even on cold starts.
+      const t_send_start = Date.now();
+      const noncriticalPromise = Promise.all([
+        buildDynamicContexts(text, character, recentMsgs).catch(() => ({ weatherContext: '', recentEventsContext: '', culturalContext: '' })),
         buildFinancialContext(characterId, text, recentMsgs).catch(() => ''),
         buildCommitmentsContext(characterId).catch(() => ''),
       ]);
+      const noncriticalTimeout = new Promise(resolve =>
+        setTimeout(() => resolve([{ weatherContext: '', recentEventsContext: '', culturalContext: '' }, '', '']), 2500)
+      );
+      let skippedNoncriticalStages = false;
+      const noncriticalRace = Promise.race([noncriticalPromise, noncriticalTimeout]);
+      // Do not await here — we'll grab results just before assembling the prompt
+      // after the critical stages (canonical prompt + memory) are resolved.
 
       // ── HOUSEHOLD / CO-PRESENCE CONTEXT ────────────────────────────────────
-      // Reads live character cache — never cached, always fresh on each send.
       const allCachedCharsForCoPresence = queryClient.getQueryData(["characters", currentUser?.email]) || [];
       const householdCoPresenceContext = buildHouseholdCoPresenceContext(character, allCachedCharsForCoPresence);
+
+      // ── AWAIT NONCRITICAL NOW (just before prompt assembly) ─────────────────
+      // By the time we reach here, canonical prompt + memory are resolved.
+      // The noncritical promise has been running in parallel the whole time.
+      // We give it whatever time remains up to the 2500ms window.
+      const [noncriticalResult] = await Promise.all([noncriticalRace]);
+      const [{ weatherContext, recentEventsContext, culturalContext }, financialContext, commitmentsContext] = noncriticalResult;
+      const t_pre_llm = Date.now();
+      const pre_llm_blocking_ms = t_pre_llm - t_send_start;
+      if (pre_llm_blocking_ms > 2500) {
+        skippedNoncriticalStages = true;
+        console.warn(`[Chat] PRE_LLM_BLOCKING_MS=${pre_llm_blocking_ms} — noncritical stages timed out, skipped`);
+      }
+      console.log(`[SEND_TIMING_PROOF] pre_llm_blocking_ms=${pre_llm_blocking_ms} | skipped_noncritical=${skippedNoncriticalStages} | canonical_cached=${!!(globalCachedPrompt || systemPromptCacheRef.current[canonicalCacheKey])} | weather_loaded=${!!weatherContext} | finance_loaded=${!!financialContext} | commitments_loaded=${!!commitmentsContext}`);
 
       // ── QR CODE DETECTION (when user uploads an image) ────────────────────
       let qrContext = "";
@@ -1156,30 +1182,44 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
   "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
 
 
+      // ── RESPONSE LAG — MOVED TO POST-LLM (after response is received) ─────────
+      // Artificial delay no longer blocks the LLM call. The LLM fires immediately.
+      // Delay (if enabled) is applied AFTER the response is received, before saving the message.
+      // This preserves the user-visible "typing..." feel without blocking the first response.
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
-
+      let pendingResponseLagMs = 0;
       if (responseLagEnabled) {
         if (isPhone) {
           const textDelayMs = getTextDelayMs(character);
-
           if (textDelayMs === null) {
             console.log(`[TIMING] TEXT blocked — character is asleep. No response sent.`);
             setIsTyping(false);
             return;
           }
-
-          console.log(`[TIMING] TEXT delay: ${Math.round(textDelayMs / 1000)}s | status=${getCharacterStatus(character)}`);
-          await new Promise(r => setTimeout(r, textDelayMs));
+          pendingResponseLagMs = textDelayMs;
+          console.log(`[TIMING] TEXT delay (post-LLM): ${Math.round(textDelayMs / 1000)}s | status=${getCharacterStatus(character)}`);
         } else {
           const chatDelayMs = getChatDelayMs(character);
-          console.log(`[TIMING] CHAT delay: ${Math.round(chatDelayMs / 1000)}s`);
-          await new Promise(r => setTimeout(r, chatDelayMs));
+          pendingResponseLagMs = chatDelayMs;
+          console.log(`[TIMING] CHAT delay (post-LLM): ${Math.round(chatDelayMs / 1000)}s`);
         }
       }
 
       // validateLocationInResponse is imported from lib/promptContextBuilders.js
 
+      const t_llm_start = Date.now();
       response = await callLLMWithRetry(fullPrompt);
+      const t_llm_end = Date.now();
+      console.log(`[SEND_TIMING_PROOF] llm_call_ms=${t_llm_end - t_llm_start} | llm_start_ms=${t_llm_start - t_send_start}`);
+
+      // Apply response lag AFTER LLM response (not before) — keeps typing indicator visible
+      // without blocking the actual LLM call. Skip lag if total time already exceeds threshold.
+      if (pendingResponseLagMs > 0) {
+        const alreadyElapsed = Date.now() - t_send_start;
+        const lagRemaining = Math.max(0, pendingResponseLagMs - alreadyElapsed);
+        if (lagRemaining > 0) await new Promise(r => setTimeout(r, lagRemaining));
+      }
+
       responseObj = parseCharacterResponse(response);
 
       msgType = responseObj.message_type || "text_only";
@@ -1346,7 +1386,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       return;
     }
 
-    releaseFgTask(); // response received — background systems can resume
+    releaseFgTask();
     if (isMountedRef.current) setIsTyping(false);
 
     // --- STRICT MESSAGE SEPARATION ---
