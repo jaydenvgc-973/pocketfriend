@@ -41,11 +41,14 @@ Deno.serve(async (req) => {
       { owner_email: user.email, status: 'active', character_type: 'active_created_character' }, null, 50
     );
 
+    // Exact match first. Substring only as fallback for auto-selected (no name given) cases.
     const charA = charAName
-      ? allActive.find(c => c.name?.toLowerCase().includes(charAName.toLowerCase()))
+      ? (allActive.find(c => c.name?.trim().toLowerCase() === charAName.trim().toLowerCase()) ||
+         (() => { throw new Error(`EXACT_CHARACTER_NOT_FOUND: "${charAName}" — no exact name match in active_created_character records`); })())
       : allActive[0];
     const charB = charBName
-      ? allActive.find(c => c.name?.toLowerCase().includes(charBName.toLowerCase()))
+      ? (allActive.find(c => c.name?.trim().toLowerCase() === charBName.trim().toLowerCase()) ||
+         (() => { throw new Error(`EXACT_CHARACTER_NOT_FOUND: "${charBName}" — no exact name match in active_created_character records`); })())
       : allActive.find(c => c.id !== charA?.id);
 
     const resolvedAName = charA?.name || charAName || 'Character A';
