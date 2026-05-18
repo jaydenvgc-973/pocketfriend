@@ -35,7 +35,7 @@ import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageCo
 import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
 import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
 import { ACTION_IMAGE_PROMPTS, getLocationActions } from "@/lib/sceneActionConfig";
-import { getSceneInteractions, resolveLocationWorkersForScene } from "@/lib/sceneInteractionEngine";
+import { getSceneInteractions } from "@/lib/sceneInteractionEngine";
 import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote } from "@/lib/sceneImagePromptBuilder";
@@ -594,13 +594,13 @@ export default function Scene() {
     );
   };
 
-  // Initialize actions dynamically — category + zone aware
+  // Initialize actions — read-only, location-scoped
   useEffect(() => {
     if (location) {
       const newActions = getSceneInteractions(
         location,
         activeZone || locationZones[0]?.zone_name,
-        broughtCharacters[0] || null
+        null // No character-scoped actions
       );
       setActions(newActions);
     }
@@ -721,14 +721,14 @@ export default function Scene() {
     }
   }, [messages.length]);
 
-  // Rotate actions every 3 minutes
+  // Rotate actions every 3 minutes — location-scoped only
   useEffect(() => {
     if (!location) return;
     const interval = setInterval(() => {
       const newActions = getSceneInteractions(
         location,
         activeZone || locationZones[0]?.zone_name,
-        broughtCharacters[0] || null
+        null
       );
       setActions(newActions);
     }, 180000);
@@ -1411,7 +1411,7 @@ Return JSON:
       const newActions = getSceneInteractions(
         location,
         activeZone || locationZones[0]?.zone_name,
-        broughtCharacters[0] || null
+        null
       );
       setActions(newActions);
     }, 1000);
@@ -1748,22 +1748,25 @@ Return JSON:
         <div ref={bottomRef} />
       </div>
 
-      {/* Action buttons — zone + category aware */}
+      {/* Action buttons — location-scoped, validated */}
       <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
         <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
           {actions.map(action => {
             const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
+            const isDisabled = action.disabled || actionCooldown;
             return (
               <button
                 key={action.id}
                 onClick={() => {
+                  if (isDisabled) return;
                   if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); }
                   else { handleAction(action); }
                 }}
-                disabled={actionCooldown}
-                title={needsZone ? `Go to ${action.suggested_zone_name}` : undefined}
-                className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center disabled:opacity-50 flex-shrink-0 snap-center ${
-                  action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20"
+                disabled={isDisabled}
+                title={action.disabledReason || (needsZone ? `Go to ${action.suggested_zone_name}` : undefined)}
+                className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${
+                  isDisabled ? "opacity-40 cursor-not-allowed"
+                  : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20"
                   : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20"
                   : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40"
                   : "bg-secondary border-border hover:border-primary/30"
@@ -1772,11 +1775,11 @@ Return JSON:
                 <span className="text-base leading-none">{action.emoji}</span>
                 <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
                 {action.cost > 0 && (
-                  <span className="text-[9px] text-green-500">
-                    {action.payer === "character" ? "they pay" : `$${action.cost}`}
-                  </span>
+                  <span className="text-[9px] text-green-500">${action.cost}</span>
                 )}
-                {needsZone && <span className="text-[8px] text-primary/60 leading-tight">→ {action.suggested_zone_name}</span>}
+                {action.no_staff_warning && (
+                  <span className="text-[8px] text-amber-500 leading-tight">no staff</span>
+                )}
               </button>
             );
           })}
