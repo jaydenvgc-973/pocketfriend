@@ -35,6 +35,7 @@ import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageCo
 import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
 import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
 import { ACTION_IMAGE_PROMPTS, getLocationActions } from "@/lib/sceneActionConfig";
+import { getSceneInteractions, resolveLocationWorkersForScene } from "@/lib/sceneInteractionEngine";
 import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote } from "@/lib/sceneImagePromptBuilder";
@@ -593,16 +594,13 @@ export default function Scene() {
     );
   };
 
-  // Initialize actions dynamically
+  // Initialize actions dynamically — category + zone aware
   useEffect(() => {
     if (location) {
-      const hour = new Date().getHours();
-      const newActions = generateLocationActions(
+      const newActions = getSceneInteractions(
         location,
         activeZone || locationZones[0]?.zone_name,
-        hour,
-        sceneCharacters,
-        0
+        broughtCharacters[0] || null
       );
       setActions(newActions);
     }
@@ -727,13 +725,10 @@ export default function Scene() {
   useEffect(() => {
     if (!location) return;
     const interval = setInterval(() => {
-      const hour = new Date().getHours();
-      const newActions = generateLocationActions(
+      const newActions = getSceneInteractions(
         location,
         activeZone || locationZones[0]?.zone_name,
-        hour,
-        sceneCharacters,
-        0
+        broughtCharacters[0] || null
       );
       setActions(newActions);
     }, 180000);
@@ -1127,7 +1122,6 @@ export default function Scene() {
     }
 
     setIsTyping(true);
-    setActions(getLocationActions(location.category, text));
 
     // Cross-page memory — fetch in parallel, non-blocking
     const _memIds = [...broughtCharacters, ...selectedNpcs].filter(c => !c.isNpc && c.id).map(c => c.id);
@@ -1414,13 +1408,10 @@ Return JSON:
     await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null);
 
     setTimeout(() => {
-      const hour = new Date().getHours();
-      const newActions = generateLocationActions(
+      const newActions = getSceneInteractions(
         location,
         activeZone || locationZones[0]?.zone_name,
-        hour,
-        sceneCharacters,
-        0
+        broughtCharacters[0] || null
       );
       setActions(newActions);
     }, 1000);
@@ -1757,31 +1748,38 @@ Return JSON:
         <div ref={bottomRef} />
       </div>
 
-      {/* Action buttons — horizontal scroll */}
+      {/* Action buttons — zone + category aware */}
       <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
         <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
-          {actions.map(action => (
-            <button
-              key={action.id}
-              onClick={() => handleAction(action)}
-              disabled={actionCooldown}
-              className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center disabled:opacity-50 flex-shrink-0 snap-center ${
-                action.type === "negative"
-                  ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20"
-                  : action.cost > 0
-                  ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20"
+          {actions.map(action => {
+            const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
+            return (
+              <button
+                key={action.id}
+                onClick={() => {
+                  if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); }
+                  else { handleAction(action); }
+                }}
+                disabled={actionCooldown}
+                title={needsZone ? `Go to ${action.suggested_zone_name}` : undefined}
+                className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center disabled:opacity-50 flex-shrink-0 snap-center ${
+                  action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20"
+                  : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20"
+                  : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40"
                   : "bg-secondary border-border hover:border-primary/30"
-              }`}
-            >
-              <span className="text-base leading-none">{action.emoji}</span>
-              <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
-              {action.cost > 0 && (
-                <span className="text-[9px] text-green-500">
-                  {action.payer === "character" ? "they pay" : `$${action.cost}`}
-                </span>
-              )}
-            </button>
-          ))}
+                }`}
+              >
+                <span className="text-base leading-none">{action.emoji}</span>
+                <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
+                {action.cost > 0 && (
+                  <span className="text-[9px] text-green-500">
+                    {action.payer === "character" ? "they pay" : `$${action.cost}`}
+                  </span>
+                )}
+                {needsZone && <span className="text-[8px] text-primary/60 leading-tight">→ {action.suggested_zone_name}</span>}
+              </button>
+            );
+          })}
         </div>
       </div>
 

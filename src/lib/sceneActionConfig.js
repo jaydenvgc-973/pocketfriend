@@ -31,6 +31,9 @@ export const ACTION_IMAGE_PROMPTS = {
   study:       (loc, who) => `${who} studying at a desk with books and notes spread out, focused, photorealistic`,
 };
 
+// Re-export from sceneInteractionEngine for backward compatibility
+export { getSceneInteractions } from './sceneInteractionEngine.js';
+
 export function getLocationActions(category) {
   const base = {
     home: [
