@@ -428,17 +428,26 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       }
     }
 
-    // Nothing found — create ONE canonical thread
-    console.log(`[WorldPhone] ensureConversation: creating canonical thread | key=${canonicalKey}`);
+    // Nothing found — create ONE canonical thread.
+    // Stamp world_contact_mode and participant_character_types for active_created→active_created proof.
+    const contactCharType = contactCharRecordRef.current?.character_type || null;
+    const ownerCharType = character.character_type || null;
+    const bothActiveCreated = ownerCharType === 'active_created_character' && contactCharType === 'active_created_character';
+    const worldContactMode = bothActiveCreated ? 'active_created_to_active_created' : 'character_to_character';
+
+    console.log(`[WorldPhone] ensureConversation: creating canonical thread | key=${canonicalKey} | mode=${worldContactMode}`);
     const convo = await base44.entities.Conversation.create({
       title: `world_phone::${participantIds.join('::')}`,
-      type: "npc",
+      // Use 'character_to_character' for active_created pairs; keep 'npc' for legacy/NPC-style contacts
+      type: bothActiveCreated ? "direct" : "npc",
       character_ids: contactId ? [character.id, contactId] : [character.id],
       participant_character_ids: participantIds,
       ...(canonicalKey ? { shared_conversation_key: canonicalKey } : {}),
       owner_email: me?.email || character.owner_email,
       channel: "world_phone",
       sync_status: "pending",
+      world_contact_mode: worldContactMode,
+      participant_character_types: [ownerCharType, contactCharType].filter(Boolean),
     });
     setConversationId(convo.id);
     subscribeToConversation(convo.id);
