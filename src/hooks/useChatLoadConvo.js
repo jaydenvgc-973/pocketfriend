@@ -249,7 +249,8 @@ export function useChatLoadConvo({
               unread.forEach(m => {
                 base44.entities.Message.update(m.id, { is_read: true }).catch(err => console.warn('[LoadConvo] inline is_read update failed for msg', m.id, err?.message));
               });
-              queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+              // Use EXACT same key as CharacterCard: [characterId, owner_email]
+              queryClient.invalidateQueries({ queryKey: ['conversations', characterId, currentUser.email] });
             }
           } else {
             if (setHasOlderMessages) setHasOlderMessages(false);

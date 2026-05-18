@@ -290,7 +290,8 @@ export default function Chat() {
         
         if (event.data.sender_type === "character" && !event.data.is_read) {
           base44.entities.Message.update(event.data.id, { is_read: true }).catch(() => {});
-          queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+          // Use EXACT same key as CharacterCard: [characterId, owner_email]
+          queryClient.invalidateQueries({ queryKey: ['conversations', characterId, currentUser?.email] });
         }
       } else if (event.type === "update") {
         setMessages(prev => prev.map(m => {
@@ -327,6 +328,7 @@ export default function Chat() {
   useChatPostLoadEffects({
     conversationId,
     characterId,
+    ownerEmail: currentUser?.email,
     messages,
     queryClient,
     catchupTimerRef,
@@ -1464,7 +1466,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           last_message_preview: textContent.substring(0, 100),
           last_message_date: new Date().toISOString(),
         }).catch(() => {});
-        queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+        queryClient.invalidateQueries({ queryKey: ['conversations', characterId, currentUser?.email] });
       }
       return txtMsg;
     };

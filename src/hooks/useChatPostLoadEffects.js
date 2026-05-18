@@ -20,6 +20,7 @@ import { isGloballyRateLimited } from "@/lib/simulationGate";
 export function useChatPostLoadEffects({
   conversationId,
   characterId,
+  ownerEmail,
   messages,
   queryClient,
   catchupTimerRef,
@@ -34,27 +35,35 @@ export function useChatPostLoadEffects({
 
     (async () => {
       // ── MARK THREAD READ ─────────────────────────────────────────────────────
-      // Only fire the backend function if there are actually unread character messages.
-      // Skipping this call when nothing is unread eliminates a redundant request on every open.
-      const hasUnread = messages.some(m => m.sender_type === "character" && !m.is_read);
-      if (hasUnread) {
-        try {
-          await base44.functions.invoke('markThreadRead', { conversationId, characterId: snapshotCharacterId });
-        } catch (err) {
-          // markThreadRead failure is non-fatal — inline is_read marks were already applied by useChatLoadConvo.
-          // Log visibly so 429s are detectable during debugging.
-          const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
-          if (is429) {
-            console.warn('[PostLoadEffects] 429 on markThreadRead — inline marks already applied, continuing');
-            window.__chatRateLimited = true;
-            setTimeout(() => { window.__chatRateLimited = false; }, 60000);
-          } else {
-            console.warn('[PostLoadEffects] markThreadRead failed (non-fatal):', err?.message);
-          }
+      // Always fire markThreadRead when a thread opens — it handles the direct character_id
+      // cleanup path even when all messages appear read in local state, since there may be
+      // orphaned unread messages not included in the loaded window.
+      // Both conversationId AND characterId are passed so the backend clears both paths.
+      try {
+        const result = await base44.functions.invoke('markThreadRead', {
+          conversationId,
+          characterId: snapshotCharacterId,
+        });
+        console.log('[markThreadRead call]', {
+          conversationId,
+          characterId: snapshotCharacterId,
+          result: result?.data,
+        });
+      } catch (err) {
+        // markThreadRead failure is non-fatal — inline is_read marks were already applied by useChatLoadConvo.
+        const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
+        if (is429) {
+          console.warn('[PostLoadEffects] 429 on markThreadRead — inline marks already applied, continuing');
+          window.__chatRateLimited = true;
+          setTimeout(() => { window.__chatRateLimited = false; }, 60000);
+        } else {
+          console.warn('[PostLoadEffects] markThreadRead failed (non-fatal):', err?.message);
         }
-        if (!isMounted || snapshotCharacterId !== characterId) return;
-        queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId] });
       }
+      if (!isMounted || snapshotCharacterId !== characterId) return;
+      // Invalidate with the EXACT same key CharacterCard uses — must include owner_email.
+      // Without owner_email in the key, CharacterCard's useQuery never re-fetches.
+      queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId, ownerEmail] });
 
       // ── CATCHUP NARRATIVE ────────────────────────────────────────────────────
       // Deferred 3s to avoid competing with initial message render and markThreadRead.
