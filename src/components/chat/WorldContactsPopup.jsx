@@ -15,7 +15,11 @@ import {
   setCachedCanonicalPrompt,
   getCachedCharRecord,
   setCachedCharRecord,
-} from "@/lib/worldContactsSessionCache";
+  prewarmCharacterRuntime,
+  reportCharacterReadyTiming,
+  setCachedConversationId,
+  getCachedConversationId,
+} from "@/lib/characterRuntimeCache";
 
 // ── CANONICAL SHARED KEY ────────────────────────────────────────────────────
 // ONE deterministic key for any two linked characters, regardless of direction.
@@ -122,6 +126,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
 
   // Load or create a persistent conversation for the selected NPC
   const selectContact = async (contact) => {
+    const t_page_open = Date.now();
     setSelectedContact(contact);
     setMessages([]);
     setConversationId(null);
@@ -136,27 +141,30 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     isSendingRef.current = false;
 
     try {
+      const me = await base44.auth.me().catch(() => null);
+      const ownerEmail = me?.email || character?.owner_email || null;
       const contactId = contact.related_character_id;
 
+      let t_character_fetch = null;
       // ── HARD GUARD: verify contactId resolves to exactly ONE Character record ──────
-      // This is the identity verification gate. Name-match IDs from the resolver are
-      // treated as untrusted until confirmed by a direct Character.filter({id}) lookup.
       if (contactId) {
-        // Check module-level session cache first (survives popup reopen)
-        const sessionCachedRecord = getCachedCharRecord(contactId);
-        if (sessionCachedRecord) {
-          contactCharRecordRef.current = sessionCachedRecord;
-          console.log(`[WorldContacts] Full character from SESSION CACHE | id=${sessionCachedRecord.id} | name=${sessionCachedRecord.name}`);
+        // Check global runtime cache first (survives popup reopen, scoped by ownerEmail)
+        const cached = ownerEmail ? getCachedCharRecord(ownerEmail, contactId) : null;
+        if (cached) {
+          contactCharRecordRef.current = cached;
+          t_character_fetch = Date.now();
+          console.log(`[WorldContacts] char_record=CACHE_HIT | id=${cached.id} | name=${cached.name}`);
         } else {
           const charMatches = await base44.entities.Character.filter({ id: contactId }).catch(() => []);
+          t_character_fetch = Date.now();
           if (charMatches.length === 0) {
             console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=${contactId} | contact_name=${contact.person_name} | reason=no_db_record_found`);
           } else if (charMatches.length > 1) {
             console.error(`[WORLD_CONTACT_MULTIPLE_CHARACTER_MATCHES] contact_id=${contactId} | matches=${charMatches.length} | contact_name=${contact.person_name}`);
           } else {
             contactCharRecordRef.current = charMatches[0];
-            setCachedCharRecord(contactId, charMatches[0]); // populate session cache
-            console.log(`[WorldContacts] Full character resolved + cached | id=${charMatches[0].id} | name=${charMatches[0].name}`);
+            if (ownerEmail) setCachedCharRecord(ownerEmail, contactId, charMatches[0]);
+            console.log(`[WorldContacts] char_record=DB_FETCH | id=${charMatches[0].id} | name=${charMatches[0].name} | fetch_ms=${t_character_fetch - t_page_open}`);
           }
         }
       }
@@ -214,6 +222,12 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         `[WorldPhone] canonical_found=${!!found} | canonical_id=${found?.id || 'none'} | legacy_candidates=${allCandidates.length} | duplicate_threads=${duplicates.length}`
       );
 
+      let t_conversation_lookup = Date.now();
+      // Cache the found conversation ID for fast reconnect
+      if (found && contactId && ownerEmail) {
+        setCachedConversationId(ownerEmail, contactId, 'world_phone', found.id);
+      }
+
       if (found) {
         // ── UPGRADE LEGACY THREAD: stamp canonical fields if missing ──────────
         const needsUpgrade = !found.shared_conversation_key ||
@@ -264,28 +278,68 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         );
       }
 
-      // ── PRE-FETCH canonical context — module-level session cache (survives popup reopen) ──
+      // ── PRE-FETCH canonical context — global runtime cache (ownerEmail-scoped) ──
+      let t_canonical_prompt_load = null;
+      let canonical_prompt_cache_hit = false;
       if (contactId) {
-        const sessionCachedPrompt = getCachedCanonicalPrompt(contactId);
-        if (sessionCachedPrompt) {
-          canonicalPromptCacheRef.current = sessionCachedPrompt;
-          console.log(`[WorldContacts] Canonical context from SESSION CACHE | id=${contactId} — character_connected_immediately`);
+        const cached = ownerEmail ? getCachedCanonicalPrompt(ownerEmail, contactId) : null;
+        if (cached) {
+          canonicalPromptCacheRef.current = cached;
+          t_canonical_prompt_load = Date.now();
+          canonical_prompt_cache_hit = true;
+          console.log(`[WorldContacts] canonical_prompt=CACHE_HIT | id=${contactId} — character_connected_immediately`);
         } else {
-          // Not in session cache — fetch and populate both caches
-          base44.functions.invoke("buildCanonicalCharacterContext", {
-            characterId: contactId,
-            interactionContext: "direct_chat",
-            topKMemories: 14,
-          }).then(ctxRes => {
-            const ctxData = ctxRes?.data || ctxRes;
-            if (ctxData?.systemPrompt) {
-              canonicalPromptCacheRef.current = ctxData.systemPrompt;
-              setCachedCanonicalPrompt(contactId, ctxData.systemPrompt); // session cache
-              console.log(`[WorldContacts] Canonical context pre-cached | id=${contactId} | memories=${ctxData.memories?.length ?? 0}`);
-            }
-          }).catch(e => console.warn(`[WorldContacts] Pre-fetch canonical context failed: ${e.message}`));
+          // Not cached — prewarm in background (non-blocking)
+          if (ownerEmail) {
+            prewarmCharacterRuntime(ownerEmail, contactId, base44).then(() => {
+              const p = getCachedCanonicalPrompt(ownerEmail, contactId);
+              if (p) {
+                canonicalPromptCacheRef.current = p;
+                console.log(`[WorldContacts] canonical_prompt=PREWARM_COMPLETE | id=${contactId}`);
+              }
+            });
+          } else {
+            // Fallback: fire-and-forget fetch
+            base44.functions.invoke("buildCanonicalCharacterContext", {
+              characterId: contactId,
+              interactionContext: "direct_chat",
+              topKMemories: 14,
+            }).then(ctxRes => {
+              const ctxData = ctxRes?.data || ctxRes;
+              if (ctxData?.systemPrompt) {
+                canonicalPromptCacheRef.current = ctxData.systemPrompt;
+                console.log(`[WorldContacts] canonical_prompt=ASYNC_LOADED | id=${contactId} | memories=${ctxData.memories?.length ?? 0}`);
+              }
+            }).catch(e => console.warn(`[WorldContacts] canonical context pre-fetch failed: ${e.message}`));
+          }
         }
       }
+
+      // ── TIMING PROOF: emit character_ready record once history + char are loaded ──
+      const t_character_ready = Date.now();
+      reportCharacterReadyTiming({
+        ownerEmail,
+        characterId: contactId,
+        characterName: contact.person_name,
+        characterType: contactCharRecordRef.current?.character_type || 'unknown',
+        pageType: 'world_contacts',
+        channel: 'world_phone',
+        t_page_open,
+        t_conversation_lookup,
+        t_character_fetch,
+        t_canonical_prompt_load: t_canonical_prompt_load || t_character_ready,
+        t_memory_pool_load: null,
+        t_relationship_context_load: null,
+        t_message_history_load: t_conversation_lookup,
+        t_subscription_connect: t_conversation_lookup,
+        t_character_ready,
+        t_full_context_complete: null, // async context loads after ready
+        cache_used: canonical_prompt_cache_hit || !!(ownerEmail && getCachedCharRecord(ownerEmail, contactId)),
+        memory_cache_hit: false,
+        canonical_prompt_cache_hit,
+        conversation_cache_hit: !!(ownerEmail && getCachedConversationId(ownerEmail, contactId, 'world_phone')),
+        blocking_stage: canonical_prompt_cache_hit ? null : 'canonical_prompt_async',
+      });
 
       // ── ENSURE BILATERAL AWARENESS: if B doesn't have A in their list, create a neutral link ──
       // Uses ensureBilateralCharacterAwareness — NEVER syncWorldPhoneMemory.
@@ -598,7 +652,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           return;
         }
         contactCharRecord = chars[0];
-        setCachedCharRecord(contactId, contactCharRecord); // session cache
+        if (ownerEmail_send) setCachedCharRecord(ownerEmail_send, contactId, contactCharRecord);
         contactCharRecordRef.current = contactCharRecord;
       } catch (e) {
         console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=${contactId} | error=${e.message} | action=send_blocked`);
@@ -608,11 +662,14 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       }
     }
 
-    // STEP 2: Canonical context — check mount cache, then module-level session cache, then fetch.
-    let canonicalPrompt = canonicalPromptCacheRef.current || getCachedCanonicalPrompt(contactId);
+    // STEP 2: Canonical context — check mount cache, then global runtime cache, then fetch.
+    const me_send = await base44.auth.me().catch(() => null);
+    const ownerEmail_send = me_send?.email || character?.owner_email || null;
+    let canonicalPrompt = canonicalPromptCacheRef.current ||
+      (ownerEmail_send ? getCachedCanonicalPrompt(ownerEmail_send, contactId) : null);
     if (canonicalPrompt && !canonicalPromptCacheRef.current) {
-      canonicalPromptCacheRef.current = canonicalPrompt; // backfill mount cache from session
-      console.log(`[WorldContacts] Canonical context from SESSION CACHE at send time | id=${contactId}`);
+      canonicalPromptCacheRef.current = canonicalPrompt;
+      console.log(`[WorldContacts] canonical_prompt=CACHE_HIT at send time | id=${contactId}`);
     }
     if (!canonicalPrompt) {
       try {
@@ -626,8 +683,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         canonicalPrompt = ctxData?.systemPrompt || null;
         if (canonicalPrompt) {
           canonicalPromptCacheRef.current = canonicalPrompt;
-          setCachedCanonicalPrompt(contactId, canonicalPrompt); // session cache
-          console.log(`[WorldContacts] canonical_context_load_ms=${Date.now() - t0}`);
+          if (ownerEmail_send) setCachedCanonicalPrompt(ownerEmail_send, contactId, canonicalPrompt);
+          console.log(`[WorldContacts] canonical_context_load_ms=${Date.now() - t0} | blocking_stage=canonical_prompt`);
         }
       } catch (e) {
         console.warn(`[WorldContacts] buildCanonicalCharacterContext failed for ${contactId}:`, e.message);

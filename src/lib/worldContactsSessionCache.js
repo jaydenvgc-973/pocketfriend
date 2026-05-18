@@ -1,43 +1,42 @@
 /**
  * worldContactsSessionCache.js
  *
- * Module-level session cache for World Contacts canonical context and character records.
- * Survives popup open/close within the same browser session.
- * Keyed by characterId. Invalidated only on hard page reload.
+ * SHIM — delegates to the global characterRuntimeCache.
+ * Kept for backward compatibility so existing imports in WorldContactsPopup still work.
+ * New code should import directly from characterRuntimeCache.js.
  *
- * This prevents re-running buildCanonicalCharacterContext on every popup reopen,
- * which was the primary source of the 1-2 minute "character not ready" experience.
+ * NOTE: ownerEmail is not available at module level, so these shims use a
+ * fallback key prefix "wc_session" for the legacy callers. WorldContactsPopup
+ * now calls the global cache directly with ownerEmail for proper scoping.
  */
 
-const _canonicalCache = new Map(); // characterId → { systemPrompt, cachedAt }
-const _charRecordCache = new Map(); // characterId → full Character record
-const CANONICAL_TTL_MS = 10 * 60 * 1000; // 10 minutes
+import {
+  getCachedCanonicalPrompt as _getCanonical,
+  setCachedCanonicalPrompt as _setCanonical,
+  getCachedCharRecord as _getChar,
+  setCachedCharRecord as _setChar,
+  invalidateCharacterCache as _invalidate,
+} from './characterRuntimeCache';
+
+// Legacy shims — use a fixed sentinel owner so they don't collide with scoped keys.
+const LEGACY_OWNER = '__wc_session__';
 
 export function getCachedCanonicalPrompt(characterId) {
-  const entry = _canonicalCache.get(characterId);
-  if (!entry) return null;
-  if (Date.now() - entry.cachedAt > CANONICAL_TTL_MS) {
-    _canonicalCache.delete(characterId);
-    return null;
-  }
-  return entry.systemPrompt;
+  return _getCanonical(LEGACY_OWNER, characterId);
 }
 
 export function setCachedCanonicalPrompt(characterId, systemPrompt) {
-  if (!characterId || !systemPrompt) return;
-  _canonicalCache.set(characterId, { systemPrompt, cachedAt: Date.now() });
+  _setCanonical(LEGACY_OWNER, characterId, systemPrompt);
 }
 
 export function getCachedCharRecord(characterId) {
-  return _charRecordCache.get(characterId) || null;
+  return _getChar(LEGACY_OWNER, characterId);
 }
 
 export function setCachedCharRecord(characterId, record) {
-  if (!characterId || !record) return;
-  _charRecordCache.set(characterId, record);
+  _setChar(LEGACY_OWNER, characterId, record);
 }
 
 export function invalidateCharacterCache(characterId) {
-  _canonicalCache.delete(characterId);
-  _charRecordCache.delete(characterId);
+  _invalidate(LEGACY_OWNER, characterId);
 }

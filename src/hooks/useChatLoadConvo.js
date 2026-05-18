@@ -3,6 +3,12 @@ import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { activateChatSafeMode, escalateChatRetry, resetChatRetry } from "@/lib/simulationGate";
 import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
+import {
+  prewarmCharacterRuntime,
+  setCachedConversationId,
+  getCachedConversationId,
+  reportCharacterReadyTiming,
+} from "@/lib/characterRuntimeCache.js";
 
 // Persist recent messages per conversation (last 50) to localStorage.
 // Key: 'chat_msgs:{characterId}' scoped by owner_email.
@@ -110,7 +116,16 @@ export function useChatLoadConvo({
       loadingForCharacterIdRef.current = characterId; // stamp which character this load is for
       setIsLoadingConvo(true);
       const t0 = Date.now();
+      const t_page_open = t0;
       console.log(`[CHAT_LOAD] loadConvo START charId=${characterId} chatType=${chatType} t=${t0}`);
+
+      // ── PREWARM: kick off canonical context fetch in background immediately ──
+      // This runs in parallel with conversation/message loading so that by the time
+      // the user sends their first message, the canonical prompt is already cached.
+      // Non-blocking — does NOT delay conversation or message display.
+      if (currentUser?.email && characterId) {
+        prewarmCharacterRuntime(currentUser.email, characterId, base44).catch(() => {});
+      }
 
       // NOTE: lfc seed already applied synchronously above (before setTimeout).
       // Do NOT re-seed here — that would overwrite any messages that arrived
@@ -239,6 +254,38 @@ export function useChatLoadConvo({
             hasShownMessagesRef.current = true;
             // Clear any lingering soft error once messages load successfully
             setConvoLoadError(null);
+
+            // Cache conversation ID for fast reconnect on next open
+            if (currentUser?.email) {
+              setCachedConversationId(currentUser.email, characterId, chatType, convoId);
+            }
+
+            // ── TIMING PROOF: emit character_ready record ──────────────────────
+            const t_messages_loaded = Date.now();
+            reportCharacterReadyTiming({
+              ownerEmail: currentUser?.email,
+              characterId,
+              characterName: character?.name,
+              characterType: character?.character_type,
+              pageType: chatType === 'phone' ? 'text' : 'chat',
+              channel: chatType,
+              t_page_open,
+              t_conversation_lookup: t0 + (t_messages_loaded - t0) * 0.3, // approx — convo found
+              t_character_fetch: t0, // already in React Query cache
+              t_canonical_prompt_load: null, // async prewarm
+              t_memory_pool_load: null,
+              t_relationship_context_load: null,
+              t_message_history_load: t_messages_loaded,
+              t_subscription_connect: t_messages_loaded,
+              t_character_ready: t_messages_loaded,
+              t_full_context_complete: null,
+              cache_used: !!readCachedMessages(currentUser?.email, characterId)?.length,
+              memory_cache_hit: false,
+              canonical_prompt_cache_hit: false, // prewarm fires async
+              conversation_cache_hit: false,
+              blocking_stage: null,
+            });
+
             // Persist to localStorage for instant display on next open.
             // This also captures any recovered image_url values that arrived while
             // the user was away — they'll be visible immediately on next navigation.

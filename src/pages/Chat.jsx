@@ -896,7 +896,26 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       let canonicalLifeJournalCount = 0;
       let canonicalFallbackUsed = false;
       const canonicalCacheKey = `canonical::${characterId}`;
-      if (systemPromptCacheRef.current[canonicalCacheKey]) {
+
+      // ── CACHE-FIRST: check global runtime cache, then mount cache, then fetch ──
+      // Global cache is warmed by prewarmCharacterRuntime fired on page open.
+      const { getCachedCanonicalPrompt: _gccp, setCachedCanonicalPrompt: _sccp } =
+        await import('@/lib/characterRuntimeCache.js');
+      const globalCachedPrompt = currentUser?.email
+        ? _gccp(currentUser.email, characterId)
+        : null;
+
+      if (globalCachedPrompt) {
+        canonicalPrompt = globalCachedPrompt;
+        canonicalContextLoaded = true;
+        // Backfill mount cache so subsequent sends in same session skip even the import
+        systemPromptCacheRef.current[canonicalCacheKey] = {
+          systemPrompt: canonicalPrompt,
+          memoryCount: 0,
+          lifeJournalCount: 0,
+        };
+        console.log(`[Chat] canonical_prompt=GLOBAL_CACHE_HIT | character=${character.name}`);
+      } else if (systemPromptCacheRef.current[canonicalCacheKey]) {
         const cached = systemPromptCacheRef.current[canonicalCacheKey];
         canonicalPrompt = cached.systemPrompt;
         canonicalContextLoaded = true;
@@ -904,6 +923,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         canonicalLifeJournalCount = cached.lifeJournalCount || 0;
       } else {
         try {
+          const t_canonical_start = Date.now();
           const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
             characterId,
             interactionContext: 'direct_chat',
@@ -915,12 +935,14 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
             canonicalContextLoaded = true;
             canonicalMemoryCount = ctxData.memories?.length ?? 0;
             canonicalLifeJournalCount = ctxData.lifeJournalEntries?.length ?? 0;
-            // Cache identity/memory/relationship only — co-presence is NOT cached (it is live state)
             systemPromptCacheRef.current[canonicalCacheKey] = {
               systemPrompt: canonicalPrompt,
               memoryCount: canonicalMemoryCount,
               lifeJournalCount: canonicalLifeJournalCount,
             };
+            // Populate global cache for future page opens
+            if (currentUser?.email) _sccp(currentUser.email, characterId, canonicalPrompt);
+            console.log(`[Chat] canonical_prompt=DB_FETCH | blocking_stage=canonical_prompt | ms=${Date.now() - t_canonical_start}`);
           } else {
             canonicalFallbackUsed = true;
           }
