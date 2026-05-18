@@ -1,3 +1,5 @@
+import { REQUIRED_STAFF_ROLES } from './sceneVenueNPCs.js';
+
 /**
  * Scene Interaction Engine — Location-Scoped, Read-Only
  *
@@ -438,6 +440,70 @@ export function getLocationStaffPresence(location, zone) {
     }));
 
   return staff.length > 0 ? staff : [];
+}
+
+/**
+ * Get temporary scene staff for a location.
+ *
+ * Priority order:
+ *   1. Real assigned worker on shift → already shown by Scene page, excluded here
+ *   2. Real assigned worker off shift → temporary NPC fills their role
+ *   3. No assigned worker for required role → temporary NPC fills the role
+ *
+ * Returns only temporary NPC objects (isTemporary: true) for roles NOT covered by
+ * a real worker currently on shift. Does NOT mutate location data.
+ *
+ * @param {Object} location - LocationReference record
+ * @param {Array}  onShiftWorkerIds - IDs already confirmed on shift (exclude from filling)
+ * @returns {Array} Temporary NPC staff objects (scene-only, not saved)
+ */
+export function getTemporarySceneStaff(location, onShiftWorkerIds = []) {
+  if (!location) return [];
+
+  const category = location.category || 'generic';
+  const requiredRoles = REQUIRED_STAFF_ROLES[category];
+  if (!requiredRoles || requiredRoles.length === 0) return [];
+
+  // Home locations never need temp operational staff
+  if (category === 'home') return [];
+
+  const assignedWorkerIds = location.worker_character_ids || [];
+  const workerJobTitles = location.worker_job_titles || {};
+  const workerShifts = location.worker_shifts || {};
+
+  // Workers assigned but not currently on shift
+  const offShiftWorkerIds = assignedWorkerIds.filter(id => !onShiftWorkerIds.includes(id));
+
+  // Collect job titles already covered by real on-shift workers
+  const coveredRoles = new Set(
+    onShiftWorkerIds.map(id => (workerJobTitles[id] || '').toLowerCase()).filter(Boolean)
+  );
+
+  const tempStaff = [];
+
+  for (const templateNpc of requiredRoles) {
+    const roleKey = templateNpc.role.toLowerCase();
+
+    // Skip if a real on-shift worker already covers this role
+    if (coveredRoles.has(roleKey)) continue;
+
+    // Check if an off-shift real worker covers this role — still generate temp NPC for them
+    // (real worker is absent; temp fills in until they come back on shift)
+    const offShiftCoversRole = offShiftWorkerIds.some(id => {
+      const title = (workerJobTitles[id] || '').toLowerCase();
+      return title === roleKey || roleKey.includes(title) || title.includes(roleKey);
+    });
+
+    // Either off-shift absence or completely unassigned — fill with temp NPC
+    tempStaff.push({
+      ...templateNpc,
+      id: `${templateNpc.id}_tmp_${location.id}`, // unique per-location so multiple locations don't collide
+      isTemporary: true,
+      temporaryLabel: offShiftCoversRole ? 'Filling in' : 'On duty',
+    });
+  }
+
+  return tempStaff;
 }
 
 /**

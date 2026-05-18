@@ -35,7 +35,7 @@ import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageCo
 import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
 import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
 import { ACTION_IMAGE_PROMPTS, getLocationActions } from "@/lib/sceneActionConfig";
-import { getSceneInteractions } from "@/lib/sceneInteractionEngine";
+import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote } from "@/lib/sceneImagePromptBuilder";
@@ -427,6 +427,15 @@ export default function Scene() {
       });
       return npcs.filter((n, i, arr) => arr.findIndex(x => x.id === n.id) === i);
     }
+
+    // TEMPORARY SCENE STAFF: Fill roles not covered by a real on-shift worker.
+    // Priority: real on-shift → real off-shift (temp fills in) → no assignment (temp fills in).
+    // Temp staff are scene-only and never overwrite Locations page data.
+    const onShiftIds = workerCharacters.map(w => w.id);
+    const tempSceneStaff = getTemporarySceneStaff(location, onShiftIds);
+    tempSceneStaff.forEach(tmpNpc => {
+      if (!npcs.find(x => x.id === tmpNpc.id)) npcs.push(tmpNpc);
+    });
 
     // NPC staff workers defined on the location record — check if on shift
     const npcWorkerKeys = Object.keys(location?.worker_job_titles || {}).filter(k => k.startsWith("npc_"));
@@ -823,13 +832,6 @@ export default function Scene() {
     
     // Use resolvedWhosHereList directly — no re-query, no re-matching by name
     const visiblePeopleForScene = resolvedWhosHereList;
-    
-    // Extract avatar URLs from all characters — prioritize avatar_url first, fallback to image_avatar_url
-    const allCharacterAvatars = visiblePeopleForScene
-      .map(c => c.avatar_url || c.image_avatar_url)
-      .filter(url => url && url.trim().length > 0);
-    
-    console.log('[Scene] Character avatars extracted:', allCharacterAvatars);
     
     // Prioritize avatars (identity lock) before environment images
     const authoratativeEnvRefs = prioritizeAvatarReferences(visiblePeopleForScene, envRefs);
