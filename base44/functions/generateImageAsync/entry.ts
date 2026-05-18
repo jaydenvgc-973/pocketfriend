@@ -61,27 +61,7 @@ function buildOutfitText(outfit) {
   return null;
 }
 
-// Fallback chains — per spec
-const OUTFIT_FALLBACK_CHAINS = {
-  bath:         ['bath', 'sleepwear', 'lounge'],
-  sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
-  swimwear:     ['swimwear', 'gym', 'daily_casual'],
-  gym:          ['gym', 'outdoor', 'daily_casual'],
-  work:         ['work', 'formal', 'daily_casual'],
-  formal:       ['formal', 'work', 'daily_casual'],
-  church:       ['church', 'formal', 'daily_casual'],
-  nightlife:    ['nightlife', 'date_night', 'daily_casual'],
-  date_night:   ['date_night', 'nightlife', 'formal', 'daily_casual'],
-  school:       ['school', 'daily_casual'],
-  lounge:       ['lounge', 'daily_casual'],
-  outdoor:      ['outdoor', 'daily_casual'],
-  travel:       ['travel', 'outdoor', 'daily_casual'],
-  medical:      ['medical', 'daily_casual'],
-  special:      ['special', 'formal', 'daily_casual'],
-  cold_weather: ['cold_weather', 'outdoor', 'daily_casual'],
-  hot_weather:  ['hot_weather', 'outdoor', 'daily_casual'],
-  daily_casual: ['daily_casual', 'outdoor', 'lounge'],
-};
+const OUTFIT_FALLBACK_CHAINS = {bath:['bath','sleepwear','lounge'],sleepwear:['sleepwear','lounge','daily_casual'],swimwear:['swimwear','gym','daily_casual'],gym:['gym','outdoor','daily_casual'],work:['work','formal','daily_casual'],formal:['formal','work','daily_casual'],church:['church','formal','daily_casual'],nightlife:['nightlife','date_night','daily_casual'],date_night:['date_night','nightlife','formal','daily_casual'],school:['school','daily_casual'],lounge:['lounge','daily_casual'],outdoor:['outdoor','daily_casual'],travel:['travel','outdoor','daily_casual'],medical:['medical','daily_casual'],special:['special','formal','daily_casual'],cold_weather:['cold_weather','outdoor','daily_casual'],hot_weather:['hot_weather','outdoor','daily_casual'],daily_casual:['daily_casual','outdoor','lounge']};
 
 function resolveOutfitCategory(character) {
   const presence = character?.resolved_presence_status || character?.location_status || '';
@@ -568,6 +548,8 @@ HOW TO BUILD THIS IMAGE
    They are physically inside the space — same floor plane, same lighting, same perspective.
 4. APPLY LIGHTING: ${timeLighting.period} — ${timeLighting.desc}
    Both character and room are lit from the same light source. No exceptions.
+5. SCALE: Character height vs furniture must be anatomically correct. Beds, chairs, tables are SCALE ANCHORS. Tight/cropped shots preferred — do NOT force full room into frame. Aggressive zoom IS correct.
+5. SCALE: Character height vs furniture must be anatomically correct. Beds, chairs, tables are SCALE ANCHORS. Tight/cropped shots ARE preferred over wide-room shots. Do NOT force full room into frame.
 
 ════════════════════════════════════════════════════════════
 WHAT MAKES THIS LOOK REAL vs FAKE
@@ -803,14 +785,8 @@ spatial/structural understanding. Discard ALL conflicting lighting states. Apply
 Treat the environment as a reusable 3D physical space that can be dynamically re-lit under any conditions.
 The active lighting period is the ONLY authority: ${timeLighting.period} — ${timeLighting.desc}.`;
 
-  // ── APPEARANCE LOCK HELPER ───────────────────────────────────────────────────
   function buildAppearanceLockText(desc) {
-    return [
-      (desc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || null,
-      (desc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || null,
-      (desc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || null,
-      (desc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || null,
-    ].filter(Boolean).join(', ') || 'as described';
+    return [(desc||'').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0]||null,(desc||'').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0]||null,(desc||'').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0]||null,(desc||'').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0]||null].filter(Boolean).join(', ')||'as described';
   }
 
   let identityLock = '';
@@ -1385,7 +1361,21 @@ Deno.serve(async (req) => {
         // P1: current_outfit always wins. P2: closet rotation by context. Never skipped silently.
         const alreadyHasOutfitInDesc = /Currently wearing:/i.test(charDesc);
         if (!alreadyHasOutfitInDesc) {
-          const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord, sanitizedPrompt.toLowerCase());
+          const promptLowerForOutfit = sanitizedPrompt.toLowerCase();
+          // ── SLEEP/WAKE CONTEXT: override with sleepwear before closet rotation ──
+          const sleepWakeKws = ['sleeping','asleep','in bed','woke up','waking up','just woke','getting up','lying in bed','napping','nap','going to bed','bedtime'];
+          const isSleepWake = (charRecord?.resolved_presence_status==='sleeping'||charRecord?.resolved_presence_status==='napping')||/\b(sleep|nap|asleep|bedtime|waking)\b/.test((charRecord?.current_activity||'').toLowerCase())||sleepWakeKws.some(kw=>promptLowerForOutfit.includes(kw));
+          if (isSleepWake) {
+            const closetItems = (charRecord?.character_closet||[]).filter(o=>o.outfit_id);
+            const sleepItem = closetItems.find(o=>o.category==='sleepwear'||o.category==='lounge');
+            const co2 = charRecord?.current_outfit;
+            let sleepText = null;
+            if (sleepItem) { sleepText = [sleepItem.top,sleepItem.bottom,sleepItem.shoes,sleepItem.outerwear,sleepItem.accessories].filter(Boolean).map(p=>{const t=p.trim();return/^(n\/?a|none|-)$/i.test(t)?null:t;}).filter(Boolean).join(', ')||sleepItem.full_description||null; }
+            else if (co2&&(co2.category==='sleepwear'||co2.category==='lounge')) { sleepText = [co2.top,co2.bottom,co2.shoes,co2.outerwear,co2.accessories].filter(Boolean).map(p=>{const t=p.trim();return/^(n\/?a|none|-)$/i.test(t)?null:t;}).filter(Boolean).join(', ')||co2.full_description||null; }
+            else { const g=(charRecord?.gender||'').toLowerCase(); sleepText=g==='female'?'soft cotton pajama set or oversized sleep shirt and shorts':g==='male'?'pajama bottoms or boxer shorts, no shirt or plain sleep shirt':'comfortable pajama set'; }
+            if (sleepText) { charDesc = charDesc?`${charDesc}. Currently wearing: ${sleepText}`:`Currently wearing: ${sleepText}`; console.log(`[SleepWakeOutfit] ✅ Override: "${sleepText.substring(0,80)}"`); }
+          }
+          const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord, promptLowerForOutfit);
           console.log(`[OutfitDiagnostic] char="${charRecord.name}" source="${resolvedOutfit.source}" name="${resolvedOutfit.name}" cat="${resolvedOutfit.category}" locked=${!!resolvedOutfit.text} raw_label="${charRecord.current_outfit?.label||'null'}" raw_id="${charRecord.current_outfit?.outfit_id||'null'}" raw_top="${charRecord.current_outfit?.top||'null'}"`);
           if (resolvedOutfit.text) {
             charDesc = charDesc ? `${charDesc}. Currently wearing: ${resolvedOutfit.text}` : `Currently wearing: ${resolvedOutfit.text}`;
