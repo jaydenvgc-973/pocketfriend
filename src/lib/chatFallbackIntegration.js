@@ -21,6 +21,9 @@ export async function handleFallbackResponse({
   setRecoveringState,
   errorReason,    // 'rate_limit' | 'timeout' | 'llm_failure'
   errorStage,     // 'response_generation' | 'memory_load' | 'canonical_prompt'
+  originalPrompt, // REQUIRED: full LLM prompt for recovery re-attempt
+  sourceMessageId, // REQUIRED: user message ID for idempotency
+  channel = 'direct', // OPTIONAL: communication channel
 }) {
   // CRITICAL: Do NOT save any fallback message to the database
   // Instead: set UI state and record durable error metadata
@@ -67,29 +70,35 @@ export async function handleFallbackResponse({
 
   // Trigger automatic recovery in background
   try {
-    if (conversationId && characterId) {
-      // Invoke recovery backend function (if it exists)
-      // This will run asynchronously and restore real character pipeline
+    if (conversationId && characterId && originalPrompt && sourceMessageId) {
+      // Invoke recovery backend function
+      // This will run asynchronously with exponential backoff and restore real character pipeline
       b44.functions.invoke('triggerRecoveryBackground', {
-        conversationId,
-        characterId,
-        ownerEmail: currentUser?.email,
-        errorReason,
-        errorStage,
+        conversation_id: conversationId,
+        character_id: characterId,
+        owner_email: currentUser?.email,
+        channel,
+        blocking_stage: errorStage,
+        prompt: originalPrompt, // REQUIRED: full prompt for re-attempt
+        source_message_id: sourceMessageId, // REQUIRED: user message for idempotency
+        character_name: character?.name,
+        failure_count: 0, // first attempt
       }).catch(err => {
         console.warn('[chatFallbackIntegration] Recovery trigger failed:', err?.message);
       });
+    } else {
+      console.warn('[chatFallbackIntegration] Missing recovery params: prompt=' + !!originalPrompt + ' sourceMsg=' + !!sourceMessageId);
     }
   } catch (err) {
     console.warn('[chatFallbackIntegration] Recovery dispatch failed:', err.message);
   }
 
-  // Clear UI recovery state after 3 seconds if recovery succeeds
+  // Clear UI recovery state after 45 seconds if recovery completes, or on timeout
   setTimeout(() => {
     if (setRecoveringState) {
       setRecoveringState(false);
     }
-  }, 3000);
+  }, 45000);
 
   return { should_save: false, reason: 'circuit_breaker_active' };
 }

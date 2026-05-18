@@ -1316,7 +1316,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       // ── CIRCUIT BREAKER: NEVER save generic fallback text as a character Message ──
       // handleFallbackResponse always returns should_save=false.
-      // Recovery triggers automatically in background.
+      // Recovery triggers automatically in background with exponential backoff.
       // UI shows "Reconnecting…" via isRecovering state — NOT a saved Message.
       if (isMountedRef.current) {
         await handleFallbackResponse({
@@ -1328,6 +1328,9 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           setRecoveringState: setIsRecovering,
           errorReason: isRateLimit ? 'rate_limit' : msg.includes('timeout') ? 'timeout' : 'llm_failure',
           errorStage: 'response_generation',
+          originalPrompt: fullPrompt, // REQUIRED: pass the full prompt for recovery
+          sourceMessageId: userMsg?.id, // REQUIRED: user message for idempotency
+          channel: isPhone ? 'phone' : 'direct',
         });
       }
       return;
