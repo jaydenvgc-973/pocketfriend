@@ -74,6 +74,8 @@ import { resolveCoPresence } from "@/lib/coPresenceResolver";
 import LocationShareTool from "@/components/chat/LocationShareTool";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { isCharacterConfined, canCharacterRespond, getConfinementNotice } from "@/lib/confinementMessagingEngine";
+import { useChatTimingProof } from "@/hooks/useChatTimingProof";
+import ChatTimingOverlay from "@/components/chat/ChatTimingOverlay";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -379,6 +381,20 @@ export default function Chat() {
 
   // Register page context so simulationGate knows chat is active for this character
   usePageContext({ page: 'chat', characterId });
+
+  // ── REAL FRONTEND TIMING PROOF ────────────────────────────────────────────
+  // Measures actual UI milestones from route enter to character_connected and first send.
+  // Add ?timing=1 to the URL to see the visual overlay.
+  const { timingRecord, markSendStart } = useChatTimingProof({
+    characterId,
+    chatType,
+    currentUser,
+    character,
+    conversationId,
+    messages,
+    isLoadingConvo,
+    isTyping,
+  });
 
   // Invalidate userSettings on character open so co-presence reads fresh location data.
   // THROTTLED: once per character per 5 min — prevents storm when user rapidly navigates.
@@ -904,6 +920,17 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       const globalCachedPrompt = currentUser?.email
         ? _gccp(currentUser.email, characterId)
         : null;
+
+      // ── FRONTEND TIMING: mark send start — report canonical cache state ────
+      // Called here so globalCachedPrompt and mount cache are both known.
+      // If cache miss → canonical_prompt stage will block the response synchronously.
+      {
+        const isCached = !!(globalCachedPrompt || systemPromptCacheRef.current[canonicalCacheKey]);
+        markSendStart({
+          canonical_prompt_cached: isCached,
+          blocking_stages: isCached ? [] : ['canonical_prompt'],
+        });
+      }
 
       if (globalCachedPrompt) {
         canonicalPrompt = globalCachedPrompt;
@@ -1853,6 +1880,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           onDone={() => { setNewPeopleDetected(null); queryClient.invalidateQueries({ queryKey: ["character", characterId] }); }}
         />
       )}
+      <ChatTimingOverlay timingRecord={timingRecord} />
     </div>
   );
 }
