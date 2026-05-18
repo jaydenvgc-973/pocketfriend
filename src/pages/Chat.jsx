@@ -696,7 +696,7 @@ export default function Chat() {
         skippedNoncriticalStages = true;
         console.warn(`[Chat] PRE_LLM_BLOCKING_MS=${pre_llm_blocking_ms} — noncritical stages timed out, skipped`);
       }
-      console.log(`[SEND_TIMING_PROOF] pre_llm_blocking_ms=${pre_llm_blocking_ms} | skipped_noncritical=${skippedNoncriticalStages} | canonical_cached=${!!(globalCachedPrompt || systemPromptCacheRef.current[canonicalCacheKey])} | weather_loaded=${!!weatherContext} | finance_loaded=${!!financialContext} | commitments_loaded=${!!commitmentsContext}`);
+      console.log(`[SEND_TIMING_PROOF] pre_llm_blocking_ms=${pre_llm_blocking_ms} | skipped_noncritical=${skippedNoncriticalStages} | weather_loaded=${!!weatherContext} | finance_loaded=${!!financialContext} | commitments_loaded=${!!commitmentsContext}`);
 
       // ── QR CODE DETECTION (when user uploads an image) ────────────────────
       let qrContext = "";
@@ -949,8 +949,6 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         : null;
 
       // ── FRONTEND TIMING: mark send start — report canonical cache state ────
-      // Called here so globalCachedPrompt and mount cache are both known.
-      // If cache miss → canonical_prompt stage will block the response synchronously.
       {
         const isCached = !!(globalCachedPrompt || systemPromptCacheRef.current[canonicalCacheKey]);
         markSendStart({
