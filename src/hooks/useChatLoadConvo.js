@@ -251,6 +251,8 @@ export function useChatLoadConvo({
               });
               // Use EXACT same key as CharacterCard: [characterId, owner_email]
               queryClient.invalidateQueries({ queryKey: ['conversations', characterId, currentUser.email] });
+              // Force CharacterCard's countUnread to re-run — length won't change so event is needed
+              window.dispatchEvent(new CustomEvent('thread:read', { detail: { characterId } }));
             }
           } else {
             if (setHasOlderMessages) setHasOlderMessages(false);

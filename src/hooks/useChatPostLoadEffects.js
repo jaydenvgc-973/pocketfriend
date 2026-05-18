@@ -62,8 +62,10 @@ export function useChatPostLoadEffects({
       }
       if (!isMounted || snapshotCharacterId !== characterId) return;
       // Invalidate with the EXACT same key CharacterCard uses — must include owner_email.
-      // Without owner_email in the key, CharacterCard's useQuery never re-fetches.
       queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId, ownerEmail] });
+      // Dispatch thread:read event so CharacterCard's countUnread re-runs immediately.
+      // conversations.length won't change (same records), so this event is the only reliable trigger.
+      window.dispatchEvent(new CustomEvent('thread:read', { detail: { characterId: snapshotCharacterId } }));
 
       // ── CATCHUP NARRATIVE ────────────────────────────────────────────────────
       // Deferred 3s to avoid competing with initial message render and markThreadRead.

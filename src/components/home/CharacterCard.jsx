@@ -172,6 +172,19 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     return () => window.removeEventListener('focus', handleFocus);
   }, [conversations, character.id, character.owner_email, queryClient]);
 
+  // Re-count when a thread is opened (badge clear path):
+  // markThreadRead dispatches 'thread:read' with the characterId so we force a recount
+  // immediately — conversations.length won't change so countUnread won't auto-run otherwise.
+  useEffect(() => {
+    const handleThreadRead = (e) => {
+      if (e.detail?.characterId === character.id) {
+        countUnread();
+      }
+    };
+    window.addEventListener('thread:read', handleThreadRead);
+    return () => window.removeEventListener('thread:read', handleThreadRead);
+  }, [character.id, countUnread]);
+
   // Real-time: recount when a relevant message changes for this character.
   // Only subscribe after queryReady — prevents firing before conversations are loaded.
   useEffect(() => {
