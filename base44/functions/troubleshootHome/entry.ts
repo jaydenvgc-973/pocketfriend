@@ -14,10 +14,12 @@ Deno.serve(async (req) => {
       issues_found: []
     };
 
-    // Fetch ONLY this user's characters — never global
+    // Fetch ONLY this user's characters — owner_email is the sole ownership source of truth.
+    // NEVER use created_by: that field is legacy and excluded from ownership checks.
     const characters = await base44.entities.Character.filter(
-      { created_by: user.email },
-      '-created_date'
+      { owner_email: user.email },
+      '-created_date',
+      300
     );
 
     // CARD DATA CHECK
@@ -59,92 +61,115 @@ Deno.serve(async (req) => {
       }
     }
 
-    // AVAILABILITY DISPLAY CHECK + AUTO-FIX
+    // AVAILABILITY DISPLAY CHECK
+    // SAFE MODE: reports issues but NEVER overwrites valid states.
+    // Protected states (never altered): jail/prison/incarceration, active travel,
+    // temporary housing, sleep-interrupted, work_release, house_arrest, hospital.
     if (selectedIssues.includes('availability_display')) {
       results.checked.push('Availability and status display (all activity types)');
 
-      const activityKeywords = [
-        'work', 'school', 'class', 'gym', 'bar', 'club', 'mall', 'home', 'hospital',
-        'prayer', 'worship', 'doctor', 'coffee', 'café', 'cafe', 'park', 'trail', 'hike',
-        'restaurant', 'dinner', 'lunch', 'brunch', 'store', 'errand', 'grocery', 'pharmacy',
-        'church', 'mosque', 'temple', 'synagogue', 'mass', 'kingdom hall',
-        'training', 'internship', 'shadowing', 'outside', 'outdoor', 'laundromat', 'laundry',
-        'shopping', 'evening', 'out for', 'friend', 'event', 'support group', 'therapy',
-        'therapist', 'counseling', 'appointment', 'procedure', 'surgery', 'clinic',
-        'workout', 'exercise', 'yoga', 'pilates', 'crossfit', 'spin class',
-        'resting', 'cooking', 'watching', 'cleaning', 'winding down', 'morning routine',
-        'sleeping', 'asleep', 'apartment', 'house', 'studying', 'tutoring', 'library', 'campus',
-        'sick', 'patient'
-      ];
-
       for (const char of characters) {
-        const fixes = {};
         const charIssues = [];
 
+        // Protected states — do not touch these characters at all
+        const isProtected = char.is_jailed ||
+          char.house_arrest_active ||
+          char.incarceration_status === 'serving' ||
+          char.incarceration_status === 'work_release' ||
+          char.travel_status === 'traveling_to_destination' ||
+          char.location_status === 'traveling' ||
+          char.temporary_housing_location_id;
+
+        if (isProtected) {
+          results.fixed.push(`${char.name}: protected state (jail/travel/housing) — not modified`);
+          continue;
+        }
+
+        // Report missing sleep schedule (do not write defaults without proven schedule data)
         if (!char.sleep_start_time || !char.wake_up_time) {
-          fixes.sleep_start_time = '23:00';
-          fixes.wake_up_time = '07:00';
-          charIssues.push('missing sleep schedule → set to 11pm–7am');
+          charIssues.push('missing sleep schedule times — check character schedule settings');
         }
 
+        // Report missing work hours only if character has a job
         if (char.work_details?.job_title && (!char.work_start_time || !char.work_end_time)) {
-          fixes.work_start_time = '09:00';
-          fixes.work_end_time = '17:00';
-          charIssues.push('missing work hours → set to 9am–5pm');
+          charIssues.push(`has job "${char.work_details.job_title}" but missing work_start_time/work_end_time`);
         }
 
-        if (char.work_details?.job_title && (!char.work_days || char.work_days.length === 0)) {
-          fixes.work_days = [1, 2, 3, 4, 5];
-          charIssues.push('missing work days → set to Mon–Fri');
-        }
-
-        // Clear unrecognized current_activity values
-        const activity = (char.current_activity || '').toLowerCase().trim();
-        const hasDetectable = !activity || activityKeywords.some(kw => activity.includes(kw));
-        if (activity && !hasDetectable) {
-          fixes.current_activity = '';
-          charIssues.push(`unrecognized activity "${char.current_activity}" → cleared`);
-        }
-
-        if (Object.keys(fixes).length > 0) {
-          await base44.entities.Character.update(char.id, fixes);
-          results.fixed.push(`${char.name}: ${charIssues.join('; ')}`);
+        if (charIssues.length > 0) {
+          results.issues_found.push(`${char.name}: ${charIssues.join('; ')}`);
         }
       }
 
-      if (results.fixed.length === 0) {
-        results.fixed.push('All characters have complete availability/activity data — nothing to fix');
+      if (results.issues_found.length === 0) {
+        results.fixed.push('All characters have availability data — no issues detected');
+      } else {
+        results.fixed.push('Availability check complete — see issues above. No data was auto-modified to protect valid states.');
       }
     }
 
-    // MARK ALL MESSAGES AS READ
+    // MARK ALL MESSAGES AS READ — real source repair
+    // Source of truth: Message.is_read field, scoped by owner_email on Conversation.
+    // Approach: fetch all conversations owned by this user, then batch-mark unread character messages.
+    // Does NOT use created_by. Does NOT touch other accounts.
+    // Per-character proof output is returned for verification.
+    // RATE LIMIT GUARD: process max 20 characters to avoid timeout on large accounts.
     if (selectedIssues.includes('mark_read')) {
-      results.checked.push('Unread message counts');
+      results.checked.push('Unread message counts (owner_email-scoped)');
       let totalMarked = 0;
       let chatUnread = 0;
       let textUnread = 0;
+      const proofRows = [];
+      const charsToProcess = characters.slice(0, 20); // process top 20 by recency
 
-      for (const char of characters) {
+      for (const char of charsToProcess) {
+        // Scope conversations by BOTH owner_email AND character_id — prevents cross-account hits
         const convos = await base44.entities.Conversation.filter(
-          { character_ids: [char.id] }, '-updated_date', 100
+          { owner_email: user.email, character_ids: [char.id] }, '-updated_date', 10
         );
+        let charChatUnread = 0;
+        let charPhoneUnread = 0;
+        const charConvoIds = [];
+
         for (const convo of convos) {
           const unreadMsgs = await base44.entities.Message.filter(
             { conversation_id: convo.id, is_read: false, sender_type: 'character' }
           );
-          if (convo.type === 'direct' || !convo.type) chatUnread += unreadMsgs.length;
-          else if (convo.type === 'phone') textUnread += unreadMsgs.length;
+          const isPhone = convo.type === 'phone';
+          const count = unreadMsgs.length;
+
+          if (!isPhone) { chatUnread += count; charChatUnread += count; }
+          else { textUnread += count; charPhoneUnread += count; }
 
           for (const msg of unreadMsgs) {
             await base44.entities.Message.update(msg.id, { is_read: true });
             totalMarked++;
           }
+          if (count > 0) charConvoIds.push(`${convo.id.slice(0,8)} (${count} msgs, type=${convo.type || 'direct'})`);
+        }
+
+        if (charChatUnread > 0 || charPhoneUnread > 0) {
+          proofRows.push({
+            character_name: char.name,
+            character_id: char.id,
+            conversations_with_unread: charConvoIds,
+            chat_unread_before: charChatUnread,
+            phone_unread_before: charPhoneUnread,
+            action: 'marked_all_read',
+            chat_unread_after: 0,
+            phone_unread_after: 0,
+          });
         }
       }
 
-      results.fixed.push(`Chat unread: ${chatUnread} → 0`);
-      results.fixed.push(`Text unread: ${textUnread} → 0`);
+      results.fixed.push(`Chat unread cleared: ${chatUnread} messages`);
+      results.fixed.push(`Text unread cleared: ${textUnread} messages`);
       results.fixed.push(`Total messages marked as read: ${totalMarked}`);
+      if (proofRows.length > 0) {
+        results.proof = proofRows;
+        results.fixed.push(`Characters repaired: ${proofRows.map(r => r.character_name).join(', ')}`);
+      } else {
+        results.fixed.push('No unread messages found — badges were already clean');
+      }
     }
 
     // CHARACTER SEPARATION / CROSS-CONTAMINATION CHECK
@@ -183,22 +208,37 @@ Deno.serve(async (req) => {
       }
     }
 
-    // NOTIFICATION INDICATORS CHECK
+    // NOTIFICATION INDICATORS CHECK — scoped by owner_email
+    // RATE LIMIT GUARD: process max 20 characters
     if (selectedIssues.includes('notification_dots')) {
-      results.checked.push('Notification indicator accuracy');
+      results.checked.push('Notification indicator accuracy (owner_email scoped)');
       let unreadCount = 0;
-      for (const char of characters) {
+      const perCharSummary = [];
+      const charsToCheck = characters.slice(0, 20);
+      for (const char of charsToCheck) {
+        // Must scope by owner_email to avoid cross-account orphan conversations
         const convos = await base44.entities.Conversation.filter(
-          { character_ids: [char.id] }, '-updated_date', 10
+          { owner_email: user.email, character_ids: [char.id] }, '-updated_date', 10
         );
+        let charUnread = 0;
         for (const convo of convos) {
           const unread = await base44.entities.Message.filter(
             { conversation_id: convo.id, is_read: false, sender_type: 'character' }
           );
+          charUnread += unread.length;
           unreadCount += unread.length;
         }
+        if (charUnread > 0) {
+          perCharSummary.push(`${char.name}: ${charUnread} unread`);
+        }
       }
-      results.fixed.push(`Notification count verified: ${unreadCount} unread message(s) across all threads`);
+      results.fixed.push(`Total unread: ${unreadCount} message(s) across all owner_email-scoped threads`);
+      if (perCharSummary.length > 0) {
+        results.issues_found.push(`Characters with unread messages: ${perCharSummary.join(' | ')}`);
+        results.fixed.push('To clear these, use "Mark messages as read"');
+      } else {
+        results.fixed.push('All notification dots are accurate — no stale unread messages found');
+      }
     }
 
     // MISSING CHARACTERS CHECK

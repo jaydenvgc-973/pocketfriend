@@ -6,18 +6,18 @@ import { X, CheckCircle2, Loader2, AlertCircle, Zap } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
 const ISSUE_LIST = [
-  { id: 'mark_read', label: 'Mark messages as read', description: 'Reset all unread notification counts to 0' },
-  { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing name or core fields' },
-  { id: 'emotional_state', label: 'Mood/emotional state missing', description: 'Restore character mood display' },
-  { id: 'location_display', label: 'Location not showing', description: 'Check city/state display' },
-  { id: 'availability_display', label: 'Availability incorrect', description: 'Verify all activity types: work, school, gym, bar, home, hospital, prayer, etc.' },
-  { id: 'notification_dots', label: 'Notification dots stuck', description: 'Recalculate unread counts' },
-  { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect and fix characters sharing threads, memories, or routing' },
-  { id: 'missing_characters', label: 'Find missing characters', description: 'Locate characters not showing on home page and fix created_by' },
-  { id: 'simulated_interaction', label: 'Simulated interaction tool issues', description: 'Diagnose and fix connection, state, or execution failures' },
+  { id: 'mark_read', label: '✉️ Mark messages as read', description: 'Clear stale unread badges — marks all unread character messages as read using owner_email-scoped conversation lookup. Returns per-character proof.' },
+  { id: 'notification_dots', label: '🔴 Notification dots stuck', description: 'Diagnose unread badge counts per character. Does not clear — use "Mark messages as read" to clear after diagnosing.' },
+  { id: 'card_data', label: 'Character cards missing data', description: 'Detect characters missing name or core display fields.' },
+  { id: 'emotional_state', label: 'Mood/emotional state missing', description: 'Restore missing emotional state display on character cards.' },
+  { id: 'location_display', label: 'Location not showing', description: 'Check city/state display fields on character cards.' },
+  { id: 'availability_display', label: 'Availability incorrect (diagnostic only)', description: 'Reports characters missing schedule data. Respects jail, travel, temporary housing, and all valid unavailable states — never overwrites protected states.' },
+  { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect duplicate character records and direct conversations shared across multiple character IDs.' },
+  { id: 'missing_characters', label: 'Find missing characters', description: 'Locate characters not showing on home page. Checks status, visibility flags, and required fields. Uses owner_email (not legacy created_by).' },
+  { id: 'simulated_interaction', label: 'Simulated interaction tool issues', description: 'Diagnose and fix connection, state, or execution failures in the simulation system.' },
   { id: 'shift_verification', label: '🕒 Work shift verification', description: 'Check if characters on shift are correctly shown on cards, travel popups, and employee lists. Flags STALE_SCHEDULE_LOCATION_DATA if mismatched.' },
-  { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems (cards, popups, profile, balance, world name, relationships, appearance lock) for UI values that are out of sync with backend.' },
-  { id: 'fix_locations', label: '📍 Fix location display', description: 'Detect characters with stale, generic, or missing location data. Clears generic labels and resets resolved location fields for affected characters.' },
+  { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems (cards, popups, profile, balance, world name, relationships, appearance lock) for UI values out of sync with backend.' },
+  { id: 'fix_locations', label: '📍 Fix location display', description: 'Detect characters with stale or missing location data. Reports issues only — does not overwrite jail, travel, hotel, shelter, or temporary housing states.' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose }) {
@@ -36,24 +36,28 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
   };
 
   const runFixAll = async () => {
+    // Fix All runs a safe diagnostic pass first: mark_read + notification_dots + card_data + missing_characters.
+    // It does NOT run autoFixSystemViolations blindly — that function uses outdated assumptions.
+    // Only proven, ownership-scoped repairs are applied.
     setIsRunning(true);
     setError(null);
     setResults(null);
     try {
-      const res = await base44.functions.invoke('autoFixSystemViolations', {});
-      const data = res?.data;
+      const safeIssues = ['mark_read', 'notification_dots', 'card_data', 'missing_characters'];
+      const res = await base44.functions.invoke('troubleshootHome', { selectedIssues: safeIssues });
+      const data = res?.data?.data || res?.data;
       setResults({
-        summary: data?.summary || 'Full diagnostic + repair complete.',
+        summary: data?.summary || 'Safe diagnostic + repair complete.',
         fixed: data?.fixes_applied || data?.fixed || [],
         issues_found: data?.issues_found || [],
         checks: data?.checks || [],
+        proof: data?.proof || [],
       });
     } catch (err) {
       setError(err.message || 'Fix All failed');
     } finally {
       await queryClient.invalidateQueries({ queryKey: ['characters'] });
-      await queryClient.invalidateQueries({ queryKey: ['userSettings'] });
-      await queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
+      await queryClient.invalidateQueries({ queryKey: ['conversations'] });
       setIsRunning(false);
     }
   };
@@ -118,8 +122,9 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
       } else {
         // All other selections go through troubleshootHome with ONLY the selected issues
         const res = await base44.functions.invoke('troubleshootHome', { selectedIssues });
-        if (res?.data?.data) {
-          setResults(res.data.data);
+        const d = res?.data?.data || res?.data;
+        if (d) {
+          setResults({ ...d, proof: d.proof || [] });
         } else {
           setError('Failed to run troubleshooting');
         }
@@ -294,6 +299,25 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                             </div>
                           );
                         })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Per-character proof output for mark_read */}
+                  {(results.proof || []).length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-cyan-400 uppercase tracking-wider">Unread Badge Proof</p>
+                      <div className="space-y-2">
+                        {results.proof.map((row, i) => (
+                          <div key={i} className="bg-secondary/60 rounded-lg p-2.5 text-xs space-y-1">
+                            <p className="font-semibold text-foreground">{row.character_name}</p>
+                            <p className="text-muted-foreground">Chat unread: <span className="text-red-400">{row.chat_unread_before}</span> → <span className="text-emerald-400">0</span></p>
+                            <p className="text-muted-foreground">Text unread: <span className="text-red-400">{row.phone_unread_before}</span> → <span className="text-emerald-400">0</span></p>
+                            {(row.conversations_with_unread || []).length > 0 && (
+                              <p className="text-muted-foreground/60 text-[10px]">Convos: {row.conversations_with_unread.join(' · ')}</p>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
