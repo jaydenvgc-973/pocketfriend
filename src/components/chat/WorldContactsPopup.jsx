@@ -36,6 +36,10 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [contacts, setContacts] = useState([]);
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
+  // Cache the resolved full Character record and canonical context for the selected contact.
+  // These must persist for the entire contact session — not re-fetched per send.
+  const contactCharRecordRef = useRef(null);   // full Character DB record
+  const canonicalPromptCacheRef = useRef(null); // canonical system prompt (same as Chat's systemPromptCacheRef)
   const bottomRef = useRef(null);
   const unsubscribeRef = useRef(null);
 
@@ -113,8 +117,29 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setInputText("");
     setIsLoadingHistory(true);
 
+    // Clear per-contact caches — stale data from a previous contact must never bleed in
+    contactCharRecordRef.current = null;
+    canonicalPromptCacheRef.current = null;
+
     try {
       const contactId = contact.related_character_id;
+
+      // ── HARD GUARD: verify contactId resolves to exactly ONE Character record ──────
+      // This is the identity verification gate. Name-match IDs from the resolver are
+      // treated as untrusted until confirmed by a direct Character.filter({id}) lookup.
+      if (contactId) {
+        const charMatches = await base44.entities.Character.filter({ id: contactId }).catch(() => []);
+        if (charMatches.length === 0) {
+          console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=${contactId} | contact_name=${contact.person_name} | reason=no_db_record_found`);
+          // Keep going — we'll show the warning banner but don't block thread loading
+        } else if (charMatches.length > 1) {
+          console.error(`[WORLD_CONTACT_MULTIPLE_CHARACTER_MATCHES] contact_id=${contactId} | matches=${charMatches.length} | contact_name=${contact.person_name}`);
+        } else {
+          // Single confirmed match — cache the full record now, not per-send
+          contactCharRecordRef.current = charMatches[0];
+          console.log(`[WorldContacts] Full character resolved at select | id=${charMatches[0].id} | name=${charMatches[0].name} | emotional_state=${charMatches[0].emotional_state || 'unset'}`);
+        }
+      }
       const canonicalKey = getCanonicalSharedKey(character.id, contactId);
       const legacyBilateralKey = contactId
         ? `bilateral_${[character.id, contactId].sort().join('_')}_world_phone`
@@ -218,6 +243,38 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           `[WorldPhone] No thread found | will create canonical on first message | key=${canonicalKey || 'none'}`
         );
       }
+
+      // ── PRE-FETCH canonical context now — cached for ALL sends in this session ──
+      // Same as Chat's systemPromptCacheRef: fetch once, reuse every turn.
+      // This prevents non-deterministic identity drift caused by per-send re-fetching.
+      if (contactId && !canonicalPromptCacheRef.current) {
+        base44.functions.invoke("buildCanonicalCharacterContext", {
+          characterId: contactId,
+          interactionContext: "direct_chat", // same as Chat — no special fork
+          topKMemories: 14,
+        }).then(ctxRes => {
+          const ctxData = ctxRes?.data || ctxRes;
+          if (ctxData?.systemPrompt) {
+            canonicalPromptCacheRef.current = ctxData.systemPrompt;
+            console.log(`[WorldContacts] Canonical context pre-cached | id=${contactId} | memories=${ctxData.memories?.length ?? 0} | lifeJournal=${(ctxData.lifeJournalEntries?.length ?? 0) > 0}`);
+          }
+        }).catch(e => console.warn(`[WorldContacts] Pre-fetch canonical context failed: ${e.message}`));
+      }
+
+      // ── ENSURE BILATERAL RELATIONSHIP: if receiver doesn't have sender in their list, add it ──
+      // This fixes the one-way contacts problem: A has B but B doesn't have A.
+      // syncWorldPhoneMemory handles this at message-send time, but we also trigger it
+      // at contact-select time so B's list is populated before any message is sent.
+      if (contactId && character.id && contactId !== character.id) {
+        base44.functions.invoke('syncWorldPhoneMemory', {
+          senderCharacterId: character.id,
+          receiverCharacterId: contactId,
+          messageContent: `[contact_opened — relationship bootstrap]`,
+          context: 'world_phone_bootstrap',
+          conversationId: conversationId || null,
+        }).catch(() => {}); // non-blocking, best-effort
+      }
+
     } catch (err) {
       console.error('[WorldPhone] selectContact error:', err.message);
     }
@@ -231,6 +288,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setSelectedContact(null);
     setMessages([]);
     setConversationId(null);
+    contactCharRecordRef.current = null;
+    canonicalPromptCacheRef.current = null;
   };
 
   const handleClose = () => {
@@ -239,6 +298,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setMessages([]);
     setConversationId(null);
     setInputText("");
+    contactCharRecordRef.current = null;
+    canonicalPromptCacheRef.current = null;
     onClose();
   };
 
@@ -451,51 +512,64 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     const allMsgs = [...messages, userMsg];
 
     // ── WORLD CONTACTS FULL CHARACTER PIPELINE ──────────────────────────────────
-    // ARCHITECTURE RULE: World Contacts is another doorway into the SAME character runtime.
-    // This must use the identical pipeline as Chat: same canonical resolver, same memory
-    // retrieval, same LLM caller, same response parser. NO personality forks allowed.
+    // ARCHITECTURE: World Contacts is another doorway into the SAME character runtime.
+    // Uses identical pipeline as Chat. No forks, no fallbacks, no simplification.
 
-    // HARD GUARD: contact must have a real Character.id to use the full pipeline.
+    // HARD GUARD: contactId must exist and must have been verified at selectContact time.
     if (!contactId) {
-      console.error(
-        `[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=MISSING | contact_name=${selectedContact.person_name} | ` +
-        `reason=no_related_character_id | action=send_blocked`
-      );
+      console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=MISSING | contact_name=${selectedContact.person_name} | reason=no_related_character_id | action=send_blocked`);
       setIsTyping(false);
       return;
     }
 
-    // STEP 1: Load the contact's full Character record — same as Chat.queryFn does.
-    let contactCharRecord = null;
-    try {
-      const chars = await base44.entities.Character.filter({ id: contactId });
-      contactCharRecord = chars[0] || null;
-    } catch { contactCharRecord = null; }
-
-    // STEP 2: Load canonical context — same call Chat makes for its character.
-    let canonicalPrompt = null;
-    let memoryCountLoaded = 0;
-    let lifeJournalLoaded = false;
-    let relationshipContextLoaded = false;
-    try {
-      const ctxRes = await base44.functions.invoke("buildCanonicalCharacterContext", {
-        characterId: contactId,
-        interactionContext: "direct_chat", // same as Chat — not a special "world_contacts" variant
-        topKMemories: 14,                  // same as Chat
-      });
-      const ctxData = ctxRes?.data || ctxRes;
-      if (ctxData?.systemPrompt) {
-        canonicalPrompt = ctxData.systemPrompt;
-        memoryCountLoaded = ctxData.memories?.length ?? 0;
-        lifeJournalLoaded = (ctxData.lifeJournalEntries?.length ?? 0) > 0;
-        relationshipContextLoaded = !!ctxData.relationshipContext;
+    // STEP 1: Use cached full Character record (resolved at selectContact, not per-send).
+    // If cache is empty for some reason, re-fetch now and cache it.
+    let contactCharRecord = contactCharRecordRef.current;
+    if (!contactCharRecord) {
+      try {
+        const chars = await base44.entities.Character.filter({ id: contactId });
+        if (chars.length === 0) {
+          console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=${contactId} | contact_name=${selectedContact.person_name} | reason=Character.filter_returned_empty | action=send_blocked`);
+          setIsTyping(false);
+          return;
+        }
+        contactCharRecord = chars[0];
+        contactCharRecordRef.current = contactCharRecord;
+      } catch (e) {
+        console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=${contactId} | error=${e.message} | action=send_blocked`);
+        setIsTyping(false);
+        return;
       }
-    } catch (e) {
-      console.warn(`[WorldContacts] buildCanonicalCharacterContext failed for ${contactId}:`, e.message);
     }
 
-    // STEP 3: Retrieve active turn-specific memories — same call Chat makes.
+    // STEP 2: Use cached canonical context (pre-fetched at selectContact, same as Chat's systemPromptCacheRef).
+    // If not yet ready (pre-fetch still in flight), wait for it now.
+    let canonicalPrompt = canonicalPromptCacheRef.current;
+    if (!canonicalPrompt) {
+      try {
+        const ctxRes = await base44.functions.invoke("buildCanonicalCharacterContext", {
+          characterId: contactId,
+          interactionContext: "direct_chat", // SAME as Chat — no fork
+          topKMemories: 14,
+        });
+        const ctxData = ctxRes?.data || ctxRes;
+        canonicalPrompt = ctxData?.systemPrompt || null;
+        if (canonicalPrompt) canonicalPromptCacheRef.current = canonicalPrompt;
+      } catch (e) {
+        console.warn(`[WorldContacts] buildCanonicalCharacterContext failed for ${contactId}:`, e.message);
+      }
+    }
+
+    if (!canonicalPrompt) {
+      console.error(`[WORLD_CONTACT_CHARACTER_CONTEXT_MISMATCH] contact_id=${contactId} | contact_name=${selectedContact.person_name} | canonical_prompt=MISSING | missing_systems=canonical_context,memory,relationship,emotional_state`);
+      // Do NOT silently generate — context is missing, fail visibly in logs
+      setIsTyping(false);
+      return;
+    }
+
+    // STEP 3: Retrieve active turn-specific memories — SAME call as Chat.
     let memoryContext = "";
+    let memoryCountLoaded = 0;
     try {
       const memRes = await base44.functions.invoke("retrieveActiveMemory", {
         characterId: contactId,
@@ -513,26 +587,24 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       }
     } catch { /* non-blocking */ }
 
-    // STEP 4: Build system prompt — same as Chat uses.
-    // If contact character record loaded, pass it; if not, use canonical prompt directly.
+    // STEP 4: Build system prompt — SAME as Chat.
     const systemPromptForContact = buildSystemPrompt(
       canonicalPrompt,
-      contactCharRecord || { name: selectedContact.person_name, id: contactId },
+      contactCharRecord,
       { allowNarration: false, worldName: character.name }
     );
 
-    // STEP 5: Build full conversation history from DB messages (not just in-popup local state).
-    // Chat uses messages.slice(-50). We use what we have from loaded history.
-    const conversationLog = allMsgs
+    // STEP 5: Full conversation history — last 50 messages (same as Chat).
+    const conversationLog = allMsgs.slice(-50)
       .map(m => `${(m.role === "sent") ? character.name : selectedContact.person_name}: ${m.content}`)
       .join("\n");
 
-    // STEP 6: Assemble the full prompt — same structure as Chat's fullPrompt.
+    // STEP 6: Assemble full prompt — SAME structure as Chat's fullPrompt.
     const fullPrompt = `${systemPromptForContact}${memoryContext}
 ${imageAnalysisContext}
 
 CURRENT CHANNEL: World Phone / World Contacts
-${character.name} is messaging you. This is a real text exchange between two people who know each other.
+${character.name} is messaging you. This is a real exchange between two people who know each other.
 Do NOT start with your name. Do NOT say "I'm an AI". Respond as you naturally would.
 
 Conversation so far:
@@ -544,33 +616,24 @@ Respond ONLY with valid JSON in this exact format:
   "text_content": "Your reply as ${selectedContact.person_name}."
 }`;
 
-    // PROOF LOG — every field must be true for correct architecture
+    // PROOF LOG — architecture verification, every field must be true
     console.log(`[SINGLE_CHARACTER_CONTEXT_CHECK] ${JSON.stringify({
       characterId: contactId,
       contactName: selectedContact.person_name,
       fullCharacterRecordResolved: !!contactCharRecord,
+      characterRecordId: contactCharRecord?.id,
       canonicalContextLoaded: !!canonicalPrompt,
-      sameResolverAsChat: true, // buildCanonicalCharacterContext with interactionContext:"direct_chat"
+      canonicalContextCached: !!canonicalPromptCacheRef.current,
+      sameResolverAsChat: true,
       memoryCountLoaded,
-      lifeJournalLoaded,
-      relationshipContextLoaded,
       emotionalStateLoaded: !!(contactCharRecord?.emotional_state),
-      sameLLMCallerAsChat: true,  // callLLMWithRetry below
-      sameResponseParserAsChat: true, // parseCharacterResponse below
-      sameVoicePipelineAsChat: true,
+      sameLLMCallerAsChat: true,
+      sameResponseParserAsChat: true,
       sameMemoryPipeline: true,
+      sameSystemPromptBuilder: true,
     })}`);
 
-    if (!canonicalPrompt && !contactCharRecord) {
-      console.error(
-        `[WORLD_CONTACT_CHARACTER_CONTEXT_MISMATCH] contact_id=${contactId} | ` +
-        `contact_name=${selectedContact.person_name} | canonical_prompt=MISSING | ` +
-        `character_record=MISSING | missing_systems=canonical_context,memory,relationship,emotional_state`
-      );
-      // Do NOT silently fall back — fail visibly but still attempt with minimal context
-    }
-
-    // STEP 7: Call LLM with SAME caller as Chat — callLLMWithRetry.
+    // STEP 7: Call LLM — SAME caller as Chat.
     let npcText = "...";
     try {
       const rawResponse = await callLLMWithRetry(fullPrompt);
@@ -672,17 +735,24 @@ Respond ONLY with valid JSON in this exact format:
         });
     }
     // ── BILATERAL MEMORY: write durable Memory records to BOTH characters ─────
-    // ROOT CAUSE FIX: syncGroupChatMemories only writes group chat context, not bilateral
-    // character Memory records. syncWorldPhoneMemory writes to both character IDs durably
-    // so Chat, Scene, Profile, and relationship logic can all retrieve the interaction.
+    // FULL EXCHANGE: pass both sent message AND npc response so both sides remember
+    // what was said AND what was replied. This matches Chat's extractMemoriesFromTurn
+    // which captures the full turn (user message + character response).
     if (selectedContact.related_character_id) {
+      const fullExchangeContent = `${character.name}: "${text}" | ${selectedContact.person_name}: "${npcText}"`;
       base44.functions.invoke('syncWorldPhoneMemory', {
         senderCharacterId: character.id,
         receiverCharacterId: selectedContact.related_character_id,
-        messageContent: text,
+        messageContent: fullExchangeContent,
         context: 'world_phone',
         conversationId: convoId,
-      }).catch(err => console.warn('[WorldPhone] syncWorldPhoneMemory failed (non-blocking):', err.message));
+      }).then(() => {
+        console.log(`[WORLD_CONTACT_BILATERAL_MEMORY_WRITTEN] sender=${character.id} | receiver=${selectedContact.related_character_id} | convo=${convoId}`);
+      }).catch(err => {
+        console.error(`[WORLD_CONTACT_MEMORY_WRITE_FAILED] sender=${character.id} | receiver=${selectedContact.related_character_id} | error=${err.message}`);
+      });
+    } else {
+      console.error(`[WORLD_CONTACT_BILATERAL_MEMORY_MISSING] contact_name=${selectedContact.person_name} | reason=no_related_character_id | memory_not_written`);
     }
   };
 

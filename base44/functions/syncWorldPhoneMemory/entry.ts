@@ -51,37 +51,47 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Ownership violation: characters must belong to current user' }, { status: 403 });
     }
 
-    const contextLabel = context || 'world_phone';
+    const contextLabel = (context || 'world_phone').replace('_bootstrap', '');
+    const isBootstrap = (context || '').includes('bootstrap');
     const timestamp = new Date().toISOString();
     const sourceCtx = conversationId ? `${contextLabel}_${conversationId}` : contextLabel;
 
-    // Write memory for SENDER (they remember what they said and the context)
-    const senderMemory = base44.entities.Memory.create({
-      character_id: senderCharacterId,
-      title: `${contextLabel.replace('_', ' ')} with ${receiver.name}`,
-      description: `I reached out to ${receiver.name} via ${contextLabel.replace('_', ' ')} and said: "${messageContent.substring(0, 300)}"`,
-      emotional_impact: 'neutral',
-      timestamp,
-      source_context: `${sourceCtx}_sender`,
-    });
+    // Bootstrap calls only create/update fictional_relationships — no Memory records written.
+    // They exist solely to ensure bilateral relationship entries exist before first message.
+    if (!isBootstrap) {
+      // Write memory for SENDER — includes the full exchange (sent + received)
+      const senderMemory = base44.entities.Memory.create({
+        character_id: senderCharacterId,
+        title: `${contextLabel.replace(/_/g, ' ')} with ${receiver.name}`,
+        description: `Exchange with ${receiver.name} via ${contextLabel.replace(/_/g, ' ')}: ${messageContent.substring(0, 400)}`,
+        emotional_impact: 'neutral',
+        timestamp,
+        source_context: `${sourceCtx}_sender`,
+      });
 
-    // Write memory for RECEIVER (they remember what was said to them)
-    const receiverMemory = base44.entities.Memory.create({
-      character_id: receiverCharacterId,
-      title: `${contextLabel.replace('_', ' ')} from ${sender.name}`,
-      description: `${sender.name} contacted me via ${contextLabel.replace('_', ' ')} and said: "${messageContent.substring(0, 300)}"`,
-      emotional_impact: 'neutral',
-      timestamp,
-      source_context: `${sourceCtx}_receiver`,
-    });
+      // Write memory for RECEIVER — they know both what was said to them AND what they replied
+      const receiverMemory = base44.entities.Memory.create({
+        character_id: receiverCharacterId,
+        title: `${contextLabel.replace(/_/g, ' ')} from ${sender.name}`,
+        description: `Exchange with ${sender.name} via ${contextLabel.replace(/_/g, ' ')}: ${messageContent.substring(0, 400)}`,
+        emotional_impact: 'neutral',
+        timestamp,
+        source_context: `${sourceCtx}_receiver`,
+      });
 
-    await Promise.all([senderMemory, receiverMemory]);
+      await Promise.all([senderMemory, receiverMemory]);
+      console.log(`[syncWorldPhoneMemory] Memory written | sender=${sender.name} (${senderCharacterId}) ↔ receiver=${receiver.name} (${receiverCharacterId}) | context=${contextLabel}`);
+    } else {
+      console.log(`[syncWorldPhoneMemory] Bootstrap only — relationship check, no memory written | ${sender.name} ↔ ${receiver.name}`);
+    }
 
     // Update last_interaction_summary on both sides of the fictional_relationships
     // Sender → Receiver relationship
     const senderRels = sender.fictional_relationships || [];
     const senderRelIdx = senderRels.findIndex(r => r.related_character_id === receiverCharacterId);
-    const senderInteractionSummary = `Sent a ${contextLabel.replace('_', ' ')} message: "${messageContent.substring(0, 100)}"`;
+    const senderInteractionSummary = isBootstrap
+      ? `Known contact via world phone`
+      : `Sent a ${contextLabel.replace(/_/g, ' ')} message: "${messageContent.substring(0, 100)}"`;
 
     if (senderRelIdx >= 0) {
       const updatedSenderRels = senderRels.map((r, i) =>
@@ -112,7 +122,9 @@ Deno.serve(async (req) => {
     // Receiver → Sender relationship
     const receiverRels = receiver.fictional_relationships || [];
     const receiverRelIdx = receiverRels.findIndex(r => r.related_character_id === senderCharacterId);
-    const receiverInteractionSummary = `${sender.name} reached out via ${contextLabel.replace('_', ' ')}: "${messageContent.substring(0, 100)}"`;
+    const receiverInteractionSummary = isBootstrap
+      ? `Known contact via world phone`
+      : `${sender.name} reached out via ${contextLabel.replace(/_/g, ' ')}: "${messageContent.substring(0, 100)}"`;
 
     if (receiverRelIdx >= 0) {
       const updatedReceiverRels = receiverRels.map((r, i) =>
@@ -140,13 +152,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log(`[syncWorldPhoneMemory] Wrote bi-directional memory: ${sender.name} ↔ ${receiver.name} via ${contextLabel}`);
+    console.log(`[syncWorldPhoneMemory] Complete | ${sender.name} (${senderCharacterId}) ↔ ${receiver.name} (${receiverCharacterId}) | context=${contextLabel} | bootstrap=${isBootstrap}`);
 
     return Response.json({
       success: true,
       sender: sender.name,
+      sender_id: senderCharacterId,
       receiver: receiver.name,
+      receiver_id: receiverCharacterId,
       context: contextLabel,
+      bootstrap: isBootstrap,
+      memory_written: !isBootstrap,
+      relationship_synced: true,
     });
 
   } catch (error) {
