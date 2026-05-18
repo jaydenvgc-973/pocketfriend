@@ -10,33 +10,43 @@ const STATUS_ICONS = {
   prayer: Sparkles,
 };
 
-export default function TravelCharacterSelector({ characters, currentUser, displayName, selectedIds, locationMap, onToggle }) {
+export default function TravelCharacterSelector({ characters, currentUser, displayName, selectedIds, locationMap, onToggle, presenceEntities = [] }) {
   const avatarUrl = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
 
-  // Sort: active created characters → NPC fictitious → NPC family members
-  // Debug: log actual character types to diagnose filtering
-  console.log('[TravelCharacterSelector Debug]', {
-    totalCharacters: characters.length,
-    types: characters.map(c => ({ name: c.name, type: c.character_type })),
-  });
-  
-  const sortedCharacters = [
-    ...characters.filter(c => c.character_type === 'active_created_character').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')),
-    ...characters.filter(c => c.character_type === 'npc_fictitious').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')),
-    ...characters.filter(c => c.character_type === 'npc_family_member').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')),
-  ];
-  
-  console.log('[TravelCharacterSelector Debug]', { activeCreated: characters.filter(c => c.character_type === 'active_created_character').length, npcFictitious: characters.filter(c => c.character_type === 'npc_fictitious').length, npcFamily: characters.filter(c => c.character_type === 'npc_family_member').length, sortedTotal: sortedCharacters.length });
+  // ── DEDUPLICATION: by stable ID first, then normalized name as last resort ──
+  // Prevents duplicate entries when a character appears via multiple parent family lists
+  const deduped = (() => {
+    const seenIds = new Set();
+    const seenNames = new Set();
+    const result = [];
+    for (const c of characters) {
+      // Dedupe by character ID (primary stable key)
+      if (seenIds.has(c.id)) continue;
+      seenIds.add(c.id);
+      // Also dedupe by normalized name within same character_type (Leo Parker appearing twice)
+      const nameKey = `${c.character_type}::${(c.name || '').trim().toLowerCase()}`;
+      if (seenNames.has(nameKey)) {
+        console.warn(`[TravelCharacterSelector] Deduped duplicate by name: ${c.name} (id=${c.id})`);
+        continue;
+      }
+      seenNames.add(nameKey);
+      result.push(c);
+    }
+    return result;
+  })();
 
-  const activeCreatedChars = characters
+  // Build a presence entity lookup map for fast hydration by character ID
+  const presenceById = Object.fromEntries(presenceEntities.map(e => [e.id, e]));
+
+  const activeCreatedChars = deduped
     .filter(c => c.character_type === 'active_created_character')
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
-  const npcFictitiousChars = characters
+  const npcFictitiousChars = deduped
     .filter(c => c.character_type === 'npc_fictitious')
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
-  const npcFamilyChars = characters
+  const npcFamilyChars = deduped
     .filter(c => c.character_type === 'npc_family_member')
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
@@ -46,12 +56,19 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
     const isSelected = selectedIds.includes(char.id);
     const isAvailable = availability.available;
     const StatusIcon = STATUS_ICONS[availability.reason?.iconType];
-    const resolvedLocName = char.resolved_current_location_name;
-    const resolvedStatus = char.resolved_presence_status;
+
+    // ── PRESENCE HYDRATION: use the unified presence entity (same source as location popup)
+    // Fall back to raw character fields if entity not found.
+    const presenceEntity = presenceById[char.id];
+    const resolvedLocName = presenceEntity?.resolved_current_location_name || char.resolved_current_location_name;
+    const resolvedStatus = presenceEntity?.resolved_presence_status || char.resolved_presence_status;
+    const isHome = presenceEntity?.is_home ?? (resolvedStatus === 'home' || resolvedStatus === 'sleeping' || resolvedStatus === 'napping');
+    const hasHomeId = !!(char.current_home_location_id || presenceEntity?.residence_location_id);
+
     let currentLocationLabel = null;
-    if (isAvailable && resolvedLocName && resolvedStatus !== 'home' && resolvedStatus !== 'sleeping' && resolvedStatus !== 'napping') {
+    if (isAvailable && resolvedLocName && !isHome) {
       currentLocationLabel = `At ${resolvedLocName}`;
-    } else if (isAvailable && (resolvedStatus === 'home' || char.current_home_location_id)) {
+    } else if (isAvailable && (isHome || hasHomeId)) {
       currentLocationLabel = 'At home';
     }
 

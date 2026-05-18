@@ -615,6 +615,114 @@ COMMITMENT ENFORCEMENT RULES:
   }
 }
 
+// ── HOUSEHOLD / CO-PRESENCE CONTEXT BUILDER ───────────────────────────────────
+
+/**
+ * buildHouseholdCoPresenceContext
+ *
+ * Builds a prompt block that tells the LLM about household members and
+ * family who are CURRENTLY CO-PRESENT — same home, same location, or verified
+ * to be home right now.
+ *
+ * This prevents the AI from saying "I need to call my son" when the son is
+ * right there in the same house, or acting as if family are unreachable
+ * when they share the same resolved location.
+ *
+ * Source of truth (in priority order):
+ *   1. Character.resolved_current_location_id matches home_location → character is home
+ *   2. character.current_home_location_id shared with another character → same household
+ *   3. family_members[] + allCharacters lookup for resolved presence
+ *
+ * @param {object} character - The character receiving the message
+ * @param {Array} allCharacters - All character records in scope (from cache)
+ * @returns {string}
+ */
+export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
+  if (!character) return '';
+
+  const charHomeId = character.current_home_location_id || character.resolved_current_location_id;
+  const charCurrentLocId = character.resolved_current_location_id;
+  const familyMembers = character.family_members || [];
+
+  if (!charHomeId && !charCurrentLocId && familyMembers.length === 0) return '';
+
+  const coPresent = [];
+
+  // ── Check all known characters sharing the same home or current location ──
+  for (const other of allCharacters) {
+    if (other.id === character.id) continue;
+    if (other.status === 'deleted') continue;
+
+    const otherHome = other.current_home_location_id;
+    const otherCurrent = other.resolved_current_location_id;
+    const otherName = other.display_name || other.name;
+    if (!otherName) continue;
+
+    // Co-present: same CURRENT location right now
+    if (charCurrentLocId && otherCurrent && charCurrentLocId === otherCurrent) {
+      coPresent.push({ name: otherName, reason: 'same_location_now', status: other.resolved_presence_status || 'here' });
+      continue;
+    }
+
+    // Co-present: both resolved to home and same home
+    if (charHomeId && otherHome && charHomeId === otherHome) {
+      const otherAtHome = !otherCurrent || otherCurrent === otherHome;
+      if (otherAtHome) {
+        coPresent.push({ name: otherName, reason: 'same_household_home', status: 'home' });
+      }
+      continue;
+    }
+  }
+
+  // ── Also check family_members[] names against allCharacters by name lookup ──
+  for (const fam of familyMembers) {
+    const famName = fam.name || fam.relationship;
+    if (!famName) continue;
+    // Skip if already added from above loop
+    if (coPresent.some(cp => cp.name?.toLowerCase() === famName.toLowerCase())) continue;
+
+    const famChar = allCharacters.find(c =>
+      c.id !== character.id &&
+      (c.name?.toLowerCase() === famName.toLowerCase() || c.display_name?.toLowerCase() === famName.toLowerCase())
+    );
+    if (!famChar) continue;
+
+    const famHome = famChar.current_home_location_id;
+    const famCurrent = famChar.resolved_current_location_id;
+
+    // Family member currently at the same location
+    if (charCurrentLocId && famCurrent && charCurrentLocId === famCurrent) {
+      coPresent.push({ name: famName, reason: 'family_same_location', status: famChar.resolved_presence_status || 'here' });
+    } else if (charHomeId && famHome && charHomeId === famHome) {
+      const famAtHome = !famCurrent || famCurrent === famHome;
+      if (famAtHome) {
+        coPresent.push({ name: famName, reason: 'family_same_home', status: 'home' });
+      }
+    }
+  }
+
+  if (coPresent.length === 0) return '';
+
+  const lines = coPresent.map(cp => {
+    if (cp.reason === 'same_location_now' || cp.reason === 'family_same_location') {
+      return `• ${cp.name} is WITH YOU right now at the same location. You do NOT need to call them. They are physically present.`;
+    }
+    return `• ${cp.name} is home with you. They are in the house right now — no need to call or locate them.`;
+  });
+
+  return `\n\n════════════════════════════════════
+HOUSEHOLD & CO-PRESENCE — PHYSICAL TRUTH (read before generating dialogue)
+════════════════════════════════════
+The following people are currently WITH YOU or in the same home as you.
+Do NOT say things like "I need to call them", "I wonder where they are", or "let me text them" — they are right there.
+If you want to involve them in conversation, reference them as physically present.
+
+${lines.join('\n')}
+
+RULE: This physical truth overrides any memory, assumption, or narrative about these people being elsewhere.
+════════════════════════════════════`;
+}
+
 // ── LOCATION RESPONSE VALIDATOR ───────────────────────────────────────────────
 
 /**

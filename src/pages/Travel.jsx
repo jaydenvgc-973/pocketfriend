@@ -523,6 +523,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             selectedIds={selectedCharacterIds}
             locationMap={locationMap}
             onToggle={toggleCharacter}
+            presenceEntities={allPresenceEntities}
           />
         </div>
 
