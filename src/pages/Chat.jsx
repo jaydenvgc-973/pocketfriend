@@ -1306,12 +1306,43 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (!isMountedRef.current) return;
       setIsTyping(false);
 
+      const { handleFallbackResponse } = await import('@/lib/chatFallbackIntegration');
+
       const msg = err?.message || '';
       const isRateLimit = msg.includes('429') || msg.includes('Rate limit') || msg.includes('rate limit') || err?.status === 429;
       const isNetwork = msg.includes('Network') || msg.includes('network') || msg.includes('timeout') || msg.includes('fetch');
       const isRetryable = isRateLimit || isNetwork;
 
       console.error('[sendMessage] Error:', msg, '| retryable:', isRetryable);
+      
+      // ── FALLBACK WITH CIRCUIT BREAKER ──
+      const fallbackResult = await handleFallbackResponse({
+        characterId,
+        conversationId: conversationIdRef.current || conversationId,
+        currentUser,
+        base44,
+        character,
+        isMountedRef,
+        setMessages,
+      });
+      
+      if (fallbackResult.should_save && isMountedRef.current) {
+        base44.entities.Message.create({
+          conversation_id: conversationIdRef.current || conversationId,
+          sender_type: "character",
+          character_id: characterId,
+          character_name: character.name,
+          content: fallbackResult.fallback_text,
+          emotional_state: character.emotional_state || "calm",
+          is_read: true,
+          timestamp: new Date().toISOString(),
+        }).then(fallbackMsg => {
+          if (fallbackMsg?.id && isMountedRef.current) {
+            setMessages(prev => prev.some(m => m.id === fallbackMsg.id) ? prev : [...prev, fallbackMsg]);
+          }
+        }).catch(() => {});
+      }
+      return;
 
       // CONVERSATION CONTINUITY RULE:
       // For retryable failures (rate-limit, network, timeout): silently retry once after a short delay.
