@@ -543,6 +543,37 @@
     "sync_error": {
       "type": "string",
       "description": "Error message if bilateral sync failed"
+    },
+    "source_message_id": {
+      "type": "string",
+      "description": "ID of the user message this character response was generated from. Used for idempotency and linking replies to sources."
+    },
+    "reply_to_message_id": {
+      "type": "string",
+      "description": "ID of the message this is replying to (may be same as source_message_id or a previous character message)."
+    },
+    "idempotency_key": {
+      "type": "string",
+      "description": "Unique key for idempotent saves across retries, recoveries, and proactive sends. Format depends on path: proactive::email::charId::channel::timebucket OR group_chat::charId::convoId::sourceMessageId OR recovery::email::charId::channel::sourceMessageId::stage"
+    },
+    "generation_lock_id": {
+      "type": "string",
+      "description": "ID of the generation lock that guarded this message's creation (Chat/Text/World Phone paths). Null for Group Chat and Proactive."
+    },
+    "recovery_signal": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this message is a technical failure signal or transient recovery placeholder. False for real character dialogue. CRITICAL: recovery_signal=true messages must NEVER trigger memory or relationship updates."
+    },
+    "memory_eligible": {
+      "type": "boolean",
+      "default": true,
+      "description": "True if this message can be read by memory extraction and relationship pipelines. False for fallback signals or messages that failed eligibility checks. Controls whether syncGroupChatMemories and related functions process this message."
+    },
+    "relationship_eligible": {
+      "type": "boolean",
+      "default": true,
+      "description": "True if this message can trigger relationship level updates and progression changes. False for fallback signals or transient recovery messages. Controls whether relationship sync reads this message."
     }
   },
   "required": [

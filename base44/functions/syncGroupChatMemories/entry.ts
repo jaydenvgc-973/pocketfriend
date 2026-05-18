@@ -46,8 +46,20 @@ Deno.serve(async (req) => {
 
     if (recentMessages.length < 2) return Response.json({ success: true, skipped: 'not enough messages' });
 
-    // Build a readable transcript
-    const transcript = recentMessages
+    // ── PROTECTION: exclude recovery signals and non-eligible messages from memory input ──
+    // recovery_signal:true messages are technical failure states, never character dialogue.
+    // memory_eligible:false messages must not enter the memory extraction pipeline.
+    // Both checks are required — a message may have one without the other during partial writes.
+    const eligibleMessages = recentMessages.filter(m => {
+      if (m.recovery_signal === true) return false;
+      if (m.memory_eligible === false) return false;
+      return true;
+    });
+
+    if (eligibleMessages.length < 2) return Response.json({ success: true, skipped: 'not enough eligible messages after filtering recovery signals' });
+
+    // Build a readable transcript — only from verified character dialogue
+    const transcript = eligibleMessages
       .map(m => {
         const speaker = m.sender_type === 'user' ? 'User' : (m.character_name || 'Character');
         return `${speaker}: ${(m.content || '').slice(0, 300)}`;

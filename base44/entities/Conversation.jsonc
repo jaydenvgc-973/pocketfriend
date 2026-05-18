@@ -91,6 +91,108 @@
         "type": "string"
       },
       "description": "character_type values of both participants at conversation creation time."
+    },
+    "generation_lock": {
+      "type": "object",
+      "description": "Durable server-side idempotency lock state for character text response generation. Prevents duplicate replies, records fallback metadata, and tracks recovery status. Written by generationLock backend function. Never written directly by frontend.",
+      "additionalProperties": true,
+      "properties": {
+        "lock_id": {
+          "type": "string",
+          "description": "Unique ID for this lock acquisition attempt."
+        },
+        "generation_in_progress": {
+          "type": "boolean",
+          "description": "True when a character response is actively being generated. Blocks concurrent generation."
+        },
+        "generation_started_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp when generation started. Used for stale lock detection (TTL = 2 minutes)."
+        },
+        "generation_released_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp when lock was released after successful generation."
+        },
+        "character_id": {
+          "type": "string",
+          "description": "Character ID that holds the current lock."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Channel this lock was acquired for: direct, phone, world_phone, group."
+        },
+        "source_message_id": {
+          "type": "string",
+          "description": "User message ID that triggered this generation. Used for idempotency checking."
+        },
+        "owner_email": {
+          "type": "string",
+          "description": "Owner email for scope validation."
+        },
+        "stale_lock": {
+          "type": "boolean",
+          "description": "True if this lock was detected as stale (> 2 minute TTL) and auto-released."
+        },
+        "stale_released_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the stale lock was auto-released."
+        },
+        "fallback_detected": {
+          "type": "boolean",
+          "description": "True when an LLM failure or circuit breaker was detected during generation."
+        },
+        "fallback_count": {
+          "type": "number",
+          "description": "How many fallback events have been recorded for this conversation. Used to block repeated fallbacks."
+        },
+        "fallback_blocked": {
+          "type": "boolean",
+          "description": "True when a second (or subsequent) fallback was detected and blocked from saving."
+        },
+        "recovery_required": {
+          "type": "boolean",
+          "description": "True when recovery pipeline should re-attempt generation."
+        },
+        "recovery_started_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When recovery was triggered."
+        },
+        "recovery_completed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When recovery successfully completed and real response was saved."
+        },
+        "last_fallback_text": {
+          "type": "string",
+          "description": "Short excerpt of the fallback error for diagnostics. Never displayed to users."
+        },
+        "last_fallback_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the most recent fallback event."
+        },
+        "real_pipeline_restored": {
+          "type": "boolean",
+          "description": "True when the real character response pipeline completed successfully after recovery."
+        },
+        "last_recovery_attempt_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_blocking_stage": {
+          "type": "string",
+          "description": "The pipeline stage where the last failure occurred."
+        },
+        "recovery_stages": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Per-stage recovery diagnostic data."
+        }
+      }
     }
   },
   "required": [

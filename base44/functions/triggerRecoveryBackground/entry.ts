@@ -194,6 +194,10 @@ Deno.serve(async (req) => {
       source_message_id: source_message_id || null,
       reply_to_message_id: source_message_id || null,
       generation_lock_id: null,
+      // ── RECOVERY CLASSIFICATION — real LLM response, eligible for memory/relationship ──
+      recovery_signal: false,       // real recovered response — NOT a fallback signal
+      memory_eligible: true,        // memory pipeline may read this
+      relationship_eligible: true,  // relationship pipeline may read this
     });
 
     if (!recoveredMsg?.id) {
