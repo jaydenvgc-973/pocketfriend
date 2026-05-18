@@ -41,6 +41,7 @@ import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote } from "@/lib/sceneImagePromptBuilder";
 import { VENUE_NPCS, DEFAULT_VENUE_NPC } from "@/lib/sceneVenueNPCs";
 import { usePageContext } from "@/hooks/usePageContext";
+import SceneProductCard from "@/components/scene/SceneProductCard";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -1035,15 +1036,18 @@ export default function Scene() {
     if (isBusinessVenue) {
       const purchaseIntentMatch = t.match(/(?:i'll take it|i like it|i love it|how much|what's the price|what is the price|how much does it cost|what's the cost|i want it|can i buy|i'll buy it|i'll take|i want to buy|i'd like to buy|i want to get|i'll get it|price)/);
       if (purchaseIntentMatch) {
-        const randomPrice = Math.floor(Math.random() * (150 - 25 + 1)) + 25; // $25-$150
+        const randomPrice = Math.floor(Math.random() * (150 - 25 + 1)) + 25;
+        const isClothingStore = (location?.subtype || []).some(s => ['clothing', 'boutique', 'apparel'].includes(s));
         setMessages(prev => [...prev, {
           id: `product_${Date.now()}`,
           sender: "product",
           price: randomPrice,
           locationName: location.name,
+          preview_image_url: sceneImage || null,
+          purchase_type: isClothingStore ? "clothing" : "consumable",
           timestamp: new Date().toISOString(),
         }]);
-        return true; // signal to sendMessage: purchase handled, skip LLM
+        return true;
       }
     }
 
@@ -1345,78 +1349,78 @@ Return JSON:
   const handleAction = async (action) => {
     if (actionCooldown) return;
     setActionCooldown(true);
-    setTimeout(() => setActionCooldown(false), 3000);
 
-    const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round'];
-    if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) {
-      const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack'
-        : action.id === 'check' || action.id === 'order' ? 'meal'
-        : 'meal';
-      broughtCharacters.forEach(char => {
-        base44.functions.invoke('recordEatingEvent', {
-          characterId: char.id,
-          mealSize,
-          foodDescription: action.label,
-          locationName: location?.name,
-        }).catch(() => {});
-      });
-      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-    }
-
-    const payer = action.payer || "user"; // "user" | "character"
-    const cost = action.cost || 0;
-
-    if (cost > 0) {
-      if (payer === "user") {
-        const newBalance = Math.max(0, (settings.user_balance ?? 6000) - cost);
-        if (settings.id) {
-          base44.entities.UserSettings.update(settings.id, { user_balance: newBalance }).catch(() => {});
-          queryClient.invalidateQueries({ queryKey: ["userSettings"] });
-        }
-      } else if (payer === "character") {
-        // Deduct from first brought character's financial record
-        const payingChar = broughtCharacters[0];
-        if (payingChar) {
-          base44.functions.invoke("calculateCharacterExpenses", {
-            characterId: payingChar.id,
-            expenseAmount: cost,
-            expenseLabel: action.label,
+    try {
+      const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round'];
+      if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) {
+        const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack'
+          : action.id === 'check' || action.id === 'order' ? 'meal'
+          : 'meal';
+        broughtCharacters.forEach(char => {
+          base44.functions.invoke('recordEatingEvent', {
+            characterId: char.id,
+            mealSize,
+            foodDescription: action.label,
+            locationName: location?.name,
           }).catch(() => {});
+        });
+        queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      }
+
+      const payer = action.payer || "user"; // "user" | "character"
+      const cost = action.cost || 0;
+
+      if (cost > 0) {
+        if (payer === "user") {
+          const newBalance = Math.max(0, (settings.user_balance ?? 6000) - cost);
+          if (settings.id) {
+            base44.entities.UserSettings.update(settings.id, { user_balance: newBalance }).catch(() => {});
+            queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+          }
+        } else if (payer === "character") {
+          const payingChar = broughtCharacters[0];
+          if (payingChar) {
+            base44.functions.invoke("calculateCharacterExpenses", {
+              characterId: payingChar.id,
+              expenseAmount: cost,
+              expenseLabel: action.label,
+            }).catch(() => {});
+          }
         }
       }
+
+      // Determine if this action should trigger a scene image update
+      const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
+      if (actionImageFn) {
+        const presentPeople = [
+          ...homeResidentsPresent,
+          ...broughtCharacters,
+        ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+        const whoDesc = presentPeople.length > 0
+          ? presentPeople.map(c => c.name).join(" and ")
+          : "no one — the space is empty";
+        const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc);
+        generateSceneImage(imagePrompt);
+      }
+
+      const payerNote = payer === "character" && broughtCharacters[0] && cost > 0
+        ? ` (${broughtCharacters[0].name} pays)`
+        : cost > 0 ? ` — $${cost}` : "";
+
+      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null);
+
+      setTimeout(() => {
+        const newActions = getSceneInteractions(
+          location,
+          activeZone || locationZones[0]?.zone_name,
+          null
+        );
+        setActions(newActions);
+      }, 1000);
+    } finally {
+      // ALWAYS release action lock — never leave buttons permanently disabled
+      setActionCooldown(false);
     }
-
-    // Determine if this action should trigger a scene image update
-    const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
-    if (actionImageFn) {
-      // Build a description of only the people physically present
-      const presentPeople = [
-        ...homeResidentsPresent,
-        ...broughtCharacters,
-      ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
-      // If no one else is present, the user is alone — describe as "the space" not a person,
-      // since the user is the camera POV and we never want to generate random strangers
-      const whoDesc = presentPeople.length > 0
-        ? presentPeople.map(c => c.name).join(" and ")
-        : "no one — the space is empty";
-      const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc);
-      generateSceneImage(imagePrompt);
-    }
-
-    const payerNote = payer === "character" && broughtCharacters[0] && cost > 0
-      ? ` (${broughtCharacters[0].name} pays)`
-      : cost > 0 ? ` — $${cost}` : "";
-
-    await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null);
-
-    setTimeout(() => {
-      const newActions = getSceneInteractions(
-        location,
-        activeZone || locationZones[0]?.zone_name,
-        null
-      );
-      setActions(newActions);
-    }, 1000);
   };
 
   // Check if location is closed
@@ -1698,16 +1702,16 @@ Return JSON:
               {msg.sender === "narrative" ? (
                 <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.content}</span>
               ) : msg.sender === "product" ? (
-                <button
-                  onClick={() => setPendingPurchase({ price: msg.price, productId: msg.id })}
-                  className="flex flex-col items-center gap-2 p-3 rounded-2xl bg-card border-2 border-primary/40 hover:border-primary/80 hover:shadow-lg transition-all max-w-[75%]"
-                >
-                  <div className="w-32 h-32 bg-primary/10 rounded-lg flex items-center justify-center">
-                    <span className="text-4xl">👔</span>
-                  </div>
-                  <p className="text-sm font-bold text-foreground">${msg.price}</p>
-                  <p className="text-xs text-muted-foreground">Click to buy</p>
-                </button>
+                <SceneProductCard
+                  msg={msg}
+                  settings={settings}
+                  location={location}
+                  currentUser={currentUser}
+                  queryClient={queryClient}
+                  base44={base44}
+                  setPendingPurchase={setPendingPurchase}
+                  setMessages={setMessages}
+                />
               ) : msg.sender === "character" ? (
                 <>
                   <div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">
