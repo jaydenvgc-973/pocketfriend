@@ -10,6 +10,12 @@ import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import { filterDashes } from "@/lib/dashFilter";
 import { stripCharacterNamePrefix } from "@/lib/nameFilterUtils";
+import {
+  getCachedCanonicalPrompt,
+  setCachedCanonicalPrompt,
+  getCachedCharRecord,
+  setCachedCharRecord,
+} from "@/lib/worldContactsSessionCache";
 
 // ── CANONICAL SHARED KEY ────────────────────────────────────────────────────
 // ONE deterministic key for any two linked characters, regardless of direction.
@@ -36,12 +42,17 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [contacts, setContacts] = useState([]);
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
-  // Cache the resolved full Character record and canonical context for the selected contact.
-  // These must persist for the entire contact session — not re-fetched per send.
+  // Per-mount caches for the selected contact session.
   const contactCharRecordRef = useRef(null);   // full Character DB record
-  const canonicalPromptCacheRef = useRef(null); // canonical system prompt (same as Chat's systemPromptCacheRef)
+  const canonicalPromptCacheRef = useRef(null); // canonical system prompt
   const bottomRef = useRef(null);
   const unsubscribeRef = useRef(null);
+  // ── REPLY LOCK: prevents duplicate replies for the same source user message ──
+  // Key: `${conversationId}:${sourceMessageId}` → true while generating or completed.
+  // Survives retries and rapid taps. Cleared only when contact changes or popup closes.
+  const replyLockRef = useRef(new Set());
+  // ── SEND GUARD: prevents concurrent sends (rapid tap / double submit) ────────
+  const isSendingRef = useRef(false);
 
   // ── LOAD CONTACTS via shared resolver + bilateral conversations ──────────────
   useEffect(() => {
@@ -117,9 +128,12 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setInputText("");
     setIsLoadingHistory(true);
 
-    // Clear per-contact caches — stale data from a previous contact must never bleed in
+    // Clear per-contact mount caches — stale data from a previous contact must never bleed in
+    // (module-level session cache is preserved across popup opens for speed)
     contactCharRecordRef.current = null;
     canonicalPromptCacheRef.current = null;
+    replyLockRef.current.clear();
+    isSendingRef.current = false;
 
     try {
       const contactId = contact.related_character_id;
@@ -128,16 +142,22 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       // This is the identity verification gate. Name-match IDs from the resolver are
       // treated as untrusted until confirmed by a direct Character.filter({id}) lookup.
       if (contactId) {
-        const charMatches = await base44.entities.Character.filter({ id: contactId }).catch(() => []);
-        if (charMatches.length === 0) {
-          console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=${contactId} | contact_name=${contact.person_name} | reason=no_db_record_found`);
-          // Keep going — we'll show the warning banner but don't block thread loading
-        } else if (charMatches.length > 1) {
-          console.error(`[WORLD_CONTACT_MULTIPLE_CHARACTER_MATCHES] contact_id=${contactId} | matches=${charMatches.length} | contact_name=${contact.person_name}`);
+        // Check module-level session cache first (survives popup reopen)
+        const sessionCachedRecord = getCachedCharRecord(contactId);
+        if (sessionCachedRecord) {
+          contactCharRecordRef.current = sessionCachedRecord;
+          console.log(`[WorldContacts] Full character from SESSION CACHE | id=${sessionCachedRecord.id} | name=${sessionCachedRecord.name}`);
         } else {
-          // Single confirmed match — cache the full record now, not per-send
-          contactCharRecordRef.current = charMatches[0];
-          console.log(`[WorldContacts] Full character resolved at select | id=${charMatches[0].id} | name=${charMatches[0].name} | emotional_state=${charMatches[0].emotional_state || 'unset'}`);
+          const charMatches = await base44.entities.Character.filter({ id: contactId }).catch(() => []);
+          if (charMatches.length === 0) {
+            console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=${contactId} | contact_name=${contact.person_name} | reason=no_db_record_found`);
+          } else if (charMatches.length > 1) {
+            console.error(`[WORLD_CONTACT_MULTIPLE_CHARACTER_MATCHES] contact_id=${contactId} | matches=${charMatches.length} | contact_name=${contact.person_name}`);
+          } else {
+            contactCharRecordRef.current = charMatches[0];
+            setCachedCharRecord(contactId, charMatches[0]); // populate session cache
+            console.log(`[WorldContacts] Full character resolved + cached | id=${charMatches[0].id} | name=${charMatches[0].name}`);
+          }
         }
       }
       const canonicalKey = getCanonicalSharedKey(character.id, contactId);
@@ -244,21 +264,27 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         );
       }
 
-      // ── PRE-FETCH canonical context now — cached for ALL sends in this session ──
-      // Same as Chat's systemPromptCacheRef: fetch once, reuse every turn.
-      // This prevents non-deterministic identity drift caused by per-send re-fetching.
-      if (contactId && !canonicalPromptCacheRef.current) {
-        base44.functions.invoke("buildCanonicalCharacterContext", {
-          characterId: contactId,
-          interactionContext: "direct_chat", // same as Chat — no special fork
-          topKMemories: 14,
-        }).then(ctxRes => {
-          const ctxData = ctxRes?.data || ctxRes;
-          if (ctxData?.systemPrompt) {
-            canonicalPromptCacheRef.current = ctxData.systemPrompt;
-            console.log(`[WorldContacts] Canonical context pre-cached | id=${contactId} | memories=${ctxData.memories?.length ?? 0} | lifeJournal=${(ctxData.lifeJournalEntries?.length ?? 0) > 0}`);
-          }
-        }).catch(e => console.warn(`[WorldContacts] Pre-fetch canonical context failed: ${e.message}`));
+      // ── PRE-FETCH canonical context — module-level session cache (survives popup reopen) ──
+      if (contactId) {
+        const sessionCachedPrompt = getCachedCanonicalPrompt(contactId);
+        if (sessionCachedPrompt) {
+          canonicalPromptCacheRef.current = sessionCachedPrompt;
+          console.log(`[WorldContacts] Canonical context from SESSION CACHE | id=${contactId} — character_connected_immediately`);
+        } else {
+          // Not in session cache — fetch and populate both caches
+          base44.functions.invoke("buildCanonicalCharacterContext", {
+            characterId: contactId,
+            interactionContext: "direct_chat",
+            topKMemories: 14,
+          }).then(ctxRes => {
+            const ctxData = ctxRes?.data || ctxRes;
+            if (ctxData?.systemPrompt) {
+              canonicalPromptCacheRef.current = ctxData.systemPrompt;
+              setCachedCanonicalPrompt(contactId, ctxData.systemPrompt); // session cache
+              console.log(`[WorldContacts] Canonical context pre-cached | id=${contactId} | memories=${ctxData.memories?.length ?? 0}`);
+            }
+          }).catch(e => console.warn(`[WorldContacts] Pre-fetch canonical context failed: ${e.message}`));
+        }
       }
 
       // ── ENSURE BILATERAL AWARENESS: if B doesn't have A in their list, create a neutral link ──
@@ -296,6 +322,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setConversationId(null);
     contactCharRecordRef.current = null;
     canonicalPromptCacheRef.current = null;
+    replyLockRef.current.clear();
+    isSendingRef.current = false;
   };
 
   const handleClose = () => {
@@ -306,6 +334,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setInputText("");
     contactCharRecordRef.current = null;
     canonicalPromptCacheRef.current = null;
+    replyLockRef.current.clear();
+    isSendingRef.current = false;
     onClose();
   };
 
@@ -456,6 +486,12 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
 
   const sendMessage = async (imageUrl = null) => {
     if (!inputText.trim() || isTyping) return;
+    // ── SEND GUARD: block concurrent sends (rapid tap / double submit) ──────────
+    if (isSendingRef.current) {
+      console.warn('[WorldContacts] sendMessage blocked — previous send still in flight');
+      return;
+    }
+    isSendingRef.current = true;
     const text = inputText.trim();
     setInputText("");
     setIsTyping(true);
@@ -467,14 +503,13 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     const participantIdsForMsg = contactId ? [character.id, contactId].sort() : [character.id];
 
     // ── HARD REJECTION: linked character-to-character World Phone requires canonical key ──
-    // If we cannot compute a canonical key (no related_character_id), reject immediately.
-    // Do NOT create any message or conversation — two realities would be the result.
     if (!contactId || !canonicalKeyForMsg) {
       console.warn(
         `[WorldPhone] SEND REJECTED — cannot compute canonical key.` +
         ` contact_id=${contactId || 'MISSING'} | key=${canonicalKeyForMsg || 'MISSING'}`
       );
       setIsTyping(false);
+      isSendingRef.current = false;
       return;
     }
 
@@ -500,6 +535,17 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
 
     console.log(`[WorldPhone] Sent message | from=${character.id} | to=${selectedContact.related_character_id} | msg_id=${savedUserMsg.id.substring(0, 8)}`);
 
+    // ── REPLY LOCK: keyed by source message id — prevents duplicate replies ─────
+    // If this source message already has a lock (generating or completed), do not run LLM again.
+    const replyLockKey = `${convoId}:${savedUserMsg.id}`;
+    if (replyLockRef.current.has(replyLockKey)) {
+      console.warn(`[WorldPhone] REPLY LOCK HIT — reply already generated or in flight for msg ${savedUserMsg.id.substring(0, 8)}. Aborting duplicate generation.`);
+      setIsTyping(false);
+      isSendingRef.current = false;
+      return;
+    }
+    replyLockRef.current.add(replyLockKey);
+
     // Render on right side (sent) immediately — subscription will also fire, dedup is handled
     const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text };
     setMessages(prev => prev.some(m => m.id === savedUserMsg.id) ? prev : [...prev, userMsg]);
@@ -521,6 +567,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     // Only send to selectedContact — never fan out to all contacts.
     if (!selectedContact?.person_name) {
       setIsTyping(false);
+      isSendingRef.current = false;
       return;
     }
 
@@ -534,6 +581,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     if (!contactId) {
       console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=MISSING | contact_name=${selectedContact.person_name} | reason=no_related_character_id | action=send_blocked`);
       setIsTyping(false);
+      isSendingRef.current = false;
       return;
     }
 
@@ -546,39 +594,50 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         if (chars.length === 0) {
           console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=${contactId} | contact_name=${selectedContact.person_name} | reason=Character.filter_returned_empty | action=send_blocked`);
           setIsTyping(false);
+          isSendingRef.current = false;
           return;
         }
         contactCharRecord = chars[0];
+        setCachedCharRecord(contactId, contactCharRecord); // session cache
         contactCharRecordRef.current = contactCharRecord;
       } catch (e) {
         console.error(`[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=${contactId} | error=${e.message} | action=send_blocked`);
         setIsTyping(false);
+        isSendingRef.current = false;
         return;
       }
     }
 
-    // STEP 2: Use cached canonical context (pre-fetched at selectContact, same as Chat's systemPromptCacheRef).
-    // If not yet ready (pre-fetch still in flight), wait for it now.
-    let canonicalPrompt = canonicalPromptCacheRef.current;
+    // STEP 2: Canonical context — check mount cache, then module-level session cache, then fetch.
+    let canonicalPrompt = canonicalPromptCacheRef.current || getCachedCanonicalPrompt(contactId);
+    if (canonicalPrompt && !canonicalPromptCacheRef.current) {
+      canonicalPromptCacheRef.current = canonicalPrompt; // backfill mount cache from session
+      console.log(`[WorldContacts] Canonical context from SESSION CACHE at send time | id=${contactId}`);
+    }
     if (!canonicalPrompt) {
       try {
+        const t0 = Date.now();
         const ctxRes = await base44.functions.invoke("buildCanonicalCharacterContext", {
           characterId: contactId,
-          interactionContext: "direct_chat", // SAME as Chat — no fork
+          interactionContext: "direct_chat",
           topKMemories: 14,
         });
         const ctxData = ctxRes?.data || ctxRes;
         canonicalPrompt = ctxData?.systemPrompt || null;
-        if (canonicalPrompt) canonicalPromptCacheRef.current = canonicalPrompt;
+        if (canonicalPrompt) {
+          canonicalPromptCacheRef.current = canonicalPrompt;
+          setCachedCanonicalPrompt(contactId, canonicalPrompt); // session cache
+          console.log(`[WorldContacts] canonical_context_load_ms=${Date.now() - t0}`);
+        }
       } catch (e) {
         console.warn(`[WorldContacts] buildCanonicalCharacterContext failed for ${contactId}:`, e.message);
       }
     }
 
     if (!canonicalPrompt) {
-      console.error(`[WORLD_CONTACT_CHARACTER_CONTEXT_MISMATCH] contact_id=${contactId} | contact_name=${selectedContact.person_name} | canonical_prompt=MISSING | missing_systems=canonical_context,memory,relationship,emotional_state`);
-      // Do NOT silently generate — context is missing, fail visibly in logs
+      console.error(`[WORLD_CONTACT_CHARACTER_CONTEXT_MISMATCH] contact_id=${contactId} | contact_name=${selectedContact.person_name} | canonical_prompt=MISSING`);
       setIsTyping(false);
+      isSendingRef.current = false;
       return;
     }
 
@@ -651,13 +710,16 @@ Respond ONLY with valid JSON in this exact format:
     // STEP 7: Call LLM — SAME caller as Chat.
     let npcText = "...";
     try {
+      const t_llm = Date.now();
       const rawResponse = await callLLMWithRetry(fullPrompt);
+      console.log(`[WorldContacts] llm_call_ms=${Date.now() - t_llm} | contact=${selectedContact.person_name}`);
       const parsed = parseCharacterResponse(rawResponse);
       npcText = parsed.text_content?.trim() || rawResponse?.trim() || "...";
       npcText = filterDashes(npcText);
       npcText = stripCharacterNamePrefix(npcText, selectedContact.person_name);
       if (!npcText || npcText.startsWith("{") || npcText.startsWith("```")) npcText = "...";
-    } catch {
+    } catch (e) {
+      console.error(`[WorldContacts] LLM call failed: ${e.message}`);
       npcText = "...";
     }
 
@@ -672,6 +734,7 @@ Respond ONLY with valid JSON in this exact format:
     if (isUserContact) {
       console.warn(`[WorldContactsPopup] BLOCKED: Attempted to create message as user contact "${selectedContact.person_name}"`);
       setIsTyping(false);
+      isSendingRef.current = false;
       return;
     }
 
@@ -701,6 +764,7 @@ Respond ONLY with valid JSON in this exact format:
     }).catch(() => {});
 
     setIsTyping(false);
+    isSendingRef.current = false; // release send guard — reply complete
 
     // ── BILATERAL SYNC + MEMORY (non-blocking with full failure tracking) ──────────
     // UI is already updated. Sync runs in background. All three records are marked.

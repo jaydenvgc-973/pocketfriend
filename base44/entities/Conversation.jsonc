@@ -69,12 +69,28 @@
     },
     "merged_into_conversation_id": {
       "type": "string",
-      "description": "If sync_status is 'merged', the canonical conversation ID this thread was consolidated into. The original thread is preserved; only new messages should go to the canonical thread."
+      "description": "If sync_status is 'merged', the canonical conversation ID this thread was consolidated into."
     },
     "merged_at": {
       "type": "string",
       "format": "date-time",
       "description": "ISO timestamp when this conversation was archived/merged into the canonical thread."
+    },
+    "world_contact_mode": {
+      "type": "string",
+      "enum": [
+        "active_created_to_active_created",
+        "character_to_character",
+        "character_to_npc"
+      ],
+      "description": "Mode classification for World Contacts conversations. Stamped at creation or backfilled."
+    },
+    "participant_character_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "character_type values of both participants at conversation creation time."
     }
   },
   "required": [
