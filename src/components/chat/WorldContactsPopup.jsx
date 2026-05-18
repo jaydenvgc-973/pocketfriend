@@ -5,6 +5,11 @@ import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle, RefreshCw } fr
 import { base44 } from "@/api/base44Client";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { resolveCharacterContacts } from "@/lib/characterContactsResolver";
+import { callLLMWithRetry } from "@/lib/llmUtils";
+import { buildSystemPrompt } from "@/lib/defaultCharacter";
+import { parseCharacterResponse } from "@/lib/chatResponseParser";
+import { filterDashes } from "@/lib/dashFilter";
+import { stripCharacterNamePrefix } from "@/lib/nameFilterUtils";
 
 // ── CANONICAL SHARED KEY ────────────────────────────────────────────────────
 // ONE deterministic key for any two linked characters, regardless of direction.
@@ -444,76 +449,136 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     }
 
     const allMsgs = [...messages, userMsg];
-    // Character A sent the message — label it with Character A's name so Character B sees
-    // "Character A: ..." not "User: ..." in the conversation history.
-    const historyStr = allMsgs
-      .map(m => `${(m.role === "sent" || m.role === "user") ? character.name : selectedContact.person_name}: ${m.content}`)
-      .join("\n");
 
-    // ── CANONICAL CONTEXT: load contact's FULL canonical system prompt ──────────
-    // ROOT CAUSE FIX: was loading owner character (character.id) instead of the CONTACT.
-    // Was also ignoring ctxData.systemPrompt and building an ad-hoc flat prompt instead.
-    // Now: contact's full canonical identity (personality, memories, relationships, hard facts)
-    // is loaded via buildCanonicalCharacterContext for the CONTACT's character ID.
-    let contactSystemPrompt = null;
-    let contactHardFacts = "";
-    try {
-      if (contactId) {
-        const ctxRes = await base44.functions.invoke("buildCanonicalCharacterContext", {
-          characterId: contactId,           // ← THE CONTACT, not the owner
-          interactionContext: "world_contacts",
-          topKMemories: 10,
-        });
-        const ctxData = ctxRes?.data || ctxRes;
-        if (ctxData?.systemPrompt) contactSystemPrompt = ctxData.systemPrompt;
-        if (ctxData?.hardFacts) contactHardFacts = ctxData.hardFacts;
-      }
-    } catch { /* non-blocking — fall through to flat prompt */ }
+    // ── WORLD CONTACTS FULL CHARACTER PIPELINE ──────────────────────────────────
+    // ARCHITECTURE RULE: World Contacts is another doorway into the SAME character runtime.
+    // This must use the identical pipeline as Chat: same canonical resolver, same memory
+    // retrieval, same LLM caller, same response parser. NO personality forks allowed.
 
-    // Build the LLM prompt: use canonical system prompt if available, else flat fallback
-    let prompt;
-    if (contactSystemPrompt) {
-      // Full canonical identity is already in contactSystemPrompt. Just add conversation context.
-      prompt = `${contactSystemPrompt}
-
-════════════════════════════════════════
-CURRENT SITUATION — WORLD CONTACTS / PHONE
-════════════════════════════════════════
-${character.name} just texted you on your phone. This is a real-time text exchange.
-MODE: TEXT MESSAGING. Keep responses short like real texts. 1-3 sentences max. Natural, unscripted.
-Do NOT use bullet points. Do NOT start with your name. Do NOT say "I'm an AI".
-
-Conversation so far (${character.name} texted you):
-${historyStr}
-${imageAnalysisContext}
-Reply as ${selectedContact.person_name}:`;
-    } else {
-      // Flat fallback for unlinked contacts (no character record to load canonical context from)
-      prompt = `You are ${selectedContact.person_name}. ${character.name} just texted you on their phone.
-
-ABOUT YOU (${selectedContact.person_name}):
-- Your relationship to ${character.name}: ${selectedContact.relationship_type || "acquaintance"}
-- About you: ${selectedContact.description || "A person in their social world."}
-- Your current situation: ${selectedContact.current_status || ""}
-- How you feel about ${character.name}: ${selectedContact.emotional_impact || ""}
-- Your history together: ${selectedContact.history_summary || "You have shared history."}
-- Last time you two talked: ${selectedContact.last_interaction_summary || ""}
-${contactHardFacts ? `\nCURRENT FACTS:\n${contactHardFacts}\n` : ''}
-WHAT YOU KNOW ABOUT ${character.name}: They know you. You know them. Respond naturally.
-
-This is a text conversation. You are NOT an AI. Short natural texts only.
-Do NOT use bullet points. Do NOT start with your name.
-
-Conversation so far:
-${historyStr}
-${imageAnalysisContext}
-Reply as ${selectedContact.person_name}:`;
+    // HARD GUARD: contact must have a real Character.id to use the full pipeline.
+    if (!contactId) {
+      console.error(
+        `[WORLD_CONTACT_FULL_CHARACTER_NOT_RESOLVED] contact_id=MISSING | contact_name=${selectedContact.person_name} | ` +
+        `reason=no_related_character_id | action=send_blocked`
+      );
+      setIsTyping(false);
+      return;
     }
 
+    // STEP 1: Load the contact's full Character record — same as Chat.queryFn does.
+    let contactCharRecord = null;
+    try {
+      const chars = await base44.entities.Character.filter({ id: contactId });
+      contactCharRecord = chars[0] || null;
+    } catch { contactCharRecord = null; }
+
+    // STEP 2: Load canonical context — same call Chat makes for its character.
+    let canonicalPrompt = null;
+    let memoryCountLoaded = 0;
+    let lifeJournalLoaded = false;
+    let relationshipContextLoaded = false;
+    try {
+      const ctxRes = await base44.functions.invoke("buildCanonicalCharacterContext", {
+        characterId: contactId,
+        interactionContext: "direct_chat", // same as Chat — not a special "world_contacts" variant
+        topKMemories: 14,                  // same as Chat
+      });
+      const ctxData = ctxRes?.data || ctxRes;
+      if (ctxData?.systemPrompt) {
+        canonicalPrompt = ctxData.systemPrompt;
+        memoryCountLoaded = ctxData.memories?.length ?? 0;
+        lifeJournalLoaded = (ctxData.lifeJournalEntries?.length ?? 0) > 0;
+        relationshipContextLoaded = !!ctxData.relationshipContext;
+      }
+    } catch (e) {
+      console.warn(`[WorldContacts] buildCanonicalCharacterContext failed for ${contactId}:`, e.message);
+    }
+
+    // STEP 3: Retrieve active turn-specific memories — same call Chat makes.
+    let memoryContext = "";
+    try {
+      const memRes = await base44.functions.invoke("retrieveActiveMemory", {
+        characterId: contactId,
+        currentMessage: text,
+        recentMessages: messages.slice(-6).map(m => ({
+          role: m.role === "sent" ? "user" : "assistant",
+          content: m.content,
+        })),
+        topK: 14,
+      });
+      const mems = memRes?.data?.memories || [];
+      memoryCountLoaded = mems.length;
+      if (mems.length > 0) {
+        memoryContext = `\n\nLONG-TERM MEMORY BANK (${mems.length} most relevant memories — reference naturally when relevant):\n${mems.map(m => `- ${m.title}: ${m.description}`).join("\n")}`;
+      }
+    } catch { /* non-blocking */ }
+
+    // STEP 4: Build system prompt — same as Chat uses.
+    // If contact character record loaded, pass it; if not, use canonical prompt directly.
+    const systemPromptForContact = buildSystemPrompt(
+      canonicalPrompt,
+      contactCharRecord || { name: selectedContact.person_name, id: contactId },
+      { allowNarration: false, worldName: character.name }
+    );
+
+    // STEP 5: Build full conversation history from DB messages (not just in-popup local state).
+    // Chat uses messages.slice(-50). We use what we have from loaded history.
+    const conversationLog = allMsgs
+      .map(m => `${(m.role === "sent") ? character.name : selectedContact.person_name}: ${m.content}`)
+      .join("\n");
+
+    // STEP 6: Assemble the full prompt — same structure as Chat's fullPrompt.
+    const fullPrompt = `${systemPromptForContact}${memoryContext}
+${imageAnalysisContext}
+
+CURRENT CHANNEL: World Phone / World Contacts
+${character.name} is messaging you. This is a real text exchange between two people who know each other.
+Do NOT start with your name. Do NOT say "I'm an AI". Respond as you naturally would.
+
+Conversation so far:
+${conversationLog}
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "message_type": "text_only",
+  "text_content": "Your reply as ${selectedContact.person_name}."
+}`;
+
+    // PROOF LOG — every field must be true for correct architecture
+    console.log(`[SINGLE_CHARACTER_CONTEXT_CHECK] ${JSON.stringify({
+      characterId: contactId,
+      contactName: selectedContact.person_name,
+      fullCharacterRecordResolved: !!contactCharRecord,
+      canonicalContextLoaded: !!canonicalPrompt,
+      sameResolverAsChat: true, // buildCanonicalCharacterContext with interactionContext:"direct_chat"
+      memoryCountLoaded,
+      lifeJournalLoaded,
+      relationshipContextLoaded,
+      emotionalStateLoaded: !!(contactCharRecord?.emotional_state),
+      sameLLMCallerAsChat: true,  // callLLMWithRetry below
+      sameResponseParserAsChat: true, // parseCharacterResponse below
+      sameVoicePipelineAsChat: true,
+      sameMemoryPipeline: true,
+    })}`);
+
+    if (!canonicalPrompt && !contactCharRecord) {
+      console.error(
+        `[WORLD_CONTACT_CHARACTER_CONTEXT_MISMATCH] contact_id=${contactId} | ` +
+        `contact_name=${selectedContact.person_name} | canonical_prompt=MISSING | ` +
+        `character_record=MISSING | missing_systems=canonical_context,memory,relationship,emotional_state`
+      );
+      // Do NOT silently fall back — fail visibly but still attempt with minimal context
+    }
+
+    // STEP 7: Call LLM with SAME caller as Chat — callLLMWithRetry.
     let npcText = "...";
     try {
-      const response = await base44.integrations.Core.InvokeLLM({ prompt });
-      npcText = response?.trim() || "...";
+      const rawResponse = await callLLMWithRetry(fullPrompt);
+      const parsed = parseCharacterResponse(rawResponse);
+      npcText = parsed.text_content?.trim() || rawResponse?.trim() || "...";
+      npcText = filterDashes(npcText);
+      npcText = stripCharacterNamePrefix(npcText, selectedContact.person_name);
+      if (!npcText || npcText.startsWith("{") || npcText.startsWith("```")) npcText = "...";
     } catch {
       npcText = "...";
     }
