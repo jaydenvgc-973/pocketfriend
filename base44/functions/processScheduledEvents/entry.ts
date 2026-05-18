@@ -88,7 +88,20 @@ Deno.serve(async (req) => {
               if (genRes && typeof genRes === 'string' && genRes.length > 3) {
                 followThroughText = genRes.trim();
               }
-            } catch {}
+            } catch (llmErr) {
+              // ── CIRCUIT BREAKER: LLM failed for scheduled follow-through ──────────
+              // Record durable fallback state. Do NOT substitute a generic "Sorry, got pulled away..."
+              // message. Skip saving entirely — the promise will be retried on next scheduled run.
+              base44.asServiceRole.functions.invoke('generationLock', {
+                action: 'record_fallback',
+                conversation_id: convId,
+                character_id: charId,
+                owner_email: null, // service-role context
+                fallback_text: `[scheduled_communication_promise_llm_failure]`,
+              }).catch(() => {});
+              console.warn(`[processScheduledEvents] LLM failed for communication_promise char=${charId} — skipping message save`);
+              continue; // Skip saving the fallback text
+            }
 
             await base44.asServiceRole.entities.Message.create({
               conversation_id: convId,

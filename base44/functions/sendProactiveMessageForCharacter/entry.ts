@@ -215,9 +215,30 @@ RULES:
 - Do NOT start with your own name or a label.
 - Max 2-3 sentences. Often 1 is better.`;
 
-    const messageContent = await base44.integrations.Core.InvokeLLM({
-      prompt: proactivePrompt,
-    });
+    let messageContent;
+    try {
+      messageContent = await base44.integrations.Core.InvokeLLM({
+        prompt: proactivePrompt,
+      });
+    } catch (llmErr) {
+      console.warn(`[sendProactiveMessageForCharacter] LLM failed for ${char.name}: ${llmErr.message}`);
+      // ── CIRCUIT BREAKER: Record durable fallback state — do NOT save generic text ──
+      // Proactive messages must NEVER use "Sorry, got pulled away..." as character speech.
+      // If LLM fails, skip this proactive message entirely.
+      const todayConvos = await base44.entities.Conversation.filter({
+        type: 'direct', owner_email: char.owner_email, character_ids: [char.id],
+      }).catch(() => []);
+      if (todayConvos.length > 0) {
+        base44.functions.invoke('generationLock', {
+          action: 'record_fallback',
+          conversation_id: todayConvos[0].id,
+          character_id: char.id,
+          owner_email: char.owner_email,
+          fallback_text: `[proactive_llm_failure] ${llmErr.message?.substring(0, 60)}`,
+        }).catch(() => {});
+      }
+      return Response.json({ success: false, reason: 'llm_failure_no_fallback_saved' });
+    }
 
     // Find or create conversation — owner_email required on both filter and create
     const convos = await base44.entities.Conversation.filter({

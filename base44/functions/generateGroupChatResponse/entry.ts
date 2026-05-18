@@ -311,7 +311,16 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
         if (!responseText) continue;
       } catch (err) {
         console.error(`[GROUP-CHAT] ${character.name} LLM error: ${err.message}`);
-        continue;
+        // ── CIRCUIT BREAKER: Record durable fallback state — do NOT save generic text ──
+        // Group Chat backend must NEVER save "Sorry, got pulled away..." as a character Message.
+        base44.functions.invoke('generationLock', {
+          action: 'record_fallback',
+          conversation_id: conversation.id,
+          character_id: character.id,
+          owner_email: character.owner_email,
+          fallback_text: `[group_chat_llm_failure] ${err.message?.substring(0, 60)}`,
+        }).catch(() => {});
+        continue; // Skip this character — no fallback message saved
       }
 
       await base44.entities.Message.create({

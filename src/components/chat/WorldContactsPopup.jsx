@@ -778,43 +778,28 @@ Respond ONLY with valid JSON in this exact format:
     } catch (e) {
       console.error(`[WorldContacts] LLM call failed: ${e.message}`);
       
-      // ── FALLBACK WITH CIRCUIT BREAKER ──
-      const { detectFallbackResponse, ConversationRecoveryState, evaluateFallbackSavability } = 
-        await import('@/lib/fallbackCircuitBreaker');
-      const { runRecoveryDiagnostic, getRecoveryUserMessage } = 
-        await import('@/lib/recoveryDiagnostic');
-      
-      npcText = "Sorry, got pulled away for a sec — what were you saying?";
-      const recoveryState = new ConversationRecoveryState(await base44.auth.me().then(m => m?.email), convoId);
-      const isFallback = detectFallbackResponse(npcText);
-      
-      if (isFallback) {
-        const fallbackCheck = recoveryState.onFallbackDetected('llm_failure', 'world_contacts_generation');
-        const savability = evaluateFallbackSavability(recoveryState);
-        
-        if (!savability.should_save) {
-          // Block second+ fallback
-          npcText = getRecoveryUserMessage(recoveryState.getState().blocking_stage);
-        }
-        
-        // Trigger recovery in background
-        if (fallbackCheck.should_trigger_recovery) {
-          setTimeout(async () => {
-            if (!recoveryState.canAttemptRecovery()) return;
-            const diagnostic = await runRecoveryDiagnostic({
-              characterId: contactId,
-              conversationId: convoId,
-              ownerEmail: await base44.auth.me().then(m => m?.email),
-              base44,
-            });
-            if (diagnostic.success) {
-              recoveryState.markRecoveryComplete();
-            } else {
-              recoveryState.markRecoveryFailed(diagnostic.blocking_stage);
-            }
-          }, 100);
-        }
-      }
+      // ── CIRCUIT BREAKER: do NOT save generic fallback as a Message ────────────
+      // Record durable fallback state and trigger background recovery.
+      // npcText left empty — UI will show reconnecting state instead.
+      npcText = null; // null = do NOT save anything
+      const { handleFallbackResponse } = await import('@/lib/chatFallbackIntegration');
+      await handleFallbackResponse({
+        characterId: contactId,
+        conversationId: convoId,
+        currentUser: await base44.auth.me().catch(() => null),
+        base44,
+        character: contactCharRecordRef.current,
+        setRecoveringState: (val) => setIsTyping(val),
+        errorReason: 'llm_failure',
+        errorStage: 'world_contacts_generation',
+      });
+    }
+
+    // SAFETY: If npcText is null, the circuit breaker blocked saving — abort silently.
+    if (npcText === null) {
+      setIsTyping(false);
+      isSendingRef.current = false;
+      return;
     }
 
     // SAFETY: Verify contact is not the user before creating message.

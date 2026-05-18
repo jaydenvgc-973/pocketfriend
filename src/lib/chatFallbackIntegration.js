@@ -1,24 +1,49 @@
 /**
  * Chat Fallback Integration
- * 
- * Handles fallback detection and recovery orchestration for Chat page.
- * Extracted from Chat.js to keep it under file size limits.
+ *
+ * Handles fallback detection and circuit breaker for ALL character-response paths.
+ *
+ * KEY RULES:
+ * 1. Generic fallback texts are NEVER saved as character Messages (not even first one)
+ *    → They were only meant to be one-time emergency signals, not saved speech.
+ *    → The circuit breaker blocks ALL fallback saves immediately.
+ *    → First fallback triggers background recovery silently.
+ *    → User sees UI state "Reconnecting…" via setRecoveringState() — NOT a saved message.
+ * 2. Durable state is written to the Conversation.generation_lock field via generationLock function.
+ * 3. This module is used by Chat, Text, WorldContacts, and can be imported by backend paths.
  */
 
-import { ConversationRecoveryState, detectFallbackResponse, evaluateFallbackSavability } from '@/lib/fallbackCircuitBreaker';
-import { runRecoveryDiagnostic, getRecoveryUserMessage } from '@/lib/recoveryDiagnostic';
-
-const FALLBACK_TEXTS = [
-  "Sorry, got pulled away for a sec — what were you saying?",
-  "Give me a moment, something came up on my end.",
-  "Hey sorry — I'm here, just had a second. What's up?",
-  "My bad, got distracted. Say that again?",
-  "Sorry, lost you for a second — I'm back.",
+const FALLBACK_PATTERNS = [
+  "sorry, got pulled away",
+  "give me a moment",
+  "hey sorry",
+  "my bad, got distracted",
+  "sorry, lost you",
+  "what were you saying",
+  "something came up on my end",
+  "i'm back",
+  "i'm here, just had a second",
+  "reconnecting",
 ];
 
 /**
- * Handle fallback response with circuit breaker logic.
- * Returns: { fallback_text, should_save, recovery_triggered }
+ * Detect if a response text is a generic fallback (not real character output).
+ */
+export function detectFallbackResponse(text) {
+  if (!text || typeof text !== 'string') return false;
+  const t = text.trim().toLowerCase();
+  if (t === '...' || t === '[image_failed]') return true;
+  const snippet = t.substring(0, 80);
+  return FALLBACK_PATTERNS.some(p => snippet.includes(p));
+}
+
+/**
+ * Main handler — called when the LLM pipeline fails and a fallback would be used.
+ *
+ * Returns: { should_save: false always, recovery_triggered, ui_state }
+ *
+ * CRITICAL: should_save is ALWAYS false. Fallback texts are NEVER saved as Messages.
+ * The caller must use setRecoveringState(true) to show "Reconnecting…" in the UI instead.
  */
 export async function handleFallbackResponse({
   characterId,
@@ -26,95 +51,202 @@ export async function handleFallbackResponse({
   currentUser,
   base44,
   character,
-  isMountedRef,
-  setMessages,
+  // UI state setters — used instead of saving a Message
+  setRecoveringState,  // (boolean) → sets "Reconnecting…" indicator in UI
+  errorReason = 'llm_failure',
+  errorStage = 'response_generation',
 }) {
   const convoId = conversationId;
+
+  // Always set recovering state in UI (not a saved message)
+  if (typeof setRecoveringState === 'function') {
+    setRecoveringState(true);
+  }
+
   if (!convoId) {
-    return { fallback_text: FALLBACK_TEXTS[0], should_save: true, recovery_triggered: false };
+    console.warn(`[ChatFallback] No conversationId — cannot record durable state`);
+    return { should_save: false, recovery_triggered: false, ui_state: 'reconnecting' };
   }
 
-  const fallbackText = FALLBACK_TEXTS[Math.floor(Math.random() * FALLBACK_TEXTS.length)];
-  const recoveryState = new ConversationRecoveryState(currentUser?.email, convoId);
-  
-  // Detect if this is a fallback
-  const isFallback = detectFallbackResponse(fallbackText);
-  if (!isFallback) {
-    return { fallback_text: fallbackText, should_save: true, recovery_triggered: false };
-  }
-
-  // Check circuit breaker
-  const fallbackCheck = recoveryState.onFallbackDetected('llm_failure', 'response_generation');
-  const savability = evaluateFallbackSavability(recoveryState);
-
-  console.log(`[Chat] Fallback detected | should_trigger_recovery=${fallbackCheck.should_trigger_recovery} | should_save=${savability.should_save}`);
-
-  if (!savability.should_save) {
-    // Block second+ fallback, show recovery message
-    const recoveryMsg = getRecoveryUserMessage(recoveryState.getState().blocking_stage);
-    if (isMountedRef.current) {
-      base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: recoveryMsg,
-        emotional_state: "calm",
-        is_read: true,
-        timestamp: new Date().toISOString(),
-      }).then(msg => {
-        if (msg?.id && isMountedRef.current) {
-          setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
-        }
-      }).catch(() => {});
-    }
-
-    // Trigger recovery in background
-    if (fallbackCheck.should_trigger_recovery) {
-      triggerRecoveryBackground(characterId, convoId, currentUser?.email, base44, character, recoveryState);
-    }
-
-    return { fallback_text: recoveryMsg, should_save: false, recovery_triggered: fallbackCheck.should_trigger_recovery };
-  }
-
-  // FIRST FALLBACK: allow save and trigger recovery
-  return { fallback_text: fallbackText, should_save: true, recovery_triggered: fallbackCheck.should_trigger_recovery };
-}
-
-/**
- * Start recovery diagnostic in background without blocking the user.
- */
-function triggerRecoveryBackground(characterId, convoId, ownerEmail, base44, character, recoveryState) {
-  setTimeout(async () => {
-    if (!recoveryState.canAttemptRecovery()) return;
-
-    const diagnostic = await runRecoveryDiagnostic({
-      characterId,
-      conversationId: convoId,
-      ownerEmail,
-      base44,
+  // ── 1. Write durable fallback record to Conversation.generation_lock ──────
+  let fallbackCount = 1;
+  let fallbackBlocked = false;
+  try {
+    const res = await base44.functions.invoke('generationLock', {
+      action: 'record_fallback',
+      conversation_id: convoId,
+      character_id: characterId,
+      owner_email: currentUser?.email,
+      fallback_text: `[${errorReason}] at stage: ${errorStage}`,
     });
+    fallbackCount = res?.data?.fallback_count || 1;
+    fallbackBlocked = res?.data?.fallback_blocked || false;
+  } catch (e) {
+    console.warn(`[ChatFallback] Failed to record durable fallback: ${e.message}`);
+  }
 
-    if (diagnostic.success) {
-      recoveryState.markRecoveryComplete();
-      if (character?.id) {
-        recoveryState.setCharacterCache(character.id, diagnostic.recovered_cache);
-      }
-      console.log(`[Chat] Recovery completed and cached`);
-    } else {
-      recoveryState.recordRecoveryAttempt(Object.keys(diagnostic.stages).find(k => diagnostic.stages[k]));
-      recoveryState.markRecoveryFailed(diagnostic.blocking_stage);
-      console.warn(`[Chat] Recovery failed at stage: ${diagnostic.blocking_stage}`);
-    }
-  }, 100);
+  console.log(`[ChatFallback] Fallback detected | count=${fallbackCount} | blocked=${fallbackBlocked} | convo=${convoId} | reason=${errorReason}`);
+
+  // ── 2. Trigger background recovery (always — every fallback triggers it) ──
+  triggerRecoveryBackground({
+    characterId,
+    conversationId: convoId,
+    ownerEmail: currentUser?.email,
+    base44,
+    characterName: character?.name,
+    setRecoveringState,
+  });
+
+  return {
+    should_save: false,       // NEVER save fallback text as a character Message
+    recovery_triggered: true,
+    fallback_count: fallbackCount,
+    fallback_blocked: fallbackBlocked,
+    ui_state: 'reconnecting', // Caller shows this in UI, does NOT save to DB
+  };
 }
 
 /**
- * Get proof logs from recovery state.
- * For debugging and monitoring.
+ * Background recovery — checks all pipeline stages and caches restored context.
+ * Non-blocking. Does NOT produce any saved messages.
  */
-export function getRecoveryProof(conversationId, ownerEmail) {
-  if (!conversationId || !ownerEmail) return null;
-  const recoveryState = new ConversationRecoveryState(ownerEmail, conversationId);
-  return recoveryState.getProof();
+function triggerRecoveryBackground({
+  characterId,
+  conversationId,
+  ownerEmail,
+  base44,
+  characterName,
+  setRecoveringState,
+}) {
+  const MAX_ATTEMPTS = 2;
+  let attempts = 0;
+
+  const tryRecover = async () => {
+    if (attempts >= MAX_ATTEMPTS) {
+      console.warn(`[ChatFallback] Recovery max attempts reached (${MAX_ATTEMPTS}) for convo=${conversationId}`);
+      if (typeof setRecoveringState === 'function') setRecoveringState(false);
+      return;
+    }
+
+    attempts++;
+    const backoffMs = attempts === 1 ? 1500 : 3000;
+    await new Promise(r => setTimeout(r, backoffMs));
+
+    const stages = {
+      canonical_prompt: false,
+      character_record: false,
+      conversation: false,
+      messages: false,
+      memory: false,
+    };
+
+    let blockingStage = null;
+
+    try {
+      // Stage 1: Character record
+      const chars = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+      if (chars.length > 0) stages.character_record = true;
+      else blockingStage = blockingStage || 'character_record';
+
+      // Stage 2: Conversation
+      const convos = await base44.entities.Conversation.filter({ id: conversationId }, null, 1).catch(() => []);
+      if (convos.length > 0) stages.conversation = true;
+      else blockingStage = blockingStage || 'conversation';
+
+      // Stage 3: Recent messages
+      const msgs = await base44.entities.Message.filter(
+        { conversation_id: conversationId }, '-created_date', 20
+      ).catch(() => []);
+      if (msgs.length > 0) stages.messages = true;
+
+      // Stage 4: Canonical prompt (non-blocking)
+      const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
+        characterId,
+        interactionContext: 'direct_chat',
+        topKMemories: 14,
+      }).catch(() => null);
+      if (ctxRes?.data?.systemPrompt) stages.canonical_prompt = true;
+      else blockingStage = blockingStage || 'canonical_prompt';
+
+      // Stage 5: Memory (non-blocking)
+      const memRes = await base44.functions.invoke('retrieveActiveMemory', {
+        characterId,
+        currentMessage: '',
+        recentMessages: [],
+        topK: 14,
+      }).catch(() => null);
+      if (memRes?.data?.memories?.length > 0) stages.memory = true;
+
+    } catch (err) {
+      blockingStage = blockingStage || `exception:${err.message?.substring(0, 40)}`;
+    }
+
+    const criticalSuccess = stages.character_record && stages.conversation;
+    const realPipelineRestored = criticalSuccess && stages.canonical_prompt;
+
+    // Write durable recovery result
+    try {
+      await base44.functions.invoke('generationLock', {
+        action: 'record_recovery',
+        conversation_id: conversationId,
+        character_id: characterId,
+        owner_email: ownerEmail,
+        blocking_stage: blockingStage,
+        recovery_stages: stages,
+        real_pipeline_restored: realPipelineRestored,
+      });
+    } catch (e) {
+      console.warn(`[ChatFallback] Failed to record recovery result: ${e.message}`);
+    }
+
+    console.log(
+      `[ChatFallback] Recovery attempt ${attempts}/${MAX_ATTEMPTS} | convo=${conversationId}` +
+      ` | character=${characterName} | success=${realPipelineRestored}` +
+      ` | stages=${JSON.stringify(stages)}`
+    );
+
+    if (realPipelineRestored) {
+      // Recovery done — clear UI recovering state
+      if (typeof setRecoveringState === 'function') setRecoveringState(false);
+      console.log(`[ChatFallback] Recovery complete | real_pipeline_restored=true`);
+    } else if (attempts < MAX_ATTEMPTS) {
+      // Retry
+      await tryRecover();
+    } else {
+      // Final failure — clear recovering state so UI doesn't hang
+      if (typeof setRecoveringState === 'function') setRecoveringState(false);
+      console.warn(`[ChatFallback] Recovery failed after ${MAX_ATTEMPTS} attempts | blocking_stage=${blockingStage}`);
+    }
+  };
+
+  // Kick off non-blocking (defer to avoid blocking current render cycle)
+  setTimeout(tryRecover, 100);
+}
+
+/**
+ * Get proof data from durable Conversation.generation_lock.
+ * Can be called any time to verify circuit breaker state.
+ */
+export async function getRecoveryProof(conversationId, base44) {
+  if (!conversationId || !base44) return null;
+  try {
+    const res = await base44.functions.invoke('generationLock', {
+      action: 'check',
+      conversation_id: conversationId,
+    });
+    const lock = res?.data?.lock_data || {};
+    return {
+      fallback_detected: !!lock.fallback_detected,
+      fallback_count: lock.fallback_count || 0,
+      fallback_blocked: !!lock.fallback_blocked,
+      recovery_required: !!lock.recovery_required,
+      recovery_started_at: lock.recovery_started_at || null,
+      recovery_completed_at: lock.recovery_completed_at || null,
+      last_blocking_stage: lock.last_blocking_stage || null,
+      real_pipeline_restored: !!lock.real_pipeline_restored,
+      generation_in_progress: !!lock.generation_in_progress,
+    };
+  } catch {
+    return null;
+  }
 }

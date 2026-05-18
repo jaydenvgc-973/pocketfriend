@@ -109,6 +109,7 @@ export default function Chat() {
   const [isLoadingConvo, setIsLoadingConvo] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
+  const [isRecovering, setIsRecovering] = useState(false);
 
   // Reset conversation state immediately when switching characters.
   // This prevents Character A's messages showing while Character B loads.
@@ -1310,37 +1311,24 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       const msg = err?.message || '';
       const isRateLimit = msg.includes('429') || msg.includes('Rate limit') || msg.includes('rate limit') || err?.status === 429;
-      const isNetwork = msg.includes('Network') || msg.includes('network') || msg.includes('timeout') || msg.includes('fetch');
-      const isRetryable = isRateLimit || isNetwork;
-
+      const isRetryable = isRateLimit || msg.includes('timeout') || msg.includes('Network');
       console.error('[sendMessage] Error:', msg, '| retryable:', isRetryable);
-      
-      // ── FALLBACK WITH CIRCUIT BREAKER ──
-      const fallbackResult = await handleFallbackResponse({
-        characterId,
-        conversationId: conversationIdRef.current || conversationId,
-        currentUser,
-        base44,
-        character,
-        isMountedRef,
-        setMessages,
-      });
-      
-      if (fallbackResult.should_save && isMountedRef.current) {
-        base44.entities.Message.create({
-          conversation_id: conversationIdRef.current || conversationId,
-          sender_type: "character",
-          character_id: characterId,
-          character_name: character.name,
-          content: fallbackResult.fallback_text,
-          emotional_state: character.emotional_state || "calm",
-          is_read: true,
-          timestamp: new Date().toISOString(),
-        }).then(fallbackMsg => {
-          if (fallbackMsg?.id && isMountedRef.current) {
-            setMessages(prev => prev.some(m => m.id === fallbackMsg.id) ? prev : [...prev, fallbackMsg]);
-          }
-        }).catch(() => {});
+
+      // ── CIRCUIT BREAKER: NEVER save generic fallback text as a character Message ──
+      // handleFallbackResponse always returns should_save=false.
+      // Recovery triggers automatically in background.
+      // UI shows "Reconnecting…" via isRecovering state — NOT a saved Message.
+      if (isMountedRef.current) {
+        await handleFallbackResponse({
+          characterId,
+          conversationId: conversationIdRef.current || conversationId,
+          currentUser,
+          base44,
+          character,
+          setRecoveringState: setIsRecovering,
+          errorReason: isRateLimit ? 'rate_limit' : msg.includes('timeout') ? 'timeout' : 'llm_failure',
+          errorStage: 'response_generation',
+        });
       }
       return;
 
@@ -1865,6 +1853,13 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         />
       ) : (
         <ChatInput onSend={sendMessage} draftKey={characterId} />
+      )}
+      {/* Reconnecting indicator — UI state only, never saved as a Message */}
+      {isRecovering && (
+        <div className="px-4 pb-1 flex items-center gap-2 text-xs text-muted-foreground/70">
+          <div className="w-3 h-3 border-2 border-muted-foreground/30 border-t-muted-foreground/70 rounded-full animate-spin flex-shrink-0" />
+          <span>Reconnecting to {character?.name || 'character'}…</span>
+        </div>
       )}
       <NarrativeBuilderPopup
         isOpen={showNarrativeBuilder}
