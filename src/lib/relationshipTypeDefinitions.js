@@ -59,12 +59,69 @@ export const RELATIONSHIP_TYPES = {
     description: "Neutral association"
   },
 
-  // ROMANTIC (bilateral)
+  // ROMANTIC / COMMITTED (bilateral — spouse family)
+  spouse: {
+    label: "Spouse",
+    category: "romantic",
+    type: "bilateral",
+    inverse: "spouse",
+    relationship_family: "spouse_partner",
+    description: "Married or life-committed partner"
+  },
+  husband: {
+    label: "Husband",
+    category: "romantic",
+    type: "bilateral",
+    inverse: "wife",
+    relationship_family: "spouse_partner",
+    description: "Married partner (male)"
+  },
+  wife: {
+    label: "Wife",
+    category: "romantic",
+    type: "bilateral",
+    inverse: "husband",
+    relationship_family: "spouse_partner",
+    description: "Married partner (female)"
+  },
+  married: {
+    label: "Married",
+    category: "romantic",
+    type: "bilateral",
+    inverse: "married",
+    relationship_family: "spouse_partner",
+    description: "Formally married"
+  },
+  married_partner: {
+    label: "Married Partner",
+    category: "romantic",
+    type: "bilateral",
+    inverse: "married_partner",
+    relationship_family: "spouse_partner",
+    description: "Married committed partner"
+  },
+  life_partner: {
+    label: "Life Partner",
+    category: "romantic",
+    type: "bilateral",
+    inverse: "life_partner",
+    relationship_family: "spouse_partner",
+    description: "Long-term life companion"
+  },
+  domestic_partner: {
+    label: "Domestic Partner",
+    category: "romantic",
+    type: "bilateral",
+    inverse: "domestic_partner",
+    relationship_family: "spouse_partner",
+    description: "Committed cohabiting partner"
+  },
   partner: {
     label: "Partner",
     category: "romantic",
     type: "bilateral",
     inverse: "partner",
+    relationship_family: "spouse_partner",
     description: "Committed relationship"
   },
   dating: {
@@ -351,4 +408,45 @@ export function getRelationshipLabel(relationType) {
 export function getRelationshipDescription(relationType) {
   const def = RELATIONSHIP_TYPES[relationType];
   return def?.description || "";
+}
+
+// ── RELATIONSHIP FAMILY NORMALIZATION ─────────────────────────────────────────
+// Maps any committed/married label to the canonical "spouse_partner" family.
+// Logic and filtering must use the family, not the raw label, for bilateral matching.
+// Display may still show the original humanized label (spouse, husband, wife, partner).
+
+const SPOUSE_PARTNER_FAMILY = new Set([
+  'spouse', 'husband', 'wife', 'married', 'married_partner',
+  'life_partner', 'partner', 'domestic_partner',
+]);
+
+/**
+ * normalizeRelationshipType(type)
+ * Returns the canonical relationship_family string for logic/filtering.
+ * Does NOT change display labels — only used for comparison and bilateral matching.
+ *
+ * Returns:
+ *   'spouse_partner'  — for any committed/married/partner variant
+ *   the def's relationship_family if set
+ *   the raw type string as fallback (no normalization applied)
+ */
+export function normalizeRelationshipType(type) {
+  if (!type) return null;
+  const t = type.trim().toLowerCase();
+  if (SPOUSE_PARTNER_FAMILY.has(t)) return 'spouse_partner';
+  const def = RELATIONSHIP_TYPES[t];
+  if (def?.relationship_family) return def.relationship_family;
+  return t;
+}
+
+/**
+ * areRelationshipTypesCompatible(typeA, typeB)
+ * Returns true if typeA and typeB belong to the same relationship family,
+ * meaning they should be treated as the same bilateral class regardless of
+ * exact label differences (e.g. "spouse" ↔ "partner").
+ */
+export function areRelationshipTypesCompatible(typeA, typeB) {
+  if (!typeA || !typeB) return false;
+  if (typeA.toLowerCase() === typeB.toLowerCase()) return true;
+  return normalizeRelationshipType(typeA) === normalizeRelationshipType(typeB);
 }

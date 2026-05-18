@@ -34,6 +34,7 @@
  */
 
 import { base44 } from '@/api/base44Client';
+import { normalizeRelationshipType } from '@/lib/relationshipTypeDefinitions';
 
 function bestAvatar(rec) {
   return rec?.avatar_url || rec?.image_avatar_url || null;
@@ -79,6 +80,7 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     seen.set(key, {
       person_name: name,
       relationship_type: rel.relationship_type || null,
+      relationship_family: normalizeRelationshipType(rel.relationship_type),
       description: rel.description || '',
       history_summary: rel.history_summary || '',
       last_interaction_summary: rel.last_interaction_summary || '',
@@ -124,6 +126,7 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     seen.set(key, {
       person_name: name,
       relationship_type: p.relationship_type || 'Known',
+      relationship_family: normalizeRelationshipType(p.relationship_type),
       description: p.description || '',
       history_summary: '',
       last_interaction_summary: '',
@@ -218,6 +221,7 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
         seen.set(lc.id, {
           person_name: lc.name,
           relationship_type: lc.character_type === 'npc_fictitious' ? 'Known Contact' : 'Character',
+          relationship_family: normalizeRelationshipType(lc.character_type === 'npc_fictitious' ? 'Known Contact' : 'Character'),
           description: lc.profile_summary || lc.backstory || '',
           history_summary: '',
           last_interaction_summary: '',
