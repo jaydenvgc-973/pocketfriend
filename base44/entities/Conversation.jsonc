@@ -94,103 +94,116 @@
     },
     "generation_lock": {
       "type": "object",
-      "description": "Durable server-side idempotency lock state for character text response generation. Prevents duplicate replies, records fallback metadata, and tracks recovery status. Written by generationLock backend function. Never written directly by frontend.",
+      "description": "Durable lock state for character response generation. Stores idempotency and recovery metadata.",
       "additionalProperties": true,
       "properties": {
         "lock_id": {
           "type": "string",
-          "description": "Unique ID for this lock acquisition attempt."
+          "description": "Unique lock identifier for this generation cycle"
         },
         "generation_in_progress": {
           "type": "boolean",
-          "description": "True when a character response is actively being generated. Blocks concurrent generation."
+          "default": false,
+          "description": "True when character response is being generated. Blocks concurrent requests."
         },
         "generation_started_at": {
           "type": "string",
           "format": "date-time",
-          "description": "ISO timestamp when generation started. Used for stale lock detection (TTL = 2 minutes)."
+          "description": "When generation began. Used to detect stale locks."
         },
         "generation_released_at": {
           "type": "string",
           "format": "date-time",
-          "description": "ISO timestamp when lock was released after successful generation."
+          "description": "When lock was released. Used to track completion time."
         },
         "character_id": {
           "type": "string",
-          "description": "Character ID that holds the current lock."
+          "description": "ID of character this lock protects"
         },
         "channel": {
           "type": "string",
-          "description": "Channel this lock was acquired for: direct, phone, world_phone, group."
+          "description": "Communication channel (direct, phone, world_phone, etc.)"
         },
         "source_message_id": {
           "type": "string",
-          "description": "User message ID that triggered this generation. Used for idempotency checking."
+          "description": "ID of user message that triggered this generation"
         },
         "owner_email": {
           "type": "string",
-          "description": "Owner email for scope validation."
-        },
-        "stale_lock": {
-          "type": "boolean",
-          "description": "True if this lock was detected as stale (> 2 minute TTL) and auto-released."
-        },
-        "stale_released_at": {
-          "type": "string",
-          "format": "date-time",
-          "description": "When the stale lock was auto-released."
+          "description": "Owner email for scoping"
         },
         "fallback_detected": {
           "type": "boolean",
-          "description": "True when an LLM failure or circuit breaker was detected during generation."
+          "default": false,
+          "description": "True if LLM failed and fallback was used"
         },
         "fallback_count": {
-          "type": "number",
-          "description": "How many fallback events have been recorded for this conversation. Used to block repeated fallbacks."
+          "type": "integer",
+          "default": 0,
+          "description": "Number of fallback signals shown for this response"
         },
         "fallback_blocked": {
           "type": "boolean",
-          "description": "True when a second (or subsequent) fallback was detected and blocked from saving."
-        },
-        "recovery_required": {
-          "type": "boolean",
-          "description": "True when recovery pipeline should re-attempt generation."
-        },
-        "recovery_started_at": {
-          "type": "string",
-          "format": "date-time",
-          "description": "When recovery was triggered."
-        },
-        "recovery_completed_at": {
-          "type": "string",
-          "format": "date-time",
-          "description": "When recovery successfully completed and real response was saved."
+          "default": false,
+          "description": "True if duplicate fallback was blocked. Triggers recovery."
         },
         "last_fallback_text": {
           "type": "string",
-          "description": "Short excerpt of the fallback error for diagnostics. Never displayed to users."
+          "description": "Truncated text of last fallback shown"
         },
         "last_fallback_at": {
           "type": "string",
           "format": "date-time",
-          "description": "Timestamp of the most recent fallback event."
+          "description": "When last fallback was shown"
         },
-        "real_pipeline_restored": {
+        "recovery_required": {
           "type": "boolean",
-          "description": "True when the real character response pipeline completed successfully after recovery."
+          "default": false,
+          "description": "True if recovery pipeline should run"
+        },
+        "recovery_started_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When recovery was triggered"
         },
         "last_recovery_attempt_at": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "description": "When recovery was last attempted"
+        },
+        "recovery_completed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When recovery successfully completed"
+        },
+        "real_pipeline_restored": {
+          "type": "boolean",
+          "default": false,
+          "description": "True if real LLM response was recovered"
         },
         "last_blocking_stage": {
           "type": "string",
-          "description": "The pipeline stage where the last failure occurred."
+          "description": "Which stage blocked (canonical_prompt, llm_call, message_save, etc.)"
+        },
+        "stale_lock": {
+          "type": "boolean",
+          "default": false,
+          "description": "True if lock exceeded TTL and was auto-released"
+        },
+        "stale_released_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When stale lock was auto-released"
+        },
+        "cooldown_until": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Do not attempt new generation until this time (circuit breaker)"
         },
         "recovery_stages": {
           "type": "object",
-          "additionalProperties": true,
-          "description": "Per-stage recovery diagnostic data."
+          "description": "Diagnostic data for each recovery stage",
+          "additionalProperties": true
         }
       }
     }
