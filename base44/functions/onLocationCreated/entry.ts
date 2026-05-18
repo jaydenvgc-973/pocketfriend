@@ -18,6 +18,31 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, skipped: true, reason: 'No location data' });
     }
 
+    // ── PERMANENT DUPLICATE-LOCATION GUARD ────────────────────────────────────
+    // If a canonical location with the same normalized name already exists,
+    // this new record is a blank shell duplicate — delete it immediately and
+    // return the canonical ID so callers can reuse it.
+    // This prevents any future process (community events, auto-create, etc.)
+    // from accumulating blank shell duplicates alongside real configured locations.
+    const normalizeLocName = (n) =>
+      (n || '').trim().toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+
+    const newName = normalizeLocName(location.name);
+    if (newName) {
+      const allLocs = await base44.asServiceRole.entities.LocationReference.list('-created_date', 500);
+      const canonical = allLocs.find(l =>
+        l.id !== location.id && normalizeLocName(l.name) === newName &&
+        ((l.zones || []).length > 0 || (l.image_urls || []).length > 0 || (l.description || '').length > 10)
+      );
+      if (canonical) {
+        console.log(`[onLocationCreated] DUPLICATE GUARD: "${location.name}" (${location.id}) matches canonical ${canonical.id} — deleting blank shell`);
+        await base44.asServiceRole.entities.LocationReference.delete(location.id).catch(() => {});
+        return Response.json({ success: true, skipped: true, reason: 'duplicate_shell_deleted', canonical_id: canonical.id });
+      }
+    }
+
     // Only process character-specific or account_global home locations that have an assigned character
     const charId = location.assigned_character_id || location.character_id;
     if (!charId) {
