@@ -10,33 +10,89 @@ const STATUS_ICONS = {
   prayer: Sparkles,
 };
 
+/**
+ * Build a canonical deduplication key for a character — especially NPC family members
+ * who can appear under multiple parent family_members[] lists.
+ *
+ * Priority chain (per spec):
+ *   1. real Character.id (strongest — stable DB identity)
+ *   2. linked_character_id or npc_fictitious_character_id if present
+ *   3. stable_family_member_id if present on the record
+ *   4. normalized name + household_id (derived from current_home_location_id shared by parents)
+ *   5. normalized name only (last resort)
+ *
+ * The key is type-scoped so "Leo Parker (npc_family_member)" never collides with
+ * an unrelated "Leo Parker (active_created_character)".
+ */
+function buildCanonicalFamilyKey(char) {
+  const type = char.character_type || 'unknown';
+  const normName = (char.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+  // Priority 1: real DB id — unique, always wins
+  // (used as map key directly — this function builds the collision-detection key for synthesis)
+
+  // Priority 2: explicit linked id (family NPC linked to a Character record)
+  if (char.linked_character_id) return `${type}::linked::${char.linked_character_id}`;
+  if (char.npc_fictitious_character_id) return `${type}::linked::${char.npc_fictitious_character_id}`;
+
+  // Priority 3: stable family member id from family list metadata
+  if (char.stable_family_member_id) return `${type}::fam::${char.stable_family_member_id}`;
+
+  // Priority 4: normalized name + shared home (household key)
+  // Two parents listing the same child will share the same home_location_id → same key
+  if (char.current_home_location_id) {
+    return `${type}::household::${char.current_home_location_id}::${normName}`;
+  }
+
+  // Priority 5: normalized name only (last resort safety net)
+  return `${type}::name::${normName}`;
+}
+
 export default function TravelCharacterSelector({ characters, currentUser, displayName, selectedIds, locationMap, onToggle, presenceEntities = [] }) {
   const avatarUrl = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
 
-  // ── DEDUPLICATION: by stable ID first, then normalized name as last resort ──
-  // Prevents duplicate entries when a character appears via multiple parent family lists
+  // ── CANONICAL DEDUPLICATION ─────────────────────────────────────────────────
+  // Two-pass dedup:
+  //   Pass 1: by DB id (fastest, handles exact duplicates from merged query results)
+  //   Pass 2: by canonical family key (handles same person synthesized from two parent lists)
+  //           Uses the priority chain: linked_id > stable_id > household+name > name-only
+  //
+  // When a duplicate is found, the FIRST occurrence wins (it came from the stronger
+  // source because travelCompanions is ordered: activeCreated → npcFictitious → npcFamilyMembers).
   const deduped = (() => {
     const seenIds = new Set();
-    const seenNames = new Set();
+    const seenCanonicalKeys = new Set();
     const result = [];
+
     for (const c of characters) {
-      // Dedupe by character ID (primary stable key)
-      if (seenIds.has(c.id)) continue;
-      seenIds.add(c.id);
-      // Also dedupe by normalized name within same character_type (Leo Parker appearing twice)
-      const nameKey = `${c.character_type}::${(c.name || '').trim().toLowerCase()}`;
-      if (seenNames.has(nameKey)) {
-        console.warn(`[TravelCharacterSelector] Deduped duplicate by name: ${c.name} (id=${c.id})`);
+      // Pass 1: hard id dedup
+      if (seenIds.has(c.id)) {
+        console.warn(`[TravelCharacterSelector] Deduped exact duplicate id: ${c.name} (id=${c.id})`);
         continue;
       }
-      seenNames.add(nameKey);
+      seenIds.add(c.id);
+
+      // Pass 2: canonical family key dedup (same person via two parent lists)
+      const canonKey = buildCanonicalFamilyKey(c);
+      if (seenCanonicalKeys.has(canonKey)) {
+        console.warn(`[TravelCharacterSelector] Deduped same-person via canonical key: ${c.name} (id=${c.id}, key=${canonKey})`);
+        continue;
+      }
+      seenCanonicalKeys.add(canonKey);
       result.push(c);
     }
+
+    console.log(`[TravelCharacterSelector] deduped: ${characters.length} input → ${result.length} output`);
     return result;
   })();
 
-  // Build a presence entity lookup map for fast hydration by character ID
+  // Build a presence entity lookup map for fast hydration:
+  //   Primary: by character DB id
+  //   Secondary: by normalized display name (for synthesized family members without id match)
   const presenceById = Object.fromEntries(presenceEntities.map(e => [e.id, e]));
+  const presenceByNormName = Object.fromEntries(
+    presenceEntities.map(e => [(e.display_name || e.name || '').trim().toLowerCase(), e])
+  );
 
   const activeCreatedChars = deduped
     .filter(c => c.character_type === 'active_created_character')
@@ -57,9 +113,14 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
     const isAvailable = availability.available;
     const StatusIcon = STATUS_ICONS[availability.reason?.iconType];
 
-    // ── PRESENCE HYDRATION: use the unified presence entity (same source as location popup)
-    // Fall back to raw character fields if entity not found.
-    const presenceEntity = presenceById[char.id];
+    // ── PRESENCE HYDRATION ──────────────────────────────────────────────────────
+    // Source priority:
+    //   1. presenceEntities matched by DB id (strongest — exact record match)
+    //   2. presenceEntities matched by normalized display name (synthesized family members)
+    //   3. raw character fields (fallback — may be stale)
+    //   4. home_id presence (character has home → show "At home" not "Unresolved")
+    const charNormName = (char.display_name || char.name || '').trim().toLowerCase();
+    const presenceEntity = presenceById[char.id] || presenceByNormName[charNormName] || null;
     const resolvedLocName = presenceEntity?.resolved_current_location_name || char.resolved_current_location_name;
     const resolvedStatus = presenceEntity?.resolved_presence_status || char.resolved_presence_status;
     const isHome = presenceEntity?.is_home ?? (resolvedStatus === 'home' || resolvedStatus === 'sleeping' || resolvedStatus === 'napping');
