@@ -1427,10 +1427,17 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           sender_type: "character",
           character_id: characterId,
           character_name: character.name,
+          sender_character_id: characterId,
+          receiver_character_id: null,
           content: "",
           emotional_state: emotionalState,
           is_read: navigatedAway ? false : true,
           timestamp: new Date().toISOString(),
+          channel: isPhone ? 'phone' : 'direct',
+          // ── IDEMPOTENCY FIELDS ───────────────────────────────────────────────
+          source_message_id: userMsg?.id || null,
+          reply_to_message_id: userMsg?.id || null,
+          generation_lock_id: null,  // image generation doesn't use generation lock
           generation_context: {
             prompt: imageGenPrompt,
             character_id: characterId,
@@ -1521,6 +1528,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
     const idempotencyOpts = { sourceMessageId: userMsg?.id || null };
 
+    // ── LOCATION SHARE IDEMPOTENCY KEY ────────────────────────────────────────
+    const locationShareIdempotencyKey = shouldShareLocation
+      ? `location_share::${characterId}::direct::${charLocationId}::${new Date().toISOString().substring(0, 13)}`
+      : null;
+
     if (msgType === "text_only") {
       primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", idempotencyOpts);
       if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
@@ -1561,7 +1573,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     }
 
     // Create location share card if flagged
-    if (shouldShareLocation) {
+    if (shouldShareLocation && locationShareIdempotencyKey) {
       // Fetch the location record to get category info
       base44.entities.LocationReference.filter({ id: charLocationId })
         .then(locs => {
@@ -1571,10 +1583,18 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
             sender_type: "character",
             character_id: characterId,
             character_name: character.name,
+            sender_character_id: characterId,
+            receiver_character_id: null,
             content: "",
             emotional_state: emotionalState,
             is_read: true,
             timestamp: new Date().toISOString(),
+            channel: isPhone ? 'phone' : 'direct',
+            // ── IDEMPOTENCY FIELDS ───────────────────────────────────────────────
+            source_message_id: userMsg?.id || null,
+            reply_to_message_id: userMsg?.id || null,
+            generation_lock_id: null,
+            idempotency_key: locationShareIdempotencyKey,
             location_share: {
               location_id: charLocationId,
               location_name: charLocationName,
@@ -1593,10 +1613,18 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
             sender_type: "character",
             character_id: characterId,
             character_name: character.name,
+            sender_character_id: characterId,
+            receiver_character_id: null,
             content: "",
             emotional_state: emotionalState,
             is_read: true,
             timestamp: new Date().toISOString(),
+            channel: isPhone ? 'phone' : 'direct',
+            // ── IDEMPOTENCY FIELDS ───────────────────────────────────────────────
+            source_message_id: userMsg?.id || null,
+            reply_to_message_id: userMsg?.id || null,
+            generation_lock_id: null,
+            idempotency_key: locationShareIdempotencyKey,
             location_share: {
               location_id: charLocationId,
               location_name: charLocationName,

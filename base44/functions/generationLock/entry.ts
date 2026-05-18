@@ -288,18 +288,20 @@ Deno.serve(async (req) => {
   }
 });
 
-// Matches the same fallback strings used in chatFallbackIntegration.js
+// Fallback content detection — identifies transient recovery messages
+// that should NOT be counted as real character dialogue
+// CRITICAL: Fallback signals are NEVER saved as Messages in current architecture
+// This function is kept for historical audit trails only
 function isFallbackContent(text) {
   if (!text) return false;
   const t = text.toLowerCase().trim();
+  // Recovery event markers (coded, not generic text)
   const patterns = [
-    'sorry, got pulled away',
-    'give me a moment',
-    'hey sorry',
-    'my bad, got distracted',
-    'sorry, lost you',
-    'reconnecting',
-    'reconnecting to character',
+    '[proactive_llm_failure]',
+    '[scheduled_communication_promise_llm_failure]',
+    'is_recovery_fallback: true',
+    'recovery_code: ',
+    'recovery_meaning: ',
   ];
-  return patterns.some(p => t.startsWith(p) || t.includes(p));
+  return patterns.some(p => t.includes(p));
 }
