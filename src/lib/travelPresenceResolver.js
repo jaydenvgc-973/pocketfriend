@@ -155,30 +155,21 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
   const currentLocId = char.resolved_current_location_id;
   let resolvedLocId, resolvedLocName, resolvedStatus, isCurrentlyPresent;
 
-  // PRESENCE RULE:
-  // resolved_current_location_id is the ONLY source of truth for current location.
-  // current_home_location_id means WHERE THE CHARACTER LIVES — NOT where they are right now.
-  // A character whose resolved_current_location_id is missing or not in locationMap
-  // is treated as Away (not placed on map, not shown in any location's "here now" list).
-  // Home fallback has been REMOVED — it caused VGC residents distributed to other locations
-  // to appear simultaneously at VGC Towers when locationMap was stale or partial.
+  // Fallback chain: resolved → home → away
   if (currentLocId && locationMap[currentLocId]) {
-    // Resolved location confirmed in locationMap — character is currently present here
+    // Tier 1: Active resolved location (highest priority)
     resolvedLocId = currentLocId;
     resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
     resolvedStatus = char.resolved_presence_status || 'home';
     isCurrentlyPresent = true;
-  } else if (currentLocId && char.resolved_current_location_name) {
-    // resolved_current_location_id is set but not in locationMap yet (stale/partial load).
-    // Trust the DB field — do NOT fall back to home. Keep them placed at their real location.
-    // is_currently_present = true so map and popups see them when the location loads.
-    resolvedLocId = currentLocId;
-    resolvedLocName = char.resolved_current_location_name;
-    resolvedStatus = char.resolved_presence_status || 'home';
+  } else if (homeLocId && locationMap[homeLocId]) {
+    // Tier 2: Fallback to home location (when resolved is stale/missing)
+    resolvedLocId = homeLocId;
+    resolvedLocName = locationMap[homeLocId]?.name;
+    resolvedStatus = 'home';
     isCurrentlyPresent = true;
   } else {
-    // No resolved_current_location_id — character has not been placed anywhere.
-    // Show as Away. "Lives at X" does NOT mean "currently at X".
+    // Tier 3: No valid location — show as Away
     resolvedLocId = null;
     resolvedLocName = null;
     resolvedStatus = 'away';
@@ -259,34 +250,4 @@ export function shouldCharacterAppearOnMap(entity, location = null) {
   
   // Show if present
   return entity.is_currently_present;
-}
-
-/**
- * getCharacterCurrentLocation — SINGLE SHARED PRESENCE HELPER
- *
- * Returns the character's current location using ONLY authoritative resolved fields.
- * NEVER reads: current_home_location_id, residents[], resident_character_ids,
- *              resident_family_members, or any home-membership field.
- *
- * Source of truth fields (in priority order):
- *   1. resolved_current_location_id
- *   2. resolved_current_location_name
- *   3. resolved_presence_status
- *
- * @param {Object} character - raw Character entity record
- * @returns {{ locationId: string|null, locationName: string|null, presenceStatus: string, isPlaced: boolean }}
- */
-export function getCharacterCurrentLocation(character) {
-  if (!character) return { locationId: null, locationName: null, presenceStatus: 'away', isPlaced: false };
-
-  const locId = character.resolved_current_location_id || null;
-  const locName = character.resolved_current_location_name || null;
-  const status = character.resolved_presence_status || (locId ? 'home' : 'away');
-
-  return {
-    locationId: locId,
-    locationName: locName,
-    presenceStatus: status,
-    isPlaced: !!locId,
-  };
 }

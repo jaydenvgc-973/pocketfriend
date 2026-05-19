@@ -114,35 +114,23 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
     const StatusIcon = STATUS_ICONS[availability.reason?.iconType];
 
     // ── PRESENCE HYDRATION ──────────────────────────────────────────────────────
-    // Source of truth: resolved_current_location_id / resolved_current_location_name ONLY.
-    // current_home_location_id is NOT used for current-location display.
-    // "Has a home" ≠ "currently at home."
+    // Source priority:
+    //   1. presenceEntities matched by DB id (strongest — exact record match)
+    //   2. presenceEntities matched by normalized display name (synthesized family members)
+    //   3. raw character fields (fallback — may be stale)
+    //   4. home_id presence (character has home → show "At home" not "Unresolved")
     const charNormName = (char.display_name || char.name || '').trim().toLowerCase();
     const presenceEntity = presenceById[char.id] || presenceByNormName[charNormName] || null;
-    // Use presence entity fields first (normalized), then raw character fields
-    const resolvedLocId = presenceEntity?.resolved_current_location_id || char.resolved_current_location_id || null;
-    const resolvedLocName = presenceEntity?.resolved_current_location_name || char.resolved_current_location_name || null;
-    const resolvedStatus = presenceEntity?.resolved_presence_status || char.resolved_presence_status || null;
-    const isCurrentlyPlaced = !!resolvedLocId;
+    const resolvedLocName = presenceEntity?.resolved_current_location_name || char.resolved_current_location_name;
+    const resolvedStatus = presenceEntity?.resolved_presence_status || char.resolved_presence_status;
+    const isHome = presenceEntity?.is_home ?? (resolvedStatus === 'home' || resolvedStatus === 'sleeping' || resolvedStatus === 'napping');
+    const hasHomeId = !!(char.current_home_location_id || presenceEntity?.residence_location_id);
 
     let currentLocationLabel = null;
-    if (isAvailable && isCurrentlyPlaced && resolvedLocName) {
-      // Use resolved_presence_status to derive the correct label
-      if (resolvedStatus === 'sleeping' || resolvedStatus === 'napping') {
-        currentLocationLabel = 'Sleeping';
-      } else if (resolvedStatus === 'at_work') {
-        currentLocationLabel = 'At work';
-      } else if (resolvedStatus === 'at_school') {
-        currentLocationLabel = 'At school';
-      } else if (resolvedStatus === 'home') {
-        currentLocationLabel = `At home · ${resolvedLocName}`;
-      } else if (resolvedStatus === 'visiting') {
-        currentLocationLabel = `Visiting · ${resolvedLocName}`;
-      } else {
-        currentLocationLabel = `Out · ${resolvedLocName}`;
-      }
-    } else if (isAvailable && !isCurrentlyPlaced) {
-      currentLocationLabel = 'Available';
+    if (isAvailable && resolvedLocName && !isHome) {
+      currentLocationLabel = `At ${resolvedLocName}`;
+    } else if (isAvailable && (isHome || hasHomeId)) {
+      currentLocationLabel = 'At home';
     }
 
     return (

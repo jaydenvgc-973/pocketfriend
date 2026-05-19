@@ -398,7 +398,7 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{o.name}</div>
                     <div style={{ fontSize: 10, color: "#64748b" }}>
-                      {o.isAsleep ? "😴 Sleeping" : isUser ? "You" : isActiveChar ? "Here now" : isFamilyChar ? "Here now" : "Here now"}
+                      {o.isAsleep ? "😴 Sleeping" : isUser ? "You" : isFamilyChar ? "Family" : label}
                     </div>
                   </div>
                 </div>
