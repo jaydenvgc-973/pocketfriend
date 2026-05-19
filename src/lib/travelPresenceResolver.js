@@ -155,21 +155,30 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
   const currentLocId = char.resolved_current_location_id;
   let resolvedLocId, resolvedLocName, resolvedStatus, isCurrentlyPresent;
 
-  // Fallback chain: resolved → home → away
+  // PRESENCE RULE:
+  // resolved_current_location_id is the ONLY source of truth for current location.
+  // current_home_location_id means WHERE THE CHARACTER LIVES — NOT where they are right now.
+  // A character whose resolved_current_location_id is missing or not in locationMap
+  // is treated as Away (not placed on map, not shown in any location's "here now" list).
+  // Home fallback has been REMOVED — it caused VGC residents distributed to other locations
+  // to appear simultaneously at VGC Towers when locationMap was stale or partial.
   if (currentLocId && locationMap[currentLocId]) {
-    // Tier 1: Active resolved location (highest priority)
+    // Resolved location confirmed in locationMap — character is currently present here
     resolvedLocId = currentLocId;
     resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
     resolvedStatus = char.resolved_presence_status || 'home';
     isCurrentlyPresent = true;
-  } else if (homeLocId && locationMap[homeLocId]) {
-    // Tier 2: Fallback to home location (when resolved is stale/missing)
-    resolvedLocId = homeLocId;
-    resolvedLocName = locationMap[homeLocId]?.name;
-    resolvedStatus = 'home';
+  } else if (currentLocId && char.resolved_current_location_name) {
+    // resolved_current_location_id is set but not in locationMap yet (stale/partial load).
+    // Trust the DB field — do NOT fall back to home. Keep them placed at their real location.
+    // is_currently_present = true so map and popups see them when the location loads.
+    resolvedLocId = currentLocId;
+    resolvedLocName = char.resolved_current_location_name;
+    resolvedStatus = char.resolved_presence_status || 'home';
     isCurrentlyPresent = true;
   } else {
-    // Tier 3: No valid location — show as Away
+    // No resolved_current_location_id — character has not been placed anywhere.
+    // Show as Away. "Lives at X" does NOT mean "currently at X".
     resolvedLocId = null;
     resolvedLocName = null;
     resolvedStatus = 'away';

@@ -647,15 +647,28 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     lines.push({ name, status: 'out', color: 'text-amber-400' });
                   });
 
-                  // LOCATION RECORD FALLBACK: Also show resident_family_members listed directly on location
+                  // LOCATION RECORD FALLBACK: resident_family_members listed on the location record.
+                  // CRITICAL: only show as "home" if their resolved_current_location_id === this location
+                  // (or if they have no resolved location at all — they haven't been moved yet).
+                  // If they have a resolved location elsewhere, show as "out".
                   (selectedLocation.resident_family_members || []).forEach(fam => {
                     if (!fam.name) return;
                     if (seenNames.has(fam.name.toLowerCase())) return;
                     seenNames.add(fam.name.toLowerCase());
-                    lines.push({ name: fam.name, status: 'home', color: 'text-green-400' });
+                    // Try to find their Character record to check resolved location
+                    const famChar = allCharactersForFamilyScan.find(c =>
+                      (c.display_name || c.name)?.toLowerCase() === fam.name.toLowerCase()
+                    );
+                    if (famChar && famChar.resolved_current_location_id && famChar.resolved_current_location_id !== selectedLocation.id) {
+                      lines.push({ name: fam.name, status: 'out', color: 'text-amber-400' });
+                    } else {
+                      lines.push({ name: fam.name, status: 'home', color: 'text-green-400' });
+                    }
                   });
 
-                  // resident_character_ids fallback for NPCs/family not caught above
+                  // resident_character_ids fallback for NPCs/family not caught above.
+                  // CRITICAL: check resolved_current_location_id before labeling "home".
+                  // A character in resident_character_ids who is distributed elsewhere must show as "out".
                   (selectedLocation.resident_character_ids || []).forEach(resId => {
                     const resChar = allCharactersForFamilyScan.find(c => c.id === resId);
                     if (!resChar) return;
@@ -663,7 +676,12 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     if (!name || seenNames.has(name.toLowerCase())) return;
                     if (resChar.character_type === 'active_created_character') return;
                     seenNames.add(name.toLowerCase());
-                    lines.push({ name, status: 'home', color: 'text-green-400' });
+                    // Use resolved_current_location_id as source of truth — never treat home membership as current location
+                    if (resChar.resolved_current_location_id && resChar.resolved_current_location_id !== selectedLocation.id) {
+                      lines.push({ name, status: 'out', color: 'text-amber-400' });
+                    } else {
+                      lines.push({ name, status: 'home', color: 'text-green-400' });
+                    }
                   });
 
                   console.log(`[Travel Popup] ${selectedLocation.name}: ${lines.length} residents shown`, lines.map(l => l.name));
@@ -679,15 +697,22 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     </div>
                   ) : null;
 
-                  // VGC Towers: show how many residents are out
+                  // VGC Towers: show breakdown of resident states using resolved fields only
                   let vgcTowersNote = null;
                   if (isHome && vgcTowers && selectedLocation.id === vgcTowers.id && vgcTowersResidents.length > 0) {
-                    const residentsAway = vgcTowersResidents.filter(r => r.is_away).length;
-                    if (residentsAway > 0) {
+                    const residentsHome = vgcTowersResidents.filter(r => r.resolved_current_location_id === vgcTowers.id).length;
+                    const residentsOut = vgcTowersResidents.filter(r => r.is_away).length;
+                    const residentsUnavailable = vgcTowersResidents.filter(r => !r.is_currently_present).length;
+                    if (residentsOut > 0 || residentsUnavailable > 0) {
                       vgcTowersNote = (
-                        <p className="text-xs text-amber-400 mt-2">
-                          {residentsAway} resident{residentsAway > 1 ? 's' : ''} out traveling
-                        </p>
+                        <div className="text-xs mt-1 space-y-0.5">
+                          {residentsOut > 0 && (
+                            <p className="text-amber-400">{residentsOut} resident{residentsOut !== 1 ? 's' : ''} out visiting</p>
+                          )}
+                          {residentsUnavailable > 0 && (
+                            <p className="text-muted-foreground">{residentsUnavailable} resident{residentsUnavailable !== 1 ? 's' : ''} unavailable (work/sleep/jail)</p>
+                          )}
+                        </div>
                       );
                     }
                   }
