@@ -86,9 +86,12 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
   const [expanded, setExpanded] = useState(false);
 
   const handleUniformSave = async (updatedLocation) => {
+    console.log('[UNIFORM-DETAIL-SAVE-DEBUG] Saving to DB:', { uniforms: updatedLocation.uniforms, correctional_attire: updatedLocation.correctional_attire });
     await base44.entities.LocationReference.update(updatedLocation.id, {
-      correctional_attire: updatedLocation.correctional_attire,
+      uniforms: updatedLocation.uniforms || {},
+      correctional_attire: updatedLocation.correctional_attire || {},
     });
+    console.log('[UNIFORM-DETAIL-SAVE-DEBUG] Saved. Reloading...');
     onLocationUpdate?.();
   };
   const catDef = CATEGORIES.find(c => c.value === location.category) || CATEGORIES[CATEGORIES.length - 1];
@@ -572,6 +575,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     worker_shifts: editingLocation?.worker_shifts || {},
     inmates: editingLocation?.inmates || [],
     correctional_attire: editingLocation?.correctional_attire || {},
+    uniforms: editingLocation?.uniforms || {},
+    worker_manual_uniforms: editingLocation?.worker_manual_uniforms || {},
   });
   const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
   const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
@@ -1113,14 +1118,17 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         />
       )}
 
-      {/* ── UNIFORMS (Jail/Prison only) ── */}
-      {form.category === 'jail_prison' && (
+      {/* ── UNIFORMS (all location types that can have workers/roles) ── */}
+      {(form.category === 'jail_prison' || form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'social' || form.category === 'medical' || form.category === 'school' || form.category === 'education' || form.category === 'gym' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'grocery') && (
         <div className="space-y-2">
-          <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Facility Uniforms</label>
-          <p className="text-xs text-muted-foreground">Define uniforms per role. Confined inmates and assigned staff get their role uniform. Visitors keep normal clothing.</p>
+          <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Uniforms & Staff Attire</label>
+          <p className="text-xs text-muted-foreground">Optional. Define uniforms for staff roles. Visitors, customers, and patrons are never given uniforms. Changes persist when you save the location.</p>
           <UniformsEditor
-            location={{ ...form, correctional_attire: form.correctional_attire }}
-            onUpdate={(updates) => update('correctional_attire', updates.correctional_attire)}
+            location={{ ...form, uniforms: form.uniforms }}
+            onUpdate={(updates) => {
+              console.log('[UNIFORM-FORM-UPDATE]', updates);
+              if (updates.uniforms !== undefined) update('uniforms', updates.uniforms);
+            }}
           />
         </div>
       )}

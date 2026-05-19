@@ -194,35 +194,69 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
               <SectionHeader icon={Briefcase} label="Workers" />
               <div className="space-y-1.5">
                 {workerIds.map(id => {
-                  const char = characters.find(c => c.id === id);
-                  const displayName = char?.name || id;
-                  const jobTitle = location.worker_job_titles?.[id];
-                  const payRate = location.worker_pay_rates?.[id];
-                  const payType = location.worker_pay_type?.[id] || 'hourly';
-                  const shift = location.worker_shifts?.[id];
-                  return (
-                    <div key={id} className="bg-secondary/40 rounded-lg p-2 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-foreground font-medium">{jobTitle ? `${displayName} — ${jobTitle}` : displayName}</span>
-                        {payRate > 0 && (
-                          <span className="text-xs text-green-400 font-semibold">
-                            ${payRate}{payType === 'hourly' ? '/hr' : '/yr'}
-                          </span>
+                    const char = characters.find(c => c.id === id);
+                    const displayName = char?.name || id;
+                    const jobTitle = location.worker_job_titles?.[id];
+                    const payRate = location.worker_pay_rates?.[id];
+                    const payType = location.worker_pay_type?.[id] || 'hourly';
+                    const shift = location.worker_shifts?.[id];
+
+                    // Resolve applicable uniform for this worker
+                    const resolvedUniform = (() => {
+                      const uniforms = location.uniforms || {};
+                      const manualAssignment = location.worker_manual_uniforms?.[id];
+                      if (manualAssignment && uniforms[manualAssignment]) return uniforms[manualAssignment];
+
+                      if (jobTitle) {
+                        const normalizedTitle = jobTitle.toLowerCase().trim();
+                        for (const [uid, u] of Object.entries(uniforms)) {
+                          if (u?.applicability === 'job_title' && (u.job_title || '').toLowerCase().trim() === normalizedTitle) {
+                            return u;
+                          }
+                        }
+                        for (const [uid, u] of Object.entries(uniforms)) {
+                          if (u?.applicability === 'generic_staff') return u;
+                        }
+                      }
+                      for (const [uid, u] of Object.entries(uniforms)) {
+                        if (u?.applicability === 'location_wide') return u;
+                      }
+                      return null;
+                    })();
+
+                    return (
+                      <div key={id} className="bg-secondary/40 rounded-lg p-2 space-y-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <span className="text-xs text-foreground font-medium">{jobTitle ? `${displayName} — ${jobTitle}` : displayName}</span>
+                            {payRate > 0 && (
+                              <div className="text-xs text-green-400 font-semibold">
+                                ${payRate}{payType === 'hourly' ? '/hr' : '/yr'}
+                              </div>
+                            )}
+                          </div>
+                          {resolvedUniform?.image_url && (
+                            <img src={resolvedUniform.image_url} alt={resolvedUniform.name} className="w-6 h-6 rounded object-cover flex-shrink-0" title={resolvedUniform.name} />
+                          )}
+                        </div>
+                        {shift?.start && shift?.end && (
+                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                            <Clock className="w-2.5 h-2.5" />
+                            {shift.days?.length > 0 && `${shift.days.map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join('/')} · `}
+                            {(() => { const fmt = (t) => { if (!t) return null; const [h,m]=t.split(':').map(Number); return `${h%12||12}:${String(m).padStart(2,'0')}${h>=12?'pm':'am'}`; }; return `${fmt(shift.start)}–${fmt(shift.end)}`; })()}
+                          </div>
+                        )}
+                        {resolvedUniform && (
+                          <div className="text-[10px] text-muted-foreground/60 border-t border-border/40 pt-1 mt-1">
+                            Uniform: <span className="text-muted-foreground">{resolvedUniform.name}</span>
+                          </div>
                         )}
                       </div>
-                      {shift?.start && shift?.end && (
-                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                          <Clock className="w-2.5 h-2.5" />
-                          {shift.days?.length > 0 && `${shift.days.map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join('/')} · `}
-                          {(() => { const fmt = (t) => { if (!t) return null; const [h,m]=t.split(':').map(Number); return `${h%12||12}:${String(m).padStart(2,'0')}${h>=12?'pm':'am'}`; }; return `${fmt(shift.start)}–${fmt(shift.end)}`; })()}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
+                    );
+                  })}
+                </div>
+                </>
+                )}
 
           {totalUtilities > 0 && (
             <>
@@ -400,6 +434,38 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
         <>
           <SectionHeader icon={Clock} label="Active Hours" />
           <p className="text-xs text-muted-foreground leading-relaxed">{hoursText}</p>
+        </>
+      )}
+
+      {/* Read-only Uniforms Section */}
+      {Object.values(location.uniforms || {}).filter(u => u?.name).length > 0 && (
+        <>
+          <SectionHeader icon={Shirt} label="Uniforms & Attire" />
+          <div className="space-y-1.5">
+            {Object.values(location.uniforms || {})
+              .filter(u => u?.name)
+              .map((uniform, i) => (
+              <div key={uniform.id || i} className="flex items-start gap-2 bg-secondary/30 rounded-lg p-2">
+                {uniform.image_url && (
+                  <img src={uniform.image_url} alt={uniform.name} className="w-8 h-8 rounded object-cover flex-shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-foreground">{uniform.name}</p>
+                  <p className="text-[10px] text-muted-foreground capitalize">
+                    {uniform.applicability === 'job_title' ? `Job: ${uniform.job_title}` :
+                     uniform.applicability === 'role_status' ? `Role: ${uniform.role_status}` :
+                     uniform.applicability === 'zone' ? `Zone: ${uniform.zone}` :
+                     uniform.applicability === 'generic_staff' ? 'Generic staff' :
+                     uniform.applicability === 'location_wide' ? 'All staff' :
+                     uniform.applicability?.replace(/_/g, ' ')}
+                  </p>
+                  {uniform.description && (
+                    <p className="text-[10px] text-muted-foreground/70 mt-0.5 truncate">{uniform.description}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </>
       )}
 

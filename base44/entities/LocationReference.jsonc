@@ -62,8 +62,7 @@
   },
   "properties": {
     "name": {
-      "type": "string",
-      "description": "The display name of the location (e.g. 'Jayden's Apartment', 'The Coffee House')"
+      "type": "string"
     },
     "location_type": {
       "type": "string",
@@ -72,8 +71,7 @@
         "character_specific",
         "shared"
       ],
-      "default": "global",
-      "description": "Legacy field \u2014 kept for backwards compatibility. Use scope instead."
+      "default": "global"
     },
     "scope": {
       "type": "string",
@@ -99,17 +97,14 @@
     },
     "is_system_managed": {
       "type": "boolean",
-      "default": false,
-      "description": "True if this location is system-created and managed"
+      "default": false
     },
     "system_location_role": {
       "type": "string",
       "enum": [
         "temporary_hotel",
         "emergency_shelter"
-      ],
-      "nullable": true,
-      "description": "Stable system identifier for predefined locations. Names can change; this field defines identity."
+      ]
     },
     "assigned_character_id": {
       "type": "string"
@@ -143,13 +138,11 @@
         "generic",
         "jail_prison"
       ],
-      "default": "generic",
-      "description": "Top-level category. Confinement facilities use jail_prison; venue type detail is in subtype/confinement_type."
+      "default": "generic"
     },
     "is_confinement_facility": {
       "type": "boolean",
-      "default": false,
-      "description": "True if this location is a jail, prison, detention center, or any correctional/confinement facility. Confinement facilities block autonomous civilian movement."
+      "default": false
     },
     "confinement_type": {
       "type": "string",
@@ -166,8 +159,7 @@
         "adult_detention",
         "immigration_detention",
         "house_arrest_residence"
-      ],
-      "description": "Specific type of confinement facility. Only set when is_confinement_facility is true."
+      ]
     },
     "confinement_security_level": {
       "type": "string",
@@ -176,21 +168,17 @@
         "low",
         "medium",
         "maximum"
-      ],
-      "description": "Security classification of this confinement facility."
+      ]
     },
     "confinement_jurisdiction": {
-      "type": "string",
-      "description": "Government body/county that operates this confinement facility."
+      "type": "string"
     },
     "confinement_capacity": {
-      "type": "integer",
-      "description": "Maximum inmate capacity"
+      "type": "integer"
     },
     "allows_visitation": {
       "type": "boolean",
-      "default": true,
-      "description": "True if visitors are allowed at this facility"
+      "default": true
     },
     "visitation_hours": {
       "type": "array",
@@ -207,34 +195,67 @@
             "type": "string"
           }
         }
-      },
-      "description": "Visiting hours (only when allows_visitation is true)"
+      }
     },
     "correctional_attire": {
       "type": "object",
-      "description": "Mandatory institutional attire for this confinement facility. Overrides character wardrobe when is_jailed is true.",
-      "properties": {
-        "uniform_description": {
-          "type": "string"
-        },
-        "uniform_image_url": {
-          "type": "string"
-        },
-        "uniform_color": {
-          "type": "string"
-        },
-        "classification_variants": {
-          "type": "object",
-          "additionalProperties": {
+      "description": "Legacy jail-only attire field. New system uses the uniforms field instead.",
+      "additionalProperties": true
+    },
+    "uniforms": {
+      "type": "object",
+      "description": "Global uniform definitions for this location. Keyed by uniform ID. Applies to all location types. Visitors and customers are never given uniforms. Priority: manual_assignment > job_title > zone > role_status > generic_staff > location_wide.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "applicability": {
+            "type": "string",
+            "enum": [
+              "job_title",
+              "role_status",
+              "zone",
+              "location_wide",
+              "generic_staff"
+            ]
+          },
+          "job_title": {
+            "type": "string"
+          },
+          "role_status": {
+            "type": "string"
+          },
+          "zone": {
             "type": "string"
           }
         }
       }
     },
+    "worker_manual_uniforms": {
+      "type": "object",
+      "description": "Map of character_id to uniform_id for manual employee-specific uniform assignments.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
     "inmates": {
       "type": "array",
       "default": [],
-      "description": "Characters currently confined or previously confined at this facility.",
       "items": {
         "type": "object",
         "properties": {
@@ -294,8 +315,7 @@
       "items": {
         "type": "string"
       },
-      "default": [],
-      "description": "Location subtypes (e.g. ['coffee', 'cafe'] for a coffee shop, ['jail'] for a jail facility)"
+      "default": []
     },
     "features": {
       "type": "array",
@@ -363,6 +383,7 @@
     },
     "enrolled_students": {
       "type": "array",
+      "default": [],
       "items": {
         "type": "object",
         "properties": {
@@ -394,8 +415,7 @@
             "default": "active"
           }
         }
-      },
-      "default": []
+      }
     },
     "character_id": {
       "type": "string"
@@ -429,8 +449,7 @@
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "Keywords for event matching"
+      }
     },
     "zones": {
       "type": "array",
@@ -459,25 +478,23 @@
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "Legacy flat image list"
+      }
     },
     "resident_character_ids": {
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "DEPRECATED: Use residents array instead"
+      }
     },
     "resident_character_names": {
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "DEPRECATED: Use residents array instead"
+      }
     },
     "residents": {
       "type": "array",
+      "default": [],
       "items": {
         "type": "object",
         "properties": {
@@ -499,8 +516,7 @@
           "character_id",
           "character_name"
         ]
-      },
-      "default": []
+      }
     },
     "resident_family_members": {
       "type": "array",
@@ -529,7 +545,6 @@
     },
     "resident_housing_context": {
       "type": "object",
-      "description": "Maps character_id to their housing context at this location: 'homeless' or 'shelter'",
       "additionalProperties": {
         "type": "string"
       }
@@ -651,8 +666,7 @@
       "type": "number"
     },
     "nightly_rate": {
-      "type": "number",
-      "description": "Nightly rate for temporary lodging (hotel/shelter). Hotel: $150+ per night. Shelter: $0-$10 per night."
+      "type": "number"
     },
     "monthly_childcare_cost": {
       "type": "number"

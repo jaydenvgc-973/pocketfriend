@@ -16,6 +16,7 @@
 
 import { resolveTargetCategory, buildOutfitPromptText } from './outfitRotationEngine.js';
 import { buildJailUniformOutfitContext } from './jailUniformResolver.js';
+import { resolveUniform, determineCharacterRoleAtLocation, buildUniformOutfitContext } from './uniformResolver.js';
 
 /**
  * Build a context object from a character's current app state.
@@ -219,18 +220,10 @@ export function resolveCharacterOutfit(character, locationMap = {}) {
   const closet = character.character_closet || [];
   const hasCloset = closet.some(item => item.outfit_id);
 
-  // PRIORITY 1: Check for jail/prison uniform (confined inmate or assigned staff)
   const currentLocationId = character.resolved_current_location_id || character.current_home_location_id;
   const currentLocation = currentLocationId ? locationMap[currentLocationId] : null;
 
-  if (currentLocation?.category === 'jail_prison') {
-    const jailUniformOutfit = buildJailUniformOutfitContext(character, currentLocation, {});
-    if (jailUniformOutfit.source === 'jail_uniform') {
-      return jailUniformOutfit;
-    }
-  }
-
-  // PRIORITY 2: Manual override set today
+  // ── PRIORITY 1: Explicit user-selected outfit (manual override) ──────
   if (context.manual_override && character.current_outfit?.label) {
     return {
       outfit: character.current_outfit,
@@ -239,6 +232,28 @@ export function resolveCharacterOutfit(character, locationMap = {}) {
       description: buildOutfitPromptText(character.current_outfit),
       source: 'manual',
     };
+  }
+
+  // ── PRIORITY 2-7: Global uniform resolver ──────────────────────────
+  if (currentLocation) {
+    const characterRole = determineCharacterRoleAtLocation(character, currentLocation);
+    const resolvedUniform = resolveUniform(character, currentLocation, characterRole);
+    
+    if (resolvedUniform.uniform) {
+      const uniformOutfit = buildUniformOutfitContext(resolvedUniform);
+      if (uniformOutfit) {
+        return uniformOutfit;
+      }
+    }
+  }
+
+  // ── LEGACY: PRIORITY for jail/prison (backward compatibility) ────────
+  // New uniform system handles this, but fallback for old data
+  if (currentLocation?.category === 'jail_prison') {
+    const jailUniformOutfit = buildJailUniformOutfitContext(character, currentLocation, {});
+    if (jailUniformOutfit.source === 'jail_uniform') {
+      return jailUniformOutfit;
+    }
   }
 
   // PRIORITY 3: Context-based category
