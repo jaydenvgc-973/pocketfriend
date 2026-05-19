@@ -620,8 +620,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     const ps = e.resolved_presence_status;
                     const isSleeping = ps === 'sleeping' || ps === 'napping';
                     const isResident = e.residence_location_id === selectedLocation.id;
-                    const status = isSleeping ? 'sleeping' : (isResident && isHome) ? 'home' : (isHome ? 'visiting' : 'here');
-                    const color = isSleeping ? 'text-blue-400' : isResident ? 'text-green-400' : 'text-blue-400';
+                    const status = isSleeping ? 'sleeping' : ps === 'at_work' ? 'at work' : (isResident && isHome) ? 'home' : (isHome ? 'visiting' : 'here');
+                    const color = isSleeping ? 'text-blue-400' : ps === 'at_work' ? 'text-amber-400' : isResident ? 'text-green-400' : 'text-blue-400';
                     return renderLine(e, status, color);
                   });
 

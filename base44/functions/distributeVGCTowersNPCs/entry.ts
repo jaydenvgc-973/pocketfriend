@@ -26,12 +26,9 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 const BATCH_LIMIT = 5;
 const ROTATION_THRESHOLD_MS = 90 * 60 * 1000; // 90 minutes
 
-// CRITICAL: npc_family_member is EXCLUDED — family members belong to specific character households,
-// NOT to VGC Towers. Including them caused Ethan's family (Larry, Marisol, etc.) to be
-// distributed as VGC residents and appear at VGC Towers incorrectly.
 const NPC_ELIGIBLE_TYPES = [
   'npc', 'background', 'npc_fictitious_person', 'npc_fictitious',
-  'npc_regular', 'promoted_npc', 'family_npc',
+  'npc_regular', 'npc_family_member', 'promoted_npc', 'family_npc',
 ];
 
 Deno.serve(async (req) => {
@@ -119,12 +116,9 @@ Deno.serve(async (req) => {
       ...legacyResidentIds,
     ]);
 
-    // Narrow: characters whose ID appears in the resident roster OR whose home is this VGC_ID.
-    // EXCLUDE npc_family_member type — family members of characters are NOT VGC Tower residents.
-    // This prevents Ethan's family members (Larry, Marisol, Vanessa, etc.) from being picked up.
+    // Narrow: characters whose ID appears in the resident roster OR whose home is this VGC_ID
     const allCharacters = allCharactersRaw.filter(c =>
-      c.character_type !== 'npc_family_member' &&
-      (residentIdSet.has(c.id) || c.current_home_location_id === VGC_ID)
+      residentIdSet.has(c.id) || c.current_home_location_id === VGC_ID
     );
 
     // DIAGNOSTIC: Log what we found
