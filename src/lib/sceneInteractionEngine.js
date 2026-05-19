@@ -195,23 +195,33 @@ export function getSceneInteractions(location, activeZone, character) {
       })
     );
   } else if (category === 'food_drink') {
+    const _hasDiningFD = realZones.includes('Dining Area');
+    const _hasBarFD = realZones.includes('Bar');
     actions.push(
       makeAction('🍔', 'Order Meal', 'food_order', hour, {
         location,
         realZones,
-        requiredZone: 'Dining Area',
+        ...(_hasDiningFD ? { requiredZone: 'Dining Area' } : {}),
         isPay: true,
         onShiftWorkers: onShiftWorkerIds,
       }),
       makeAction('☕', 'Get Drink', 'food_drink_order', hour, {
         location,
         realZones,
-        requiredZone: 'Bar',
+        ...(_hasBarFD ? { requiredZone: 'Bar' } : {}),
         isPay: true,
         onShiftWorkers: onShiftWorkerIds,
       })
     );
   } else if (category === 'social') {
+    // RULE: Social/bar/nightclub actions must NEVER be disabled by missing zone config.
+    // Zones are optional in social venues. If a zone exists, navigate to it.
+    // If it doesn't exist, the action is still fully available — just not zone-locked.
+    const hasBar = realZones.includes('Bar');
+    const hasDining = realZones.includes('Dining Area');
+    const hasDanceFloor = realZones.includes('Dance Floor');
+    const hasStage = realZones.includes('Stage');
+
     actions.push(
       makeAction('🎉', 'Socialize', 'social_mingle', hour, {
         location, realZones,
@@ -219,23 +229,23 @@ export function getSceneInteractions(location, activeZone, character) {
       }),
       makeAction('🍹', 'Order Drink', 'drink_order', hour, {
         location, realZones,
-        requiredZone: 'Bar',
+        ...(hasBar ? { requiredZone: 'Bar' } : {}), // zone-lock only if zone exists
         isPay: true,
         onShiftWorkers: onShiftWorkerIds,
       }),
       makeAction('🍔', 'Order Food', 'food_order', hour, {
         location, realZones,
-        requiredZone: 'Dining Area',
+        ...(hasDining ? { requiredZone: 'Dining Area' } : {}),
         isPay: true,
         onShiftWorkers: onShiftWorkerIds,
       }),
       makeAction('🎵', 'Dance', 'social_dance', hour, {
         location, realZones,
-        requiredZone: 'Dance Floor',
+        ...(hasDanceFloor ? { requiredZone: 'Dance Floor' } : {}),
       }),
       makeAction('🎤', 'Perform', 'social_perform', hour, {
         location, realZones,
-        requiredZone: 'Stage',
+        ...(hasStage ? { requiredZone: 'Stage' } : {}),
       })
     );
   } else if (category === 'medical') {
@@ -348,11 +358,14 @@ export function getSceneInteractions(location, activeZone, character) {
         makeAction('🏷️', 'Go to Register', 'clothing_register', hour, { location, realZones, requiredZone: 'Register', onShiftWorkers: onShiftWorkerIds })
       );
     } else if (venueSubtype === 'bar_restaurant') {
+      const _hasBar2 = realZones.includes('Bar');
+      const _hasDining2 = realZones.includes('Dining Area');
+      const _hasMain2 = realZones.includes('Main Area');
       actions.push(
-        makeAction('🍔', 'Order Food', 'food_order', hour, { location, realZones, requiredZone: 'Dining Area', isPay: true, onShiftWorkers: onShiftWorkerIds }),
-        makeAction('🍹', 'Order Drink', 'drink_order', hour, { location, realZones, requiredZone: 'Bar', isPay: true, onShiftWorkers: onShiftWorkerIds }),
-        makeAction('🎉', 'Socialize', 'social_mingle', hour, { location, realZones, requiredZone: 'Main Area' }),
-        makeAction('💳', 'Get Check', 'food_check', hour, { location, realZones, requiredZone: 'Dining Area', onShiftWorkers: onShiftWorkerIds })
+        makeAction('🍔', 'Order Food', 'food_order', hour, { location, realZones, ...(_hasDining2 ? { requiredZone: 'Dining Area' } : {}), isPay: true, onShiftWorkers: onShiftWorkerIds }),
+        makeAction('🍹', 'Order Drink', 'drink_order', hour, { location, realZones, ...(_hasBar2 ? { requiredZone: 'Bar' } : {}), isPay: true, onShiftWorkers: onShiftWorkerIds }),
+        makeAction('🎉', 'Socialize', 'social_mingle', hour, { location, realZones, ...(_hasMain2 ? { requiredZone: 'Main Area' } : {}) }),
+        makeAction('💳', 'Get Check', 'food_check', hour, { location, realZones, ...(_hasDining2 ? { requiredZone: 'Dining Area' } : {}), onShiftWorkers: onShiftWorkerIds })
       );
     } else if (venueSubtype === 'salon') {
       actions.push(
