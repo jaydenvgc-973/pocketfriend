@@ -196,13 +196,43 @@ export function useChatLoadConvo({
         let convoId = null;
 
         if (convos.length > 0) {
-          const withMsgs = convos.filter(c => c.last_message_date);
-          const withoutMsgs = convos.filter(c => !c.last_message_date);
+          // ── CHAT IDENTITY GUARD ────────────────────────────────────────────────
+          // Chat page must only load a user ↔ character conversation.
+          // Filter out any conversation where character_ids has more than one entry —
+          // those are character ↔ character (World Contact / World Phone) threads and
+          // must NEVER be loaded as the user's direct chat with a character.
+          // Also filter out conversations with a shared_conversation_key — those are
+          // bilateral/world-phone threads, not user-direct threads.
+          const directUserConvos = convos.filter(c => {
+            const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
+            const isCharToChar = ids.length > 1;
+            const isBilateral = !!c.shared_conversation_key;
+            const isWorldPhone = c.channel === 'world_phone';
+            if (isCharToChar || isBilateral || isWorldPhone) {
+              console.log(`[CHAT_LOAD] EXCLUDED char-to-char/world-phone convo id=${c.id} type=${c.type} char_ids=[${ids.join(',')}] shared_key=${c.shared_conversation_key || 'none'} channel=${c.channel || 'none'}`);
+              return false;
+            }
+            return true;
+          });
+
+          const candidatePool = directUserConvos.length > 0 ? directUserConvos : [];
+          if (candidatePool.length === 0) {
+            console.log(`[CHAT_LOAD] All ${convos.length} convos were char-to-char/world-phone — treating as no valid conversation found`);
+            // Clear any stale LFC seed that may have cached wrong messages from a prior bad load
+            try { lfcWrite(currentUser.email, `chat_msgs:${chatType}:${characterId}`, []); } catch {}
+          }
+
+          const withMsgs = candidatePool.filter(c => c.last_message_date);
+          const withoutMsgs = candidatePool.filter(c => !c.last_message_date);
           withMsgs.sort((a, b) => new Date(b.last_message_date) - new Date(a.last_message_date));
           withoutMsgs.sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
           const selectedConvo = [...withMsgs, ...withoutMsgs][0];
+          if (!selectedConvo) {
+            // No valid direct conversation — fall through to creation block below
+            console.log(`[CHAT_LOAD] No valid direct user↔character conversation — will create new one`);
+          } else {
           convoId = selectedConvo.id;
-          console.log(`[CHAT_LOAD] CONVO_SELECTED id=${convoId} candidates=${convos.length} last_msg=${selectedConvo.last_message_date || 'none'} t=${Date.now()}`);
+          console.log(`[CHAT_LOAD] CONVO_SELECTED id=${convoId} candidates=${candidatePool.length} last_msg=${selectedConvo.last_message_date || 'none'} t=${Date.now()}`);
 
           // ── STEP 2: Load most recent MSG_WINDOW messages for initial render ──
           console.log(`[CHAT_LOAD] Message.filter START convoId=${convoId} window=${MSG_WINDOW} t=${Date.now()}`);
@@ -308,8 +338,11 @@ export function useChatLoadConvo({
             setConversationId(convoId);
             setConvoLoadError(null);
           }
-        } else {
-          // No conversation found — create one
+          } // end else (selectedConvo exists)
+        }
+
+        // No valid direct user↔character conversation — create one
+        if (!convoId) {
           console.log(`[CHAT_LOAD] No conversation found — creating new one t=${Date.now()}`);
           const convo = await base44.entities.Conversation.create({
             title: `${chatType} with ${character.name}`,
