@@ -127,10 +127,21 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
 
     let currentLocationLabel = null;
     if (isAvailable && isCurrentlyPlaced && resolvedLocName) {
-      // Show the actual current location — not a home inference
-      currentLocationLabel = `At ${resolvedLocName}`;
+      // Use resolved_presence_status to derive the correct label
+      if (resolvedStatus === 'sleeping' || resolvedStatus === 'napping') {
+        currentLocationLabel = 'Sleeping';
+      } else if (resolvedStatus === 'at_work') {
+        currentLocationLabel = 'At work';
+      } else if (resolvedStatus === 'at_school') {
+        currentLocationLabel = 'At school';
+      } else if (resolvedStatus === 'home') {
+        currentLocationLabel = `At home · ${resolvedLocName}`;
+      } else if (resolvedStatus === 'visiting') {
+        currentLocationLabel = `Visiting · ${resolvedLocName}`;
+      } else {
+        currentLocationLabel = `Out · ${resolvedLocName}`;
+      }
     } else if (isAvailable && !isCurrentlyPlaced) {
-      // No resolved location — character is unplaced
       currentLocationLabel = 'Available';
     }
 

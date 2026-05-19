@@ -606,31 +606,33 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
 
                   console.log(`[Travel Popup] "${selectedLocation.name}": hereNow=${hereNow.length}, away=${residentsAway.length}, unplaced=${residentsUnplaced.length}`);
 
-                  const renderLine = (entity, status, color) => {
-                    const name = entity.display_name;
-                    return (
-                      <p key={entity.id} className="text-xs truncate">
-                        <span className="text-foreground font-medium">{name}</span>
-                        <span className={`ml-1 ${color}`}>is {status}</span>
-                      </p>
-                    );
-                  };
+                  const renderLine = (entity, status, color) => (
+                    <p key={entity.id} className="text-xs truncate">
+                      <span className="text-foreground font-medium">{entity.display_name}</span>
+                      <span className={`ml-1 ${color}`}>{status}</span>
+                    </p>
+                  );
 
                   const hereNowLines = hereNow.map(e => {
                     const ps = e.resolved_presence_status;
-                    const isSleeping = ps === 'sleeping' || ps === 'napping';
                     const isResident = e.residence_location_id === selectedLocation.id;
-                    const status = isSleeping ? 'sleeping' : ps === 'at_work' ? 'at work' : (isResident && isHome) ? 'home' : (isHome ? 'visiting' : 'here');
-                    const color = isSleeping ? 'text-blue-400' : ps === 'at_work' ? 'text-amber-400' : isResident ? 'text-green-400' : 'text-blue-400';
-                    return renderLine(e, status, color);
+                    if (ps === 'sleeping' || ps === 'napping') return renderLine(e, '· Sleeping', 'text-blue-400');
+                    if (ps === 'at_work') return renderLine(e, '· At work', 'text-amber-400');
+                    if (ps === 'at_school') return renderLine(e, '· At school', 'text-amber-400');
+                    if (isResident && isHome) return renderLine(e, '· At home', 'text-green-400');
+                    return renderLine(e, '· Visiting', 'text-blue-400');
                   });
 
-                  const awayLines = residentsAway.map(e =>
-                    renderLine(e, `out (${e.resolved_current_location_name || 'elsewhere'})`, 'text-amber-400')
-                  );
+                  const awayLines = residentsAway.map(e => {
+                    const ps = e.resolved_presence_status;
+                    const destName = e.resolved_current_location_name || 'elsewhere';
+                    if (ps === 'at_work') return renderLine(e, '· At work', 'text-amber-400');
+                    if (ps === 'sleeping' || ps === 'napping') return renderLine(e, '· Sleeping', 'text-blue-400');
+                    return renderLine(e, `· Out · ${destName}`, 'text-amber-400');
+                  });
 
                   const unplacedLines = residentsUnplaced.map(e =>
-                    renderLine(e, 'unavailable', 'text-muted-foreground')
+                    renderLine(e, '· Unavailable', 'text-muted-foreground')
                   );
 
                   const allLines = [...hereNowLines, ...awayLines, ...unplacedLines];
