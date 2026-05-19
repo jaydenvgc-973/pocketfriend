@@ -12,23 +12,25 @@ const CATEGORY_LABELS = {
   grocery: "Grocery", church: "Church", religion: "Church",
   social: "Social", community: "Community", government: "Gov't",
   business: "Business", public: "Public", generic: "Place",
+  jail_prison: "Jail / Prison",
 };
 
 const CATEGORY_COLORS = {
-  home:       { pin: "#3b82f6", dot: "#3b82f6" },
-  workplace:  { pin: "#7c3aed", dot: "#7c3aed" },
-  school:     { pin: "#ca8a04", dot: "#ca8a04" },
-  gym:        { pin: "#16a34a", dot: "#16a34a" },
-  food_drink: { pin: "#ea580c", dot: "#ea580c" },
-  bar:        { pin: "#a855f7", dot: "#a855f7" },
-  restaurant: { pin: "#f97316", dot: "#f97316" },
-  park:       { pin: "#059669", dot: "#059669" },
-  hospital:   { pin: "#ef4444", dot: "#ef4444" },
-  medical:    { pin: "#ef4444", dot: "#ef4444" },
-  church:     { pin: "#d97706", dot: "#d97706" },
-  social:     { pin: "#ec4899", dot: "#ec4899" },
-  grocery:    { pin: "#0891b2", dot: "#0891b2" },
-  generic:    { pin: "#64748b", dot: "#64748b" },
+  home:        { pin: "#3b82f6", dot: "#3b82f6" },
+  workplace:   { pin: "#7c3aed", dot: "#7c3aed" },
+  school:      { pin: "#ca8a04", dot: "#ca8a04" },
+  gym:         { pin: "#16a34a", dot: "#16a34a" },
+  food_drink:  { pin: "#ea580c", dot: "#ea580c" },
+  bar:         { pin: "#a855f7", dot: "#a855f7" },
+  restaurant:  { pin: "#f97316", dot: "#f97316" },
+  park:        { pin: "#059669", dot: "#059669" },
+  hospital:    { pin: "#ef4444", dot: "#ef4444" },
+  medical:     { pin: "#ef4444", dot: "#ef4444" },
+  church:      { pin: "#d97706", dot: "#d97706" },
+  social:      { pin: "#ec4899", dot: "#ec4899" },
+  grocery:     { pin: "#0891b2", dot: "#0891b2" },
+  generic:     { pin: "#64748b", dot: "#64748b" },
+  jail_prison: { pin: "#475569", dot: "#475569" },
 };
 
 const CATEGORY_ICONS = {
@@ -37,6 +39,7 @@ const CATEGORY_ICONS = {
   hospital: "🏥", medical: "💊", clinic: "🩺", grocery: "🛒",
   church: "⛪", religion: "⛪", social: "🎉", community: "🤝",
   government: "🏛️", business: "💼", public: "🌐", generic: "📍",
+  jail_prison: "🏛️",
 };
 
 function getColors(category) {
@@ -609,6 +612,10 @@ const BUILDING_ANCHORS = {
     {x:40, y:30}, {x:50, y:24}, {x:60, y:32}, {x:40, y:50},
     {x:50, y:56}, {x:60, y:48}, {x:40, y:68}, {x:50, y:72},
   ],
+  // Jail/prison: placed in the government/civic zone near the top-right edge of the map
+  jail_prison: [
+    {x:93, y:80}, {x:97, y:76},
+  ],
 };
 
 // Fallback zone boundaries (used only if a category has no anchor list)
@@ -628,7 +635,8 @@ const CATEGORY_ZONES = {
   restaurant: { xMin: 82, xMax: 98 },
   social:     { xMin: 82, xMax: 98 },
   community:  { xMin: 82, xMax: 98 },
-  generic:    { xMin: 35, xMax: 78 },
+  generic:     { xMin: 35, xMax: 78 },
+  jail_prison: { xMin: 88, xMax: 98 },
 };
 
 const Y_MIN = 18;
