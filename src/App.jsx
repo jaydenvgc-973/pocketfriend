@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, useLocation, useParams, useSearchParams, Navigate } from 'react-router-dom';
 
 import { useEffect } from 'react';
 import PageNotFound from './lib/PageNotFound';
@@ -16,6 +16,7 @@ import CommunityEventsDemo from './pages/CommunityEventsDemo';
 import OnboardingGuard from './components/OnboardingGuard';
 import Home from './pages/Home';
 import Chat from './pages/Chat';
+import Text from './pages/Text';
 import HolidayPopup from '@/components/holidays/HolidayPopup';
 import GroupChat from './pages/GroupChat';
 import Groups from './pages/Groups';
@@ -50,22 +51,30 @@ import { base44 } from '@/api/base44Client';
 /**
  * ChatChannelMount
  *
- * Thin wrapper that forces a full remount of Chat when the user switches between
- * the Chat (direct) and Text (phone) channels for the same character.
- *
- * key={characterId:chatType} means React treats direct and phone as distinct instances.
- * Without this, React Router reuses the same component, causing all state (messages,
- * conversationId, isTyping, modals, pagination cursor, draft text) to bleed across channels.
- *
- * SHARED TOOL RULE: Shared tools (MediaGallery, NarrativeActionButton, image pipeline, etc.)
- * remain shared — they receive channel context via conversationId and chatType props.
- * Only page-level React state is isolated per channel.
+ * Mounts the Chat shell in direct mode for /chat/:characterId.
+ * If the legacy ?type=phone param is present, redirects to /text/:characterId
+ * so old bookmarks/links still work without keeping the param as primary identity.
  */
 function ChatChannelMount() {
   const { characterId } = useParams();
   const [searchParams] = useSearchParams();
-  const chatType = searchParams.get('type') || 'direct';
-  return <Chat key={`${characterId}:${chatType}`} />;
+  // Backward-compatible redirect: ?type=phone → /text/:characterId
+  if (searchParams.get('type') === 'phone') {
+    return <Navigate to={`/text/${characterId}`} replace />;
+  }
+  return <Chat key={`${characterId}:direct`} />;
+}
+
+/**
+ * TextChannelMount
+ *
+ * Mounts the Chat shell in phone/text mode for /text/:characterId.
+ * key={characterId:phone} guarantees a separate React instance from /chat/:characterId.
+ * Passes chatTypeOverride="phone" so Chat reads it without needing ?type=phone in the URL.
+ */
+function TextChannelMount() {
+  const { characterId } = useParams();
+  return <Text key={`${characterId}:phone`} chatTypeOverride="phone" />;
 }
 
 const AuthenticatedApp = ({ holidaysEnabled }) => {
@@ -106,6 +115,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/community-events-demo" element={<CommunityEventsDemo />} />
       <Route path="/chat/:characterId" element={<ChatChannelMount />} />
+      <Route path="/text/:characterId" element={<TextChannelMount />} />
       <Route path="/groups" element={<Groups />} />
       <Route path="/group-chat" element={<GroupChat />} />
       <Route path="/create" element={<CreateCharacter />} />

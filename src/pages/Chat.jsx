@@ -77,10 +77,13 @@ import { isCharacterConfined, canCharacterRespond, getConfinementNotice } from "
 import { useChatTimingProof } from "@/hooks/useChatTimingProof";
 import ChatTimingOverlay from "@/components/chat/ChatTimingOverlay";
 
-export default function Chat() {
+export default function Chat({ chatTypeOverride } = {}) {
   const { characterId } = useParams();
   const [searchParams] = useSearchParams();
-  const chatType = searchParams.get("type") || "direct";
+  // chatTypeOverride is set by Text.jsx wrapper (route: /text/:characterId).
+  // It takes precedence over the ?type= search param so /text/ never depends
+  // on a query param for its page identity.
+  const chatType = chatTypeOverride || searchParams.get("type") || "direct";
   const isPhone = chatType === "phone";
 
   const [messages, setMessages] = useState([]);

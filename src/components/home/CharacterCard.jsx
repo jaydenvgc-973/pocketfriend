@@ -410,7 +410,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 )}
               </AnimatePresence>
             </Link>
-            <Link to={`/chat/${character.id}?type=phone`} className="flex-1 relative">
+            <Link to={`/text/${character.id}`} className="flex-1 relative">
               <button className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm font-medium hover:bg-secondary/80 transition-colors">
                 <Phone className="w-4 h-4" /> Text
               </button>

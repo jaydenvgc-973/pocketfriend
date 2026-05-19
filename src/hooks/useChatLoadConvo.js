@@ -11,21 +11,22 @@ import {
 } from "@/lib/characterRuntimeCache.js";
 
 // Persist recent messages per conversation (last 50) to localStorage.
-// Key: 'chat_msgs:{characterId}' scoped by owner_email.
-function readCachedMessages(ownerEmail, characterId) {
+// Key: 'chat_msgs:{chatType}:{characterId}' — channel-scoped so Chat and Text
+// never seed each other's initial render, even for the same character.
+function readCachedMessages(ownerEmail, characterId, chatType) {
   try {
-    const lfc = lfcRead(ownerEmail, `chat_msgs:${characterId}`);
+    const lfc = lfcRead(ownerEmail, `chat_msgs:${chatType}:${characterId}`);
     return lfc?.data ?? null;
   } catch { return null; }
 }
 
-function writeCachedMessages(ownerEmail, characterId, msgs) {
+function writeCachedMessages(ownerEmail, characterId, chatType, msgs) {
   if (!ownerEmail || !characterId || !Array.isArray(msgs) || msgs.length === 0) return;
   // Only store the 50 most recent messages to keep localStorage usage bounded
   const recent = [...msgs].sort((a, b) =>
     new Date(b.created_date || b.timestamp || 0) - new Date(a.created_date || a.timestamp || 0)
   ).slice(0, 50).reverse(); // oldest first for correct render order
-  lfcWrite(ownerEmail, `chat_msgs:${characterId}`, recent);
+  lfcWrite(ownerEmail, `chat_msgs:${chatType}:${characterId}`, recent);
 }
 
 /**
@@ -96,7 +97,7 @@ export function useChatLoadConvo({
     // Reset conversation state on character switch.
     // CRITICAL: Seed from lfc BEFORE clearing — avoids the 300ms blank window.
     // If lfc has messages for this character, show them instantly. Server will refresh.
-    const immediateCache = readCachedMessages(currentUser.email, characterId);
+    const immediateCache = readCachedMessages(currentUser.email, characterId, chatType);
     if (immediateCache && immediateCache.length > 0) {
       setMessages(immediateCache);
       hasShownMessagesRef.current = true;
@@ -279,7 +280,7 @@ export function useChatLoadConvo({
               t_subscription_connect: t_messages_loaded,
               t_character_ready: t_messages_loaded,
               t_full_context_complete: null,
-              cache_used: !!readCachedMessages(currentUser?.email, characterId)?.length,
+              cache_used: !!readCachedMessages(currentUser?.email, characterId, chatType)?.length,
               memory_cache_hit: false,
               canonical_prompt_cache_hit: false, // prewarm fires async
               conversation_cache_hit: false,
@@ -289,7 +290,7 @@ export function useChatLoadConvo({
             // Persist to localStorage for instant display on next open.
             // This also captures any recovered image_url values that arrived while
             // the user was away — they'll be visible immediately on next navigation.
-            writeCachedMessages(currentUser.email, characterId, sorted);
+            writeCachedMessages(currentUser.email, characterId, chatType, sorted);
 
             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
             if (unread.length > 0) {
