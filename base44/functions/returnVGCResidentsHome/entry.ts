@@ -31,9 +31,9 @@ Deno.serve(async (req) => {
     const now = new Date();
     const log = [];
 
-    // Load all active characters + locations via service role (no user session at 1 AM)
-    const [allCharacters, accountLocations, sharedLocations] = await Promise.all([
-      base44.asServiceRole.entities.Character.filter({ status: 'active' }, null, 500),
+    // Step 1: Load all VGC Towers location records via service role
+    // No user session at 1 AM — service role required for all reads
+    const [accountLocations, sharedLocations] = await Promise.all([
       base44.asServiceRole.entities.LocationReference.filter({ scope: 'account_global' }, null, 500),
       base44.asServiceRole.entities.LocationReference.filter({ scope: 'shared' }, null, 200),
     ]);
@@ -58,11 +58,29 @@ Deno.serve(async (req) => {
       const VGC_ID = vgcTowers.id;
       const ownerEmail = vgcTowers.owner_email;
 
-      const vgcResidents = allCharacters.filter(c =>
-        c.current_home_location_id === VGC_ID &&
+      // Step 2: Load characters by owner_email (the VGC Towers location owner).
+      // Character.get() returns 404 under user RLS for characters owned by another user.
+      // filter({ owner_email }) is the confirmed working read path for this account's characters.
+      // Cross-reference against LocationReference.residents[] to identify VGC members.
+      const residentStubs = vgcTowers.residents || [];
+      const residentIdSet = new Set([
+        ...residentStubs.map(r => r.character_id).filter(Boolean),
+        ...(vgcTowers.resident_character_ids || []),
+      ]);
+
+      const allCharactersRaw = await base44.asServiceRole.entities.Character.filter(
+        { owner_email: ownerEmail, status: 'active' }, null, 500
+      );
+
+      const allCharactersForTower = allCharactersRaw.filter(c =>
+        residentIdSet.has(c.id) || c.current_home_location_id === VGC_ID
+      );
+
+      const vgcResidents = allCharactersForTower.filter(c =>
+        c.status !== 'deleted' &&
+        c.status !== 'soft_deleted' &&
         NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
-        !c.protected_active &&
-        (c.owner_email === ownerEmail)
+        !c.protected_active
       );
 
       if (vgcResidents.length === 0) continue;

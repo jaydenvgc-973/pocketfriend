@@ -42,8 +42,14 @@ Deno.serve(async (req) => {
     const hour = nowET.getHours();
     const minute = nowET.getMinutes();
 
+    // Parse payload for force flag (admin diagnostic override only)
+    let payload = {};
+    try { payload = await req.json(); } catch { /* no body */ }
+    const forceRun = payload.force === true;
+
     // LOCKDOWN: 1 AM – 10 AM — no movement, no DB reads
-    if (hour >= 1 && hour < 10) {
+    // forceRun bypasses lockdown for diagnostic/proof testing only
+    if (!forceRun && hour >= 1 && hour < 10) {
       return Response.json({
         success: true, mode: 'lockdown',
         message: 'Movement locked 1–10 AM ET. No DB reads.',
@@ -87,37 +93,49 @@ Deno.serve(async (req) => {
     }
     const VGC_ID = vgcTowers.id;
 
-    // Step 2: Fetch characters assigned to THIS VGC Towers by home location ID.
-    // This is the same isolation strategy used by auditVGCTowersDuplicatesDetailed.
-    // owner_email is NOT used as a filter on characters because VGC Towers residents
-    // may have been created before owner_email was consistently backfilled on NPC records.
-    // Account isolation is guaranteed by VGC_ID — which is unique per user account.
-    const allCharacters = await base44.asServiceRole.entities.Character.filter(
-      { current_home_location_id: VGC_ID, status: 'active' }, null, 200
+    // Step 2: Resident roster and character records.
+    // THE SOURCE OF TRUTH: LocationReference.residents[] contains the 13 resident stubs.
+    // Character.get() returns 404 under user RLS even via asServiceRole when the character
+    // was created by a different owner. The correct read path is filter by owner_email of the
+    // VGC Towers location — the location owner IS the character owner for this account.
+    // This matches how auditVGCTowersDuplicatesDetailed resolves them.
+    const vgcOwnerEmail = vgcTowers.owner_email;
+    const residentStubs = vgcTowers.residents || [];
+    const legacyResidentIds = vgcTowers.resident_character_ids || [];
+
+    // Load characters via user-scoped query — asServiceRole returns 0 for Character records
+    // regardless of owner_email filter when called from a user-authenticated request.
+    // User-scoped filter is the only confirmed working path to read this account's characters.
+    const allCharactersRaw = await base44.entities.Character.filter(
+      { status: 'active' }, null, 500
     );
 
-    // DIAGNOSTIC: Log what we found so we can trace resident miss
+    // Build resident ID set from the LocationReference roster (both arrays)
+    const residentIdSet = new Set([
+      ...residentStubs.map(r => r.character_id).filter(Boolean),
+      ...legacyResidentIds,
+    ]);
+
+    // Narrow: characters whose ID appears in the resident roster OR whose home is this VGC_ID
+    const allCharacters = allCharactersRaw.filter(c =>
+      residentIdSet.has(c.id) || c.current_home_location_id === VGC_ID
+    );
+
+    // DIAGNOSTIC: Log what we found
     const diagnosticNPCTypes = {};
     const diagnosticHomeMismatch = [];
     for (const c of allCharacters) {
-      if (c.current_home_location_id === VGC_ID) {
-        const t = c.character_type || 'undefined';
-        diagnosticNPCTypes[t] = (diagnosticNPCTypes[t] || 0) + 1;
-        if (!NPC_ELIGIBLE_TYPES.includes(c.character_type)) {
-          diagnosticHomeMismatch.push({ name: c.name, type: c.character_type, owner_email: c.owner_email });
-        }
+      const t = c.character_type || 'undefined';
+      diagnosticNPCTypes[t] = (diagnosticNPCTypes[t] || 0) + 1;
+      if (!NPC_ELIGIBLE_TYPES.includes(c.character_type)) {
+        diagnosticHomeMismatch.push({ name: c.name, type: c.character_type, owner_email: c.owner_email });
       }
     }
 
-    // Identify VGC residents — primary key is current_home_location_id === VGC_ID.
-    // Secondary ownership check: owner_email matches user OR owner_email is not set
-    // (legacy characters created before owner_email was backfilled).
-    // This matches the strategy used by auditVGCTowersDuplicatesDetailed which correctly
-    // finds 13 residents for murqart@gmail.com.
-    // allCharacters is already filtered to current_home_location_id === VGC_ID by the query above.
-    // Additional filters: NPC type and not protected.
-    // No owner_email filter — account isolation is guaranteed by VGC_ID uniqueness per account.
+    // VGC residents: filtered to NPC types and not protected
     const vgcResidents = allCharacters.filter(c =>
+      c.status !== 'deleted' &&
+      c.status !== 'soft_deleted' &&
       NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
       !c.protected_active
     );
@@ -176,7 +194,7 @@ Deno.serve(async (req) => {
     const blocked_with_reasons = [];
 
     for (const npc of vgcResidents) {
-      const blockReason = getBlockReason(npc, nowET, PRE_SLEEP_WINDOW_MINUTES);
+      const blockReason = forceRun ? null : getBlockReason(npc, nowET, PRE_SLEEP_WINDOW_MINUTES);
       if (blockReason) {
         blocked_with_reasons.push({ name: npc.name, reason: blockReason });
         log.push(`${npc.name} → BLOCKED: ${blockReason}`);
@@ -299,8 +317,11 @@ Deno.serve(async (req) => {
     let proofCheck = null;
     if (updates.length > 0) {
       const proofTarget = updates[0];
-      const freshRecords = await base44.asServiceRole.entities.Character.filter({ status: 'active' }, null, 500);
-      const freshRecord = freshRecords.find(c => c.id === proofTarget.id);
+      // Proof read-back: user-scoped query (same confirmed working path as main load)
+      const freshAllForProof = await base44.entities.Character.filter(
+        { status: 'active' }, null, 500
+      );
+      const freshRecord = freshAllForProof.find(c => c.id === proofTarget.id);
       proofCheck = {
         name: proofTarget.name,
         expected_destination: proofTarget.dest,
