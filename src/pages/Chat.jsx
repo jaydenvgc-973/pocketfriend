@@ -1833,7 +1833,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           onSelect={(text) => sendMessage(text, null)}
         />
       ) : (
-        <ChatInput onSend={sendMessage} draftKey={characterId} />
+        <ChatInput onSend={sendMessage} draftKey={`${chatType}:${characterId}`} />
       )}
       {/* Reconnecting indicator — UI state only, never saved as a Message */}
       {isRecovering && (

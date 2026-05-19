@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, useLocation, useParams, useSearchParams } from 'react-router-dom';
 
 import { useEffect } from 'react';
 import PageNotFound from './lib/PageNotFound';
@@ -47,6 +47,27 @@ import { LocationEditProvider } from '@/components/location/LocationEditConflict
 import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 
+/**
+ * ChatChannelMount
+ *
+ * Thin wrapper that forces a full remount of Chat when the user switches between
+ * the Chat (direct) and Text (phone) channels for the same character.
+ *
+ * key={characterId:chatType} means React treats direct and phone as distinct instances.
+ * Without this, React Router reuses the same component, causing all state (messages,
+ * conversationId, isTyping, modals, pagination cursor, draft text) to bleed across channels.
+ *
+ * SHARED TOOL RULE: Shared tools (MediaGallery, NarrativeActionButton, image pipeline, etc.)
+ * remain shared — they receive channel context via conversationId and chatType props.
+ * Only page-level React state is isolated per channel.
+ */
+function ChatChannelMount() {
+  const { characterId } = useParams();
+  const [searchParams] = useSearchParams();
+  const chatType = searchParams.get('type') || 'direct';
+  return <Chat key={`${characterId}:${chatType}`} />;
+}
+
 const AuthenticatedApp = ({ holidaysEnabled }) => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
 
@@ -84,7 +105,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/home" element={<OnboardingGuard><Home /></OnboardingGuard>} />
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/community-events-demo" element={<CommunityEventsDemo />} />
-      <Route path="/chat/:characterId" element={<Chat />} />
+      <Route path="/chat/:characterId" element={<ChatChannelMount />} />
       <Route path="/groups" element={<Groups />} />
       <Route path="/group-chat" element={<GroupChat />} />
       <Route path="/create" element={<CreateCharacter />} />
