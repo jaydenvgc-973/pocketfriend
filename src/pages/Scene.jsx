@@ -1023,8 +1023,9 @@ export default function Scene() {
       .then(r => setSceneImage(r.url)).catch(() => {}).finally(() => setIsGeneratingImage(false));
   };
 
-  // Detect if a message/action should trigger an image update OR a purchase intent
-  const checkImageTrigger = (text, actionImagePrompt = null) => {
+  // Detect if a message/action should trigger an image update OR a purchase intent.
+  // actionCategory: 'food' | 'drink' | 'clothing' | null — passed from strip action buttons.
+  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null) => {
     if (actionImagePrompt) {
       generateFocusedImage(actionImagePrompt);
       return;
@@ -1039,12 +1040,15 @@ export default function Scene() {
       ['clothing','boutique','apparel','thrift','mall'].some(s => (location?.venue_identity||'').toLowerCase().includes(s)||(location?.name||'').toLowerCase().includes(s));
     const isFoodDrinkBusiness = isShoppingVenue && subtypes.some(s => ['bar','restaurant','cafe','diner','food','pub','lounge'].includes(s));
 
-    if (isFoodDrinkVenue || isFoodDrinkBusiness) {
-      if (isPurchaseIntent(text)) {
+    // Strip action explicitly triggered a product card (food_order / drink_order)
+    const isActionTriggered = !!actionCategory;
+
+    if (isFoodDrinkVenue || isFoodDrinkBusiness || isActionTriggered) {
+      if (isActionTriggered || isPurchaseIntent(text)) {
         const ep = t.match(/\$?(\d+(?:\.\d{1,2})?)/);
         const price = ep ? Math.min(parseInt(ep[1]), 200) : Math.floor(Math.random() * 18) + 8;
-        // Pronoun-aware: resolves "Can I get it now?" → "Long Beach Iced Tea" from context
-        const item_label = extractSceneItemLabel(text, messages, true);
+        // Pronoun-aware resolution — action category is the authority for item type
+        const resolved = extractSceneItemLabel(text, messages, actionCategory);
         setMessages(prev => [...prev, {
           id: `product_${Date.now()}`,
           sender: "product",
@@ -1052,23 +1056,26 @@ export default function Scene() {
           locationName: location.name,
           preview_image_url: null,
           purchase_type: "consumable",
-          item_label,
+          item_label: resolved.label,
+          item_category: resolved.category, // 'drink' | 'food' | 'clothing'
           timestamp: new Date().toISOString(),
         }]);
+        return; // skip "show me" trigger below for action-initiated cards
       }
     } else if (isShoppingVenue) {
       const pi = t.match(/(?:i'll take it|i like it|i love it|how much|what's the price|i want it|can i buy|i'll buy it|i want to buy|i'd like to buy|i'll get it|buy this|show me the|let me see the|i want the|i'll take the)/);
       if (pi) {
         const randomPrice = Math.floor(Math.random() * (150 - 25 + 1)) + 25;
-        const item_label = extractSceneItemLabel(text, messages, false);
+        const resolvedClothing = extractSceneItemLabel(text, messages, isClothingStore ? 'clothing' : null);
         setMessages(prev => [...prev, {
           id: `product_${Date.now()}`,
           sender: "product",
           price: randomPrice,
           locationName: location.name,
-          preview_image_url: null, // SceneProductCard generates its own item image
+          preview_image_url: null,
           purchase_type: isClothingStore ? "clothing" : "consumable",
-          item_label,
+          item_label: resolvedClothing.label,
+          item_category: isClothingStore ? 'clothing' : resolvedClothing.category,
           timestamp: new Date().toISOString(),
         }]);
       }
@@ -1092,17 +1099,16 @@ export default function Scene() {
     }]);
   };
 
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null) => {
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null) => {
     if (!text.trim() || !location) return;
     setInputText("");
 
     const userMsg = { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
     setMessages(prev => [...prev, userMsg]);
 
-    // Check if we should update the scene image — returns true if it was a purchase intent (skip LLM)
-    // IMPORTANT: purchase card is shown alongside the LLM response, not instead of it.
-    // Sales Associate / Bartender must still respond even when a purchase card is shown.
-    checkImageTrigger(text, actionImagePrompt, actionScenePrompt);
+    // Check if we should update the scene image or spawn a product card.
+    // actionCategory ('food'|'drink'|'clothing') comes from the strip action button — takes authority.
+    checkImageTrigger(text, actionImagePrompt, actionCategory);
 
     setIsTyping(true);
 
@@ -1384,7 +1390,7 @@ Return JSON:
         ? ` (${broughtCharacters[0].name} pays)`
         : cost > 0 ? ` — $${cost}` : "";
 
-      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null);
+      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, action.action_category || null);
 
       setTimeout(() => {
         const newActions = getSceneInteractions(

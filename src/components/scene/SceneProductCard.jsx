@@ -23,17 +23,28 @@ export default function SceneProductCard({
   const [isLoadingImage, setIsLoadingImage] = useState(true);
   const [status, setStatus] = useState("pending"); // pending | accepted | rejected
 
-  // Build a focused product image prompt — item-specific, never scene background
+  // Build a focused product image prompt — item-specific, never scene background.
+  // item_category ('drink'|'food'|'clothing') is the authoritative type set by the action.
   const buildItemPrompt = () => {
     const itemLabel = msg.item_label || "product";
-    const type = msg.purchase_type;
-    if (type === "clothing") {
+    const category = msg.item_category; // 'drink' | 'food' | 'clothing' | undefined
+
+    if (category === "clothing" || msg.purchase_type === "clothing") {
       return `Professional product photography of ${itemLabel}, isolated on clean light background, retail studio shot, high detail, no people`;
     }
-    if (type === "consumable") {
-      return `Professional food photography of ${itemLabel}, beautifully presented on a plate or glass, restaurant quality, close-up, clean background, high detail`;
+    if (category === "drink") {
+      return `Professional bar photography of a ${itemLabel} cocktail or drink, beautifully presented in a glass, bar top surface, close-up, clean background, high detail, no food`;
     }
-    return `Professional product photo of ${itemLabel}, clean white background, studio lighting, high detail`;
+    if (category === "food") {
+      return `Professional food photography of ${itemLabel}, beautifully plated on a dish, restaurant quality, close-up, clean background, high detail, no drinks`;
+    }
+    // Legacy fallback — consumable with no category: infer from label
+    const labelLower = itemLabel.toLowerCase();
+    const looksLikeDrink = /\b(tea|iced tea|cocktail|drink|beer|wine|shot|mojito|margarita|vodka|rum|gin|whiskey|bourbon|lager|cider|champagne|prosecco|daiquiri|martini)\b/i.test(labelLower);
+    if (looksLikeDrink) {
+      return `Professional bar photography of a ${itemLabel} cocktail or drink, beautifully presented in a glass, close-up, clean background, high detail`;
+    }
+    return `Professional food photography of ${itemLabel}, beautifully plated, restaurant quality, close-up, clean background, high detail`;
   };
 
   // Generate item-specific image on mount
