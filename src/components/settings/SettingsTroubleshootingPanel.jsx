@@ -81,13 +81,13 @@ const SYSTEM_ISSUES = [
   },
   {
     id: 'work_schedule_sync',
-    label: 'Work schedule violations',
-    description: 'Check if characters are correctly marked as at-work during their scheduled shifts'
+    label: 'Work schedule violations (diagnostic only)',
+    description: 'Check if characters are correctly marked as at-work during their scheduled shifts. Does NOT overwrite jail, travel, sleep, hospital, shelter, or confinement states — reports only.'
   },
   {
     id: 'closed_venue_presence',
-    label: 'Characters at closed venues',
-    description: 'Find characters whose current resolved location is a venue outside its operating hours'
+    label: 'Characters at closed venues (diagnostic only)',
+    description: 'Find characters whose current resolved location is a venue outside its operating hours. Does NOT move jailed, traveling, hospitalized, or sheltered characters — reports only.'
   },
   {
     id: 'backfill_owner_email',
@@ -527,10 +527,12 @@ function SyncLocationsPanel({ user }) {
 
   return (
     <div className="space-y-4">
-      <div className="bg-secondary/50 border border-border rounded-lg p-3">
+      <div className="bg-secondary/50 border border-border rounded-lg p-3 space-y-1.5">
         <p className="text-xs text-muted-foreground">
-          Discovers all your active characters, then calls the location enforcement function for each one sequentially.
-          This syncs each character's <code className="text-primary">resolved_presence_status</code> to the current schedule truth.
+          Discovers all your active characters, then syncs each character's <code className="text-primary">resolved_presence_status</code> to the current schedule truth.
+        </p>
+        <p className="text-xs text-amber-400 font-medium">
+          ⚠️ This writes location fields. Characters with valid jail, travel, shelter, hospital, house arrest, or temporary housing states should not need this sync — those states are managed automatically. Use only if characters are stuck at the wrong location after a schedule change.
         </p>
       </div>
 
