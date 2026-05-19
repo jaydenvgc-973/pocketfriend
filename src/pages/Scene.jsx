@@ -1037,19 +1037,52 @@ export default function Scene() {
     const isClothingStore = subtypes.some(s => ['clothing','boutique','apparel','thrift','clothing_store','mall'].includes(s)) ||
       ['clothing','boutique','apparel','thrift','mall'].some(s => (location?.venue_identity||'').toLowerCase().includes(s)||(location?.name||'').toLowerCase().includes(s));
     const isFoodDrinkBusiness = isShoppingVenue && subtypes.some(s => ['bar','restaurant','cafe','diner','food','pub','lounge'].includes(s));
+
+    // Extract item label from user message — used to generate item-specific image
+    const extractItemLabel = (rawText) => {
+      // "I'll have a Long Island iced tea" → "Long Island iced tea"
+      const itemMatch = rawText.match(/(?:i'll (?:have|take|get|order)|can i (?:get|have|order)|give me|i want|i'd like|show me|let me see|i'll take|bring me|get me)\s+(?:a |an |some |the |one )?(.+)/i);
+      if (itemMatch?.[1]) return itemMatch[1].trim().replace(/[.!?]$/, '');
+      // "cream formal trousers" or any noun phrase after "looking for"
+      const lookMatch = rawText.match(/(?:looking for|need|want)\s+(?:a |an |some |the )?(.+)/i);
+      if (lookMatch?.[1]) return lookMatch[1].trim().replace(/[.!?]$/, '');
+      // fallback
+      return rawText.replace(/[.!?]$/, '').trim().slice(0, 60);
+    };
+
     if (isFoodDrinkVenue || isFoodDrinkBusiness) {
-      const fd = t.match(/(?:i'll (have|take|get)|can i (get|have|order)|give me|order|i want|i'd like)\s+(a |an |some |the )?.+/) ||
+      const fd = t.match(/(?:i'll (have|take|get)|can i (get|have|order)|give me|order\b|i want|i'd like|bring me|get me)\s+(a |an |some |the )?.+/) ||
                  t.match(/(?:that('s| is| will be)|it('s| is))\s+\$?\d+|\$\d+\s+(for|per)/);
       if (fd) {
         const ep = t.match(/\$?(\d+(?:\.\d{1,2})?)/);
         const price = ep ? Math.min(parseInt(ep[1]), 200) : Math.floor(Math.random() * 18) + 8;
-        setMessages(prev => [...prev, { id:`product_${Date.now()}`, sender:"product", price, locationName:location.name, preview_image_url:sceneImage||null, purchase_type:"consumable", item_label:"Food / Drink", timestamp:new Date().toISOString() }]);
+        const item_label = extractItemLabel(text);
+        setMessages(prev => [...prev, {
+          id: `product_${Date.now()}`,
+          sender: "product",
+          price,
+          locationName: location.name,
+          preview_image_url: null, // SceneProductCard generates its own item image
+          purchase_type: "consumable",
+          item_label,
+          timestamp: new Date().toISOString(),
+        }]);
       }
     } else if (isShoppingVenue) {
-      const pi = t.match(/(?:i'll take it|i like it|i love it|how much|what's the price|i want it|can i buy|i'll buy it|i want to buy|i'd like to buy|i'll get it|buy this|price)/);
+      const pi = t.match(/(?:i'll take it|i like it|i love it|how much|what's the price|i want it|can i buy|i'll buy it|i want to buy|i'd like to buy|i'll get it|buy this|show me the|let me see the|i want the|i'll take the)/);
       if (pi) {
         const randomPrice = Math.floor(Math.random() * (150 - 25 + 1)) + 25;
-        setMessages(prev => [...prev, { id:`product_${Date.now()}`, sender:"product", price:randomPrice, locationName:location.name, preview_image_url:sceneImage||null, purchase_type:isClothingStore?"clothing":"consumable", timestamp:new Date().toISOString() }]);
+        const item_label = extractItemLabel(text);
+        setMessages(prev => [...prev, {
+          id: `product_${Date.now()}`,
+          sender: "product",
+          price: randomPrice,
+          locationName: location.name,
+          preview_image_url: null, // SceneProductCard generates its own item image
+          purchase_type: isClothingStore ? "clothing" : "consumable",
+          item_label,
+          timestamp: new Date().toISOString(),
+        }]);
       }
     }
 
