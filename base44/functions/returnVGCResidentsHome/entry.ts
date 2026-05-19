@@ -1,58 +1,37 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * RETURN-HOME AUTOMATION
+ * RETURN-HOME AUTOMATION — STAGGERED SMALL-BATCH
+ *
  * Runs at 1:00 AM ET daily.
- * Forces all npc_fictitious residents of VGC Towers back home.
- * Guarantees travel window closure and home restoration.
+ * Returns VGC Towers NPC residents home in small batches (max 5 per execution).
+ * Defers remaining residents safely — they will be caught by subsequent runs
+ * or the next day's return cycle.
+ *
+ * No mass simultaneous write. Each batch is written sequentially.
+ *
+ * GUARDS: Work schedule, school hours, hospitalized, and overnight-stay
+ * approved residents are protected from forced home return.
+ *
+ * Ownership: resolved via vgcTowers.owner_email per account.
+ * No created_by used anywhere.
  */
-function isWorkScheduleActive(char) {
-  if (!char.work_start_time || !char.work_end_time || !char.work_days) return false;
-  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const dayOfWeek = nowET.getDay();
-  if (!char.work_days.includes(dayOfWeek)) return false;
-  const [sh, sm] = char.work_start_time.split(':').map(Number);
-  const [eh, em] = char.work_end_time.split(':').map(Number);
-  const now = nowET.getHours() * 60 + nowET.getMinutes();
-  const startMin = sh * 60 + sm;
-  const endMin = eh * 60 + em;
-  if (endMin < startMin) return now >= startMin || now < endMin;
-  return now >= startMin && now < endMin;
-}
 
-function isSchoolScheduleActive(char) {
-  if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
-  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const now = nowET.getHours() * 60 + nowET.getMinutes();
-  return now >= 480 && now < 900; // 8:00 AM - 3:00 PM
-}
+const RETURN_BATCH_LIMIT = 5;
 
-function hasValidActiveTravel(char) {
-  return char.travel_status && char.travel_status !== 'not_traveling' && char.travel_destination_location_id;
-}
-
-function shouldProtectFromHomeReturn(char) {
-  // MANDATORY GUARD: protect all active obligations before forcing home
-  if (isWorkScheduleActive(char)) return true;
-  if (isSchoolScheduleActive(char)) return true;
-  if (hasValidActiveTravel(char)) return true;
-  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
-  if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
-  return false;
-}
+const NPC_ELIGIBLE_TYPES = [
+  'npc', 'background', 'npc_fictitious_person', 'npc_fictitious',
+  'npc_regular', 'npc_family_member', 'promoted_npc', 'family_npc',
+];
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
 
-    // Runs as scheduled automation — no user session. Uses service role.
     const now = new Date();
     const log = [];
 
-    // NPC types that live in VGC Towers (must match Character entity schema)
-    const NPC_ELIGIBLE_TYPES = ['npc_fictitious', 'npc_regular', 'npc_family_member', 'family_npc'];
-
-    // Load ALL active characters + locations via service role
+    // Load all active characters + locations via service role (no user session at 1 AM)
     const [allCharacters, accountLocations, sharedLocations] = await Promise.all([
       base44.asServiceRole.entities.Character.filter({ status: 'active' }, null, 500),
       base44.asServiceRole.entities.LocationReference.filter({ scope: 'account_global' }, null, 500),
@@ -66,15 +45,15 @@ Deno.serve(async (req) => {
       return true;
     });
 
-    // Find all VGC Towers (one per account)
     const vgcTowersList = allLocations.filter(l => l.name === 'VGC Towers');
     if (vgcTowersList.length === 0) {
       return Response.json({ success: true, message: 'No VGC Towers found', returned: 0 });
     }
 
     let totalReturned = 0;
+    let totalDeferred = 0;
+    let totalProtected = 0;
 
-    // Process each account's VGC Towers independently (account isolation)
     for (const vgcTowers of vgcTowersList) {
       const VGC_ID = vgcTowers.id;
       const ownerEmail = vgcTowers.owner_email;
@@ -82,46 +61,64 @@ Deno.serve(async (req) => {
       const vgcResidents = allCharacters.filter(c =>
         c.current_home_location_id === VGC_ID &&
         NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
-        !c.protected_active
+        !c.protected_active &&
+        (c.owner_email === ownerEmail)
       );
 
       if (vgcResidents.length === 0) continue;
 
-      // Return all residents who are not already home
-      const toReturn = vgcResidents.filter(npc => npc.resolved_current_location_id !== VGC_ID);
+      // Only process residents NOT already home
+      const awayResidents = vgcResidents.filter(npc => npc.resolved_current_location_id !== VGC_ID);
+      if (awayResidents.length === 0) continue;
 
-      if (toReturn.length > 0) {
-        await Promise.all(toReturn.map(npc => {
-          // GUARD: Do NOT force home if NPC has active obligations
-          if (shouldProtectFromHomeReturn(npc)) {
-            console.log(`[1AM return] ${npc.name} protected by active obligation — skipping home return`);
-            return Promise.resolve();
-          }
-          log.push(`[${ownerEmail}] ${npc.name} → VGC Towers (1 AM return-home)`);
-          return base44.asServiceRole.entities.Character.update(npc.id, {
-            resolved_current_location_id: VGC_ID,
-            resolved_current_location_name: 'VGC Towers',
-            resolved_presence_status: 'home',
-            resolved_location_type: 'home',
-            resolved_source_reason: 'return_home_block_1am',
-            presence_state: 'home',
-            source_of_move: 'system',
-            valid_from: now.toISOString(),
-            valid_until: null,
-            return_location_id: null,
-            next_move_at: null,
-          });
-        }));
-        totalReturned += toReturn.length;
+      // Separate protected from returnable
+      const protected_ = awayResidents.filter(npc => shouldProtectFromHomeReturn(npc));
+      const returnable = awayResidents.filter(npc => !shouldProtectFromHomeReturn(npc));
+
+      totalProtected += protected_.length;
+      protected_.forEach(npc => log.push(`[${ownerEmail}] ${npc.name} → PROTECTED from 1AM return`));
+
+      // Batch: return at most RETURN_BATCH_LIMIT per account per run
+      const thisBatch = returnable.slice(0, RETURN_BATCH_LIMIT);
+      const deferred = returnable.slice(RETURN_BATCH_LIMIT);
+
+      totalDeferred += deferred.length;
+      deferred.forEach(npc => log.push(`[${ownerEmail}] ${npc.name} → DEFERRED to next return cycle`));
+
+      // Sequential writes — no mass Promise.all, no simultaneous write storm
+      for (const npc of thisBatch) {
+        await base44.asServiceRole.entities.Character.update(npc.id, {
+          resolved_current_location_id: VGC_ID,
+          resolved_current_location_name: 'VGC Towers',
+          resolved_presence_status: 'home',
+          resolved_location_type: 'home',
+          resolved_source_reason: 'return_home_block_1am',
+          location_status: 'home',
+          presence_state: 'home',
+          source_of_move: 'system',
+          valid_from: now.toISOString(),
+          valid_until: null,
+          last_location_update_time: now.toISOString(),
+          return_location_id: null,
+          next_move_at: null,
+          vgc_travel_day_active: false,
+          current_travel_block: null,
+        });
+        log.push(`[${ownerEmail}] ${npc.name} → VGC Towers (1 AM staggered return)`);
+        totalReturned++;
       }
     }
 
     return Response.json({
       success: true,
-      mode: 'return_home',
+      mode: 'return_home_staggered',
       timestamp: now.toISOString(),
-      accountsProcessed: vgcTowersList.length,
+      accounts_processed: vgcTowersList.length,
+      batch_limit: RETURN_BATCH_LIMIT,
       returned: totalReturned,
+      deferred: totalDeferred,
+      protected: totalProtected,
+      next_return_window: 'next 1 AM ET run (deferred residents)',
       log,
     });
 
@@ -130,3 +127,35 @@ Deno.serve(async (req) => {
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
+
+// ── GUARDS ────────────────────────────────────────────────────────────────────
+
+function isWorkScheduleActive(char) {
+  if (!char.work_start_time || !char.work_end_time || !char.work_days) return false;
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dayOfWeek = nowET.getDay();
+  if (!char.work_days.includes(dayOfWeek)) return false;
+  const [sh, sm] = char.work_start_time.split(':').map(Number);
+  const [eh, em] = char.work_end_time.split(':').map(Number);
+  const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  if (endMin < startMin) return nowMin >= startMin || nowMin < endMin;
+  return nowMin >= startMin && nowMin < endMin;
+}
+
+function isSchoolScheduleActive(char) {
+  if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+  return nowMin >= 480 && nowMin < 900; // 8:00 AM – 3:00 PM
+}
+
+function shouldProtectFromHomeReturn(char) {
+  if (isWorkScheduleActive(char)) return true;
+  if (isSchoolScheduleActive(char)) return true;
+  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
+  if (char.is_jailed || char.house_arrest_active) return true;
+  if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
+  return false;
+}
