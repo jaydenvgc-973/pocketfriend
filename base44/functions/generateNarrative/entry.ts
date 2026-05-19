@@ -465,7 +465,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, chatHistory } = await req.json();
+    const { characterId, chatHistory, userPresenceLocationId, userPresenceStatus, userWorldName } = await req.json();
     if (!characterId || !chatHistory) {
       return Response.json({ error: 'characterId and chatHistory are required' }, { status: 400 });
     }
@@ -605,6 +605,61 @@ Deno.serve(async (req) => {
       .replace('{GENDER}', charGender)
       .replace('{PRONOUNS}', charPronouns);
 
+    // ── Step 5b: Resolve user presence truth ─────────────────────────────────
+    const userIsCoPresent = !!(
+      userPresenceStatus === 'present' &&
+      userPresenceLocationId &&
+      char.resolved_current_location_id &&
+      userPresenceLocationId === char.resolved_current_location_id
+    );
+    const resolvedUserWorldName = userWorldName || worldName || 'the user';
+
+    const userPresenceBlock = userIsCoPresent
+      ? `\n════════════════════════════════════
+USER PRESENCE — PHYSICALLY CO-PRESENT
+════════════════════════════════════
+"${resolvedUserWorldName}" is currently AT THE SAME LOCATION as ${characterName}.
+Physical co-presence IS confirmed.
+• ${characterName} may look at, react to, or physically interact with ${resolvedUserWorldName}
+• Shared environmental experiences are valid
+════════════════════════════════════`
+      : `\n════════════════════════════════════
+USER PRESENCE — REMOTE / NOT CO-PRESENT
+════════════════════════════════════
+"${resolvedUserWorldName}" is NOT physically present with ${characterName} right now.
+This is a TEXT or PHONE interaction — the user is REMOTE.
+
+ABSOLUTE PROHIBITIONS (these are generation errors):
+✗ "${characterName} glanced over at you"
+✗ "You sat together" or "You stood beside him/her"
+✗ "${characterName} watched you leave"
+✗ Any description implying the user is in the same physical space
+
+ALLOWED — remote-only framing:
+✓ ${characterName} thinking about / missing ${resolvedUserWorldName}
+✓ Referencing a prior visit or memory involving ${resolvedUserWorldName}
+✓ Emotional reaction to the text/call
+✓ Environment details of WHERE ${characterName} is without the user
+✓ What ${characterName} is doing alone or with others who ARE physically there
+════════════════════════════════════`;
+
+    // ── Step 5c: Build narrative continuity block from chatHistory ────────────
+    const priorNarrativeBeats = chatHistory
+      .filter(m => m.is_narrative && m.content?.trim())
+      .slice(-6);
+    
+    const narrativeContinuityBlock = priorNarrativeBeats.length > 0
+      ? `\n════════════════════════════════════
+NARRATIVE CONTINUITY — ALREADY IN CANON (read before generating)
+These beats already happened. DO NOT repeat, contradict, or reset them.
+Continue FROM the state they left the scene in.
+════════════════════════════════════
+${priorNarrativeBeats.map((m, i) => `BEAT ${i + 1}: "${m.content}"`).join('\n\n')}
+
+RULE: Begin from AFTER the last beat resolves. Maintain established emotional/physical tone unless a clear in-story event justifies a shift.
+════════════════════════════════════`
+      : '';
+
     // ── Step 6: Resolve actor label ───────────────────────────────────────────
     const recentUserMsgs = chatHistory.filter(m => m.sender_type === 'user').slice(-5);
     const playedAsName = recentUserMsgs.map(m => m.played_as_character_name).filter(Boolean).pop() || null;
@@ -663,6 +718,8 @@ HOME-STYLE NARRATIVES ARE BLOCKED when character is confirmed at a non-home loca
 STORY CONTINUITY RULE:
 The character is already mid-scene. They are not arriving or resetting.
 Narratives must continue what is already happening — a living timeline, not isolated snapshots.
+${userPresenceBlock}
+${narrativeContinuityBlock}
 
 OUTPUT REJECTION CONDITIONS:
 Reject if: narrative does not match confirmed location, ignores schedule, restarts a scene, contradicts recent events, or ignores time of day.

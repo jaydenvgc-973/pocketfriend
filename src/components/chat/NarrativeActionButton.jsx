@@ -21,6 +21,7 @@ export default function NarrativeActionButton({
   onNarrativeCreated,
   externalTrigger,
   onExternalClose,
+  userSettings = null,
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -54,21 +55,87 @@ export default function NarrativeActionButton({
     setLoading(true);
 
     try {
-      // Build conversation context
-      const recentContext = recentMessages.slice(-10).map(m =>
+      // Build conversation context — include more history for continuity
+      const recentContext = recentMessages.slice(-15).map(m =>
         `${m.sender_type === "user" ? "User" : character.name}: ${m.content || "(image)"}`
       ).join("\n");
 
-      // Extract recent action narratives to prevent repetition
-      const recentActionNarratives = recentMessages
-        .filter(m => m.is_narrative && m.sender_type === "character")
+      // Extract ALL recent narrative blocks for continuity (not just 3 for anti-repetition)
+      const allRecentNarratives = recentMessages
+        .filter(m => m.is_narrative && m.sender_type === "character" && m.content?.trim())
+        .slice(-6);
+      
+      const recentActionNarratives = allRecentNarratives
         .slice(-3)
         .map(m => m.content)
         .join("\n---\n");
       
+      const narrativeContinuityBlock = allRecentNarratives.length > 0
+        ? `\n\n════════════════════════════════════
+NARRATIVE CONTINUITY — ALREADY ESTABLISHED (read before generating)
+These narrative beats already happened. DO NOT repeat or contradict them.
+Continue FROM the emotional/physical state they left the scene in.
+════════════════════════════════════
+${allRecentNarratives.map((m, i) => `BEAT ${i + 1}:\n"${m.content}"`).join("\n\n")}
+
+CONTINUATION RULES:
+• The above beats are ALREADY IN CANON. They happened.
+• Do NOT restate, re-describe, or reset them.
+• Continue from the CURRENT emotional/physical state they established.
+• If the last beat established tension — maintain or escalate it, do not suddenly reset to calm.
+• If the last beat established calm — do not suddenly inject unearned drama.
+• If the last beat ended with a physical action — begin from AFTER that action resolves.
+════════════════════════════════════`
+        : "";
+
       const actionMemory = recentActionNarratives 
         ? `\nRECENT ACTIONS TO AVOID REPEATING:\n${recentActionNarratives}\n\nDo NOT start with the same action or gesture as above. Choose a completely different approach.`
         : "";
+
+      // ── USER PRESENCE TRUTH BLOCK ─────────────────────────────────────────
+      // Determine if the user is physically co-present with the character or remote.
+      const userLocationId = userSettings?.user_current_location_id || null;
+      const userPresenceStatus = userSettings?.user_presence_status || 'away';
+      const charLocationId = character.resolved_current_location_id || null;
+      const userIsCoPresent = !!(
+        userPresenceStatus === 'present' &&
+        userLocationId &&
+        charLocationId &&
+        userLocationId === charLocationId
+      );
+
+      const userWorldName = userSettings?.fictional_world_name || 'the user';
+
+      const userPresenceBlock = userIsCoPresent
+        ? `\n\n════════════════════════════════════
+USER PRESENCE — PHYSICALLY CO-PRESENT
+════════════════════════════════════
+"${userWorldName}" is currently AT THE SAME LOCATION as ${character.name}.
+Physical co-presence IS confirmed. The following are ALLOWED:
+• ${character.name} can look at, react to, or physically interact with ${userWorldName}
+• Shared environmental experience (both in the same space)
+• Eye contact, handing objects, physical proximity descriptions
+════════════════════════════════════`
+        : `\n\n════════════════════════════════════
+USER PRESENCE — REMOTE / NOT CO-PRESENT
+════════════════════════════════════
+"${userWorldName}" is NOT physically present with ${character.name} right now.
+This is a TEXT/PHONE interaction — the user is remote.
+
+ABSOLUTE PROHIBITIONS — these are generation errors:
+✗ "${character.name} glanced over at you"
+✗ "You sat together" / "You stood beside him/her"
+✗ "He/She watched you leave"
+✗ "You could feel the tension between you"
+✗ Any description implying the user is in the same physical space
+
+ALLOWED — remote-only framing:
+✓ ${character.name} thinking about the user / missing the user
+✓ Referencing a previous visit or memory
+✓ Emotional reaction to the text/call conversation
+✓ Environmental details of WHERE ${character.name} IS without the user present
+✓ What ${character.name} is doing in their space alone or with others who ARE there
+════════════════════════════════════`;
 
       const last5 = recentMessages.slice(-5).map(m => m.content || "").join(" ").toLowerCase();
 
@@ -200,6 +267,8 @@ Emotional state: ${emotionalState}
 Location: ${location}
 Relationship type: ${intentType}
 Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction: ${attractionLevel}/100
+${userPresenceBlock}
+${narrativeContinuityBlock}
 
 RECENT CONVERSATION:
 ${recentContext || "(no recent messages)"}${actionMemory}

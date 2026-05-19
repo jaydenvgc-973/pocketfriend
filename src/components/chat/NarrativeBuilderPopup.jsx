@@ -5,7 +5,7 @@ import { X, Wand2, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 
-export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, conversationId, chatHistory, onNarrativeSubmitted, currentUser }) {
+export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, conversationId, chatHistory, onNarrativeSubmitted, currentUser, userSettings = null }) {
   const [narrativeText, setNarrativeText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -18,7 +18,10 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
     try {
       const res = await base44.functions.invoke('generateNarrative', {
         characterId,
-        chatHistory: chatHistory.slice(-10),
+        chatHistory: chatHistory.slice(-20),
+        userPresenceLocationId: userSettings?.user_current_location_id || null,
+        userPresenceStatus: userSettings?.user_presence_status || 'away',
+        userWorldName: userSettings?.fictional_world_name || null,
       });
       if (res?.data?.success && res.data.narrative) {
         setNarrativeText(res.data.narrative);

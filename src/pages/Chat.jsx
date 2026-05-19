@@ -1722,6 +1722,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           character={character}
           conversationId={conversationId}
           recentMessages={messages}
+          userSettings={userSettings}
           onNarrativeCreated={(msg) => setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg])}
           externalTrigger={showNarrativeAction}
           onExternalClose={() => setShowNarrativeAction(false)}
@@ -1848,6 +1849,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         conversationId={conversationId}
         chatHistory={messages}
         currentUser={currentUser}
+        userSettings={userSettings}
         onNarrativeSubmitted={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
       />
       <WorldContactsPopup
