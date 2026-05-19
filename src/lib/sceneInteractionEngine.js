@@ -480,16 +480,25 @@ function validateAction(action) {
   }
 
   // ── ACTION CATEGORY — maps action type → item category for product card routing ──
-  // This is how the strip button tells checkImageTrigger what kind of item to generate.
+  // This tells checkImageTrigger what kind of item to generate.
+  // Categories: food | drink | clothing | home_goods | hardware | grocery | pharmacy | electronics
   const ACTION_CATEGORY_MAP = {
-    food_order: 'food',
-    drink_order: 'drink',
-    food_drink_order: 'drink',
-    clothing_buy: 'clothing',
+    // Food & drink venues
+    food_order:        'food',
+    drink_order:       'drink',
+    food_drink_order:  'drink',
+    food_check:        'food',
+    hotel_dining:      'food',
+    // Retail venues
+    clothing_buy:      'clothing',
     clothing_register: 'clothing',
-    retail_checkout: 'clothing',
-    grocery_checkout: 'food',
-    grocery_shopping: 'food',
+    retail_checkout:   'clothing',
+    retail_browse:     'clothing',
+    // Grocery
+    grocery_checkout:  'grocery',
+    grocery_shopping:  'grocery',
+    // Generic business — subtype determines category at runtime
+    business_buy:      'home_goods',   // default; overridden by venue subtype in checkImageTrigger
   };
   if (ACTION_CATEGORY_MAP[type]) {
     action.action_category = ACTION_CATEGORY_MAP[type];

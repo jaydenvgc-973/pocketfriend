@@ -429,7 +429,13 @@ export default function Home() {
           ) : null}
 
           {currentUser && (
-            <CommunityEventsStrip currentUser={currentUser} appLocations={locationsData} />
+            <CommunityEventsStrip
+              currentUser={currentUser}
+              characters={[
+                ...(defaultChar ? [defaultChar] : []),
+                ...activeCustomChars,
+              ]}
+            />
           )}
           
           <div>

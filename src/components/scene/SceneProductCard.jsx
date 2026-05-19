@@ -23,28 +23,44 @@ export default function SceneProductCard({
   const [isLoadingImage, setIsLoadingImage] = useState(true);
   const [status, setStatus] = useState("pending"); // pending | accepted | rejected
 
-  // Build a focused product image prompt — item-specific, never scene background.
-  // item_category ('drink'|'food'|'clothing') is the authoritative type set by the action.
+  // Build a focused product image prompt — item-specific, never scene/venue background.
+  // item_category is the authoritative type set by the action and venue context.
   const buildItemPrompt = () => {
     const itemLabel = msg.item_label || "product";
-    const category = msg.item_category; // 'drink' | 'food' | 'clothing' | undefined
+    const category = msg.item_category;
 
-    if (category === "clothing" || msg.purchase_type === "clothing") {
-      return `Professional product photography of ${itemLabel}, isolated on clean light background, retail studio shot, high detail, no people`;
+    switch (category) {
+      case "drink":
+        return `Professional bar photography of a ${itemLabel}, beautifully presented in a glass on a bar surface, close-up, clean background, high detail, no food items`;
+      case "food":
+        return `Professional food photography of ${itemLabel}, beautifully plated on a dish, restaurant quality, close-up, clean light background, high detail, no drinks`;
+      case "clothing":
+        return `Professional retail product photography of ${itemLabel}, isolated on clean white background, studio lighting, high detail, no people`;
+      case "home_goods":
+        return `Professional product photography of ${itemLabel}, clean white or light grey background, studio shot, sharp detail, no people`;
+      case "hardware":
+        return `Professional product photography of ${itemLabel}, isolated on clean background, hardware store presentation, sharp detail, no people`;
+      case "grocery":
+        return `Professional grocery product photography of ${itemLabel}, clean background, sharp detail, well-lit, no people`;
+      case "pharmacy":
+        return `Professional pharmacy product photography of ${itemLabel}, clean white background, clinical presentation, sharp detail, no people`;
+      case "electronics":
+        return `Professional electronics product photography of ${itemLabel}, isolated on clean dark or white background, tech product style, high detail, no people`;
+      default: {
+        // Infer from label
+        const labelLower = itemLabel.toLowerCase();
+        if (/\b(cocktail|drink|beer|wine|shot|mojito|margarita|vodka|rum|gin|whiskey|bourbon|lager|cider|champagne|prosecco|daiquiri|martini|latte|espresso|coffee)\b/i.test(labelLower)) {
+          return `Professional bar or café photography of a ${itemLabel}, beautifully presented, close-up, clean background`;
+        }
+        if (/\b(shirt|jacket|pants|shoes|boots|bag|dress|coat|sneakers|hoodie|jeans)\b/i.test(labelLower)) {
+          return `Professional retail product photography of ${itemLabel}, clean white background, studio lighting, high detail`;
+        }
+        if (/\b(drill|hammer|wrench|saw|screwdriver|paint|lumber|tool)\b/i.test(labelLower)) {
+          return `Professional product photography of ${itemLabel}, hardware store presentation, clean background, sharp detail`;
+        }
+        return `Professional product photography of ${itemLabel}, clean background, studio lighting, sharp detail, no people`;
+      }
     }
-    if (category === "drink") {
-      return `Professional bar photography of a ${itemLabel} cocktail or drink, beautifully presented in a glass, bar top surface, close-up, clean background, high detail, no food`;
-    }
-    if (category === "food") {
-      return `Professional food photography of ${itemLabel}, beautifully plated on a dish, restaurant quality, close-up, clean background, high detail, no drinks`;
-    }
-    // Legacy fallback — consumable with no category: infer from label
-    const labelLower = itemLabel.toLowerCase();
-    const looksLikeDrink = /\b(tea|iced tea|cocktail|drink|beer|wine|shot|mojito|margarita|vodka|rum|gin|whiskey|bourbon|lager|cider|champagne|prosecco|daiquiri|martini)\b/i.test(labelLower);
-    if (looksLikeDrink) {
-      return `Professional bar photography of a ${itemLabel} cocktail or drink, beautifully presented in a glass, close-up, clean background, high detail`;
-    }
-    return `Professional food photography of ${itemLabel}, beautifully plated, restaurant quality, close-up, clean background, high detail`;
   };
 
   // Generate item-specific image on mount

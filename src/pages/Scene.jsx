@@ -37,6 +37,7 @@ import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGener
 import { ACTION_IMAGE_PROMPTS, getLocationActions } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { extractSceneItemLabel, isPurchaseIntent } from "@/lib/sceneItemResolver";
+import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
 import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote } from "@/lib/sceneImagePromptBuilder";
@@ -1023,69 +1024,9 @@ export default function Scene() {
       .then(r => setSceneImage(r.url)).catch(() => {}).finally(() => setIsGeneratingImage(false));
   };
 
-  // Detect if a message/action should trigger an image update OR a purchase intent.
-  // actionCategory: 'food' | 'drink' | 'clothing' | null — passed from strip action buttons.
+  // Venue-aware purchase intent + image trigger — delegates to lib/sceneCheckImageTrigger.js
   const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null) => {
-    if (actionImagePrompt) {
-      generateFocusedImage(actionImagePrompt);
-      return;
-    }
-    const t = text.toLowerCase();
-
-    // ── PURCHASE INTENT DETECTION — venue-aware ────────────────────────────────
-    const isShoppingVenue = ["business", "workplace", "grocery"].includes(location?.category);
-    const isFoodDrinkVenue = ["social", "food_drink"].includes(location?.category);
-    const subtypes = (location?.subtype || []).map(s => s.toLowerCase());
-    const isClothingStore = subtypes.some(s => ['clothing','boutique','apparel','thrift','clothing_store','mall'].includes(s)) ||
-      ['clothing','boutique','apparel','thrift','mall'].some(s => (location?.venue_identity||'').toLowerCase().includes(s)||(location?.name||'').toLowerCase().includes(s));
-    const isFoodDrinkBusiness = isShoppingVenue && subtypes.some(s => ['bar','restaurant','cafe','diner','food','pub','lounge'].includes(s));
-
-    // Strip action explicitly triggered a product card (food_order / drink_order)
-    const isActionTriggered = !!actionCategory;
-
-    if (isFoodDrinkVenue || isFoodDrinkBusiness || isActionTriggered) {
-      if (isActionTriggered || isPurchaseIntent(text)) {
-        const ep = t.match(/\$?(\d+(?:\.\d{1,2})?)/);
-        const price = ep ? Math.min(parseInt(ep[1]), 200) : Math.floor(Math.random() * 18) + 8;
-        // Pronoun-aware resolution — action category is the authority for item type
-        const resolved = extractSceneItemLabel(text, messages, actionCategory);
-        setMessages(prev => [...prev, {
-          id: `product_${Date.now()}`,
-          sender: "product",
-          price,
-          locationName: location.name,
-          preview_image_url: null,
-          purchase_type: "consumable",
-          item_label: resolved.label,
-          item_category: resolved.category, // 'drink' | 'food' | 'clothing'
-          timestamp: new Date().toISOString(),
-        }]);
-        return; // skip "show me" trigger below for action-initiated cards
-      }
-    } else if (isShoppingVenue) {
-      const pi = t.match(/(?:i'll take it|i like it|i love it|how much|what's the price|i want it|can i buy|i'll buy it|i want to buy|i'd like to buy|i'll get it|buy this|show me the|let me see the|i want the|i'll take the)/);
-      if (pi) {
-        const randomPrice = Math.floor(Math.random() * (150 - 25 + 1)) + 25;
-        const resolvedClothing = extractSceneItemLabel(text, messages, isClothingStore ? 'clothing' : null);
-        setMessages(prev => [...prev, {
-          id: `product_${Date.now()}`,
-          sender: "product",
-          price: randomPrice,
-          locationName: location.name,
-          preview_image_url: null,
-          purchase_type: isClothingStore ? "clothing" : "consumable",
-          item_label: resolvedClothing.label,
-          item_category: isClothingStore ? 'clothing' : resolvedClothing.category,
-          timestamp: new Date().toISOString(),
-        }]);
-      }
-    }
-
-    // "show me X" or "look at X" — general image generation trigger
-    const showMatch = t.match(/(?:show me|look at|what does|can i see|i want to see)\s+(.+)/);
-    if (showMatch) {
-      generateFocusedImage(`${showMatch[1]} at ${location.name},`);
-    }
+    _checkImageTrigger({ text, actionImagePrompt, actionCategory, location, messages, generateFocusedImage, setMessages });
   };
 
   const sendNarration = (text) => {
