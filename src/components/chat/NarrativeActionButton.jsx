@@ -29,7 +29,11 @@ export default function NarrativeActionButton({
   const cooldownRef = useRef(null);
 
   useEffect(() => {
-    if (externalTrigger) setOpen(true);
+    if (externalTrigger) {
+      setOpen(true);
+    } else {
+      setOpen(false);
+    }
   }, [externalTrigger]);
 
   useEffect(() => {
@@ -52,6 +56,7 @@ export default function NarrativeActionButton({
   const triggerNarrative = async (intent) => {
     if (!character || !conversationId || loading || cooldown > 0) return;
     setOpen(false);
+    onExternalClose?.();
     setLoading(true);
 
     try {
@@ -224,6 +229,63 @@ If the chosen intent was "flirt" — generate a grounded professional moment ins
 `;
       }
 
+      // ── CONFINEMENT COMMUNICATION BLOCK ──────────────────────────────────────
+      const isConfined = !!(character.is_jailed || character.house_arrest_active ||
+        ['incarcerated','house_arrest','confined'].includes(character.resolved_presence_status) ||
+        ['incarcerated','house_arrest','confined'].includes(character.resolved_location_type));
+
+      let confinementBlock = "";
+      if (isConfined) {
+        // Determine if we are inside the allowed communication window (9 AM – 9 PM ET)
+        const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const etHour = nowET.getHours();
+        const commAllowed = etHour >= 9 && etHour < 21;
+
+        if (!commAllowed) {
+          confinementBlock = `
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! CONFINEMENT COMMUNICATION BLACKOUT — HARD BLOCK  !!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+${character.name} is currently INCARCERATED / CONFINED.
+The current time is outside the allowed communication window (9:00 AM – 9:00 PM).
+Communication is NOT permitted right now.
+
+ABSOLUTE PROHIBITIONS — violation = critical generation error:
+✗ Phone buzzing or ringing
+✗ Receiving or reading a text message
+✗ Sending a text, call, or message of any kind
+✗ Checking social media or any app
+✗ Any implication of live digital communication
+
+THIS NARRATIVE MUST INSTEAD:
+✓ Show ${character.name} in their cell or housing unit
+✓ Internal reflection, memory, emotional state, anticipation
+✓ Physical environment of the facility (sounds, light, fabric, air)
+✓ Thinking about someone — NOT communicating with them
+✓ Frustration, longing, or quiet resolve — without active contact
+
+DO NOT place ${character.name} near entrances, parking lots, sidewalks, or public-facing areas.
+Courtyard/recreation access only during approved daytime hours.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+`;
+        } else {
+          confinementBlock = `
+════════════════════════════════════
+CONFINEMENT RESTRICTIONS ACTIVE
+════════════════════════════════════
+${character.name} is INCARCERATED / CONFINED. Communication is currently within allowed hours (9 AM–9 PM) but institutional restrictions still apply.
+
+RULES:
+• Phone access is LIMITED — short calls/texts only, monitored
+• ${character.name} is INSIDE the facility — no outdoor public areas, no civilian spaces
+• Do NOT place them near entrances, parking lots, or public sidewalks
+• Movement is restricted to sanctioned areas (cell, common room, courtyard if daytime)
+• Narrative must maintain institutional reality (guards, restricted movement, facility environment)
+════════════════════════════════════
+`;
+        }
+      }
+
       // Intent action descriptions
       const intentDescriptions = {
         action: contextTier === "high"
@@ -258,7 +320,7 @@ If the chosen intent was "flirt" — generate a grounded professional moment ins
         MENTORSHIP: "See ABSOLUTE HARD BLOCK above. No exceptions whatsoever.",
       };
 
-      const prompt = `${hardBoundary}
+      const prompt = `${hardBoundary}${confinementBlock}
 You are writing a SHORT third-person narrative scene (2-4 sentences) for ${character.name}.
 
 CHARACTER: ${character.name}
@@ -358,6 +420,8 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
       console.error("[NarrativeButton] Failed:", err.message);
     } finally {
       setLoading(false);
+      // Always reset external trigger so Action can be reopened
+      onExternalClose?.();
     }
   };
 
@@ -365,7 +429,7 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
     <AnimatePresence>
       {open && (
         <>
-          <div className="fixed inset-0 z-[200] bg-black/40" onClick={() => { setOpen(false); onExternalClose?.(); }} />
+          <div className="fixed inset-0 z-[200] bg-black/40" onClick={() => { onExternalClose?.(); }} />
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
