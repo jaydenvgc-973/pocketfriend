@@ -127,9 +127,7 @@ export default function Chat() {
     // location data is shared across characters and stable for the session.
     // (Only clear this character's entry, not others)
     if (characterId) {
-      // Clear both channel variants so neither bleeds into the next character session
-      delete systemPromptCacheRef.current[`canonical::${characterId}::chat`];
-      delete systemPromptCacheRef.current[`canonical::${characterId}::phone`];
+      delete systemPromptCacheRef.current[`canonical::${characterId}`];
     }
   }, [characterId]);
 
@@ -940,9 +938,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       let canonicalMemoryCount = 0;
       let canonicalLifeJournalCount = 0;
       let canonicalFallbackUsed = false;
-      // CRITICAL: Cache key includes channel type — Chat and Text must never share the same canonical prompt.
-      // isPhone=true (text page) uses text_message context. isPhone=false (chat page) uses direct_chat context.
-      const canonicalCacheKey = `canonical::${characterId}::${isPhone ? 'phone' : 'chat'}`;
+      const canonicalCacheKey = `canonical::${characterId}`;
 
       // ── CACHE-FIRST: check global runtime cache, then mount cache, then fetch ──
       // Global cache is warmed by prewarmCharacterRuntime fired on page open.
@@ -982,7 +978,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
           const t_canonical_start = Date.now();
           const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
             characterId,
-            interactionContext: isPhone ? 'text_message' : 'direct_chat',
+            interactionContext: 'direct_chat',
             topKMemories: 14,
           });
           const ctxData = ctxRes?.data || ctxRes;
@@ -1041,54 +1037,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         systemPrompt = buildSystemPrompt(canonicalPrompt, character, { allowNarration: false, outfitHint, worldName: userDisplayName });
       }
       const userNameForPrompts = userDisplayName || null;
-      // ── CHANNEL IDENTITY BLOCK — structural separation between Chat and Text ──────
-      // This is the authoritative behavioral difference between the two pages.
-      // Chat = immersive, continuous, emotionally engaged conversation.
-      // Text = asynchronous messaging — intermittent, delayed, life-interrupted.
-      // One sentence of "keep it short" is NOT enough. The LLM needs structural rules.
-      const modeInstruction = isPhone
-        ? `
-
-════════════════════════════════════
-COMMUNICATION CHANNEL: ASYNCHRONOUS TEXT MESSAGE
-════════════════════════════════════
-You are NOT in a live conversation. You are exchanging TEXT MESSAGES — like SMS.
-
-BEHAVIORAL RULES FOR TEXT MODE:
-• You have your own life happening right now. You are NOT sitting waiting to respond.
-• Replies feel naturally delayed — you were doing something else when this came in.
-• Messages are SHORT. 1-2 sentences max. No paragraphs. No long explanations.
-• Casual abbreviations and informal tone are natural ("lol", "omw", "ngl", "brb").
-• You do NOT need to acknowledge everything or wrap up every point.
-• You may go quiet after a reply — real texting includes silence.
-• Your availability is NOT guaranteed. Work, sleep, driving, company, or mood may limit you.
-• Do NOT write as though you are physically present with the user.
-• Do NOT write as though this is a live phone call or voice conversation.
-• Do NOT write long emotionally continuous paragraphs — that belongs in Chat, not Text.
-• Occasional "k", "yeah", "lol", "sounds good" are realistic and valid.
-• It is OK to drop the conversation naturally after replying — real people do this.
-• If you're busy, your reply can reflect that: brief, distracted, low-energy.
-• Do NOT narrate what you are doing in real-time — that is immersive Chat behavior.
-• Emotional depth is allowed but must feel message-appropriate — short, punchy, real.
-════════════════════════════════════`
-        : `
-
-════════════════════════════════════
-COMMUNICATION CHANNEL: IMMERSIVE LIVE CHAT / DIRECT CONVERSATION
-════════════════════════════════════
-You are in an active, ongoing, emotionally continuous conversation — like talking face-to-face or on a call.
-
-BEHAVIORAL RULES FOR CHAT MODE:
-• You are PRESENT and engaged. This is not a delayed exchange.
-• Longer, more emotionally nuanced responses are appropriate when the moment calls for it.
-• You can reference what just happened in this conversation — the continuity is immediate.
-• Deeper exchanges, storytelling, emotional vulnerability — all appropriate here.
-• You can ask follow-up questions, volley back, respond to subtext.
-• Presence and emotional attunement are expected — this is not a quick check-in.
-• You are still your own person with your own life — but right now, you are HERE.
-• Real-time responsiveness is natural — you heard what they said and are responding now.
-• Conversational depth is valued — this is not a one-liner exchange unless that fits the moment.
-════════════════════════════════════`;
+      const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
       const charStatus = getCharacterStatus(character);
       const statusContext = !isPhone ? buildStatusPromptContext(character, isPhone, recentMsgs.slice(-10)) : "";
