@@ -723,6 +723,77 @@ RULE: This physical truth overrides any memory, assumption, or narrative about t
 ════════════════════════════════════`;
 }
 
+// ── CONFINEMENT IMAGE ENVIRONMENT OVERRIDE ────────────────────────────────────
+
+/**
+ * buildConfinementImageOverride
+ *
+ * When a character is currently confined (jailed, incarcerated, detained, shelter),
+ * returns a hard environment isolation block that:
+ * - Suppresses ALL prior social/nightlife/lounge aesthetics from context bleed
+ * - Forces the image prompt to use current confinement location as visual truth
+ * - Prevents club lighting, restaurant scenery, editorial posing from appearing
+ *
+ * Returns empty string if character is not confined.
+ *
+ * @param {object} character - Full character object
+ * @returns {string}
+ */
+export function buildConfinementImageOverride(character) {
+  if (!character) return '';
+
+  const isJailed = character.is_jailed === true;
+  const isHouseArrest = character.house_arrest_active === true;
+  const isIncarcerated = ['pretrial', 'sentenced', 'serving', 'solitary', 'work_release'].includes(character.incarceration_status);
+  const isConfinedByPresence = ['incarcerated', 'confined', 'house_arrest'].includes(character.resolved_presence_status);
+
+  if (!isJailed && !isHouseArrest && !isIncarcerated && !isConfinedByPresence) return '';
+
+  // Determine environment description
+  let environmentDesc = '';
+  let attireDesc = '';
+
+  if (isHouseArrest && !isJailed && !isIncarcerated) {
+    // House arrest — civilian environment but restricted
+    const homeName = character.house_arrest_location_id ? 'their assigned residence' : 'home';
+    environmentDesc = `inside ${homeName} — residential interior, living room or bedroom, civilian home setting, natural lighting from windows, NO institutional or luxury venue aesthetics`;
+    attireDesc = 'casual civilian home clothing — not institutional uniform, not nightlife outfit, not formal wear';
+  } else {
+    // Jail / prison / detention
+    const facilityName = character.incarceration_facility_name || 'a jail facility';
+    const uniformColor = character.incarceration_status === 'solitary' ? 'red or orange jumpsuit' : 'standard jail jumpsuit — orange, tan, or white';
+    environmentDesc = `inside ${facilityName} — small institutional cell or common area, concrete walls, fluorescent lighting, metal bunk bed or bench, no windows or only small barred window, institutional and stark environment. ABSOLUTE PROHIBITION: NO restaurant scenery, NO lounge aesthetic, NO club lighting, NO luxury ambiance, NO editorial posing, NO nightlife background, NO stylish indoor venue. This is a correctional facility.`;
+    attireDesc = `${uniformColor}, institutional prison attire, NO civilian streetwear, NO designer clothing, NO nightlife fashion`;
+  }
+
+  return `\n\n════════════════════════════════════
+CONFINEMENT IMAGE ENVIRONMENT OVERRIDE — CRITICAL RULE
+════════════════════════════════════
+This character is CURRENTLY CONFINED. This is the dominant visual truth for ALL image generation.
+
+CURRENT ENVIRONMENT: ${environmentDesc}
+
+CURRENT ATTIRE: ${attireDesc}
+
+ENVIRONMENT ISOLATION MANDATE:
+• DO NOT use any visual memory from prior social scenes, restaurants, bars, clubs, or luxury venues
+• DO NOT carry nightlife aesthetics, lounge lighting, or editorial posing from recent conversation context
+• DO NOT generate images that look like restaurant portraits, nightlife shots, or social venue scenes
+• The character may have been at those places before — that context is NOW OVERRIDDEN by confinement reality
+• Every image prompt for this character MUST reflect the confinement environment above
+• If the user asks for a photo, the photo must show the character in the confinement environment
+• Emotional expression can vary — but the physical environment and clothing must be institutional
+• Reference images (if any) are for face/identity only — DO NOT use their styling, location, or wardrobe
+
+VISUAL TRUTH HIERARCHY (confinement):
+1. Current confinement location and cell environment [DOMINANT]
+2. Institutional attire appropriate to the facility
+3. Character's facial identity and expression
+4. Time of day lighting (cool fluorescent institutional light, not warm lounge lighting)
+5. Nothing else
+════════════════════════════════════`;
+}
+
 // ── LOCATION RESPONSE VALIDATOR ───────────────────────────────────────────────
 
 /**

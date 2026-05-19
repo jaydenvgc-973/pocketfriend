@@ -136,6 +136,7 @@ export async function writeSceneExitMemories({
       .join(" ");
 
     try {
+      // Write to Memory entity (existing — used by memory audit/review)
       await base44.entities.Memory.create({
         character_id: char.id,
         title: `Scene at ${location.name} with ${userDisplayName || "the user"}`,
@@ -147,8 +148,34 @@ export async function writeSceneExitMemories({
       });
       console.log(`[sceneExitMemory] ✓ Memory written for ${char.name} (${char.id})`);
     } catch (err) {
-      // Visible failure — log what failed and why
-      console.error(`[sceneExitMemory] ✗ FAILED for ${char.name} (${char.id}):`, err?.message || err);
+      console.error(`[sceneExitMemory] ✗ Memory FAILED for ${char.name} (${char.id}):`, err?.message || err);
+    }
+
+    // BILATERAL MEMORY: Also write CharacterMemory record so retrieveActiveMemory
+    // surfaces this scene event in Chat/Text dialogue context.
+    // CharacterMemory is the durable layer read by the LLM pipeline.
+    try {
+      const memoryText = [
+        `${userDisplayName || "the user"} and ${char.name} were at ${location.name} (${location.category || "venue"}) together.`,
+        othersLabel ? `Others present: ${othersLabel}.` : "",
+        outcomeText,
+        sceneHighlights ? `Key moments: ${sceneHighlights.substring(0, 300)}` : "",
+      ].filter(Boolean).join(" ");
+
+      await base44.entities.CharacterMemory.create({
+        character_id: char.id,
+        memory_type: "event",
+        memory_text: memoryText,
+        memory_summary: `Scene at ${location.name} with ${userDisplayName || "the user"}${othersLabel ? ` and ${othersLabel}` : ""}`,
+        related_location_id: location.id || null,
+        importance_score: 7,
+        confidence_score: 1.0,
+        permanence: "long_term",
+        validation_status: "confirmed",
+      });
+      console.log(`[sceneExitMemory] ✓ CharacterMemory written for ${char.name} (${char.id})`);
+    } catch (err) {
+      console.error(`[sceneExitMemory] ✗ CharacterMemory FAILED for ${char.name} (${char.id}):`, err?.message || err);
     }
   });
 
