@@ -130,7 +130,7 @@ export default function Travel() {
   // Fed directly to LivePresenceMap — ensures map matches popup/counts exactly
   const mapCharacters = allPresenceEntities;
 
-  // VGC Towers residents (for travel-away count)
+  // VGC Towers residents — characters whose current_home_location_id === VGC Towers ID
   const vgcTowers = locationsData.find(l => l.name === 'VGC Towers');
   const vgcTowersResidents = allPresenceEntities.filter(e =>
     (e.character_type === 'npc_fictitious' || e.character_type === 'npc_family_member') &&
@@ -203,25 +203,8 @@ export default function Travel() {
     if (!location || location.category !== "home") {
       return { canVisit: true, blockedBy: null, homeResidents: [] };
     }
-    
-    // Use unified presence resolver (allPresenceEntities) — consistent with map + popup
-    const presentHere = getPresenceAtLocation(location, allPresenceEntities);
-    const homeResidents = presentHere.map(e => ({ name: e.display_name }));
-    
-    const userHasKey = (settings.home_key_holders || []).some(k => k.location_id === location.id);
-    const hasAssignedResidents = (location.resident_character_ids || []).length > 0 ||
-      (location.resident_family_members || []).length > 0;
-    const canVisit = homeResidents.length > 0 || hasAssignedResidents || userHasKey;
-    
-    if (!hasAssignedResidents && homeResidents.length === 0) {
-      return { canVisit: true, blockedBy: null, homeResidents: [] };
-    }
-    
-    return {
-      canVisit,
-      blockedBy: !canVisit ? { name: location.name } : null,
-      homeResidents,
-    };
+    // Home access: always allow — presence of listed residents enables visit
+    return { canVisit: true, blockedBy: null, homeResidents: [] };
   };
 
   const toggleCharacter = (charId) => {
@@ -585,7 +568,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   </button>
                 </div>
                 {(() => {
-                  const homeAccess = checkHomeAccess(selectedLocation);
                   const isHome = selectedLocation.category === "home";
                   const isClosed = isLocationActiveNow(selectedLocation) === false;
 
@@ -597,132 +579,76 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     );
                   }
 
-                  // UNIFIED: Use presence entities + location record resident_family_members as fallback
-                  const presentHere = getPresenceAtLocation(selectedLocation, allPresenceEntities);
-                  const lines = [];
-                  const seenNames = new Set();
+                  // ── PRESENCE-ONLY POPUP ─────────────────────────────────────────────────────
+                  // SOURCE OF TRUTH: resolved_current_location_id ONLY.
+                  // resident_character_ids, residents[], resident_family_members are NOT presence sources.
+                  // They describe who LIVES here. "Lives here" ≠ "currently here."
+                  // ───────────────────────────────────────────────────────────────────────────
 
-                  // Build resident ID set from all resident fields on the location
-                  const residentIdSet = new Set([
-                    ...(selectedLocation.resident_character_ids || []),
-                    ...(selectedLocation.residents || []).map(r => r.character_id).filter(Boolean),
-                  ]);
+                  // 1. Characters physically HERE NOW — resolved_current_location_id === this location
+                  const hereNow = allPresenceEntities.filter(e =>
+                    e.is_currently_present && e.resolved_current_location_id === selectedLocation.id
+                  );
 
-                  // From unified presence entities — characters physically AT this location right now
-                  presentHere.forEach(entity => {
+                  // 2. Residents (home = current_home_location_id) who are currently AWAY
+                  // Uses residence_location_id which is set from current_home_location_id in normalizer
+                  const residentsAway = allPresenceEntities.filter(e =>
+                    e.residence_location_id === selectedLocation.id &&
+                    e.resolved_current_location_id !== selectedLocation.id &&
+                    e.is_currently_present // they ARE somewhere — just not here
+                  );
+
+                  // 3. Residents whose resolved location is unknown (not placed anywhere)
+                  const residentsUnplaced = allPresenceEntities.filter(e =>
+                    e.residence_location_id === selectedLocation.id &&
+                    !e.is_currently_present
+                  );
+
+                  console.log(`[Travel Popup] "${selectedLocation.name}": hereNow=${hereNow.length}, away=${residentsAway.length}, unplaced=${residentsUnplaced.length}`);
+
+                  const renderLine = (entity, status, color) => {
                     const name = entity.display_name;
-                    if (seenNames.has(name?.toLowerCase())) return;
-                    seenNames.add(name?.toLowerCase());
-
-                    const isResidentHere = entity.residence_location_id === selectedLocation.id ||
-                      residentIdSet.has(entity.id);
-
-                    let status = entity.resolved_presence_status || (isHome ? 'home' : 'here');
-                    // Resident physically here — never label as "visiting"
-                    if (isResidentHere && status === 'visiting') status = 'home';
-
-                    let color = (isHome || isResidentHere) ? 'text-green-400' : 'text-blue-400';
-                    if (status === 'visiting') { color = 'text-amber-400'; }
-                    if (status === 'home' || status === 'sleeping' || status === 'napping') {
-                      color = status === 'home' ? 'text-green-400' : 'text-blue-400';
-                      status = status === 'sleeping' || status === 'napping' ? 'sleeping' : 'home';
-                    }
-                    // Show "working" if resolved_presence_status is at_work from schedule source
-                    if (!isHome && status === 'at_work' &&
-                        (entity.resolved_source_reason === 'work_schedule' || entity.resolved_source_reason === 'work_schedule_enforced')) {
-                      status = 'working';
-                      color = 'text-purple-400';
-                    }
-                    lines.push({ name, status, color });
-                  });
-
-                  // RESIDENTS WHO ARE AWAY: show residents not physically here as "out"
-                  // This covers VGC Towers NPCs who were distributed to other locations
-                  allPresenceEntities.forEach(entity => {
-                    if (!residentIdSet.has(entity.id) && entity.residence_location_id !== selectedLocation.id) return;
-                    if (entity.resolved_current_location_id === selectedLocation.id) return; // already shown above
-                    const name = entity.display_name;
-                    if (!name || seenNames.has(name?.toLowerCase())) return;
-                    seenNames.add(name.toLowerCase());
-                    lines.push({ name, status: 'out', color: 'text-amber-400' });
-                  });
-
-                  // LOCATION RECORD FALLBACK: resident_family_members listed on the location record.
-                  // CRITICAL: only show as "home" if their resolved_current_location_id === this location
-                  // (or if they have no resolved location at all — they haven't been moved yet).
-                  // If they have a resolved location elsewhere, show as "out".
-                  (selectedLocation.resident_family_members || []).forEach(fam => {
-                    if (!fam.name) return;
-                    if (seenNames.has(fam.name.toLowerCase())) return;
-                    seenNames.add(fam.name.toLowerCase());
-                    // Try to find their Character record to check resolved location
-                    const famChar = allCharactersForFamilyScan.find(c =>
-                      (c.display_name || c.name)?.toLowerCase() === fam.name.toLowerCase()
+                    return (
+                      <p key={entity.id} className="text-xs truncate">
+                        <span className="text-foreground font-medium">{name}</span>
+                        <span className={`ml-1 ${color}`}>is {status}</span>
+                      </p>
                     );
-                    if (famChar && famChar.resolved_current_location_id && famChar.resolved_current_location_id !== selectedLocation.id) {
-                      lines.push({ name: fam.name, status: 'out', color: 'text-amber-400' });
-                    } else {
-                      lines.push({ name: fam.name, status: 'home', color: 'text-green-400' });
-                    }
+                  };
+
+                  const hereNowLines = hereNow.map(e => {
+                    const ps = e.resolved_presence_status;
+                    const isSleeping = ps === 'sleeping' || ps === 'napping';
+                    const isResident = e.residence_location_id === selectedLocation.id;
+                    const status = isSleeping ? 'sleeping' : (isResident && isHome) ? 'home' : (isHome ? 'visiting' : 'here');
+                    const color = isSleeping ? 'text-blue-400' : isResident ? 'text-green-400' : 'text-blue-400';
+                    return renderLine(e, status, color);
                   });
 
-                  // resident_character_ids fallback for NPCs/family not caught above.
-                  // CRITICAL: check resolved_current_location_id before labeling "home".
-                  // A character in resident_character_ids who is distributed elsewhere must show as "out".
-                  (selectedLocation.resident_character_ids || []).forEach(resId => {
-                    const resChar = allCharactersForFamilyScan.find(c => c.id === resId);
-                    if (!resChar) return;
-                    const name = resChar.display_name || resChar.name;
-                    if (!name || seenNames.has(name.toLowerCase())) return;
-                    if (resChar.character_type === 'active_created_character') return;
-                    seenNames.add(name.toLowerCase());
-                    // Use resolved_current_location_id as source of truth — never treat home membership as current location
-                    if (resChar.resolved_current_location_id && resChar.resolved_current_location_id !== selectedLocation.id) {
-                      lines.push({ name, status: 'out', color: 'text-amber-400' });
-                    } else {
-                      lines.push({ name, status: 'home', color: 'text-green-400' });
-                    }
-                  });
+                  const awayLines = residentsAway.map(e =>
+                    renderLine(e, `out (${e.resolved_current_location_name || 'elsewhere'})`, 'text-amber-400')
+                  );
 
-                  console.log(`[Travel Popup] ${selectedLocation.name}: ${lines.length} residents shown`, lines.map(l => l.name));
+                  const unplacedLines = residentsUnplaced.map(e =>
+                    renderLine(e, 'unavailable', 'text-muted-foreground')
+                  );
 
-                  const presenceSummary = lines.length > 0 ? (
-                    <div className={lines.length > 4 ? "grid grid-cols-2 gap-x-3 gap-y-0.5" : "space-y-0.5"}>
-                      {lines.map((l, i) => (
-                        <p key={i} className="text-xs truncate">
-                          <span className="text-foreground font-medium">{l.name}</span>
-                          <span className={`ml-1 ${l.color}`}>is {l.status}</span>
+                  const allLines = [...hereNowLines, ...awayLines, ...unplacedLines];
+
+                  const presenceSummary = allLines.length > 0 ? (
+                    <div className={allLines.length > 4 ? "grid grid-cols-2 gap-x-3 gap-y-0.5" : "space-y-0.5"}>
+                      {allLines}
+                      {residentsAway.length > 0 && (
+                        <p className="text-xs text-amber-400 col-span-2 mt-1">
+                          {residentsAway.length} resident{residentsAway.length !== 1 ? 's' : ''} out visiting
                         </p>
-                      ))}
+                      )}
                     </div>
                   ) : null;
-
-                  // VGC Towers: show breakdown of resident states using resolved fields only
-                  let vgcTowersNote = null;
-                  if (isHome && vgcTowers && selectedLocation.id === vgcTowers.id && vgcTowersResidents.length > 0) {
-                    const residentsHome = vgcTowersResidents.filter(r => r.resolved_current_location_id === vgcTowers.id).length;
-                    const residentsOut = vgcTowersResidents.filter(r => r.is_away).length;
-                    const residentsUnavailable = vgcTowersResidents.filter(r => !r.is_currently_present).length;
-                    if (residentsOut > 0 || residentsUnavailable > 0) {
-                      vgcTowersNote = (
-                        <div className="text-xs mt-1 space-y-0.5">
-                          {residentsOut > 0 && (
-                            <p className="text-amber-400">{residentsOut} resident{residentsOut !== 1 ? 's' : ''} out visiting</p>
-                          )}
-                          {residentsUnavailable > 0 && (
-                            <p className="text-muted-foreground">{residentsUnavailable} resident{residentsUnavailable !== 1 ? 's' : ''} unavailable (work/sleep/jail)</p>
-                          )}
-                        </div>
-                      );
-                    }
-                  }
-
-                  // REMOVED: false "Nobody's home" block — if residents exist from location record, always allow travel
 
                   return (
                     <>
                       {presenceSummary}
-                      {vgcTowersNote}
                       <Button onClick={handleTravel} disabled={isTraveling} className="w-full h-12 rounded-xl gap-2">
                         <Navigation className="w-4 h-4" />
                         {isTraveling ? "Traveling..." : travelLabel}

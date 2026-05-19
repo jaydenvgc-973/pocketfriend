@@ -260,3 +260,33 @@ export function shouldCharacterAppearOnMap(entity, location = null) {
   // Show if present
   return entity.is_currently_present;
 }
+
+/**
+ * getCharacterCurrentLocation — SINGLE SHARED PRESENCE HELPER
+ *
+ * Returns the character's current location using ONLY authoritative resolved fields.
+ * NEVER reads: current_home_location_id, residents[], resident_character_ids,
+ *              resident_family_members, or any home-membership field.
+ *
+ * Source of truth fields (in priority order):
+ *   1. resolved_current_location_id
+ *   2. resolved_current_location_name
+ *   3. resolved_presence_status
+ *
+ * @param {Object} character - raw Character entity record
+ * @returns {{ locationId: string|null, locationName: string|null, presenceStatus: string, isPlaced: boolean }}
+ */
+export function getCharacterCurrentLocation(character) {
+  if (!character) return { locationId: null, locationName: null, presenceStatus: 'away', isPlaced: false };
+
+  const locId = character.resolved_current_location_id || null;
+  const locName = character.resolved_current_location_name || null;
+  const status = character.resolved_presence_status || (locId ? 'home' : 'away');
+
+  return {
+    locationId: locId,
+    locationName: locName,
+    presenceStatus: status,
+    isPlaced: !!locId,
+  };
+}
