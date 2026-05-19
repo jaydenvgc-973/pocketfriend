@@ -35,6 +35,13 @@ export const VENUE_NPCS = {
     { id: "npc_shopper_1", name: "Shopper", role: "Customer", npcType: "customer" },
     { id: "npc_shopper_2", name: "Customer browsing", role: "Customer", npcType: "customer" },
   ],
+  // Clothing store specific — used when venueSubtype === 'clothing_store'
+  clothing_store: [
+    { id: "npc_sales_associate", name: "Sales Associate", role: "Sales Associate", npcType: "staff" },
+    { id: "npc_store_manager", name: "Store Manager", role: "Store Manager", npcType: "staff" },
+    { id: "npc_cashier", name: "Cashier", role: "Cashier", npcType: "staff" },
+    { id: "npc_shopper_1", name: "Shopper", role: "Customer", npcType: "customer" },
+  ],
   medical: [
     { id: "npc_medical_receptionist", name: "Medical Receptionist", role: "Medical Receptionist", npcType: "staff" },
     { id: "npc_nurse", name: "Nurse", role: "Nurse", npcType: "staff" },

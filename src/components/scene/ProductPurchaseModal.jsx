@@ -8,6 +8,7 @@ export default function ProductPurchaseModal({
   isOpen,
   price,
   productId,
+  preview_image_url,
   userBalance,
   userSettings,
   currentUser,
@@ -17,6 +18,20 @@ export default function ProductPurchaseModal({
 }) {
   const queryClient = useQueryClient();
 
+  // Build a closet piece record. Uses the generated scene image as image_url.
+  // Saved to Pieces (not Outfits) — accessories and single items go here.
+  const buildPieceRecord = (label = "Purchased Item") => ({
+    outfit_id: `piece_${productId || Date.now()}`,
+    label,
+    category: "daily_casual",
+    image_url: preview_image_url || null,        // preserve generated image
+    full_description: label,
+    created_at: new Date().toISOString(),
+    is_favorite: false,
+    source: "scene_purchase",
+    purchase_price: price,
+  });
+
   const handleAddToUserCloset = async () => {
     const newBalance = Math.max(0, (userBalance ?? 6000) - price);
     if (userSettings?.id) {
@@ -24,13 +39,7 @@ export default function ProductPurchaseModal({
         user_balance: newBalance,
         user_closet: [
           ...(userSettings.user_closet || []),
-          {
-            outfit_id: `item_${Date.now()}`,
-            label: "Purchased Item",
-            category: "daily_casual",
-            top: "Item",
-            created_at: new Date().toISOString(),
-          }
+          buildPieceRecord("Scene Purchase"),
         ]
       });
       queryClient.invalidateQueries({ queryKey: ["userSettings"] });
@@ -44,17 +53,10 @@ export default function ProductPurchaseModal({
       await base44.entities.UserSettings.update(userSettings.id, { user_balance: newBalance });
       queryClient.invalidateQueries({ queryKey: ["userSettings"] });
     }
-
     await base44.entities.Character.update(char.id, {
       character_closet: [
         ...(char.character_closet || []),
-        {
-          outfit_id: `item_${Date.now()}`,
-          label: "Gifted Item",
-          category: "daily_casual",
-          top: "Item",
-          created_at: new Date().toISOString(),
-        }
+        buildPieceRecord(`Gift for ${char.name}`),
       ]
     });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
@@ -84,9 +86,18 @@ export default function ProductPurchaseModal({
             </div>
 
             <div className="space-y-3">
-              <div className="bg-primary/10 rounded-lg p-4 text-center">
-                <p className="text-2xl font-bold text-foreground">${price}</p>
-                <p className="text-xs text-muted-foreground mt-1">Item price</p>
+              {/* Product preview — show generated image if available */}
+              <div className="flex items-center gap-3 bg-secondary/50 rounded-xl p-3">
+                <div className="w-16 h-16 rounded-lg bg-primary/10 flex items-center justify-center overflow-hidden flex-shrink-0">
+                  {preview_image_url
+                    ? <img src={preview_image_url} alt="Item" className="w-full h-full object-cover rounded-lg" />
+                    : <span className="text-3xl">🛍️</span>
+                  }
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-foreground">${price}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Scene purchase</p>
+                </div>
               </div>
 
               {/* Add to user closet */}

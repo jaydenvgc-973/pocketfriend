@@ -21,10 +21,47 @@ import { REQUIRED_STAFF_ROLES } from './sceneVenueNPCs.js';
  * @param {Object} character - Character in scene (null if none)
  * @returns {Array} Interaction objects with zone/price validation
  */
+// Subtype sets that map to specific shopping/venue action profiles
+const CLOTHING_SUBTYPES = ['clothing', 'boutique', 'apparel', 'thrift', 'thrift_store', 'clothing_store', 'mall', 'department_store', 'shoe_store', 'accessories'];
+const BAR_RESTAURANT_SUBTYPES = ['bar', 'restaurant', 'cafe', 'coffee', 'diner', 'fast_food', 'food', 'lounge', 'nightclub', 'pub', 'tavern', 'cocktail_bar', 'wine_bar', 'brewery'];
+const SALON_SUBTYPES = ['salon', 'barbershop', 'spa', 'nail_salon', 'beauty_salon'];
+const BOOKSTORE_SUBTYPES = ['bookstore', 'record_store', 'electronics_store', 'home_goods', 'toy_store', 'gift_shop'];
+
+/**
+ * Resolve the effective venue subtype for action routing.
+ * Checks location.subtype array and venue_identity string.
+ * Returns one of: 'clothing_store' | 'bar_restaurant' | 'salon' | 'retail_store' | null
+ */
+function resolveVenueSubtype(location) {
+  const subtypes = (location.subtype || []).map(s => s.toLowerCase().replace(/\s+/g, '_'));
+  const venueIdentity = (location.venue_identity || '').toLowerCase();
+  const nameHint = (location.name || '').toLowerCase();
+
+  if (subtypes.some(s => CLOTHING_SUBTYPES.includes(s)) ||
+      CLOTHING_SUBTYPES.some(s => venueIdentity.includes(s)) ||
+      CLOTHING_SUBTYPES.some(s => nameHint.includes(s))) {
+    return 'clothing_store';
+  }
+  if (subtypes.some(s => BAR_RESTAURANT_SUBTYPES.includes(s)) ||
+      BAR_RESTAURANT_SUBTYPES.some(s => venueIdentity.includes(s)) ||
+      BAR_RESTAURANT_SUBTYPES.some(s => nameHint.includes(s))) {
+    return 'bar_restaurant';
+  }
+  if (subtypes.some(s => SALON_SUBTYPES.includes(s)) ||
+      SALON_SUBTYPES.some(s => venueIdentity.includes(s))) {
+    return 'salon';
+  }
+  if (subtypes.some(s => BOOKSTORE_SUBTYPES.includes(s))) {
+    return 'retail_store';
+  }
+  return null;
+}
+
 export function getSceneInteractions(location, activeZone, character) {
   if (!location) return [];
 
   const category = location.category || 'generic';
+  const venueSubtype = resolveVenueSubtype(location);
   const actions = [];
   const now = new Date();
   const hour = now.getHours();
@@ -177,18 +214,27 @@ export function getSceneInteractions(location, activeZone, character) {
   } else if (category === 'social') {
     actions.push(
       makeAction('🎉', 'Socialize', 'social_mingle', hour, {
-        location,
-        realZones,
-        requiredZone: 'Main Area',
+        location, realZones,
+        // No required zone — always clickable
+      }),
+      makeAction('🍹', 'Order Drink', 'drink_order', hour, {
+        location, realZones,
+        requiredZone: 'Bar',
+        isPay: true,
+        onShiftWorkers: onShiftWorkerIds,
+      }),
+      makeAction('🍔', 'Order Food', 'food_order', hour, {
+        location, realZones,
+        requiredZone: 'Dining Area',
+        isPay: true,
+        onShiftWorkers: onShiftWorkerIds,
       }),
       makeAction('🎵', 'Dance', 'social_dance', hour, {
-        location,
-        realZones,
+        location, realZones,
         requiredZone: 'Dance Floor',
       }),
       makeAction('🎤', 'Perform', 'social_perform', hour, {
-        location,
-        realZones,
+        location, realZones,
         requiredZone: 'Stage',
       })
     );
@@ -290,20 +336,42 @@ export function getSceneInteractions(location, activeZone, character) {
       })
     );
   } else if (category === 'business') {
-    actions.push(
-      makeAction('💼', 'Work', 'business_work', hour, {
-        location,
-        realZones,
-        requiredZone: 'Office',
-        onShiftWorkers: onShiftWorkerIds,
-      }),
-      makeAction('📊', 'Meet', 'business_meet', hour, {
-        location,
-        realZones,
-        requiredZone: 'Conference Room',
-        onShiftWorkers: onShiftWorkerIds,
-      })
-    );
+    // Route by subtype first — clothing store gets shopping actions, not generic business actions
+    if (venueSubtype === 'clothing_store') {
+      actions.push(
+        makeAction('🛍️', 'Browse Racks', 'clothing_browse', hour, { location, realZones, requiredZone: 'Sales Floor' }),
+        makeAction('👗', 'Ask for Size', 'clothing_ask_size', hour, { location, realZones, requiredZone: 'Sales Floor', onShiftWorkers: onShiftWorkerIds }),
+        makeAction('🪞', 'Try It On', 'clothing_try_on', hour, { location, realZones, requiredZone: 'Fitting Rooms' }),
+        makeAction('💰', 'Ask Price', 'clothing_ask_price', hour, { location, realZones, requiredZone: 'Sales Floor', onShiftWorkers: onShiftWorkerIds }),
+        makeAction('🛒', 'Buy Item', 'clothing_buy', hour, { location, realZones, requiredZone: 'Register', onShiftWorkers: onShiftWorkerIds }),
+        makeAction('👜', 'Check Accessories', 'clothing_accessories', hour, { location, realZones, requiredZone: 'Accessories' }),
+        makeAction('🏷️', 'Go to Register', 'clothing_register', hour, { location, realZones, requiredZone: 'Register', onShiftWorkers: onShiftWorkerIds })
+      );
+    } else if (venueSubtype === 'bar_restaurant') {
+      actions.push(
+        makeAction('🍔', 'Order Food', 'food_order', hour, { location, realZones, requiredZone: 'Dining Area', isPay: true, onShiftWorkers: onShiftWorkerIds }),
+        makeAction('🍹', 'Order Drink', 'drink_order', hour, { location, realZones, requiredZone: 'Bar', isPay: true, onShiftWorkers: onShiftWorkerIds }),
+        makeAction('🎉', 'Socialize', 'social_mingle', hour, { location, realZones, requiredZone: 'Main Area' }),
+        makeAction('💳', 'Get Check', 'food_check', hour, { location, realZones, requiredZone: 'Dining Area', onShiftWorkers: onShiftWorkerIds })
+      );
+    } else if (venueSubtype === 'salon') {
+      actions.push(
+        makeAction('💇', 'Book Service', 'salon_book', hour, { location, realZones, requiredZone: 'Reception', onShiftWorkers: onShiftWorkerIds }),
+        makeAction('✂️', 'Get Cut', 'salon_cut', hour, { location, realZones, requiredZone: 'Styling Area', onShiftWorkers: onShiftWorkerIds })
+      );
+    } else if (venueSubtype === 'retail_store') {
+      actions.push(
+        makeAction('🛍️', 'Browse', 'retail_browse', hour, { location, realZones, requiredZone: 'Store Floor' }),
+        makeAction('❓', 'Ask Staff', 'retail_ask', hour, { location, realZones, requiredZone: 'Store Floor', onShiftWorkers: onShiftWorkerIds }),
+        makeAction('💳', 'Checkout', 'retail_checkout', hour, { location, realZones, requiredZone: 'Checkout', onShiftWorkers: onShiftWorkerIds })
+      );
+    } else {
+      // Generic business fallback
+      actions.push(
+        makeAction('💼', 'Work', 'business_work', hour, { location, realZones, requiredZone: 'Office', onShiftWorkers: onShiftWorkerIds }),
+        makeAction('📊', 'Meet', 'business_meet', hour, { location, realZones, requiredZone: 'Conference Room', onShiftWorkers: onShiftWorkerIds })
+      );
+    }
   } else if (category === 'religion') {
     actions.push(
       makeAction('🙏', 'Pray', 'religion_pray', hour, {

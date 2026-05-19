@@ -1030,75 +1030,33 @@ export default function Scene() {
     }
     const t = text.toLowerCase();
 
-    // ── PURCHASE INTENT DETECTION (AT BUSINESS VENUES) ────────────────────────────
-    // Detect when user wants to buy: "I'll take it", "I like it", "how much", "price", etc.
-    const isBusinessVenue = ["business", "workplace", "grocery"].includes(location?.category);
-    if (isBusinessVenue) {
-      const purchaseIntentMatch = t.match(/(?:i'll take it|i like it|i love it|how much|what's the price|what is the price|how much does it cost|what's the cost|i want it|can i buy|i'll buy it|i'll take|i want to buy|i'd like to buy|i want to get|i'll get it|price)/);
-      if (purchaseIntentMatch) {
+    // ── PURCHASE INTENT DETECTION — venue-aware ────────────────────────────────
+    const isShoppingVenue = ["business", "workplace", "grocery"].includes(location?.category);
+    const isFoodDrinkVenue = ["social", "food_drink"].includes(location?.category);
+    const subtypes = (location?.subtype || []).map(s => s.toLowerCase());
+    const isClothingStore = subtypes.some(s => ['clothing','boutique','apparel','thrift','clothing_store','mall'].includes(s)) ||
+      ['clothing','boutique','apparel','thrift','mall'].some(s => (location?.venue_identity||'').toLowerCase().includes(s)||(location?.name||'').toLowerCase().includes(s));
+    const isFoodDrinkBusiness = isShoppingVenue && subtypes.some(s => ['bar','restaurant','cafe','diner','food','pub','lounge'].includes(s));
+    if (isFoodDrinkVenue || isFoodDrinkBusiness) {
+      const fd = t.match(/(?:i'll (have|take|get)|can i (get|have|order)|give me|order|i want|i'd like)\s+(a |an |some |the )?.+/) ||
+                 t.match(/(?:that('s| is| will be)|it('s| is))\s+\$?\d+|\$\d+\s+(for|per)/);
+      if (fd) {
+        const ep = t.match(/\$?(\d+(?:\.\d{1,2})?)/);
+        const price = ep ? Math.min(parseInt(ep[1]), 200) : Math.floor(Math.random() * 18) + 8;
+        setMessages(prev => [...prev, { id:`product_${Date.now()}`, sender:"product", price, locationName:location.name, preview_image_url:sceneImage||null, purchase_type:"consumable", item_label:"Food / Drink", timestamp:new Date().toISOString() }]);
+      }
+    } else if (isShoppingVenue) {
+      const pi = t.match(/(?:i'll take it|i like it|i love it|how much|what's the price|i want it|can i buy|i'll buy it|i want to buy|i'd like to buy|i'll get it|buy this|price)/);
+      if (pi) {
         const randomPrice = Math.floor(Math.random() * (150 - 25 + 1)) + 25;
-        const isClothingStore = (location?.subtype || []).some(s => ['clothing', 'boutique', 'apparel'].includes(s));
-        setMessages(prev => [...prev, {
-          id: `product_${Date.now()}`,
-          sender: "product",
-          price: randomPrice,
-          locationName: location.name,
-          preview_image_url: sceneImage || null,
-          purchase_type: isClothingStore ? "clothing" : "consumable",
-          timestamp: new Date().toISOString(),
-        }]);
-        return true;
+        setMessages(prev => [...prev, { id:`product_${Date.now()}`, sender:"product", price:randomPrice, locationName:location.name, preview_image_url:sceneImage||null, purchase_type:isClothingStore?"clothing":"consumable", timestamp:new Date().toISOString() }]);
       }
     }
 
-    // ── BUSINESS ITEM REQUEST DETECTION ────────────────────────────────────────
-    // At a business/workplace, detect when the user is asking to see or find an item.
-    // Triggers a worker NPC to "show" the item by generating a focused product image.
-    if (isBusinessVenue) {
-      // Pattern 1: "show me X", "can you show me X", "can I see X", "I want to see X"
-      const showMatch = t.match(/(?:show me|can you show me|can i see|i want to see|let me see|could i see)\s+(?:a |an |the )?(.+)/);
-      if (showMatch) {
-        const item = showMatch[1].replace(/[?.!]+$/, "").trim();
-        generateFocusedImage(`${item} displayed on a retail shelf or counter at ${location.name}, product close-up, professional lighting,`);
-        return;
-      }
-      // Pattern 2: "I'm looking for a/an/the X", "looking for X"
-      const lookingMatch = t.match(/(?:i'm looking for|i am looking for|looking for)\s+(?:a |an |the )?(.+)/);
-      if (lookingMatch) {
-        const item = lookingMatch[1].replace(/[?.!]+$/, "").trim();
-        generateFocusedImage(`${item} displayed on a retail shelf or counter at ${location.name}, product close-up, professional lighting,`);
-        return;
-      }
-      // Pattern 3: "do you have X", "do you carry X", "do you sell X"
-      const haveMatch = t.match(/(?:do you have|do you carry|do you sell|got any|have any)\s+(?:a |an |the )?(.+)/);
-      if (haveMatch) {
-        const item = haveMatch[1].replace(/[?.!]+$/, "").trim();
-        generateFocusedImage(`${item} displayed on a retail shelf or counter at ${location.name}, product close-up, professional lighting,`);
-        return;
-      }
-    }
-
-    // "show me X" or "look at X" or "what does X look like" — general (non-business)
+    // "show me X" or "look at X" — general image generation trigger
     const showMatch = t.match(/(?:show me|look at|what does|can i see|i want to see)\s+(.+)/);
     if (showMatch) {
       generateFocusedImage(`${showMatch[1]} at ${location.name},`);
-      return;
-    }
-    // Food order detection
-    const foodKeywords = ["order", "ordered", "i'll have", "i'll get", "can i get", "give me", "burger", "pizza", "pasta", "salad", "sandwich", "steak", "sushi", "tacos", "wings"];
-    const drinkKeywords = ["drink", "beer", "wine", "cocktail", "shot", "whiskey", "vodka", "juice", "soda", "coffee", "latte", "water"];
-    const hasFoodOrder = foodKeywords.some(k => t.includes(k));
-    const hasDrinkOrder = drinkKeywords.some(k => t.includes(k));
-    // At home, only trigger food images for explicit takeout — not generic eating
-    const isTakeoutContext = t.includes("takeout") || t.includes("take out") || t.includes("delivery") || t.includes("order takeout");
-    const nonHomeFood = FOOD_VENUE_CATEGORIES.includes(location.category) && !isHomeLocation;
-    if (hasFoodOrder && (nonHomeFood || isTakeoutContext)) {
-      const item = showMatch?.[1] || text.replace(/[[\]]/g, "").trim();
-      const setting = isTakeoutContext ? "takeout containers on a coffee table, home setting" : "restaurant setting";
-      generateFocusedImage(`${item}, served on a plate, ${setting}, close-up,`);
-    } else if (hasDrinkOrder && nonHomeFood) {
-      const item = text.replace(/[[\]]/g, "").trim();
-      generateFocusedImage(`${item}, drink in a glass, bar or restaurant setting, close-up,`);
     }
   };
 
@@ -1121,11 +1079,9 @@ export default function Scene() {
     setMessages(prev => [...prev, userMsg]);
 
     // Check if we should update the scene image — returns true if it was a purchase intent (skip LLM)
-    const wasPurchaseIntent = checkImageTrigger(text, actionImagePrompt, actionScenePrompt);
-    if (wasPurchaseIntent) {
-      setIsTyping(false);
-      return;
-    }
+    // IMPORTANT: purchase card is shown alongside the LLM response, not instead of it.
+    // Sales Associate / Bartender must still respond even when a purchase card is shown.
+    checkImageTrigger(text, actionImagePrompt, actionScenePrompt);
 
     setIsTyping(true);
 
@@ -1943,6 +1899,7 @@ Return JSON:
         isOpen={!!pendingPurchase}
         price={pendingPurchase?.price}
         productId={pendingPurchase?.productId}
+        preview_image_url={pendingPurchase?.preview_image_url}
         userBalance={settings.user_balance ?? 6000}
         userSettings={settings}
         currentUser={currentUser}
