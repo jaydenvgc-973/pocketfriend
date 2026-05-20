@@ -398,6 +398,33 @@ export function getSceneInteractions(location, activeZone, character) {
         requiredZone: 'Library',
       })
     );
+  } else if (category === 'workplace') {
+    actions.push(
+      makeAction('💼', 'Work', 'business_work', hour, { location, realZones, requiredZone: 'Office', onShiftWorkers: onShiftWorkerIds }),
+      makeAction('📊', 'Meet', 'business_meet', hour, { location, realZones, requiredZone: 'Conference Room', onShiftWorkers: onShiftWorkerIds }),
+      makeAction('☕', 'Coffee Break', 'workplace_break', hour, { location, realZones }),
+      makeAction('🗣️', 'Check In', 'workplace_checkin', hour, { location, realZones, requiredZone: 'Reception', onShiftWorkers: onShiftWorkerIds })
+    );
+  } else if (category === 'public') {
+    actions.push(
+      makeAction('🚶', 'Walk Around', 'outdoor_walk', hour, { location, realZones }),
+      makeAction('📸', 'Take Photos', 'outdoor_photo', hour, { location, realZones }),
+      makeAction('💬', 'Talk', 'social_mingle', hour, { location, realZones }),
+      makeAction('🔍', 'Explore', 'outdoor_explore', hour, { location, realZones })
+    );
+  } else if (category === 'hotel') {
+    // hotel already handled above — this branch never runs, but kept for safety
+  }
+
+  // Universal fallback — if no category-specific actions were generated, provide sensible defaults
+  // so no location ever has an empty strip.
+  if (actions.length === 0) {
+    actions.push(
+      makeAction('💬', 'Talk', 'social_mingle', hour, { location, realZones }),
+      makeAction('👀', 'Look Around', 'outdoor_explore', hour, { location, realZones }),
+      makeAction('😄', 'Crack a Joke', 'social_joke', hour, { location, realZones }),
+      makeAction('🤔', 'Ask Something', 'social_ask', hour, { location, realZones })
+    );
   }
 
   // Filter and validate all actions
@@ -438,28 +465,27 @@ function validateAction(action) {
     onShiftWorkers,
   } = action;
 
-  // Zone validation
+  // Zone validation — zone is a NAVIGATION HINT, not a hard requirement.
+  // If the zone doesn't exist on the location, the action still works, just without zone-locking.
+  // This ensures ALL locations get functional actions regardless of whether zones are configured.
   if (requiredZone) {
     const zoneExists = realZones.includes(requiredZone);
-    if (!zoneExists) {
-      // Action blocked — zone not configured
-      return {
-        ...action,
-        disabled: true,
-        disabledReason: `${requiredZone} zone not configured`,
-      };
+    if (zoneExists) {
+      action.suggested_zone_name = requiredZone;
     }
-    action.suggested_zone_name = requiredZone;
+    // If zone doesn't exist: action is still available, just no zone navigation attached.
+    // Do NOT disable the action — missing zones are a configuration gap, not a blocker.
   }
 
-  // Price validation for paid actions
+  // Price validation for paid actions.
+  // If price is not configured, the action is still available — just shown without a cost badge.
+  // This ensures actions like "Sign Up Membership" work even if gym_membership_fee is not set.
+  // Do NOT disable — missing price is a config gap, not a hard blocker.
   if (cost === null && (action.isPay || type.includes('payment') || type.includes('membership'))) {
-    // Action blocked — price not configured
-    return {
-      ...action,
-      disabled: true,
-      disabledReason: 'Price not configured',
-    };
+    // Show action without price — clear the cost so no "$null" badge appears
+    delete action.cost;
+    delete action.payer;
+    delete action.costSource;
   }
 
   if (cost !== null && cost !== undefined) {

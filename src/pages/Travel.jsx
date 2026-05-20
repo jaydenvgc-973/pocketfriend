@@ -647,10 +647,30 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     lines.push({ name, status: 'out', color: 'text-amber-400' });
                   });
 
-                  // LOCATION RECORD FALLBACK: Also show resident_family_members listed directly on location
+                  // LOCATION RECORD FALLBACK: resident_family_members listed on this location.
+                  // RULE: Only show if source_character_id is a confirmed resident of THIS location.
+                  // Never infer from name matching or family relationship alone.
                   (selectedLocation.resident_family_members || []).forEach(fam => {
                     if (!fam.name) return;
                     if (seenNames.has(fam.name.toLowerCase())) return;
+
+                    // Gate: the source character that owns this family entry must live HERE.
+                    // If source_character_id is set, verify they are actually a resident of this location.
+                    if (fam.source_character_id) {
+                      const sourceChar = allCharactersForFamilyScan.find(c => c.id === fam.source_character_id);
+                      if (!sourceChar) return; // source character not loaded — skip
+                      const sourceHomesHere = sourceChar.current_home_location_id === selectedLocation.id;
+                      const sourceInResidents = residentIdSet.has(sourceChar.id);
+                      if (!sourceHomesHere && !sourceInResidents) {
+                        // Source character lives somewhere else — this family member belongs to THAT home, not this one
+                        console.log(`[Travel Popup] SUPPRESSED family member "${fam.name}" — source char ${sourceChar.name} lives at ${sourceChar.current_home_location_id}, not ${selectedLocation.id}`);
+                        return;
+                      }
+                    } else {
+                      // No source_character_id — cannot verify ownership — skip to prevent bleed-over
+                      return;
+                    }
+
                     seenNames.add(fam.name.toLowerCase());
                     lines.push({ name: fam.name, status: 'home', color: 'text-green-400' });
                   });
