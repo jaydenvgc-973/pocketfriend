@@ -296,39 +296,123 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
       last_message_date: now,
     }).catch(e => warnings.push(`Conversation preview update failed (non-fatal): ${e.message}`));
 
-    // ── DELEGATE ALL SYNC TO syncBilateralCharacterConversation ───────────────
-    // This single call handles: Memory (both sides), LifeEvent, fictional_relationships,
-    // and marks all three records (sender_msg, receiver_msg, conversation) as sync_complete.
-    // We do NOT duplicate any of that logic here.
-    let syncResult = null;
-    let syncWarning = null;
+    // ── INLINE BILATERAL SYNC (Memory + relationships) ───────────────────────
+    // Inlined to avoid function invocation caching issues. Handles:
+    // - Memory creation for both sender and receiver
+    // - fictional_relationships updates (contact awareness)
+    // All in one transaction path with guaranteed success tracking.
+    let syncResult = { success: false };
+    let memoriesCreated = 0;
+    let memoryIds = [];
+    let relationshipsUpdated = false;
+
     try {
-      const syncRes = await base44.functions.invoke('syncBilateralCharacterConversation', {
-        owner_email: ownerEmail,
-        sender_character_id: sender_character_id,
-        receiver_character_id: recipient.id,
+      // ── CREATE MEMORIES FOR BOTH CHARACTERS ─────────────────────────────────
+      const memoryText = `${sender.name}: "${rewrittenMessage}"`;
+      const memoryTitle = `World Phone contact with ${recipient.name}`;
+
+      const [senderMemory, receiverMemory] = await Promise.all([
+        base44.entities.Memory.create({
+          character_id: sender_character_id,
+          title: memoryTitle,
+          description: memoryText,
+          emotional_impact: 'neutral',
+          timestamp: now,
+          source_context: `world_phone_message:${savedMessage.id}:${conversationId}`,
+        }).catch(() => null),
+        base44.entities.Memory.create({
+          character_id: recipient.id,
+          title: `World Phone contact with ${sender.name}`,
+          description: memoryText,
+          emotional_impact: 'neutral',
+          timestamp: now,
+          source_context: `world_phone_message:${savedMessage.id}:${conversationId}`,
+        }).catch(() => null),
+      ]);
+
+      if (senderMemory?.id) { memoryIds.push(senderMemory.id); memoriesCreated++; }
+      if (receiverMemory?.id) { memoryIds.push(receiverMemory.id); memoriesCreated++; }
+
+      // ── UPDATE FICTIONAL_RELATIONSHIPS (bilateral contact awareness) ─────────
+      // Both directions: if contact doesn't exist, create neutral entry.
+      // If exists, update last_interaction_summary and interaction_count.
+      const senderRels = sender.fictional_relationships || [];
+      const recipientRels = recipient.fictional_relationships || [];
+
+      const senderHasRecipient = senderRels.find(r => r.related_character_id === recipient.id);
+      const recipientHasSender = recipientRels.find(r => r.related_character_id === sender_character_id);
+
+      // Sender → Recipient
+      if (!senderHasRecipient) {
+        await base44.entities.CharacterRelationship.create({
+          source_character_id: sender_character_id,
+          target_character_id: recipient.id,
+          relationship_type: 'contact',
+          label_from_source_perspective: recipient.name,
+          label_from_target_perspective: sender.name,
+          friendship_level: 50,
+          trust_level: 50,
+          familiarity_level: 50,
+        }).catch(() => null);
+      } else {
+        // Update existing
+        await base44.entities.CharacterRelationship.update(senderHasRecipient.id, {
+          interaction_count: (senderHasRecipient.interaction_count || 0) + 1,
+          last_interaction_summary: rewrittenMessage.substring(0, 100),
+        }).catch(() => null);
+      }
+
+      // Recipient → Sender
+      if (!recipientHasSender) {
+        await base44.entities.CharacterRelationship.create({
+          source_character_id: recipient.id,
+          target_character_id: sender_character_id,
+          relationship_type: 'contact',
+          label_from_source_perspective: sender.name,
+          label_from_target_perspective: recipient.name,
+          friendship_level: 50,
+          trust_level: 50,
+          familiarity_level: 50,
+        }).catch(() => null);
+      } else {
+        // Update existing
+        await base44.entities.CharacterRelationship.update(recipientHasSender.id, {
+          interaction_count: (recipientHasSender.interaction_count || 0) + 1,
+          last_interaction_summary: rewrittenMessage.substring(0, 100),
+        }).catch(() => null);
+      }
+
+      relationshipsUpdated = true;
+
+      // Mark sync complete
+      syncResult = {
+        success: true,
+        memories_created: memoriesCreated,
+        memory_ids: memoryIds,
+        relationships_updated: relationshipsUpdated,
         conversation_id: conversationId,
-        sender_message_id: savedMessage.id,
-        receiver_message_id: null, // no mirrored message — single outbound record
-        message_content: rewrittenMessage,
-        response_content: null,
-        shared_conversation_key: canonicalKey,
-        participant_character_ids: participantIds,
-        channel: 'world_phone',
-        topic: rewrittenMessage.substring(0, 100),
-        emotional_tone: sender.emotional_state || 'neutral',
-        outcome: 'shared',
-        timestamp: now,
-      });
-      syncResult = syncRes?.data || syncRes;
-    } catch (e) {
-      syncWarning = `syncBilateralCharacterConversation failed (non-fatal): ${e.message}`;
-      warnings.push(syncWarning);
-      console.warn('[sendWorldPhoneMessage]', syncWarning);
-      // Mark message sync_status failed so it can be retried
+        sync_status: 'complete',
+      };
+
+      // Update conversation sync status
+      await base44.entities.Conversation.update(conversationId, {
+        sync_status: 'complete',
+      }).catch(() => {});
+
+    } catch (syncErr) {
+      console.warn('[sendWorldPhoneMessage] inline sync error:', syncErr.message);
+      syncResult = {
+        success: false,
+        error: syncErr.message,
+        memories_created: memoriesCreated,
+        memory_ids: memoryIds,
+        relationships_updated: relationshipsUpdated,
+        sync_status: 'failed',
+      };
+      // Mark message as failed sync
       await base44.entities.Message.update(savedMessage.id, {
         sync_status: 'failed',
-        sync_error: e.message,
+        sync_error: syncErr.message,
       }).catch(() => {});
     }
 
@@ -347,8 +431,7 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
         participant_character_ids: participantIds,
         recipient_resolution_path: recipientResolutionPath,
         source,
-        sync_result: syncResult || null,
-        sync_warning: syncWarning || null,
+        sync_result: syncResult,
         warnings: warnings.length > 0 ? warnings : null,
       },
     });
