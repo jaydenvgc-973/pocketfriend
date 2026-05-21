@@ -670,6 +670,12 @@ function buildLocationCoordinateMap(locations) {
 // ONE-TRUTH RULE: Characters with an active in_transit session must ONLY appear as
 // a TransitMarker (moving dot), never as a static pin at their origin.
 // travelingCharacterIds is the Set of character_ids currently in_transit.
+// 
+// CRITICAL VERIFICATION RULE (added to fix arrival failure re-suppression):
+// After travel ends, the static marker must NOT reappear using a stale origin location.
+// Static pins are ONLY shown if Character.resolved_current_location_id is verified as current.
+// If a travel session failed, the character's travel flags should be cleared and location updated
+// to the actual verified location — NOT the old origin.
 function buildMarkers(entities, locations, gridCoords, travelingCharacterIds = new Set()) {
   const locationMap = new Map(locations.map((l) => [l.id, l]));
   const markers = [];
