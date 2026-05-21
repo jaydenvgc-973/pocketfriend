@@ -73,7 +73,18 @@ export function buildScenePrompt({
   isResidential = false,
   characters = [],
 }) {
-  const basePrompt = `${envNote} Scene: ${locationName}${zoneSuffix}, ${timeOfDay} lighting.${atmosphere} ${peopleConstraint}${residentialConstraint}${identityLock}${avatarIdentityBlock}${outfitSuffix} Photorealistic.`;
+  // Human presence purity enforcement for scene images
+  const expectedCount = characters?.length || 0;
+  const humanPurityEnforcement = `
+⛔ HUMAN PRESENCE PURITY LAW: Only ${expectedCount} declared subject(s) may appear.
+No background extras. No ambient patrons. No silhouettes. No reflections of undeclared people.
+No location owners, workers, residents, or family members unless explicitly declared as a subject.
+No partial bodies, cropped torsos, or over-the-shoulder framing implying an additional person.
+LOCATION OWNER/RESIDENT FIREWALL: This location's associated people are EXCLUDED unless named.
+${expectedCount === 0 ? 'ZERO HUMANS. No people of any kind. No bodies. No hands. No silhouettes.' : `EXACTLY ${expectedCount} person(s). No extras. No background occupants.`}
+`;
+
+  const basePrompt = `${envNote} Scene: ${locationName}${zoneSuffix}, ${timeOfDay} lighting.${atmosphere} ${peopleConstraint}${residentialConstraint}${humanPurityEnforcement}${identityLock}${avatarIdentityBlock}${outfitSuffix} Photorealistic.`;
   
   // CRITICAL: Validate each character's appearance_lock and outfit before returning prompt
   // Only validate characters that have an appearance_lock defined

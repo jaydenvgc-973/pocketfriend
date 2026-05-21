@@ -1008,7 +1008,15 @@ Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. No
     closetLock = lines.join('\n');
   }
 
-  return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`;
+  // ── HUMAN PRESENCE PURITY ─────────────────────────────────────────────────
+  const expectedHumanCount = subjectType==='joint'?2:(subjectType==='character'||subjectType==='user'||subjectType==='known_character')?1:0;
+  const pLow=(prompt||'').toLowerCase();
+  const isIso=/\b(alone|empty|vacant|no people|room only|object only|just the|document only|id only|id card|card only|photo of the|picture of the|image of the|nobody|no one|no person|no humans|no figures)\b/.test(pLow);
+  const isPub=/\b(pool party|club|concert|beach party|festival|mall|airport|crowd)\b/i.test(prompt)&&!isIso;
+  const ec=isIso&&expectedHumanCount===0?0:expectedHumanCount;
+  const humanPurityBlock=`\n\n════════════════════════════════════════════════════════════\n⛔⛔⛔ HUMAN PRESENCE PURITY LAW — ABSOLUTE OVERRIDE ⛔⛔⛔\n════════════════════════════════════════════════════════════\n\nEXPECTED HUMAN COUNT: ${ec}\n${ec===0?'→ ZERO HUMANS. No people, bodies, faces, hands, silhouettes, or reflections of people.':ec===1?'→ EXACTLY ONE declared person. No extras. No background occupants. No bystanders.':'→ EXACTLY TWO declared subjects. No third person. No background figures.'}\n\nFORBIDDEN (unless a named person is explicitly declared in the prompt):\n⛔ Extra people anywhere — foreground, midground, background\n⛔ Partial people — arms, legs, torsos, feet, hands of undeclared persons\n⛔ Silhouettes behind doors, windows, or walls\n⛔ Reflections of people in mirrors, windows, glass, or any surface\n⛔ Shadows implying a person is present\n⛔ Blurred background humans or ambient patrons\n⛔ POV photographer body parts (over-the-shoulder, hands in frame)\n⛔ Environmental extras added for atmosphere\n⛔ Location owners, workers, residents, or family members unless explicitly named\n\nLOCATION OWNER/RESIDENT FIREWALL:\nLocation metadata = setting description ONLY.\nNo person associated with this location may appear unless explicitly named as a subject.\nA named bar does NOT authorize any staff or owner to appear.\nA home does NOT authorize any resident to appear unless declared.\n${isIso?'\nISOLATION ACTIVE: zero humans total. No hand holding the object. No reflection of photographer.\n':''}\n${isPub?'\nPUBLIC ENV EXCEPTION: background figures allowed ONLY as out-of-focus blur. Never foreground. Never identifiable.\n':'\nPRIVATE ENV: zero background figures. Zero extras.\n'}\nTHE GENERATOR MAY NOT ADD HUMANS TO "HELP":\n⛔ "Empty = needs a focal human" — INVALID\n⛔ "A silhouette improves atmosphere" — INVALID\n⛔ "A hand improves realism" — INVALID\n⛔ "Background patron makes venue feel alive" — INVALID\n\nGENERATION INVALID IF:\n🚫 Any undeclared human appears anywhere including reflections\n🚫 Human count exceeds ${ec}\n🚫 Any location-associated person appears without being named\n════════════════════════════════════════════════════════════`;
+
+  return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`;
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
@@ -1773,7 +1781,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       resolved_outfit_metadata: resolvedOutfitMetadata,
       user_outfit_text: userOutfitText || null,
       user_outfit_source: userOutfitText ? 'user_current_outfit' : null,
-      background_extras_allowed: /\b(pool party|club|concert|bar|beach|festival|mall|airport|restaurant|crowd)\b/i.test(sanitizedPrompt),
+      background_extras_allowed: /\b(pool party|club|concert|beach party|festival|mall|airport|crowd)\b/i.test(sanitizedPrompt) && !/\b(alone|empty|vacant|no people|object only|room only|just the|nobody|no one)\b/i.test(sanitizedPrompt),
       appearance_lock_corrections: appearanceLockCorrections.length > 0 ? appearanceLockCorrections : undefined,
       prompt,
       character_id: characterId || null,
