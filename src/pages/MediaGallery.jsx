@@ -54,6 +54,15 @@ export default function MediaGallery() {
         console.error(`[MediaGallery] OWNERSHIP MISMATCH: response user=${data.currentUserEmail}, current=${user.email}`);
       }
 
+      // Log verification paths for diagnostics
+      if (data.images?.length > 0) {
+        console.log(`[MediaGallery] Page ${page} verification paths:`, data.images.map(img => ({
+          id: img.id,
+          verificationPath: img.verificationPath,
+          hasOwnEmail: !!img.ownerEmail,
+        })));
+      }
+
       // Store nextRawCursor so the next page can use it
       if (data.nextRawCursor != null) {
         setCursorStack(prev => {
@@ -157,6 +166,16 @@ export default function MediaGallery() {
             <div>excluded: {lastProof.excluded}</div>
             <div>exhausted: {lastProof.exhausted ? 'yes' : 'no'}</div>
             <div>nextRawCursor: {lastProof.nextRawCursor !== null ? lastProof.nextRawCursor : 'none (end)'}</div>
+            {pageImages.length > 0 && (
+              <>
+                <div className="mt-2"><strong>Verification Paths:</strong></div>
+                {pageImages.map((img, i) => (
+                  <div key={i} className="text-[10px]">
+                    img{i}: {img.verificationPath || 'unknown'} {img.ownerEmail ? `(direct: ${img.ownerEmail})` : '(inherited)'}
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         )}
 

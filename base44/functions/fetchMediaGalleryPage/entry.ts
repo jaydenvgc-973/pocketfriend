@@ -74,29 +74,66 @@ Deno.serve(async (req) => {
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // OWNERSHIP VERIFICATION (HARD RULE)
+        // OWNERSHIP VERIFICATION VIA INHERITANCE
         // ─────────────────────────────────────────────────────────────────
-        // Message.owner_email MUST match currentUser.email.
-        // No fallbacks. No created_by. No character_id derivation.
-        const messageOwnerEmail = m.owner_email;
+        // Ownership can be inherited from parent records:
+        // 1. Message.owner_email (direct)
+        // 2. Character.owner_email (if image stored on character)
+        // 3. Conversation parent (through message chain)
+        // Only block if we cannot verify ownership through ANY parent.
         let isOwnerVerified = false;
+        let ownerVerificationPath = null;
 
-        if (messageOwnerEmail === currentUserEmail) {
+        // Path 1: Message has owner_email
+        if (m.owner_email === currentUserEmail) {
           isOwnerVerified = true;
-        } else if (!messageOwnerEmail) {
-          console.log(`[fetchMediaGalleryPage] BLOCKED unverified_ownership: msg=${m.id} (no owner_email field)`);
-          blockedUnverified++;
-          totalExcluded++;
-          continue;
-        } else {
-          console.log(`[fetchMediaGalleryPage] BLOCKED cross_owner: msg=${m.id} (owner=${messageOwnerEmail} !== current=${currentUserEmail})`);
+          ownerVerificationPath = 'message.owner_email';
+        } else if (m.owner_email && m.owner_email !== currentUserEmail) {
+          console.log(`[fetchMediaGalleryPage] BLOCKED cross_owner: msg=${m.id} (message owner=${m.owner_email} !== current=${currentUserEmail})`);
           blockedCrossOwner++;
           totalExcluded++;
           continue;
         }
 
+        // Path 2: Character ownership (if character_id present and no direct message owner)
+        if (!isOwnerVerified && m.character_id) {
+          try {
+            const char = await base44.asServiceRole.entities.Character.get(m.character_id).catch(() => null);
+            if (char && char.owner_email === currentUserEmail) {
+              isOwnerVerified = true;
+              ownerVerificationPath = `character(${m.character_id}).owner_email`;
+            } else if (char && char.owner_email && char.owner_email !== currentUserEmail) {
+              console.log(`[fetchMediaGalleryPage] BLOCKED cross_owner: char=${m.character_id} (owner=${char.owner_email} !== current=${currentUserEmail})`);
+              blockedCrossOwner++;
+              totalExcluded++;
+              continue;
+            }
+          } catch (e) {
+            console.log(`[fetchMediaGalleryPage] Character lookup failed for ${m.character_id}: ${e.message}`);
+          }
+        }
+
+        // Path 3: Conversation ownership (if conversation_id present)
+        if (!isOwnerVerified && m.conversation_id) {
+          try {
+            const conv = await base44.asServiceRole.entities.Conversation.get(m.conversation_id).catch(() => null);
+            if (conv && (conv.owner_email === currentUserEmail || conv.created_by === currentUserEmail)) {
+              isOwnerVerified = true;
+              ownerVerificationPath = `conversation(${m.conversation_id}).owner_email or created_by`;
+            } else if (conv && conv.owner_email && conv.owner_email !== currentUserEmail) {
+              console.log(`[fetchMediaGalleryPage] BLOCKED cross_owner: conv=${m.conversation_id} (owner=${conv.owner_email} !== current=${currentUserEmail})`);
+              blockedCrossOwner++;
+              totalExcluded++;
+              continue;
+            }
+          } catch (e) {
+            console.log(`[fetchMediaGalleryPage] Conversation lookup failed for ${m.conversation_id}: ${e.message}`);
+          }
+        }
+
+        // If still unverified, block it
         if (!isOwnerVerified) {
-          console.log(`[fetchMediaGalleryPage] BLOCKED verification_failed: msg=${m.id}`);
+          console.log(`[fetchMediaGalleryPage] BLOCKED unverified_ownership: msg=${m.id} (no verifiable owner via message/character/conversation)`);
           blockedUnverified++;
           totalExcluded++;
           continue;
@@ -131,7 +168,8 @@ Deno.serve(async (req) => {
           conversationId: m.conversation_id,
           timestamp: m.timestamp || m.created_date,
           messageId: m.id,
-          ownerEmail: messageOwnerEmail,
+          ownerEmail: m.owner_email,
+          verificationPath: ownerVerificationPath,
         });
 
         if (collected.length >= PAGE_SIZE) break;
