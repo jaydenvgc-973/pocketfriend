@@ -186,6 +186,54 @@ export default function Travel() {
       })
       .catch(() => {});
   }, [currentUser?.email, hasRunDistribution]);
+
+  // CRITICAL: Detect arrival completion and invalidate character cache
+  // When a TravelSession transitions from in_transit → arrived, the Character's
+  // resolved_current_location has been updated in the database, but React Query
+  // still has stale data. This effect detects the transition and refreshes the cache
+  // so the map shows the character at destination, not origin.
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    let cancelled = false;
+
+    const checkForArrivals = async () => {
+      try {
+        // Query all TravelSessions to detect any that just transitioned to arrived
+        const sessions = await base44.entities.TravelSession.filter(
+          { owner_email: currentUser.email },
+          '-created_at',
+          100
+        ).catch(() => []);
+
+        if (cancelled) return;
+
+        // Check if any session is now in "arrived" status (completed within last 30 seconds)
+        const recentlyArrived = sessions.filter(s => {
+          if (s.route_status !== 'arrived') return false;
+          if (!s.actual_arrival_time) return false;
+          const arrivedAt = new Date(s.actual_arrival_time).getTime();
+          const now = new Date().getTime();
+          return (now - arrivedAt) < 30000; // Within last 30 seconds
+        });
+
+        if (recentlyArrived.length > 0 && !cancelled) {
+          console.log(`[Travel] Detected ${recentlyArrived.length} recently-arrived session(s) — invalidating character cache`, 
+            recentlyArrived.map(s => ({ id: s.character_id, name: s.character_name, destination: s.destination_location_name })));
+          // Invalidate character cache so activeCharacters re-fetches from DB with updated locations
+          queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
+          queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser.id] });
+        }
+      } catch (e) {
+        console.warn('[Travel] Arrival detection check failed:', e.message);
+      }
+    };
+
+    const checkInterval = setInterval(checkForArrivals, 5000); // Check every 5 seconds
+    return () => {
+      cancelled = true;
+      clearInterval(checkInterval);
+    };
+  }, [currentUser?.email, currentUser?.id]);
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
   const formatOperatingHours = (location) => {
