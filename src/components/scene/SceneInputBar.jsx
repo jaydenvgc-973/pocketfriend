@@ -1,29 +1,29 @@
 import React, { useRef, useCallback, memo } from "react";
 import { Send, BookOpen } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { motion } from "framer-motion";
 
 /**
  * SceneInputBar — stable input component for the Scene page.
  *
- * Keyboard stability rules enforced here:
- * - The input element itself never remounts (no key changes, no conditional rendering)
- * - Mode toggle buttons use onMouseDown + preventDefault to avoid stealing focus from input
- * - Send button uses onMouseDown + preventDefault so the input never loses focus on tap
- * - No onTouchStart/onTouchEnd on the send button (prevents double-fire on mobile)
- * - Input className is stable — only border/italic changes, not the element itself
- * - Draft text is owned here via props; parent state updates don't remount this component
+ * Layout matches Chat/Text page composer (bg-secondary rounded-2xl container,
+ * resizing textarea, motion send button). Keyboard stability rules preserved:
+ * - Mode toggle buttons use onMouseDown + preventDefault to avoid stealing focus
+ * - Send button uses onMouseDown + preventDefault so input never loses focus on tap
+ * - No onTouchStart/onTouchEnd on send (prevents double-fire on mobile)
+ * - Draft text owned by parent via props; no remount on parent state changes
  */
 function SceneInputBar({ inputText, setInputText, narratorMode, setNarratorMode, onSend }) {
   const inputRef = useRef(null);
+  const inputTextRef = useRef(inputText);
+  inputTextRef.current = inputText;
 
   const handleSend = useCallback(() => {
     const text = inputTextRef.current.trim();
     if (!text) return;
     onSend(text);
-    // Re-focus input after send so keyboard stays open
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-    });
-  }, [inputText, onSend]);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [onSend]);
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -33,24 +33,15 @@ function SceneInputBar({ inputText, setInputText, narratorMode, setNarratorMode,
   }, [handleSend]);
 
   const handleModeSwitch = useCallback((mode) => (e) => {
-    // preventDefault stops the button from stealing focus from the input
     e.preventDefault();
     setNarratorMode(mode);
-    // Re-focus input after mode switch
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-    });
+    requestAnimationFrame(() => inputRef.current?.focus());
   }, [setNarratorMode]);
 
-  // Sync inputText to a ref so handleSend always uses the latest value
-  // without needing inputText in its dependency array (which would cause re-renders)
-  const inputTextRef = useRef(inputText);
-  inputTextRef.current = inputText;
-
   return (
-    <div className="border-t border-border flex-shrink-0">
+    <div className="border-t border-border flex-shrink-0 px-4 pb-4 pt-2">
       {/* Mode toggle — mouseDown prevents focus theft */}
-      <div className="flex gap-1 px-3 pt-2 pb-1">
+      <div className="flex gap-1 pb-2">
         <button
           onMouseDown={handleModeSwitch(false)}
           onClick={(e) => e.preventDefault()}
@@ -67,35 +58,35 @@ function SceneInputBar({ inputText, setInputText, narratorMode, setNarratorMode,
         </button>
       </div>
 
-      <div className="flex gap-2 px-3 pb-2">
-        <input
+      {/* Composer — matches Chat/Text layout exactly */}
+      <div className="flex items-end gap-2 bg-secondary rounded-2xl p-2">
+        <textarea
           ref={inputRef}
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={narratorMode ? "Describe the scene, set the atmosphere..." : "Say something..."}
-          className={`flex-1 h-11 px-3 rounded-xl bg-secondary border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-colors ${narratorMode ? "border-primary/40 italic" : "border-border"}`}
+          placeholder={narratorMode ? "Describe the scene..." : "Say something..."}
+          rows={1}
+          className={`flex-1 bg-transparent text-foreground text-sm resize-none outline-none px-1 py-2 max-h-32 placeholder:text-muted-foreground${narratorMode ? " italic" : ""}`}
+          style={{ minHeight: "40px" }}
           autoComplete="off"
           autoCorrect="off"
           autoCapitalize="sentences"
           spellCheck={false}
         />
-        <button
-          // onMouseDown + preventDefault keeps focus on the input (no blur on tap)
-          onMouseDown={(e) => {
-            e.preventDefault();
-            handleSend();
-          }}
-          // Fallback for devices where mouseDown doesn't fire
-          onClick={(e) => {
-            e.preventDefault();
-            handleSend();
-          }}
-          disabled={!inputText.trim()}
-          className={`w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-40 transition-all active:scale-95 ${narratorMode ? "bg-primary/70 text-primary-foreground hover:bg-primary/80" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
-        >
-          {narratorMode ? <BookOpen className="w-4 h-4" /> : <Send className="w-4 h-4" />}
-        </button>
+        <div className="flex items-center pb-1">
+          <motion.div whileTap={{ scale: 0.9 }}>
+            <Button
+              size="icon"
+              onMouseDown={(e) => { e.preventDefault(); handleSend(); }}
+              onClick={(e) => { e.preventDefault(); handleSend(); }}
+              disabled={!inputText.trim()}
+              className="h-9 w-9 rounded-full bg-primary hover:bg-primary/90"
+            >
+              {narratorMode ? <BookOpen className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+            </Button>
+          </motion.div>
+        </div>
       </div>
     </div>
   );
