@@ -2,28 +2,55 @@
  * createTravelSession
  *
  * Creates a persistent TravelSession record and sets the character's presence
- * to in_transit WITHOUT immediately updating resolved_current_location_id to the destination.
+ * to traveling WITHOUT immediately updating resolved_current_location_id to the destination.
  *
  * RULES:
  * - owner_email is the sole ownership source of truth — never created_by
  * - Does NOT teleport the character — origin stays as current location while in_transit
- * - travel_destination_location_id is set on Character; resolved_current_location_id stays at origin
+ * - resolved_current_location_id stays at origin until processTravelArrivals commits it
  * - Blockers: jailed, asleep, at_work (unless override), already in transit
+ * - Duplicate active session check is ALWAYS owner_email + character_id scoped
+ * - All jitter is DETERMINISTIC — based on characterId + locationIds + date, never Math.random()
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ── DETERMINISTIC JITTER ──────────────────────────────────────────────────────
+// Produces a stable 0.0–1.0 float from string inputs.
+// Same inputs = same output, every time. No Math.random().
+function deterministicFloat(...parts) {
+  const str = parts.join('|');
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+  }
+  // Unsigned 32-bit → 0.0–1.0
+  return ((h >>> 0) % 10000) / 10000;
+}
+
+// Deterministic jitter in [minAdd, maxAdd] minutes based on seed parts
+function jitterMinutes(minAdd, maxAdd, ...seedParts) {
+  const f = deterministicFloat(...seedParts);
+  return minAdd + f * (maxAdd - minAdd);
+}
+
 // ── TRAVEL TIME ESTIMATOR ─────────────────────────────────────────────────────
 // Returns { durationMinutes, distanceMiles, positioningMode }
-function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown' }) {
+// All "random" ranges are now deterministic via jitterMinutes().
+function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown', characterId = '' }) {
   const geoO = originLoc?.geo_mode || 'unknown';
   const geoD = destLoc?.geo_mode || 'unknown';
+
+  // Seed for jitter: character + both location IDs + today's date (stable within a day)
+  const today = new Date().toISOString().slice(0, 10);
+  const seed = [characterId, originLoc?.id || 'no_origin', destLoc?.id || 'no_dest', today];
 
   // ── SAME BUILDING / SAME COMPLEX ──────────────────────────────────────────
   if (
     originLoc?.same_building_group_id &&
     originLoc.same_building_group_id === destLoc?.same_building_group_id
   ) {
-    return { durationMinutes: 2 + Math.random() * 3, distanceMiles: 0.1, positioningMode: 'fictional_coordinates' };
+    const dur = 1 + jitterMinutes(0, 2, ...seed, 'same_building');
+    return { durationMinutes: dur, distanceMiles: 0.05, positioningMode: 'fictional_coordinates' };
   }
 
   // ── REAL COORDINATES (lat/lng) ─────────────────────────────────────────────
@@ -35,8 +62,14 @@ function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown' }) {
     // Rough haversine approximation (degrees → miles) — ~69 miles/degree lat, ~52 miles/degree lng in NJ
     const distMiles = Math.sqrt((latDiff * 69) ** 2 + (lngDiff * 52) ** 2);
     const mph = travelMode === 'walking' ? 3 : travelMode === 'bus' || travelMode === 'train' ? 18 : 22;
-    const mins = Math.max(3, Math.round((distMiles / mph) * 60));
-    return { durationMinutes: mins, distanceMiles: Math.round(distMiles * 10) / 10, positioningMode: 'real_coordinates' };
+    const baseMin = Math.max(3, Math.round((distMiles / mph) * 60));
+    // ±10% deterministic traffic jitter
+    const jitter = jitterMinutes(-baseMin * 0.1, baseMin * 0.1, ...seed, 'real_coords');
+    return {
+      durationMinutes: Math.max(2, Math.round(baseMin + jitter)),
+      distanceMiles: Math.round(distMiles * 10) / 10,
+      positioningMode: 'real_coordinates',
+    };
   }
 
   // ── FICTIONAL COORDINATES (map_x / map_y) ─────────────────────────────────
@@ -49,8 +82,13 @@ function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown' }) {
     // Scale: 100 units ≈ 8 miles across the Greater Paterson VGC district
     const estMiles = (mapDist / 100) * 8;
     const mph = travelMode === 'walking' ? 3 : 20;
-    const mins = Math.max(3, Math.round((estMiles / mph) * 60));
-    return { durationMinutes: mins, distanceMiles: Math.round(estMiles * 10) / 10, positioningMode: 'fictional_coordinates' };
+    const baseMin = Math.max(3, Math.round((estMiles / mph) * 60));
+    const jitter = jitterMinutes(-1, 2, ...seed, 'fictional_coords');
+    return {
+      durationMinutes: Math.max(2, Math.round(baseMin + jitter)),
+      distanceMiles: Math.round(estMiles * 10) / 10,
+      positioningMode: 'fictional_coordinates',
+    };
   }
 
   // ── ANCHOR CITY REGION FALLBACK ────────────────────────────────────────────
@@ -59,7 +97,11 @@ function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown' }) {
 
   // Same anchor → local trip
   if (anchorO && anchorD && anchorO === anchorD) {
-    return { durationMinutes: 8 + Math.random() * 7, distanceMiles: 1.5, positioningMode: 'fallback_estimate' };
+    return {
+      durationMinutes: Math.round(8 + jitterMinutes(0, 7, ...seed, 'same_anchor')),
+      distanceMiles: 1.5,
+      positioningMode: 'fallback_estimate',
+    };
   }
 
   // Greater Paterson region (Paterson ↔ Haledon / Elmwood Park)
@@ -67,7 +109,11 @@ function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown' }) {
   const isOPaterson = paterRegion.some(c => anchorO.includes(c));
   const isDPaterson = paterRegion.some(c => anchorD.includes(c));
   if (isOPaterson && isDPaterson) {
-    return { durationMinutes: 10 + Math.random() * 8, distanceMiles: 3, positioningMode: 'fallback_estimate' };
+    return {
+      durationMinutes: Math.round(10 + jitterMinutes(0, 8, ...seed, 'paterson_region')),
+      distanceMiles: 3,
+      positioningMode: 'fallback_estimate',
+    };
   }
 
   // Paterson region ↔ Newark
@@ -75,7 +121,11 @@ function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown' }) {
   const isONewark = newarkRegion.some(c => anchorO.includes(c));
   const isDNewark = newarkRegion.some(c => anchorD.includes(c));
   if ((isOPaterson && isDNewark) || (isDPaterson && isONewark)) {
-    return { durationMinutes: 25 + Math.random() * 10, distanceMiles: 12, positioningMode: 'fallback_estimate' };
+    return {
+      durationMinutes: Math.round(25 + jitterMinutes(0, 10, ...seed, 'paterson_newark')),
+      distanceMiles: 12,
+      positioningMode: 'fallback_estimate',
+    };
   }
 
   // NYC / West New York (longer trip)
@@ -83,14 +133,26 @@ function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown' }) {
   const isONYC = nycRegion.some(c => anchorO.includes(c));
   const isDNYC = nycRegion.some(c => anchorD.includes(c));
   if ((isOPaterson || isONewark) && isDNYC) {
-    return { durationMinutes: 40 + Math.random() * 20, distanceMiles: 20, positioningMode: 'fallback_estimate' };
+    return {
+      durationMinutes: Math.round(40 + jitterMinutes(0, 20, ...seed, 'to_nyc')),
+      distanceMiles: 20,
+      positioningMode: 'fallback_estimate',
+    };
   }
   if (isONYC && (isDPaterson || isDNewark)) {
-    return { durationMinutes: 40 + Math.random() * 20, distanceMiles: 20, positioningMode: 'fallback_estimate' };
+    return {
+      durationMinutes: Math.round(40 + jitterMinutes(0, 20, ...seed, 'from_nyc')),
+      distanceMiles: 20,
+      positioningMode: 'fallback_estimate',
+    };
   }
 
-  // Unknown / unpositioned — use safe conservative fallback (never fake precision)
-  return { durationMinutes: 15 + Math.random() * 10, distanceMiles: null, positioningMode: 'fallback_estimate' };
+  // Unknown / unpositioned — use conservative fallback (never fake precision)
+  return {
+    durationMinutes: Math.round(15 + jitterMinutes(0, 10, ...seed, 'unknown_region')),
+    distanceMiles: null,
+    positioningMode: 'fallback_estimate',
+  };
 }
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
@@ -183,8 +245,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 4. Already in transit
+    // 4. Already in transit — MUST be owner_email + character_id scoped (not character_id alone)
     const activeSessions = await base44.asServiceRole.entities.TravelSession.filter({
+      owner_email: ownerEmailFinal,
       character_id: characterId,
       route_status: 'in_transit',
     }, null, 1).catch(() => []);
@@ -196,6 +259,16 @@ Deno.serve(async (req) => {
         blocker: 'already_traveling',
         blocker_reason: `${char.name} is already traveling to ${existing.destination_location_name || 'another location'}.`,
         active_session_id: existing.id,
+      });
+    }
+
+    // ── SAME DESTINATION CHECK ──────────────────────────────────────────────
+    if (char.resolved_current_location_id === destinationLocationId) {
+      return Response.json({
+        success: false,
+        blocked: true,
+        blocker: 'already_there',
+        blocker_reason: `${char.name} is already at the destination.`,
       });
     }
 
@@ -211,11 +284,12 @@ Deno.serve(async (req) => {
 
     if (!destLoc) return Response.json({ error: 'Destination location not found' }, { status: 404 });
 
-    // ── ESTIMATE TRAVEL TIME ───────────────────────────────────────────────
+    // ── ESTIMATE TRAVEL TIME (deterministic) ───────────────────────────────
     const { durationMinutes, distanceMiles, positioningMode } = estimateTravelTime({
       originLoc,
       destLoc,
       travelMode: travelMode || 'unknown',
+      characterId,
     });
 
     const now = new Date();
@@ -250,10 +324,10 @@ Deno.serve(async (req) => {
       created_at:                now.toISOString(),
     });
 
-    // ── UPDATE CHARACTER — IN TRANSIT (do NOT change resolved_current_location_id) ──
-    // The character stays at origin. Only travel_destination fields are updated.
-    // resolved_current_location_id = origin STILL
-    // presence = in_transit
+    // ── UPDATE CHARACTER — IN TRANSIT ──────────────────────────────────────
+    // CRITICAL: resolved_current_location_id is NOT updated here.
+    // The character stays at origin. Only travel_destination fields are set.
+    // processTravelArrivals will commit the destination when ETA passes.
     await base44.asServiceRole.entities.Character.update(characterId, {
       resolved_presence_status:        'traveling',
       resolved_source_reason:          `travel_session:${session.id}`,
@@ -262,9 +336,10 @@ Deno.serve(async (req) => {
       traveling_to_location_id:        destinationLocationId,
       traveling_to_location_name:      destLoc.name,
       last_location_update_time:       now.toISOString(),
+      // resolved_current_location_id deliberately NOT changed — stays at origin
     });
 
-    console.log(`[createTravelSession] ✅ ${char.name} → ${destLoc.name} | ETA: ${eta.toISOString()} | ${Math.round(durationMinutes)}min | mode: ${positioningMode}`);
+    console.log(`[createTravelSession] ✅ ${char.name} → ${destLoc.name} | ETA: ${eta.toISOString()} | ${Math.round(durationMinutes)}min | mode: ${positioningMode} | session: ${session.id}`);
 
     return Response.json({
       success: true,

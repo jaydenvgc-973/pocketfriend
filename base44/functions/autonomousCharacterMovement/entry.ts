@@ -886,25 +886,11 @@ Deno.serve(async (req) => {
                       blockedLog.push(`${char.name}: commitment directive blocked — ${td.blocker_reason || td.blocker}`);
                       console.log(`[autonomousMovement] ${char.name}: COMMITMENT DIRECTIVE BLOCKED — ${td.blocker_reason}`);
                     } else {
-                      // createTravelSession failed — fall back to direct presence update
-                      console.warn(`[autonomousMovement] ${char.name}: createTravelSession failed (${td.error || 'unknown'}) — using direct update fallback`);
-                      await base44.asServiceRole.entities.Character.update(char.id, {
-                        resolved_current_location_id:   destLoc.id,
-                        resolved_current_location_name: destLoc.name,
-                        resolved_presence_status:       'visiting',
-                        resolved_location_type:         'visit',
-                        resolved_source_reason:         'commitment_travel_directive_fallback',
-                        last_arrived_time:              nowET.toISOString(),
-                        travel_status:                  'not_traveling',
-                        travel_destination_location_id: null,
-                      }).catch(() => {});
-                      await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
-                        status: 'completed',
-                        travel_arrived_at: nowET.toISOString(),
-                        completion_result: `Arrived at ${destLoc.name} (direct fallback)`,
-                      }).catch(() => {});
-                      totalMoved++;
-                      moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_DIRECTIVE_FALLBACK]`);
+                      // createTravelSession failed — LOG and block. NO teleport fallback.
+                      // A failed travel session must never silently move the character.
+                      const failReason = td.error || 'createTravelSession returned failure without error detail';
+                      blockedLog.push(`${char.name}: createTravelSession FAILED — ${failReason} — NO fallback teleport applied`);
+                      console.error(`[autonomousMovement] ⛔ NO-TELEPORT ENFORCED: ${char.name}: createTravelSession failed — ${failReason}. Character stays at origin. Commitment NOT completed.`);
                     }
                   } else {
                     // Already there — mark completed
@@ -954,23 +940,10 @@ Deno.serve(async (req) => {
                   } else if (td2.blocked) {
                     blockedLog.push(`${char.name}: promise travel blocked — ${td2.blocker_reason || td2.blocker}`);
                   } else {
-                    // Fallback
-                    await base44.asServiceRole.entities.Character.update(char.id, {
-                      resolved_current_location_id:   destLoc.id,
-                      resolved_current_location_name: destLoc.name,
-                      resolved_presence_status:       'visiting',
-                      resolved_location_type:         'visit',
-                      resolved_source_reason:         'commitment_travel_promise_fallback',
-                      last_arrived_time:              nowET.toISOString(),
-                      travel_status:                  'not_traveling',
-                      travel_destination_location_id: null,
-                    }).catch(() => {});
-                    await base44.asServiceRole.entities.CharacterCommitment.update(promise.id, {
-                      status: 'in_progress',
-                      travel_started_at: nowET.toISOString(),
-                    }).catch(() => {});
-                    totalMoved++;
-                    moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_PROMISE_FALLBACK]`);
+                    // createTravelSession failed — LOG and block. NO teleport fallback.
+                    const failReason2 = td2.error || 'createTravelSession returned failure without error detail';
+                    blockedLog.push(`${char.name}: promise createTravelSession FAILED — ${failReason2} — NO fallback teleport applied`);
+                    console.error(`[autonomousMovement] ⛔ NO-TELEPORT ENFORCED: ${char.name}: promise createTravelSession failed — ${failReason2}. Character stays at origin.`);
                   }
                   commitmentHandled = true;
                 }
