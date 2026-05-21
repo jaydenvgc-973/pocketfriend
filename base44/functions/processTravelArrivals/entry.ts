@@ -48,9 +48,12 @@ Deno.serve(async (req) => {
 
     for (const session of due) {
       try {
-        // Load character
-        const charList = await base44.asServiceRole.entities.Character.filter({ id: session.character_id }, null, 1).catch(() => []);
-        const char = charList?.[0];
+        // Load character — asServiceRole.filter({id:...}) is broken for Character (RLS issue).
+        // Must filter by owner_email then find by id in JS.
+        const ownerChars = await base44.asServiceRole.entities.Character.filter(
+          { owner_email: session.owner_email }, null, 200
+        ).catch(() => []);
+        const char = ownerChars?.find(c => c.id === session.character_id) || null;
         if (!char) {
           console.warn(`[processTravelArrivals] Character ${session.character_id} not found for session ${session.id}`);
           continue;
@@ -66,11 +69,11 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Load destination location
-        const destList = await base44.asServiceRole.entities.LocationReference.filter(
+        // Load destination location — asServiceRole.filter({id:...}) works for LocationReference
+        const destLocArr = await base44.asServiceRole.entities.LocationReference.filter(
           { id: session.destination_location_id }, null, 1
         ).catch(() => []);
-        const destLoc = destList?.[0];
+        const destLoc = destLocArr?.[0] || null;
         if (!destLoc) {
           console.warn(`[processTravelArrivals] Destination ${session.destination_location_id} not found`);
           continue;

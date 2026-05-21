@@ -173,6 +173,7 @@ Deno.serve(async (req) => {
       travelMode,
       overrideWorkBlock,    // bool — set by convince/override flow
       ownerEmail,           // for service-role callers
+      characterData,        // optional: caller can pass full character record to avoid lookup
     } = await req.json();
 
     if (!characterId || !destinationLocationId) {
@@ -185,9 +186,41 @@ Deno.serve(async (req) => {
     }
 
     // ── LOAD CHARACTER ─────────────────────────────────────────────────────
-    const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
-    const char = charList?.[0];
-    if (!char) return Response.json({ error: 'Character not found' }, { status: 404 });
+    // DIAGNOSTIC DISCOVERY: asServiceRole.Character.filter({id:...}) returns 0 results
+    // because Character RLS requires owner_email match even for service-role callers.
+    // WORKING PATTERNS (confirmed):
+    //   1. characterData passed directly by caller (zero lookup needed)
+    //   2. base44.entities.Character.filter({id:...}) via user-scoped token
+    //   3. base44.entities.Character.filter({owner_email:...}) + JS find (for service-role callers)
+    // BROKEN PATTERNS (confirmed):
+    //   - base44.asServiceRole.entities.Character.filter({id:...}) → always 0
+    //   - base44.asServiceRole.entities.Character.list() → always 0
+    let char = characterData || null;
+
+    if (!char) {
+      if (user) {
+        // User session present — use user-scoped filter (confirmed working)
+        const res = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+        char = res?.[0] || null;
+      }
+    }
+
+    if (!char) {
+      // No user session (service-role caller) — filter by owner_email then find by id
+      if (requestEmail) {
+        const res = await base44.entities.Character.filter({ owner_email: requestEmail }, null, 200).catch(() => []);
+        char = res?.find(c => c.id === characterId) || null;
+      }
+    }
+
+    if (!char) {
+      return Response.json({
+        error: 'Character not found',
+        debug_id: characterId,
+        debug_email: requestEmail,
+        hint: 'Pass characterData in payload to bypass lookup for service-role callers',
+      }, { status: 404 });
+    }
 
     // Ownership check — owner_email only, never created_by
     if (char.owner_email && char.owner_email !== requestEmail) {
@@ -273,14 +306,15 @@ Deno.serve(async (req) => {
     }
 
     // ── LOAD LOCATIONS ─────────────────────────────────────────────────────
-    const [originLocList, destLocList] = await Promise.all([
+    // LocationReference: asServiceRole.filter({id:...}) confirmed working
+    const [originLocArr, destLocArr] = await Promise.all([
       char.resolved_current_location_id
         ? base44.asServiceRole.entities.LocationReference.filter({ id: char.resolved_current_location_id }, null, 1).catch(() => [])
         : Promise.resolve([]),
       base44.asServiceRole.entities.LocationReference.filter({ id: destinationLocationId }, null, 1).catch(() => []),
     ]);
-    const originLoc = originLocList?.[0] || null;
-    const destLoc   = destLocList?.[0] || null;
+    const originLoc = originLocArr?.[0] || null;
+    const destLoc   = destLocArr?.[0] || null;
 
     if (!destLoc) return Response.json({ error: 'Destination location not found' }, { status: 404 });
 
@@ -328,7 +362,9 @@ Deno.serve(async (req) => {
     // CRITICAL: resolved_current_location_id is NOT updated here.
     // The character stays at origin. Only travel_destination fields are set.
     // processTravelArrivals will commit the destination when ETA passes.
-    await base44.asServiceRole.entities.Character.update(characterId, {
+    // Use user-scoped update when user session exists (asServiceRole.update blocked by Character RLS).
+    const charUpdateApi = user ? base44.entities.Character : base44.asServiceRole.entities.Character;
+    await charUpdateApi.update(characterId, {
       resolved_presence_status:        'traveling',
       resolved_source_reason:          `travel_session:${session.id}`,
       travel_status:                   'traveling_to_destination',

@@ -57,11 +57,11 @@ Deno.serve(async (req) => {
         travel_source:     session.travel_source,
       });
 
-      // Load character record to check invariant
-      const charList = await base44.asServiceRole.entities.Character.filter(
-        { id: session.character_id }, null, 1
+      // Character lookup: asServiceRole.filter({id:...}) broken — use owner_email filter + JS find
+      const ownerCharsForSession = await base44.asServiceRole.entities.Character.filter(
+        { owner_email: session.owner_email }, null, 200
       ).catch(() => []);
-      const char = charList?.[0];
+      const char = ownerCharsForSession?.find(c => c.id === session.character_id) || null;
 
       if (!char) {
         orphanedSessions.push({
