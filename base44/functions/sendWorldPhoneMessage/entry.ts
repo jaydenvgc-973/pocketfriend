@@ -34,6 +34,9 @@ Deno.serve(async (req) => {
       sender_character_id,
       recipient_identifier,       // character ID or name string
       requested_message,          // raw message content to send
+      image_url,                  // optional: image URL for image sends
+      image_description,          // optional: caption/description for image
+      message_type,               // optional: 'text' | 'image' (default: 'text')
       source,                     // "user_instruction" | "character_action"
       current_chat_message_id,    // source message ID in the active chat conversation
       current_conversation_id,    // active chat conversation ID (not the WP thread)
@@ -41,10 +44,25 @@ Deno.serve(async (req) => {
       generate_recipient_response, // optional: if true, generate Character B's response now
     } = await req.json();
 
-    if (!sender_character_id || !recipient_identifier || !requested_message) {
+    if (!sender_character_id || !recipient_identifier) {
       return Response.json({
         success: false,
-        error: 'Missing required fields: sender_character_id, recipient_identifier, requested_message',
+        error: 'Missing required fields: sender_character_id, recipient_identifier',
+      }, { status: 400 });
+    }
+
+    // Image sends must have image_url; text sends must have requested_message
+    const isImageSend = message_type === 'image';
+    if (isImageSend && !image_url) {
+      return Response.json({
+        success: false,
+        error: 'Image send requires image_url',
+      }, { status: 400 });
+    }
+    if (!isImageSend && !requested_message) {
+      return Response.json({
+        success: false,
+        error: 'Text send requires requested_message',
       }, { status: 400 });
     }
 
@@ -155,27 +173,30 @@ Deno.serve(async (req) => {
       return Response.json({ success: false, error: 'Sender and recipient are the same character.' });
     }
 
-    // ── REWRITE MESSAGE IN SENDER'S VOICE ──────────────────────────────────────
-    const personalityHint = [sender.personality_summary, sender.communication_style, sender.archetype]
-      .filter(Boolean).join(', ');
-    const traitHints = ['dry_humor','blunt','flirty','oversharer','night_owl']
-      .filter(t => sender[`trait_${t}`])
-      .slice(0, 3).join(', ');
-
+    // ── REWRITE MESSAGE IN SENDER'S VOICE (text only) ────────────────────────────
     let rewrittenMessage = requested_message;
-    try {
-      const rewriteRes = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are ${sender.name}.${personalityHint ? ` Personality: ${personalityHint}.` : ''}${traitHints ? ` Traits: ${traitHints}.` : ''}${sender.emotional_state ? ` Mood: ${sender.emotional_state}.` : ''}
+    
+    if (!isImageSend && requested_message) {
+      const personalityHint = [sender.personality_summary, sender.communication_style, sender.archetype]
+        .filter(Boolean).join(', ');
+      const traitHints = ['dry_humor','blunt','flirty','oversharer','night_owl']
+        .filter(t => sender[`trait_${t}`])
+        .slice(0, 3).join(', ');
+
+      try {
+        const rewriteRes = await base44.integrations.Core.InvokeLLM({
+          prompt: `You are ${sender.name}.${personalityHint ? ` Personality: ${personalityHint}.` : ''}${traitHints ? ` Traits: ${traitHints}.` : ''}${sender.emotional_state ? ` Mood: ${sender.emotional_state}.` : ''}
 
 Send this message to ${recipient.name}: "${requested_message}"
 
 Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No greetings or sign-offs unless they're genuinely your style. Return ONLY the rewritten message, no quotes, no explanation.`,
-      });
-      if (typeof rewriteRes === 'string' && rewriteRes.trim().length > 0) {
-        rewrittenMessage = rewriteRes.trim();
+        });
+        if (typeof rewriteRes === 'string' && rewriteRes.trim().length > 0) {
+          rewrittenMessage = rewriteRes.trim();
+        }
+      } catch (e) {
+        warnings.push(`Voice rewrite failed (non-fatal), using original: ${e.message}`);
       }
-    } catch (e) {
-      warnings.push(`Voice rewrite failed (non-fatal), using original: ${e.message}`);
     }
 
     // ── CANONICAL CONVERSATION KEY ─────────────────────────────────────────────
@@ -246,7 +267,7 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
     const now = new Date().toISOString();
 
     // ── SAVE THE OUTBOUND MESSAGE ──────────────────────────────────────────────
-    const savedMessage = await base44.entities.Message.create({
+    const messagePayload = {
       conversation_id: conversationId,
       sender_type: 'character',
       character_id: sender_character_id,
@@ -255,7 +276,7 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
       receiver_character_id: recipient.id,
       participant_character_ids: participantIds,
       shared_conversation_key: canonicalKey,
-      content: rewrittenMessage,
+      content: isImageSend ? (image_description || '') : rewrittenMessage,
       channel: 'world_phone',
       timestamp: now,
       is_read: false,
@@ -266,7 +287,17 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
       recovery_signal: false,
       memory_eligible: true,
       relationship_eligible: true,
-    });
+      message_type: message_type || 'text',
+    };
+
+    // Add image fields if this is an image send
+    if (isImageSend && image_url) {
+      messagePayload.image_url = image_url;
+      messagePayload.image_description = image_description || '';
+      messagePayload.image_analysis_status = 'complete';
+    }
+
+    const savedMessage = await base44.entities.Message.create(messagePayload);
 
     // HARD STOP: if message write failed, return failure — caller must not fake success
     if (!savedMessage?.id) {
@@ -279,8 +310,12 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
     }
 
     // Update conversation preview
+    const previewText = isImageSend
+      ? (image_description ? image_description.substring(0, 100) : 'Image')
+      : rewrittenMessage.substring(0, 100);
+    
     await base44.entities.Conversation.update(conversationId, {
-      last_message_preview: rewrittenMessage.substring(0, 100),
+      last_message_preview: previewText,
       last_message_date: now,
     }).catch(e => warnings.push(`Conversation preview update failed (non-fatal): ${e.message}`));
 
@@ -431,10 +466,17 @@ Respond ONLY with valid JSON:
       console.warn(`[sendWorldPhoneMessage] Bilateral sync error: ${err.message}`);
     });
 
-    console.log(`[sendWorldPhoneMessage] ✅ msg=${savedMessage.id} | conv=${conversationId} | key=${canonicalKey} | source=${source} | recipient_response=${recipientResponseMessageId || 'none'}`);
+    console.log(`[sendWorldPhoneMessage] ✅ msg=${savedMessage.id} | conv=${conversationId} | key=${canonicalKey} | source=${source} | type=${message_type || 'text'} | image=${isImageSend ? image_url : 'none'} | recipient_response=${recipientResponseMessageId || 'none'}`);
 
     return Response.json({
       success: true,
+      message_id: savedMessage.id,
+      conversation_id: conversationId,
+      shared_conversation_key: canonicalKey,
+      sender_character_id,
+      receiver_character_id: recipient.id,
+      channel: 'world_phone',
+      image_url_saved: isImageSend ? !!image_url : false,
       proof: {
         message_id: savedMessage.id,
         recipient_response_message_id: recipientResponseMessageId,
@@ -444,6 +486,8 @@ Respond ONLY with valid JSON:
         participant_character_ids: participantIds,
         recipient_response_generated: !!recipientResponseMessageId,
         recipient_resolution_path: recipientResolutionPath,
+        message_type: message_type || 'text',
+        image_url_saved: isImageSend ? !!image_url : false,
         source,
         warnings: warnings.length > 0 ? warnings : null,
       },

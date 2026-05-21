@@ -348,10 +348,11 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
 
 function SendImageModal({ image, onClose, onSent }) {
   const [characters, setCharacters] = useState([]);
-  const [selected, setSelected] = useState(new Set());
   const [senderMode, setSenderMode] = useState('user');
-  const [recipient, setRecipient] = useState(null); // For character-to-character sends
+  const [selectedSenderCharacterId, setSelectedSenderCharacterId] = useState(null);
+  const [selectedRecipientCharacterIds, setSelectedRecipientCharacterIds] = useState(new Set());
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
 
   useEffect(() => {
@@ -375,10 +376,9 @@ function SendImageModal({ image, onClose, onSent }) {
     load();
   }, [user?.email]);
 
-  // Group and sort characters
+  // Group and sort characters alphabetically within type
   const groupedCharacters = useMemo(() => {
     const groups = {
-      user: [],
       active_created: [],
       npc_regular: [],
       npc_family: [],
@@ -388,16 +388,16 @@ function SendImageModal({ image, onClose, onSent }) {
 
     characters.forEach(char => {
       const type = char.character_type || 'other';
-      const sorted = { ...char, displayName: char.display_name || char.name };
+      const displayName = char.display_name || char.name;
 
-      if (type === 'active_created_character') groups.active_created.push(sorted);
-      else if (type === 'npc_regular') groups.npc_regular.push(sorted);
-      else if (type === 'npc_family_member') groups.npc_family.push(sorted);
-      else if (type === 'npc_fictitious') groups.npc_fictitious.push(sorted);
-      else groups.other.push(sorted);
+      if (type === 'active_created_character') groups.active_created.push({ ...char, displayName });
+      else if (type === 'npc_regular') groups.npc_regular.push({ ...char, displayName });
+      else if (type === 'npc_family_member') groups.npc_family.push({ ...char, displayName });
+      else if (type === 'npc_fictitious') groups.npc_fictitious.push({ ...char, displayName });
+      else groups.other.push({ ...char, displayName });
     });
 
-    // Sort each group alphabetically
+    // Sort each group alphabetically by display name
     Object.keys(groups).forEach(key => {
       groups[key].sort((a, b) => a.displayName.localeCompare(b.displayName));
     });
@@ -406,16 +406,18 @@ function SendImageModal({ image, onClose, onSent }) {
   }, [characters]);
 
   const handleSend = async () => {
+    setError(null);
     setLoading(true);
     try {
       if (senderMode === 'user') {
-        // User sending to multiple characters
-        if (selected.size === 0) {
-          alert('Please select at least one character');
+        // User sending to multiple characters via chat/text
+        if (selectedRecipientCharacterIds.size === 0) {
+          setError('Please select at least one character');
           setLoading(false);
           return;
         }
-        for (const charId of selected) {
+
+        for (const charId of selectedRecipientCharacterIds) {
           const char = characters.find(c => c.id === charId);
           if (!char) continue;
 
@@ -423,50 +425,57 @@ function SendImageModal({ image, onClose, onSent }) {
             conversation_id: `${charId}_user`,
             sender_type: 'user',
             character_id: charId,
-            content: image.description,
+            content: image.description || '',
             image_url: image.url,
+            image_description: image.description || '',
             timestamp: new Date().toISOString(),
+            owner_email: user?.email,
           });
         }
-        console.log(`[SendImageModal] User sent image to ${selected.size} character(s)`);
+        console.log(`[SendImageModal] User sent image to ${selectedRecipientCharacterIds.size} character(s)`);
       } else {
-        // Character sending to character via World Phone
-        if (!recipient) {
-          alert('Please select a recipient character');
+        // Character sending to character(s) via World Phone
+        if (!selectedSenderCharacterId) {
+          setError('Please select a sender character');
           setLoading(false);
           return;
         }
 
-        const senderChar = characters.find(c => c.id === recipient); // sender is the selected recipient dropdown (actual sender)
-        const senderCharacterId = recipient;
-        const receiverCharacterIds = Array.from(selected);
+        if (selectedRecipientCharacterIds.size === 0) {
+          setError('Please select at least one recipient character');
+          setLoading(false);
+          return;
+        }
 
-        if (receiverCharacterIds.length === 0) {
-          alert('Please select at least one receiver character');
+        // Check for self-send
+        if (selectedRecipientCharacterIds.has(selectedSenderCharacterId)) {
+          setError('Cannot send to the same character you are sending as');
           setLoading(false);
           return;
         }
 
         // Send image to each selected receiver via World Phone
-        for (const receiverId of receiverCharacterIds) {
+        for (const receiverId of selectedRecipientCharacterIds) {
           try {
             const res = await base44.functions.invoke('sendWorldPhoneMessage', {
-              sender_character_id: senderCharacterId,
+              sender_character_id: selectedSenderCharacterId,
               recipient_identifier: receiverId,
-              requested_message: image.description || 'Shared an image',
+              requested_message: image.description || 'Sent an image',
               image_url: image.url,
+              image_description: image.description || '',
+              message_type: 'image',
               source: 'media_gallery_send',
-              current_conversation_id: null,
               owner_email: user?.email,
             });
 
-            console.log('[SendImageModal] World Phone send result:', {
+            console.log('[SendImageModal] World Phone image send:', {
               send_as: 'character',
-              sender_character_id: senderCharacterId,
+              sender_character_id: selectedSenderCharacterId,
               receiver_character_id: receiverId,
               image_url: image.url,
               success: res?.data?.success,
               message_id: res?.data?.message_id,
+              channel: res?.data?.channel,
             });
 
             if (!res?.data?.success) {
@@ -474,7 +483,7 @@ function SendImageModal({ image, onClose, onSent }) {
             }
           } catch (e) {
             console.error(`[SendImageModal] Failed to send to ${receiverId}:`, e.message);
-            alert(`Failed to send to character: ${e.message}`);
+            setError(`Failed to send to character: ${e.message}`);
             setLoading(false);
             return;
           }
@@ -483,13 +492,13 @@ function SendImageModal({ image, onClose, onSent }) {
       onSent();
     } catch (e) {
       console.error('[SendImageModal] Send failed:', e);
-      alert(`Send failed: ${e.message}`);
+      setError(`Send failed: ${e.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const CharacterGroup = ({ title, chars }) => {
+  const CharacterGroupUser = ({ title, chars, selected, onToggle }) => {
     if (chars.length === 0) return null;
     return (
       <>
@@ -504,17 +513,46 @@ function SendImageModal({ image, onClose, onSent }) {
             <input
               type="checkbox"
               checked={selected.has(char.id)}
-              onChange={() => {
-                const newSet = new Set(selected);
-                if (newSet.has(char.id)) newSet.delete(char.id);
-                else newSet.add(char.id);
-                setSelected(newSet);
-              }}
+              onChange={() => onToggle(char.id)}
               className="w-4 h-4"
             />
             <span className="text-sm text-foreground">{char.displayName}</span>
           </label>
         ))}
+      </>
+    );
+  };
+
+  const CharacterGroupCharacter = ({ title, chars, selected, senderCharacterId, onToggle }) => {
+    if (chars.length === 0) return null;
+    return (
+      <>
+        <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">
+          {title}
+        </div>
+        {chars.map((char) => {
+          const isSender = char.id === senderCharacterId;
+          return (
+            <label
+              key={char.id}
+              className={`flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-border/50 last:border-b-0 ${
+                isSender ? 'bg-secondary/20 opacity-50 cursor-not-allowed' : 'hover:bg-secondary/50'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={selected.has(char.id)}
+                onChange={() => onToggle(char.id)}
+                disabled={isSender}
+                className="w-4 h-4 disabled:opacity-50"
+              />
+              <span className={`text-sm ${isSender ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
+                {char.displayName}
+                {isSender && ' (sender)'}
+              </span>
+            </label>
+          );
+        })}
       </>
     );
   };
@@ -561,35 +599,28 @@ function SendImageModal({ image, onClose, onSent }) {
           </div>
         </div>
 
-        {/* Recipient selector for character-to-character */}
-        {senderMode === 'character' && (
-          <div className="mb-4">
-            <p className="text-sm font-semibold text-foreground mb-2">Send To Character:</p>
-            <select
-              value={recipient || ''}
-              onChange={(e) => setRecipient(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-card text-foreground"
-            >
-              <option value="">— Select recipient —</option>
-              {characters.map((char) => (
-                <option key={char.id} value={char.id}>
-                  {char.display_name || char.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
         {/* User mode: select receivers */}
         {senderMode === 'user' && (
           <div className="mb-4">
             <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send to Characters:</p>
             <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 max-h-56">
-              <CharacterGroup title="Active Characters" chars={groupedCharacters.active_created} />
-              <CharacterGroup title="NPC Regular" chars={groupedCharacters.npc_regular} />
-              <CharacterGroup title="NPC Family Members" chars={groupedCharacters.npc_family} />
-              <CharacterGroup title="NPC Fictitious" chars={groupedCharacters.npc_fictitious} />
-              <CharacterGroup title="Other" chars={groupedCharacters.other} />
+              {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
+                const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
+                return (
+                  <CharacterGroupUser
+                    key={typeKey}
+                    title={typeLabels[typeKey]}
+                    chars={groupedCharacters[typeKey]}
+                    selected={selectedRecipientCharacterIds}
+                    onToggle={(charId) => {
+                      const newSet = new Set(selectedRecipientCharacterIds);
+                      if (newSet.has(charId)) newSet.delete(charId);
+                      else newSet.add(charId);
+                      setSelectedRecipientCharacterIds(newSet);
+                    }}
+                  />
+                );
+              })}
             </div>
           </div>
         )}
@@ -601,14 +632,14 @@ function SendImageModal({ image, onClose, onSent }) {
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Sending As:</p>
               <select
-                value={recipient || ''}
-                onChange={(e) => setRecipient(e.target.value)}
+                value={selectedSenderCharacterId || ''}
+                onChange={(e) => setSelectedSenderCharacterId(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-border bg-card text-foreground"
               >
                 <option value="">— Select character —</option>
-                {characters.map((char) => (
+                {[...groupedCharacters.active_created, ...groupedCharacters.npc_regular, ...groupedCharacters.npc_family, ...groupedCharacters.npc_fictitious, ...groupedCharacters.other].map((char) => (
                   <option key={char.id} value={char.id}>
-                    {char.display_name || char.name}
+                    {char.displayName}
                   </option>
                 ))}
               </select>
@@ -618,11 +649,24 @@ function SendImageModal({ image, onClose, onSent }) {
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send To:</p>
               <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 max-h-40">
-                <CharacterGroup title="Active Characters" chars={groupedCharacters.active_created} />
-                <CharacterGroup title="NPC Regular" chars={groupedCharacters.npc_regular} />
-                <CharacterGroup title="NPC Family Members" chars={groupedCharacters.npc_family} />
-                <CharacterGroup title="NPC Fictitious" chars={groupedCharacters.npc_fictitious} />
-                <CharacterGroup title="Other" chars={groupedCharacters.other} />
+                {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
+                  const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
+                  return (
+                    <CharacterGroupCharacter
+                      key={typeKey}
+                      title={typeLabels[typeKey]}
+                      chars={groupedCharacters[typeKey]}
+                      selected={selectedRecipientCharacterIds}
+                      senderCharacterId={selectedSenderCharacterId}
+                      onToggle={(charId) => {
+                        const newSet = new Set(selectedRecipientCharacterIds);
+                        if (newSet.has(charId)) newSet.delete(charId);
+                        else newSet.add(charId);
+                        setSelectedRecipientCharacterIds(newSet);
+                      }}
+                    />
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -636,10 +680,15 @@ function SendImageModal({ image, onClose, onSent }) {
           >
             Cancel
           </button>
+          {error && (
+            <div className="text-xs text-destructive bg-destructive/10 px-3 py-2 rounded-lg">
+              {error}
+            </div>
+          )}
           <button
             onClick={handleSend}
-            disabled={loading || (senderMode === 'user' ? selected.size === 0 : !recipient || selected.size === 0)}
-            className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            disabled={loading || (senderMode === 'user' ? selectedRecipientCharacterIds.size === 0 : !selectedSenderCharacterId || selectedRecipientCharacterIds.size === 0)}
+            className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Sending...' : 'Send'}
           </button>
