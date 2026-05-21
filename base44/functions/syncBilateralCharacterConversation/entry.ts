@@ -62,12 +62,30 @@ Deno.serve(async (req) => {
     const userEmail = owner_email || user.email;
 
     // ── VERIFY OWNERSHIP ─────────────────────────────────────────────────────────
-    const [senderChar, receiverChar] = await Promise.all([
-      base44.asServiceRole.entities.Character.filter({ id: sender_character_id, owner_email: userEmail }).then(c => c[0]),
-      base44.asServiceRole.entities.Character.filter({ id: receiver_character_id, owner_email: userEmail }).then(c => c[0]),
+    // Look up by ID only — owner_email may be unset on legacy/shared NPC characters.
+    // Reject only if owner_email is explicitly set to a DIFFERENT user's email.
+    // This matches the ownership check used by syncWorldPhoneMemory (lines 47-52).
+    // IMPORTANT: Use user-scoped entities (not asServiceRole) for Character lookup —
+    // asServiceRole.filter({ id }) returns 0 results due to Character RLS requiring owner_email.
+    const [senderChars, receiverChars] = await Promise.all([
+      base44.entities.Character.filter({ id: sender_character_id }).catch(() => []),
+      base44.entities.Character.filter({ id: receiver_character_id }).catch(() => []),
     ]);
 
+    const senderChar = senderChars[0];
+    const receiverChar = receiverChars[0];
+
     if (!senderChar || !receiverChar) {
+      return Response.json(
+        { error: 'One or both characters not found' },
+        { status: 404 }
+      );
+    }
+
+    // Only block if owner_email is set AND explicitly belongs to a different user
+    const senderEmailMismatch = senderChar.owner_email && senderChar.owner_email !== userEmail;
+    const receiverEmailMismatch = receiverChar.owner_email && receiverChar.owner_email !== userEmail;
+    if (senderEmailMismatch || receiverEmailMismatch) {
       return Response.json(
         { error: 'One or both characters do not belong to the authenticated user' },
         { status: 403 }
