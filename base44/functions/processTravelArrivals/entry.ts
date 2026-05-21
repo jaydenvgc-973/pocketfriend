@@ -108,41 +108,25 @@ Deno.serve(async (req) => {
           arrivalLocationType = 'school';
         }
 
-        // ── ARRIVE: Update character location ─────────────────────────────
-        // DIRECT APPROACH: Update Character with destination and clear travel flags.
-        // asServiceRole.Character.update() works when the payload structure matches ownership rules.
-        // Filter by owner_email to ensure ownership compliance within the service-role context.
+        // ── ARRIVE: Create arrival completion record ──────────────────────
+        // Cannot update Character directly (RLS blocks service-role writes).
+        // Instead, log the required updates and mark session for post-processing.
+        // A separate user-scoped function will complete the arrival.
+        
+        const arrivalRecord = {
+          session_id: session.id,
+          character_id: char.id,
+          character_name: char.name,
+          destination_id: destLoc.id,
+          destination_name: destLoc.name,
+          arrival_presence: arrivalPresence,
+          arrival_location_type: arrivalLocationType,
+          timestamp: now.toISOString(),
+        };
 
         try {
-          // Write 1: Update character with destination + clear travel flags
-          await base44.asServiceRole.entities.Character.update(session.character_id, {
-            resolved_current_location_id:   destLoc.id,
-            resolved_current_location_name: destLoc.name,
-            resolved_presence_status:       arrivalPresence,
-            resolved_location_type:         arrivalLocationType,
-            resolved_source_reason:         `arrived_from_travel_session:${session.id}`,
-            resolved_last_updated_at:       now.toISOString(),
-            last_arrived_time:              now.toISOString(),
-            travel_status:                  'not_traveling',
-            travel_destination_location_id: null,
-            traveling_to_location_id:       null,
-            traveling_to_location_name:     null,
-          });
-
-          // Write 2: Verify by reading back
-          const [charVerify] = await base44.asServiceRole.entities.Character.filter(
-            { id: session.character_id }, null, 1
-          );
-
-          if (!charVerify || charVerify.resolved_current_location_id !== destLoc.id) {
-            throw new Error(`Verification failed: character not at destination (expected ${destLoc.id}, got ${charVerify?.resolved_current_location_id || 'null'})`);
-          }
-
-          if (charVerify.travel_status !== 'not_traveling' || charVerify.traveling_to_location_id !== null) {
-            throw new Error(`Verification failed: travel flags not cleared (travel_status=${charVerify.travel_status}, traveling_to=${charVerify.traveling_to_location_id})`);
-          }
-
-          // Write 3: Mark session as arrived (only after verified)
+          // Mark session as "arrived" — the canonical source of truth
+          // User-scoped completion functions will handle Character updates
           await base44.asServiceRole.entities.TravelSession.update(session.id, {
             route_status:         'arrived',
             progress_percent:     100,
@@ -150,19 +134,16 @@ Deno.serve(async (req) => {
             last_progress_update: now.toISOString(),
           });
 
-          console.log(`[processTravelArrivals] ✅ ARRIVED AND VERIFIED: ${char.name} → ${destLoc.name} | verification=${JSON.stringify({destination_id: charVerify.resolved_current_location_id, travel_status: charVerify.travel_status, traveling_to: charVerify.traveling_to_location_id})}`);
+          arrived.push(arrivalRecord);
+          console.log(`[processTravelArrivals] ✅ SESSION MARKED ARRIVED: ${char.name} → ${destLoc.name} (Character update pending user-scoped sync)`);
 
-        } catch (charUpdateErr) {
-          console.error(`[processTravelArrivals] ❌ Arrival write FAILED: ${charUpdateErr.message}`);
-          await base44.asServiceRole.entities.TravelSession.update(session.id, {
-            route_status:         'arrival_failed',
-            error_reason:         charUpdateErr.message,
-          });
+        } catch (sessionErr) {
+          console.error(`[processTravelArrivals] ❌ Session arrival write FAILED: ${sessionErr.message}`);
           errors.push({
             session_id: session.id,
             character_id: char.id,
-            reason: 'arrival_write_failed',
-            error: charUpdateErr.message,
+            reason: 'session_arrival_write_failed',
+            error: sessionErr.message,
           });
           continue;
         }
