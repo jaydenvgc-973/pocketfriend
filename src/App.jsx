@@ -37,6 +37,7 @@ import Travel from './pages/Travel';
 import Scene from './pages/Scene';
 import Moments from './pages/Moments';
 import MemoryReelCreator from './pages/MemoryReelCreator';
+import MediaGallery from './pages/MediaGallery';
 import Locations from './pages/Locations';
 
 
@@ -127,6 +128,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/edit-character-emotions" element={<EditCharacterEmotions />} />
       <Route path="/moments" element={<Moments />} />
       <Route path="/memory-reel" element={<MemoryReelCreator />} />
+      <Route path="/media-gallery" element={<MediaGallery />} />
       <Route path="/locations" element={<Locations />} />
 
 

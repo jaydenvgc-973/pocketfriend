@@ -1,18 +1,26 @@
 /**
  * processTravelArrivals
  *
- * Scheduled every 5 minutes. Checks all active TravelSession records
- * where estimated_arrival_time has passed. For each one:
- *   1. Updates progress_percent to 100
- *   2. Sets route_status = "arrived"
- *   3. Updates Character: resolved_current_location_id = destination
- *   4. Clears in_transit presence state
- *   5. Marks CharacterCommitment as completed if linked
+ * Scheduled every 5 minutes. Checks all active TravelSession records where ETA has passed.
+ *
+ * TWO-STAGE ARRIVAL (no RLS bypass needed):
+ *   Stage 1 (this function, asServiceRole):
+ *   - Marks TravelSession route_status = "arrived" only (service-role safe)
+ *   - Sets actual_arrival_time
+ *   - Logs proof
+ *
+ *   Stage 2 (completeCharacterArrival, user-scoped):
+ *   - Updates Character resolved_current_location_id to destination
+ *   - Clears travel_status, traveling_to fields
+ *   - Triggered by separate cron or sync process scoped to user
  *
  * RULES:
  * - owner_email is the sole ownership source — never created_by
- * - Only process sessions that are "in_transit" with ETA in the past
+ * - Only process "in_transit" sessions with ETA in past or within 2-min threshold
+ * - If session can't be marked, log exact error in route_status = "arrival_failed" + error_reason
+ * - Never modify Character here (RLS-blocked for asServiceRole)
  * - Never reset jail, shelter, hotel, or house_arrest state
+ * - Blocker characters are detected via character_snapshot for safety
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 

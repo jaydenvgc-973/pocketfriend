@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { isCharacterConfined, getConfinementLabel } from "@/lib/confinementMessagingEngine";
-import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward, MapPin, Pencil, Check } from "lucide-react";
+import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward, MapPin, Pencil, Check, Share2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { filterDashes } from "@/lib/dashFilter";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
@@ -18,7 +18,7 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, character, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded, onLocationSignal }) {
+export default function MessageBubble({ message, character, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded, onLocationSignal, onShareNarrative }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
   const playingAsLabel = isUser && message.played_as_character_name ? message.played_as_character_name : null;
@@ -332,11 +332,20 @@ export default function MessageBubble({ message, character, showName = false, on
             <>
               <button
                 onClick={(e) => { e.stopPropagation(); setEditedNarrative(message.content || ""); setIsEditingNarrative(true); }}
-                className="absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
+                className="absolute -left-12 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
                 title="Edit narrative"
               >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
+              {onShareNarrative && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onShareNarrative(message); }}
+                  className="absolute -right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
+                  title="Share narrative"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                </button>
+              )}
               {onDelete && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}

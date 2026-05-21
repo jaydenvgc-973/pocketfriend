@@ -3,7 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Wrench, Film, Loader2, CheckCircle2 } from "lucide-react";
+import { Wrench, Film, Loader2, CheckCircle2, Images } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import ActiveArcCard from "@/components/moments/ActiveArcCard";
 import AchievementBadge from "@/components/moments/AchievementBadge";
@@ -254,6 +254,20 @@ export default function Moments() {
             queryClient.invalidateQueries({ queryKey: ['communityEvents'] });
           }}
         />
+
+        {/* Media Gallery Link */}
+        <Link
+          to="/media-gallery"
+          className="block p-4 rounded-xl border border-border bg-card hover:bg-secondary/50 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <Images className="w-5 h-5 text-primary" />
+            <div>
+              <h3 className="font-semibold text-foreground">Media Gallery</h3>
+              <p className="text-xs text-muted-foreground">Browse and share generated images</p>
+            </div>
+          </div>
+        </Link>
 
          {/* Active Arcs — active created characters only (no NPCs) */}
         {characters.filter(c => c.character_type === 'active_created_character').length > 0 && (
