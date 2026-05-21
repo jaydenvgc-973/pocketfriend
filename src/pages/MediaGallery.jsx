@@ -21,33 +21,39 @@ export default function MediaGallery() {
 
   const [hasMore, setHasMore] = useState(true);
 
-  // Load paginated batch of images on demand
-  // Uses skip-based pagination: page 1 = skip 0, page 2 = skip 20, etc.
-  // Fetches IMAGES_PER_PAGE + 1 to detect if more pages exist, then slices back to 20.
-  // No $exists filter (not supported) — filter by image_url presence in JS after fetch.
-  // Fetches a wider batch (IMAGES_PER_PAGE * 3) to account for JS-side filtering of
-  // records without image_url, then slices to the correct window.
-  const FETCH_BATCH = IMAGES_PER_PAGE * 4; // wider net to find enough image records
+  // Load all account images with true pagination: each page fetches a fresh batch
+  // Page 1 = skip 0, fetches records 0–N until we have 20 images
+  // Page 2 = skip from where page 1 ended (after filtering), fetches next 20 images
+  // Problem: we don't know ahead of time how many non-image messages exist between image records
+  // Solution: fetch a large batch, filter to images, slice to 20, track the last timestamp for next page
+  const FETCH_BATCH = IMAGES_PER_PAGE * 5; // fetch 100 raw messages to reliably find 20 images
   const { data: currentPageImages = [], isLoading, refetch: refetchCurrentPage } = useQuery({
     queryKey: ['media_gallery_page', user?.email, currentPage, searchTerm],
     queryFn: async () => {
       if (!user?.email) return [];
       try {
         const searchLower = searchTerm.toLowerCase();
-        // Skip = (page - 1) * 20 image records. Because we don't know how many non-image
-        // records exist before our target window, we fetch a larger batch from the correct
-        // timestamp offset and filter down. We use skip on the raw query as an approximation.
-        const skip = (currentPage - 1) * IMAGES_PER_PAGE;
+        // Calculate skip: cumulative count of all images returned on previous pages
+        // If page 1 returned 20, skip for page 2 = 20. If page 1 was short, skip is smaller.
+        const skipCount = (currentPage - 1) * IMAGES_PER_PAGE;
 
-        // Fetch a broad batch ordered newest first, skipping already-seen pages
-        const messages = await base44.entities.Message.list('-timestamp', FETCH_BATCH, skip * 2);
+        // Fetch ALL messages (no character filter) ordered newest first
+        // Use a large batch to account for non-image messages in between
+        const messages = await base44.entities.Message.list('-timestamp', FETCH_BATCH, skipCount);
 
-        // Filter to only messages that have an image_url
+        if (!messages || messages.length === 0) {
+          setHasMore(false);
+          return [];
+        }
+
+        // Filter to only messages with image_url, deduplicate, apply search
         const seen = new Set();
         const withImages = messages.filter(m => {
           if (!m.image_url) return false;
           if (seen.has(m.image_url)) return false;
           seen.add(m.image_url);
+          
+          // Apply search filter if present
           if (searchTerm) {
             const desc = (m.image_description || m.content || '').toLowerCase();
             const name = (m.character_name || 'you').toLowerCase();
@@ -56,12 +62,12 @@ export default function MediaGallery() {
           return true;
         });
 
-        // Take only 20 for display, +1 to detect hasMore
-        const pageSlice = withImages.slice(0, IMAGES_PER_PAGE + 1);
-        const hasNextPage = pageSlice.length > IMAGES_PER_PAGE;
+        // Determine if there are more pages: if we got more than 20 images, there are more
+        const hasNextPage = withImages.length > IMAGES_PER_PAGE;
         setHasMore(hasNextPage);
 
-        const items = pageSlice.slice(0, IMAGES_PER_PAGE).map(m => ({
+        // Take exactly 20 for this page
+        const items = withImages.slice(0, IMAGES_PER_PAGE).map(m => ({
           id: m.id,
           url: m.image_url,
           description: m.image_description || m.content?.slice(0, 100) || 'Image',
