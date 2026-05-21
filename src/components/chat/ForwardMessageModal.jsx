@@ -59,19 +59,25 @@ export default function ForwardMessageModal({ message, onClose }) {
           convoId = newConvo.id;
         }
 
+        const isNarrative = !!message.is_narrative;
         const senderLabel = message.character_name || "them";
-        const fwdContent = message.content
-          ? `Fwd Message from ${senderLabel}:\n${message.content}`
-          : `Fwd Message from ${senderLabel}`;
+        const fwdContent = isNarrative
+          ? message.content
+          : (message.content
+            ? `Fwd Message from ${senderLabel}:\n${message.content}`
+            : `Fwd Message from ${senderLabel}`);
 
         const forwardedPayload = {
           conversation_id: convoId,
-          sender_type: "user",
+          sender_type: isNarrative ? "character" : "user",
+          character_id: isNarrative ? message.character_id : undefined,
+          character_name: isNarrative ? message.character_name : undefined,
           content: fwdContent,
           image_url: message.image_url || undefined,
           timestamp: new Date().toISOString(),
-          is_forwarded: true,
-          forwarded_from: senderLabel,
+          is_narrative: isNarrative || undefined,
+          is_forwarded: !isNarrative,
+          forwarded_from: isNarrative ? undefined : senderLabel,
         };
 
         // CRITICAL: Preserve location_share so the receiving chat renders the card UI
@@ -128,7 +134,7 @@ export default function ForwardMessageModal({ message, onClose }) {
         >
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Forward className="w-4 h-4 text-primary" /> Forward to...
+              <Forward className="w-4 h-4 text-primary" /> {message.is_narrative ? "Share narrative to..." : "Forward to..."}
             </h3>
             <button onClick={onClose}><X className="w-4 h-4 text-muted-foreground" /></button>
           </div>
@@ -180,7 +186,7 @@ export default function ForwardMessageModal({ message, onClose }) {
             ) : isSending ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Sending...</>
             ) : (
-              <><Forward className="w-4 h-4" /> Forward to {selectedIds.length > 0 ? `${selectedIds.length} chat${selectedIds.length > 1 ? "s" : ""}` : "..."}</>
+              <><Forward className="w-4 h-4" /> {message.is_narrative ? "Share" : "Forward"} to {selectedIds.length > 0 ? `${selectedIds.length} chat${selectedIds.length > 1 ? "s" : ""}` : "..."}</>
             )}
           </button>
         </motion.div>
