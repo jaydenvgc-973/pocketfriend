@@ -19,26 +19,48 @@ export default function MediaGallery() {
     base44.auth.me().then(u => setUser(u)).catch(() => {});
   }, []);
 
-  // Load all images from all sources
-  const { data: allMediaItems = [], isLoading } = useQuery({
-    queryKey: ['media_gallery_complete', user?.email],
+  const [lastTimestamp, setLastTimestamp] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+
+  // Load paginated batch of images on demand
+  const { data: currentPageImages = [], isLoading, refetch: refetchCurrentPage } = useQuery({
+    queryKey: ['media_gallery_page', user?.email, currentPage, searchTerm],
     queryFn: async () => {
       if (!user?.email) return [];
       try {
-        // Load all messages with images
-        const messages = await base44.entities.Message.filter(
-          { image_url: { $exists: true } },
+        // Build query: filter by search term if present
+        const query = { image_url: { $exists: true } };
+        
+        // Apply search filter if present
+        const searchLower = searchTerm.toLowerCase();
+        
+        // Fetch 20 images, ordered newest first
+        let messages = await base44.entities.Message.filter(
+          query,
           '-timestamp',
-          500
+          IMAGES_PER_PAGE + 1  // Fetch one extra to detect if there are more pages
         );
 
+        // Deduplicate by URL and filter by search term
         const seen = new Set();
         const items = messages
           .filter(m => {
+            // Check if we've already seen this image URL
             if (seen.has(m.image_url)) return false;
             seen.add(m.image_url);
+            
+            // Apply search filter if present
+            if (searchTerm) {
+              const desc = (m.image_description || m.content || '').toLowerCase();
+              const name = (m.character_name || 'you').toLowerCase();
+              if (!desc.includes(searchLower) && !name.includes(searchLower)) {
+                return false;
+              }
+            }
+            
             return true;
           })
+          .slice(0, IMAGES_PER_PAGE)  // Only keep 20 for this page
           .map(m => ({
             id: m.id,
             url: m.image_url,
@@ -52,25 +74,24 @@ export default function MediaGallery() {
             messageId: m.id,
           }));
 
+        // Update tracking for next page fetch
+        if (items.length > 0) {
+          setLastTimestamp(items[items.length - 1].timestamp);
+          setHasMore(items.length === IMAGES_PER_PAGE);
+        } else {
+          setHasMore(false);
+        }
+
         return items;
       } catch (e) {
-        console.error('[MediaGallery] Failed to load media:', e);
+        console.error('[MediaGallery] Failed to load media page:', e);
         return [];
       }
     },
     enabled: !!user?.email,
   });
 
-  const filteredMedia = useMemo(() => {
-    return allMediaItems.filter(item =>
-      item.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.senderName.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [allMediaItems, searchTerm]);
-
-  const totalPages = Math.ceil(filteredMedia.length / IMAGES_PER_PAGE);
-  const startIdx = (currentPage - 1) * IMAGES_PER_PAGE;
-  const paginatedMedia = filteredMedia.slice(startIdx, startIdx + IMAGES_PER_PAGE);
+  const paginatedMedia = currentPageImages;
 
   return (
     <div className="min-h-screen bg-background p-6" style={{ paddingTop: 'max(1.5rem, calc(1.5rem + env(safe-area-inset-top)))' }}>
@@ -88,7 +109,7 @@ export default function MediaGallery() {
             <div>
               <h1 className="text-3xl font-bold text-foreground">Media Gallery</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                {filteredMedia.length} images • Page {currentPage} of {totalPages}
+                Page {currentPage}{hasMore ? '+' : ''}
               </p>
             </div>
           </div>
@@ -113,8 +134,10 @@ export default function MediaGallery() {
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full" />
           </div>
-        ) : filteredMedia.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">No media found.</div>
+        ) : paginatedMedia.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            {searchTerm ? 'No images match your search.' : 'No media found.'}
+          </div>
         ) : (
           <>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
@@ -141,42 +164,28 @@ export default function MediaGallery() {
               ))}
             </div>
 
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 mb-8">
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Previous
-                </button>
+            {/* Pagination Controls */}
+            <div className="flex items-center justify-center gap-2 mb-8">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Previous
+              </button>
 
-                <div className="flex items-center gap-1">
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                    <button
-                      key={page}
-                      onClick={() => setCurrentPage(page)}
-                      className={`w-10 h-10 rounded-lg transition-colors ${
-                        currentPage === page
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-secondary text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {page}
-                    </button>
-                  ))}
-                </div>
+              <span className="text-sm text-muted-foreground px-4">
+                Page {currentPage}
+              </span>
 
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
-                  className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Next
-                </button>
-              </div>
-            )}
+              <button
+                onClick={() => setCurrentPage(p => p + 1)}
+                disabled={!hasMore}
+                className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -193,10 +202,12 @@ export default function MediaGallery() {
             try {
               // Delete the message containing the image
               await base44.entities.Message.delete(selectedImage.messageId);
-              // Refresh media list
               setSelectedImage(null);
+              // Refresh the current page after deletion
+              refetchCurrentPage();
             } catch (e) {
               console.error('[MediaGallery] Delete failed:', e);
+              alert(`Delete failed: ${e.message}`);
             }
           }}
         />
