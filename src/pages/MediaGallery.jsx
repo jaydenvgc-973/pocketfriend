@@ -1,12 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { motion } from 'framer-motion';
 import { X, Send, Trash2, Search, ArrowLeft } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-
-const IMAGES_PER_PAGE = 20;
-const BATCH_SIZE = 100; // raw messages to scan per fetch
 
 export default function MediaGallery() {
   const navigate = useNavigate();
@@ -14,115 +10,111 @@ export default function MediaGallery() {
   const [showSendModal, setShowSendModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [user, setUser] = useState(null);
+
+  // Cursor stack: index = page number (1-based), value = rawCursor to pass for that page.
+  // Page 1 always starts at rawCursor=0.
+  // After page N loads, its nextRawCursor is pushed so page N+1 knows where to start.
+  // This guarantees no raw-message skipping of valid images between pages.
   const [currentPage, setCurrentPage] = useState(1);
-  const [imageCursor, setImageCursor] = useState(0); // cursor in image result stream, not raw messages
+  const [cursorStack, setCursorStack] = useState([0]); // cursorStack[0] = cursor for page 1
+  const [hasMore, setHasMore] = useState(true);
+  const [pageImages, setPageImages] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     base44.auth.me().then(u => setUser(u)).catch(() => {});
   }, []);
 
-  const [hasMore, setHasMore] = useState(true);
+  // Fetch whenever user, page, or searchTerm changes
+  const fetchPage = useCallback(async (page, cursors, search) => {
+    if (!user?.email) return;
+    setIsLoading(true);
+    try {
+      const rawCursor = cursors[page - 1] ?? 0;
+      console.log(`[MediaGallery] fetchPage page=${page} rawCursor=${rawCursor} search="${search}"`);
 
-  // TRUE image-level pagination with cursor tracking
-  // Cursor = total count of images returned so far across all pages
-  // Each page: fetch raw batches starting from (cursor / estimated_images_per_batch) offset,
-  // scan until 20 valid images collected, store new cursor position
-  const { data: currentPageImages = [], isLoading, refetch: refetchCurrentPage } = useQuery({
-    queryKey: ['media_gallery_page', user?.email, currentPage, searchTerm, imageCursor],
-    queryFn: async () => {
-      if (!user?.email) return [];
-      try {
-        const searchLower = searchTerm.toLowerCase();
-        
-        // Estimate raw message offset: assume ~20% of messages have images
-        // This is approximate; we'll scan beyond and adjust cursor after
-        const estimatedSkip = Math.floor(imageCursor / 0.2);
-        
-        console.log(`[MediaGallery] Fetching page ${currentPage} | cursor=${imageCursor} | search="${searchTerm}" | estimatedSkip=${estimatedSkip}`);
+      const res = await base44.functions.invoke('fetchMediaGalleryPage', {
+        rawCursor,
+        searchTerm: search,
+      });
 
-        // Fetch a large batch of raw messages ordered newest first
-        const rawMessages = await base44.entities.Message.list('-timestamp', BATCH_SIZE, estimatedSkip);
+      const data = res?.data;
+      if (!data) throw new Error('No data returned from fetchMediaGalleryPage');
 
-        if (!rawMessages || rawMessages.length === 0) {
-          console.log('[MediaGallery] No raw messages found, marking hasMore=false');
-          setHasMore(false);
-          return [];
-        }
+      console.log('[MediaGallery] PROOF:', data.proof);
 
-        // Scan through raw messages and collect image records
-        const seen = new Set();
-        const allImages = [];
-        for (const m of rawMessages) {
-          if (!m.image_url) continue;
-          if (seen.has(m.image_url)) continue;
-          seen.add(m.image_url);
+      setPageImages(data.images || []);
+      setHasMore(data.hasMore === true);
 
-          // Apply search filter
-          if (searchTerm) {
-            const desc = (m.image_description || m.content || '').toLowerCase();
-            const name = (m.character_name || 'you').toLowerCase();
-            if (!desc.includes(searchLower) && !name.includes(searchLower)) continue;
-          }
-
-          allImages.push(m);
-        }
-
-        console.log(`[MediaGallery] Scanned ${rawMessages.length} raw messages | found ${allImages.length} valid images | deduped from ${seen.size} unique URLs`);
-
-        // Slice to page size
-        const pageImages = allImages.slice(0, IMAGES_PER_PAGE);
-        const nextCursor = imageCursor + pageImages.length;
-        
-        // Detect if more pages exist: if we got full page size, likely more exist
-        const foundFullPage = pageImages.length === IMAGES_PER_PAGE;
-        const hasNextPage = foundFullPage && allImages.length > IMAGES_PER_PAGE;
-        
-        console.log(`[MediaGallery] Returning ${pageImages.length} images | hasMore=${hasNextPage} | nextCursor=${nextCursor}`);
-
-        setHasMore(hasNextPage);
-        setImageCursor(nextCursor);
-
-        const items = pageImages.map(m => ({
-          id: m.id,
-          url: m.image_url,
-          description: m.image_description || m.content?.slice(0, 100) || 'Image',
-          senderType: m.sender_type,
-          senderName: m.character_name || 'You',
-          characterId: m.character_id,
-          conversationId: m.conversation_id,
-          timestamp: m.timestamp,
-          sourceType: 'message',
-          messageId: m.id,
-        }));
-
-        return items;
-      } catch (e) {
-        console.error('[MediaGallery] Failed to load media page:', e);
-        return [];
+      // Store nextRawCursor so the next page can use it
+      if (data.nextRawCursor != null) {
+        setCursorStack(prev => {
+          const next = [...prev];
+          next[page] = data.nextRawCursor; // index = page number (page 2 cursor at index 2, etc.)
+          return next;
+        });
       }
-    },
-    enabled: !!user?.email,
-  });
+    } catch (e) {
+      console.error('[MediaGallery] fetchPage error:', e.message);
+      setPageImages([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user?.email]);
 
-  const paginatedMedia = currentPageImages;
+  // Initial load and on page/search change
+  useEffect(() => {
+    if (user?.email) {
+      fetchPage(currentPage, cursorStack, searchTerm);
+    }
+  }, [user?.email, currentPage, searchTerm]); // eslint-disable-line
+
+  const handleNext = () => {
+    const nextPage = currentPage + 1;
+    setCurrentPage(nextPage);
+  };
+
+  const handlePrev = () => {
+    if (currentPage <= 1) return;
+    setCurrentPage(p => p - 1);
+  };
+
+  const handleSearchChange = (val) => {
+    setSearchTerm(val);
+    setCurrentPage(1);
+    setCursorStack([0]); // reset cursor stack on new search
+    setHasMore(true);
+  };
+
+  const handleDeleteImage = async (image) => {
+    try {
+      console.log(`[MediaGallery] Deleting message ${image.messageId}`);
+      await base44.entities.Message.delete(image.messageId);
+      setSelectedImage(null);
+      // Refetch current page with same cursor
+      await fetchPage(currentPage, cursorStack, searchTerm);
+    } catch (e) {
+      console.error('[MediaGallery] Delete failed:', e);
+      alert(`Delete failed: ${e.message}`);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background p-6" style={{ paddingTop: 'max(1.5rem, calc(1.5rem + env(safe-area-inset-top)))' }}>
       <div className="max-w-7xl mx-auto">
-        {/* Header with back button */}
+        {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
             <button
               onClick={() => navigate(-1)}
               className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-              title="Go back"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div>
               <h1 className="text-3xl font-bold text-foreground">Media Gallery</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                Page {currentPage}{hasMore ? '+' : ''}
+                Page {currentPage}{hasMore ? '+' : ''} • {pageImages.length} images
               </p>
             </div>
           </div>
@@ -135,10 +127,7 @@ export default function MediaGallery() {
             type="text"
             placeholder="Search by name or description..."
             value={searchTerm}
-            onChange={(e) => {
-              setSearchTerm(e.target.value);
-              setCurrentPage(1);
-            }}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="flex-1 px-4 py-2 rounded-lg border border-border bg-card text-foreground placeholder-muted-foreground"
           />
         </div>
@@ -147,14 +136,14 @@ export default function MediaGallery() {
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full" />
           </div>
-        ) : paginatedMedia.length === 0 ? (
+        ) : pageImages.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
-            {searchTerm ? 'No images match your search.' : 'No media found.'}
+            {searchTerm ? 'No images match your search.' : 'No media found. Images you send and receive will appear here.'}
           </div>
         ) : (
           <>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
-              {paginatedMedia.map((item) => (
+              {pageImages.map((item) => (
                 <motion.div
                   key={item.id}
                   initial={{ opacity: 0, scale: 0.9 }}
@@ -177,26 +166,18 @@ export default function MediaGallery() {
               ))}
             </div>
 
-            {/* Pagination Controls */}
-            <div className="flex items-center justify-center gap-2 mb-8">
+            {/* Pagination */}
+            <div className="flex items-center justify-center gap-4 mb-8">
               <button
-                onClick={() => {
-                  setCurrentPage(p => Math.max(1, p - 1));
-                  // On previous, recalculate cursor by fetching from scratch would be complex
-                  // For now, just decrement page; ideally we'd cache cursors per page
-                }}
-                disabled={currentPage === 1}
+                onClick={handlePrev}
+                disabled={currentPage === 1 || isLoading}
                 className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Previous
               </button>
-
-              <span className="text-sm text-muted-foreground px-4">
-                Page {currentPage} • {currentPageImages.length} images
-              </span>
-
+              <span className="text-sm text-muted-foreground">Page {currentPage}</span>
               <button
-                onClick={() => setCurrentPage(p => p + 1)}
+                onClick={handleNext}
                 disabled={!hasMore || isLoading}
                 className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
@@ -207,39 +188,20 @@ export default function MediaGallery() {
         )}
       </div>
 
-      {/* Image Detail Modal */}
       {selectedImage && (
         <ImageDetailModal
           image={selectedImage}
           onClose={() => setSelectedImage(null)}
-          onSend={() => {
-            setShowSendModal(true);
-          }}
-          onDelete={async () => {
-            try {
-              console.log(`[MediaGallery] Deleting message ${selectedImage.messageId} with image ${selectedImage.url}`);
-              await base44.entities.Message.delete(selectedImage.messageId);
-              console.log('[MediaGallery] Delete successful, refetching current page');
-              setSelectedImage(null);
-              // Refetch current page to remove deleted image
-              await refetchCurrentPage();
-            } catch (e) {
-              console.error('[MediaGallery] Delete failed:', e);
-              alert(`Delete failed: ${e.message}`);
-            }
-          }}
+          onSend={() => setShowSendModal(true)}
+          onDelete={() => handleDeleteImage(selectedImage)}
         />
       )}
 
-      {/* Send to Characters Modal */}
       {showSendModal && selectedImage && (
         <SendImageModal
           image={selectedImage}
           onClose={() => setShowSendModal(false)}
-          onSent={() => {
-            setShowSendModal(false);
-            setSelectedImage(null);
-          }}
+          onSent={() => { setShowSendModal(false); setSelectedImage(null); }}
         />
       )}
     </div>
