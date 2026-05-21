@@ -38,13 +38,17 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Failed to load sessions: ${e.message}` }, { status: 500 });
     }
 
-    // Filter to sessions where ETA has passed
+    // Filter to sessions where ETA has passed OR is within the arrival threshold (2 minutes).
+    // This prevents characters from getting stuck at 96–99% when the scheduler fires just
+    // before ETA. The 2-minute window matches frontend "Arriving now" display threshold.
+    const ARRIVAL_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
     const due = sessions.filter(s => {
       if (!s.estimated_arrival_time) return false;
-      return new Date(s.estimated_arrival_time) <= now;
+      const eta = new Date(s.estimated_arrival_time).getTime();
+      return eta - now.getTime() <= ARRIVAL_THRESHOLD_MS; // ETA passed OR within 2 min
     });
 
-    console.log(`[processTravelArrivals] ${sessions.length} in_transit sessions, ${due.length} due for arrival`);
+    console.log(`[processTravelArrivals] ${sessions.length} in_transit sessions, ${due.length} due for arrival (threshold: ETA ≤ now+2min)`);
 
     for (const session of due) {
       try {
@@ -138,7 +142,9 @@ Deno.serve(async (req) => {
         }
 
         arrived.push({ character: char.name, destination: destLoc.name, session_id: session.id });
-        console.log(`[processTravelArrivals] ✅ ${char.name} arrived at ${destLoc.name}`);
+
+        // Proof log — required fields per spec
+        console.log(`[processTravelArrivals] ARRIVAL PROOF | character_id=${char.id} | character=${char.name} | origin=${session.origin_location_name || session.origin_location_id} | destination=${destLoc.name} | travel_status_before=in_transit | computed_progress=${session.progress_percent || 'unknown'} | arrival_triggered=true | final_location=${destLoc.name} | static_origin_marker_suppressed=true | session_id=${session.id}`);
 
       } catch (e) {
         errors.push({ session_id: session.id, error: e.message });

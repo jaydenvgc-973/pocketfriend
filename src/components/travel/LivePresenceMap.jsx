@@ -667,13 +667,24 @@ function buildLocationCoordinateMap(locations) {
 
 // Normalized presence entities provide all location/display info directly — no fallback resolvers needed
 
-function buildMarkers(entities, locations, gridCoords) {
+// ONE-TRUTH RULE: Characters with an active in_transit session must ONLY appear as
+// a TransitMarker (moving dot), never as a static pin at their origin.
+// travelingCharacterIds is the Set of character_ids currently in_transit.
+function buildMarkers(entities, locations, gridCoords, travelingCharacterIds = new Set()) {
   const locationMap = new Map(locations.map((l) => [l.id, l]));
   const markers = [];
   const seenIds = new Set();
   
   for (const entity of entities) {
     if (seenIds.has(entity.id)) continue;
+
+    // SUPPRESS: character has an active travel session — only the TransitMarker should render.
+    // This enforces the one-truth rule: a character cannot appear at two places at once.
+    if (travelingCharacterIds.has(entity.id)) {
+      console.log(`[LivePresenceMap] SUPPRESSED static pin for traveling character: ${entity.display_name} (${entity.id}) — TransitMarker is authoritative`);
+      seenIds.add(entity.id);
+      continue;
+    }
     
     // NORMALIZED ENTITY: always has resolved_current_location_id if is_currently_present
     const locId = entity.resolved_current_location_id;
@@ -825,7 +836,18 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
   }, [allCharacters]);
 
   const gridCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
-  const markers = useMemo(() => buildMarkers(characters, locations, gridCoords), [characters, locations, gridCoords]);
+
+  // Build the set of character_ids currently in_transit — used to suppress their static pins.
+  // ONE-TRUTH: a traveling character must only appear as a TransitMarker, not also at origin.
+  const travelingCharacterIds = useMemo(() => {
+    const ids = new Set(activeSessions.map(s => s.character_id).filter(Boolean));
+    if (ids.size > 0) {
+      console.log(`[LivePresenceMap] Traveling characters (static pin suppressed): ${[...ids].join(', ')}`);
+    }
+    return ids;
+  }, [activeSessions]);
+
+  const markers = useMemo(() => buildMarkers(characters, locations, gridCoords, travelingCharacterIds), [characters, locations, gridCoords, travelingCharacterIds]);
   
   // Build family avatar map: name (lowercase) → photo_url
   // Scans all characters' family_members[] arrays — the REAL avatar source for internal family

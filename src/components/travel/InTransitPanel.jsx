@@ -29,17 +29,57 @@ export default function InTransitPanel({ ownerEmail }) {
           '-created_at',
           20
         ).catch(() => []);
-        if (!cancelled) setSessions(raw.map(enrichSessionProgress));
+        if (cancelled) return;
+        const enriched = raw.map(enrichSessionProgress);
+
+        // If any session is overdue (past ETA and still in_transit), trigger backend arrival
+        // completion immediately rather than waiting up to 5 min for the scheduled task.
+        const overdue = enriched.filter(s => s.is_overdue);
+        if (overdue.length > 0) {
+          console.log(`[InTransitPanel] ${overdue.length} overdue session(s) detected — triggering processTravelArrivals`, overdue.map(s => ({
+            character_id: s.character_id,
+            character: s.character_name,
+            origin: s.origin_location_name,
+            destination: s.destination_location_name,
+            travel_status_before: s.route_status,
+            computed_progress: s.computed_progress,
+            arrival_triggered: true,
+          })));
+          // Fire-and-forget — re-fetch after a short delay to pick up arrived status
+          base44.functions.invoke('processTravelArrivals', {})
+            .then(() => {
+              if (cancelled) return;
+              setTimeout(async () => {
+                if (cancelled) return;
+                const refreshed = await base44.entities.TravelSession.filter(
+                  { owner_email: ownerEmail, route_status: 'in_transit' },
+                  '-created_at', 20
+                ).catch(() => []);
+                if (!cancelled) {
+                  const refreshedEnriched = refreshed.map(enrichSessionProgress);
+                  setSessions(refreshedEnriched);
+                  // Proof log: show which sessions completed
+                  overdue.forEach(s => {
+                    const stillActive = refreshedEnriched.find(r => r.id === s.id);
+                    console.log(`[InTransitPanel] ARRIVAL PROOF | character_id=${s.character_id} | character=${s.character_name} | origin=${s.origin_location_name} | destination=${s.destination_location_name} | status_before=in_transit | arrival_triggered=true | still_in_transit=${!!stillActive} | final_location=${stillActive ? 'still_traveling' : s.destination_location_name}`);
+                  });
+                }
+              }, 2000);
+            })
+            .catch(err => {
+              console.warn('[InTransitPanel] processTravelArrivals invoke failed:', err.message);
+            });
+        }
+
+        setSessions(enriched);
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
 
     fetchSessions();
-    // Refresh progress every 15 seconds
-    const interval = setInterval(() => {
-      setSessions(prev => prev.map(enrichSessionProgress));
-    }, 15000);
+    // Re-fetch from DB every 15 seconds (not just remap stale data — catches arrivals and backend updates)
+    const interval = setInterval(fetchSessions, 15000);
 
     return () => {
       cancelled = true;
