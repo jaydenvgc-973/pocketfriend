@@ -168,13 +168,135 @@ Deno.serve(async (req) => {
     }
 
     // ────────────────────────────────────────────────────────────────────────────
-    // Stuck travel diagnostics (Andre, Khalil, James)
+    // CRITICAL: Actively repair stuck travel in repair mode
+    // ────────────────────────────────────────────────────────────────────────────
+
+    if (mode === 'repair_verified') {
+      // Find characters with travel_status but no active session
+      const stuckTravelChars = charactersToCheck.filter(c => {
+        const travelingStates = ['traveling_to_work', 'traveling_to_school', 'traveling_to_destination', 'traveling'];
+        return travelingStates.includes(c.travel_status);
+      });
+
+      for (const char of stuckTravelChars) {
+        // Check if we already found an active session for this char
+        const activeSessions = await base44.entities.TravelSession.filter(
+          { character_id: char.id, route_status: { $in: ['in_transit', 'preparing', 'delayed'] } },
+          null,
+          1
+        ).catch(() => []);
+
+        if (activeSessions.length > 0) {
+          // Already has active session, skip
+          continue;
+        }
+
+        // ── STUCK TRAVEL FOUND: Character has travel_status but no active session ──
+        // Attempt repair
+
+        let repaired = false;
+        let repairAction = null;
+        let repairError = null;
+
+        // Try to recreate session if destination can be verified
+        if (char.travel_destination_location_id) {
+          const destArr = await base44.entities.LocationReference.filter(
+            { id: char.travel_destination_location_id },
+            null,
+            1
+          ).catch(() => []);
+
+          const originArr = char.current_home_location_id
+            ? await base44.entities.LocationReference.filter(
+                { id: char.current_home_location_id },
+                null,
+                1
+              ).catch(() => [])
+            : [];
+
+          if (destArr.length > 0 && originArr.length > 0) {
+            // Recreate session
+            const now = new Date();
+            const travelMinutes = 3;
+            const arrivalTime = new Date(now.getTime() + travelMinutes * 60 * 1000);
+
+            try {
+              const newSession = await base44.entities.TravelSession.create({
+                character_id: char.id,
+                character_name: char.name,
+                owner_email,
+                origin_location_id: originArr[0].id,
+                origin_location_name: originArr[0].name,
+                destination_location_id: destArr[0].id,
+                destination_location_name: destArr[0].name,
+                travel_reason: 'Stuck travel repair',
+                travel_source: 'manual',
+                distance_miles: 5,
+                estimated_departure_time: now.toISOString(),
+                estimated_arrival_time: arrivalTime.toISOString(),
+                duration_minutes: travelMinutes,
+                progress_percent: 0,
+                route_status: 'in_transit',
+              });
+
+              repaired = true;
+              repairAction = `STUCK_TRAVEL_SESSION_RECREATED:${newSession.id}`;
+              console.log(`[sharedLocationTravelDiagnosticAndRepair] ✓ Recreated session for stuck char ${char.name}`);
+            } catch (e) {
+              repairError = `session_creation_failed:${e.message}`;
+            }
+          }
+        }
+
+        // If repair failed, clear the broken travel state
+        if (!repaired) {
+          if (char.travel_destination_location_id) {
+            repairError = `unable_to_verify_destination:${char.travel_destination_location_id}`;
+          } else {
+            repairError = 'no_destination_to_recreate_from';
+          }
+
+          try {
+            await base44.entities.Character.update(char.id, {
+              travel_status: 'not_traveling',
+              traveling_to_location_id: null,
+              traveling_to_location_name: null,
+              travel_destination_location_id: null,
+            });
+            repaired = true;
+            repairAction = 'STUCK_TRAVEL_CLEARED';
+            console.log(`[sharedLocationTravelDiagnosticAndRepair] ✓ Cleared stuck travel for ${char.name}: ${repairError}`);
+          } catch (e) {
+            repairError = `clear_failed:${e.message}`;
+          }
+        }
+
+        // Log repair result
+        const repairEntry = {
+          character_id: char.id,
+          character_name: char.name,
+          before_travel_status: char.travel_status,
+          action_taken: repairAction,
+          repaired,
+          error: repairError,
+        };
+
+        if (repaired) {
+          proof.push(repairEntry);
+        } else {
+          skipped.push(repairEntry);
+        }
+      }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // Stuck travel diagnostics
     // ────────────────────────────────────────────────────────────────────────────
 
     const stuckTravelSessions = await base44.entities.TravelSession.filter(
       {
         owner_email,
-        route_status: ['arrived', 'blocked'],
+        route_status: { $in: ['arrived', 'blocked'] },
       },
       '-updated_date',
       100
