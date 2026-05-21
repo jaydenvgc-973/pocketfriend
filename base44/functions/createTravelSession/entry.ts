@@ -330,6 +330,18 @@ Deno.serve(async (req) => {
     const eta = new Date(now.getTime() + durationMinutes * 60 * 1000);
 
     // ── CREATE TRAVEL SESSION ──────────────────────────────────────────────
+    // Store character_snapshot so processTravelArrivals (scheduled, no user session)
+    // can process arrivals without re-fetching Character (blocked by RLS for asServiceRole).
+    const characterSnapshot = {
+      id:                       char.id,
+      name:                     char.name || char.display_name || char.primary_name,
+      owner_email:              ownerEmailFinal,
+      is_jailed:                char.is_jailed || false,
+      house_arrest_active:      char.house_arrest_active || false,
+      resolved_presence_status: char.resolved_presence_status || 'traveling',
+      current_home_location_id: char.current_home_location_id || null,
+    };
+
     const session = await base44.asServiceRole.entities.TravelSession.create({
       character_id:              characterId,
       character_name:            char.name || char.display_name || char.primary_name,
@@ -356,6 +368,8 @@ Deno.serve(async (req) => {
       origin_geo_mode:           originLoc?.geo_mode || 'unknown',
       destination_geo_mode:      destLoc?.geo_mode || 'unknown',
       created_at:                now.toISOString(),
+      character_snapshot:        characterSnapshot,
+      character_home_location_id: char.current_home_location_id || null,
     });
 
     // ── UPDATE CHARACTER — IN TRANSIT ──────────────────────────────────────

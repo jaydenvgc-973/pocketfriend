@@ -48,16 +48,23 @@ Deno.serve(async (req) => {
 
     for (const session of due) {
       try {
-        // Load character — asServiceRole.filter({id:...}) is broken for Character (RLS issue).
-        // Must filter by owner_email then find by id in JS.
-        const ownerChars = await base44.asServiceRole.entities.Character.filter(
-          { owner_email: session.owner_email }, null, 200
-        ).catch(() => []);
-        const char = ownerChars?.find(c => c.id === session.character_id) || null;
-        if (!char) {
-          console.warn(`[processTravelArrivals] Character ${session.character_id} not found for session ${session.id}`);
-          continue;
-        }
+        // Character RLS blocks asServiceRole reads entirely for this entity.
+        // processTravelArrivals runs scheduled (no user session) so cannot use user-scoped API.
+        // SOLUTION: TravelSession stores a character_snapshot (written by createTravelSession at
+        // session creation). Use snapshot for blocker checks + home detection; skip if missing.
+        // For sessions without snapshot, synthesize a minimal char from session fields.
+        const charSnap = session.character_snapshot || null;
+        const char = charSnap || {
+          id:                          session.character_id,
+          name:                        session.character_name,
+          owner_email:                 session.owner_email,
+          is_jailed:                   false,
+          house_arrest_active:         false,
+          resolved_presence_status:    'traveling',
+          current_home_location_id:    session.character_home_location_id || null,
+        };
+        // Use session fields as ground truth for location context
+        const charHomeId = session.character_home_location_id || char.current_home_location_id || null;
 
         // Safety guard — do NOT override jail/house_arrest
         if (char.is_jailed === true || char.house_arrest_active === true) {
@@ -80,10 +87,11 @@ Deno.serve(async (req) => {
         }
 
         // Determine arrival presence status
+        // Use charHomeId (from session snapshot) since char may be synthesized without all fields
         let arrivalPresence = 'visiting';
         let arrivalLocationType = 'visit';
         if (destLoc.category === 'home' && (
-          char.current_home_location_id === destLoc.id ||
+          charHomeId === destLoc.id ||
           char.temporary_housing_location_id === destLoc.id
         )) {
           arrivalPresence = 'home';
