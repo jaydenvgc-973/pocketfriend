@@ -296,52 +296,42 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
       last_message_date: now,
     }).catch(e => warnings.push(`Conversation preview update failed (non-fatal): ${e.message}`));
 
-    // ── DELEGATE SYNC TO CANONICAL syncWorldPhoneMemory ─────────────────────
-    // This function handles Memory creation + fictional_relationships updates.
-    // Called non-blocking after message creation (UI already updated).
-    let syncResult = null;
-
+    // ── DELEGATE BILATERAL SYNC TO CANONICAL FUNCTION ───────────────────────────
+    // syncWorldPhoneMemory is the SINGLE SOURCE OF TRUTH for bilateral Memory + fictional_relationships.
+    // Non-blocking background call — UI shows message immediately.
+    const syncResult = {};
     base44.functions.invoke('syncWorldPhoneMemory', {
       senderCharacterId: sender_character_id,
       receiverCharacterId: recipient.id,
-      messageContent: `${sender.name}: "${rewrittenMessage}" | ${recipient.name}: [awaiting reply in World Contacts]`,
+      messageContent: rewrittenMessage,
       context: 'world_phone',
       conversationId: conversationId,
     })
-      .then(res => {
-        syncResult = res?.data || res;
-        console.log(`[sendWorldPhoneMessage] syncWorldPhoneMemory complete | result=${JSON.stringify(syncResult)}`);
-        // Update conversation sync status on success
-        base44.entities.Conversation.update(conversationId, {
-          sync_status: 'complete',
-        }).catch(() => {});
+      .then(syncRes => {
+        const data = syncRes?.data || syncRes;
+        syncResult.success = data?.success !== false;
+        syncResult.memory_written = data?.memory_written;
+        syncResult.relationship_synced = data?.relationship_synced;
+        console.log(`[sendWorldPhoneMessage] Bilateral sync delegated to syncWorldPhoneMemory | msg=${savedMessage.id}`);
       })
       .catch(err => {
-        console.warn(`[sendWorldPhoneMessage] syncWorldPhoneMemory failed: ${err.message}`);
-        syncResult = { success: false, error: err.message };
-        // Mark message as failed sync
-        base44.entities.Message.update(savedMessage.id, {
-          sync_status: 'failed',
-          sync_error: err.message,
-        }).catch(() => {});
+        syncResult.success = false;
+        syncResult.error = err.message;
+        console.warn(`[sendWorldPhoneMessage] Bilateral sync background error: ${err.message}`);
       });
 
-    console.log(`[sendWorldPhoneMessage] ✅ ${sender.name} → ${recipient.name} | conv=${conversationId} | msg=${savedMessage.id} | key=${canonicalKey} | source=${source} | path=${recipientResolutionPath}`);
+    console.log(`[sendWorldPhoneMessage] ✅ msg=${savedMessage.id} | conv=${conversationId} | key=${canonicalKey} | source=${source} | sync=delegated_to_syncWorldPhoneMemory`);
 
     return Response.json({
       success: true,
       proof: {
-        sender: { id: sender_character_id, name: sender.name },
-        recipient: { id: recipient.id, name: recipient.name },
-        original_request: requested_message,
-        rewritten_message: rewrittenMessage,
         message_id: savedMessage.id,
         conversation_id: conversationId,
         shared_conversation_key: canonicalKey,
         participant_character_ids: participantIds,
+        sync_delegated_to: 'syncWorldPhoneMemory',
         recipient_resolution_path: recipientResolutionPath,
         source,
-        sync_result: syncResult,
         warnings: warnings.length > 0 ? warnings : null,
       },
     });
