@@ -4,120 +4,120 @@
   "properties": {
     "character_id": {
       "type": "string",
-      "description": "ID of the character who made the commitment"
+      "description": "Character making the commitment"
     },
     "character_name": {
       "type": "string",
-      "description": "Display name of the character"
+      "description": "Display name of character"
     },
     "owner_email": {
       "type": "string",
-      "description": "Owner email for scoping. Required."
+      "description": "Owner email for RLS"
     },
     "commitment_type": {
       "type": "string",
       "enum": [
-        "travel_directive",
-        "travel_promise",
-        "communication_promise"
+        "arrival",
+        "meeting",
+        "visit",
+        "pickup"
       ],
-      "description": "travel_directive = immediate action declared (I'm on my way). travel_promise = future travel declared (I'll come by tonight). communication_promise = future message/call declared (I'll text you later)."
+      "description": "Type of commitment"
+    },
+    "destination_location_id": {
+      "type": "string",
+      "description": "Locked destination location ID"
+    },
+    "destination_location_name": {
+      "type": "string",
+      "description": "Locked destination location name"
+    },
+    "commitment_source": {
+      "type": "string",
+      "description": "Source: conversational_message, chat_commitment, etc."
+    },
+    "source_message_id": {
+      "type": "string",
+      "description": "ID of message that triggered commitment"
+    },
+    "source_conversation_id": {
+      "type": "string",
+      "description": "ID of conversation"
+    },
+    "commitment_text": {
+      "type": "string",
+      "description": "Original text: 'I'm on my way', 'I'll be there in 10 minutes', etc."
+    },
+    "expected_arrival_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When character committed to arrive"
+    },
+    "expected_arrival_window_minutes": {
+      "type": "number",
+      "default": 15,
+      "description": "Believable arrival window in minutes"
+    },
+    "interruptible": {
+      "type": "boolean",
+      "default": false,
+      "description": "Can this be overridden by autonomous logic? Only true for legitimate blockers (jail, health emergency, etc.)"
     },
     "status": {
       "type": "string",
       "enum": [
         "active",
-        "in_progress",
-        "completed",
-        "missed",
-        "blocked",
-        "cancelled"
+        "arrived",
+        "cancelled",
+        "blocked"
       ],
-      "default": "active"
+      "default": "active",
+      "description": "Current commitment status"
     },
-    "destination_location_id": {
-      "type": "string",
-      "description": "For travel commitments: resolved location ID of destination"
-    },
-    "destination_location_name": {
-      "type": "string",
-      "description": "For travel commitments: display name of destination"
-    },
-    "recipient_character_id": {
-      "type": "string",
-      "description": "For character-to-character commitments: ID of the other character"
-    },
-    "recipient_character_name": {
-      "type": "string",
-      "description": "For character-to-character commitments: display name of other character"
-    },
-    "recipient_type": {
-      "type": "string",
-      "enum": [
-        "user",
-        "character"
-      ],
-      "description": "Who the commitment is directed to"
-    },
-    "promised_action": {
-      "type": "string",
-      "description": "What the character said they would do (text/call/visit/arrive etc.)"
-    },
-    "source_message": {
-      "type": "string",
-      "description": "The exact message text that created this commitment"
-    },
-    "conversation_id": {
-      "type": "string",
-      "description": "The conversation where the commitment was made"
-    },
-    "promised_time_window": {
-      "type": "string",
-      "description": "Human-readable time window: 'in 5 minutes', 'tonight', 'after work', 'now'"
-    },
-    "scheduled_execute_at": {
+    "completed_at": {
       "type": "string",
       "format": "date-time",
-      "description": "Resolved ISO datetime when this commitment should fire"
+      "description": "When commitment was fulfilled"
     },
-    "scheduled_event_id": {
+    "cancellation_reason": {
       "type": "string",
-      "description": "ID of the linked ScheduledEvent record that will fire the action"
-    },
-    "block_reason": {
-      "type": "string",
-      "description": "If status=blocked: why the character could not follow through (jail, work, sleep, medical)"
-    },
-    "completion_result": {
-      "type": "string",
-      "description": "Outcome note when completed or missed"
-    },
-    "travel_started_at": {
-      "type": "string",
-      "format": "date-time",
-      "description": "For travel directives: when the character began traveling"
-    },
-    "travel_arrived_at": {
-      "type": "string",
-      "format": "date-time",
-      "description": "For travel commitments: when the character actually arrived"
-    },
-    "bilateral_memory_written": {
-      "type": "boolean",
-      "default": false,
-      "description": "True when both parties have a CharacterMemory record for this commitment"
+      "description": "Why commitment was cancelled/blocked"
     },
     "created_at": {
       "type": "string",
-      "format": "date-time",
-      "description": "When the commitment record was created"
+      "format": "date-time"
     }
   },
   "required": [
     "character_id",
-    "character_name",
+    "owner_email",
     "commitment_type",
-    "source_message",
-    "conversation_id"
-  ]
+    "destination_location_id",
+    "commitment_source"
+  ],
+  "rls": {
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "read": {
+      "owner_email": "{{user.email}}"
+    },
+    "update": {
+      "owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "owner_email": "{{user.email}}"
+    }
+  }
 }
