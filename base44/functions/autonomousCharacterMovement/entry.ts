@@ -711,27 +711,30 @@ Deno.serve(async (req) => {
                     console.log(`[autonomousMovement] ${char.name}: WORK — already at ${workLoc.name}`);
                     workDispatchDone = true;
                   } else {
-                    // Dispatch to work
-                    const workPayload = {
-                      resolved_current_location_id:   workLoc.id,
-                      resolved_current_location_name: workLoc.name,
-                      resolved_presence_status:       'at_work',
-                      resolved_location_type:         'work',
-                      resolved_source_reason:         'work_schedule',
-                      resolved_last_updated_at:       nowET.toISOString(),
-                      last_arrived_time:              nowET.toISOString(),
-                      travel_status:                  'not_traveling',
-                      travel_destination_location_id: null,
-                    };
-                    try {
-                      await base44.entities.Character.update(char.id, workPayload);
-                    } catch {
-                      await base44.asServiceRole.entities.Character.update(char.id, workPayload);
+                    // Dispatch to work via TravelSession — NO direct location write, NO teleport
+                    const workTravelRes = await base44.functions.invoke('createTravelSession', {
+                      characterId:           char.id,
+                      destinationLocationId: workLoc.id,
+                      travelReason:          `work_schedule: shift ${char.work_start_time}–${char.work_end_time}`,
+                      travelSource:          'work_schedule',
+                      ownerEmail:            char.owner_email,
+                      characterData:         char,
+                    }).catch(e => ({ data: { success: false, error: e.message } }));
+                    const wtd = workTravelRes?.data || {};
+                    if (wtd.success) {
+                      totalMoved++;
+                      moveLog.push(`${char.name} → ${workLoc.name} [WORK_SCHEDULE → IN_TRANSIT ~${wtd.duration_minutes}min]`);
+                      console.log(`[autonomousMovement] ✓ ${char.name}: WORK DISPATCH → in_transit → ${workLoc.name}`);
+                      workDispatchDone = true;
+                    } else if (wtd.blocked) {
+                      blockedLog.push(`${char.name}: work dispatch blocked — ${wtd.blocker_reason || wtd.blocker}`);
+                      console.log(`[autonomousMovement] ${char.name}: WORK DISPATCH BLOCKED — ${wtd.blocker_reason}`);
+                      workDispatchDone = true;
+                    } else {
+                      blockedLog.push(`${char.name}: work createTravelSession FAILED — ${wtd.error} — NO teleport`);
+                      console.error(`[autonomousMovement] ⛔ NO-TELEPORT: ${char.name} work dispatch failed — ${wtd.error}`);
+                      workDispatchDone = true;
                     }
-                    totalMoved++;
-                    moveLog.push(`${char.name} → ${workLoc.name} [WORK_SCHEDULE] shift: ${char.work_start_time}–${char.work_end_time}`);
-                    console.log(`[autonomousMovement] ✓ ${char.name}: WORK DISPATCH → ${workLoc.name}`);
-                    workDispatchDone = true;
                   }
                 }
               }
@@ -776,25 +779,27 @@ Deno.serve(async (req) => {
                 console.log(`[autonomousMovement] ${char.name}: SCHOOL — already at ${schoolLoc.name}`);
                 continue;
               } else {
-                const schoolPayload = {
-                  resolved_current_location_id:   schoolLoc.id,
-                  resolved_current_location_name: schoolLoc.name,
-                  resolved_presence_status:       'at_school',
-                  resolved_location_type:         'school',
-                  resolved_source_reason:         'school_schedule',
-                  resolved_last_updated_at:       nowET.toISOString(),
-                  last_arrived_time:              nowET.toISOString(),
-                  travel_status:                  'not_traveling',
-                  travel_destination_location_id: null,
-                };
-                try {
-                  await base44.entities.Character.update(char.id, schoolPayload);
-                } catch {
-                  await base44.asServiceRole.entities.Character.update(char.id, schoolPayload);
+                // Dispatch to school via TravelSession — NO direct location write, NO teleport
+                const schoolTravelRes = await base44.functions.invoke('createTravelSession', {
+                  characterId:           char.id,
+                  destinationLocationId: schoolLoc.id,
+                  travelReason:          'school_schedule',
+                  travelSource:          'school_schedule',
+                  ownerEmail:            char.owner_email,
+                  characterData:         char,
+                }).catch(e => ({ data: { success: false, error: e.message } }));
+                const std = schoolTravelRes?.data || {};
+                if (std.success) {
+                  totalMoved++;
+                  moveLog.push(`${char.name} → ${schoolLoc.name} [SCHOOL_SCHEDULE → IN_TRANSIT ~${std.duration_minutes}min]`);
+                  console.log(`[autonomousMovement] ✓ ${char.name}: SCHOOL DISPATCH → in_transit → ${schoolLoc.name}`);
+                } else if (std.blocked) {
+                  blockedLog.push(`${char.name}: school dispatch blocked — ${std.blocker_reason || std.blocker}`);
+                  console.log(`[autonomousMovement] ${char.name}: SCHOOL DISPATCH BLOCKED — ${std.blocker_reason}`);
+                } else {
+                  blockedLog.push(`${char.name}: school createTravelSession FAILED — ${std.error} — NO teleport`);
+                  console.error(`[autonomousMovement] ⛔ NO-TELEPORT: ${char.name} school dispatch failed — ${std.error}`);
                 }
-                totalMoved++;
-                moveLog.push(`${char.name} → ${schoolLoc.name} [SCHOOL_SCHEDULE]`);
-                console.log(`[autonomousMovement] ✓ ${char.name}: SCHOOL DISPATCH → ${schoolLoc.name}`);
                 continue;
               }
             }

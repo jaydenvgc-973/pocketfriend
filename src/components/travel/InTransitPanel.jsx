@@ -45,26 +45,52 @@ export default function InTransitPanel({ ownerEmail }) {
             computed_progress: s.computed_progress,
             arrival_triggered: true,
           })));
-          // Fire-and-forget — re-fetch after a short delay to pick up arrived status
+          // Step 1: Mark sessions arrived (service-role — can't write Character)
+          // Step 2: For each overdue session, call completeCharacterArrival to write
+          //         Character.resolved_current_location_id = destination (user-scoped, with read-back proof)
           base44.functions.invoke('processTravelArrivals', {})
-            .then(() => {
+            .then(async () => {
               if (cancelled) return;
-              setTimeout(async () => {
-                if (cancelled) return;
-                const refreshed = await base44.entities.TravelSession.filter(
-                  { owner_email: ownerEmail, route_status: 'in_transit' },
-                  '-created_at', 20
-                ).catch(() => []);
-                if (!cancelled) {
-                  const refreshedEnriched = refreshed.map(enrichSessionProgress);
-                  setSessions(refreshedEnriched);
-                  // Proof log: show which sessions completed
-                  overdue.forEach(s => {
-                    const stillActive = refreshedEnriched.find(r => r.id === s.id);
-                    console.log(`[InTransitPanel] ARRIVAL PROOF | character_id=${s.character_id} | character=${s.character_name} | origin=${s.origin_location_name} | destination=${s.destination_location_name} | status_before=in_transit | arrival_triggered=true | still_in_transit=${!!stillActive} | final_location=${stillActive ? 'still_traveling' : s.destination_location_name}`);
-                  });
+
+              // Wait briefly for processTravelArrivals DB writes to propagate
+              await new Promise(r => setTimeout(r, 1500));
+              if (cancelled) return;
+
+              // Load which sessions are now marked "arrived" for our overdue set
+              for (const s of overdue) {
+                try {
+                  // Fetch the session to check if it's now "arrived"
+                  const arrivedArr = await base44.entities.TravelSession.filter(
+                    { id: s.id },
+                    null, 1
+                  ).catch(() => []);
+                  const arrivedSession = arrivedArr?.[0];
+                  if (arrivedSession?.route_status === 'arrived') {
+                    // Complete the arrival — writes Character destination with read-back proof
+                    const completeRes = await base44.functions.invoke('completeCharacterArrival', {
+                      session_id: s.id,
+                    }).catch(e => ({ data: { success: false, error: e.message } }));
+                    const cData = completeRes?.data || {};
+                    if (cData.success) {
+                      console.log(`[InTransitPanel] ARRIVAL PROOF | character=${s.character_name} | origin=${s.origin_location_name} | destination=${s.destination_location_name} | final_location=${cData.after_location} | destination_verified=${cData.after_location === s.destination_location_name}`);
+                    } else {
+                      console.error(`[InTransitPanel] completeCharacterArrival FAILED | character=${s.character_name} | error=${cData.error}`);
+                    }
+                  }
+                } catch (e) {
+                  console.warn(`[InTransitPanel] arrival completion error for ${s.character_name}:`, e.message);
                 }
-              }, 2000);
+              }
+
+              // Re-fetch active sessions to update the panel
+              if (cancelled) return;
+              const refreshed = await base44.entities.TravelSession.filter(
+                { owner_email: ownerEmail, route_status: 'in_transit' },
+                '-created_at', 20
+              ).catch(() => []);
+              if (!cancelled) {
+                setSessions(refreshed.map(enrichSessionProgress));
+              }
             })
             .catch(err => {
               console.warn('[InTransitPanel] processTravelArrivals invoke failed:', err.message);
