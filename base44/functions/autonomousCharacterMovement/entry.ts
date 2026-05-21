@@ -1128,6 +1128,7 @@ Deno.serve(async (req) => {
             travelReason:          `autonomous_needs: ${top.key}(${Math.round(top.value)})`,
             travelSource:          'autonomous_need',
             ownerEmail:            char.owner_email,
+            characterData:         char, // Pass full character to avoid service-role lookup failures
           }).catch(e => ({ data: { success: false, error: e.message } }));
           const td = travelRes?.data || {};
 

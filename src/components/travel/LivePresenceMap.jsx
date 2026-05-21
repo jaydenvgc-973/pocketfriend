@@ -796,12 +796,18 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
   const [activeSessions, setActiveSessions] = useState([]);
 
   // Poll active TravelSessions every 30s to render transit markers
+  // SCOPING: Only show sessions for the current user (owner_email)
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
+        const user = await base44.auth.me().catch(() => null);
+        if (!user) {
+          setActiveSessions([]);
+          return;
+        }
         const sessions = await base44.entities.TravelSession.filter(
-          { route_status: 'in_transit' }, '-created_at', 20
+          { owner_email: user.email, route_status: 'in_transit' }, '-created_at', 20
         );
         if (!cancelled) {
           // Enrich with avatar from allCharacters
@@ -928,19 +934,20 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
         })}
 
         {/* Transit markers — animated movers for in_transit TravelSessions */}
-        {activeSessions.map(session => {
+         {activeSessions.map(session => {
           const originCoords = session.origin_location_id ? gridCoords[session.origin_location_id] : null;
           const destCoords   = session.destination_location_id ? gridCoords[session.destination_location_id] : null;
-          if (!originCoords && !destCoords) return null;
-          // If we have dest but not origin, start from dest (already near arrival)
-          const effectiveOrigin = originCoords || destCoords;
-          const effectiveDest   = destCoords || originCoords;
+          // WARN: Both coordinates missing — cannot render transit marker
+          if (!originCoords || !destCoords) {
+            console.warn(`[LivePresenceMap] Transit session ${session.id} missing coordinates: origin=${!!originCoords}, dest=${!!destCoords}`);
+            return null;
+          }
           return (
             <TransitMarker
               key={session.id}
               session={session}
-              originCoords={effectiveOrigin}
-              destCoords={effectiveDest}
+              originCoords={originCoords}
+              destCoords={destCoords}
             />
           );
         })}
