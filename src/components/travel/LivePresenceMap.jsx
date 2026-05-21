@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Moon, MapPin } from "lucide-react";
+import { base44 } from "@/api/base44Client";
 import { calcLocationGravity } from "@/lib/locationGravity";
 
 // ─── Category metadata ────────────────────────────────────────────────────────
@@ -723,9 +724,99 @@ function buildFamilyAvatarMap(allCharacters) {
   return map;
 }
 
+// ─── Transit marker (animated, interpolates between origin and destination) ──
+function TransitMarker({ session, originCoords, destCoords }) {
+  const [progress, setProgress] = useState(session.progress_percent ?? 0);
+  const intervalRef = useRef(null);
+
+  useEffect(() => {
+    // Smoothly tick progress forward based on real ETA
+    const tick = () => {
+      if (!session.estimated_departure_time || !session.estimated_arrival_time) return;
+      const now = Date.now();
+      const start = new Date(session.estimated_departure_time).getTime();
+      const end   = new Date(session.estimated_arrival_time).getTime();
+      const total = end - start;
+      if (total <= 0) { setProgress(100); return; }
+      const elapsed = now - start;
+      setProgress(Math.min(99, Math.round((elapsed / total) * 100)));
+    };
+    tick();
+    intervalRef.current = setInterval(tick, 10000); // refresh every 10s
+    return () => clearInterval(intervalRef.current);
+  }, [session.estimated_departure_time, session.estimated_arrival_time]);
+
+  if (!originCoords || !destCoords) return null;
+
+  // Interpolate x/y between origin and destination based on progress
+  const t = Math.min(1, Math.max(0, progress / 100));
+  const x = originCoords.x + (destCoords.x - originCoords.x) * t;
+  const y = originCoords.y + (destCoords.y - originCoords.y) * t;
+
+  return (
+    <div style={{ position: "absolute", left: `${x}%`, top: `${y}%`, transform: "translate(-50%, -50%)", zIndex: 30, pointerEvents: "none" }}>
+      {/* Pulsing transit ring */}
+      <motion.div
+        animate={{ scale: [1, 1.7, 1], opacity: [0.7, 0, 0.7] }}
+        transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+        style={{ position: "absolute", inset: -4, borderRadius: "50%", background: "#f59e0b44", border: "2px solid #f59e0b88" }}
+      />
+      {/* Avatar / initials */}
+      <div style={{
+        width: 30, height: 30, borderRadius: "50%",
+        border: "2.5px solid #f59e0b",
+        background: "#1e293b",
+        display: "grid", placeItems: "center",
+        overflow: "hidden", position: "relative",
+        boxShadow: "0 0 0 2px #f59e0b44, 0 3px 10px rgba(0,0,0,0.3)",
+      }}>
+        {session._avatarUrl ? (
+          <img src={session._avatarUrl} alt={session.character_name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : (
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#f59e0b" }}>
+            {(session.character_name || '?').slice(0, 1).toUpperCase()}
+          </span>
+        )}
+      </div>
+      {/* Progress label */}
+      <div style={{
+        position: "absolute", bottom: -14, left: "50%", transform: "translateX(-50%)",
+        background: "#f59e0b", color: "#000", fontSize: 7, fontWeight: 800,
+        padding: "1px 4px", borderRadius: 3, whiteSpace: "nowrap",
+      }}>
+        {progress}% ✈
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function LivePresenceMap({ locations = [], characters = [], onLocationClick, onCharacterClick, onLocationPanelGoHere, allCharacters = [] }) {
   const [activeLocationId, setActiveLocationId] = useState(null);
+  const [activeSessions, setActiveSessions] = useState([]);
+
+  // Poll active TravelSessions every 30s to render transit markers
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const sessions = await base44.entities.TravelSession.filter(
+          { route_status: 'in_transit' }, '-created_at', 20
+        );
+        if (!cancelled) {
+          // Enrich with avatar from allCharacters
+          const enriched = (sessions || []).map(s => {
+            const char = allCharacters.find(c => c.id === s.character_id);
+            return { ...s, _avatarUrl: char?.avatar_url || char?.image_avatar_url || null };
+          });
+          setActiveSessions(enriched);
+        }
+      } catch { /* non-fatal */ }
+    };
+    load();
+    const timer = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [allCharacters]);
 
   const gridCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
   const markers = useMemo(() => buildMarkers(characters, locations, gridCoords), [characters, locations, gridCoords]);
@@ -832,6 +923,24 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
               marker={marker}
               onClick={handleCharacterClick}
               offset={offset}
+            />
+          );
+        })}
+
+        {/* Transit markers — animated movers for in_transit TravelSessions */}
+        {activeSessions.map(session => {
+          const originCoords = session.origin_location_id ? gridCoords[session.origin_location_id] : null;
+          const destCoords   = session.destination_location_id ? gridCoords[session.destination_location_id] : null;
+          if (!originCoords && !destCoords) return null;
+          // If we have dest but not origin, start from dest (already near arrival)
+          const effectiveOrigin = originCoords || destCoords;
+          const effectiveDest   = destCoords || originCoords;
+          return (
+            <TransitMarker
+              key={session.id}
+              session={session}
+              originCoords={effectiveOrigin}
+              destCoords={effectiveDest}
             />
           );
         })}

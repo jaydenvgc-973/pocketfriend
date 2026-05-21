@@ -362,6 +362,46 @@ Deno.serve(async (req) => {
         const vals = needValues(char);
         const energyUrgency = urgencyLevel(vals.energy);
 
+        // ── TIER -1: ACTIVE TRANSIT GUARD ────────────────────────────────────
+        // If this character already has an active in_transit TravelSession,
+        // do NOT override their location via any autonomous path.
+        // Let processTravelArrivals handle the commit.
+        // Exception: sleep enforcement and pass-out may cancel a session (handled below in Tier 1/2/3).
+        let activeSession = null;
+        try {
+          const activeSessions = await base44.asServiceRole.entities.TravelSession.filter({
+            owner_email: char.owner_email,
+            character_id: char.id,
+            route_status: 'in_transit',
+          }, null, 1).catch(() => []);
+          activeSession = activeSessions?.[0] || null;
+        } catch { /* non-fatal */ }
+
+        if (activeSession) {
+          // Only proceed if an overriding hard condition is present (sleep/jail/energy-critical).
+          // Non-overriding paths must skip — character is in transit.
+          const overridingHardCondition = (
+            char.is_jailed === true ||
+            char.house_arrest_active === true ||
+            char.resolved_presence_status === 'incarcerated' ||
+            char.resolved_presence_status === 'confined' ||
+            char.resolved_presence_status === 'house_arrest' ||
+            urgencyLevel(needValues(char).energy) >= 4 ||   // pass-out
+            isScheduledSleeping(char, nowET)                // sleep window
+          );
+          if (!overridingHardCondition) {
+            console.log(`[autonomousMovement] ${char.name}: IN_TRANSIT (session ${activeSession.id} → ${activeSession.destination_location_name}) — skip autonomous move`);
+            continue;
+          }
+          // Hard condition overrides transit — cancel the session before re-routing
+          console.log(`[autonomousMovement] ${char.name}: HARD CONDITION overrides active transit — cancelling session ${activeSession.id}`);
+          await base44.asServiceRole.entities.TravelSession.update(activeSession.id, {
+            route_status: 'cancelled',
+            blocker_reason: 'overridden_by_hard_condition',
+          }).catch(() => {});
+          activeSession = null;
+        }
+
         // ── TIER 0: INCARCERATION / HOUSE ARREST / HOSPITALIZED — absolute hard stop ──
         // Incarcerated characters are CONFINED. They cannot autonomously travel, roam, visit,
         // go shopping, work (unless work-release is active), or relocate.
@@ -987,31 +1027,28 @@ Deno.serve(async (req) => {
         // ── FILTER OUT CLOSED LOCATIONS ───────────────────────────────────────
         const openLocations = userLocations.filter(loc => isLocationOpen(loc));
 
-        // ── LOW ENERGY (urgent, < 50) → route home before scoring ────────────
+        // ── LOW ENERGY (urgent, < 50) → route home via travel session ────────
+        // No teleport — initiate transit to home. processTravelArrivals delivers them.
         if (energyUrgency >= 2 && char.current_home_location_id) {
           const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
           if (ownHome && char.resolved_current_location_id !== ownHome.id) {
-            try {
-              await base44.entities.Character.update(char.id, {
-                resolved_current_location_id:   ownHome.id,
-                resolved_current_location_name: ownHome.name,
-                resolved_presence_status:       'home',
-                resolved_location_type:         'home',
-                resolved_source_reason:         'energy_low_return_home',
-                last_arrived_time:              new Date().toISOString(),
-              }).catch(() => base44.asServiceRole.entities.Character.update(char.id, {
-                resolved_current_location_id:   ownHome.id,
-                resolved_current_location_name: ownHome.name,
-                resolved_presence_status:       'home',
-                resolved_location_type:         'home',
-                resolved_source_reason:         'energy_low_return_home',
-                last_arrived_time:              new Date().toISOString(),
-              }));
+            const eLowRes = await base44.functions.invoke('createTravelSession', {
+              characterId:           char.id,
+              destinationLocationId: ownHome.id,
+              travelReason:          `energy_low_return_home energy(${Math.round(vals.energy)})`,
+              travelSource:          'autonomous_need',
+              ownerEmail:            char.owner_email,
+            }).catch(e => ({ data: { success: false, error: e.message } }));
+            const eLowData = eLowRes?.data || {};
+            if (eLowData.success) {
               totalMoved++;
-              moveLog.push(`${char.name} → ${ownHome.name} [ENERGY_LOW_HOME] energy(${Math.round(vals.energy)})`);
-              console.log(`[autonomousMovement] ✓ ${char.name} → ${ownHome.name} [ENERGY_LOW_HOME]`);
-            } catch (e) {
-              blockedLog.push(`${char.name}: energy home write failed — ${e.message}`);
+              moveLog.push(`${char.name} → ${ownHome.name} [ENERGY_LOW_HOME → IN_TRANSIT ~${eLowData.duration_minutes}min] energy(${Math.round(vals.energy)})`);
+              console.log(`[autonomousMovement] ✓ ${char.name}: energy low → in_transit home ${ownHome.name}`);
+            } else if (eLowData.blocked) {
+              blockedLog.push(`${char.name}: energy-low home travel blocked — ${eLowData.blocker_reason}`);
+            } else {
+              blockedLog.push(`${char.name}: energy-low home createTravelSession failed — ${eLowData.error} — NO fallback teleport`);
+              console.error(`[autonomousMovement] ⛔ NO-TELEPORT: ${char.name} energy-low home travel failed — ${eLowData.error}`);
             }
             continue;
           }
@@ -1080,50 +1117,56 @@ Deno.serve(async (req) => {
           finalLocation = homeFallback;
         }
 
-        // ── MOVE ────────────────────────────────────────────────────────────
+        // ── INITIATE TRAVEL SESSION (no teleport) ───────────────────────────
+        // Needs-driven movement MUST go through createTravelSession.
+        // The character stays at origin. processTravelArrivals commits the destination on arrival.
+        // Direct location mutation is FORBIDDEN here — that is the no-teleport invariant.
         try {
-          const newStatus = finalLocation.category === 'home' ? 'home' : 'visiting';
-          const updatePayload = {
-            resolved_current_location_id:   finalLocation.id,
-            resolved_current_location_name: finalLocation.name,
-            resolved_presence_status:       newStatus,
-            resolved_location_type:         finalLocation.category === 'home' ? 'home' : 'visit',
-            resolved_source_reason:         'autonomous_needs_driven',
-            last_arrived_time:              new Date().toISOString(),
-            // Clear stale travel fields so nothing can override this move
-            travel_destination_location_id: null,
-            travel_status:                  'not_traveling',
-            autonomous_destination_id:      null,
-            autonomous_movement_status:     null,
-          };
-          try {
-            await base44.entities.Character.update(char.id, updatePayload);
-          } catch {
-            await base44.asServiceRole.entities.Character.update(char.id, updatePayload);
-          }
+          const travelRes = await base44.functions.invoke('createTravelSession', {
+            characterId:           char.id,
+            destinationLocationId: finalLocation.id,
+            travelReason:          `autonomous_needs: ${top.key}(${Math.round(top.value)})`,
+            travelSource:          'autonomous_need',
+            ownerEmail:            char.owner_email,
+          }).catch(e => ({ data: { success: false, error: e.message } }));
+          const td = travelRes?.data || {};
 
-          totalMoved++;
-          const urgentList = Object.entries(vals)
-            .filter(([, v]) => urgencyLevel(v) >= 2)
-            .map(([k, v]) => `${k}(${Math.round(v)})`)
-            .join(', ') || `${top.key}(${Math.round(top.value)})`;
-          const mandatory = isMandatory ? '[MANDATORY]' : '[optional]';
-          const msg = `${char.name} → ${finalLocation.name} ${mandatory} needs: ${urgentList}`;
-          moveLog.push(msg);
-          console.log(`[autonomousMovement] ✓ ${msg}`);
-          // RATE LIMIT CAP: stop processing once max moves reached for this run
-          if (totalMoved >= MAX_MOVES_PER_RUN) {
-            console.log(`[autonomousMovement] MAX_MOVES_PER_RUN (${MAX_MOVES_PER_RUN}) reached — stopping run`);
-            return Response.json({ success: true, users_processed: Object.keys(byUser).length, characters_moved: totalMoved, moves: moveLog, blocked_with_reason: blockedLog, skipped: skippedLog.length, capped: true, timestamp: new Date().toISOString() });
+          if (td.success) {
+            totalMoved++;
+            const urgentList = Object.entries(vals)
+              .filter(([, v]) => urgencyLevel(v) >= 2)
+              .map(([k, v]) => `${k}(${Math.round(v)})`)
+              .join(', ') || `${top.key}(${Math.round(top.value)})`;
+            const mandatory = isMandatory ? '[MANDATORY]' : '[optional]';
+            const msg = `${char.name} → ${finalLocation.name} ${mandatory} needs: ${urgentList} [IN_TRANSIT ~${td.duration_minutes}min ETA: ${td.estimated_arrival}]`;
+            moveLog.push(msg);
+            console.log(`[autonomousMovement] ✓ ${msg}`);
+            if (totalMoved >= MAX_MOVES_PER_RUN) {
+              console.log(`[autonomousMovement] MAX_MOVES_PER_RUN (${MAX_MOVES_PER_RUN}) reached — stopping run`);
+              return Response.json({ success: true, users_processed: Object.keys(byUser).length, characters_moved: totalMoved, moves: moveLog, blocked_with_reason: blockedLog, skipped: skippedLog.length, capped: true, timestamp: new Date().toISOString() });
+            }
+          } else if (td.blocked) {
+            blockedLog.push(`${char.name}: travel blocked — ${td.blocker_reason || td.blocker}`);
+            console.log(`[autonomousMovement] ${char.name}: travel BLOCKED — ${td.blocker_reason}`);
+          } else {
+            // createTravelSession failed — NO teleport fallback. Character stays at origin.
+            const failReason = td.error || 'createTravelSession returned failure without error detail';
+            blockedLog.push(`${char.name}: createTravelSession FAILED — ${failReason} — NO fallback teleport`);
+            console.error(`[autonomousMovement] ⛔ NO-TELEPORT ENFORCED: ${char.name} → ${finalLocation.name}: ${failReason}. Character stays at origin.`);
+            const is429 = failReason.includes('429') || failReason.includes('Rate limit');
+            if (is429) {
+              console.warn(`[autonomousMovement] 429 from createTravelSession — stopping run`);
+              return Response.json({ success: true, users_processed: Object.keys(byUser).length, characters_moved: totalMoved, moves: moveLog, blocked_with_reason: blockedLog, skipped: skippedLog.length, rate_limited: true, timestamp: new Date().toISOString() });
+            }
           }
         } catch (e) {
           const is429 = e?.message?.includes('429') || e?.message?.includes('Rate limit');
           if (is429) {
-            console.warn(`[autonomousMovement] 429 on write — stopping run immediately`);
+            console.warn(`[autonomousMovement] 429 on travel initiation — stopping run`);
             return Response.json({ success: true, users_processed: Object.keys(byUser).length, characters_moved: totalMoved, moves: moveLog, blocked_with_reason: blockedLog, skipped: skippedLog.length, rate_limited: true, timestamp: new Date().toISOString() });
           }
-          console.error(`[autonomousMovement] Move FAILED for ${char.name}:`, e.message);
-          blockedLog.push(`${char.name}: write failed — ${e.message}`);
+          console.error(`[autonomousMovement] createTravelSession invoke FAILED for ${char.name}:`, e.message);
+          blockedLog.push(`${char.name}: createTravelSession invoke failed — ${e.message}`);
         }
       }
     }
