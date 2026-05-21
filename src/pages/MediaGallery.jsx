@@ -20,6 +20,8 @@ export default function MediaGallery() {
   const [hasMore, setHasMore] = useState(true);
   const [pageImages, setPageImages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [lastProof, setLastProof] = useState(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   useEffect(() => {
     base44.auth.me().then(u => setUser(u)).catch(() => {});
@@ -45,6 +47,12 @@ export default function MediaGallery() {
 
       setPageImages(data.images || []);
       setHasMore(data.hasMore === true);
+      setLastProof(data.proof);
+
+      // Validate ownership: all images must belong to currentUser
+      if (data.currentUserEmail && user?.email && data.currentUserEmail !== user.email) {
+        console.error(`[MediaGallery] OWNERSHIP MISMATCH: response user=${data.currentUserEmail}, current=${user.email}`);
+      }
 
       // Store nextRawCursor so the next page can use it
       if (data.nextRawCursor != null) {
@@ -87,8 +95,17 @@ export default function MediaGallery() {
   };
 
   const handleDeleteImage = async (image) => {
+    if (!user?.email) {
+      alert('User not authenticated');
+      return;
+    }
+    if (image.ownerEmail !== user.email) {
+      alert(`Cannot delete image. Ownership mismatch: image owner=${image.ownerEmail}, current user=${user.email}`);
+      console.warn(`[MediaGallery] BLOCKED delete: image owned by ${image.ownerEmail}, current user is ${user.email}`);
+      return;
+    }
     try {
-      console.log(`[MediaGallery] Deleting message ${image.messageId}`);
+      console.log(`[MediaGallery] Deleting message ${image.messageId} (owned by ${image.ownerEmail})`);
       await base44.entities.Message.delete(image.messageId);
       setSelectedImage(null);
       // Refetch current page with same cursor
@@ -118,7 +135,30 @@ export default function MediaGallery() {
               </p>
             </div>
           </div>
+          <button
+            onClick={() => setShowDiagnostics(!showDiagnostics)}
+            className="text-xs px-2 py-1 rounded-lg bg-secondary/40 text-muted-foreground hover:text-foreground"
+            title="Show ownership diagnostics"
+          >
+            {showDiagnostics ? 'Hide' : 'Show'} diagnostics
+          </button>
         </div>
+
+        {/* Diagnostics Panel */}
+        {showDiagnostics && lastProof && (
+          <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
+            <div><strong>Ownership Diagnostics:</strong></div>
+            <div>currentUser: {user?.email || 'unknown'}</div>
+            <div>responseUser: {lastProof.currentUserEmail || 'unknown'}</div>
+            <div>rawScanned: {lastProof.rawScanned}</div>
+            <div>validFound: {lastProof.validFound}</div>
+            <div>blockedCrossOwner: {lastProof.blockedCrossOwner}</div>
+            <div>blockedUnverified: {lastProof.blockedUnverified}</div>
+            <div>excluded: {lastProof.excluded}</div>
+            <div>exhausted: {lastProof.exhausted ? 'yes' : 'no'}</div>
+            <div>nextRawCursor: {lastProof.nextRawCursor !== null ? lastProof.nextRawCursor : 'none (end)'}</div>
+          </div>
+        )}
 
         {/* Search */}
         <div className="mb-6 flex items-center gap-2">
