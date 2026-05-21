@@ -147,6 +147,38 @@
       "type": "string",
       "description": "geo_mode of destination location"
     },
+    "character_snapshot": {
+      "type": "object",
+      "description": "Snapshot of character data at session creation for RLS-safe arrival processing",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "owner_email": {
+          "type": "string"
+        },
+        "is_jailed": {
+          "type": "boolean"
+        },
+        "house_arrest_active": {
+          "type": "boolean"
+        },
+        "resolved_presence_status": {
+          "type": "string"
+        },
+        "current_home_location_id": {
+          "type": "string"
+        }
+      }
+    },
+    "character_home_location_id": {
+      "type": "string",
+      "description": "Character's home location at session creation (for arrival presence detection)"
+    },
     "created_at": {
       "type": "string",
       "format": "date-time"
