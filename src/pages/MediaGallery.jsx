@@ -11,12 +11,7 @@ export default function MediaGallery() {
   const [searchTerm, setSearchTerm] = useState('');
   const [user, setUser] = useState(null);
 
-  // Cursor stack: index = page number (1-based), value = rawCursor to pass for that page.
-  // Page 1 always starts at rawCursor=0.
-  // After page N loads, its nextRawCursor is pushed so page N+1 knows where to start.
-  // This guarantees no raw-message skipping of valid images between pages.
   const [currentPage, setCurrentPage] = useState(1);
-  const [cursorStack, setCursorStack] = useState([0]); // cursorStack[0] = cursor for page 1
   const [hasMore, setHasMore] = useState(true);
   const [pageImages, setPageImages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -28,15 +23,15 @@ export default function MediaGallery() {
   }, []);
 
   // Fetch whenever user, page, or searchTerm changes
-  const fetchPage = useCallback(async (page, cursors, search) => {
+  const fetchPage = useCallback(async (page, search) => {
     if (!user?.email) return;
     setIsLoading(true);
     try {
-      const rawCursor = cursors[page - 1] ?? 0;
-      console.log(`[MediaGallery] fetchPage page=${page} rawCursor=${rawCursor} search="${search}"`);
+      console.log(`[MediaGallery] fetchPage page=${page} search="${search}"`);
 
       const res = await base44.functions.invoke('fetchMediaGalleryPage', {
-        rawCursor,
+        page,
+        pageSize: 20,
         searchTerm: search,
       });
 
@@ -56,19 +51,10 @@ export default function MediaGallery() {
 
       // Log verification paths for diagnostics
       if (data.images?.length > 0) {
-        console.log(`[MediaGallery] Page ${page} verification paths:`, data.images.map(img => ({
-          id: img.id,
-          verificationPath: img.verificationPath,
-          hasOwnEmail: !!img.ownerEmail,
-        })));
-      }
-
-      // Store nextRawCursor so the next page can use it
-      if (data.nextRawCursor != null) {
-        setCursorStack(prev => {
-          const next = [...prev];
-          next[page] = data.nextRawCursor; // index = page number (page 2 cursor at index 2, etc.)
-          return next;
+        console.log(`[MediaGallery] Page ${page} first image:`, {
+          id: data.images[0].id,
+          timestamp: data.images[0].timestamp,
+          verificationPath: data.images[0].verificationPath,
         });
       }
     } catch (e) {
@@ -82,9 +68,9 @@ export default function MediaGallery() {
   // Initial load and on page/search change
   useEffect(() => {
     if (user?.email) {
-      fetchPage(currentPage, cursorStack, searchTerm);
+      fetchPage(currentPage, searchTerm);
     }
-  }, [user?.email, currentPage, searchTerm]); // eslint-disable-line
+  }, [user?.email, currentPage, searchTerm, fetchPage]);
 
   const handleNext = () => {
     const nextPage = currentPage + 1;
@@ -108,7 +94,6 @@ export default function MediaGallery() {
   const handleSearchChange = (val) => {
     setSearchTerm(val);
     setCurrentPage(1);
-    setCursorStack([0]); // reset cursor stack on new search
     setHasMore(true);
   };
 
@@ -127,8 +112,8 @@ export default function MediaGallery() {
       if (res?.data?.success) {
         console.log(`[MediaGallery] ✓ Deleted image ${image.messageId}`);
         setSelectedImage(null);
-        // Refetch current page with same cursor
-        await fetchPage(currentPage, cursorStack, searchTerm);
+        // Refetch current page
+        await fetchPage(currentPage, searchTerm);
       } else {
         alert(`Delete denied: ${res?.data?.error || 'Unknown error'}`);
       }
