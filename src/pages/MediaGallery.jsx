@@ -468,6 +468,7 @@ function SendImageModal({ image, onClose, onSent }) {
               owner_email: user?.email,
             });
 
+            const proof = res?.data?.proof || {};
             console.log('[SendImageModal] World Phone image send:', {
               send_as: 'character',
               sender_character_id: selectedSenderCharacterId,
@@ -476,10 +477,23 @@ function SendImageModal({ image, onClose, onSent }) {
               success: res?.data?.success,
               message_id: res?.data?.message_id,
               channel: res?.data?.channel,
+              image_url_saved: proof.image_url_saved,
+              image_url_readback: proof.image_url_readback,
+              message_type_readback: proof.message_type_readback,
             });
 
             if (!res?.data?.success) {
               throw new Error(res?.data?.error || 'World Phone send failed');
+            }
+
+            // Read-back verification: image_url must be persisted
+            if (!proof.image_url_saved || !proof.image_url_readback) {
+              throw new Error(
+                `Image was not saved to World Phone message. ` +
+                `image_url_saved=${proof.image_url_saved} | readback=${proof.image_url_readback || 'null'} | ` +
+                `message_type=${proof.message_type_readback || 'null'}. ` +
+                `Check Message entity schema allows image_url field.`
+              );
             }
           } catch (e) {
             console.error(`[SendImageModal] Failed to send to ${receiverId}:`, e.message);

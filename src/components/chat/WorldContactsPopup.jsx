@@ -264,6 +264,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           role: (m.sender_character_id === character.id || (!m.sender_character_id && m.character_id === character.id))
             ? "sent" : "npc",
           content: m.content,
+          image_url: m.image_url || null,
+          message_type: m.message_type || null,
         })));
 
         // Mark incoming as read (non-blocking)
@@ -470,6 +472,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
             dbId: d.id,
             role: isSent ? "sent" : "npc",
             content: d.content,
+            image_url: d.image_url || null,
+            message_type: d.message_type || null,
           }];
         });
       }
@@ -601,7 +605,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     replyLockRef.current.add(replyLockKey);
 
     // Render on right side (sent) immediately — subscription will also fire, dedup is handled
-    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text };
+    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text, image_url: imageUrl || null };
     setMessages(prev => prev.some(m => m.id === savedUserMsg.id) ? prev : [...prev, userMsg]);
 
     // ── IMAGE UNDERSTANDING PIPELINE ──────────────────────────────────────
@@ -1096,22 +1100,41 @@ Respond ONLY with valid JSON in this exact format:
                 ) : null}
 
                 <AnimatePresence>
-                  {messages.map(msg => (
-                    <motion.div
-                      key={msg.id}
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className={`flex ${(msg.role === "user" || msg.role === "sent") ? "justify-end" : "justify-start"}`}
-                    >
-                      <div className={`max-w-[78%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                        (msg.role === "user" || msg.role === "sent")
-                          ? "bg-primary text-primary-foreground rounded-br-sm"
-                          : "bg-secondary text-foreground rounded-bl-sm"
-                      }`}>
-                        {msg.content}
-                      </div>
-                    </motion.div>
-                  ))}
+                  {messages.map(msg => {
+                    const isSent = msg.role === "user" || msg.role === "sent";
+                    const hasImage = !!(msg.image_url || msg.message_type === "image");
+                    return (
+                      <motion.div
+                        key={msg.id}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={`flex ${isSent ? "justify-end" : "justify-start"}`}
+                      >
+                        <div className={`max-w-[78%] rounded-2xl overflow-hidden text-sm ${
+                          isSent
+                            ? "bg-primary text-primary-foreground rounded-br-sm"
+                            : "bg-secondary text-foreground rounded-bl-sm"
+                        }`}>
+                          {hasImage && msg.image_url ? (
+                            <div>
+                              <img
+                                src={msg.image_url}
+                                alt={msg.content || "image"}
+                                className="w-full max-w-xs object-cover rounded-t-2xl"
+                                style={{ maxHeight: 220 }}
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                              />
+                              {msg.content && (
+                                <p className="px-3 py-2 text-sm leading-relaxed">{msg.content}</p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="px-4 py-2.5 leading-relaxed">{msg.content}</p>
+                          )}
+                        </div>
+                      </motion.div>
+                    );
+                  })}
                 </AnimatePresence>
 
                 {isTyping && (

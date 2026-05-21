@@ -309,6 +309,28 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
       });
     }
 
+    // ── READ-BACK VERIFICATION for image sends ──────────────────────────────────
+    // After create, read the record back to confirm image_url was persisted.
+    // This catches silent field-drop issues (e.g. entity schema not accepting image_url).
+    let savedImageUrl = savedMessage.image_url || null;
+    let savedMessageType = savedMessage.message_type || null;
+    if (isImageSend) {
+      try {
+        const readBack = await base44.asServiceRole.entities.Message.filter({ id: savedMessage.id }, null, 1).catch(() => []);
+        const rb = readBack?.[0];
+        if (rb) {
+          savedImageUrl = rb.image_url || null;
+          savedMessageType = rb.message_type || null;
+          console.log(`[sendWorldPhoneMessage] READ-BACK | msg=${savedMessage.id} | image_url=${savedImageUrl ? 'PRESENT' : 'MISSING'} | message_type=${savedMessageType}`);
+          if (!savedImageUrl) {
+            console.error(`[sendWorldPhoneMessage] IMAGE_URL_NOT_PERSISTED | msg=${savedMessage.id} | payload_had_image_url=${!!image_url}`);
+          }
+        }
+      } catch (rbErr) {
+        warnings.push(`Read-back verification failed (non-fatal): ${rbErr.message}`);
+      }
+    }
+
     // Update conversation preview
     const previewText = isImageSend
       ? (image_description ? image_description.substring(0, 100) : 'Image')
@@ -487,7 +509,9 @@ Respond ONLY with valid JSON:
         recipient_response_generated: !!recipientResponseMessageId,
         recipient_resolution_path: recipientResolutionPath,
         message_type: message_type || 'text',
-        image_url_saved: isImageSend ? !!image_url : false,
+        image_url_saved: isImageSend ? (savedImageUrl === image_url) : false,
+        image_url_readback: savedImageUrl || null,
+        message_type_readback: savedMessageType || null,
         source,
         warnings: warnings.length > 0 ? warnings : null,
       },
