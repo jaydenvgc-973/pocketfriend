@@ -265,30 +265,6 @@ function getTimeLighting(hour = new Date().getHours()) {
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
 function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime, subjectType, characterId, userWorldName, userOutfitText }) {
-  // ── IMAGE GENERATION PRIORITY STACK (GOVERNING LAW) ──────────────────────
-  // Priority 1: SCENE INTENT — user prompt meaning, emotion, action
-  // Priority 2: CHARACTER PRESENCE — who is there and what they are doing
-  // Priority 3: CAMERA POSITION — angle, distance, framing
-  // Priority 4: ZONE IDENTITY — room type and style
-  // Priority 5: REFERENCE IMAGE — guidance only, not replication
-  // Priority 6: SAFETY SANITIZATION — minimal, non-destructive
-  //
-  // CRITICAL: Lower priority NEVER overrides higher priority.
-  // CONFLICT RESOLUTION: scene intent → camera realism → zone identity → relax reference constraints
-  // ANTI-FLAT RULE: slightly imperfect room + correct emotion/camera = VALID. Perfect room + static camera = FAILED.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // ── INTENSITY BALANCING ───────────────────────────────────────────────────
-  // When multiple high-intensity signals co-occur (closeness + nighttime + private setting + minimal clothing),
-  // do NOT maximize all signals simultaneously — balance them to stay below filter threshold while preserving the moment.
-  // Rules:
-  //   - Reduce camera proximity slightly when physical contact + minimal clothing are both present
-  //   - Soften physical contact wording (e.g. "close to" instead of "pressed against")
-  //   - Imply environment rather than labeling it directly (e.g. avoid stacking "night" + "bedroom" + "alone" + "intimate")
-  //   - Keep emotional tone without labeling it as "intimate" or "sensual"
-  // Goal: preserve the visual/emotional moment while keeping overall intensity balanced.
-  // ─────────────────────────────────────────────────────────────────────────
-
   const hasEnv  = envRefCount > 0;
   const hasChar = charRefCount > 0;
   const hasUser = userRefCount > 0;
@@ -1547,14 +1523,8 @@ Deno.serve(async (req) => {
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | char=${charRecord?.name || characterName || 'none'} | outfit_injected=${/Currently wearing:/i.test(charDesc)} | message_id=${messageId}`);
 
 
-    // ── 5b. PRE-GENERATION VISUAL SOURCE AUDIT ───────────────────────────────
-    // Delegates to imageGenerationValidator (shared helper) which:
-    //   - Fetches conversation context names live from DB (not manually passed)
-    //   - Resolves location owner/resident names
-    //   - Resolves sender name for firewall
-    //   - Calls imageVisualSourceValidator audit
-    //   - Returns boundary block for prompt injection
-    // On audit failure: returns validation_unavailable + fail-closed boundary block.
+    // ── 5b. PRE-GENERATION VISUAL SOURCE AUDIT (FAIL-CLOSED) ─────────────────
+    // audit_unavailable = generation blocked. No bypass.
     let visualSourceAudit = null;
     let visualSourceBoundaryBlock = '';
     {
@@ -1565,27 +1535,29 @@ Deno.serve(async (req) => {
       const expectedHumanCount = subjectType === 'joint' ? 2 : (subjectType === 'character' || subjectType === 'user' || subjectType === 'known_character') ? 1 : 0;
       const locationId = charRecord?.resolved_current_location_id || charRecord?.current_home_location_id || null;
 
-      const prepareRes = await base44.functions.invoke('imageGenerationValidator', {
-        mode: 'prepare',
-        conversationId: message.conversation_id || null,
-        senderCharacterId: senderCharacterId || null,
-        subjectCharacterId: characterId || null,
-        locationId,
-        approvedSubjects,
-        sanitizedPrompt,
-        expectedHumanCount,
-        logPrefix: `[generateImageAsync][${messageId}]`,
-      }).catch(err => {
-        console.error(`[generateImageAsync] ⛔ imageGenerationValidator prepare FAILED: ${err?.message}`);
-        return { data: { audit: { validation_status: 'validation_unavailable', error: err?.message }, boundaryBlock: '\n\n⚠️ VISUAL SOURCE BOUNDARY: Audit unavailable — maximum identity isolation enforced.\n', auditStatus: 'validation_unavailable' } };
-      });
-
-      const prepareData = prepareRes?.data || {};
+      let prepareData = null;
+      try {
+        const pr = await base44.functions.invoke('imageGenerationValidator', {
+          mode: 'prepare', conversationId: message.conversation_id || null,
+          senderCharacterId: senderCharacterId || null, subjectCharacterId: characterId || null,
+          locationId, approvedSubjects, sanitizedPrompt, expectedHumanCount,
+          logPrefix: `[generateImageAsync][${messageId}]`,
+        });
+        prepareData = pr?.data || {};
+      } catch (prepErr) {
+        console.error(`[generateImageAsync] ⛔ PRE-GEN AUDIT INVOKE FAILED — BLOCKING: ${prepErr?.message}`);
+        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { visual_validation: { audit_status: 'audit_unavailable', validation_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false, error: prepErr?.message } } }).catch(() => {});
+        return Response.json({ success: false, error: 'Pre-generation audit unavailable — image blocked.', audit_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false }, { status: 503 });
+      }
+      if (!prepareData || prepareData.auditStatus === 'validation_unavailable' || !prepareData.audit) {
+        const ae = prepareData?.audit?.error || 'audit returned unavailable';
+        console.error(`[generateImageAsync] ⛔ PRE-GEN AUDIT UNAVAILABLE — BLOCKING: ${ae}`);
+        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { visual_validation: { audit_status: 'audit_unavailable', validation_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false, error: ae } } }).catch(() => {});
+        return Response.json({ success: false, error: 'Pre-generation audit unavailable — image blocked.', audit_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false }, { status: 503 });
+      }
       visualSourceAudit = prepareData.audit || null;
       visualSourceBoundaryBlock = prepareData.boundaryBlock || '';
-
-      // Log the live conversation context names so the proof is traceable in real logs
-      console.log(`[generateImageAsync][${messageId}] audit_status=${prepareData.auditStatus || 'unknown'} | conversation_context_names=[${(prepareData.conversationContextNames || []).join(', ')}] | location_owner_names=[${(prepareData.locationOwnerNames || []).join(', ')}] | sender_name=${prepareData.senderName || 'none'}`);
+      console.log(`[generateImageAsync][${messageId}] audit_status=${prepareData.auditStatus} | ctx_names=[${(prepareData.conversationContextNames||[]).join(', ')}] | loc_owners=[${(prepareData.locationOwnerNames||[]).join(', ')}] | sender=${prepareData.senderName||'none'}`);
     }
 
     // ── 5c. APPLY APPEARANCE LOCK VALIDATION ─────────────────────────────────
@@ -1833,9 +1805,46 @@ All reference images (if any) are environment/location refs only — do NOT trea
         continue;
       }
 
-      // ── POST-GENERATION VALIDATION (via imageGenerationValidator shared helper) ──
-      // FAIL-CLOSED: validation_unavailable recorded. passes===false → retry/fail. passes===null → unverified but proceeds.
-      if(attemptGenRes?.url){const expHC=subjectType==='joint'?2:1;const vRes=await base44.functions.invoke('imageGenerationValidator',{mode:'validate',imageUrl:attemptGenRes.url,audit:visualSourceAudit||{final_visual_roster:[charRecord?.name||characterName].filter(Boolean),conversation_entities_detected:[],location_entities_detected:[],expected_human_count:expHC},charRecord:charRecord?{name:charRecord.name,appearance_lock:charRecord.appearance_lock||{}}:null,expectedHumanCount:expHC,attempt,logPrefix:`[PostGenValidation][generateImageAsync][${messageId}]`}).catch(vErr=>{console.error(`[PostGenValidation][generateImageAsync] ⛔ validator invoke failed attempt ${attempt}: ${vErr?.message}`);return{data:{passes:null,validation_status:'validation_unavailable',validation_error:vErr?.message,image_not_verified:true}};});const vd=vRes?.data||{};const validationStatus=vd.validation_status||(vd.passes===true?'passed':vd.passes===false?'failed':'validation_unavailable');console.log(`[PostGenValidation][generateImageAsync] attempt ${attempt}: validation_status=${validationStatus} passes=${vd.passes??'null'}`);if(vd.passes===false){const rr=vd.reject_reason||(vd.issues||[]).join('; ')||'post-gen validation failed';const lock=charRecord?.appearance_lock||{};const cH=[lock.hair_type,lock.hairstyle].filter(Boolean).join(', ');const isBaldC=lock.bald===true||/\b(bald|shaved head|no hair)\b/i.test(lock.hair_type||'');stagedAttempts.push({attempt_index:attempt,prompt:attemptPrompt.slice(0,500),generated_image_url:attemptGenRes.url,camera:extractCameraVarsFromPrompt(attemptPrompt),status:'rejected_post_gen_validation',rejection_reason:rr,validation_status:validationStatus,validation_issues:vd.issues||[],created_at:new Date().toISOString()});console.warn(`[PostGenValidation][generateImageAsync] ⛔ REJECTED attempt ${attempt}: ${rr}`);await base44.asServiceRole.entities.Message.update(messageId,{generation_context:{...baseGenerationContext,camera_variables:null,attempts:stagedAttempts,accepted_attempt_index:null}}).catch(()=>{});if(attempt<MAX_ATTEMPTS){const cl=[`\n\n════ POST-GEN CORRECTION (retry ${attempt}) ════`,`Issues: ${rr}`];if(vd.vision_result?.hair_mismatch)cl.push(isBaldC?'BALD — zero hair.':`HAIR canonical="${cH}". Render ONLY that.`);if(vd.vision_result?.facial_hair_mismatch&&lock.facial_hair)cl.push(`FACIAL HAIR="${lock.facial_hair}". No deviation.`);if(vd.vision_result?.sender_appeared)cl.push('SENDER MUST NOT APPEAR.');if(vd.vision_result?.banned_person_appeared)cl.push('BANNED ENTITY APPEARED — remove all context persons.');if(vd.vision_result?.identifiable_background_faces_detected)cl.push('BACKGROUND FACES — blur all background figures.');cl.push('════════════════════════════════════════');attemptPrompt=attemptPrompt+cl.join('\n');continue;}console.error(`[PostGenValidation][generateImageAsync] ❌ All ${MAX_ATTEMPTS} attempts failed.`);await base44.asServiceRole.entities.Message.update(messageId,{content:'[IMAGE_FAILED]',generation_context:{...baseGenerationContext,attempts:stagedAttempts,accepted_attempt_index:null}}).catch(()=>{});return Response.json({success:false,error:`Image rejected after ${MAX_ATTEMPTS} attempts: ${rr}`,appearance_validation_failed:true});}if(validationStatus==='validation_unavailable'){console.warn(`[PostGenValidation][generateImageAsync] ⚠️ validation_unavailable attempt ${attempt} — proceeds as unverified. error=${vd.validation_error||'none'}`);}}
+      // ── POST-GENERATION VALIDATION — STRICT FAIL-CLOSED ─────────────────────
+      // passes===true ONLY → proceed. Everything else (false, null, undefined, validation_unavailable, image_not_verified) = REJECT.
+      {
+        const expHC = subjectType==='joint'?2:(subjectType==='character'||subjectType==='user'||subjectType==='known_character')?1:0;
+        const lock = charRecord?.appearance_lock||{};
+        const cH = [lock.hair_type,lock.hairstyle].filter(Boolean).join(', ');
+        const isBaldC = lock.bald===true||/\b(bald|shaved head|no hair)\b/i.test(lock.hair_type||'');
+        const vRes = await base44.functions.invoke('imageGenerationValidator',{mode:'validate',imageUrl:attemptGenRes.url,audit:visualSourceAudit||{final_visual_roster:[charRecord?.name||characterName].filter(Boolean),conversation_entities_detected:[],location_entities_detected:[],expected_human_count:expHC},charRecord:charRecord?{name:charRecord.name,appearance_lock:lock}:null,expectedHumanCount:expHC,attempt,logPrefix:`[PostGenValidation][generateImageAsync][${messageId}]`}).catch(vErr=>{
+          console.error(`[PostGenValidation][generateImageAsync] ⛔ validator invoke failed attempt ${attempt}: ${vErr?.message}`);
+          return{data:{passes:null,validation_status:'validation_unavailable',validation_error:vErr?.message,image_not_verified:true}};
+        });
+        const vd = vRes?.data||{};
+        const vStatus = vd.validation_status||(vd.passes===true?'passed':vd.passes===false?'failed':'validation_unavailable');
+        const failClosed = vd.passes!==true; // STRICT: only true passes
+        console.log(`[PostGenValidation][generateImageAsync] attempt ${attempt}: vStatus=${vStatus} passes=${vd.passes??'null'} fail_closed=${failClosed}`);
+        const vvProof = {audit_status:prepareData?.auditStatus||'success',validation_status:vStatus,image_not_verified:failClosed,final_image_accepted:!failClosed,expected_human_count:expHC,final_visual_roster:visualSourceAudit?.final_visual_roster||[],conversation_entities_detected:visualSourceAudit?.conversation_entities_detected||[],conversation_entities_ignored:visualSourceAudit?.conversation_entities_ignored||[],location_entities_detected:visualSourceAudit?.location_entities_detected||[],location_entities_ignored:visualSourceAudit?.location_entities_ignored||[],sender_detected:visualSourceAudit?.sender_detected||null,sender_ignored:visualSourceAudit?.sender_ignored||null,forbidden_context_sources_blocked:visualSourceAudit?.forbidden_context_sources_blocked||[],ambient_occupants_enabled:visualSourceAudit?.ambient_occupants_enabled??false,identifiable_background_faces_detected:vd.vision_result?.identifiable_background_faces_detected??null,named_character_similarity_detected:vd.vision_result?.named_character_similarity_detected??null,human_count_correct:vd.vision_result?.human_count_correct??null,hair_mismatch:vd.vision_result?.hair_mismatch??null,facial_hair_mismatch:vd.vision_result?.facial_hair_mismatch??null,body_mismatch:vd.vision_result?.body_mismatch??null,banned_person_appeared:vd.vision_result?.banned_person_appeared??null,sender_appeared:vd.vision_result?.sender_appeared??null,reject_reason:vd.reject_reason||null,validation_error:vd.validation_error||null};
+        if (failClosed) {
+          const rr = vd.reject_reason||(vd.issues||[]).join('; ')||vStatus;
+          stagedAttempts.push({attempt_index:attempt,prompt:attemptPrompt.slice(0,500),generated_image_url:attemptGenRes.url,camera:extractCameraVarsFromPrompt(attemptPrompt),status:'rejected_post_gen_validation',rejection_reason:rr,validation_status:vStatus,created_at:new Date().toISOString()});
+          console.warn(`[PostGenValidation][generateImageAsync] ⛔ REJECTED attempt ${attempt} (${vStatus}): ${rr}`);
+          await base44.asServiceRole.entities.Message.update(messageId,{generation_context:{...baseGenerationContext,camera_variables:null,attempts:stagedAttempts,accepted_attempt_index:null,visual_validation:{...vvProof,final_image_accepted:false}}}).catch(()=>{});
+          if (attempt<MAX_ATTEMPTS) {
+            const cl=[`\n\n════ POST-GEN CORRECTION (retry ${attempt}) ════`,`Issues: ${rr}`];
+            if(vd.vision_result?.hair_mismatch)cl.push(isBaldC?'BALD — zero hair.':`HAIR canonical="${cH}". Render ONLY that.`);
+            if(vd.vision_result?.facial_hair_mismatch&&lock.facial_hair)cl.push(`FACIAL HAIR="${lock.facial_hair}". No deviation.`);
+            if(vd.vision_result?.sender_appeared)cl.push('SENDER MUST NOT APPEAR.');
+            if(vd.vision_result?.banned_person_appeared)cl.push('BANNED ENTITY APPEARED — remove all context persons.');
+            if(vd.vision_result?.identifiable_background_faces_detected)cl.push('BACKGROUND FACES — blur all background figures.');
+            if(vStatus==='validation_unavailable')cl.push('VALIDATION UNAVAILABLE — re-generate with maximum identity isolation.');
+            cl.push('════════════════════════════════════════');
+            attemptPrompt=attemptPrompt+cl.join('\n');
+            continue;
+          }
+          console.error(`[PostGenValidation][generateImageAsync] ❌ All ${MAX_ATTEMPTS} attempts failed (${vStatus}).`);
+          await base44.asServiceRole.entities.Message.update(messageId,{content:'[IMAGE_FAILED]',generation_context:{...baseGenerationContext,attempts:stagedAttempts,accepted_attempt_index:null,visual_validation:vvProof}}).catch(()=>{});
+          return Response.json({success:false,error:`Image blocked after ${MAX_ATTEMPTS} attempts: ${rr}`,appearance_validation_failed:true,validation_status:vStatus,image_not_verified:true,final_image_accepted:false});
+        }
+        // passes===true — attach proof to this attempt's gen result for use in final write
+        attemptGenRes._vvProof = vvProof;
+      }
 
       // Extract camera variables from the prompt used — best proxy without image analysis
       const thisCameraVars = extractCameraVarsFromPrompt(attemptPrompt);
@@ -1876,15 +1885,13 @@ All reference images (if any) are environment/location refs only — do NOT trea
         // Write staging data + final image atomically
         await base44.asServiceRole.entities.Message.update(messageId, {
           image_url: acceptedGenRes.url,
-          ...(generatedImageDescription ? {
-            image_description: generatedImageDescription,
-            image_analysis_status: 'complete',
-          } : {}),
+          ...(generatedImageDescription ? { image_description: generatedImageDescription, image_analysis_status: 'complete' } : {}),
           generation_context: {
             ...baseGenerationContext,
             camera_variables: acceptedCameraVars,
             attempts: stagedAttempts,
             accepted_attempt_index: acceptedAttemptIndex,
+            visual_validation: acceptedGenRes._vvProof || { audit_status: 'success', validation_status: 'passed', image_not_verified: false, final_image_accepted: true },
           },
           content: '',
         });

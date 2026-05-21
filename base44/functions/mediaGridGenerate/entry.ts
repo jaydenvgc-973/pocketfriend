@@ -549,38 +549,39 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
 
       console.log(`[mediaGridGenerate] Multi-person prompt built for ${people.length} people with ${identityRefs.length} identity refs + ${envRefs.length} env refs`);
 
-      // ── PRE-GENERATION VISUAL SOURCE AUDIT (multi-person path) ────────────
+      // ── PRE-GENERATION VISUAL SOURCE AUDIT (multi-person path) — FAIL-CLOSED ─
+      // audit_unavailable = generation blocked. No bypass.
       let mgVisualAudit = null;
       let mgBoundaryBlock = '';
       const mgApprovedSubjects = people.map(p => ({ id: p.id, name: p.displayName || p.role, type: p.subjectRole }));
-      const mgLocationOwnerNames = [];
+      let mgPrepareData = null;
       try {
-        if (locationId) {
-          const locRecs = await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []);
-          const loc = locRecs?.[0];
-          if (loc) {
-            if (loc.owner_character_name) mgLocationOwnerNames.push(loc.owner_character_name);
-            if (loc.owner_npc_name) mgLocationOwnerNames.push(loc.owner_npc_name);
-            (loc.residents || []).forEach(r => { if (r.character_name) mgLocationOwnerNames.push(r.character_name); });
-          }
-        }
-        const mgAuditRes = await base44.functions.invoke('imageVisualSourceValidator', {
-          mode: 'audit',
-          prompt: sanitizedPrompt,
+        const mgPr = await base44.functions.invoke('imageGenerationValidator', {
+          mode: 'prepare',
+          conversationId: null,
+          senderCharacterId: null,
+          subjectCharacterId: null,
+          locationId: locationId || null,
           approvedSubjects: mgApprovedSubjects,
-          conversationContextNames: [],
-          locationOwnerNames: mgLocationOwnerNames,
-          senderName: null,
+          sanitizedPrompt,
           expectedHumanCount: people.length,
           logPrefix: `[VisualSourceAudit][mediaGridGenerate][${messageId}]`,
         });
-        mgVisualAudit = mgAuditRes?.data?.audit || null;
-        mgBoundaryBlock = mgAuditRes?.data?.boundary_block || '';
+        mgPrepareData = mgPr?.data || {};
       } catch (auditErr) {
-        console.error(`[mediaGridGenerate] ⛔ Visual source audit FAILED — recording validation_unavailable: ${auditErr?.message}`);
-        mgVisualAudit = { validation_status: 'validation_unavailable', error: auditErr?.message };
-        mgBoundaryBlock = '\n\n⚠️ VISUAL SOURCE BOUNDARY: Audit unavailable — proceed with maximum identity isolation.\n';
+        console.error(`[mediaGridGenerate] ⛔ PRE-GEN AUDIT INVOKE FAILED — BLOCKING: ${auditErr?.message}`);
+        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { visual_validation: { audit_status: 'audit_unavailable', validation_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false, error: auditErr?.message } } }).catch(() => {});
+        return Response.json({ success: false, error: 'Pre-generation audit unavailable — image blocked.', audit_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false }, { status: 503 });
       }
+      if (!mgPrepareData || mgPrepareData.auditStatus === 'validation_unavailable' || !mgPrepareData.audit) {
+        const mgAe = mgPrepareData?.audit?.error || 'audit returned unavailable';
+        console.error(`[mediaGridGenerate] ⛔ PRE-GEN AUDIT UNAVAILABLE — BLOCKING: ${mgAe}`);
+        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { visual_validation: { audit_status: 'audit_unavailable', validation_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false, error: mgAe } } }).catch(() => {});
+        return Response.json({ success: false, error: 'Pre-generation audit unavailable — image blocked.', audit_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false }, { status: 503 });
+      }
+      mgVisualAudit = mgPrepareData.audit || null;
+      mgBoundaryBlock = mgPrepareData.boundaryBlock || '';
+      console.log(`[mediaGridGenerate][${messageId}] audit_status=${mgPrepareData.auditStatus} | ctx_names=[${(mgPrepareData.conversationContextNames||[]).join(', ')}] | loc_owners=[${(mgPrepareData.locationOwnerNames||[]).join(', ')}]`);
 
       const allReferences = [
         ...envRefs,
@@ -611,29 +612,30 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
           return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
         }
 
-        // ── POST-GENERATION VALIDATION (multi-person path) ──────────────────
-        let mgPostGenStatus = 'validation_unavailable';
-        try {
-          const mgValidateRes = await base44.functions.invoke('imageVisualSourceValidator', {
-            mode: 'validate',
-            imageUrl: genRes.url,
-            audit: mgVisualAudit || { final_visual_roster: mgApprovedSubjects.map(s => s.name), conversation_entities_detected: [], location_entities_detected: mgLocationOwnerNames, expected_human_count: people.length },
-            charRecord: null,
-            expectedHumanCount: people.length,
-            attempt: 1,
-            logPrefix: `[PostGenValidation][mediaGridGenerate][${messageId}]`,
-          });
-          const mgVd = mgValidateRes?.data || {};
-          mgPostGenStatus = mgVd.passes === true ? 'passed' : mgVd.passes === false ? 'failed' : 'validation_unavailable';
-          if (mgVd.passes === false) {
-            console.warn(`[PostGenValidation][mediaGridGenerate] ⚠️ POST-GEN FAILED (not blocking multi-person path): ${mgVd.reject_reason || (mgVd.issues || []).join('; ')}`);
-          } else {
-            console.log(`[PostGenValidation][mediaGridGenerate] ✅ post-gen validation: ${mgPostGenStatus}`);
-          }
-        } catch (mgVErr) {
-          console.error(`[PostGenValidation][mediaGridGenerate] ⛔ validation_unavailable: ${mgVErr?.message}`);
-          mgPostGenStatus = 'validation_unavailable';
+        // ── POST-GENERATION VALIDATION (multi-person path) — STRICT FAIL-CLOSED ─
+        // passes===true ONLY → proceed. Everything else = REJECT.
+        let mgVvProof = { audit_status: mgPrepareData?.auditStatus||'success', validation_status: 'validation_unavailable', image_not_verified: true, final_image_accepted: false };
+        const mgVRes = await base44.functions.invoke('imageGenerationValidator', {
+          mode: 'validate', imageUrl: genRes.url,
+          audit: mgVisualAudit || { final_visual_roster: mgApprovedSubjects.map(s => s.name), conversation_entities_detected: [], location_entities_detected: [], expected_human_count: people.length },
+          charRecord: null, expectedHumanCount: people.length, attempt: 1,
+          logPrefix: `[PostGenValidation][mediaGridGenerate][${messageId}]`,
+        }).catch(mgVErr => {
+          console.error(`[PostGenValidation][mediaGridGenerate] ⛔ validator invoke failed: ${mgVErr?.message}`);
+          return { data: { passes: null, validation_status: 'validation_unavailable', validation_error: mgVErr?.message, image_not_verified: true } };
+        });
+        const mgVd = mgVRes?.data || {};
+        const mgVStatus = mgVd.validation_status||(mgVd.passes===true?'passed':mgVd.passes===false?'failed':'validation_unavailable');
+        const mgFailClosed = mgVd.passes !== true;
+        mgVvProof = { audit_status: mgPrepareData?.auditStatus||'success', validation_status: mgVStatus, image_not_verified: mgFailClosed, final_image_accepted: !mgFailClosed, expected_human_count: people.length, final_visual_roster: mgVisualAudit?.final_visual_roster||[], conversation_entities_detected: mgVisualAudit?.conversation_entities_detected||[], location_entities_detected: mgVisualAudit?.location_entities_detected||[], sender_detected: mgVisualAudit?.sender_detected||null, sender_ignored: mgVisualAudit?.sender_ignored||null, forbidden_context_sources_blocked: mgVisualAudit?.forbidden_context_sources_blocked||[], identifiable_background_faces_detected: mgVd.vision_result?.identifiable_background_faces_detected??null, banned_person_appeared: mgVd.vision_result?.banned_person_appeared??null, sender_appeared: mgVd.vision_result?.sender_appeared??null, reject_reason: mgVd.reject_reason||null, validation_error: mgVd.validation_error||null };
+        console.log(`[PostGenValidation][mediaGridGenerate] vStatus=${mgVStatus} passes=${mgVd.passes??'null'} fail_closed=${mgFailClosed}`);
+        if (mgFailClosed) {
+          const mgRr = mgVd.reject_reason||(mgVd.issues||[]).join('; ')||mgVStatus;
+          console.error(`[PostGenValidation][mediaGridGenerate] ⛔ BLOCKED (${mgVStatus}): ${mgRr}`);
+          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { visual_validation: { ...mgVvProof, final_image_accepted: false } } }).catch(() => {});
+          return Response.json({ success: false, error: `Multi-person image blocked: ${mgRr}`, validation_status: mgVStatus, image_not_verified: true, final_image_accepted: false }, { status: 422 });
         }
+        let mgPostGenStatus = mgVStatus;
 
         // Build structured subjects array — matches generateImageAsync format.
         // This allows recoverSingleImage and regenerateImageWithReason to recover
@@ -659,6 +661,7 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
           context_origin: 'media_grid',
           schema_written_at: new Date().toISOString(),
           post_gen_validation_status: mgPostGenStatus,
+          visual_validation: mgVvProof,
 
           // New structured format — read by recoverSingleImage and regenerateImageWithReason
           image_type: 'multi',
