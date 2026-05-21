@@ -1,18 +1,17 @@
 /**
  * fetchMediaGalleryPage
  *
- * CORRECT PAGINATION ALGORITHM:
- * 1. Gather ALL owner-verified image candidates from all sources
- * 2. Filter by search term
- * 3. Deduplicate by URL
- * 4. Sort by timestamp descending
- * 5. THEN slice for pagination (page * PAGE_SIZE)
+ * CORRECT PAGINATION WITH BATCHED FETCHING:
+ * 1. Fetch raw messages in batches (not one capped list)
+ * 2. Collect owner-verified images until we have ENOUGH for the requested page
+ * 3. Stop only when: (a) we have enough, OR (b) no more records exist
+ * 4. Then dedupe, sort, paginate
  *
- * This guarantees consistent pages because pagination happens AFTER filtering,
- * not on raw message records.
+ * This fixes the issue where page 15 fails because only 500 raw messages were scanned.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+const BATCH_SIZE = 200;
 const PAGE_SIZE = 20;
 
 Deno.serve(async (req) => {
@@ -26,90 +25,118 @@ Deno.serve(async (req) => {
     const { page = 1, pageSize = PAGE_SIZE, searchTerm = '' } = await req.json();
     const currentUserEmail = user.email;
     const searchLower = searchTerm.toLowerCase();
+    const requiredImageCount = page * pageSize; // Need this many verified images to slice page
 
-    console.log(`[fetchMediaGalleryPage] page=${page} pageSize=${pageSize} search="${searchTerm}" user=${currentUserEmail}`);
+    console.log(`[fetchMediaGalleryPage] page=${page} pageSize=${pageSize} requiredImageCount=${requiredImageCount} search="${searchTerm}"`);
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // STEP 1: Gather all owner-verified images from all sources
+    // STEP 1: Batched fetching — collect until we have enough verified images
     // ─────────────────────────────────────────────────────────────────────────────
 
     const allImages = [];
-    let totalScanned = 0;
-    let totalVerified = 0;
+    let rawOffset = 0;
+    let totalRawScanned = 0;
+    let batchNumber = 0;
+    let exhausted = false;
 
-    // Source 1: All Messages with image_url
-    try {
-      console.log('[fetchMediaGalleryPage] Source 1: Scanning Messages');
-      const messages = await base44.asServiceRole.entities.Message.list('-timestamp', 500);
-      totalScanned += messages.length;
+    while (allImages.length < requiredImageCount && !exhausted) {
+      batchNumber++;
+      console.log(`[fetchMediaGalleryPage] Batch ${batchNumber}: fetching ${BATCH_SIZE} messages starting at offset ${rawOffset}`);
 
-      for (const m of messages) {
-        // Only include messages with image_url
-        if (!m.image_url) continue;
+      try {
+        // Fetch batch of raw messages (ascending order, so we scan from oldest first — then reverse to newest)
+        const batch = await base44.asServiceRole.entities.Message.list('timestamp', BATCH_SIZE, rawOffset);
 
-        // CRITICAL: Verify ownership through parent source
-        let isOwner = false;
-        let verificationPath = null;
-
-        // Path A: Message.owner_email
-        if (m.owner_email === currentUserEmail) {
-          isOwner = true;
-          verificationPath = `message.owner_email`;
+        if (!batch || batch.length === 0) {
+          console.log(`[fetchMediaGalleryPage] Batch ${batchNumber}: empty result — exhausted`);
+          exhausted = true;
+          break;
         }
 
-        // Path B: Conversation owner
-        if (!isOwner && m.conversation_id) {
-          try {
-            const conv = await base44.asServiceRole.entities.Conversation.get(m.conversation_id).catch(() => null);
-            if (conv && (conv.owner_email === currentUserEmail || conv.created_by === currentUserEmail)) {
-              isOwner = true;
-              verificationPath = `conversation.owner_email`;
-            }
-          } catch {
-            // Ignore conversation lookup failure — message ownership is still possible via other paths
+        totalRawScanned += batch.length;
+        console.log(`[fetchMediaGalleryPage] Batch ${batchNumber}: got ${batch.length} raw records`);
+
+        // Process each message for ownership and images
+        for (const m of batch) {
+          // Only process messages with image_url
+          if (!m.image_url) continue;
+
+          // CRITICAL: Verify ownership through parent source
+          let isOwner = false;
+          let verificationPath = null;
+
+          // Path A: Message.owner_email
+          if (m.owner_email === currentUserEmail) {
+            isOwner = true;
+            verificationPath = `message.owner_email`;
           }
-        }
 
-        // Path C: Character owner (if character_id is present)
-        if (!isOwner && m.character_id) {
-          try {
-            const char = await base44.asServiceRole.entities.Character.get(m.character_id).catch(() => null);
-            if (char && char.owner_email === currentUserEmail) {
-              isOwner = true;
-              verificationPath = `character.owner_email`;
+          // Path B: Conversation owner
+          if (!isOwner && m.conversation_id) {
+            try {
+              const conv = await base44.asServiceRole.entities.Conversation.get(m.conversation_id).catch(() => null);
+              if (conv && (conv.owner_email === currentUserEmail || conv.created_by === currentUserEmail)) {
+                isOwner = true;
+                verificationPath = `conversation.owner_email`;
+              }
+            } catch {
+              // Ignore lookup failure
             }
-          } catch {
-            // Ignore character lookup failure
           }
+
+          // Path C: Character owner
+          if (!isOwner && m.character_id) {
+            try {
+              const char = await base44.asServiceRole.entities.Character.get(m.character_id).catch(() => null);
+              if (char && char.owner_email === currentUserEmail) {
+                isOwner = true;
+                verificationPath = `character.owner_email`;
+              }
+            } catch {
+              // Ignore lookup failure
+            }
+          }
+
+          if (!isOwner) continue;
+
+          allImages.push({
+            id: m.id,
+            url: m.image_url,
+            description: m.image_description || m.content?.slice(0, 100) || 'Image',
+            senderType: m.sender_type,
+            senderName: m.character_name || 'You',
+            characterId: m.character_id,
+            conversationId: m.conversation_id,
+            timestamp: m.timestamp || m.created_date,
+            messageId: m.id,
+            ownerEmail: m.owner_email,
+            verificationPath,
+            source_type: 'message',
+            source_id: m.id,
+            parent_entity: 'Message',
+            parent_owner_email: m.owner_email,
+            parent_conversation_id: m.conversation_id,
+          });
         }
 
-        if (!isOwner) continue;
+        console.log(`[fetchMediaGalleryPage] Batch ${batchNumber}: collected ${allImages.length} verified images so far`);
 
-        totalVerified++;
-        allImages.push({
-          id: m.id,
-          url: m.image_url,
-          description: m.image_description || m.content?.slice(0, 100) || 'Image',
-          senderType: m.sender_type,
-          senderName: m.character_name || 'You',
-          characterId: m.character_id,
-          conversationId: m.conversation_id,
-          timestamp: m.timestamp || m.created_date,
-          messageId: m.id,
-          ownerEmail: m.owner_email,
-          verificationPath,
-          source_type: 'message',
-          source_id: m.id,
-          parent_entity: 'Message',
-          parent_owner_email: m.owner_email,
-          parent_conversation_id: m.conversation_id,
-        });
+        // Stop if batch was smaller than BATCH_SIZE (no more records exist)
+        if (batch.length < BATCH_SIZE) {
+          console.log(`[fetchMediaGalleryPage] Batch ${batchNumber}: returned ${batch.length} < ${BATCH_SIZE} — exhausted`);
+          exhausted = true;
+          break;
+        }
+
+        rawOffset += BATCH_SIZE;
+      } catch (batchErr) {
+        console.log(`[fetchMediaGalleryPage] Batch ${batchNumber} error: ${batchErr.message}`);
+        exhausted = true;
+        break;
       }
-    } catch (err) {
-      console.log(`[fetchMediaGalleryPage] Message scan error: ${err.message}`);
     }
 
-    console.log(`[fetchMediaGalleryPage] Messages: scanned=${totalScanned} verified=${totalVerified}`);
+    console.log(`[fetchMediaGalleryPage] Batching complete: scanned=${totalRawScanned} verified=${allImages.length} batches=${batchNumber}`);
 
     // ─────────────────────────────────────────────────────────────────────────────
     // STEP 2: Deduplicate by URL
@@ -117,10 +144,7 @@ Deno.serve(async (req) => {
 
     const seenUrls = new Set();
     const deduplicated = allImages.filter(img => {
-      if (seenUrls.has(img.url)) {
-        console.log(`[fetchMediaGalleryPage] Dedup: skipped ${img.url.substring(0, 50)}`);
-        return false;
-      }
+      if (seenUrls.has(img.url)) return false;
       seenUrls.add(img.url);
       return true;
     });
@@ -148,7 +172,6 @@ Deno.serve(async (req) => {
         const sender = (img.senderName || '').toLowerCase();
         return desc.includes(searchLower) || sender.includes(searchLower);
       });
-      console.log(`[fetchMediaGalleryPage] After search filter: ${filtered.length} images`);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -161,29 +184,15 @@ Deno.serve(async (req) => {
     const pageImages = filtered.slice(start, end);
     const hasMore = end < totalImages;
 
-    console.log(`[fetchMediaGalleryPage] PAGINATION: total=${totalImages} start=${start} end=${end} pageSize=${pageSize} hasMore=${hasMore}`);
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // PROOF & RETURN
-    // ─────────────────────────────────────────────────────────────────────────────
-
-    console.log('[fetchMediaGalleryPage] PROOF LOG:');
-    console.log(`  currentUser: ${currentUserEmail}`);
-    console.log(`  page: ${page}`);
-    console.log(`  pageSize: ${pageSize}`);
-    console.log(`  search: "${searchTerm}"`);
-    console.log(`  totalMessages scanned: ${totalScanned}`);
-    console.log(`  totalVerified from messages: ${totalVerified}`);
-    console.log(`  afterDedup: ${deduplicated.length}`);
-    console.log(`  afterSearch: ${filtered.length}`);
-    console.log(`  sliceStart: ${start}`);
-    console.log(`  sliceEnd: ${end}`);
-    console.log(`  pageImages returned: ${pageImages.length}`);
-    console.log(`  hasMore: ${hasMore}`);
+    console.log(`[fetchMediaGalleryPage] PAGINATION: total=${totalImages} start=${start} end=${end} hasMore=${hasMore}`);
 
     if (pageImages.length > 0) {
       console.log(`[fetchMediaGalleryPage] Page ${page} first image: id=${pageImages[0].id} timestamp=${pageImages[0].timestamp}`);
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // PROOF & RETURN
+    // ─────────────────────────────────────────────────────────────────────────────
 
     return Response.json({
       images: pageImages,
@@ -193,16 +202,20 @@ Deno.serve(async (req) => {
       totalImages,
       hasMore,
       proof: {
-        currentUserEmail,
-        page,
-        totalImagesScanned: totalScanned,
-        totalVerified,
+        requestedPage: page,
+        pageSize,
+        requiredImageCount,
+        rawRecordsScanned: totalRawScanned,
+        verifiedImagesCollected: allImages.length,
         afterDedup: deduplicated.length,
         afterSearch: filtered.length,
         sliceStart: start,
         sliceEnd: end,
         pageImagesReturned: pageImages.length,
+        firstImageIdOnPage: pageImages.length > 0 ? pageImages[0].id : null,
         hasMore,
+        exhausted,
+        batchesScanned: batchNumber,
       }
     });
 

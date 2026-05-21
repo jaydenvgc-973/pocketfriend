@@ -406,15 +406,19 @@ function SendImageModal({ image, onClose, onSent }) {
   }, [characters]);
 
   const handleSend = async () => {
-    if (selected.size === 0) return;
     setLoading(true);
     try {
-      for (const charId of selected) {
-        const char = characters.find(c => c.id === charId);
-        if (!char) continue;
+      if (senderMode === 'user') {
+        // User sending to multiple characters
+        if (selected.size === 0) {
+          alert('Please select at least one character');
+          setLoading(false);
+          return;
+        }
+        for (const charId of selected) {
+          const char = characters.find(c => c.id === charId);
+          if (!char) continue;
 
-        if (senderMode === 'user') {
-          // User sending to character — use Text/Chat system
           await base44.entities.Message.create({
             conversation_id: `${charId}_user`,
             sender_type: 'user',
@@ -423,15 +427,57 @@ function SendImageModal({ image, onClose, onSent }) {
             image_url: image.url,
             timestamp: new Date().toISOString(),
           });
-        } else {
-          // Character sending to character — use World Phone system
-          await base44.functions.invoke('sendWorldPhoneMessage', {
-            senderCharacterId: charId,
-            recipientCharacterId: charId, // Will be replaced by actual recipient selection if needed
-            messageContent: image.description,
-            imageUrl: image.url,
-            messageType: 'image',
-          });
+        }
+        console.log(`[SendImageModal] User sent image to ${selected.size} character(s)`);
+      } else {
+        // Character sending to character via World Phone
+        if (!recipient) {
+          alert('Please select a recipient character');
+          setLoading(false);
+          return;
+        }
+
+        const senderChar = characters.find(c => c.id === recipient); // sender is the selected recipient dropdown (actual sender)
+        const senderCharacterId = recipient;
+        const receiverCharacterIds = Array.from(selected);
+
+        if (receiverCharacterIds.length === 0) {
+          alert('Please select at least one receiver character');
+          setLoading(false);
+          return;
+        }
+
+        // Send image to each selected receiver via World Phone
+        for (const receiverId of receiverCharacterIds) {
+          try {
+            const res = await base44.functions.invoke('sendWorldPhoneMessage', {
+              sender_character_id: senderCharacterId,
+              recipient_identifier: receiverId,
+              requested_message: image.description || 'Shared an image',
+              image_url: image.url,
+              source: 'media_gallery_send',
+              current_conversation_id: null,
+              owner_email: user?.email,
+            });
+
+            console.log('[SendImageModal] World Phone send result:', {
+              send_as: 'character',
+              sender_character_id: senderCharacterId,
+              receiver_character_id: receiverId,
+              image_url: image.url,
+              success: res?.data?.success,
+              message_id: res?.data?.message_id,
+            });
+
+            if (!res?.data?.success) {
+              throw new Error(res?.data?.error || 'World Phone send failed');
+            }
+          } catch (e) {
+            console.error(`[SendImageModal] Failed to send to ${receiverId}:`, e.message);
+            alert(`Failed to send to character: ${e.message}`);
+            setLoading(false);
+            return;
+          }
         }
       }
       onSent();
@@ -534,14 +580,51 @@ function SendImageModal({ image, onClose, onSent }) {
           </div>
         )}
 
-        {/* Character List — for user sends, shows who receives the image */}
+        {/* User mode: select receivers */}
         {senderMode === 'user' && (
-          <div className="mb-4 flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20">
-            <CharacterGroup title="Active Characters" chars={groupedCharacters.active_created} />
-            <CharacterGroup title="NPC Regular" chars={groupedCharacters.npc_regular} />
-            <CharacterGroup title="NPC Family Members" chars={groupedCharacters.npc_family} />
-            <CharacterGroup title="NPC Fictitious" chars={groupedCharacters.npc_fictitious} />
-            <CharacterGroup title="Other" chars={groupedCharacters.other} />
+          <div className="mb-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send to Characters:</p>
+            <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 max-h-56">
+              <CharacterGroup title="Active Characters" chars={groupedCharacters.active_created} />
+              <CharacterGroup title="NPC Regular" chars={groupedCharacters.npc_regular} />
+              <CharacterGroup title="NPC Family Members" chars={groupedCharacters.npc_family} />
+              <CharacterGroup title="NPC Fictitious" chars={groupedCharacters.npc_fictitious} />
+              <CharacterGroup title="Other" chars={groupedCharacters.other} />
+            </div>
+          </div>
+        )}
+
+        {/* Character mode: select sender, then receivers */}
+        {senderMode === 'character' && (
+          <div className="mb-4 space-y-4">
+            {/* Sender selection */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Sending As:</p>
+              <select
+                value={recipient || ''}
+                onChange={(e) => setRecipient(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-border bg-card text-foreground"
+              >
+                <option value="">— Select character —</option>
+                {characters.map((char) => (
+                  <option key={char.id} value={char.id}>
+                    {char.display_name || char.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Receiver selection */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send To:</p>
+              <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 max-h-40">
+                <CharacterGroup title="Active Characters" chars={groupedCharacters.active_created} />
+                <CharacterGroup title="NPC Regular" chars={groupedCharacters.npc_regular} />
+                <CharacterGroup title="NPC Family Members" chars={groupedCharacters.npc_family} />
+                <CharacterGroup title="NPC Fictitious" chars={groupedCharacters.npc_fictitious} />
+                <CharacterGroup title="Other" chars={groupedCharacters.other} />
+              </div>
+            </div>
           </div>
         )}
 
@@ -555,8 +638,8 @@ function SendImageModal({ image, onClose, onSent }) {
           </button>
           <button
             onClick={handleSend}
-            disabled={loading || (senderMode === 'user' ? selected.size === 0 : !recipient)}
-            className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
+            disabled={loading || (senderMode === 'user' ? selected.size === 0 : !recipient || selected.size === 0)}
+            className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Sending...' : 'Send'}
           </button>
