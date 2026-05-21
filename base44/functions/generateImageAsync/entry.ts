@@ -785,9 +785,7 @@ spatial/structural understanding. Discard ALL conflicting lighting states. Apply
 Treat the environment as a reusable 3D physical space that can be dynamically re-lit under any conditions.
 The active lighting period is the ONLY authority: ${timeLighting.period} — ${timeLighting.desc}.`;
 
-  function buildAppearanceLockText(desc) {
-    return [(desc||'').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0]||null,(desc||'').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0]||null,(desc||'').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0]||null,(desc||'').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0]||null].filter(Boolean).join(', ')||'as described';
-  }
+  function buildAppearanceLockText(desc,name){const d=desc||'',n=name||'this character';const ht=d.match(/\b(dreadlocks?|locs?|afro|coils?|braids?|long hair|short hair|buzz cut|fade|bald|shaved head|pixie|bob|wavy|curly|straight|natural hair|voluminous|cornrows|twists?)/i)?.[1]||null;const hc=d.match(/\b(black hair|brown hair|blonde hair|gray hair|grey hair|red hair|auburn|platinum hair|white hair)/i)?.[1]||null;const fh=d.match(/\b(clean-?shaven|no facial hair|beard|full beard|thick beard|goatee|mustache|stubble)/i)?.[1]||null;const st=d.match(/\b(fair skin|light skin|pale skin|medium skin|olive skin|tan skin|brown skin|dark skin|deep skin|ebony skin)/i)?.[1]||null;const bt=d.match(/\b(slim|slender|lean|athletic|muscular|stocky|heavyset|heavy.?set|plus.?size|curvy|petite|tall|broad|average build|thin|overweight)/i)?.[1]||null;const isBald=/\b(bald|shaved head|no hair)\b/i.test(d);console.log(`[CanonicalAppearance] ${n}: hair=${ht||'n/a'} bald=${isBald} facial=${fh||'n/a'} skin=${st||'n/a'} body=${bt||'n/a'}`);if(!ht&&!hc&&!fh&&!st&&!bt&&!isBald)return`render from refs — do not redesign`;const r=[`\n🔒 CANONICAL APPEARANCE LOCK — "${n}" — ABSOLUTE IDENTITY AUTHORITY\nThese traits OVERRIDE any conflicting prompt styling. Canonical = source of truth.\n`];if(isBald){r.push(`HAIR: BALD — zero hair on top. ⛔ NO curls, locs, braids, fade, hairline.`);}else if(ht){r.push(`HAIR: ${ht}`);if(/dreadlocks?|locs?/i.test(ht))r.push(`⛔ REJECT: fade, short, bald, generic curls — DREADLOCKS ONLY`);else if(/long hair/i.test(ht))r.push(`⛔ REJECT: short, buzz, fade, cropped — LONG HAIR ONLY`);else if(/short|buzz|fade/i.test(ht))r.push(`⛔ REJECT: long, flowing — SHORT/FADE ONLY`);else if(/braids?|cornrows/i.test(ht))r.push(`⛔ REJECT: loose/straight/fade — BRAIDS ONLY`);else if(/afro/i.test(ht))r.push(`⛔ REJECT: straight, slicked, fade — AFRO ONLY`);}if(hc)r.push(`HAIR COLOR: ${hc} — do not alter.`);if(fh){r.push(`FACIAL HAIR: ${fh}`);if(/clean-?shaven|no facial hair/i.test(fh))r.push(`⛔ REJECT beard/stubble — CLEAN-SHAVEN ONLY`);else r.push(`⛔ REJECT clean-shaven — ${fh} MUST EXIST`);}if(st)r.push(`SKIN TONE: ${st} — do not lighten/darken.`);if(bt)r.push(`BODY TYPE: ${bt} — do not slim, bulk, age-down, or beautify.`);r.push(`\nCANONICAL > REFS > PROMPT. Prompt controls pose/scene ONLY. NOT hair/face/body.\n⛔ REJECT: any prompt trait conflicting with the above.\n🚫 INVALID if hair/facial hair/body type differs from canonical.`);return r.join('\n');}
 
   let identityLock = '';
 
@@ -829,7 +827,7 @@ Extract ONLY: face structure, skin tone, eye shape, nose, mouth, hair color/leng
 }
 Subject 1 Appearance Lock (ABSOLUTE — 100% non-negotiable):
   ${charDesc ? charDesc : 'Generate as described in scene prompt.'}
-Subject 1 Appearance Key: ${buildAppearanceLockText(charDesc)}
+Subject 1 Appearance Key: ${buildAppearanceLockText(charDesc, charName)}
 ⛔ Subject 1 MUST look like "${charName}" at all times. Do NOT substitute a generic person.
 ⛔ Do NOT let Subject 2's appearance overwrite or bleed into Subject 1.
 
@@ -892,7 +890,7 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
   ✅ Cast real shadows from the character onto the floor and nearby furniture using ${timeLighting.period} lighting
   ✅ Skin tones, highlights, and shadows on the character MUST match the room's time-of-day lighting exactly
   ✅ Character scale must be physically correct relative to the room furniture and camera distance
-  ✅ APPEARANCE LOCK (100% ABSOLUTE): ${buildAppearanceLockText(charDesc)} — NON-NEGOTIABLE
+  ✅ APPEARANCE LOCK (100% ABSOLUTE): ${buildAppearanceLockText(charDesc, charName)}
   ✅ OUTFIT ENFORCEMENT: See CLOSET OUTFIT LOCK block below — this is NON-NEGOTIABLE.
   
   ⛔ HARD FAILS:
@@ -909,7 +907,7 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
   ? `Images ${charRefStart}–${charEnd} are face reference photos. Match ONLY face structure, skin tone, eyes, hair color/length/style, facial hair, body type.`
   : `Generate "${charName}" from text description: ${charDesc || 'realistic human'}.`
   }
-  ✅ APPEARANCE LOCK: ${buildAppearanceLockText(charDesc)} — NON-NEGOTIABLE
+  ✅ APPEARANCE LOCK: ${buildAppearanceLockText(charDesc, charName)}
   ⛔ Do NOT copy pose, background, or clothing from reference photos — only the face identity transfers`;
   }
 
@@ -1209,81 +1207,7 @@ Deno.serve(async (req) => {
     // If the prompt contains wording that directly contradicts locked appearance fields,
     // remove or rewrite the conflicting phrase. appearance_lock always wins.
     // This is applied to sanitizedPrompt (reassignable let) so corrections feed into buildPrompt.
-    function validatePromptAgainstAppearanceLock(p, lock) {
-      if (!lock || typeof lock !== 'object') return { prompt: p, corrections: [] };
-      const corrections = [];
-      let result = p;
-
-      // Hair type/style conflicts
-      if (lock.hair_type || lock.hairstyle) {
-        const lockedHair = [lock.hair_type, lock.hairstyle].filter(Boolean).join(' ').toLowerCase();
-        const isLongOrVoluminous = /\b(long|afro|coily|coil|voluminous|thick|natural|curly)\b/.test(lockedHair);
-        if (isLongOrVoluminous) {
-          // Remove contradicting short hair descriptors
-          const shortHairPattern = /\b(short\s+(?:dark\s+)?hair|closely?\s+cropped\s+hair|buzz\s+cut|fade\s+cut|cropped\s+hair)\b/gi;
-          const fixed = result.replace(shortHairPattern, `${lockedHair} hair`);
-          if (fixed !== result) {
-            corrections.push({ field: 'hair', removed: result.match(shortHairPattern)?.[0], injected: `${lockedHair} hair` });
-            result = fixed;
-          }
-        }
-        const isShort = /\b(short|cropped|buzz|fade)\b/.test(lockedHair);
-        if (isShort) {
-          const longHairPattern = /\b(long\s+(?:flowing\s+)?hair|flowing\s+hair|waist[\s-]length\s+hair)\b/gi;
-          const fixed = result.replace(longHairPattern, `${lockedHair} hair`);
-          if (fixed !== result) {
-            corrections.push({ field: 'hair', removed: result.match(longHairPattern)?.[0], injected: `${lockedHair} hair` });
-            result = fixed;
-          }
-        }
-      }
-
-      // Facial hair conflicts
-      if (lock.facial_hair) {
-        const lockedFacial = lock.facial_hair.toLowerCase();
-        const hasBeard = /\b(beard|goatee|stubble|mustache)\b/.test(lockedFacial);
-        const isCleanShaven = /\b(clean.?shaven|no facial hair|shaved)\b/.test(lockedFacial);
-        if (isCleanShaven) {
-          const beardPattern = /\b(thick\s+beard|full\s+beard|long\s+beard|beard|goatee|stubble)\b/gi;
-          const fixed = result.replace(beardPattern, 'clean-shaven');
-          if (fixed !== result) {
-            corrections.push({ field: 'facial_hair', removed: 'beard/stubble', injected: 'clean-shaven' });
-            result = fixed;
-          }
-        } else if (hasBeard) {
-          const cleanPattern = /\bclean.?shaven\b/gi;
-          const fixed = result.replace(cleanPattern, lockedFacial);
-          if (fixed !== result) {
-            corrections.push({ field: 'facial_hair', removed: 'clean-shaven', injected: lockedFacial });
-            result = fixed;
-          }
-        }
-      }
-
-      // Skin tone conflicts — only rewrite if clearly wrong tone is stated
-      if (lock.skin_tone) {
-        const lockedSkin = lock.skin_tone.toLowerCase();
-        const isDark = /\b(dark|deep|rich brown|brown skin|dark brown)\b/.test(lockedSkin);
-        const isFair = /\b(fair|light|pale|porcelain|ivory)\b/.test(lockedSkin);
-        if (isDark) {
-          const fairSkinPattern = /\b(fair[- ]?skinned|light[- ]?skinned|pale[- ]?skinned|pale skin|fair skin|light skin)\b/gi;
-          const fixed = result.replace(fairSkinPattern, `${lockedSkin} skin`);
-          if (fixed !== result) {
-            corrections.push({ field: 'skin_tone', removed: 'fair/light/pale', injected: `${lockedSkin} skin` });
-            result = fixed;
-          }
-        } else if (isFair) {
-          const darkSkinPattern = /\b(dark[- ]?skinned|dark skin|deeply complexioned)\b/gi;
-          const fixed = result.replace(darkSkinPattern, `${lockedSkin} skin`);
-          if (fixed !== result) {
-            corrections.push({ field: 'skin_tone', removed: 'dark-skinned', injected: `${lockedSkin} skin` });
-            result = fixed;
-          }
-        }
-      }
-
-      return { prompt: result, corrections };
-    }
+    function validatePromptAgainstAppearanceLock(p,lock){if(!lock||typeof lock!=='object')return{prompt:p,corrections:[]};const c=[];let r=p;const fix=(field,pat,rep)=>{const f=r.replace(pat,rep);if(f!==r){c.push({field,removed:String(pat),injected:rep});r=f;}};if(lock.hair_type||lock.hairstyle){const lh=[lock.hair_type,lock.hairstyle].filter(Boolean).join(' ').toLowerCase();if(/\b(bald|shaved head|no hair)\b/.test(lh)){fix('hair',/\b(short\s+hair|long\s+hair|curly\s+hair|dreadlocks?|locs?|afro|braids?|fade|buzz\s+cut|cornrows|full\s+head)\b/gi,'bald');}else if(/\b(dreadlocks?|locs?)\b/.test(lh)){fix('hair',/\b(short\s+hair|closely?\s+cropped|buzz\s+cut|fade|shaved|bald|generic\s+curls?|straight\s+hair)\b/gi,'dreadlocks');}else if(/\b(long|afro|coily|voluminous|braids?)\b/.test(lh)){fix('hair',/\b(short\s+(?:dark\s+)?hair|closely?\s+cropped\s+hair|buzz\s+cut|fade\s+cut|cropped\s+hair)\b/gi,lh+' hair');}else if(/\b(short|cropped|buzz|fade)\b/.test(lh)){fix('hair',/\b(long\s+(?:flowing\s+)?hair|flowing\s+hair|waist[\s-]length\s+hair|dreadlocks?|locs?)\b/gi,lh+' hair');}}if(lock.facial_hair){const lf=lock.facial_hair.toLowerCase();if(/\b(clean.?shaven|no facial hair|shaved)\b/.test(lf))fix('facial_hair',/\b(thick\s+beard|full\s+beard|beard|goatee|stubble)\b/gi,'clean-shaven');else if(/\b(beard|goatee|stubble|mustache)\b/.test(lf))fix('facial_hair',/\bclean.?shaven\b/gi,lf);}if(lock.skin_tone){const ls=lock.skin_tone.toLowerCase();if(/\b(dark|deep|rich brown|ebony)\b/.test(ls))fix('skin_tone',/\b(fair[- ]?skinned|light[- ]?skinned|pale skin|fair skin|light skin)\b/gi,ls+' skin');else if(/\b(fair|light|pale|porcelain)\b/.test(ls))fix('skin_tone',/\b(dark[- ]?skinned|dark skin|deeply complexioned)\b/gi,ls+' skin');}if(lock.overall_aesthetic){const la=lock.overall_aesthetic.toLowerCase();if(/\b(heavyset|heavy.?set|overweight|plus.?size|stocky)\b/.test(la))fix('body_type',/\b(slim|slender|lean|thin|skinny)\b/gi,la);else if(/\b(slim|slender|lean|petite)\b/.test(la))fix('body_type',/\b(heavyset|overweight|large frame|plus.?size|stocky)\b/gi,la);}if(c.length>0)c.forEach(x=>console.warn(`[AppearanceLock] corrected field=${x.field}`));return{prompt:r,corrections:c};}
 
     // ── 2. RESOLVE CHARACTER ──────────────────────────────────────────────────
     let charRecord = null;
