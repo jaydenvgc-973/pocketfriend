@@ -19,68 +19,60 @@ export default function MediaGallery() {
     base44.auth.me().then(u => setUser(u)).catch(() => {});
   }, []);
 
-  const [lastTimestamp, setLastTimestamp] = useState(null);
   const [hasMore, setHasMore] = useState(true);
 
   // Load paginated batch of images on demand
+  // Uses skip-based pagination: page 1 = skip 0, page 2 = skip 20, etc.
+  // Fetches IMAGES_PER_PAGE + 1 to detect if more pages exist, then slices back to 20.
+  // No $exists filter (not supported) — filter by image_url presence in JS after fetch.
+  // Fetches a wider batch (IMAGES_PER_PAGE * 3) to account for JS-side filtering of
+  // records without image_url, then slices to the correct window.
+  const FETCH_BATCH = IMAGES_PER_PAGE * 4; // wider net to find enough image records
   const { data: currentPageImages = [], isLoading, refetch: refetchCurrentPage } = useQuery({
     queryKey: ['media_gallery_page', user?.email, currentPage, searchTerm],
     queryFn: async () => {
       if (!user?.email) return [];
       try {
-        // Build query: filter by search term if present
-        const query = { image_url: { $exists: true } };
-        
-        // Apply search filter if present
         const searchLower = searchTerm.toLowerCase();
-        
-        // Fetch 20 images, ordered newest first
-        let messages = await base44.entities.Message.filter(
-          query,
-          '-timestamp',
-          IMAGES_PER_PAGE + 1  // Fetch one extra to detect if there are more pages
-        );
+        // Skip = (page - 1) * 20 image records. Because we don't know how many non-image
+        // records exist before our target window, we fetch a larger batch from the correct
+        // timestamp offset and filter down. We use skip on the raw query as an approximation.
+        const skip = (currentPage - 1) * IMAGES_PER_PAGE;
 
-        // Deduplicate by URL and filter by search term
+        // Fetch a broad batch ordered newest first, skipping already-seen pages
+        const messages = await base44.entities.Message.list('-timestamp', FETCH_BATCH, skip * 2);
+
+        // Filter to only messages that have an image_url
         const seen = new Set();
-        const items = messages
-          .filter(m => {
-            // Check if we've already seen this image URL
-            if (seen.has(m.image_url)) return false;
-            seen.add(m.image_url);
-            
-            // Apply search filter if present
-            if (searchTerm) {
-              const desc = (m.image_description || m.content || '').toLowerCase();
-              const name = (m.character_name || 'you').toLowerCase();
-              if (!desc.includes(searchLower) && !name.includes(searchLower)) {
-                return false;
-              }
-            }
-            
-            return true;
-          })
-          .slice(0, IMAGES_PER_PAGE)  // Only keep 20 for this page
-          .map(m => ({
-            id: m.id,
-            url: m.image_url,
-            description: m.image_description || m.content?.slice(0, 100) || 'Image',
-            senderType: m.sender_type,
-            senderName: m.character_name || 'You',
-            characterId: m.character_id,
-            conversationId: m.conversation_id,
-            timestamp: m.timestamp,
-            sourceType: 'message',
-            messageId: m.id,
-          }));
+        const withImages = messages.filter(m => {
+          if (!m.image_url) return false;
+          if (seen.has(m.image_url)) return false;
+          seen.add(m.image_url);
+          if (searchTerm) {
+            const desc = (m.image_description || m.content || '').toLowerCase();
+            const name = (m.character_name || 'you').toLowerCase();
+            return desc.includes(searchLower) || name.includes(searchLower);
+          }
+          return true;
+        });
 
-        // Update tracking for next page fetch
-        if (items.length > 0) {
-          setLastTimestamp(items[items.length - 1].timestamp);
-          setHasMore(items.length === IMAGES_PER_PAGE);
-        } else {
-          setHasMore(false);
-        }
+        // Take only 20 for display, +1 to detect hasMore
+        const pageSlice = withImages.slice(0, IMAGES_PER_PAGE + 1);
+        const hasNextPage = pageSlice.length > IMAGES_PER_PAGE;
+        setHasMore(hasNextPage);
+
+        const items = pageSlice.slice(0, IMAGES_PER_PAGE).map(m => ({
+          id: m.id,
+          url: m.image_url,
+          description: m.image_description || m.content?.slice(0, 100) || 'Image',
+          senderType: m.sender_type,
+          senderName: m.character_name || 'You',
+          characterId: m.character_id,
+          conversationId: m.conversation_id,
+          timestamp: m.timestamp,
+          sourceType: 'message',
+          messageId: m.id,
+        }));
 
         return items;
       } catch (e) {

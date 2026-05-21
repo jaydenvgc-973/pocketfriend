@@ -327,42 +327,40 @@ export default function MessageBubble({ message, character, showName = false, on
 
         {/* Message bubble with reaction trigger */}
         <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)} onKeyDown={() => {}}>
-          {/* Narrative action buttons — shown on hover, positioned inline */}
+          {/* Narrative action buttons — inline flex row above/overlaid on narrative, fully within bounds */}
           {isNarrative && !isEditingNarrative && (
-            <>
-              {/* Edit button (left, inline) */}
+            <div className="absolute inset-x-0 top-1 flex items-center justify-between px-2 opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none">
+              {/* Edit — left */}
               <button
                 onClick={(e) => { e.stopPropagation(); setEditedNarrative(message.content || ""); setIsEditingNarrative(true); }}
-                className="absolute left-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
+                className="pointer-events-auto p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40 touch-manipulation"
                 title="Edit narrative"
               >
-                <Pencil className="w-3 h-3" />
+                <Pencil className="w-3.5 h-3.5" />
               </button>
-
-              {/* Delete button (right, inline) */}
-              {onDelete && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
-                  className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40"
-                  title="Remove narrative"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
-
-              {/* Share button (centered underneath) */}
+              {/* Share — center */}
               {onShareNarrative && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onShareNarrative(message); }}
-                  className="absolute left-1/2 -translate-x-1/2 bottom-0 translate-y-full opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40 mt-1"
+                  className="pointer-events-auto p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40 touch-manipulation"
                   title="Share narrative"
                 >
-                  <Share2 className="w-3 h-3" />
+                  <Share2 className="w-3.5 h-3.5" />
                 </button>
               )}
-            </>
+              {/* Delete — right */}
+              {onDelete ? (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
+                  className="pointer-events-auto p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 touch-manipulation"
+                  title="Remove narrative"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              ) : <span />}
+            </div>
           )}
-          <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center py-3" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}`}>
+          <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center py-3 pt-8" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}`}>
             {/* Narrative inline edit mode */}
             {isNarrative && isEditingNarrative && (
               <div className="flex flex-col gap-2 px-2" onClick={e => e.stopPropagation()}>
