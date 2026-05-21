@@ -318,6 +318,46 @@ Deno.serve(async (req) => {
 
     if (!destLoc) return Response.json({ error: 'Destination location not found' }, { status: 404 });
 
+    // ── OWNERSHIP SCOPE VALIDATION (CRITICAL) ───────────────────────────────
+    // Character and destination must belong to the same user account or destination must be public/global.
+    // This prevents cross-account character/location mixing.
+    // HARD RULE: If destination has any owner_email, it must match character owner exactly.
+    if (destLoc.owner_email) {
+      if (destLoc.owner_email !== ownerEmailFinal) {
+        console.error(`[createTravelSession] CROSS-OWNER TRAVEL BLOCKED: ${char.name} (${ownerEmailFinal}) → ${destLoc.name} (${destLoc.owner_email})`);
+        console.error(`[createTravelSession] CONTAMINATION PREVENTED: Character from ${ownerEmailFinal} cannot travel to location owned by ${destLoc.owner_email}`);
+        return Response.json({
+          success: false,
+          error: 'Destination location belongs to a different account',
+          blocked: true,
+          blocker: 'cross_account_location',
+          blocker_reason: `Cannot travel: Khalil (${ownerEmailFinal}) → ${destLoc.name} (${destLoc.owner_email}). Locations must be from the same account.`,
+          character_owner: ownerEmailFinal,
+          destination_owner: destLoc.owner_email,
+        }, { status: 403 });
+      }
+    } else if (!destLoc.is_global && !destLoc.is_user_created && destLoc.scope !== 'shared') {
+      // Location has no owner_email and is not explicitly public/global
+      console.error(`[createTravelSession] UNOWNED LOCATION: ${char.name} → ${destLoc.name} (no owner_email, not public/global)`);
+      return Response.json({
+        success: false,
+        error: 'Destination location ownership cannot be verified',
+        blocked: true,
+        blocker: 'unverified_location',
+        blocker_reason: 'The destination location is not owned by your account and is not publicly available.',
+      }, { status: 403 });
+    }
+    // If destination has no owner_email, it must be explicitly marked public/global
+    if (!destLoc.owner_email && !destLoc.is_global && destLoc.scope !== 'shared') {
+      console.error(`[createTravelSession] UNOWNED LOCATION: ${char.name} → ${destLoc.name} (no owner_email, not global)`);
+      return Response.json({
+        success: false,
+        error: 'Destination location ownership cannot be verified',
+        blocked: true,
+        blocker: 'unverified_location',
+      }, { status: 403 });
+    }
+
     // ── ESTIMATE TRAVEL TIME (deterministic) ───────────────────────────────
     const { durationMinutes, distanceMiles, positioningMode } = estimateTravelTime({
       originLoc,
