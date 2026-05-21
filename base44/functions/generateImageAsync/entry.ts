@@ -1014,83 +1014,10 @@ Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. No
   const ec=isIso&&expectedHumanCount===0?0:expectedHumanCount;
   const humanPurityBlock=`\n\n════════════════════════════════════════════════════════════\n⛔⛔⛔ HUMAN PRESENCE PURITY LAW — ABSOLUTE OVERRIDE ⛔⛔⛔\n════════════════════════════════════════════════════════════\n\nEXPECTED HUMAN COUNT: ${ec}\n${ec===0?'→ ZERO HUMANS. No people, bodies, faces, hands, silhouettes, or reflections of people.':ec===1?'→ EXACTLY ONE declared person. No extras. No background occupants. No bystanders.':'→ EXACTLY TWO declared subjects. No third person. No background figures.'}\n\nFORBIDDEN (unless a named person is explicitly declared in the prompt):\n⛔ Extra people anywhere — foreground, midground, background\n⛔ Partial people — arms, legs, torsos, feet, hands of undeclared persons\n⛔ Silhouettes behind doors, windows, or walls\n⛔ Reflections of people in mirrors, windows, glass, or any surface\n⛔ Shadows implying a person is present\n⛔ Blurred background humans or ambient patrons\n⛔ POV photographer body parts (over-the-shoulder, hands in frame)\n⛔ Environmental extras added for atmosphere\n⛔ Location owners, workers, residents, or family members unless explicitly named\n\nLOCATION OWNER/RESIDENT FIREWALL:\nLocation metadata = setting description ONLY.\nNo person associated with this location may appear unless explicitly named as a subject.\nA named bar does NOT authorize any staff or owner to appear.\nA home does NOT authorize any resident to appear unless declared.\n${isIso?'\nISOLATION ACTIVE: zero humans total. No hand holding the object. No reflection of photographer.\n':''}\n${isPub?'\nPUBLIC ENV EXCEPTION: background figures allowed ONLY as out-of-focus blur. Never foreground. Never identifiable.\n':'\nPRIVATE ENV: zero background figures. Zero extras.\n'}\nTHE GENERATOR MAY NOT ADD HUMANS TO "HELP":\n⛔ "Empty = needs a focal human" — INVALID\n⛔ "A silhouette improves atmosphere" — INVALID\n⛔ "A hand improves realism" — INVALID\n⛔ "Background patron makes venue feel alive" — INVALID\n\nGENERATION INVALID IF:\n🚫 Any undeclared human appears anywhere including reflections\n🚫 Human count exceeds ${ec}\n🚫 Any location-associated person appears without being named\n════════════════════════════════════════════════════════════`;
 
-  // ── VISUAL SOURCE BOUNDARY LAW ────────────────────────────────────────────
-  // Enforces strict separation between subject authority and all forbidden context sources.
-  // Conversation history, relationship context, location entities, and semantic memory
-  // are NEVER visual sources. Only the current prompt + selected subjects + canonical data.
-  const visualSourceBoundary = `
-
-════════════════════════════════════════════════════════════
-⛔ VISUAL SOURCE BOUNDARY LAW — ABSOLUTE ARCHITECTURAL RULE
-════════════════════════════════════════════════════════════
-
-TWO SEPARATE SYSTEMS EXIST. THEY MUST NEVER CROSS.
-
-SYSTEM 1 — SUBJECT AUTHORITY LAYER (the ONLY identity source):
-  ✅ Current image prompt (what the image is about)
-  ✅ Selected/locked subjects listed in this prompt
-  ✅ Canonical appearance_lock fields (hair, skin, body type, facial hair)
-  ✅ Locked reference images (face/body identity only)
-  ✅ Approved closet/outfit data
-
-SYSTEM 2 — ENVIRONMENTAL ATMOSPHERE LAYER (setting and density only):
-  ✅ Crowd density signals (packed, busy, crowded)
-  ✅ Ambient occupancy (anonymous background atmosphere)
-  ✅ Environmental energy (venue mood, lighting, scale)
-  ✅ Background activity level
-  ⛔ CANNOT determine who appears
-  ⛔ CANNOT inject named characters
-  ⛔ CANNOT override selected subjects
-  ⛔ CANNOT use conversation entities as visual subjects
-
-FORBIDDEN VISUAL SOURCES (never allowed to determine identity or appearance):
-  ⛔ Prior chat messages or conversation history
-  ⛔ Recently mentioned character names from conversation context
-  ⛔ Sender identity (who sent the message is NOT a subject)
-  ⛔ Location owner/resident/worker associations
-  ⛔ Relationship context or emotional relevance
-  ⛔ Semantic memory retrieval ("who should be there")
-  ⛔ Inferred presence ("they're probably here too")
-  ⛔ Any person not explicitly declared in this prompt
-
-ENVIRONMENTAL OCCUPANCY SAFETY RULE:
-${isPub ? `This scene implies a populated setting. Anonymous atmospheric occupants ARE allowed, but:
-  ✅ Background figures must be blurred, indistinct, distant, non-identifiable silhouettes
-  ✅ No recognizable facial detail on any background figure
-  ✅ No background figure may resemble any declared subject or recently mentioned character
-  ✅ Background occupants are ATMOSPHERE ONLY — not roster participants
-  ⛔ Do NOT resolve background people into known identities
-  ⛔ Do NOT let any background figure become a secondary focal subject
-  ⛔ If you cannot guarantee anonymous background figures, REDUCE or REMOVE them
-  ⛔ Identity purity > environmental realism — always choose anonymity over detail` : `This is not a public crowd scene. Zero background figures.`}
-
-visual_source_audit:
-  prompt_subjects_used: ${ec > 0 ? 'yes — declared in prompt' : 'none — object/environment only'}
-  locked_subjects_used: yes — only subjects explicitly declared above
-  canonical_traits_used: yes — appearance_lock fields only
-  conversation_entities_detected: [any names from chat history] → IGNORED
-  forbidden_context_sources_blocked: prior_chat, sender_identity, location_associations, relationship_context, semantic_memory
-  final_visual_roster: exactly ${ec} declared subject(s) — no additions from context
-  final_visual_mode: ${ec === 0 ? 'object_or_environment' : ec === 1 ? 'single_subject_portrait_or_scene' : 'dual_subject_scene'}
-  environmental_occupancy_audit:
-    ambient_occupants_enabled: ${isPub ? 'yes — atmosphere only, non-identifiable' : 'no'}
-    identifiable_background_faces_detected: must_be_zero
-    background_identity_similarity_detected: must_be_zero
-    named_character_similarity_detected: must_be_zero
-    environmental_occupants_anonymized: ${isPub ? 'required — blurred silhouettes only' : 'n/a'}
-    subject_authority_lock_active: yes
-    environmental_layer_blocked_from_identity_system: yes
-
-AUTO-REJECT CONDITIONS:
-🚫 Any background figure becomes identifiable
-🚫 Any conversation-mentioned character appears without being in the prompt subject list
-🚫 Sender identity appears in the image
-🚫 Environmental atmosphere overrides subject identity
-🚫 Any person appears who is not declared in this prompt
-
-════════════════════════════════════════════════════════════`;
-
-  return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}${visualSourceBoundary}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`;
+  // visualSourceBoundaryBlock is injected externally from the pre-generation audit call
+  // (see step 5c below). It contains the runtime-computed forbidden entity list,
+  // approved roster, and anonymity enforcement — not static text.
+  return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}{{VISUAL_SOURCE_BOUNDARY_BLOCK}}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`;
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
@@ -1621,7 +1548,53 @@ Deno.serve(async (req) => {
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | char=${charRecord?.name || characterName || 'none'} | outfit_injected=${/Currently wearing:/i.test(charDesc)} | message_id=${messageId}`);
 
 
-    // ── 5b. APPLY APPEARANCE LOCK VALIDATION ─────────────────────────────────
+    // ── 5b. PRE-GENERATION VISUAL SOURCE AUDIT ───────────────────────────────
+    // Calls imageVisualSourceValidator to:
+    //   - Log all runtime diagnostics (conversation_entities_detected, sender_detected, etc.)
+    //   - Build the boundary block text injected into the final prompt
+    //   - Prove forbidden context entities were detected AND ignored
+    let visualSourceAudit = null;
+    let visualSourceBoundaryBlock = '';
+    {
+      const approvedSubjects = [
+        ...(charRecord ? [{ id: charRecord.id, name: charRecord.name, type: 'character', canonical_traits: Object.keys(charRecord.appearance_lock || {}).join(',') || null }] : []),
+        ...((subjectType === 'joint' || subjectType === 'user') ? [{ id: requestingUser, name: userWorldName || 'user', type: 'user' }] : []),
+      ];
+      // Resolve location owner/resident names for forbidden entity detection
+      const locationOwnerNames = [];
+      if (charRecord?.resolved_current_location_id || charRecord?.current_home_location_id) {
+        try {
+          const locId = charRecord.resolved_current_location_id || charRecord.current_home_location_id;
+          const locRecs = await base44.asServiceRole.entities.LocationReference.filter({ id: locId }, null, 1).catch(() => []);
+          const loc = locRecs?.[0];
+          if (loc) {
+            if (loc.owner_character_name) locationOwnerNames.push(loc.owner_character_name);
+            if (loc.owner_npc_name) locationOwnerNames.push(loc.owner_npc_name);
+            (loc.residents || []).forEach(r => { if (r.character_name) locationOwnerNames.push(r.character_name); });
+            (loc.resident_character_names || []).forEach(n => { if (n) locationOwnerNames.push(n); });
+          }
+        } catch (locErr) { /* non-blocking */ }
+      }
+      const expectedHumanCount = subjectType === 'joint' ? 2 : (subjectType === 'character' || subjectType === 'user' || subjectType === 'known_character') ? 1 : 0;
+      try {
+        const auditRes = await base44.functions.invoke('imageVisualSourceValidator', {
+          mode: 'audit',
+          prompt: sanitizedPrompt,
+          approvedSubjects,
+          conversationContextNames: [],  // conversation context not available server-side at this layer
+          locationOwnerNames,
+          senderName: senderCharacterId && senderCharacterId !== characterId ? (charRecord?.name ? null : null) : null,
+          expectedHumanCount,
+          logPrefix: `[VisualSourceAudit][generateImageAsync][${messageId}]`,
+        });
+        visualSourceAudit = auditRes?.data?.audit || null;
+        visualSourceBoundaryBlock = auditRes?.data?.boundary_block || '';
+      } catch (auditErr) {
+        console.warn(`[generateImageAsync] Visual source audit failed (non-blocking): ${auditErr?.message}`);
+      }
+    }
+
+    // ── 5c. APPLY APPEARANCE LOCK VALIDATION ─────────────────────────────────
     const appearanceLockCorrections = [];
     if (charRecord?.appearance_lock && sanitizedPrompt) {
       const { prompt: correctedPrompt, corrections } = validatePromptAgainstAppearanceLock(
@@ -1640,8 +1613,7 @@ Deno.serve(async (req) => {
 
     // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
 
-    // ── USER OUTFIT RESOLUTION — must happen BEFORE buildPrompt ─────────────
-    // FIX: was previously declared AFTER buildPrompt, causing it to always be undefined.
+    // ── USER OUTFIT RESOLUTION ─────────────────────────────────────────────
     let userOutfitText = null;
     if (subjectType === 'joint' || subjectType === 'user') {
       const uoArr = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
@@ -1676,7 +1648,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
     }
 
     const serverTime = new Date();
-    const finalPrompt = thirdPartyPreamble + buildPrompt({
+    let finalPrompt = thirdPartyPreamble + buildPrompt({
       prompt: sanitizedPrompt,
       charName: isThirdPartyPhoto && !characterId ? 'the described person' : (charRecord?.name || characterName || 'the character'),
       charDesc: isThirdPartyPhoto && !characterId ? '' : charDesc,
@@ -1695,6 +1667,13 @@ All reference images (if any) are environment/location refs only — do NOT trea
       userWorldName,
       userOutfitText: userOutfitText || null,
     });
+
+    // Inject the runtime-computed visual source boundary block (replaces placeholder)
+    if (visualSourceBoundaryBlock) {
+      finalPrompt = finalPrompt.replace('{{VISUAL_SOURCE_BOUNDARY_BLOCK}}', visualSourceBoundaryBlock);
+    } else {
+      finalPrompt = finalPrompt.replace('{{VISUAL_SOURCE_BOUNDARY_BLOCK}}', '');
+    }
 
     // ── 7. CAMERA ENFORCEMENT — EXTRACT PREVIOUS CAMERA STATE ────────────────
     // Reuse `message` already fetched in step 1 — no second query needed.
@@ -1860,8 +1839,8 @@ All reference images (if any) are environment/location refs only — do NOT trea
         continue;
       }
 
-      // ── POST-GENERATION APPEARANCE VALIDATION (vision-based, fail-closed) ──
-      if(charRecord?.appearance_lock&&Object.keys(charRecord.appearance_lock||{}).length>0&&attemptGenRes?.url){const lock=charRecord.appearance_lock;const canonHair=[lock.hair_type,lock.hairstyle].filter(Boolean).join(', ');const isBaldC=lock.bald===true||/\b(bald|shaved head|no hair)\b/i.test(lock.hair_type||'');const expH=subjectType==='joint'?2:1;const vp=[`Analyze image. Return JSON only. Character: "${charRecord.name}"`,`CANONICAL: ${isBaldC?'BALD — zero hair':(canonHair||'any hair')}${lock.facial_hair?`, facial_hair: ${lock.facial_hair}`:''}${lock.skin_tone?`, skin: ${lock.skin_tone}`:''}. Expected humans: ${expH}.`,`JSON: {"detected_hair":"...","hair_mismatch":bool,"facial_hair_mismatch":bool,"unauthorized_humans":bool,"partial_humans":bool,"passes":bool,"reject_reason":"null or reason","drift_score":0-10}`,`STRICT: dreadlocks≠short hair → passes=false. bald+any hair → passes=false.`].join('\n');try{const vr=await base44.asServiceRole.integrations.Core.InvokeLLM({prompt:vp,file_urls:[attemptGenRes.url],response_json_schema:{type:'object',properties:{detected_hair:{type:'string'},hair_mismatch:{type:'boolean'},facial_hair_mismatch:{type:'boolean'},unauthorized_humans:{type:'boolean'},partial_humans:{type:'boolean'},passes:{type:'boolean'},reject_reason:{type:'string'},drift_score:{type:'number'}}}});console.log(`[AppearanceValidation] attempt=${attempt} passes=${vr.passes} hair_mismatch=${vr.hair_mismatch} drift=${vr.drift_score} detected="${vr.detected_hair}" reason="${vr.reject_reason}"`);if(vr.passes===false){const rr=vr.reject_reason||'canonical mismatch';stagedAttempts.push({attempt_index:attempt,prompt:attemptPrompt.slice(0,500),generated_image_url:attemptGenRes.url,camera:extractCameraVarsFromPrompt(attemptPrompt),status:'rejected_appearance_mismatch',rejection_reason:rr,vision_result:vr,created_at:new Date().toISOString()});console.warn(`[AppearanceValidation] ⛔ REJECTED attempt ${attempt}: ${rr}`);await base44.asServiceRole.entities.Message.update(messageId,{generation_context:{...baseGenerationContext,camera_variables:null,attempts:stagedAttempts,accepted_attempt_index:null}}).catch(()=>{});if(attempt<MAX_ATTEMPTS){attemptPrompt=attemptPrompt+`\n\n════ APPEARANCE CORRECTION (retry ${attempt}) ════\nPREVIOUS FAILED VALIDATION. ${isBaldC?'BALD — zero hair.':'HAIR canonical="'+canonHair+'". Render ONLY that.'} ${lock.facial_hair?'FACIAL HAIR="'+lock.facial_hair+'". No deviation.':''} drift=${vr.drift_score}/10. CANONICAL NON-NEGOTIABLE.\n════════════════════════`;continue;}console.error(`[AppearanceValidation] ❌ All ${MAX_ATTEMPTS} attempts failed. Failing closed.`);await base44.asServiceRole.entities.Message.update(messageId,{content:'[IMAGE_FAILED]',generation_context:{...baseGenerationContext,attempts:stagedAttempts,accepted_attempt_index:null}}).catch(()=>{});return Response.json({success:false,error:`Image rejected: canonical appearance failed after ${MAX_ATTEMPTS} attempts. ${rr}`,appearance_validation_failed:true});}console.log(`[AppearanceValidation] ✅ PASSES attempt ${attempt} drift=${vr.drift_score}`);}catch(vErr){console.warn(`[AppearanceValidation] ⚠️ Vision error (non-blocking): ${vErr?.message}`);}}
+      // ── POST-GENERATION VALIDATION (via shared imageVisualSourceValidator) ──
+      if(attemptGenRes?.url){const expHC=subjectType==='joint'?2:1;try{const vRes=await base44.functions.invoke('imageVisualSourceValidator',{mode:'validate',imageUrl:attemptGenRes.url,audit:visualSourceAudit||{final_visual_roster:[charRecord?.name||characterName].filter(Boolean),conversation_entities_detected:[],location_entities_detected:[],expected_human_count:expHC},charRecord:charRecord?{name:charRecord.name,appearance_lock:charRecord.appearance_lock||{}}:null,expectedHumanCount:expHC,attempt,logPrefix:`[PostGenValidation][generateImageAsync][${messageId}]`});const vd=vRes?.data||{};if(vd.passes===false){const rr=vd.reject_reason||(vd.issues||[]).join('; ')||'post-gen validation failed';const lock=charRecord?.appearance_lock||{};const cH=[lock.hair_type,lock.hairstyle].filter(Boolean).join(', ');const isBaldC=lock.bald===true||/\b(bald|shaved head|no hair)\b/i.test(lock.hair_type||'');stagedAttempts.push({attempt_index:attempt,prompt:attemptPrompt.slice(0,500),generated_image_url:attemptGenRes.url,camera:extractCameraVarsFromPrompt(attemptPrompt),status:'rejected_post_gen_validation',rejection_reason:rr,validation_issues:vd.issues,created_at:new Date().toISOString()});console.warn(`[PostGenValidation] ⛔ REJECTED attempt ${attempt}: ${rr}`);await base44.asServiceRole.entities.Message.update(messageId,{generation_context:{...baseGenerationContext,camera_variables:null,attempts:stagedAttempts,accepted_attempt_index:null}}).catch(()=>{});if(attempt<MAX_ATTEMPTS){const cl=[`\n\n════ POST-GEN CORRECTION (retry ${attempt}) ════`,`Issues: ${rr}`];if(vd.vision_result?.hair_mismatch)cl.push(isBaldC?'BALD — zero hair.':'HAIR canonical="'+cH+'". Render ONLY that.');if(vd.vision_result?.facial_hair_mismatch&&lock.facial_hair)cl.push(`FACIAL HAIR="${lock.facial_hair}". No deviation.`);if(vd.vision_result?.sender_appeared)cl.push('SENDER MUST NOT APPEAR. Subject is approved roster only.');if(vd.vision_result?.banned_person_appeared)cl.push('BANNED ENTITY APPEARED — remove all conversation/location context persons.');if(vd.vision_result?.identifiable_background_faces_detected)cl.push('BACKGROUND FACES DETECTED — blur all background figures, zero identifiable faces.');cl.push('════════════════════════════════════════');attemptPrompt=attemptPrompt+cl.join('\n');continue;}console.error(`[PostGenValidation] ❌ All ${MAX_ATTEMPTS} attempts failed.`);await base44.asServiceRole.entities.Message.update(messageId,{content:'[IMAGE_FAILED]',generation_context:{...baseGenerationContext,attempts:stagedAttempts,accepted_attempt_index:null}}).catch(()=>{});return Response.json({success:false,error:`Image rejected after ${MAX_ATTEMPTS} attempts: ${rr}`,appearance_validation_failed:true});}}catch(vErr){console.warn(`[PostGenValidation] ⚠️ Error (non-blocking): ${vErr?.message}`);}}
 
       // Extract camera variables from the prompt used — best proxy without image analysis
       const thisCameraVars = extractCameraVarsFromPrompt(attemptPrompt);
