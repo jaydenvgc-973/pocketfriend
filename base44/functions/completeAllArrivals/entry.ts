@@ -37,33 +37,40 @@ Deno.serve(async (req) => {
     let completed = 0;
     let failed = 0;
 
-    // For each arrived session, invoke completeCharacterArrival
-    // (it will verify ownership and write the character's location)
+    // For each arrived session, call achieveCharacterDestination directly (service role)
+    // This bypasses user-scoped RLS and writes the destination.
     for (const session of arrivedSessions) {
       try {
-        const res = await base44.functions.invoke('completeCharacterArrival', {
-          session_id: session.id,
+        const res = await base44.asServiceRole.functions.invoke('achieveCharacterDestination', {
+          character_id:              session.character_id,
+          destination_location_id:   session.destination_location_id,
+          destination_location_name: session.destination_location_name,
+          presence_status:           session.travel_source === 'work_schedule' ? 'at_work' :
+                                     session.travel_source === 'school_schedule' ? 'at_school' : 'visiting',
+          location_type:             'visit',
+          source_reason:             `travel_session_completion:${session.id}`,
+          owner_email:               session.owner_email,
         }).catch(e => ({ data: { success: false, error: e.message } }));
 
-        const cData = res?.data || {};
-        if (cData.success) {
+        const aData = res?.data || {};
+        if (aData.success) {
           completed++;
           results.push({
             session_id: session.id,
             character_name: session.character_name,
-            destination: cData.destination_name,
+            destination: aData.destination_name,
             status: 'completed',
           });
-          console.log(`[completeAllArrivals] ✅ ${session.character_name} arrived at ${cData.destination_name}`);
+          console.log(`[completeAllArrivals] ✅ ${session.character_name} arrived at ${aData.destination_name}`);
         } else {
           failed++;
           results.push({
             session_id: session.id,
             character_name: session.character_name,
-            error: cData.error || 'unknown error',
+            error: aData.error || 'unknown error',
             status: 'failed',
           });
-          console.warn(`[completeAllArrivals] ⚠️ ${session.character_name} arrival completion failed: ${cData.error}`);
+          console.warn(`[completeAllArrivals] ⚠️ ${session.character_name} arrival completion failed: ${aData.error}`);
         }
       } catch (e) {
         failed++;
