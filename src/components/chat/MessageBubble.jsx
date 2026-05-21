@@ -327,26 +327,26 @@ export default function MessageBubble({ message, character, showName = false, on
 
         {/* Message bubble with reaction trigger */}
         <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)} onKeyDown={() => {}}>
-          {/* Narrative action buttons — shown on hover */}
+          {/* Narrative action buttons — shown on hover, positioned inline */}
           {isNarrative && !isEditingNarrative && (
             <>
-              {/* Edit button (left) */}
+              {/* Edit button (left, inline) */}
               <button
                 onClick={(e) => { e.stopPropagation(); setEditedNarrative(message.content || ""); setIsEditingNarrative(true); }}
-                className="absolute -left-12 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
+                className="absolute left-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
                 title="Edit narrative"
               >
-                <Pencil className="w-3.5 h-3.5" />
+                <Pencil className="w-3 h-3" />
               </button>
 
-              {/* Delete button (right) */}
+              {/* Delete button (right, inline) */}
               {onDelete && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
-                  className="absolute -right-12 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40"
+                  className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40"
                   title="Remove narrative"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <Trash2 className="w-3 h-3" />
                 </button>
               )}
 
@@ -354,10 +354,10 @@ export default function MessageBubble({ message, character, showName = false, on
               {onShareNarrative && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onShareNarrative(message); }}
-                  className="absolute left-1/2 -translate-x-1/2 -bottom-8 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
+                  className="absolute left-1/2 -translate-x-1/2 bottom-0 translate-y-full opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40 mt-1"
                   title="Share narrative"
                 >
-                  <Share2 className="w-3.5 h-3.5" />
+                  <Share2 className="w-3 h-3" />
                 </button>
               )}
             </>
