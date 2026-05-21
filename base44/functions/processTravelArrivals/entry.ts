@@ -109,16 +109,12 @@ Deno.serve(async (req) => {
         }
 
         // ── ARRIVE: Update character location ─────────────────────────────
-        // CRITICAL: Character RLS blocks asServiceRole writes because RLS requires data.owner_email = user.email
-        // Since processTravelArrivals is scheduled (no user context), we must either:
-        // A) Create a non-RLS scoped backend function that arrival completion can invoke, or
-        // B) Query the current Character record and use a scoped write mechanism
-        //
-        // For now: use the TravelSession's stored character_snapshot to verify owner, then invoke
-        // a helper function that can write Character data with proper context.
-        // FALLBACK: If helper fails, we at least completed the TravelSession; next resolver cycle will detect it.
+        // Character RLS blocks asServiceRole writes.
+        // SOLUTION: Use the character_snapshot's owner_email to create a scoped update request
+        // that bypasses RLS by using a user-context wrapper function.
+        // Since we don't have user context in a scheduled function, we'll invoke updateCharacterArrivalAsUser
+        // which uses user-scoped API calls internally.
 
-        // Helper approach: invoke a character-update function scoped to the character's owner
         const charUpdatePayload = {
           character_id: char.id,
           owner_email: session.owner_email,
@@ -138,12 +134,11 @@ Deno.serve(async (req) => {
         };
 
         try {
-          // Attempt to update via a helper backend function that handles RLS properly
-          const charUpdateResult = await base44.asServiceRole.functions.invoke('updateCharacterArrivalState', charUpdatePayload);
+          // Invoke user-scoped character update via service role (which CAN invoke, but the function itself uses user API)
+          const charUpdateResult = await base44.asServiceRole.functions.invoke('updateCharacterArrivalAsUser', charUpdatePayload);
           
-          // CRITICAL: Only mark arrived if Character destination write succeeded and was verified
           if (!charUpdateResult?.data?.success) {
-            throw new Error(charUpdateResult?.data?.error || 'Character destination write failed or unverified');
+            throw new Error(charUpdateResult?.data?.error || 'Character destination write failed');
           }
 
           // ── CLOSE TRAVEL SESSION (only on verified success) ──────────────────────────────────────────
@@ -154,9 +149,10 @@ Deno.serve(async (req) => {
             last_progress_update: now.toISOString(),
           });
 
+          console.log(`[processTravelArrivals] ✅ ARRIVED AND VERIFIED: ${char.name} → ${destLoc.name}`);
+
         } catch (charUpdateErr) {
-          // FATAL: Do NOT mark arrived. Set to arrival_failed instead.
-          console.error(`[processTravelArrivals] Character location update FAILED: ${charUpdateErr.message}`);
+          console.error(`[processTravelArrivals] ❌ Arrival write FAILED: ${charUpdateErr.message}`);
           await base44.asServiceRole.entities.TravelSession.update(session.id, {
             route_status:         'arrival_failed',
             error_reason:         charUpdateErr.message,
@@ -164,10 +160,10 @@ Deno.serve(async (req) => {
           errors.push({
             session_id: session.id,
             character_id: char.id,
-            reason: 'arrival_completion_failed',
+            reason: 'arrival_write_failed',
             error: charUpdateErr.message,
           });
-          continue; // Skip the commitment update for this failed session
+          continue;
         }
 
         // ── MARK COMMITMENT COMPLETE if linked ────────────────────────────
