@@ -76,6 +76,7 @@ import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterC
 import { isCharacterConfined, canCharacterRespond, getConfinementNotice } from "@/lib/confinementMessagingEngine";
 import { useChatTimingProof } from "@/hooks/useChatTimingProof";
 import ChatTimingOverlay from "@/components/chat/ChatTimingOverlay";
+import { detectWorldPhoneIntent, detectCharacterWorldPhoneAction } from "@/lib/worldPhoneIntentDetector";
 
 export default function Chat({ chatTypeOverride } = {}) {
   const { characterId } = useParams();
@@ -443,6 +444,23 @@ export default function Chat({ chatTypeOverride } = {}) {
     // ── LOCATION SHARE DETECTION ───────────────────────────────────────────
     const locationShareResult = await tryHandleLocationShare(text);
     if (locationShareResult.handled) return;
+
+    // ── WORLD PHONE EXPLICIT INTENT DETECTION ────────────────────────────────
+    // Detects: "text Character B...", "call Character B...", "tell Character B...", "message Character B..."
+    // Must run BEFORE LLM so we can gate the character's response on real write success.
+    const worldPhoneIntent = detectWorldPhoneIntent(text);
+    let worldPhoneSendResult = null;
+    if (worldPhoneIntent) {
+      worldPhoneSendResult = await base44.functions.invoke('sendWorldPhoneMessage', {
+        sender_character_id: characterId,
+        recipient_identifier: worldPhoneIntent.recipient,
+        requested_message: worldPhoneIntent.message,
+        source: 'user_instruction',
+        current_conversation_id: conversationIdRef.current || conversationId,
+        owner_email: currentUser.email,
+      }).catch(err => ({ data: { success: false, error: err.message } }));
+      console.log('[WorldPhone] explicit send result:', worldPhoneSendResult?.data);
+    }
 
     const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|music\.amazon|tidal\.com|soundcloud\.com|bandcamp\.com)[^\s]*/i);
     if (musicLinkMatch) {
@@ -1270,6 +1288,36 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       responseText = filterDashes(responseText);
       responseText = stripCharacterNamePrefix(responseText, character.name);
 
+      // ── WORLD PHONE CHARACTER-ACTION DETECTION ──────────────────────────────
+      // If the LLM response CLAIMS it sent/texted/called someone, detect and persist it.
+      // If detection fails, modify response to remove false claim.
+      if (!worldPhoneIntent && responseText) {
+        const charActionIntent = detectCharacterWorldPhoneAction(responseText, character.name);
+        if (charActionIntent) {
+          console.log('[WorldPhone] character-action intent detected:', charActionIntent);
+          const charActionResult = await base44.functions.invoke('sendWorldPhoneMessage', {
+            sender_character_id: characterId,
+            recipient_identifier: charActionIntent.recipient,
+            requested_message: charActionIntent.message,
+            source: 'character_action',
+            current_conversation_id: conversationIdRef.current || conversationId,
+            owner_email: currentUser.email,
+          }).catch(err => ({ data: { success: false, error: err.message } }));
+          const charActionData = charActionResult?.data;
+          if (!charActionData?.success) {
+            // Strip false claim from response — character cannot say it happened if it didn't
+            console.warn('[WorldPhone] character-action send failed — removing false claim from response:', charActionData?.error);
+            responseText = responseText
+              .replace(/I\s+(just\s+)?(texted|called|messaged|sent\s+\w+\s+a\s+(text|message|call))\s+[A-Z][a-z]+[^.!?]*[.!?]/gi, '')
+              .replace(/\s{2,}/g, ' ')
+              .trim();
+            if (!responseText) responseText = '...';
+          } else {
+            worldPhoneSendResult = charActionResult;
+          }
+        }
+      }
+
       if (hasImage && responseObj.image_generation_prompts?.length === 0 && isPhotogenic && explicitImageRequest) {
         imagePrompts = [`[CHARACTER] Candid selfie, ${character.name} looking natural and confident, ready for the camera, good lighting, genuine expression`];
       } else {
@@ -1687,6 +1735,21 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       characterId, convoId, character, text, responseText, recentMsgs,
       activeCharacter, isPhone, currentUser, isTyping: false, userMsg,
     });
+
+    // ── RELATIONSHIP CONTINUITY DETECTION (background, non-blocking) ──────────
+    // Detects when character references knowing another app character and syncs
+    // fictional_relationships + memory for both characters automatically.
+    if (responseText && responseText.length > 20) {
+      setTimeout(() => {
+        base44.functions.invoke('detectAndSyncRelationship', {
+          character_id: characterId,
+          response_text: responseText,
+          user_message_text: text,
+          conversation_id: convoId,
+          owner_email: currentUser.email,
+        }).catch(() => {});
+      }, 3000);
+    }
 
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
