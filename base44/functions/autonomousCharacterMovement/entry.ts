@@ -848,49 +848,75 @@ Deno.serve(async (req) => {
               c.status === 'active' || c.status === 'in_progress'
             );
 
+            // Priority 0: Skip if already in transit to this destination
+            const alreadyTraveling = char.resolved_presence_status === 'traveling' &&
+              char.travel_destination_location_id != null;
+            if (alreadyTraveling) {
+              console.log(`[autonomousMovement] ${char.name}: already in_transit to ${char.traveling_to_location_name || char.travel_destination_location_id} — skip`);
+              commitmentHandled = true;
+            }
+
             // Priority 1: Travel directives — "I'm on my way" / "heading there now"
-            const directive = liveCommitments.find(c => c.commitment_type === 'travel_directive');
-            if (directive && directive.destination_location_id) {
-              const destLoc = userLocations.find(l => l.id === directive.destination_location_id);
-              if (destLoc) {
-                if (char.resolved_current_location_id !== destLoc.id) {
-                  // Route to commitment destination — this character said they are on the way
-                  const commitPayload = {
-                    resolved_current_location_id:   destLoc.id,
-                    resolved_current_location_name: destLoc.name,
-                    resolved_presence_status:       'visiting',
-                    resolved_location_type:         'visit',
-                    resolved_source_reason:         'commitment_travel_directive',
-                    last_arrived_time:              nowET.toISOString(),
-                    travel_status:                  'not_traveling',
-                    travel_destination_location_id: null,
-                    traveling_to_location_id:       null,
-                    traveling_to_location_name:     null,
-                  };
-                  try {
-                    await base44.entities.Character.update(char.id, commitPayload);
-                  } catch {
-                    await base44.asServiceRole.entities.Character.update(char.id, commitPayload);
+            if (!commitmentHandled) {
+              const directive = liveCommitments.find(c => c.commitment_type === 'travel_directive');
+              if (directive && directive.destination_location_id) {
+                const destLoc = userLocations.find(l => l.id === directive.destination_location_id);
+                if (destLoc) {
+                  if (char.resolved_current_location_id !== destLoc.id) {
+                    // Create a REAL travel session — character is in transit, NOT teleported
+                    const travelRes = await base44.functions.invoke('createTravelSession', {
+                      characterId:           char.id,
+                      destinationLocationId: destLoc.id,
+                      travelReason:          directive.promised_action || 'commitment travel directive',
+                      travelSource:          'promise',
+                      sourceCommitmentId:    directive.id,
+                      ownerEmail:            char.owner_email,
+                    }).catch(e => ({ data: { success: false, error: e.message } }));
+                    const td = travelRes?.data || {};
+                    if (td.success) {
+                      // Update commitment to in_progress
+                      await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
+                        status: 'in_progress',
+                        travel_started_at: nowET.toISOString(),
+                      }).catch(() => {});
+                      totalMoved++;
+                      moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_TRAVEL_DIRECTIVE → IN_TRANSIT ~${td.duration_minutes}min] "${directive.promised_action || 'on the way'}"`);
+                      console.log(`[autonomousMovement] ✓ ${char.name}: COMMITMENT DIRECTIVE → in_transit → ${destLoc.name} (ETA: ${td.estimated_arrival})`);
+                    } else if (td.blocked) {
+                      blockedLog.push(`${char.name}: commitment directive blocked — ${td.blocker_reason || td.blocker}`);
+                      console.log(`[autonomousMovement] ${char.name}: COMMITMENT DIRECTIVE BLOCKED — ${td.blocker_reason}`);
+                    } else {
+                      // createTravelSession failed — fall back to direct presence update
+                      console.warn(`[autonomousMovement] ${char.name}: createTravelSession failed (${td.error || 'unknown'}) — using direct update fallback`);
+                      await base44.asServiceRole.entities.Character.update(char.id, {
+                        resolved_current_location_id:   destLoc.id,
+                        resolved_current_location_name: destLoc.name,
+                        resolved_presence_status:       'visiting',
+                        resolved_location_type:         'visit',
+                        resolved_source_reason:         'commitment_travel_directive_fallback',
+                        last_arrived_time:              nowET.toISOString(),
+                        travel_status:                  'not_traveling',
+                        travel_destination_location_id: null,
+                      }).catch(() => {});
+                      await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
+                        status: 'completed',
+                        travel_arrived_at: nowET.toISOString(),
+                        completion_result: `Arrived at ${destLoc.name} (direct fallback)`,
+                      }).catch(() => {});
+                      totalMoved++;
+                      moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_DIRECTIVE_FALLBACK]`);
+                    }
+                  } else {
+                    // Already there — mark completed
+                    await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
+                      status: 'completed',
+                      travel_arrived_at: nowET.toISOString(),
+                      completion_result: `Already at ${destLoc.name}`,
+                    }).catch(() => {});
+                    console.log(`[autonomousMovement] ${char.name}: COMMITMENT DIRECTIVE — already at destination ${destLoc.name}`);
                   }
-                  // Mark commitment as completed now that they've arrived
-                  await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
-                    status: 'completed',
-                    travel_arrived_at: nowET.toISOString(),
-                    completion_result: `Arrived at ${destLoc.name}`,
-                  }).catch(() => {});
-                  totalMoved++;
-                  moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_TRAVEL_DIRECTIVE] "${directive.promised_action || 'on the way'}"`);
-                  console.log(`[autonomousMovement] ✓ ${char.name}: COMMITMENT DIRECTIVE → ${destLoc.name}`);
-                } else {
-                  // Already there — mark completed
-                  await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
-                    status: 'completed',
-                    travel_arrived_at: nowET.toISOString(),
-                    completion_result: `Already at ${destLoc.name}`,
-                  }).catch(() => {});
-                  console.log(`[autonomousMovement] ${char.name}: COMMITMENT DIRECTIVE — already at destination ${destLoc.name}`);
+                  commitmentHandled = true;
                 }
-                commitmentHandled = true;
               }
             }
 
@@ -902,35 +928,50 @@ Deno.serve(async (req) => {
                 if (!c.destination_location_id) return false;
                 if (!c.scheduled_execute_at) return false;
                 const dueMs = new Date(c.scheduled_execute_at).getTime();
-                return dueMs - nowMs <= 60 * 60 * 1000 && dueMs > nowMs - 10 * 60 * 1000; // within next 60 min or up to 10 min overdue
+                return dueMs - nowMs <= 60 * 60 * 1000 && dueMs > nowMs - 10 * 60 * 1000;
               });
               if (promise && promise.destination_location_id) {
                 const destLoc = userLocations.find(l => l.id === promise.destination_location_id);
                 if (destLoc && char.resolved_current_location_id !== destLoc.id) {
-                  const promisePayload = {
-                    resolved_current_location_id:   destLoc.id,
-                    resolved_current_location_name: destLoc.name,
-                    resolved_presence_status:       'visiting',
-                    resolved_location_type:         'visit',
-                    resolved_source_reason:         'commitment_travel_promise',
-                    last_arrived_time:              nowET.toISOString(),
-                    travel_status:                  'not_traveling',
-                    travel_destination_location_id: null,
-                    traveling_to_location_id:       null,
-                    traveling_to_location_name:     null,
-                  };
-                  try {
-                    await base44.entities.Character.update(char.id, promisePayload);
-                  } catch {
-                    await base44.asServiceRole.entities.Character.update(char.id, promisePayload);
+                  // Create travel session — promise fulfillment is real transit
+                  const travelRes2 = await base44.functions.invoke('createTravelSession', {
+                    characterId:           char.id,
+                    destinationLocationId: destLoc.id,
+                    travelReason:          promise.promised_action || 'travel promise fulfillment',
+                    travelSource:          'promise',
+                    sourceCommitmentId:    promise.id,
+                    ownerEmail:            char.owner_email,
+                  }).catch(e => ({ data: { success: false, error: e.message } }));
+                  const td2 = travelRes2?.data || {};
+                  if (td2.success) {
+                    await base44.asServiceRole.entities.CharacterCommitment.update(promise.id, {
+                      status: 'in_progress',
+                      travel_started_at: nowET.toISOString(),
+                    }).catch(() => {});
+                    totalMoved++;
+                    moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_PROMISE → IN_TRANSIT ~${td2.duration_minutes}min] due ${promise.promised_time_window || 'soon'}`);
+                    console.log(`[autonomousMovement] ✓ ${char.name}: COMMITMENT PROMISE → in_transit → ${destLoc.name}`);
+                  } else if (td2.blocked) {
+                    blockedLog.push(`${char.name}: promise travel blocked — ${td2.blocker_reason || td2.blocker}`);
+                  } else {
+                    // Fallback
+                    await base44.asServiceRole.entities.Character.update(char.id, {
+                      resolved_current_location_id:   destLoc.id,
+                      resolved_current_location_name: destLoc.name,
+                      resolved_presence_status:       'visiting',
+                      resolved_location_type:         'visit',
+                      resolved_source_reason:         'commitment_travel_promise_fallback',
+                      last_arrived_time:              nowET.toISOString(),
+                      travel_status:                  'not_traveling',
+                      travel_destination_location_id: null,
+                    }).catch(() => {});
+                    await base44.asServiceRole.entities.CharacterCommitment.update(promise.id, {
+                      status: 'in_progress',
+                      travel_started_at: nowET.toISOString(),
+                    }).catch(() => {});
+                    totalMoved++;
+                    moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_PROMISE_FALLBACK]`);
                   }
-                  await base44.asServiceRole.entities.CharacterCommitment.update(promise.id, {
-                    status: 'in_progress',
-                    travel_started_at: nowET.toISOString(),
-                  }).catch(() => {});
-                  totalMoved++;
-                  moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_TRAVEL_PROMISE] due ${promise.promised_time_window || 'soon'}`);
-                  console.log(`[autonomousMovement] ✓ ${char.name}: COMMITMENT PROMISE → ${destLoc.name}`);
                   commitmentHandled = true;
                 }
               }

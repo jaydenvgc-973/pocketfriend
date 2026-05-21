@@ -1,0 +1,161 @@
+{
+  "name": "TravelSession",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character traveling"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of the character"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email \u2014 required for all queries. Never use created_by."
+    },
+    "origin_location_id": {
+      "type": "string",
+      "description": "Location ID where travel began"
+    },
+    "origin_location_name": {
+      "type": "string",
+      "description": "Display name of origin"
+    },
+    "destination_location_id": {
+      "type": "string",
+      "description": "Location ID of travel destination"
+    },
+    "destination_location_name": {
+      "type": "string",
+      "description": "Display name of destination"
+    },
+    "travel_reason": {
+      "type": "string",
+      "description": "Human-readable reason for this trip"
+    },
+    "travel_source": {
+      "type": "string",
+      "enum": [
+        "autonomous_need",
+        "autonomous_want",
+        "routine",
+        "event",
+        "promise",
+        "manual",
+        "work_schedule",
+        "school_schedule"
+      ],
+      "description": "What triggered this travel session"
+    },
+    "source_message_id": {
+      "type": "string",
+      "description": "Message ID that triggered travel (for promise/chat-triggered sessions)"
+    },
+    "source_conversation_id": {
+      "type": "string",
+      "description": "Conversation ID that triggered travel"
+    },
+    "source_commitment_id": {
+      "type": "string",
+      "description": "CharacterCommitment ID that spawned this session"
+    },
+    "travel_mode": {
+      "type": "string",
+      "enum": [
+        "walking",
+        "car",
+        "rideshare",
+        "bus",
+        "train",
+        "unknown"
+      ],
+      "default": "unknown",
+      "description": "How the character is traveling"
+    },
+    "distance_miles": {
+      "type": "number",
+      "description": "Estimated distance in miles (may be null if unpositioned)"
+    },
+    "estimated_departure_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When travel actually began"
+    },
+    "estimated_arrival_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Expected arrival time"
+    },
+    "actual_arrival_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When character actually arrived (set on completion)"
+    },
+    "duration_minutes": {
+      "type": "number",
+      "description": "Total expected travel duration in minutes"
+    },
+    "progress_percent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "0\u2013100 travel progress"
+    },
+    "route_status": {
+      "type": "string",
+      "enum": [
+        "preparing",
+        "in_transit",
+        "delayed",
+        "arrived",
+        "cancelled",
+        "blocked"
+      ],
+      "default": "preparing",
+      "description": "Current state of this travel session"
+    },
+    "last_progress_update": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When progress_percent was last updated"
+    },
+    "interruption_allowed": {
+      "type": "boolean",
+      "default": true,
+      "description": "Can this trip be interrupted by a higher-priority event?"
+    },
+    "blocker_reason": {
+      "type": "string",
+      "description": "Why travel was blocked or cancelled (jail, asleep, at_work, already_traveling)"
+    },
+    "positioning_mode": {
+      "type": "string",
+      "enum": [
+        "real_coordinates",
+        "fictional_coordinates",
+        "fallback_estimate"
+      ],
+      "description": "How travel distance/time was calculated"
+    },
+    "origin_geo_mode": {
+      "type": "string",
+      "description": "geo_mode of origin location"
+    },
+    "destination_geo_mode": {
+      "type": "string",
+      "description": "geo_mode of destination location"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "character_id",
+    "owner_email",
+    "destination_location_id",
+    "route_status"
+  ]
+}

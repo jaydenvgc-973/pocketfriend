@@ -22,6 +22,7 @@ import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils"
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { canCharacterTravelToLocation } from "@/lib/characterEditableListResolver";
 import { resolveTravelPresenceEntities, getPresenceAtLocation, isLocationEmpty } from "@/lib/travelPresenceResolver";
+import InTransitPanel from "@/components/travel/InTransitPanel";
 import { shouldVGCResidentBeAtHome } from "@/lib/vgcTowersPresenceEngine";
 import { useUserPresence } from "@/hooks/useUserPresence";
 import { useUserSettings } from "@/hooks/useUserSettings";
@@ -473,6 +474,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-6 relative z-10">
+
+        {/* In-Transit Sessions */}
+        <InTransitPanel ownerEmail={currentUser?.email} />
 
         {/* Live Presence Map */}
         <AnimatePresence>

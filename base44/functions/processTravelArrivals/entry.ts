@@ -1,0 +1,172 @@
+/**
+ * processTravelArrivals
+ *
+ * Scheduled every 5 minutes. Checks all active TravelSession records
+ * where estimated_arrival_time has passed. For each one:
+ *   1. Updates progress_percent to 100
+ *   2. Sets route_status = "arrived"
+ *   3. Updates Character: resolved_current_location_id = destination
+ *   4. Clears in_transit presence state
+ *   5. Marks CharacterCommitment as completed if linked
+ *
+ * RULES:
+ * - owner_email is the sole ownership source — never created_by
+ * - Only process sessions that are "in_transit" with ETA in the past
+ * - Never reset jail, shelter, hotel, or house_arrest state
+ */
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    // Scheduled — no user session
+    try { await base44.auth.me(); } catch { /* ok */ }
+
+    const now = new Date();
+    const arrived = [];
+    const errors = [];
+
+    // Load all active in_transit sessions
+    let sessions = [];
+    try {
+      sessions = await base44.asServiceRole.entities.TravelSession.filter(
+        { route_status: 'in_transit' },
+        '-created_at',
+        100
+      );
+    } catch (e) {
+      return Response.json({ error: `Failed to load sessions: ${e.message}` }, { status: 500 });
+    }
+
+    // Filter to sessions where ETA has passed
+    const due = sessions.filter(s => {
+      if (!s.estimated_arrival_time) return false;
+      return new Date(s.estimated_arrival_time) <= now;
+    });
+
+    console.log(`[processTravelArrivals] ${sessions.length} in_transit sessions, ${due.length} due for arrival`);
+
+    for (const session of due) {
+      try {
+        // Load character
+        const charList = await base44.asServiceRole.entities.Character.filter({ id: session.character_id }, null, 1).catch(() => []);
+        const char = charList?.[0];
+        if (!char) {
+          console.warn(`[processTravelArrivals] Character ${session.character_id} not found for session ${session.id}`);
+          continue;
+        }
+
+        // Safety guard — do NOT override jail/house_arrest
+        if (char.is_jailed === true || char.house_arrest_active === true) {
+          console.log(`[processTravelArrivals] SKIP ${char.name} — confined (jail/house_arrest)`);
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            route_status: 'cancelled',
+            blocker_reason: 'character_confined',
+          }).catch(() => {});
+          continue;
+        }
+
+        // Load destination location
+        const destList = await base44.asServiceRole.entities.LocationReference.filter(
+          { id: session.destination_location_id }, null, 1
+        ).catch(() => []);
+        const destLoc = destList?.[0];
+        if (!destLoc) {
+          console.warn(`[processTravelArrivals] Destination ${session.destination_location_id} not found`);
+          continue;
+        }
+
+        // Determine arrival presence status
+        let arrivalPresence = 'visiting';
+        let arrivalLocationType = 'visit';
+        if (destLoc.category === 'home' && (
+          char.current_home_location_id === destLoc.id ||
+          char.temporary_housing_location_id === destLoc.id
+        )) {
+          arrivalPresence = 'home';
+          arrivalLocationType = 'home';
+        } else if (session.travel_source === 'work_schedule') {
+          arrivalPresence = 'at_work';
+          arrivalLocationType = 'work';
+        } else if (session.travel_source === 'school_schedule') {
+          arrivalPresence = 'at_school';
+          arrivalLocationType = 'school';
+        }
+
+        // ── ARRIVE: Update character location ─────────────────────────────
+        await base44.asServiceRole.entities.Character.update(char.id, {
+          resolved_current_location_id:   destLoc.id,
+          resolved_current_location_name: destLoc.name,
+          resolved_presence_status:       arrivalPresence,
+          resolved_location_type:         arrivalLocationType,
+          resolved_source_reason:         `arrived_from_travel_session:${session.id}`,
+          resolved_last_updated_at:       now.toISOString(),
+          last_arrived_time:              now.toISOString(),
+          // Clear travel state
+          travel_status:                  'not_traveling',
+          travel_destination_location_id: null,
+          traveling_to_location_id:       null,
+          traveling_to_location_name:     null,
+        });
+
+        // ── CLOSE TRAVEL SESSION ──────────────────────────────────────────
+        await base44.asServiceRole.entities.TravelSession.update(session.id, {
+          route_status:         'arrived',
+          progress_percent:     100,
+          actual_arrival_time:  now.toISOString(),
+          last_progress_update: now.toISOString(),
+        });
+
+        // ── MARK COMMITMENT COMPLETE if linked ────────────────────────────
+        if (session.source_commitment_id) {
+          await base44.asServiceRole.entities.CharacterCommitment.update(session.source_commitment_id, {
+            status: 'completed',
+            travel_arrived_at: now.toISOString(),
+            completion_result: `Arrived at ${destLoc.name}`,
+          }).catch(() => {});
+        }
+
+        arrived.push({ character: char.name, destination: destLoc.name, session_id: session.id });
+        console.log(`[processTravelArrivals] ✅ ${char.name} arrived at ${destLoc.name}`);
+
+      } catch (e) {
+        errors.push({ session_id: session.id, error: e.message });
+        console.error(`[processTravelArrivals] Error for session ${session.id}:`, e.message);
+      }
+    }
+
+    // ── UPDATE PROGRESS for sessions not yet due ─────────────────────────
+    const stillTraveling = sessions.filter(s => !due.find(d => d.id === s.id));
+    for (const session of stillTraveling) {
+      try {
+        if (!session.estimated_departure_time || !session.estimated_arrival_time) continue;
+        const start = new Date(session.estimated_departure_time).getTime();
+        const end   = new Date(session.estimated_arrival_time).getTime();
+        const total = end - start;
+        if (total <= 0) continue;
+        const elapsed  = now.getTime() - start;
+        const progress = Math.min(99, Math.round((elapsed / total) * 100));
+        if (Math.abs(progress - (session.progress_percent || 0)) >= 5) {
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            progress_percent:     progress,
+            last_progress_update: now.toISOString(),
+          }).catch(() => {});
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    return Response.json({
+      success: true,
+      checked: sessions.length,
+      arrived: arrived.length,
+      arrivals: arrived,
+      errors,
+      still_traveling: stillTraveling.length,
+      timestamp: now.toISOString(),
+    });
+
+  } catch (error) {
+    console.error('[processTravelArrivals]', error.message);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+});

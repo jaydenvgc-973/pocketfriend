@@ -11,6 +11,21 @@ const NPC_TYPES = ['npc', 'family_npc', 'background', 'promoted_npc', 'npc_ficti
 export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (!character) return { available: false, reason: { iconType: 'out', message: 'Unknown status', color: 'text-muted-foreground' }, availableAt: null };
 
+  // IN TRANSIT: character has an active travel session — cannot start another trip
+  if (
+    character.resolved_presence_status === 'traveling' ||
+    character.travel_status === 'traveling_to_destination' ||
+    character.travel_status === 'traveling_to_work' ||
+    character.travel_status === 'traveling_to_school'
+  ) {
+    const destName = character.traveling_to_location_name || 'their destination';
+    return {
+      available: false,
+      reason: { iconType: 'out', message: `${character.name} is already in transit to ${destName}.`, color: 'text-blue-400' },
+      availableAt: 'Will be free after they arrive',
+    };
+  }
+
   // JAIL/PRISON CONFINEMENT: hard block — confined characters cannot travel until released.
   // This mirrors how "at work" and "asleep" block travel — jail is a locked presence state.
   if (character.is_jailed === true) {
