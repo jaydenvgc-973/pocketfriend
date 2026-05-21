@@ -170,6 +170,12 @@ Deno.serve(async (req) => {
           messageId: m.id,
           ownerEmail: m.owner_email,
           verificationPath: ownerVerificationPath,
+          // Parent source for ownership resolution on delete
+          source_type: 'message',
+          source_id: m.id,
+          parent_entity: 'Message',
+          parent_owner_email: m.owner_email,
+          parent_conversation_id: m.conversation_id,
         });
 
         if (collected.length >= PAGE_SIZE) break;

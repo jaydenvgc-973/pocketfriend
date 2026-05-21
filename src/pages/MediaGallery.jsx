@@ -96,6 +96,15 @@ export default function MediaGallery() {
     setCurrentPage(p => p - 1);
   };
 
+  const handlePageJump = (newPage) => {
+    const page = parseInt(newPage, 10);
+    if (page < 1 || !Number.isInteger(page)) {
+      alert('Please enter a valid page number (1 or higher).');
+      return;
+    }
+    setCurrentPage(page);
+  };
+
   const handleSearchChange = (val) => {
     setSearchTerm(val);
     setCurrentPage(1);
@@ -108,17 +117,21 @@ export default function MediaGallery() {
       alert('User not authenticated');
       return;
     }
-    if (image.ownerEmail !== user.email) {
-      alert(`Cannot delete image. Ownership mismatch: image owner=${image.ownerEmail}, current user=${user.email}`);
-      console.warn(`[MediaGallery] BLOCKED delete: image owned by ${image.ownerEmail}, current user is ${user.email}`);
-      return;
-    }
     try {
-      console.log(`[MediaGallery] Deleting message ${image.messageId} (owned by ${image.ownerEmail})`);
-      await base44.entities.Message.delete(image.messageId);
-      setSelectedImage(null);
-      // Refetch current page with same cursor
-      await fetchPage(currentPage, cursorStack, searchTerm);
+      // Use backend to resolve ownership from parent source, not just image URL
+      const res = await base44.functions.invoke('deleteMediaGalleryImage', {
+        messageId: image.messageId,
+        parentEntity: image.parent_entity,
+      });
+      
+      if (res?.data?.success) {
+        console.log(`[MediaGallery] ✓ Deleted image ${image.messageId}`);
+        setSelectedImage(null);
+        // Refetch current page with same cursor
+        await fetchPage(currentPage, cursorStack, searchTerm);
+      } else {
+        alert(`Delete denied: ${res?.data?.error || 'Unknown error'}`);
+      }
     } catch (e) {
       console.error('[MediaGallery] Delete failed:', e);
       alert(`Delete failed: ${e.message}`);
@@ -226,7 +239,7 @@ export default function MediaGallery() {
             </div>
 
             {/* Pagination */}
-            <div className="flex items-center justify-center gap-4 mb-8">
+            <div className="flex items-center justify-center gap-4 mb-8 flex-wrap">
               <button
                 onClick={handlePrev}
                 disabled={currentPage === 1 || isLoading}
@@ -234,7 +247,26 @@ export default function MediaGallery() {
               >
                 Previous
               </button>
-              <span className="text-sm text-muted-foreground">Page {currentPage}</span>
+              
+              {/* Page Jump */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Go to page:</span>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder={String(currentPage)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handlePageJump(e.currentTarget.value || String(currentPage));
+                      e.currentTarget.value = '';
+                    }
+                  }}
+                  className="w-16 px-2 py-1 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <span className="text-sm text-muted-foreground">Page {currentPage}{hasMore ? '+' : ''}</span>
+              
               <button
                 onClick={handleNext}
                 disabled={!hasMore || isLoading}
@@ -280,13 +312,14 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
         initial={{ scale: 0.9 }}
         animate={{ scale: 1 }}
         onClick={(e) => e.stopPropagation()}
-        className="bg-card rounded-lg max-w-2xl w-full overflow-hidden"
+        className="bg-card rounded-lg max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden"
       >
-        <div className="relative">
+        {/* Image */}
+        <div className="relative flex-shrink-0">
           <img
             src={image.url}
             alt={image.description}
-            className="w-full max-h-96 object-contain"
+            className="w-full max-h-64 object-contain"
           />
           <button
             onClick={onClose}
@@ -295,23 +328,33 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
             <X className="w-5 h-5 text-white" />
           </button>
         </div>
-        <div className="p-4">
-          <p className="text-sm text-muted-foreground mb-2">From: {image.senderName}</p>
-          <p className="text-foreground mb-4">{image.description}</p>
-          <div className="flex gap-2">
-            <button
-              onClick={onSend}
-              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 flex items-center justify-center gap-2"
-            >
-              <Send className="w-4 h-4" /> Send to Character
-            </button>
-            <button
-              onClick={onDelete}
-              className="px-4 py-2 bg-destructive/10 text-destructive rounded-lg hover:bg-destructive/20 flex items-center justify-center gap-2"
-            >
-              <Trash2 className="w-4 h-4" /> Delete
-            </button>
+
+        {/* Scrollable content area */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">From</p>
+            <p className="text-sm text-foreground">{image.senderName}</p>
           </div>
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Description</p>
+            <p className="text-sm text-foreground whitespace-pre-wrap">{image.description}</p>
+          </div>
+        </div>
+
+        {/* Fixed action buttons */}
+        <div className="flex-shrink-0 border-t border-border p-4 bg-card flex gap-2">
+          <button
+            onClick={onSend}
+            className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 flex items-center justify-center gap-2 text-sm font-medium"
+          >
+            <Send className="w-4 h-4" /> Send to Character
+          </button>
+          <button
+            onClick={onDelete}
+            className="px-4 py-2 bg-destructive/10 text-destructive rounded-lg hover:bg-destructive/20 flex items-center justify-center gap-2"
+          >
+            <Trash2 className="w-4 h-4" /> Delete
+          </button>
         </div>
       </motion.div>
     </motion.div>
