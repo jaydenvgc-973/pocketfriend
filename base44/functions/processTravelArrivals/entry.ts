@@ -139,26 +139,36 @@ Deno.serve(async (req) => {
 
         try {
           // Attempt to update via a helper backend function that handles RLS properly
-          await base44.asServiceRole.functions.invoke('updateCharacterArrivalState', charUpdatePayload);
+          const charUpdateResult = await base44.asServiceRole.functions.invoke('updateCharacterArrivalState', charUpdatePayload);
+          
+          // CRITICAL: Only mark arrived if Character destination write succeeded and was verified
+          if (!charUpdateResult?.data?.success) {
+            throw new Error(charUpdateResult?.data?.error || 'Character destination write failed or unverified');
+          }
+
+          // ── CLOSE TRAVEL SESSION (only on verified success) ──────────────────────────────────────────
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            route_status:         'arrived',
+            progress_percent:     100,
+            actual_arrival_time:  now.toISOString(),
+            last_progress_update: now.toISOString(),
+          });
+
         } catch (charUpdateErr) {
-          // Non-fatal: TravelSession is complete; Character will be synced on next presence resolver cycle.
-          // This is safe fallback behavior, not a silent failure.
-          console.warn(`[processTravelArrivals] Character location update deferred: ${charUpdateErr.message}`);
+          // FATAL: Do NOT mark arrived. Set to arrival_failed instead.
+          console.error(`[processTravelArrivals] Character location update FAILED: ${charUpdateErr.message}`);
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            route_status:         'arrival_failed',
+            error_reason:         charUpdateErr.message,
+          });
           errors.push({
             session_id: session.id,
             character_id: char.id,
-            reason: 'character_location_update_deferred',
+            reason: 'arrival_completion_failed',
             error: charUpdateErr.message,
           });
+          continue; // Skip the commitment update for this failed session
         }
-
-        // ── CLOSE TRAVEL SESSION ──────────────────────────────────────────
-        await base44.asServiceRole.entities.TravelSession.update(session.id, {
-          route_status:         'arrived',
-          progress_percent:     100,
-          actual_arrival_time:  now.toISOString(),
-          last_progress_update: now.toISOString(),
-        });
 
         // ── MARK COMMITMENT COMPLETE if linked ────────────────────────────
         if (session.source_commitment_id) {
