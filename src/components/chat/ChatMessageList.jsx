@@ -34,6 +34,7 @@ export default function ChatMessageList({
   onDismissError,
   setSendError,
   onLocationSignal,
+  onShareNarrative,
   hasOlderMessages,
   onLoadOlderMessages,
 }) {
@@ -85,23 +86,24 @@ export default function ChatMessageList({
           const msg = item;
           return (
             <MessageBubble
-              key={msg.id}
-              message={msg}
-              character={character}
-              onReact={onReact}
-              onDelete={onDelete}
-              onDeleteImage={onDeleteImage}
-              onPlayVoice={
-                msg.sender_type !== "user" && !msg.is_narrative
-                  ? () => onPlayVoice(msg.id, msg.content, character, userSettings, true)
-                  : null
-              }
-              isPlayingVoice={playingAudioId === msg.id}
-              voiceError={voiceErrors[msg.id]}
-              onForward={!msg.is_narrative ? (m) => onForward(m) : null}
-              onImageLoaded={onImageLoaded}
-              onLocationSignal={msg.sender_type === "character" && !msg.is_narrative && onLocationSignal ? onLocationSignal : null}
-            />
+               key={msg.id}
+               message={msg}
+               character={character}
+               onReact={onReact}
+               onDelete={onDelete}
+               onDeleteImage={onDeleteImage}
+               onPlayVoice={
+                 msg.sender_type !== "user" && !msg.is_narrative
+                   ? () => onPlayVoice(msg.id, msg.content, character, userSettings, true)
+                   : null
+               }
+               isPlayingVoice={playingAudioId === msg.id}
+               voiceError={voiceErrors[msg.id]}
+               onForward={!msg.is_narrative ? (m) => onForward(m) : null}
+               onImageLoaded={onImageLoaded}
+               onLocationSignal={msg.sender_type === "character" && !msg.is_narrative && onLocationSignal ? onLocationSignal : null}
+               onShareNarrative={msg.is_narrative && onShareNarrative ? (m) => onShareNarrative(m) : null}
+             />
           );
         })}
       </AnimatePresence>

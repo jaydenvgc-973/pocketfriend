@@ -1889,7 +1889,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
                 }
                 return next;
               });
-            }} onLocationSignal={handleLocationSignal} hasOlderMessages={hasOlderMessages} onLoadOlderMessages={loadOlderMessages} />
+            }} onShareNarrative={(msg) => base44.functions.invoke('shareNarrative', { narrativeId: msg.id, characterId, conversationId, narrativeText: msg.content }).catch(err => setSendError(`Failed to share: ${err.message}`)) } onLocationSignal={handleLocationSignal} hasOlderMessages={hasOlderMessages} onLoadOlderMessages={loadOlderMessages} />
       )}
       {activeCharacter && character ? (
         <DialogueSelector
