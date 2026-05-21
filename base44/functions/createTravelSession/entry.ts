@@ -95,23 +95,23 @@ function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown', charac
   const anchorO = (originLoc?.anchor_city || '').toLowerCase();
   const anchorD = (destLoc?.anchor_city || '').toLowerCase();
 
-  // Same anchor → local trip
+  // Same anchor → local trip (3–5 minutes)
   if (anchorO && anchorD && anchorO === anchorD) {
     return {
-      durationMinutes: Math.round(8 + jitterMinutes(0, 7, ...seed, 'same_anchor')),
-      distanceMiles: 1.5,
+      durationMinutes: Math.round(3 + jitterMinutes(0, 2, ...seed, 'same_anchor')),
+      distanceMiles: 0.5,
       positioningMode: 'fallback_estimate',
     };
   }
 
-  // Greater Paterson region (Paterson ↔ Haledon / Elmwood Park)
+  // Greater Paterson region (Paterson ↔ Haledon / Elmwood Park) — 5–7 minutes
   const paterRegion = ['paterson', 'haledon', 'elmwood park', 'hawthorne', 'wayne', 'clifton'];
   const isOPaterson = paterRegion.some(c => anchorO.includes(c));
   const isDPaterson = paterRegion.some(c => anchorD.includes(c));
   if (isOPaterson && isDPaterson) {
     return {
-      durationMinutes: Math.round(10 + jitterMinutes(0, 8, ...seed, 'paterson_region')),
-      distanceMiles: 3,
+      durationMinutes: Math.round(5 + jitterMinutes(0, 2, ...seed, 'paterson_region')),
+      distanceMiles: 1.5,
       positioningMode: 'fallback_estimate',
     };
   }
@@ -147,9 +147,9 @@ function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown', charac
     };
   }
 
-  // Unknown / unpositioned — use conservative fallback (never fake precision)
+  // Unknown / unpositioned — assume Paterson/local area (7–10 minutes)
   return {
-    durationMinutes: Math.round(15 + jitterMinutes(0, 10, ...seed, 'unknown_region')),
+    durationMinutes: Math.round(7 + jitterMinutes(0, 3, ...seed, 'unknown_region')),
     distanceMiles: null,
     positioningMode: 'fallback_estimate',
   };
