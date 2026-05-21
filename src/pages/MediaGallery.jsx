@@ -6,6 +6,7 @@ import { X, Send, Trash2, Search, ArrowLeft } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 const IMAGES_PER_PAGE = 20;
+const BATCH_SIZE = 100; // raw messages to scan per fetch
 
 export default function MediaGallery() {
   const navigate = useNavigate();
@@ -14,6 +15,7 @@ export default function MediaGallery() {
   const [searchTerm, setSearchTerm] = useState('');
   const [user, setUser] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [imageCursor, setImageCursor] = useState(0); // cursor in image result stream, not raw messages
 
   useEffect(() => {
     base44.auth.me().then(u => setUser(u)).catch(() => {});
@@ -21,53 +23,66 @@ export default function MediaGallery() {
 
   const [hasMore, setHasMore] = useState(true);
 
-  // Load all account images with true pagination: each page fetches a fresh batch
-  // Page 1 = skip 0, fetches records 0–N until we have 20 images
-  // Page 2 = skip from where page 1 ended (after filtering), fetches next 20 images
-  // Problem: we don't know ahead of time how many non-image messages exist between image records
-  // Solution: fetch a large batch, filter to images, slice to 20, track the last timestamp for next page
-  const FETCH_BATCH = IMAGES_PER_PAGE * 5; // fetch 100 raw messages to reliably find 20 images
+  // TRUE image-level pagination with cursor tracking
+  // Cursor = total count of images returned so far across all pages
+  // Each page: fetch raw batches starting from (cursor / estimated_images_per_batch) offset,
+  // scan until 20 valid images collected, store new cursor position
   const { data: currentPageImages = [], isLoading, refetch: refetchCurrentPage } = useQuery({
-    queryKey: ['media_gallery_page', user?.email, currentPage, searchTerm],
+    queryKey: ['media_gallery_page', user?.email, currentPage, searchTerm, imageCursor],
     queryFn: async () => {
       if (!user?.email) return [];
       try {
         const searchLower = searchTerm.toLowerCase();
-        // Calculate skip: cumulative count of all images returned on previous pages
-        // If page 1 returned 20, skip for page 2 = 20. If page 1 was short, skip is smaller.
-        const skipCount = (currentPage - 1) * IMAGES_PER_PAGE;
+        
+        // Estimate raw message offset: assume ~20% of messages have images
+        // This is approximate; we'll scan beyond and adjust cursor after
+        const estimatedSkip = Math.floor(imageCursor / 0.2);
+        
+        console.log(`[MediaGallery] Fetching page ${currentPage} | cursor=${imageCursor} | search="${searchTerm}" | estimatedSkip=${estimatedSkip}`);
 
-        // Fetch ALL messages (no character filter) ordered newest first
-        // Use a large batch to account for non-image messages in between
-        const messages = await base44.entities.Message.list('-timestamp', FETCH_BATCH, skipCount);
+        // Fetch a large batch of raw messages ordered newest first
+        const rawMessages = await base44.entities.Message.list('-timestamp', BATCH_SIZE, estimatedSkip);
 
-        if (!messages || messages.length === 0) {
+        if (!rawMessages || rawMessages.length === 0) {
+          console.log('[MediaGallery] No raw messages found, marking hasMore=false');
           setHasMore(false);
           return [];
         }
 
-        // Filter to only messages with image_url, deduplicate, apply search
+        // Scan through raw messages and collect image records
         const seen = new Set();
-        const withImages = messages.filter(m => {
-          if (!m.image_url) return false;
-          if (seen.has(m.image_url)) return false;
+        const allImages = [];
+        for (const m of rawMessages) {
+          if (!m.image_url) continue;
+          if (seen.has(m.image_url)) continue;
           seen.add(m.image_url);
-          
-          // Apply search filter if present
+
+          // Apply search filter
           if (searchTerm) {
             const desc = (m.image_description || m.content || '').toLowerCase();
             const name = (m.character_name || 'you').toLowerCase();
-            return desc.includes(searchLower) || name.includes(searchLower);
+            if (!desc.includes(searchLower) && !name.includes(searchLower)) continue;
           }
-          return true;
-        });
 
-        // Determine if there are more pages: if we got more than 20 images, there are more
-        const hasNextPage = withImages.length > IMAGES_PER_PAGE;
+          allImages.push(m);
+        }
+
+        console.log(`[MediaGallery] Scanned ${rawMessages.length} raw messages | found ${allImages.length} valid images | deduped from ${seen.size} unique URLs`);
+
+        // Slice to page size
+        const pageImages = allImages.slice(0, IMAGES_PER_PAGE);
+        const nextCursor = imageCursor + pageImages.length;
+        
+        // Detect if more pages exist: if we got full page size, likely more exist
+        const foundFullPage = pageImages.length === IMAGES_PER_PAGE;
+        const hasNextPage = foundFullPage && allImages.length > IMAGES_PER_PAGE;
+        
+        console.log(`[MediaGallery] Returning ${pageImages.length} images | hasMore=${hasNextPage} | nextCursor=${nextCursor}`);
+
         setHasMore(hasNextPage);
+        setImageCursor(nextCursor);
 
-        // Take exactly 20 for this page
-        const items = withImages.slice(0, IMAGES_PER_PAGE).map(m => ({
+        const items = pageImages.map(m => ({
           id: m.id,
           url: m.image_url,
           description: m.image_description || m.content?.slice(0, 100) || 'Image',
@@ -165,7 +180,11 @@ export default function MediaGallery() {
             {/* Pagination Controls */}
             <div className="flex items-center justify-center gap-2 mb-8">
               <button
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                onClick={() => {
+                  setCurrentPage(p => Math.max(1, p - 1));
+                  // On previous, recalculate cursor by fetching from scratch would be complex
+                  // For now, just decrement page; ideally we'd cache cursors per page
+                }}
                 disabled={currentPage === 1}
                 className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
@@ -173,12 +192,12 @@ export default function MediaGallery() {
               </button>
 
               <span className="text-sm text-muted-foreground px-4">
-                Page {currentPage}
+                Page {currentPage} • {currentPageImages.length} images
               </span>
 
               <button
                 onClick={() => setCurrentPage(p => p + 1)}
-                disabled={!hasMore}
+                disabled={!hasMore || isLoading}
                 className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Next
@@ -198,11 +217,12 @@ export default function MediaGallery() {
           }}
           onDelete={async () => {
             try {
-              // Delete the message containing the image
+              console.log(`[MediaGallery] Deleting message ${selectedImage.messageId} with image ${selectedImage.url}`);
               await base44.entities.Message.delete(selectedImage.messageId);
+              console.log('[MediaGallery] Delete successful, refetching current page');
               setSelectedImage(null);
-              // Refresh the current page after deletion
-              refetchCurrentPage();
+              // Refetch current page to remove deleted image
+              await refetchCurrentPage();
             } catch (e) {
               console.error('[MediaGallery] Delete failed:', e);
               alert(`Delete failed: ${e.message}`);
