@@ -46,6 +46,28 @@ export function detectWorldPhoneIntent(userText) {
 }
 
 /**
+ * stripFabricatedReplyFromResponse
+ * When Character A's send actually succeeded, strips any fabricated summary of
+ * what Character B supposedly said back. Character B's REAL response is generated
+ * by the backend — Character A must not invent how Character B responded.
+ * 
+ * Removes patterns like:
+ *   "...and they said X"
+ *   "...she replied X"
+ *   "...he texted back X"
+ *   "...they responded that X"
+ */
+export function stripFabricatedReplyFromResponse(responseText) {
+  if (!responseText) return responseText;
+  return responseText
+    .replace(/\s+(?:and\s+)?(?:they|she|he)\s+(?:said|replied|responded|texted\s+back|wrote\s+back)[^.!?]*[.!?]/gi, '.')
+    .replace(/\s+(?:she|he)\s+(?:said|replied|responded)[^.!?]*[.!?]/gi, '.')
+    .replace(/,?\s+(?:they|she|he)\s+(?:said|replied|texted\s+back)[^.!?]*/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim() || '...';
+}
+
+/**
  * detectCharacterWorldPhoneAction
  * Detects when a character's LLM response CLAIMS it sent/called/messaged someone.
  * Only past-tense confirmations — not hypothetical future statements.

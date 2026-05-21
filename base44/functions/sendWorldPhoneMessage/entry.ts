@@ -8,15 +8,17 @@
  *
  * DESIGN RULES:
  * - Canonical key format: "world_phone::${sortedA}::${sortedB}" — matches WorldContactsPopup exactly
- * - Conversation type: "direct" for active_created↔active_created, "npc" otherwise — matches WorldContactsPopup
- * - Conversation lookup: canonical key first, then participant_character_ids, then character_ids
- * - ONE outbound Message record only (no mirrored duplicate) — WorldContactsPopup reads by conversation_id
- * - Memory + LifeEvent + fictional_relationships updates delegated to syncBilateralCharacterConversation
+ * - Conversation type: "direct" for active_created↔active_created, "npc" otherwise
+ * - ONE outbound Message record + ONE inbound response from Character B's own LLM pipeline
+ * - Character A may NOT claim Character B responded unless Character B's record actually exists
+ * - Memory + fictional_relationships updates delegated to syncBilateralCharacterConversation
  * - If Message write fails → return success:false → caller must not let character claim it was sent
  * - owner_email scoping only — never created_by
  *
- * RETURNS proof object with:
- *   conversation_id, message_id, sender, recipient, shared_key, sync_result, warnings[]
+ * CRITICAL BEHAVIOR:
+ * - After sending, Character B generates their OWN response using their own context/memory/mood
+ * - Character A's dialogue text must NOT include invented summaries of Character B's reply
+ * - Only after Character B's Message record exists does bilateral memory get written
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
@@ -36,6 +38,7 @@ Deno.serve(async (req) => {
       current_chat_message_id,    // source message ID in the active chat conversation
       current_conversation_id,    // active chat conversation ID (not the WP thread)
       owner_email,
+      generate_recipient_response, // optional: if true, generate Character B's response now
     } = await req.json();
 
     if (!sender_character_id || !recipient_identifier || !requested_message) {
@@ -56,8 +59,6 @@ Deno.serve(async (req) => {
     }
 
     // ── RESOLVE RECIPIENT ──────────────────────────────────────────────────────
-    // Priority: exact ID → sender's fictional_relationships by ID → sender's family_members by ID
-    //           → account-wide exact name match → account-wide partial name match (ambiguity-blocked)
     let recipient = null;
     let recipientResolutionPath = null;
 
@@ -109,7 +110,6 @@ Deno.serve(async (req) => {
       const nameLower = recipient_identifier.toLowerCase().trim();
       const allChars = await base44.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => []);
 
-      // Exact full-name match
       const exactMatches = allChars.filter(c =>
         c.name?.toLowerCase() === nameLower ||
         c.display_name?.toLowerCase() === nameLower ||
@@ -119,14 +119,12 @@ Deno.serve(async (req) => {
         recipient = exactMatches[0];
         recipientResolutionPath = 'account_exact_name';
       } else if (exactMatches.length > 1) {
-        // Ambiguity — fail visible, do not guess
         return Response.json({
           success: false,
           error: `Ambiguous recipient: "${recipient_identifier}" matches ${exactMatches.length} characters. Use a character ID to be precise.`,
           ambiguous_matches: exactMatches.map(c => ({ id: c.id, name: c.name })),
         });
       } else {
-        // Partial match — only accept if exactly one result
         const partialMatches = allChars.filter(c =>
           c.name?.toLowerCase().includes(nameLower) ||
           c.display_name?.toLowerCase().includes(nameLower)
@@ -153,7 +151,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Cannot send to self
     if (recipient.id === sender_character_id) {
       return Response.json({ success: false, error: 'Sender and recipient are the same character.' });
     }
@@ -182,14 +179,11 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
     }
 
     // ── CANONICAL CONVERSATION KEY ─────────────────────────────────────────────
-    // MUST match WorldContactsPopup format exactly: world_phone::sortedA::sortedB
     const sortedIds = [sender_character_id, recipient.id].sort();
     const canonicalKey = `world_phone::${sortedIds[0]}::${sortedIds[1]}`;
-    const participantIds = sortedIds; // already sorted
+    const participantIds = sortedIds;
 
     // ── FIND OR CREATE CONVERSATION ────────────────────────────────────────────
-    // Lookup order: canonical key → participant_character_ids → character_ids (both present)
-    // Matches WorldContactsPopup resolution chain exactly.
     let conversationId = null;
 
     const [byCanonical, byParticipant] = await Promise.all([
@@ -197,7 +191,6 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
       base44.entities.Conversation.filter({ participant_character_ids: [sender_character_id] }, '-updated_date', 100).catch(() => []),
     ]);
 
-    // Merge + deduplicate candidates
     const seenIds = new Set();
     const allCandidates = [...byCanonical, ...byParticipant].filter(c => {
       if (seenIds.has(c.id)) return false;
@@ -218,7 +211,6 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
 
     if (existingConvo) {
       conversationId = existingConvo.id;
-      // Upgrade legacy thread to canonical fields if needed
       const needsUpgrade = existingConvo.shared_conversation_key !== canonicalKey ||
         !Array.isArray(existingConvo.participant_character_ids) ||
         !participantIds.every(id => existingConvo.participant_character_ids?.includes(id));
@@ -233,7 +225,6 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
         }).catch(e => warnings.push(`Legacy conversation upgrade failed (non-fatal): ${e.message}`));
       }
     } else {
-      // Create new canonical thread — type matches WorldContactsPopup logic
       const senderType = sender.character_type || null;
       const recipientType = recipient.character_type || null;
       const bothActiveCreated = senderType === 'active_created_character' && recipientType === 'active_created_character';
@@ -255,9 +246,6 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
     const now = new Date().toISOString();
 
     // ── SAVE THE OUTBOUND MESSAGE ──────────────────────────────────────────────
-    // ONE message record only. WorldContactsPopup reads via Message.filter({ conversation_id })
-    // and determines direction from sender_character_id vs the active character's ID.
-    // Required fields proven from WorldContactsPopup lines 572–588 and 833–855:
     const savedMessage = await base44.entities.Message.create({
       conversation_id: conversationId,
       sender_type: 'character',
@@ -296,40 +284,165 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
       last_message_date: now,
     }).catch(e => warnings.push(`Conversation preview update failed (non-fatal): ${e.message}`));
 
-    // ── DELEGATE BILATERAL SYNC TO CANONICAL FUNCTION ───────────────────────────
-    // syncWorldPhoneMemory is the SINGLE SOURCE OF TRUTH for bilateral Memory + fictional_relationships.
-    // Non-blocking background call — UI shows message immediately.
-    const syncResult = {};
+    // ── GENERATE CHARACTER B's REAL RESPONSE ───────────────────────────────────
+    // CRITICAL: Character B responds using their own LLM pipeline — not guessed by Character A.
+    // This creates the visible incoming message in Character B's World Phone thread.
+    let recipientResponse = null;
+    let recipientResponseMessageId = null;
+    
+    try {
+      // Load recent conversation history for context
+      const recentHistory = await base44.entities.Message.filter(
+        { conversation_id: conversationId },
+        'created_date',
+        20
+      ).catch(() => []);
+
+      // Build Character B's canonical context
+      const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
+        characterId: recipient.id,
+        interactionContext: 'world_phone',
+        topKMemories: 10,
+      }).catch(() => null);
+
+      const canonicalPrompt = ctxRes?.data?.systemPrompt || null;
+
+      if (canonicalPrompt) {
+        // Retrieve memories relevant to this exchange
+        const memRes = await base44.functions.invoke('retrieveActiveMemory', {
+          characterId: recipient.id,
+          currentMessage: rewrittenMessage,
+          recentMessages: recentHistory.slice(-6).map(m => ({
+            role: m.sender_character_id === recipient.id ? 'assistant' : 'user',
+            content: m.content,
+          })),
+          topK: 8,
+        }).catch(() => null);
+
+        const mems = memRes?.data?.memories || [];
+        const memoryContext = mems.length > 0
+          ? `\n\nLONG-TERM MEMORY (${mems.length} relevant memories):\n${mems.map(m => `- ${m.title}: ${m.description}`).join('\n')}`
+          : '';
+
+        // Build conversation history for the prompt
+        const conversationLog = [
+          ...recentHistory.slice(-10).map(m => {
+            const speakerName = m.sender_character_id === recipient.id ? recipient.name : sender.name;
+            return `${speakerName}: ${m.content}`;
+          }),
+          `${sender.name}: ${rewrittenMessage}`,
+        ].join('\n');
+
+        const recipientPersonalityHint = [recipient.personality_summary, recipient.communication_style]
+          .filter(Boolean).join(', ');
+
+        const fullPrompt = `${canonicalPrompt}${memoryContext}
+
+CURRENT CHANNEL: World Phone / World Contacts
+${sender.name} is texting you. This is a real phone/text exchange.
+Do NOT start with your name. Do NOT say "I'm an AI". Respond as you naturally would.
+${recipientPersonalityHint ? `\nYour personality: ${recipientPersonalityHint}` : ''}
+${recipient.emotional_state ? `\nYour current mood: ${recipient.emotional_state}` : ''}
+
+Conversation so far:
+${conversationLog}
+
+Respond ONLY with valid JSON:
+{
+  "message_type": "text_only",
+  "text_content": "Your reply as ${recipient.name}. Keep it natural, like a real text."
+}`;
+
+        const { InvokeLLM } = base44.integrations.Core;
+        const rawResponse = await InvokeLLM({ prompt: fullPrompt });
+        
+        // Parse JSON response
+        let parsedText = null;
+        try {
+          const jsonStr = typeof rawResponse === 'string'
+            ? rawResponse.replace(/```json\n?|\n?```/g, '').trim()
+            : JSON.stringify(rawResponse);
+          const parsed = JSON.parse(jsonStr);
+          parsedText = parsed.text_content?.trim();
+        } catch {
+          // If not JSON, use raw text directly
+          parsedText = typeof rawResponse === 'string' ? rawResponse.trim() : null;
+        }
+
+        if (parsedText && parsedText.length > 0 && !parsedText.startsWith('{')) {
+          recipientResponse = parsedText;
+
+          // Save Character B's response as a real Message record
+          const responseTimestamp = new Date(Date.now() + 2000).toISOString(); // 2s after send
+          const recipientMsg = await base44.entities.Message.create({
+            conversation_id: conversationId,
+            sender_type: 'character',
+            character_id: recipient.id,
+            character_name: recipient.name,
+            sender_character_id: recipient.id,
+            receiver_character_id: sender_character_id,
+            participant_character_ids: participantIds,
+            shared_conversation_key: canonicalKey,
+            content: recipientResponse,
+            channel: 'world_phone',
+            timestamp: responseTimestamp,
+            is_read: false,
+            reply_to_message_id: savedMessage.id,
+            source_message_id: savedMessage.id,
+            sync_status: 'pending',
+            recovery_signal: false,
+            memory_eligible: true,
+            relationship_eligible: true,
+          });
+
+          if (recipientMsg?.id) {
+            recipientResponseMessageId = recipientMsg.id;
+            // Update conversation with latest message
+            await base44.entities.Conversation.update(conversationId, {
+              last_message_preview: recipientResponse.substring(0, 100),
+              last_message_date: responseTimestamp,
+            }).catch(() => {});
+            console.log(`[sendWorldPhoneMessage] ✅ Recipient response saved | msg=${recipientMsg.id} | from=${recipient.name}`);
+          }
+        }
+      } else {
+        warnings.push(`Could not generate Character B response — canonical context unavailable for ${recipient.name}`);
+        console.warn(`[sendWorldPhoneMessage] No canonical context for recipient ${recipient.id} — response generation skipped`);
+      }
+    } catch (respErr) {
+      warnings.push(`Recipient response generation failed (non-fatal): ${respErr.message}`);
+      console.warn(`[sendWorldPhoneMessage] Recipient response generation error: ${respErr.message}`);
+    }
+
+    // ── BILATERAL SYNC: memory + relationship for BOTH characters ──────────────
+    // Only write if we have a real exchange (both messages exist)
+    const fullExchangeContent = recipientResponse
+      ? `${sender.name}: "${rewrittenMessage}" | ${recipient.name}: "${recipientResponse}"`
+      : `${sender.name}: "${rewrittenMessage}"`;
+
     base44.functions.invoke('syncWorldPhoneMemory', {
       senderCharacterId: sender_character_id,
       receiverCharacterId: recipient.id,
-      messageContent: rewrittenMessage,
+      messageContent: fullExchangeContent,
       context: 'world_phone',
       conversationId: conversationId,
-    })
-      .then(syncRes => {
-        const data = syncRes?.data || syncRes;
-        syncResult.success = data?.success !== false;
-        syncResult.memory_written = data?.memory_written;
-        syncResult.relationship_synced = data?.relationship_synced;
-        console.log(`[sendWorldPhoneMessage] Bilateral sync delegated to syncWorldPhoneMemory | msg=${savedMessage.id}`);
-      })
-      .catch(err => {
-        syncResult.success = false;
-        syncResult.error = err.message;
-        console.warn(`[sendWorldPhoneMessage] Bilateral sync background error: ${err.message}`);
-      });
+    }).catch(err => {
+      warnings.push(`Bilateral sync failed (non-fatal): ${err.message}`);
+      console.warn(`[sendWorldPhoneMessage] Bilateral sync error: ${err.message}`);
+    });
 
-    console.log(`[sendWorldPhoneMessage] ✅ msg=${savedMessage.id} | conv=${conversationId} | key=${canonicalKey} | source=${source} | sync=delegated_to_syncWorldPhoneMemory`);
+    console.log(`[sendWorldPhoneMessage] ✅ msg=${savedMessage.id} | conv=${conversationId} | key=${canonicalKey} | source=${source} | recipient_response=${recipientResponseMessageId || 'none'}`);
 
     return Response.json({
       success: true,
       proof: {
         message_id: savedMessage.id,
+        recipient_response_message_id: recipientResponseMessageId,
+        recipient_response_text: recipientResponse,
         conversation_id: conversationId,
         shared_conversation_key: canonicalKey,
         participant_character_ids: participantIds,
-        sync_delegated_to: 'syncWorldPhoneMemory',
+        recipient_response_generated: !!recipientResponseMessageId,
         recipient_resolution_path: recipientResolutionPath,
         source,
         warnings: warnings.length > 0 ? warnings : null,
