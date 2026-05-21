@@ -549,7 +549,6 @@ HOW TO BUILD THIS IMAGE
 4. APPLY LIGHTING: ${timeLighting.period} — ${timeLighting.desc}
    Both character and room are lit from the same light source. No exceptions.
 5. SCALE: Character height vs furniture must be anatomically correct. Beds, chairs, tables are SCALE ANCHORS. Tight/cropped shots preferred — do NOT force full room into frame. Aggressive zoom IS correct.
-5. SCALE: Character height vs furniture must be anatomically correct. Beds, chairs, tables are SCALE ANCHORS. Tight/cropped shots ARE preferred over wide-room shots. Do NOT force full room into frame.
 
 ════════════════════════════════════════════════════════════
 WHAT MAKES THIS LOOK REAL vs FAKE
@@ -1577,20 +1576,44 @@ Deno.serve(async (req) => {
       }
       const expectedHumanCount = subjectType === 'joint' ? 2 : (subjectType === 'character' || subjectType === 'user' || subjectType === 'known_character') ? 1 : 0;
       try {
+        // ── RESOLVE CONVERSATION CONTEXT NAMES FROM RECENT MESSAGES ─────────
+        const conversationContextNames = [];
+        try {
+          const convId = message.conversation_id;
+          if (convId) {
+            const recentMsgs = await base44.asServiceRole.entities.Message.filter({ conversation_id: convId }, '-created_date', 20).catch(() => []);
+            const nameSet = new Set();
+            for (const m of recentMsgs) {
+              if (m.character_name) nameSet.add(m.character_name);
+              if (m.played_as_character_name) nameSet.add(m.played_as_character_name);
+            }
+            const approvedNameSet = new Set(approvedSubjects.map(s => (s.name || '').toLowerCase()));
+            for (const n of nameSet) { if (n && !approvedNameSet.has(n.toLowerCase())) conversationContextNames.push(n); }
+            console.log(`[VisualSourceAudit][generateImageAsync] conversation_context_names: [${conversationContextNames.join(', ')}] from ${recentMsgs.length} msgs in conv ${convId}`);
+          }
+        } catch (ctxErr) { console.warn(`[VisualSourceAudit][generateImageAsync] ctx name resolution failed: ${ctxErr?.message}`); }
+        // Resolve sender name for firewall (sender ≠ subject means sender must be blocked from image)
+        let senderNameForAudit = null;
+        if (senderCharacterId && senderCharacterId !== characterId) {
+          try { const sr = await base44.asServiceRole.entities.Character.filter({ id: senderCharacterId }, null, 1).catch(() => []); senderNameForAudit = sr?.[0]?.name || null; } catch (_) {}
+        }
         const auditRes = await base44.functions.invoke('imageVisualSourceValidator', {
           mode: 'audit',
           prompt: sanitizedPrompt,
           approvedSubjects,
-          conversationContextNames: [],  // conversation context not available server-side at this layer
+          conversationContextNames,
           locationOwnerNames,
-          senderName: senderCharacterId && senderCharacterId !== characterId ? (charRecord?.name ? null : null) : null,
+          senderName: senderNameForAudit,
           expectedHumanCount,
           logPrefix: `[VisualSourceAudit][generateImageAsync][${messageId}]`,
         });
         visualSourceAudit = auditRes?.data?.audit || null;
         visualSourceBoundaryBlock = auditRes?.data?.boundary_block || '';
       } catch (auditErr) {
-        console.warn(`[generateImageAsync] Visual source audit failed (non-blocking): ${auditErr?.message}`);
+        // Audit failure must be recorded — not silently swallowed
+        console.error(`[generateImageAsync] ⛔ Visual source audit FAILED — recording validation_unavailable: ${auditErr?.message}`);
+        visualSourceAudit = { validation_status: 'validation_unavailable', error: auditErr?.message };
+        visualSourceBoundaryBlock = '\n\n⚠️ VISUAL SOURCE BOUNDARY: Audit unavailable — proceed with maximum identity isolation. No conversation or location context persons may appear.\n';
       }
     }
 

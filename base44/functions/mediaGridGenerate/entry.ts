@@ -549,6 +549,39 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
 
       console.log(`[mediaGridGenerate] Multi-person prompt built for ${people.length} people with ${identityRefs.length} identity refs + ${envRefs.length} env refs`);
 
+      // ── PRE-GENERATION VISUAL SOURCE AUDIT (multi-person path) ────────────
+      let mgVisualAudit = null;
+      let mgBoundaryBlock = '';
+      const mgApprovedSubjects = people.map(p => ({ id: p.id, name: p.displayName || p.role, type: p.subjectRole }));
+      const mgLocationOwnerNames = [];
+      try {
+        if (locationId) {
+          const locRecs = await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []);
+          const loc = locRecs?.[0];
+          if (loc) {
+            if (loc.owner_character_name) mgLocationOwnerNames.push(loc.owner_character_name);
+            if (loc.owner_npc_name) mgLocationOwnerNames.push(loc.owner_npc_name);
+            (loc.residents || []).forEach(r => { if (r.character_name) mgLocationOwnerNames.push(r.character_name); });
+          }
+        }
+        const mgAuditRes = await base44.functions.invoke('imageVisualSourceValidator', {
+          mode: 'audit',
+          prompt: sanitizedPrompt,
+          approvedSubjects: mgApprovedSubjects,
+          conversationContextNames: [],
+          locationOwnerNames: mgLocationOwnerNames,
+          senderName: null,
+          expectedHumanCount: people.length,
+          logPrefix: `[VisualSourceAudit][mediaGridGenerate][${messageId}]`,
+        });
+        mgVisualAudit = mgAuditRes?.data?.audit || null;
+        mgBoundaryBlock = mgAuditRes?.data?.boundary_block || '';
+      } catch (auditErr) {
+        console.error(`[mediaGridGenerate] ⛔ Visual source audit FAILED — recording validation_unavailable: ${auditErr?.message}`);
+        mgVisualAudit = { validation_status: 'validation_unavailable', error: auditErr?.message };
+        mgBoundaryBlock = '\n\n⚠️ VISUAL SOURCE BOUNDARY: Audit unavailable — proceed with maximum identity isolation.\n';
+      }
+
       const allReferences = [
         ...envRefs,
         ...identityRefs,
@@ -564,15 +597,42 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
         allReferences.push(toPublicCDN(referenceImageUrl));
       }
 
+      // Inject boundary block into prompt
+      const finalMultiPersonPrompt = mgBoundaryBlock ? multiPersonPrompt + mgBoundaryBlock : multiPersonPrompt;
+
       try {
         const genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-          prompt: multiPersonPrompt,
+          prompt: finalMultiPersonPrompt,
           existing_image_urls: allReferences,
         });
 
         if (!genRes?.url) {
           await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
           return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
+        }
+
+        // ── POST-GENERATION VALIDATION (multi-person path) ──────────────────
+        let mgPostGenStatus = 'validation_unavailable';
+        try {
+          const mgValidateRes = await base44.functions.invoke('imageVisualSourceValidator', {
+            mode: 'validate',
+            imageUrl: genRes.url,
+            audit: mgVisualAudit || { final_visual_roster: mgApprovedSubjects.map(s => s.name), conversation_entities_detected: [], location_entities_detected: mgLocationOwnerNames, expected_human_count: people.length },
+            charRecord: null,
+            expectedHumanCount: people.length,
+            attempt: 1,
+            logPrefix: `[PostGenValidation][mediaGridGenerate][${messageId}]`,
+          });
+          const mgVd = mgValidateRes?.data || {};
+          mgPostGenStatus = mgVd.passes === true ? 'passed' : mgVd.passes === false ? 'failed' : 'validation_unavailable';
+          if (mgVd.passes === false) {
+            console.warn(`[PostGenValidation][mediaGridGenerate] ⚠️ POST-GEN FAILED (not blocking multi-person path): ${mgVd.reject_reason || (mgVd.issues || []).join('; ')}`);
+          } else {
+            console.log(`[PostGenValidation][mediaGridGenerate] ✅ post-gen validation: ${mgPostGenStatus}`);
+          }
+        } catch (mgVErr) {
+          console.error(`[PostGenValidation][mediaGridGenerate] ⛔ validation_unavailable: ${mgVErr?.message}`);
+          mgPostGenStatus = 'validation_unavailable';
         }
 
         // Build structured subjects array — matches generateImageAsync format.
@@ -598,6 +658,7 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
           generation_context_version: 2,
           context_origin: 'media_grid',
           schema_written_at: new Date().toISOString(),
+          post_gen_validation_status: mgPostGenStatus,
 
           // New structured format — read by recoverSingleImage and regenerateImageWithReason
           image_type: 'multi',

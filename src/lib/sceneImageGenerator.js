@@ -84,7 +84,11 @@ LOCATION OWNER/RESIDENT FIREWALL: This location's associated people are EXCLUDED
 ${expectedCount === 0 ? 'ZERO HUMANS. No people of any kind. No bodies. No hands. No silhouettes.' : `EXACTLY ${expectedCount} person(s). No extras. No background occupants.`}
 `;
 
-  const basePrompt = `${envNote} Scene: ${locationName}${zoneSuffix}, ${timeOfDay} lighting.${atmosphere} ${peopleConstraint}${residentialConstraint}${humanPurityEnforcement}${identityLock}${avatarIdentityBlock}${outfitSuffix} Photorealistic.`;
+  // {{VISUAL_SOURCE_BOUNDARY_BLOCK}} is replaced at generation time by generateImageAsync
+  // after imageVisualSourceValidator runs the pre-generation audit. This ensures the
+  // runtime-computed forbidden entity list (conversation context, location owner names,
+  // sender identity) is injected into every scene image prompt.
+  const basePrompt = `${envNote} Scene: ${locationName}${zoneSuffix}, ${timeOfDay} lighting.${atmosphere} ${peopleConstraint}${residentialConstraint}${humanPurityEnforcement}{{VISUAL_SOURCE_BOUNDARY_BLOCK}}${identityLock}${avatarIdentityBlock}${outfitSuffix} Photorealistic.`;
   
   // CRITICAL: Validate each character's appearance_lock and outfit before returning prompt
   // Only validate characters that have an appearance_lock defined
