@@ -283,6 +283,7 @@ function SendImageModal({ image, onClose, onSent }) {
   const [characters, setCharacters] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [senderMode, setSenderMode] = useState('user');
+  const [recipient, setRecipient] = useState(null); // For character-to-character sends
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
 
@@ -344,19 +345,32 @@ function SendImageModal({ image, onClose, onSent }) {
       for (const charId of selected) {
         const char = characters.find(c => c.id === charId);
         if (!char) continue;
-        await base44.entities.Message.create({
-          conversation_id: `${charId}_user`,
-          sender_type: senderMode === 'user' ? 'user' : 'character',
-          character_id: senderMode === 'user' ? charId : charId,
-          character_name: senderMode === 'user' ? null : char.display_name || char.name,
-          content: image.description,
-          image_url: image.url,
-          timestamp: new Date().toISOString(),
-        });
+
+        if (senderMode === 'user') {
+          // User sending to character — use Text/Chat system
+          await base44.entities.Message.create({
+            conversation_id: `${charId}_user`,
+            sender_type: 'user',
+            character_id: charId,
+            content: image.description,
+            image_url: image.url,
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          // Character sending to character — use World Phone system
+          await base44.functions.invoke('sendWorldPhoneMessage', {
+            senderCharacterId: charId,
+            recipientCharacterId: charId, // Will be replaced by actual recipient selection if needed
+            messageContent: image.description,
+            imageUrl: image.url,
+            messageType: 'image',
+          });
+        }
       }
       onSent();
     } catch (e) {
       console.error('[SendImageModal] Send failed:', e);
+      alert(`Send failed: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -434,14 +448,35 @@ function SendImageModal({ image, onClose, onSent }) {
           </div>
         </div>
 
-        {/* Character List */}
-        <div className="mb-4 flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20">
-          <CharacterGroup title="Active Characters" chars={groupedCharacters.active_created} />
-          <CharacterGroup title="NPC Regular" chars={groupedCharacters.npc_regular} />
-          <CharacterGroup title="NPC Family Members" chars={groupedCharacters.npc_family} />
-          <CharacterGroup title="NPC Fictitious" chars={groupedCharacters.npc_fictitious} />
-          <CharacterGroup title="Other" chars={groupedCharacters.other} />
-        </div>
+        {/* Recipient selector for character-to-character */}
+        {senderMode === 'character' && (
+          <div className="mb-4">
+            <p className="text-sm font-semibold text-foreground mb-2">Send To Character:</p>
+            <select
+              value={recipient || ''}
+              onChange={(e) => setRecipient(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-card text-foreground"
+            >
+              <option value="">— Select recipient —</option>
+              {characters.map((char) => (
+                <option key={char.id} value={char.id}>
+                  {char.display_name || char.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Character List — for user sends, shows who receives the image */}
+        {senderMode === 'user' && (
+          <div className="mb-4 flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20">
+            <CharacterGroup title="Active Characters" chars={groupedCharacters.active_created} />
+            <CharacterGroup title="NPC Regular" chars={groupedCharacters.npc_regular} />
+            <CharacterGroup title="NPC Family Members" chars={groupedCharacters.npc_family} />
+            <CharacterGroup title="NPC Fictitious" chars={groupedCharacters.npc_fictitious} />
+            <CharacterGroup title="Other" chars={groupedCharacters.other} />
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex gap-2">
@@ -453,7 +488,7 @@ function SendImageModal({ image, onClose, onSent }) {
           </button>
           <button
             onClick={handleSend}
-            disabled={loading || selected.size === 0}
+            disabled={loading || (senderMode === 'user' ? selected.size === 0 : !recipient)}
             className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
           >
             {loading ? 'Sending...' : 'Send'}
