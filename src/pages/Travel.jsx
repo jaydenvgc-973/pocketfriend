@@ -22,14 +22,11 @@ import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils"
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { canCharacterTravelToLocation } from "@/lib/characterEditableListResolver";
 import { resolveTravelPresenceEntities, getPresenceAtLocation, isLocationEmpty } from "@/lib/travelPresenceResolver";
-import InTransitPanel from "@/components/travel/InTransitPanel";
-import { shouldVGCResidentBeAtHome } from "@/lib/vgcTowersPresenceEngine";
 import { useUserPresence } from "@/hooks/useUserPresence";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { useForegroundTask } from "@/hooks/useForegroundTask";
 import { FOREGROUND_TASKS } from "@/lib/foregroundPriority";
-import { useTravelSessions, applySessionProofToCharacters } from "@/lib/travelDisplayIntegrity";
 
 
 export default function Travel() {
@@ -87,9 +84,6 @@ export default function Travel() {
   const safeSettings = settingsObj?.id ? settingsObj : null;
   const settings = settingsObj || {};
 
-  // Load active in_transit sessions — used to gate travel display (ONE TRUTH RULE)
-  const { sessions: activeTravelSessions } = useTravelSessions(currentUser?.email);
-
   // useUserPresence: gives optimistic-aware presence (survives cache staleness and optimistic UI)
   const { userPresence } = useUserPresence(currentUser, safeSettings, safeSettings?.id);
 
@@ -99,9 +93,7 @@ export default function Travel() {
   // ALL character records for internal family scanning (parent character lookup)
   const allCharactersForFamilyScan = [...activeCharacters, ...npcCharacters, ...npcFamilyMembers];
 
-  // Apply travel display integrity — inject session proof onto all characters.
-  // This gates "already in transit" display on a valid in_transit TravelSession.
-  const verifiedTravelCompanions = applySessionProofToCharacters(travelCompanions, activeTravelSessions);
+  const verifiedTravelCompanions = travelCompanions;
 
   // Build a synthetic userSettings object that merges server data with optimistic presence
   // so resolveTravelPresenceEntities always sees the current user location (not stale DB value)
@@ -214,53 +206,7 @@ export default function Travel() {
       .catch(() => {});
   }, [currentUser?.email, hasRunDistribution]);
 
-  // CRITICAL: Detect arrival completion and invalidate character cache
-  // When a TravelSession transitions from in_transit → arrived, the Character's
-  // resolved_current_location has been updated in the database, but React Query
-  // still has stale data. This effect detects the transition and refreshes the cache
-  // so the map shows the character at destination, not origin.
-  useEffect(() => {
-    if (!currentUser?.email) return;
-    let cancelled = false;
 
-    const checkForArrivals = async () => {
-      try {
-        // Query all TravelSessions to detect any that just transitioned to arrived
-        const sessions = await base44.entities.TravelSession.filter(
-          { owner_email: currentUser.email },
-          '-created_at',
-          100
-        ).catch(() => []);
-
-        if (cancelled) return;
-
-        // Check if any session is now in "arrived" status (completed within last 30 seconds)
-        const recentlyArrived = sessions.filter(s => {
-          if (s.route_status === 'arrived' && s.actual_arrival_time) {
-            const arrivedAt = new Date(s.actual_arrival_time).getTime();
-            return (Date.now() - arrivedAt) < 30000;
-          }
-          return false;
-        });
-
-        if (recentlyArrived.length > 0 && !cancelled) {
-          console.log(`[Travel] Detected ${recentlyArrived.length} recently-arrived session(s) — invalidating character cache`, 
-            recentlyArrived.map(s => ({ id: s.character_id, name: s.character_name, destination: s.destination_location_name })));
-          // Invalidate character cache so activeCharacters re-fetches from DB with updated locations
-          queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
-          queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser.id] });
-        }
-      } catch (e) {
-        console.warn('[Travel] Arrival detection check failed:', e.message);
-      }
-    };
-
-    const checkInterval = setInterval(checkForArrivals, 5000); // Check every 5 seconds
-    return () => {
-      cancelled = true;
-      clearInterval(checkInterval);
-    };
-  }, [currentUser?.email, currentUser?.id]);
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
   const formatOperatingHours = (location) => {
@@ -549,9 +495,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-6 relative z-10">
-
-        {/* In-Transit Sessions */}
-        <InTransitPanel ownerEmail={currentUser?.email} />
 
         {/* Live Presence Map */}
         <AnimatePresence>
