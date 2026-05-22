@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Wrench, CheckCircle2, AlertCircle, Loader2, MapPin, Star, Database, Zap, RefreshCw, Moon } from 'lucide-react';
+import { X, Wrench, CheckCircle2, AlertCircle, Loader2, MapPin, Star, Database, Zap, RefreshCw, Moon, AlarmClock, Lock, Briefcase } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -830,6 +830,225 @@ function SleepPresenceRepairPanel({ user }) {
   return null;
 }
 
+// ── ALARM DIAGNOSTIC PANEL ────────────────────────────────────────────────────
+
+function AlarmDiagnosticPanel({ user }) {
+  const [characterId, setCharacterId] = useState('');
+  const [status, setStatus] = useState('idle');
+  const [result, setResult] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const queryClient = useQueryClient();
+
+  const run = async () => {
+    if (!characterId.trim()) return;
+    setStatus('running');
+    setResult(null);
+    setErrorMsg(null);
+    try {
+      const res = await base44.functions.invoke('diagnoseAlarmFailure', { characterId: characterId.trim() });
+      setResult(res?.data);
+      setStatus('done');
+    } catch (err) {
+      setErrorMsg(err.message);
+      setStatus('error');
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-secondary/50 border border-border rounded-lg p-3 space-y-1">
+        <p className="text-sm font-medium text-foreground">Diagnose Alarm Failure</p>
+        <p className="text-xs text-muted-foreground">Full diagnostic: character lookup, ownership check, RLS validation, sleep state, work obligations.</p>
+      </div>
+      <div className="space-y-2">
+        <label className="text-xs text-muted-foreground">Character ID</label>
+        <input
+          type="text"
+          value={characterId}
+          onChange={e => setCharacterId(e.target.value)}
+          placeholder="Paste character ID..."
+          className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+        />
+      </div>
+      <button
+        onClick={run}
+        disabled={!characterId.trim() || status === 'running'}
+        className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 text-sm"
+      >
+        {status === 'running' ? <><Loader2 className="w-4 h-4 animate-spin" /> Running…</> : <><AlarmClock className="w-4 h-4" /> Run Alarm Diagnostic</>}
+      </button>
+      {errorMsg && <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 text-sm text-destructive">{errorMsg}</div>}
+      {result && (
+        <div className="space-y-3">
+          <div className={`p-3 rounded-xl border text-xs ${result.alarm_would_succeed ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-amber-500/10 border-amber-500/20'}`}>
+            <p className="font-semibold text-foreground">{result.summary}</p>
+            {result.root_cause && <p className="text-amber-400 mt-1">Root cause: {result.root_cause}</p>}
+          </div>
+          {(result.checks || []).map((c, i) => (
+            <div key={i} className={`p-2.5 rounded-lg border text-xs space-y-0.5 ${c.status === 'pass' || c.status === 'sleeping' ? 'bg-emerald-500/5 border-emerald-500/20' : c.status === 'fail' || c.status === 'error' ? 'bg-destructive/5 border-destructive/20' : 'bg-secondary border-border'}`}>
+              <p className="font-medium text-foreground capitalize">{c.step?.replace(/_/g,' ')}</p>
+              <p className="text-muted-foreground">{c.detail || JSON.stringify(c)}</p>
+              {c.would_produce && <p className="text-amber-400">Would produce: {c.would_produce}</p>}
+              {c.root_cause && <p className="text-destructive">Root cause: {c.root_cause}</p>}
+            </div>
+          ))}
+          <button onClick={() => { setStatus('idle'); setResult(null); setCharacterId(''); }} className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground text-sm font-medium">Reset</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CONFINEMENT RELEASE PANEL ─────────────────────────────────────────────────
+
+function ConfinementReleasePanel({ user }) {
+  const [phase, setPhase] = useState('idle');
+  const [diagData, setDiagData] = useState(null);
+  const [repairData, setRepairData] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const queryClient = useQueryClient();
+
+  const runDiag = async () => {
+    setPhase('diagnosing'); setDiagData(null); setErrorMsg(null);
+    try {
+      const res = await base44.functions.invoke('fixOverdueConfinement', { dry_run: true });
+      setDiagData(res?.data);
+      setPhase('diagnosed');
+    } catch (e) { setErrorMsg(e.message); setPhase('error'); }
+  };
+
+  const runFix = async () => {
+    setPhase('fixing'); setRepairData(null);
+    try {
+      const res = await base44.functions.invoke('fixOverdueConfinement', { dry_run: false });
+      setRepairData(res?.data);
+      setPhase('done');
+      queryClient.invalidateQueries({ queryKey: ['characters'] });
+    } catch (e) { setErrorMsg(e.message); setPhase('error'); }
+  };
+
+  const reset = () => { setPhase('idle'); setDiagData(null); setRepairData(null); setErrorMsg(null); };
+
+  if (phase === 'idle') return (
+    <div className="space-y-4">
+      <div className="bg-secondary/50 border border-border rounded-lg p-3 space-y-1">
+        <p className="text-sm font-medium text-foreground">Fix Overdue Confinement Release</p>
+        <p className="text-xs text-muted-foreground">Finds jailed characters whose sentence has ended. Shows booked date, sentence length, calculated release date, and whether release is overdue. Characters without a determinable release date are flagged for manual review — never auto-released.</p>
+      </div>
+      <button onClick={runDiag} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-colors">
+        <Lock className="w-4 h-4" /> Run Diagnostic
+      </button>
+    </div>
+  );
+
+  if (phase === 'diagnosing' || phase === 'fixing') return (
+    <div className="flex flex-col items-center justify-center py-8 gap-3">
+      <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      <p className="text-sm text-muted-foreground">{phase === 'diagnosing' ? 'Checking confinement records…' : 'Releasing overdue sentences…'}</p>
+    </div>
+  );
+
+  if (phase === 'error') return (
+    <div className="space-y-3">
+      <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 text-sm text-destructive">{errorMsg}</div>
+      <button onClick={reset} className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground text-sm font-medium">Try Again</button>
+    </div>
+  );
+
+  const data = diagData || repairData;
+  if (!data) return null;
+  const overdue = (data.characters || []).filter(c => c.release_overdue);
+  const needsReview = (data.characters || []).filter(c => c.action_taken === 'flagged_manual_review');
+
+  return (
+    <div className="space-y-4">
+      <div className={`p-3 rounded-xl border text-xs ${overdue.length > 0 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
+        <p className="font-semibold text-foreground">{data.summary}</p>
+        <p className="text-muted-foreground mt-0.5">Total jailed: {data.total_jailed} · Overdue: {data.overdue_count} · Needs manual review: {data.needs_manual_review}</p>
+      </div>
+      {overdue.map((c, i) => (
+        <div key={i} className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-2.5 text-xs space-y-0.5">
+          <p className="font-medium text-foreground">{c.character_name}</p>
+          <p className="text-muted-foreground">Booked: {c.booked_date ? new Date(c.booked_date).toLocaleDateString() : '—'} · Sentence: {c.sentence_days ?? '?'}d</p>
+          <p className="text-muted-foreground">Calculated release: {c.calculated_release_date ? new Date(c.calculated_release_date).toLocaleDateString() : '—'}</p>
+          <p className={phase === 'done' ? 'text-emerald-400' : 'text-amber-400'}>{c.action_taken}: {c.reason}</p>
+        </div>
+      ))}
+      {needsReview.map((c, i) => (
+        <div key={i} className="bg-destructive/5 border border-destructive/20 rounded-lg p-2.5 text-xs space-y-0.5">
+          <p className="font-medium text-foreground">{c.character_name} — Manual Review Required</p>
+          <p className="text-muted-foreground">{c.reason}</p>
+        </div>
+      ))}
+      {(data.characters || []).filter(c => !c.release_overdue && c.action_taken !== 'flagged_manual_review').map((c, i) => (
+        <div key={i} className="bg-secondary/30 border border-border rounded-lg p-2.5 text-xs">
+          <p className="font-medium text-foreground">{c.character_name}</p>
+          <p className="text-muted-foreground">{c.reason}</p>
+        </div>
+      ))}
+      <div className="flex gap-2">
+        {phase === 'diagnosed' && overdue.length > 0 && (
+          <button onClick={runFix} className="flex-1 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-colors">
+            Release {overdue.length} Overdue
+          </button>
+        )}
+        <button onClick={reset} className="flex-1 px-4 py-3 rounded-xl bg-secondary text-foreground font-medium text-sm">{phase === 'done' ? 'Done' : 'Cancel'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── EMPLOYMENT ROUTING PANEL ──────────────────────────────────────────────────
+
+function EmploymentDiagnosticPanel({ user }) {
+  const [status, setStatus] = useState('idle');
+  const [result, setResult] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
+
+  const run = async () => {
+    setStatus('running'); setResult(null); setErrorMsg(null);
+    try {
+      const res = await base44.functions.invoke('diagnoseEmploymentRouting', {});
+      setResult(res?.data);
+      setStatus('done');
+    } catch (e) { setErrorMsg(e.message); setStatus('error'); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-secondary/50 border border-border rounded-lg p-3 space-y-1">
+        <p className="text-sm font-medium text-foreground">Diagnose Employment Routing</p>
+        <p className="text-xs text-muted-foreground">Finds characters being routed to work incorrectly — fired/quit still scheduled, not on roster, or showing at_work outside shift hours.</p>
+      </div>
+      <button onClick={run} disabled={status === 'running'} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-colors disabled:opacity-50">
+        {status === 'running' ? <><Loader2 className="w-4 h-4 animate-spin" /> Diagnosing…</> : <><Briefcase className="w-4 h-4" /> Run Employment Diagnostic</>}
+      </button>
+      {errorMsg && <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 text-sm text-destructive">{errorMsg}</div>}
+      {result && (
+        <div className="space-y-3">
+          <div className={`p-3 rounded-xl border text-xs ${result.issues_found > 0 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
+            <p className="font-semibold text-foreground">{result.summary}</p>
+          </div>
+          {(result.problematic_characters || []).map((c, i) => (
+            <div key={i} className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-2.5 text-xs space-y-1">
+              <p className="font-medium text-foreground">{c.name}</p>
+              <p className="text-muted-foreground">Location: {c.occupation_location_name || '—'} · Status: {c.employment_status || 'none'} · On roster: {c.is_on_work_roster === null ? 'location not found' : c.is_on_work_roster ? 'yes' : 'no'}</p>
+              {c.issues_found.map((issue, j) => (
+                <div key={j} className={`pl-2 border-l-2 ${issue.severity === 'critical' ? 'border-destructive' : issue.severity === 'high' ? 'border-amber-500' : 'border-yellow-500/50'}`}>
+                  <p className="text-amber-400 font-medium">{issue.type}</p>
+                  <p className="text-muted-foreground">{issue.detail}</p>
+                  <p className="text-muted-foreground/70">Fix: {issue.fix}</p>
+                </div>
+              ))}
+            </div>
+          ))}
+          <button onClick={() => { setStatus('idle'); setResult(null); }} className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground text-sm font-medium">Reset</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN PANEL ───────────────────────────────────────────────────────────────
 
 const TABS = [
@@ -837,6 +1056,9 @@ const TABS = [
   { id: 'moments', label: 'Moments', icon: Star, issues: MOMENTS_ISSUES, fn: 'troubleshootMoments' },
   { id: 'system', label: 'System & Data', icon: Database, issues: SYSTEM_ISSUES, fn: 'troubleshootSystemData' },
   { id: 'sleep', label: 'Sleep', icon: Moon, issues: null, fn: null },
+  { id: 'alarm', label: 'Alarm', icon: AlarmClock, issues: null, fn: null },
+  { id: 'confinement', label: 'Confinement', icon: Lock, issues: null, fn: null },
+  { id: 'employment', label: 'Employment', icon: Briefcase, issues: null, fn: null },
   { id: 'sync', label: 'Sync', icon: RefreshCw, issues: null, fn: null },
 ];
 
@@ -898,8 +1120,14 @@ export default function SettingsTroubleshootingPanel({ isOpen, onClose, user }) 
                 <SyncLocationsPanel user={user} />
               ) : activeTab === 'sleep' ? (
                 <SleepPresenceRepairPanel user={user} />
+              ) : activeTab === 'alarm' ? (
+                <AlarmDiagnosticPanel user={user} />
+              ) : activeTab === 'confinement' ? (
+                <ConfinementReleasePanel user={user} />
+              ) : activeTab === 'employment' ? (
+                <EmploymentDiagnosticPanel user={user} />
               ) : (
-                TABS.filter(t => t.id !== 'sync' && t.id !== 'sleep').map(tab => (
+                TABS.filter(t => !['sync', 'sleep', 'alarm', 'confinement', 'employment'].includes(t.id)).map(tab => (
                   activeTab === tab.id && (
                     <TabPanel
                       key={tab.id}

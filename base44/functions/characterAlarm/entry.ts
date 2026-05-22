@@ -25,11 +25,58 @@ Deno.serve(async (req) => {
     }
 
     // Verify ownership — owner_email is source of truth. Never use created_by.
-    const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
-    const character = charList?.[0];
-    if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
+    // DIAGNOSTIC: capture exactly what lookup was attempted so 404s are traceable.
+    let character = null;
+    let lookupMethod = 'filter_by_id';
+    let lookupError = null;
+    try {
+      const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
+      character = charList?.[0] || null;
+    } catch (e) {
+      lookupError = e.message;
+      lookupMethod = 'filter_by_id_FAILED';
+    }
+
+    if (!character) {
+      // Diagnostic: try direct get as fallback to distinguish "not found" from "RLS block"
+      let directLookupResult = null;
+      let directLookupError = null;
+      try {
+        const directList = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email, id: characterId }, null, 1);
+        directLookupResult = directList?.[0] || null;
+      } catch (e2) {
+        directLookupError = e2.message;
+      }
+
+      return Response.json({
+        error: 'Character not found',
+        diagnostic: {
+          character_id: characterId,
+          caller_email: user.email,
+          lookup_method: lookupMethod,
+          lookup_error: lookupError,
+          filter_by_id_result: 'null',
+          owner_scoped_filter_result: directLookupResult ? `found: ${directLookupResult.name}` : 'null',
+          owner_scoped_filter_error: directLookupError,
+          possible_cause: lookupError
+            ? 'service-role filter threw — possible SDK or DB error'
+            : directLookupResult
+            ? 'character exists but ID filter returned empty — possible RLS or index mismatch'
+            : 'character not found under either scope — may belong to different account or be deleted',
+        }
+      }, { status: 404 });
+    }
+
     if (character.owner_email !== user.email) {
-      return Response.json({ error: 'Forbidden — character does not belong to your account' }, { status: 403 });
+      return Response.json({
+        error: 'Forbidden — character does not belong to your account',
+        diagnostic: {
+          character_id: characterId,
+          character_owner_email: character.owner_email,
+          caller_email: user.email,
+          mismatch: true,
+        }
+      }, { status: 403 });
     }
 
     const firstName = (character.name || 'They').split(' ')[0];

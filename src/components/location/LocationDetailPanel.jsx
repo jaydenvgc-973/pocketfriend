@@ -3,6 +3,7 @@ import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
 import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
+import WorkerEmploymentControls from "./WorkerEmploymentControls";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -27,6 +28,8 @@ function SectionHeader({ icon: Icon, label }) {
 export default function LocationDetailPanel({ location, characters = [], allLocations = [], onResidentsChanged = null, currentUserId = null, currentUserEmail = null, onLocationUpdate = null }) {
   const [confirmMove, setConfirmMove] = useState(null);
   const [isMoving, setIsMoving] = useState(false);
+  const [workerUpdateTick, setWorkerUpdateTick] = useState(0);
+  const handleWorkerUpdated = () => { setWorkerUpdateTick(t => t + 1); onResidentsChanged?.(); };
 
   if (!location) return null;
 
@@ -250,6 +253,15 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                           <div className="text-[10px] text-muted-foreground/60 border-t border-border/40 pt-1 mt-1">
                             Uniform: <span className="text-muted-foreground">{resolvedUniform.name}</span>
                           </div>
+                        )}
+                        {char && (
+                          <WorkerEmploymentControls
+                            characterId={id}
+                            characterName={char.name}
+                            locationId={location.id}
+                            locationName={location.name}
+                            onUpdated={handleWorkerUpdated}
+                          />
                         )}
                       </div>
                     );

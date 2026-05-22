@@ -47,7 +47,12 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
   const sleepState = getCharacterSleepState(character);
   const isAsleep = sleepState.isSleeping;
   const firstName = character.name?.split(" ")[0] || "Character";
-  const sleepContextDesc = sleepState.contextLabel || (sleepState.isNapping ? 'Napping' : 'Sleeping');
+  // Only show confirmed reason — never infer from needs values
+  const sleepContextDesc = sleepState.confirmed_reason && sleepState.confidence >= 0.8
+    ? sleepState.visible_label
+    : sleepState.isLikelyStale
+    ? 'Sleep state unverified — no proof found'
+    : null;
 
   const invoke = async (action, extra = {}) => {
     setIsLoading(true);
@@ -72,26 +77,25 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
         setResult({ type: "error", text: data?.error || "Something went wrong." });
       }
     } catch (err) {
-      // Never expose raw HTTP error messages (e.g. "Request failed with status code 404")
-      // Map to user-friendly descriptions
+      // Show diagnostic detail — NOT a vague friendly message.
+      // The root cause must be visible so the user or admin can act on it.
       const rawMsg = err?.message || '';
-      let friendlyMsg = "Could not reach the alarm service. Please try again.";
+      let diagMsg = `Alarm failed (${action}): ${rawMsg || 'unknown error'}`;
+
+      // Parse HTTP status from message for clear diagnosis
       if (rawMsg.includes('404')) {
-        friendlyMsg = "Alarm service unavailable — the wake endpoint could not be reached. Please refresh the app.";
+        diagMsg = `404 — Character not found or lookup failed. Character ID: ${characterId}. This may be an RLS scope issue or the character was deleted. Run Settings → Troubleshooting → Alarm for full diagnosis.`;
       } else if (rawMsg.includes('403')) {
-        friendlyMsg = "Permission denied — this character doesn't belong to your account.";
-      } else if (rawMsg.includes('429') || rawMsg.toLowerCase().includes('rate limit')) {
-        friendlyMsg = "Too many requests — please wait a moment and try again.";
+        diagMsg = `403 — Permission denied. This character may not belong to your account. Character ID: ${characterId}.`;
       } else if (rawMsg.includes('401')) {
-        friendlyMsg = "Not signed in — please refresh the page.";
+        diagMsg = `401 — Not authenticated. Please refresh the page and sign in again.`;
+      } else if (rawMsg.includes('429') || rawMsg.toLowerCase().includes('rate limit')) {
+        diagMsg = `429 — Rate limit hit. Wait 30 seconds and try again.`;
       } else if (rawMsg.includes('500')) {
-        friendlyMsg = "Server error — the alarm service encountered an issue. Try again in a moment.";
-      } else if (rawMsg.length > 0 && rawMsg.length < 120) {
-        // Only show raw message if it's short and doesn't look like an HTTP error
-        const looksLikeHttpError = /\b(status code|failed with|network error|axios|ERR_)\b/i.test(rawMsg);
-        if (!looksLikeHttpError) friendlyMsg = rawMsg;
+        diagMsg = `500 — Server error in characterAlarm function. Character ID: ${characterId}. Check backend logs.`;
       }
-      setResult({ type: "error", text: friendlyMsg });
+
+      setResult({ type: "error", text: diagMsg });
     } finally {
       setIsLoading(false);
     }
@@ -168,11 +172,11 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
               <p className="text-sm text-foreground">
                 {isAsleep ? `${firstName} is currently ${sleepState.isNapping ? 'napping' : 'sleeping'}.` : `${firstName} is already awake.`}
               </p>
-              {isAsleep && sleepState.sleepType !== 'scheduled' && sleepState.sleepType !== 'unknown' && (
-                <p className="text-xs text-indigo-300/70 mt-0.5">{sleepContextDesc}</p>
+              {isAsleep && sleepContextDesc && (
+                <p className={`text-xs mt-0.5 ${sleepState.isLikelyStale ? 'text-amber-400/80' : 'text-indigo-300/70'}`}>{sleepContextDesc}</p>
               )}
-              {isAsleep && sleepState.isLikelyStale && (
-                <p className="text-xs text-amber-400/80 mt-0.5">⚠ Sleep state may be stale — no active reason detected</p>
+              {isAsleep && sleepState.isLikelyStale && !sleepContextDesc && (
+                <p className="text-xs text-amber-400/80 mt-0.5">⚠ Sleep state unverified — run Settings → Troubleshooting → Sleep to diagnose</p>
               )}
             </div>
           </div>
