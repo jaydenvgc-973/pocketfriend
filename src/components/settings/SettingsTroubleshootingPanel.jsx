@@ -499,7 +499,7 @@ function SyncLocationsPanel({ user }) {
         });
       }
       setResults([...collected]); // update progressively
-      await sleep(300);
+      await sleep(1200); // throttle to avoid 429 rate limits (one call per 1.2s)
     }
 
     queryClient.invalidateQueries({ queryKey: ['characters'] });

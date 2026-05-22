@@ -127,6 +127,23 @@ export default function Home() {
 
 
 
+  // AUTO-RESOLVE STUCK TRAVEL on home mount — session-gated.
+  // completeStuckTravelUserScoped is the only path that can write to Character (user-scoped RLS).
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    const stuckKey = `stuck_travel_resolved_${currentUser.email}`;
+    if (sessionStorage.getItem(stuckKey)) return;
+    sessionStorage.setItem(stuckKey, '1');
+    base44.functions.invoke('completeStuckTravelUserScoped', {})
+      .then(res => {
+        const found = res?.data?.stuck_characters_found || 0;
+        if (found > 0) {
+          queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
+        }
+      })
+      .catch(() => {});
+  }, [currentUser?.email]);
+
   // Check for character invites on first mount only
   useEffect(() => {
     if (!currentUser?.email) return;

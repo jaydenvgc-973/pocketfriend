@@ -167,6 +167,25 @@ export default function Travel() {
     };
   }, [selectedLocation]);
 
+  // AUTO-RESOLVE STUCK TRAVEL on page load.
+  // completeStuckTravelUserScoped uses user-scoped RLS (the only path that works for Character writes).
+  // Session-gated: run once per session to avoid hammering the API.
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    const stuckKey = `stuck_travel_resolved_${currentUser.email}`;
+    if (sessionStorage.getItem(stuckKey)) return;
+    sessionStorage.setItem(stuckKey, '1');
+    base44.functions.invoke('completeStuckTravelUserScoped', {})
+      .then(res => {
+        const completed = res?.data?.stuck_characters_found || 0;
+        if (completed > 0) {
+          queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
+          queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
+        }
+      })
+      .catch(() => {});
+  }, [currentUser?.email]);
+
   // Auto-distribute VGC NPCs on page load so UI shows their real locations.
   // Session-gated: distributeVGCTowersNPCs is expensive — run at most once per session.
   useEffect(() => {
