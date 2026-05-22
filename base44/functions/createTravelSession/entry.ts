@@ -382,6 +382,15 @@ Deno.serve(async (req) => {
       current_home_location_id: char.current_home_location_id || null,
     };
 
+    // Commitment-driven sessions are NOT interruptible by autonomous needs/wants.
+    // A character who said "I'm on my way" has made an autonomous decision.
+    // That session must be protected until arrival or a legitimate hard blocker (jail, hospitalization).
+    const isCommitmentDriven = (
+      travelSource === 'promise' ||
+      !!sourceCommitmentId
+    );
+    const sessionInterruptionAllowed = !isCommitmentDriven;
+
     const session = await base44.asServiceRole.entities.TravelSession.create({
       character_id:              characterId,
       character_name:            char.name || char.display_name || char.primary_name,
@@ -403,7 +412,7 @@ Deno.serve(async (req) => {
       progress_percent:          0,
       route_status:              'in_transit',
       last_progress_update:      now.toISOString(),
-      interruption_allowed:      true,
+      interruption_allowed:      sessionInterruptionAllowed,
       positioning_mode:          positioningMode,
       origin_geo_mode:           originLoc?.geo_mode || 'unknown',
       destination_geo_mode:      destLoc?.geo_mode || 'unknown',

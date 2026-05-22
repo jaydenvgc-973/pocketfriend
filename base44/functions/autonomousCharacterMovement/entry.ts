@@ -378,28 +378,57 @@ Deno.serve(async (req) => {
         } catch { /* non-fatal */ }
 
         if (activeSession) {
-          // Only proceed if an overriding hard condition is present (sleep/jail/energy-critical).
-          // Non-overriding paths must skip — character is in transit.
-          const overridingHardCondition = (
-            char.is_jailed === true ||
-            char.house_arrest_active === true ||
-            char.resolved_presence_status === 'incarcerated' ||
-            char.resolved_presence_status === 'confined' ||
-            char.resolved_presence_status === 'house_arrest' ||
-            urgencyLevel(needValues(char).energy) >= 4 ||   // pass-out
-            isScheduledSleeping(char, nowET)                // sleep window
-          );
-          if (!overridingHardCondition) {
-            console.log(`[autonomousMovement] ${char.name}: IN_TRANSIT (session ${activeSession.id} → ${activeSession.destination_location_name}) — skip autonomous move`);
-            continue;
+          // COMMITMENT PROTECTION: sessions with interruption_allowed=false are commitment-driven
+          // (character said "I'm on my way", accepted a plan, made a verbal promise).
+          // These represent autonomous decisions by the character — they outrank passive needs/wants.
+          // Only CONFINEMENT (jail/house_arrest) can cancel a commitment session.
+          // Sleep, energy, hunger, boredom, and all other needs CANNOT cancel a commitment.
+          const isCommitmentSession = activeSession.interruption_allowed === false ||
+            activeSession.travel_source === 'promise';
+
+          if (isCommitmentSession) {
+            // ONLY hard confinement can interrupt a commitment session
+            const confinementBlock = (
+              char.is_jailed === true ||
+              char.house_arrest_active === true ||
+              char.resolved_presence_status === 'incarcerated' ||
+              char.resolved_presence_status === 'confined' ||
+              char.resolved_presence_status === 'house_arrest'
+            );
+            if (!confinementBlock) {
+              console.log(`[autonomousMovement] ${char.name}: COMMITMENT SESSION PROTECTED (session ${activeSession.id} → ${activeSession.destination_location_name}) — autonomous needs cannot override`);
+              continue;
+            }
+            // Confinement cancels even commitment sessions
+            console.log(`[autonomousMovement] ${char.name}: CONFINEMENT overrides commitment session ${activeSession.id}`);
+            await base44.asServiceRole.entities.TravelSession.update(activeSession.id, {
+              route_status: 'cancelled',
+              blocker_reason: 'overridden_by_confinement',
+            }).catch(() => {});
+            activeSession = null;
+          } else {
+            // Non-commitment session: only proceed if an overriding hard condition is present.
+            const overridingHardCondition = (
+              char.is_jailed === true ||
+              char.house_arrest_active === true ||
+              char.resolved_presence_status === 'incarcerated' ||
+              char.resolved_presence_status === 'confined' ||
+              char.resolved_presence_status === 'house_arrest' ||
+              urgencyLevel(needValues(char).energy) >= 4 ||   // pass-out
+              isScheduledSleeping(char, nowET)                // sleep window
+            );
+            if (!overridingHardCondition) {
+              console.log(`[autonomousMovement] ${char.name}: IN_TRANSIT (session ${activeSession.id} → ${activeSession.destination_location_name}) — skip autonomous move`);
+              continue;
+            }
+            // Hard condition overrides non-commitment transit — cancel the session before re-routing
+            console.log(`[autonomousMovement] ${char.name}: HARD CONDITION overrides active transit — cancelling session ${activeSession.id}`);
+            await base44.asServiceRole.entities.TravelSession.update(activeSession.id, {
+              route_status: 'cancelled',
+              blocker_reason: 'overridden_by_hard_condition',
+            }).catch(() => {});
+            activeSession = null;
           }
-          // Hard condition overrides transit — cancel the session before re-routing
-          console.log(`[autonomousMovement] ${char.name}: HARD CONDITION overrides active transit — cancelling session ${activeSession.id}`);
-          await base44.asServiceRole.entities.TravelSession.update(activeSession.id, {
-            route_status: 'cancelled',
-            blocker_reason: 'overridden_by_hard_condition',
-          }).catch(() => {});
-          activeSession = null;
         }
 
         // ── TIER 0: INCARCERATION / HOUSE ARREST / HOSPITALIZED — absolute hard stop ──
@@ -863,6 +892,28 @@ Deno.serve(async (req) => {
         ) {
           console.log(`[autonomousMovement] ${char.name}: HARD BLOCK (${reason || status})`);
           continue;
+        }
+
+        // ── COMMITMENT DESTINATION LOCK ───────────────────────────────────────
+        // If character has an active commitment-driven TravelSession (interruption_allowed=false),
+        // do NOT start any needs-based travel. The character has already made an autonomous decision.
+        // This check covers the case where the session was created but Tier -1 did not catch it
+        // (e.g., session just became active after this loop iteration loaded char).
+        {
+          const lockedSessions = await base44.asServiceRole.entities.TravelSession.filter({
+            owner_email: char.owner_email,
+            character_id: char.id,
+            route_status: 'in_transit',
+          }, null, 5).catch(() => []);
+          const hasLockedCommitment = (lockedSessions || []).some(s =>
+            s.interruption_allowed === false || s.travel_source === 'promise'
+          );
+          if (hasLockedCommitment) {
+            const locked = lockedSessions.find(s => s.interruption_allowed === false || s.travel_source === 'promise');
+            console.log(`[autonomousMovement] ${char.name}: COMMITMENT DESTINATION LOCKED → ${locked?.destination_location_name} — needs-based travel blocked`);
+            skippedLog.push(`${char.name}: commitment-locked (→ ${locked?.destination_location_name})`);
+            continue;
+          }
         }
 
         // ── TIER 6.5: ACTIVE COMMITMENT CHECK ────────────────────────────────

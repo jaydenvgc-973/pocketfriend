@@ -220,12 +220,42 @@ Deno.serve(async (req) => {
       });
 
       if (!blockReason) {
-        // Immediately update character to traveling state
-        await base44.asServiceRole.entities.Character.update(characterId, {
-          travel_status: 'traveling_to_destination',
-          resolved_source_reason: 'conversation_directive',
-          resolved_last_updated_at: new Date(now).toISOString(),
-        });
+        // IMMEDIATE TRAVEL SESSION: Character said "I'm on my way" — this is an autonomous decision.
+        // Create a real TravelSession right now so the commitment destination is locked
+        // and cannot be overridden by the next autonomous needs cycle.
+        // The destination is the character's current conversation context (user's location or agreed location).
+        // We store the commitment_id so the session is marked interruption_allowed=false.
+        // Note: destination_location_id may not be determinable from text alone — we use
+        // the character's existing traveling_to_location_id or current invite destination if available.
+        // The travel session will also update Character.travel_status properly through the TravelSession path.
+        let travelSessionStarted = false;
+        const directiveDestId = character.traveling_to_location_id || character.travel_destination_location_id;
+        if (directiveDestId) {
+          const tsRes = await base44.functions.invoke('createTravelSession', {
+            characterId,
+            destinationLocationId: directiveDestId,
+            travelReason: `conversation_directive: "${messageContent.substring(0, 100)}"`,
+            travelSource: 'promise',
+            sourceConversationId: conversationId,
+            ownerEmail: ownerEmail || character.owner_email || '',
+          }).catch(e => ({ data: { success: false, error: e.message } }));
+          const tsData = tsRes?.data || {};
+          if (tsData.success) {
+            travelSessionStarted = true;
+            console.log(`[detectAndScheduleCommitments] ✅ Immediate TravelSession created for directive → ${tsData.destination} ETA: ${tsData.estimated_arrival}`);
+          } else {
+            console.warn(`[detectAndScheduleCommitments] TravelSession not started: ${tsData.blocker_reason || tsData.error} — updating travel_status only`);
+          }
+        }
+
+        if (!travelSessionStarted) {
+          // No destination ID available — stamp travel_status so UI reflects the commitment
+          await base44.asServiceRole.entities.Character.update(characterId, {
+            travel_status: 'traveling_to_destination',
+            resolved_source_reason: 'conversation_directive',
+            resolved_last_updated_at: new Date(now).toISOString(),
+          });
+        }
 
         // Create ScheduledEvent to fire arrival
         const arrivalNarrative = `${character.name} has arrived — following through on their commitment.`;
