@@ -257,48 +257,96 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 2. Asleep — canonical sleep check:
-    // DB status alone can be stale. We check BOTH DB status AND schedule-derived sleep
-    // to catch characters who are in their sleep window but have a stale 'home' DB status.
-    // computeAdaptiveSleepWindow logic inlined here (no local imports in Deno functions):
-    const isAsleepByDB = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+    // 2. Asleep — canonical sleep check with stale-vs-valid distinction:
+    //
+    // We check canonical schedule-derived sleep FIRST (source of truth).
+    // For DB sleeping state: we only block if it is VALID (character-driven).
+    // STALE DB sleep (system artifact past wake time with no valid reason) must NOT block travel.
+    //
+    // Valid reasons to block despite being past wake_up_time (not stale):
+    //   - illness (health_value < 30)
+    //   - emotional crash (mental_value < 25)
+    //   - high sleep debt (sleep_debt_hours >= 2)
+    //   - interrupted sleep recovery (sleep_interrupted_at within 4h)
+    //   - shifted sleep (decided_to_stay_up_until set recently)
+    //   - user-directed nap (resolved_source_reason === 'user_directed_nap')
+    //   - recovery nap during nap window with sleep debt
+    //
+    // Inline classifySleepState logic (no local imports in Deno functions):
+    const toMinCS = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const currentMinutesET = nowET.getHours() * 60 + nowET.getMinutes();
+
     const isAsleepBySchedule = (() => {
-      // Respect explicit stay-up decision
       if (char.decided_to_stay_up_until && new Date() < new Date(char.decided_to_stay_up_until)) return false;
-      const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
-      const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
-      // Use stored schedule as source of truth (Priority 1)
+      // Priority 1: stored schedule
       if (char.sleep_start_time && char.wake_up_time) {
-        const s = toMin(char.sleep_start_time), w = toMin(char.wake_up_time);
+        const s = toMinCS(char.sleep_start_time), w = toMinCS(char.wake_up_time);
         if (s !== null && w !== null) {
-          return s > w ? (currentMinutes >= s || currentMinutes < w) : (currentMinutes >= s && currentMinutes < w);
+          return s > w ? (currentMinutesET >= s || currentMinutesET < w) : (currentMinutesET >= s && currentMinutesET < w);
         }
       }
-      // Derive from work schedule (Priority 2)
+      // Priority 2: derive from work schedule
       if (char.work_start_time && char.work_end_time && Array.isArray(char.work_days)) {
         const dayOfWeek = nowET.getDay();
         if (char.work_days.includes(dayOfWeek) || char.work_days.includes((dayOfWeek + 1) % 7)) {
-          const ws = toMin(char.work_start_time), we = toMin(char.work_end_time);
+          const ws = toMinCS(char.work_start_time), we = toMinCS(char.work_end_time);
           if (ws !== null && we !== null) {
             const isOvernight = we < ws;
             const wakeMin = (ws - 60 + 1440) % 1440;
             const sleepMin = isOvernight ? (we + 60) % 1440 : (wakeMin - 7 * 60 + 1440) % 1440;
-            return sleepMin > wakeMin ? (currentMinutes >= sleepMin || currentMinutes < wakeMin) : (currentMinutes >= sleepMin && currentMinutes < wakeMin);
+            return sleepMin > wakeMin ? (currentMinutesET >= sleepMin || currentMinutesET < wakeMin) : (currentMinutesET >= sleepMin && currentMinutesET < wakeMin);
           }
         }
       }
-      return false; // No determinable schedule — fail safe: awake
+      return false;
     })();
-    const isAsleep = isAsleepByDB || isAsleepBySchedule;
+
+    // DB sleep state — classify as valid or stale
+    const dbSleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+    let dbSleepIsValid = false;
+    let dbSleepReason = 'not_sleeping';
+    if (dbSleeping && !isAsleepBySchedule) {
+      // Past canonical sleep window — check valid character-driven reasons
+      const STALE_GRACE = 20;
+      const sleepSource = char.resolved_source_reason || '';
+      if (char.decided_to_stay_up_until && new Date(char.decided_to_stay_up_until) > new Date(Date.now() - 8 * 3600 * 1000)) {
+        dbSleepIsValid = true; dbSleepReason = 'shifted_sleep_stay_up';
+      } else if (sleepSource === 'user_directed_nap' || sleepSource.includes('nap')) {
+        dbSleepIsValid = true; dbSleepReason = 'user_directed_nap';
+      } else if ((char.sleep_debt_hours || 0) > 0 && char.resolved_presence_status === 'napping') {
+        dbSleepIsValid = true; dbSleepReason = 'recovery_nap';
+      } else if ((char.health_value || 100) < 30) {
+        dbSleepIsValid = true; dbSleepReason = 'illness_sleep';
+      } else if ((char.mental_value || 100) < 25) {
+        dbSleepIsValid = true; dbSleepReason = 'emotional_crash_sleep';
+      } else if ((char.sleep_debt_hours || 0) >= 2) {
+        dbSleepIsValid = true; dbSleepReason = 'oversleeping_sleep_debt';
+      } else if (char.sleep_interrupted_at && (Date.now() - new Date(char.sleep_interrupted_at).getTime()) / 3600000 < 4) {
+        dbSleepIsValid = true; dbSleepReason = 'interrupted_sleep_recovery';
+      } else {
+        // Grace period
+        const wakeMin = toMinCS(char.wake_up_time);
+        if (wakeMin !== null) {
+          let minutesPastWake = currentMinutesET - wakeMin;
+          if (minutesPastWake < 0) minutesPastWake += 1440;
+          if (minutesPastWake < STALE_GRACE) { dbSleepIsValid = true; dbSleepReason = 'within_wake_grace_period'; }
+        }
+      }
+      if (!dbSleepIsValid) dbSleepReason = 'stale_system_sleep'; // stale — do not block
+    }
+
+    const isAsleep = isAsleepBySchedule || (dbSleeping && dbSleepIsValid);
     if (isAsleep) {
       return Response.json({
         success: false,
         blocked: true,
         blocker: 'asleep',
         blocker_reason: `${char.name} is asleep and cannot travel right now.`,
-        asleep_by_db: isAsleepByDB,
         asleep_by_schedule: isAsleepBySchedule,
+        asleep_by_db: dbSleeping,
+        db_sleep_valid: dbSleepIsValid,
+        db_sleep_reason: dbSleepReason,
       });
     }
 

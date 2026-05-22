@@ -194,14 +194,105 @@ function hasSleepDebt(character) {
   return character.sleep_debt_hours && character.sleep_debt_hours > 0;
 }
 
+function classifySleepStateInline(character, etTime) {
+  // Inline version of sleepUtils.js classifySleepState() — no local imports in Deno.
+  // Returns { isStale, isValid, reason, consequence_tags }
+  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+  const STALE_GRACE = 20; // minutes past wake_up_time before stale classification
+
+  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+  if (!dbSleeping) return { isStale: false, isValid: false, reason: 'not_sleeping_in_db' };
+
+  if (isSleeping(character, etTime)) {
+    return { isStale: false, isValid: true, reason: 'within_canonical_sleep_window' };
+  }
+
+  // Past canonical sleep window — check valid reasons before clearing
+  if (character.decided_to_stay_up_until) {
+    const stayUntil = new Date(character.decided_to_stay_up_until);
+    if (stayUntil > new Date(Date.now() - 8 * 3600 * 1000)) {
+      return { isStale: false, isValid: true, reason: 'shifted_sleep_stay_up', consequence_tags: ['tired'] };
+    }
+  }
+
+  const sleepSource = character.resolved_source_reason || '';
+  if (sleepSource === 'user_directed_nap' || sleepSource.includes('nap')) {
+    return { isStale: false, isValid: true, reason: 'user_directed_nap' };
+  }
+
+  if ((character.sleep_debt_hours || 0) > 0 && character.resolved_presence_status === 'napping') {
+    return { isStale: false, isValid: true, reason: 'recovery_nap' };
+  }
+
+  if ((character.health_value || 100) < 30) {
+    return { isStale: false, isValid: true, reason: 'illness_sleep' };
+  }
+
+  if ((character.mental_value || 100) < 25) {
+    return { isStale: false, isValid: true, reason: 'emotional_crash_sleep' };
+  }
+
+  if ((character.sleep_debt_hours || 0) >= 2) {
+    return { isStale: false, isValid: true, reason: 'oversleeping_sleep_debt' };
+  }
+
+  if (character.sleep_interrupted_at) {
+    const hoursSince = (Date.now() - new Date(character.sleep_interrupted_at).getTime()) / 3600000;
+    if (hoursSince < 4) {
+      return { isStale: false, isValid: true, reason: 'interrupted_sleep_recovery' };
+    }
+  }
+
+  // Grace period check
+  const wakeMin = toMin(character.wake_up_time);
+  if (wakeMin !== null) {
+    const currentMin = etTime.getHours() * 60 + etTime.getMinutes();
+    let minutesPastWake = currentMin - wakeMin;
+    if (minutesPastWake < 0) minutesPastWake += 1440;
+    if (minutesPastWake < STALE_GRACE) {
+      return { isStale: false, isValid: true, reason: 'within_wake_grace_period' };
+    }
+  }
+
+  // Stale — build consequence tags by personality
+  const consequenceTags = [];
+  const dayOfWeek = etTime.getDay();
+  const currentMin = etTime.getHours() * 60 + etTime.getMinutes();
+  const hasWork = character.work_start_time && character.work_end_time &&
+    Array.isArray(character.work_days) && character.work_days.includes(dayOfWeek);
+  if (hasWork) {
+    const workStart = toMin(character.work_start_time);
+    if (workStart !== null && currentMin > workStart) {
+      consequenceTags.push('late_for_work');
+    }
+  }
+  if (character.trait_anxious || (character.emotional_state || '').includes('anxious')) {
+    consequenceTags.push('spiraling', 'rushing');
+  } else if (character.trait_lazy || character.archetype === 'slacker') {
+    consequenceTags.push('dismissive', 'may_call_out');
+  } else if (character.trait_workaholic) {
+    consequenceTags.push('panicking', 'guilty');
+  }
+
+  return { isStale: true, isValid: false, reason: 'stale_system_sleep', consequence_tags: consequenceTags };
+}
+
 function computeResolved(character, locationMap, etTime) {
   const todayET = etTime.toISOString().slice(0, 10);
 
-  // ── LAYER 0: SLEEP HARD LOCK (HIGHEST PRIORITY) ───────────────────────────
+  // ── LAYER 0: SLEEP LOCK — valid vs stale distinction ─────────────────────
+  // RULE: Valid character-driven sleep (oversleeping, recovery, illness, emotional crash,
+  // shifted schedule, interrupted, user-directed nap) → preserve and lock at home.
+  // Stale system sleep (DB says sleeping, canonical says false, no valid reason) → do NOT lock.
+  // Instead fall through to normal resolution so the character wakes up correctly.
   const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
   const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
 
-  if (isSleeping(character, etTime)) {
+  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+  const canonicallyAsleep = isSleeping(character, etTime);
+
+  if (canonicallyAsleep) {
+    // Unambiguously within sleep window — hard lock at home
     if (sleepHomeId) {
       return {
         resolved_current_location_id: sleepHomeId,
@@ -213,7 +304,6 @@ function computeResolved(character, locationMap, etTime) {
         home_resolution_failed: !sleepHomeLoc,
       };
     }
-    // No valid home — unresolved sleep state. Never rabbit_hole while sleeping.
     return {
       resolved_current_location_id: null,
       resolved_current_location_name: 'Unresolved',
@@ -223,6 +313,28 @@ function computeResolved(character, locationMap, etTime) {
       resolved_zone: null,
       home_resolution_failed: true,
     };
+  }
+
+  // Past canonical sleep window — check DB + valid reasons
+  if (dbSleeping) {
+    const sleepClassification = classifySleepStateInline(character, etTime);
+    if (sleepClassification.isValid) {
+      // Character-driven valid sleep (oversleeping, recovery, illness, etc.) — preserve at home
+      if (sleepHomeId) {
+        return {
+          resolved_current_location_id: sleepHomeId,
+          resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+          resolved_location_type: 'home',
+          resolved_presence_status: character.resolved_presence_status, // preserve sleeping/napping
+          resolved_source_reason: `valid_${sleepClassification.reason}`,
+          resolved_zone: null,
+          home_resolution_failed: !sleepHomeLoc,
+        };
+      }
+    }
+    // isStale === true — fall through to normal resolution (do NOT re-lock as sleeping)
+    // The character will resolve to home/work/school as normal — stale sleep is cleared.
+    console.log && console.log(`[scheduledEnforcement] ${character.name}: stale sleep cleared (${sleepClassification.reason}) — resolving normally`);
   }
 
   // ── LAYER 0B: RECOVERY NAP LOCK ──────────────────────────────────────────

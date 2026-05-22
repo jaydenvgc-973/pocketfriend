@@ -14,7 +14,188 @@
  * Any future change to priority order MUST be applied to ALL locations above.
  * Root cause of Nathan Parker's 1AM/3AM autonomous travel: backend copies had work-schedule
  * BEFORE stored schedule, causing sleep window to start at 01:00 instead of 23:00.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SLEEP STATE TAXONOMY
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * VALID (character-driven) — PRESERVE, never auto-clear:
+ *   - oversleeping:        past wake time, DB sleeping, character has sleep_debt_hours OR
+ *                          last_sleep_start is recent OR no valid reason to be awake yet
+ *   - recovery_nap:        sleep_debt_hours > 0 during nap window (13:00–16:00)
+ *   - user_directed_nap:   resolved_source_reason === 'user_directed_nap'
+ *   - narrative_nap:       resolved_source_reason includes 'nap' and has story context
+ *   - shifted_sleep:       decided_to_stay_up_until set and sleep was delayed by user action
+ *   - interrupted_sleep:   sleep_interrupted_at within past 4h, still in extended sleep window
+ *   - illness_sleep:       health_value < 30 or current_activity includes 'sick'
+ *   - emotional_crash:     mental_value < 25 or emotional_state includes extreme values
+ *
+ * STALE (system-generated) — SAFE TO CLEAR after wake_up_time:
+ *   - DB says sleeping/napping
+ *   - canonical isCharacterAsleep() returns false
+ *   - current time is past wake_up_time by more than STALE_SLEEP_GRACE_MINUTES
+ *   - none of the valid reasons above apply
+ *   - no active travel session (which would have already woken them)
+ *
+ * NEVER auto-clear valid sleep. ALWAYS clear stale sleep after grace period.
  */
+
+/** Grace period after wake_up_time before stale sleep is cleared (minutes). */
+export const STALE_SLEEP_GRACE_MINUTES = 20;
+
+/**
+ * Determines if a character's DB sleeping/napping state is valid (character-driven)
+ * or stale (system artifact that should be cleared).
+ *
+ * Returns an object:
+ * {
+ *   isStale: boolean,           // true = safe to clear
+ *   isValid: boolean,           // true = preserve — character-driven reason exists
+ *   reason: string,             // classification of why
+ *   consequence_tags: string[], // for stale sleep, what consequences to simulate
+ * }
+ *
+ * Only meaningful when DB says sleeping/napping AND canonical isCharacterAsleep() === false.
+ * If canonical returns true (still in sleep window) → not stale, always valid.
+ */
+export function classifySleepState(character) {
+  const canonicalAsleep = isCharacterAsleep(character);
+
+  // If canonical sleep window is still active → valid, not stale
+  if (canonicalAsleep) {
+    return { isStale: false, isValid: true, reason: 'within_canonical_sleep_window', consequence_tags: [] };
+  }
+
+  // If DB does not say sleeping/napping → not a stale sleep state (nothing to classify)
+  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+  if (!dbSleeping) {
+    return { isStale: false, isValid: false, reason: 'not_sleeping_in_db', consequence_tags: [] };
+  }
+
+  // Past canonical wake time — check for valid character-driven reasons before clearing
+
+  // 1. Active stay-up decision that shifted sleep (shifted schedule)
+  if (character.decided_to_stay_up_until) {
+    const stayUntil = new Date(character.decided_to_stay_up_until);
+    if (stayUntil > new Date(Date.now() - 8 * 3600 * 1000)) {
+      // Stay-up decision was recent — sleep window was shifted; this is valid oversleeping
+      return { isStale: false, isValid: true, reason: 'shifted_sleep_stay_up', consequence_tags: ['tired', 'shifted_schedule'] };
+    }
+  }
+
+  // 2. User-directed nap or narrative-supported nap
+  const sleepSource = character.resolved_source_reason || '';
+  if (sleepSource === 'user_directed_nap' || sleepSource.includes('nap')) {
+    return { isStale: false, isValid: true, reason: 'user_directed_nap', consequence_tags: [] };
+  }
+
+  // 3. Recovery nap — sleep debt present
+  if ((character.sleep_debt_hours || 0) > 0 && character.resolved_presence_status === 'napping') {
+    return { isStale: false, isValid: true, reason: 'recovery_nap', consequence_tags: ['recovering'] };
+  }
+
+  // 4. Illness sleep
+  if ((character.health_value || 100) < 30) {
+    return { isStale: false, isValid: true, reason: 'illness_sleep', consequence_tags: ['sick', 'tired'] };
+  }
+
+  // 5. Emotional crash sleep
+  if ((character.mental_value || 100) < 25) {
+    return { isStale: false, isValid: true, reason: 'emotional_crash_sleep', consequence_tags: ['emotional', 'exhausted'] };
+  }
+
+  // 6. High sleep debt — character legitimately oversleeping to recover
+  if ((character.sleep_debt_hours || 0) >= 2) {
+    return { isStale: false, isValid: true, reason: 'oversleeping_sleep_debt', consequence_tags: ['tired', 'oversleeping'] };
+  }
+
+  // 7. Interrupted sleep recovery — sleep was interrupted within past 4 hours
+  if (character.sleep_interrupted_at) {
+    const interruptedAt = new Date(character.sleep_interrupted_at);
+    const hoursSince = (Date.now() - interruptedAt.getTime()) / 3600000;
+    if (hoursSince < 4) {
+      return { isStale: false, isValid: true, reason: 'interrupted_sleep_recovery', consequence_tags: ['tired', 'interrupted'] };
+    }
+  }
+
+  // 8. Check grace period — give the cron a window before marking stale
+  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const currentMin = nowET.getHours() * 60 + nowET.getMinutes();
+  const wakeMin = toMin(character.wake_up_time);
+  if (wakeMin !== null) {
+    let minutesPastWake = currentMin - wakeMin;
+    if (minutesPastWake < 0) minutesPastWake += 1440; // crossed midnight
+    if (minutesPastWake < STALE_SLEEP_GRACE_MINUTES) {
+      // Still within grace period — too early to call stale
+      return { isStale: false, isValid: true, reason: 'within_wake_grace_period', consequence_tags: [] };
+    }
+  }
+
+  // 9. No valid reason found — this is a system-generated stale sleep state
+  // Build consequence tags based on personality + missed obligations
+  const consequenceTags = buildOversleeepConsequences(character, nowET);
+  return {
+    isStale: true,
+    isValid: false,
+    reason: 'stale_system_sleep',
+    consequence_tags: consequenceTags,
+  };
+}
+
+/**
+ * Builds character-specific oversleep consequence tags based on personality traits,
+ * quirks, work obligations, and emotional state.
+ * These tags feed into narrative generation — not all consequences fire for every character.
+ */
+export function buildOversleeepConsequences(character, nowET) {
+  const tags = [];
+  const dayOfWeek = nowET.getDay();
+  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+  const currentMin = nowET.getHours() * 60 + nowET.getMinutes();
+
+  // Check if they're missing work right now
+  const hasWork = character.work_start_time && character.work_end_time &&
+    Array.isArray(character.work_days) && character.work_days.includes(dayOfWeek);
+  if (hasWork) {
+    const workStart = toMin(character.work_start_time);
+    if (workStart !== null && currentMin > workStart) {
+      tags.push('late_for_work');
+      tags.push('missed_shift_start');
+    }
+  }
+
+  // Check school
+  if (character.student_status === 'enrolled' && character.education_location_id) {
+    const schoolStart = 8 * 60;
+    if (currentMin > schoolStart && [1,2,3,4,5].includes(dayOfWeek)) {
+      tags.push('late_for_school');
+    }
+  }
+
+  // Personality-based consequence tags
+  if (character.trait_workaholic || character.archetype === 'workaholic') {
+    tags.push('panicking', 'guilty', 'rushing');
+  } else if (character.trait_anxious || (character.emotional_state || '').includes('anxious')) {
+    tags.push('spiraling', 'rushing', 'apologetic');
+  } else if (character.trait_lazy || character.archetype === 'slacker') {
+    tags.push('dismissive', 'slow_moving', 'may_call_out');
+  } else if (character.trait_rebellious || character.trait_rule_breaker) {
+    tags.push('intentional_skip', 'unbothered');
+  } else if (character.trait_conscientious) {
+    tags.push('rushing', 'apologetic', 'self_critical');
+  } else if (character.trait_stubborn || character.trait_self_absorbed) {
+    tags.push('blaming_others', 'dismissive');
+  } else {
+    tags.push('groggy', 'adjusting');
+  }
+
+  // Energy-based
+  if ((character.energy_value || 75) < 30) tags.push('exhausted');
+  if ((character.sleep_debt_hours || 0) > 1) tags.push('sleep_debt_active');
+
+  return tags;
+}
 
 /**
  * Returns detailed sleep state — use this instead of a single boolean flag.

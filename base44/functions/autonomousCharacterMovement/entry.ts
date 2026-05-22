@@ -733,9 +733,27 @@ Deno.serve(async (req) => {
         ) {
           // ── WAKE CHECK: Recalculate adaptive sleep window right now ───────────
           // Do NOT trust the stored status as permanent. If the sleep window has ended,
-          // wake the character and fall through to schedule/work/movement evaluation.
+          // wake the character — BUT only if no valid character-driven reason still applies.
+          //
+          // Valid reasons to stay sleeping past wake_up_time (NOT stale):
+          //   illness, emotional crash, high sleep debt, interrupted sleep recovery,
+          //   shifted sleep (decided_to_stay_up_until), user-directed nap
+          // Stale sleep: system artifact with none of the above — safe to clear.
           const stillSleeping = isScheduledSleeping(char, nowET);
-          if (!stillSleeping && (status === 'sleeping' || status === 'napping')) {
+          const sleepSource = char.resolved_source_reason || '';
+          const hasValidOversleepReason = (() => {
+            if (char.decided_to_stay_up_until && new Date(char.decided_to_stay_up_until) > new Date(Date.now() - 8 * 3600 * 1000)) return true;
+            if (sleepSource === 'user_directed_nap' || sleepSource.includes('nap')) return true;
+            if ((char.sleep_debt_hours || 0) > 0 && status === 'napping') return true;
+            if ((char.health_value || 100) < 30) return true;
+            if ((char.mental_value || 100) < 25) return true;
+            if ((char.sleep_debt_hours || 0) >= 2) return true;
+            if (char.sleep_interrupted_at && (Date.now() - new Date(char.sleep_interrupted_at).getTime()) / 3600000 < 4) return true;
+            return false;
+          })();
+
+          if (!stillSleeping && !hasValidOversleepReason && (status === 'sleeping' || status === 'napping')) {
+            // Confirmed stale sleep — safe to clear
             const wakePayload = {
               resolved_presence_status:   'home',
               resolved_source_reason:     'adaptive_sleep_ended_wake',
@@ -746,11 +764,15 @@ Deno.serve(async (req) => {
             } catch {
               await base44.asServiceRole.entities.Character.update(char.id, wakePayload);
             }
-            console.log(`[autonomousMovement] ✓ ${char.name}: WOKE UP — sleep window ended, released to schedule/movement`);
+            console.log(`[autonomousMovement] ✓ ${char.name}: STALE SLEEP CLEARED — window ended, no valid oversleep reason, released to schedule/movement`);
             // Update char in memory so the rest of this loop iteration sees the new status
             char.resolved_presence_status = 'home';
             char.resolved_source_reason = 'adaptive_sleep_ended_wake';
             // Do NOT continue — fall through to schedule, work, travel, and movement evaluation
+          } else if (!stillSleeping && hasValidOversleepReason && (status === 'sleeping' || status === 'napping')) {
+            // Valid character-driven oversleeping — preserve. Do not wake them automatically.
+            console.log(`[autonomousMovement] ${char.name}: VALID OVERSLEEP preserved (${sleepSource || 'no source'}) — not waking automatically`);
+            continue;
           } else {
             // Sleep window is still active (or it's a non-sleeping sleep-adjacent state) —
             // validate sleep location and hold.
