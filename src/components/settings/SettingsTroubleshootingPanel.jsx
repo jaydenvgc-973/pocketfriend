@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Wrench, CheckCircle2, AlertCircle, Loader2, MapPin, Star, Database, Zap, RefreshCw } from 'lucide-react';
+import { X, Wrench, CheckCircle2, AlertCircle, Loader2, MapPin, Star, Database, Zap, RefreshCw, Moon } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -589,12 +589,254 @@ function SyncLocationsPanel({ user }) {
   );
 }
 
+// ── SLEEP / PRESENCE REPAIR PANEL ────────────────────────────────────────────
+
+function SleepPresenceRepairPanel({ user }) {
+  const [phase, setPhase] = useState('idle'); // idle | diagnosing | diagnosed | repairing | done | error
+  const [diagData, setDiagData] = useState(null);
+  const [repairData, setRepairData] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const queryClient = useQueryClient();
+
+  const runDiagnostic = async () => {
+    setPhase('diagnosing');
+    setDiagData(null);
+    setErrorMsg(null);
+    try {
+      const res = await base44.functions.invoke('fixStaleSleepPresence', { dry_run: true });
+      const d = res?.data;
+      if (!d) throw new Error('No response from diagnostic');
+      setDiagData(d);
+      setPhase('diagnosed');
+    } catch (err) {
+      setErrorMsg(err.message || 'Diagnostic failed');
+      setPhase('error');
+    }
+  };
+
+  const runRepair = async () => {
+    setPhase('repairing');
+    setRepairData(null);
+    try {
+      const res = await base44.functions.invoke('fixStaleSleepPresence', { dry_run: false });
+      const d = res?.data;
+      if (!d) throw new Error('No response from repair');
+      setRepairData(d);
+      setPhase('done');
+      queryClient.invalidateQueries({ queryKey: ['characters'] });
+    } catch (err) {
+      setErrorMsg(err.message || 'Repair failed');
+      setPhase('error');
+    }
+  };
+
+  const reset = () => { setPhase('idle'); setDiagData(null); setRepairData(null); setErrorMsg(null); };
+
+  // ── Idle ─────────────────────────────────────────────────────────────────
+  if (phase === 'idle') {
+    return (
+      <div className="space-y-4">
+        <div className="bg-secondary/50 border border-border rounded-lg p-3 space-y-1.5">
+          <p className="text-sm font-medium text-foreground">Fix stale sleep / presence mismatch</p>
+          <p className="text-xs text-muted-foreground">
+            Detects characters incorrectly stuck as sleeping or napping when their sleep window has ended and no valid reason exists. Also finds stale arrived travel sessions poisoning presence or map markers.
+          </p>
+          <p className="text-xs text-amber-400 font-medium mt-1">
+            Runs a full diagnostic first. You'll review results before any repairs are applied.
+          </p>
+        </div>
+        <div className="bg-secondary/30 border border-border rounded-lg p-3 space-y-1 text-xs text-muted-foreground">
+          <p className="font-medium text-foreground">Never repairs valid sleep:</p>
+          <p>✓ Illness sleep · emotional crash · high sleep debt</p>
+          <p>✓ Recovery nap · interrupted sleep · shifted schedule</p>
+          <p>✓ User-directed nap · narrative nap · within grace period</p>
+        </div>
+        <button
+          onClick={runDiagnostic}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors text-sm"
+        >
+          <Moon className="w-4 h-4" />
+          Run Diagnostic
+        </button>
+      </div>
+    );
+  }
+
+  // ── Loading ────────────────────────────────────────────────────────────────
+  if (phase === 'diagnosing' || phase === 'repairing') {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 gap-3">
+        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+        <p className="text-sm text-muted-foreground">{phase === 'diagnosing' ? 'Running diagnostic…' : 'Applying repairs…'}</p>
+      </div>
+    );
+  }
+
+  // ── Error ─────────────────────────────────────────────────────────────────
+  if (phase === 'error') {
+    return (
+      <div className="space-y-3">
+        <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+          <p className="text-sm text-destructive">{errorMsg}</p>
+        </div>
+        <button onClick={reset} className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground text-sm font-medium">Try Again</button>
+      </div>
+    );
+  }
+
+  // ── Diagnosed — show results and offer repair ──────────────────────────────
+  if (phase === 'diagnosed' && diagData) {
+    const stale = (diagData.diagnostics || []).filter(d => d.is_stale_sleep);
+    const valid = (diagData.diagnostics || []).filter(d => d.is_valid_sleep);
+    const staleSessions = (diagData.diagnostics || []).filter(d => d.stale_arrived_sessions?.length > 0);
+    const canRepair = stale.length > 0 || staleSessions.length > 0;
+
+    return (
+      <div className="space-y-4">
+        {/* Summary */}
+        <div className={`p-3 rounded-xl border text-xs ${canRepair ? 'bg-amber-500/10 border-amber-500/30' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
+          <p className="font-semibold text-foreground">{diagData.summary}</p>
+          <p className="text-muted-foreground mt-0.5">{diagData.et_time} · {diagData.totals?.characters_checked} characters checked</p>
+        </div>
+
+        {/* Stale sleep states */}
+        {stale.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Stale Sleep States — will be cleared ({stale.length})</p>
+            {stale.map((d, i) => (
+              <div key={i} className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-2.5 text-xs space-y-0.5">
+                <p className="font-medium text-foreground">{d.name}</p>
+                <p className="text-muted-foreground">DB: <span className="text-amber-400">{d.db_presence}</span> · source: {d.db_source || '—'}</p>
+                <p className="text-muted-foreground">Canonical: {d.canonical_asleep ? 'asleep' : 'awake'} · wake_up_time: {d.wake_up_time || '—'} · {d.minutes_past_wake != null ? `${d.minutes_past_wake}m past wake` : ''}</p>
+                {d.consequence_tags?.length > 0 && <p className="text-muted-foreground/70">Tags: {d.consequence_tags.join(', ')}</p>}
+                {d.active_travel_session && <p className="text-blue-400">Active session → {d.active_travel_session.destination}</p>}
+                {d.active_commitments?.length > 0 && <p className="text-purple-400">{d.active_commitments.length} commitment(s) preserved</p>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Valid sleep states */}
+        {valid.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Valid Sleep — will NOT be touched ({valid.length})</p>
+            {valid.map((d, i) => (
+              <div key={i} className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-2.5 text-xs space-y-0.5">
+                <p className="font-medium text-foreground">{d.name}</p>
+                <p className="text-muted-foreground">{d.classification} · {d.block_reason}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Stale arrived sessions */}
+        {staleSessions.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-blue-400 uppercase tracking-wider">Stale Arrived Sessions — travel display will be cleared</p>
+            {staleSessions.map((d, i) => (
+              <div key={i} className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-2.5 text-xs">
+                <p className="font-medium text-foreground">{d.name}</p>
+                {d.stale_arrived_sessions.map((s, j) => (
+                  <p key={j} className="text-muted-foreground">Session → {s.destination} arrived {new Date(s.arrived_at).toLocaleTimeString()}</p>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* No issues */}
+        {!canRepair && (
+          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 text-xs text-emerald-400 text-center">
+            No stale sleep states or poisoned travel sessions found. Everything looks correct.
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          {canRepair && (
+            <button
+              onClick={runRepair}
+              className="flex-1 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors text-sm"
+            >
+              Apply Repairs ({stale.length + staleSessions.length})
+            </button>
+          )}
+          <button onClick={reset} className="flex-1 px-4 py-3 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors text-sm">
+            {canRepair ? 'Cancel' : 'Done'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Done — show repair proof ───────────────────────────────────────────────
+  if (phase === 'done' && repairData) {
+    return (
+      <div className="space-y-4">
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+          <p className="text-sm font-semibold text-foreground">{repairData.summary}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{repairData.et_time}</p>
+        </div>
+
+        {repairData.repaired?.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Repaired ({repairData.repaired.length})</p>
+            {repairData.repaired.map((r, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-medium text-foreground">{r.name}</span>
+                  <span className="text-muted-foreground ml-1">{r.was_presence} → {r.now_presence}</span>
+                  {r.consequence_tags?.length > 0 && <p className="text-muted-foreground/60">Tags: {r.consequence_tags.join(', ')}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {repairData.preserved?.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Preserved — valid sleep ({repairData.preserved.length})</p>
+            {repairData.preserved.map((r, i) => (
+              <p key={i} className="text-xs text-muted-foreground pl-1">· {r.name} ({r.classification})</p>
+            ))}
+          </div>
+        )}
+
+        {repairData.session_repairs?.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-blue-400 uppercase tracking-wider">Travel Display Cleaned ({repairData.session_repairs.length})</p>
+            {repairData.session_repairs.map((r, i) => (
+              <p key={i} className="text-xs text-muted-foreground pl-1">· {r.character}: {r.action}</p>
+            ))}
+          </div>
+        )}
+
+        {repairData.skipped?.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Skipped ({repairData.skipped.length})</p>
+            {repairData.skipped.map((r, i) => (
+              <p key={i} className="text-xs text-muted-foreground pl-1">· {r.name}: {r.reason}</p>
+            ))}
+          </div>
+        )}
+
+        <button onClick={reset} className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors text-sm">
+          Done
+        </button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 // ── MAIN PANEL ───────────────────────────────────────────────────────────────
 
 const TABS = [
   { id: 'location', label: 'Location', icon: MapPin, issues: LOCATION_ISSUES, fn: 'troubleshootLocations' },
   { id: 'moments', label: 'Moments', icon: Star, issues: MOMENTS_ISSUES, fn: 'troubleshootMoments' },
   { id: 'system', label: 'System & Data', icon: Database, issues: SYSTEM_ISSUES, fn: 'troubleshootSystemData' },
+  { id: 'sleep', label: 'Sleep', icon: Moon, issues: null, fn: null },
   { id: 'sync', label: 'Sync', icon: RefreshCw, issues: null, fn: null },
 ];
 
@@ -654,8 +896,10 @@ export default function SettingsTroubleshootingPanel({ isOpen, onClose, user }) 
             <div className="flex-1 overflow-y-auto p-4">
               {activeTab === 'sync' ? (
                 <SyncLocationsPanel user={user} />
+              ) : activeTab === 'sleep' ? (
+                <SleepPresenceRepairPanel user={user} />
               ) : (
-                TABS.filter(t => t.id !== 'sync').map(tab => (
+                TABS.filter(t => t.id !== 'sync' && t.id !== 'sleep').map(tab => (
                   activeTab === tab.id && (
                     <TabPanel
                       key={tab.id}
