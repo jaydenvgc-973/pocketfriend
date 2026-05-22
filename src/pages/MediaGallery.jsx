@@ -1,8 +1,19 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { motion } from 'framer-motion';
-import { X, Send, Trash2, Search, ArrowLeft } from 'lucide-react';
+import { X, Send, Trash2, Search, ArrowLeft, RefreshCw } from 'lucide-react';
+import { lfcRead, lfcWrite } from '@/lib/localFirstCache';
+
+// Cache key for a specific page+search combination
+function galleryPageCacheKey(page, search, pageSize = 20) {
+  const s = (search || '').trim().toLowerCase();
+  return `mediaGallery:page:${page}:ps:${pageSize}:search:${s}`;
+}
+
+// Cache key for the total image count (used to know if hasMore)
+const GALLERY_META_KEY = 'mediaGallery:meta';
+const GALLERY_STALE_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function MediaGallery() {
   const navigate = useNavigate();
@@ -14,81 +25,113 @@ export default function MediaGallery() {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [pageImages, setPageImages] = useState([]);
+  // isLoading: true only when no cached data available (cold load)
   const [isLoading, setIsLoading] = useState(false);
+  // isRefreshing: silent background refresh — gallery already showing cached data
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastProof, setLastProof] = useState(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [pageJumpValue, setPageJumpValue] = useState('');
+
+  // Ref to prevent stale closures in background refresh
+  const activeRequestRef = useRef(0);
 
   useEffect(() => {
     base44.auth.me().then(u => setUser(u)).catch(() => {});
   }, []);
 
-  // Fetch whenever user, page, or searchTerm changes
-  const fetchPage = useCallback(async (page, search) => {
+  const fetchPage = useCallback(async (page, search, opts = {}) => {
     if (!user?.email) return;
-    setIsLoading(true);
-    try {
-      console.log(`[MediaGallery] fetchPage page=${page} search="${search}"`);
+    const { forceRefresh = false } = opts;
 
+    const cacheKey = galleryPageCacheKey(page, search);
+    const requestId = ++activeRequestRef.current;
+
+    // ── STEP 1: Serve cache immediately ───────────────────────────────────────
+    const cached = lfcRead(user.email, cacheKey);
+    const cacheAge = cached?.loaded_at ? Date.now() - cached.loaded_at : Infinity;
+    const isCacheStale = cacheAge > GALLERY_STALE_MS;
+
+    if (cached?.data && !forceRefresh) {
+      // Show cached data instantly — no spinner needed
+      console.log(`[MediaGallery] Cache HIT page=${page} search="${search}" age=${Math.round(cacheAge/1000)}s stale=${isCacheStale}`);
+      setPageImages(cached.data.images || []);
+      setHasMore(cached.data.hasMore === true);
+      setLastProof(cached.data.proof || null);
+
+      // If cache is fresh enough, skip background refresh
+      if (!isCacheStale && !forceRefresh) return;
+
+      // Cache is stale — do a silent background refresh without showing a spinner
+      setIsRefreshing(true);
+    } else {
+      // Cold load — show spinner
+      console.log(`[MediaGallery] Cache MISS page=${page} search="${search}" — cold load`);
+      setIsLoading(true);
+    }
+
+    // ── STEP 2: Fetch from backend ─────────────────────────────────────────────
+    try {
       const res = await base44.functions.invoke('fetchMediaGalleryPage', {
         page,
         pageSize: 20,
         searchTerm: search,
       });
 
+      // Stale request — a newer navigation happened, discard
+      if (requestId !== activeRequestRef.current) {
+        console.log(`[MediaGallery] Stale response for page=${page} — discarded`);
+        return;
+      }
+
       const data = res?.data;
-      if (!data) throw new Error('No data returned from fetchMediaGalleryPage');
+      if (!data) throw new Error('No data returned');
 
-      console.log('[MediaGallery] PROOF:', data.proof);
+      const freshImages = data.images || [];
 
-      setPageImages(data.images || []);
+      console.log(`[MediaGallery] Fresh page=${page} images=${freshImages.length} total=${data.totalImages} hasMore=${data.hasMore}`);
+      console.log(`[MediaGallery] PROOF:`, data.proof);
+
+      // Write to cache
+      const cachePayload = { images: freshImages, hasMore: data.hasMore === true, proof: data.proof };
+      if (freshImages.length > 0) {
+        lfcWrite(user.email, cacheKey, cachePayload);
+      }
+
+      // Update UI — preserve existing images during background refresh (no wipe)
+      setPageImages(freshImages);
       setHasMore(data.hasMore === true);
-      setLastProof(data.proof);
+      setLastProof(data.proof || null);
 
-      // Validate ownership: all images must belong to currentUser
-      if (data.currentUserEmail && user?.email && data.currentUserEmail !== user.email) {
-        console.error(`[MediaGallery] OWNERSHIP MISMATCH: response user=${data.currentUserEmail}, current=${user.email}`);
-      }
-
-      // Log verification paths for diagnostics
-      if (data.images?.length > 0) {
-        console.log(`[MediaGallery] Page ${page} first image:`, {
-          id: data.images[0].id,
-          timestamp: data.images[0].timestamp,
-          verificationPath: data.images[0].verificationPath,
-        });
-      }
     } catch (e) {
+      // Only log — cached data (if any) remains showing
       console.error('[MediaGallery] fetchPage error:', e.message);
-      setPageImages([]);
+      if (requestId === activeRequestRef.current && pageImages.length === 0) {
+        setPageImages([]);
+      }
     } finally {
-      setIsLoading(false);
+      if (requestId === activeRequestRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
-  }, [user?.email]);
+  }, [user?.email]); // eslint-disable-line
 
-  // Initial load and on page/search change
+  // Load whenever user, page, or search changes
   useEffect(() => {
     if (user?.email) {
       fetchPage(currentPage, searchTerm);
     }
   }, [user?.email, currentPage, searchTerm, fetchPage]);
 
-  const handleNext = () => {
-    const nextPage = currentPage + 1;
-    setCurrentPage(nextPage);
-  };
+  const handleNext = () => setCurrentPage(p => p + 1);
+  const handlePrev = () => { if (currentPage > 1) setCurrentPage(p => p - 1); };
 
-  const handlePrev = () => {
-    if (currentPage <= 1) return;
-    setCurrentPage(p => p - 1);
-  };
-
-  const handlePageJump = (newPage) => {
-    const page = parseInt(newPage, 10);
-    if (page < 1 || !Number.isInteger(page)) {
-      alert('Please enter a valid page number (1 or higher).');
-      return;
-    }
+  const handlePageJump = () => {
+    const page = parseInt(pageJumpValue, 10);
+    if (!page || page < 1) return;
     setCurrentPage(page);
+    setPageJumpValue('');
   };
 
   const handleSearchChange = (val) => {
@@ -97,23 +140,24 @@ export default function MediaGallery() {
     setHasMore(true);
   };
 
+  const handleManualRefresh = () => {
+    fetchPage(currentPage, searchTerm, { forceRefresh: true });
+  };
+
   const handleDeleteImage = async (image) => {
-    if (!user?.email) {
-      alert('User not authenticated');
-      return;
-    }
+    if (!user?.email) { alert('User not authenticated'); return; }
     try {
-      // Use backend to resolve ownership from parent source, not just image URL
       const res = await base44.functions.invoke('deleteMediaGalleryImage', {
         messageId: image.messageId,
         parentEntity: image.parent_entity,
       });
-      
       if (res?.data?.success) {
         console.log(`[MediaGallery] ✓ Deleted image ${image.messageId}`);
         setSelectedImage(null);
-        // Refetch current page
-        await fetchPage(currentPage, searchTerm);
+        // Invalidate cache for this page and force refresh
+        const cacheKey = galleryPageCacheKey(currentPage, searchTerm);
+        lfcWrite(user.email, cacheKey, null); // clear
+        fetchPage(currentPage, searchTerm, { forceRefresh: true });
       } else {
         alert(`Delete denied: ${res?.data?.error || 'Unknown error'}`);
       }
@@ -137,43 +181,43 @@ export default function MediaGallery() {
             </button>
             <div>
               <h1 className="text-3xl font-bold text-foreground">Media Gallery</h1>
-              <p className="text-sm text-muted-foreground mt-1">
+              <p className="text-sm text-muted-foreground mt-1 flex items-center gap-2">
                 Page {currentPage}{hasMore ? '+' : ''} • {pageImages.length} images
+                {isRefreshing && <RefreshCw className="w-3 h-3 animate-spin opacity-50" />}
               </p>
             </div>
           </div>
-          <button
-            onClick={() => setShowDiagnostics(!showDiagnostics)}
-            className="text-xs px-2 py-1 rounded-lg bg-secondary/40 text-muted-foreground hover:text-foreground"
-            title="Show ownership diagnostics"
-          >
-            {showDiagnostics ? 'Hide' : 'Show'} diagnostics
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleManualRefresh}
+              disabled={isLoading || isRefreshing}
+              className="p-2 rounded-lg bg-secondary/40 text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+              title="Refresh gallery"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              onClick={() => setShowDiagnostics(!showDiagnostics)}
+              className="text-xs px-2 py-1 rounded-lg bg-secondary/40 text-muted-foreground hover:text-foreground"
+              title="Show diagnostics"
+            >
+              {showDiagnostics ? 'Hide' : 'Show'} diagnostics
+            </button>
+          </div>
         </div>
 
         {/* Diagnostics Panel */}
         {showDiagnostics && lastProof && (
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
-            <div><strong>Ownership Diagnostics:</strong></div>
-            <div>currentUser: {user?.email || 'unknown'}</div>
-            <div>responseUser: {lastProof.currentUserEmail || 'unknown'}</div>
-            <div>rawScanned: {lastProof.rawScanned}</div>
-            <div>validFound: {lastProof.validFound}</div>
-            <div>blockedCrossOwner: {lastProof.blockedCrossOwner}</div>
-            <div>blockedUnverified: {lastProof.blockedUnverified}</div>
-            <div>excluded: {lastProof.excluded}</div>
-            <div>exhausted: {lastProof.exhausted ? 'yes' : 'no'}</div>
-            <div>nextRawCursor: {lastProof.nextRawCursor !== null ? lastProof.nextRawCursor : 'none (end)'}</div>
-            {pageImages.length > 0 && (
-              <>
-                <div className="mt-2"><strong>Verification Paths:</strong></div>
-                {pageImages.map((img, i) => (
-                  <div key={i} className="text-[10px]">
-                    img{i}: {img.verificationPath || 'unknown'} {img.ownerEmail ? `(direct: ${img.ownerEmail})` : '(inherited)'}
-                  </div>
-                ))}
-              </>
-            )}
+            <div><strong>Gallery Diagnostics — Page {currentPage}</strong></div>
+            <div>owner: {user?.email || 'unknown'}</div>
+            <div>skip: {lastProof.skip ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
+            <div>rawScanned: {lastProof.rawScanned} | validFound: {lastProof.validFound}</div>
+            <div>afterDedup: {lastProof.afterDedup} | returned: {lastProof.pageImagesReturned}</div>
+            <div>firstTs: {lastProof.firstImageTimestamp || 'n/a'}</div>
+            <div>lastTs: {lastProof.lastImageTimestamp || 'n/a'}</div>
+            <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'} | exhausted: {lastProof.exhausted ? 'yes' : 'no'}</div>
+            <div>batches: {lastProof.batchesScanned}</div>
           </div>
         )}
 
@@ -201,16 +245,15 @@ export default function MediaGallery() {
           <>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
               {pageImages.map((item) => (
-                <motion.div
+                <div
                   key={item.id}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
                   className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer border border-border hover:border-primary/50 transition-all"
                   onClick={() => setSelectedImage(item)}
                 >
                   <img
                     src={item.url}
-                    alt={item.description}
+                    alt={item.description || 'Gallery image'}
+                    loading="lazy"
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                     onError={(e) => {
                       e.target.src = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23333%22 width=%22200%22 height=%22200%22/%3E%3C/svg%3E';
@@ -219,7 +262,7 @@ export default function MediaGallery() {
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                     <Send className="w-5 h-5 text-white" />
                   </div>
-                </motion.div>
+                </div>
               ))}
             </div>
 
@@ -232,26 +275,31 @@ export default function MediaGallery() {
               >
                 Previous
               </button>
-              
+
               {/* Page Jump */}
               <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Go to page:</span>
+                <span className="text-xs text-muted-foreground">Page:</span>
                 <input
                   type="number"
                   min="1"
+                  value={pageJumpValue}
                   placeholder={String(currentPage)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handlePageJump(e.currentTarget.value || String(currentPage));
-                      e.currentTarget.value = '';
-                    }
-                  }}
+                  onChange={(e) => setPageJumpValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handlePageJump(); }}
                   className="w-16 px-2 py-1 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:border-primary"
                 />
+                {pageJumpValue && (
+                  <button
+                    onClick={handlePageJump}
+                    className="px-2 py-1 rounded-lg bg-primary text-primary-foreground text-xs font-medium"
+                  >
+                    Go
+                  </button>
+                )}
               </div>
 
               <span className="text-sm text-muted-foreground">Page {currentPage}{hasMore ? '+' : ''}</span>
-              
+
               <button
                 onClick={handleNext}
                 disabled={!hasMore || isLoading}
