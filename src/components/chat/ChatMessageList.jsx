@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { AnimatePresence } from "framer-motion";
 import MessageBubble from "@/components/chat/MessageBubble";
 import TypingIndicator from "@/components/chat/TypingIndicator";
@@ -6,6 +6,7 @@ import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import DateSeparator from "@/components/chat/DateSeparator";
 import { injectDateSeparators } from "@/lib/messageDateGrouping";
 import { ChevronUp, Loader2 } from "lucide-react";
+import MovementCommitmentPrompt from "@/components/chat/MovementCommitmentPrompt";
 
 /**
  * ChatMessageList
@@ -39,6 +40,40 @@ export default function ChatMessageList({
   onLoadOlderMessages,
 }) {
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [dismissedCommitmentIds, setDismissedCommitmentIds] = useState(new Set());
+
+  // Detect movement commitment in latest character message
+  const detectedCommitment = useMemo(() => {
+    const latestCharMsg = [...messages]
+      .reverse()
+      .find(m => m.sender_type === 'character' && !m.is_narrative && !dismissedCommitmentIds.has(m.id));
+    
+    if (!latestCharMsg?.content) return null;
+
+    const content = latestCharMsg.content.toLowerCase();
+    const patterns = [
+      /(?:i'll|i will|i'm|i am).*?(?:be|go|head|get).*?(?:there|to|at).+?(?:in|at|in about|within|around|in\s+\d+)/i,
+      /(?:i'll|i will).*?(?:there|go).*?(?:in|at|within|about|around)\s+(?:about\s+)?(\d+)\s*(?:minutes?|mins?|hours?|hour)/i,
+      /(?:getting|heading|going).*?to\s+(.+?)\s+(?:in|at|within).+?(?:\d+\s*(?:minutes?|mins?|hours?))/i,
+    ];
+
+    const matches = patterns.some(p => p.test(content));
+    if (!matches) return null;
+
+    // Extract destination and time estimate
+    const destMatch = content.match(/(?:to|at|in)\s+([A-Z][^.!?]*?(?:Bar|Park|Home|Shop|Café|Restaurant|Store|Location|Hall|Office|Gym))/i);
+    const timeMatch = content.match(/(?:in|at|within|around|in\s+about)\s+(?:about\s+)?(\d+)\s*(?:minutes?|mins?|hours?)/i);
+
+    const destination = destMatch?.[1]?.trim() || null;
+    const minutes = timeMatch?.[1] ? parseInt(timeMatch[1]) : 10;
+
+    return {
+      messageId: latestCharMsg.id,
+      destination,
+      etaMinutes: minutes,
+      characterName: character?.name || latestCharMsg.character_name
+    };
+  }, [messages, dismissedCommitmentIds, character]);
 
   const handleLoadOlder = async () => {
     if (isLoadingOlder || !onLoadOlderMessages) return;
@@ -111,6 +146,26 @@ export default function ChatMessageList({
       <AnimatePresence>
         {isTyping && character && (
           <TypingIndicator name={character.name} avatarUrl={character.avatar_url} />
+        )}
+      </AnimatePresence>
+
+      {/* Movement Commitment Prompt */}
+      <AnimatePresence>
+        {detectedCommitment && (
+          <MovementCommitmentPrompt
+            characterName={detectedCommitment.characterName}
+            characterId={characterId}
+            destination={detectedCommitment.destination || "their destination"}
+            etaMinutes={detectedCommitment.etaMinutes}
+            conversationId={conversationId}
+            messageId={detectedCommitment.messageId}
+            onConfirm={() => {
+              setDismissedCommitmentIds(prev => new Set([...prev, detectedCommitment.messageId]));
+            }}
+            onCancel={() => {
+              setDismissedCommitmentIds(prev => new Set([...prev, detectedCommitment.messageId]));
+            }}
+          />
         )}
       </AnimatePresence>
 

@@ -535,7 +535,13 @@ export default function MessageBubble({ message, character, showName = false, on
                   src={localImageUrl}
                   alt="shared photo"
                   onError={() => {
-                    console.warn(`[MessageBubble] Image load error (attempt ${imgRetryKey + 1}): ${localImageUrl?.substring(0, 80)}`);
+                    console.error(`[MessageBubble] ❌ Image FAILED TO LOAD (attempt ${imgRetryKey + 1})`, {
+                      url: localImageUrl?.substring(0, 100),
+                      messageId: message.id,
+                      timestamp: new Date().toISOString(),
+                      contentType: typeof message.content,
+                      hasGenerationContext: !!message.generation_context
+                    });
                     setImgLoadError(true);
                   }}
                   className={`w-full max-w-xs rounded-t-2xl object-cover ${!isUser && message.generation_context?.location_id ? "cursor-pointer hover:brightness-90 transition-all" : ""}`}
