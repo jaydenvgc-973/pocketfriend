@@ -1,0 +1,125 @@
+{
+  "name": "TravelViolation",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character with the travel violation"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name for quick reads"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner of the character"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "TravelSession ID involved"
+    },
+    "origin_location_id": {
+      "type": "string",
+      "description": "Where travel began"
+    },
+    "origin_location_name": {
+      "type": "string"
+    },
+    "destination_location_id": {
+      "type": "string",
+      "description": "Intended destination"
+    },
+    "destination_location_name": {
+      "type": "string"
+    },
+    "eta": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Expected arrival time from TravelSession"
+    },
+    "travel_status_at_violation": {
+      "type": "string",
+      "description": "Character.travel_status when violation was detected"
+    },
+    "route_status_at_violation": {
+      "type": "string",
+      "description": "TravelSession.route_status when violation was detected"
+    },
+    "presence_status_at_violation": {
+      "type": "string",
+      "description": "Character.resolved_presence_status when violation was detected"
+    },
+    "progress_percent": {
+      "type": "number",
+      "description": "Progress at time of violation"
+    },
+    "failure_type": {
+      "type": "string",
+      "enum": [
+        "ORPHANED_TRAVEL_STATUS",
+        "TRAVEL_WITHOUT_RENDER_DATA",
+        "ETA_PASSED_NO_ARRIVAL",
+        "DESTINATION_WRITE_FAILURE",
+        "MAP_RENDER_FAILURE",
+        "STATUS_BAR_RENDER_FAILURE",
+        "TRAVEL_SESSION_MISSING",
+        "STALE_IN_TRANSIT_STATE",
+        "INVALID_DESTINATION_REFERENCE",
+        "LOCATION_READBACK_MISMATCH",
+        "CHARACTER_LEFT_OFFSCREEN",
+        "TRAVEL_REVERTED_TO_ORIGIN",
+        "TRAVEL_CLEARED_WITHOUT_ARRIVAL",
+        "ARRIVAL_WRITE_FAILURE"
+      ],
+      "description": "Classification of the failure"
+    },
+    "blocker_reason": {
+      "type": "string",
+      "description": "Specific reason the arrival failed or was blocked"
+    },
+    "repair_attempted": {
+      "type": "boolean",
+      "default": false
+    },
+    "repair_result": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failed",
+        "partial",
+        "not_attempted"
+      ],
+      "default": "not_attempted"
+    },
+    "repair_detail": {
+      "type": "string",
+      "description": "Details of the repair attempt"
+    },
+    "final_verified_location_id": {
+      "type": "string",
+      "description": "Character.resolved_current_location_id after repair read-back"
+    },
+    "final_verified_location_name": {
+      "type": "string"
+    },
+    "readback_matched_destination": {
+      "type": "boolean",
+      "description": "True if read-back confirmed Character is at destination_location_id"
+    },
+    "violation_resolved": {
+      "type": "boolean",
+      "default": false,
+      "description": "True once the violation is fully resolved and verified"
+    },
+    "detected_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "character_id",
+    "owner_email",
+    "failure_type",
+    "detected_at"
+  ]
+}

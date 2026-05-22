@@ -521,6 +521,7 @@ export default function Home() {
       <TroubleshootingPanelHome
         isOpen={showTroubleshooting}
         onClose={() => setShowTroubleshooting(false)}
+        ownerEmail={currentUser?.email}
       />
       {invitations && (
         <InviteOutModal

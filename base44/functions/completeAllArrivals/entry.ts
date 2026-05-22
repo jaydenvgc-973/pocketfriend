@@ -96,11 +96,19 @@ Deno.serve(async (req) => {
 
     console.log(`[completeAllArrivals] Complete | total_completed=${totalCompleted} | owners=${ownerEmails.length}`);
 
+    // ── ENFORCEMENT PASS: Run arrival integrity check after all completion attempts ──
+    // This catches any read-back mismatches, stale in_transit sessions, and logs violations.
+    // Runs async — does not block the completion response.
+    base44.asServiceRole.functions.invoke('enforceArrivalIntegrity', {}).catch(e => {
+      console.warn(`[completeAllArrivals] enforceArrivalIntegrity post-pass failed (non-fatal): ${e.message}`);
+    });
+
     return Response.json({
       total_arrived_sessions: arrivedSessions.length,
       owners_processed: ownerEmails.length,
       total_completed: totalCompleted,
       owner_results: ownerResults,
+      enforcement_pass: 'triggered',
     });
 
   } catch (error) {

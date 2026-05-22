@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, CheckCircle2, Loader2, AlertCircle, Zap } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import TravelViolationLog from '@/components/travel/TravelViolationLog';
 
 const ISSUE_LIST = [
   { id: 'mark_read', label: '✉️ Mark messages as read', description: 'Clear stale unread badges — marks all unread character messages as read using owner_email-scoped conversation lookup. Returns per-character proof.' },
@@ -20,7 +21,7 @@ const ISSUE_LIST = [
   { id: 'fix_locations', label: '📍 Fix location display', description: 'Detect characters with stale or missing location data. Reports issues only — does not overwrite jail, travel, hotel, shelter, or temporary housing states.' },
 ];
 
-export default function TroubleshootingPanelHome({ isOpen, onClose }) {
+export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }) {
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
@@ -337,6 +338,13 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
               {error && (
                 <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
                   <p className="text-sm text-destructive">{error}</p>
+                </div>
+              )}
+
+              {/* Travel Violation Log — always visible, not gated by issue selection */}
+              {ownerEmail && (
+                <div className="border-t border-border pt-4">
+                  <TravelViolationLog ownerEmail={ownerEmail} maxItems={15} />
                 </div>
               )}
             </div>

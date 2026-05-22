@@ -95,14 +95,37 @@ Deno.serve(async (req) => {
         destName = char.traveling_to_location_name;
       }
 
-      // No destination at all — clear travel flags only
+      // No destination at all — VIOLATION: TRAVEL_CLEARED_WITHOUT_ARRIVAL
+      // Per spec: do NOT silently clear travel when there's no destination.
+      // Log violation and clear flags, but record what happened.
       if (!destId) {
+        // Log violation before clearing
+        await base44.asServiceRole.entities.TravelViolation.create({
+          character_id:                 char.id,
+          character_name:               char.name,
+          owner_email:                  ownerEmail,
+          session_id:                   sessionId || null,
+          travel_status_at_violation:   char.travel_status,
+          presence_status_at_violation: char.resolved_presence_status || null,
+          failure_type:                 'TRAVEL_CLEARED_WITHOUT_ARRIVAL',
+          blocker_reason:               'no_destination_found_in_any_session_or_character_fields',
+          repair_attempted:             true,
+          repair_result:                'partial',
+          repair_detail:                'Travel flags cleared — no destination to route to. Character stays at current location.',
+          final_verified_location_id:   char.resolved_current_location_id || null,
+          final_verified_location_name: char.resolved_current_location_name || null,
+          readback_matched_destination: false,
+          violation_resolved:           false,
+          detected_at:                  new Date().toISOString(),
+        }).catch(e => console.warn(`[completeStuckTravelUserScoped] Violation log failed: ${e.message}`));
+
         await base44.entities.Character.update(char.id, {
           travel_status: 'not_traveling',
           traveling_to_location_id: null,
           traveling_to_location_name: null,
           travel_destination_location_id: null,
         });
+        console.warn(`[completeStuckTravelUserScoped] VIOLATION LOGGED: TRAVEL_CLEARED_WITHOUT_ARRIVAL for ${char.name}`);
         results.push({
           name: char.name,
           before_location: char.resolved_current_location_name,
@@ -112,7 +135,7 @@ Deno.serve(async (req) => {
           travel_status_after: 'not_traveling',
           location_write_verified: 'N/A',
           travel_cleared_verified: true,
-          blocker: 'no_destination_found_travel_flags_cleared',
+          blocker: 'VIOLATION:TRAVEL_CLEARED_WITHOUT_ARRIVAL:no_destination_found',
         });
         continue;
       }
@@ -125,12 +148,36 @@ Deno.serve(async (req) => {
       ).catch(() => []);
 
       if (!destLoc) {
+        // VIOLATION: INVALID_DESTINATION_REFERENCE — cannot push to destination that doesn't exist.
+        // Log violation. Clear travel flags since session is invalid, but record the failure.
+        await base44.asServiceRole.entities.TravelViolation.create({
+          character_id:                 char.id,
+          character_name:               char.name,
+          owner_email:                  ownerEmail,
+          session_id:                   sessionId || null,
+          destination_location_id:      destId,
+          destination_location_name:    destName || destId,
+          travel_status_at_violation:   char.travel_status,
+          presence_status_at_violation: char.resolved_presence_status || null,
+          failure_type:                 'INVALID_DESTINATION_REFERENCE',
+          blocker_reason:               `destination_location_id=${destId} not found in LocationReference`,
+          repair_attempted:             true,
+          repair_result:                'failed',
+          repair_detail:                'Destination location record does not exist — cannot route character there. Travel flags cleared.',
+          final_verified_location_id:   char.resolved_current_location_id || null,
+          final_verified_location_name: char.resolved_current_location_name || null,
+          readback_matched_destination: false,
+          violation_resolved:           false,
+          detected_at:                  new Date().toISOString(),
+        }).catch(e => console.warn(`[completeStuckTravelUserScoped] Violation log failed: ${e.message}`));
+
         await base44.entities.Character.update(char.id, {
           travel_status: 'not_traveling',
           traveling_to_location_id: null,
           traveling_to_location_name: null,
           travel_destination_location_id: null,
         });
+        console.error(`[completeStuckTravelUserScoped] VIOLATION: INVALID_DESTINATION_REFERENCE for ${char.name} dest=${destId}`);
         results.push({
           name: char.name,
           before_location: char.resolved_current_location_name,
@@ -140,7 +187,7 @@ Deno.serve(async (req) => {
           travel_status_after: 'not_traveling',
           location_write_verified: false,
           travel_cleared_verified: true,
-          blocker: `destination_location_record_not_found:${destId}`,
+          blocker: `VIOLATION:INVALID_DESTINATION_REFERENCE:${destId}`,
         });
         continue;
       }
@@ -188,7 +235,40 @@ Deno.serve(async (req) => {
         }).catch(() => {});
       }
 
-      console.log(`[completeStuckTravelUserScoped] ✅ ${char.name} → ${destLoc.name} | location_ok=${locationWriteOk} travel_cleared=${travelClearedOk}`);
+      // READ-BACK ENFORCEMENT: If character is NOT at destination after write → log violation
+      if (!locationWriteOk) {
+        const currentLocId = charAfter?.resolved_current_location_id;
+        const failureType = currentLocId === (char.resolved_current_location_id)
+          ? 'TRAVEL_REVERTED_TO_ORIGIN'
+          : 'LOCATION_READBACK_MISMATCH';
+
+        await base44.asServiceRole.entities.TravelViolation.create({
+          character_id:                 char.id,
+          character_name:               char.name,
+          owner_email:                  ownerEmail,
+          session_id:                   sessionId || null,
+          destination_location_id:      destLoc.id,
+          destination_location_name:    destLoc.name,
+          origin_location_id:           char.resolved_current_location_id || null,
+          origin_location_name:         char.resolved_current_location_name || null,
+          travel_status_at_violation:   char.travel_status,
+          presence_status_at_violation: char.resolved_presence_status || null,
+          failure_type:                 failureType,
+          blocker_reason:               `write_executed_but_read_back_shows_${currentLocId}_not_${destLoc.id}`,
+          repair_attempted:             true,
+          repair_result:                'failed',
+          repair_detail:                `Write attempted. Read-back returned location=${currentLocId}, expected=${destLoc.id}`,
+          final_verified_location_id:   currentLocId || null,
+          final_verified_location_name: charAfter?.resolved_current_location_name || null,
+          readback_matched_destination: false,
+          violation_resolved:           false,
+          detected_at:                  now.toISOString(),
+        }).catch(e => console.warn(`[completeStuckTravelUserScoped] Violation log failed: ${e.message}`));
+
+        console.error(`[completeStuckTravelUserScoped] VIOLATION: ${failureType} for ${char.name} — expected at ${destLoc.name}, found at ${charAfter?.resolved_current_location_name}`);
+      } else {
+        console.log(`[completeStuckTravelUserScoped] ✅ ${char.name} → ${destLoc.name} | location_ok=${locationWriteOk} travel_cleared=${travelClearedOk}`);
+      }
 
       results.push({
         name: char.name,
@@ -199,7 +279,7 @@ Deno.serve(async (req) => {
         travel_status_after: charAfter?.travel_status,
         location_write_verified: locationWriteOk,
         travel_cleared_verified: travelClearedOk,
-        blocker: (!locationWriteOk || !travelClearedOk) ? 'write_verify_failed' : null,
+        blocker: (!locationWriteOk || !travelClearedOk) ? 'VIOLATION:LOCATION_READBACK_MISMATCH:write_verify_failed' : null,
         session_id: sessionId,
       });
     }
