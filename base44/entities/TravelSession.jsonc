@@ -90,7 +90,7 @@
     "actual_arrival_time": {
       "type": "string",
       "format": "date-time",
-      "description": "When character actually arrived (set on completion)"
+      "description": "When character actually arrived \u2014 only set after Character read-back confirms destination"
     },
     "duration_minutes": {
       "type": "number",
@@ -109,12 +109,34 @@
         "preparing",
         "in_transit",
         "delayed",
+        "arrival_due",
         "arrived",
+        "arrival_failed",
         "cancelled",
         "blocked"
       ],
       "default": "preparing",
-      "description": "Current state of this travel session"
+      "description": "Current state of this travel session. arrival_due = ETA passed, Character write pending. arrived = Character write verified at destination. arrival_failed = write failed after retry."
+    },
+    "arrival_due": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when ETA has passed and Character write is pending. NEVER set arrived before this is resolved."
+    },
+    "arrival_pending_character_write": {
+      "type": "boolean",
+      "default": false,
+      "description": "True while waiting for user-scoped Character write to complete"
+    },
+    "arrival_due_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When ETA passed and arrival_due was first set"
+    },
+    "arrival_write_attempts": {
+      "type": "number",
+      "default": 0,
+      "description": "Number of times Character write has been attempted for this arrival"
     },
     "last_progress_update": {
       "type": "string",

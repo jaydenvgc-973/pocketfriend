@@ -236,11 +236,11 @@ export default function Travel() {
 
         // Check if any session is now in "arrived" status (completed within last 30 seconds)
         const recentlyArrived = sessions.filter(s => {
-          if (s.route_status !== 'arrived') return false;
-          if (!s.actual_arrival_time) return false;
-          const arrivedAt = new Date(s.actual_arrival_time).getTime();
-          const now = new Date().getTime();
-          return (now - arrivedAt) < 30000; // Within last 30 seconds
+          if (s.route_status === 'arrived' && s.actual_arrival_time) {
+            const arrivedAt = new Date(s.actual_arrival_time).getTime();
+            return (Date.now() - arrivedAt) < 30000;
+          }
+          return false;
         });
 
         if (recentlyArrived.length > 0 && !cancelled) {

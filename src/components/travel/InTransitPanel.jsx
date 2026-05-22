@@ -10,7 +10,7 @@
  * Read-only display panel — does not modify travel state.
  */
 import React, { useEffect, useState } from 'react';
-import { Navigation, Clock, MapPin, AlertCircle } from 'lucide-react';
+import { Navigation, Clock, MapPin, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { enrichSessionProgress } from '@/lib/travelSessionEngine';
 import { base44 } from '@/api/base44Client';
 
@@ -24,77 +24,54 @@ export default function InTransitPanel({ ownerEmail }) {
 
     const fetchSessions = async () => {
       try {
-        const raw = await base44.entities.TravelSession.filter(
-          { owner_email: ownerEmail, route_status: 'in_transit' },
-          '-created_at',
-          20
-        ).catch(() => []);
+        // Load in_transit + arrival_due + arrival_failed sessions — all are "active travel" states
+        const [inTransit, arrivalDue, arrivalFailed] = await Promise.all([
+          base44.entities.TravelSession.filter(
+            { owner_email: ownerEmail, route_status: 'in_transit' }, '-created_at', 20
+          ).catch(() => []),
+          base44.entities.TravelSession.filter(
+            { owner_email: ownerEmail, route_status: 'arrival_due' }, '-created_at', 20
+          ).catch(() => []),
+          base44.entities.TravelSession.filter(
+            { owner_email: ownerEmail, route_status: 'arrival_failed' }, '-created_at', 10
+          ).catch(() => []),
+        ]);
+
         if (cancelled) return;
-        const enriched = raw.map(enrichSessionProgress);
 
-        // If any session is overdue (past ETA and still in_transit), trigger backend arrival
-        // completion immediately rather than waiting up to 5 min for the scheduled task.
-        const overdue = enriched.filter(s => s.is_overdue);
-        if (overdue.length > 0) {
-          console.log(`[InTransitPanel] ${overdue.length} overdue session(s) detected — triggering processTravelArrivals`, overdue.map(s => ({
-            character_id: s.character_id,
-            character: s.character_name,
-            origin: s.origin_location_name,
-            destination: s.destination_location_name,
-            travel_status_before: s.route_status,
-            computed_progress: s.computed_progress,
-            arrival_triggered: true,
-          })));
-          // Step 1: Mark sessions arrived (service-role — can't write Character)
-          // Step 2: For each overdue session, call completeCharacterArrival to write
-          //         Character.resolved_current_location_id = destination (user-scoped, with read-back proof)
-          base44.functions.invoke('processTravelArrivals', {})
-            .then(async () => {
+        const allActive = [...inTransit, ...arrivalDue, ...arrivalFailed];
+        const enriched  = allActive.map(s => ({
+          ...enrichSessionProgress(s),
+          _display_status: s.route_status, // preserve raw status for UI badges
+        }));
+
+        // Overdue in_transit: trigger arrival pipeline (sets arrival_due, then verified write)
+        const overdueInTransit = inTransit.filter(s => {
+          if (!s.estimated_arrival_time) return false;
+          return new Date(s.estimated_arrival_time).getTime() < Date.now();
+        });
+
+        if (overdueInTransit.length > 0 || arrivalDue.length > 0) {
+          console.log(`[InTransitPanel] ${overdueInTransit.length} overdue in_transit + ${arrivalDue.length} arrival_due — triggering completeTravelArrivalVerified`);
+          // Trigger the verified completion pipeline (user-scoped, Character write + read-back)
+          base44.functions.invoke('completeTravelArrivalVerified', {})
+            .then(async (res) => {
               if (cancelled) return;
-
-              // Wait briefly for processTravelArrivals DB writes to propagate
-              await new Promise(r => setTimeout(r, 1500));
-              if (cancelled) return;
-
-              // Load which sessions are now marked "arrived" for our overdue set
-              for (const s of overdue) {
-                try {
-                  // Fetch the session to check if it's now "arrived"
-                  const arrivedArr = await base44.entities.TravelSession.filter(
-                    { id: s.id },
-                    null, 1
-                  ).catch(() => []);
-                  const arrivedSession = arrivedArr?.[0];
-                  if (arrivedSession?.route_status === 'arrived') {
-                    // Complete the arrival — writes Character destination with read-back proof
-                    const completeRes = await base44.functions.invoke('completeCharacterArrival', {
-                      session_id: s.id,
-                    }).catch(e => ({ data: { success: false, error: e.message } }));
-                    const cData = completeRes?.data || {};
-                    if (cData.success) {
-                      console.log(`[InTransitPanel] ARRIVAL PROOF | character=${s.character_name} | origin=${s.origin_location_name} | destination=${s.destination_location_name} | final_location=${cData.after_location} | destination_verified=${cData.after_location === s.destination_location_name}`);
-                    } else {
-                      console.error(`[InTransitPanel] completeCharacterArrival FAILED | character=${s.character_name} | error=${cData.error}`);
-                    }
-                  }
-                } catch (e) {
-                  console.warn(`[InTransitPanel] arrival completion error for ${s.character_name}:`, e.message);
+              const verifiedCount = res?.data?.verified_arrivals || 0;
+              if (verifiedCount > 0) {
+                // Re-fetch sessions after verified arrivals
+                await new Promise(r => setTimeout(r, 1500));
+                if (cancelled) return;
+                const refreshed = await base44.entities.TravelSession.filter(
+                  { owner_email: ownerEmail, route_status: { $in: ['in_transit', 'arrival_due', 'arrival_failed'] } },
+                  '-created_at', 30
+                ).catch(() => []);
+                if (!cancelled) {
+                  setSessions(refreshed.map(s => ({ ...enrichSessionProgress(s), _display_status: s.route_status })));
                 }
               }
-
-              // Re-fetch active sessions to update the panel
-              if (cancelled) return;
-              const refreshed = await base44.entities.TravelSession.filter(
-                { owner_email: ownerEmail, route_status: 'in_transit' },
-                '-created_at', 20
-              ).catch(() => []);
-              if (!cancelled) {
-                setSessions(refreshed.map(enrichSessionProgress));
-              }
             })
-            .catch(err => {
-              console.warn('[InTransitPanel] processTravelArrivals invoke failed:', err.message);
-            });
+            .catch(err => console.warn('[InTransitPanel] completeTravelArrivalVerified failed:', err.message));
         }
 
         setSessions(enriched);
@@ -115,6 +92,27 @@ export default function InTransitPanel({ ownerEmail }) {
 
   if (loading) return null;
   if (sessions.length === 0) return null;
+
+  const statusBadge = (session) => {
+    const status = session._display_status || session.route_status;
+    if (status === 'arrival_due' || status === 'arrival_pending_write') {
+      return (
+        <span className="flex items-center gap-1 text-[10px] font-medium text-amber-400 bg-amber-400/10 rounded-full px-2 py-0.5">
+          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+          Finalizing arrival…
+        </span>
+      );
+    }
+    if (status === 'arrival_failed') {
+      return (
+        <span className="flex items-center gap-1 text-[10px] font-medium text-destructive bg-destructive/10 rounded-full px-2 py-0.5">
+          <AlertCircle className="w-2.5 h-2.5" />
+          Arrival error — retrying
+        </span>
+      );
+    }
+    return null;
+  };
 
   const travelSourceLabel = (source) => {
     if (!source) return null;
@@ -140,10 +138,16 @@ export default function InTransitPanel({ ownerEmail }) {
         </p>
       </div>
 
-      {sessions.map(session => (
+      {sessions.map(session => {
+        const displayStatus = session._display_status || session.route_status;
+        const isArrivalDue    = displayStatus === 'arrival_due';
+        const isArrivalFailed = displayStatus === 'arrival_failed';
+        const borderColor = isArrivalFailed ? 'border-destructive/30' : isArrivalDue ? 'border-amber-500/30' : 'border-blue-500/20';
+
+        return (
         <div
           key={session.id}
-          className="bg-card border border-blue-500/20 rounded-xl p-3 space-y-2"
+          className={`bg-card border ${borderColor} rounded-xl p-3 space-y-2`}
         >
           {/* Header */}
           <div className="flex items-start justify-between gap-2">
@@ -153,9 +157,12 @@ export default function InTransitPanel({ ownerEmail }) {
                 {session.origin_location_name || 'Unknown origin'} → {session.destination_location_name}
               </p>
             </div>
-            <div className="text-right shrink-0">
-              <p className="text-xs font-medium text-blue-400">{session.eta_display}</p>
-              {session.travel_source && (
+            <div className="text-right shrink-0 space-y-1">
+              {!isArrivalDue && !isArrivalFailed && (
+                <p className="text-xs font-medium text-blue-400">{session.eta_display}</p>
+              )}
+              {statusBadge(session)}
+              {session.travel_source && !isArrivalDue && !isArrivalFailed && (
                 <p className="text-[10px] text-muted-foreground/70">{travelSourceLabel(session.travel_source)}</p>
               )}
             </div>
@@ -189,7 +196,7 @@ export default function InTransitPanel({ ownerEmail }) {
           )}
 
           {/* Distance if available */}
-          {session.distance_miles && (
+          {session.distance_miles && !isArrivalDue && !isArrivalFailed && (
             <div className="flex items-center gap-1">
               <MapPin className="w-2.5 h-2.5 text-muted-foreground/40" />
               <p className="text-[10px] text-muted-foreground/50">
@@ -197,8 +204,19 @@ export default function InTransitPanel({ ownerEmail }) {
               </p>
             </div>
           )}
+
+          {/* Arrival failed — visible repair error */}
+          {isArrivalFailed && (
+            <div className="flex items-start gap-1.5 pt-0.5">
+              <AlertCircle className="w-3 h-3 text-destructive shrink-0 mt-0.5" />
+              <p className="text-[10px] text-destructive/80">
+                Arrival write failed — system is retrying. {session.blocker_reason ? `(${session.blocker_reason})` : ''}
+              </p>
+            </div>
+          )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

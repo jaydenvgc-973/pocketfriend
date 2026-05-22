@@ -1,37 +1,44 @@
 /**
  * processTravelArrivals
  *
- * Scheduled every 5 minutes. Checks all active TravelSession records where ETA has passed.
+ * Scheduled every 5 minutes. Checks all active in_transit TravelSession records where ETA has passed.
  *
- * TWO-STAGE ARRIVAL (no RLS bypass needed):
+ * TRAVEL ARRIVAL FAILURE RULE — DESTINATION ENFORCEMENT
+ *
+ * ETA passed is NOT arrival. ETA passed means ARRIVAL_DUE.
+ *
+ * This function ONLY sets route_status: "arrival_due" when ETA passes.
+ * It NEVER sets route_status: "arrived".
+ * "arrived" may only be set by completeTravelArrivalVerified after Character write + read-back proof.
+ *
+ * PIPELINE:
  *   Stage 1 (this function, asServiceRole):
- *   - Marks TravelSession route_status = "arrived" only (service-role safe)
- *   - Sets actual_arrival_time
- *   - Logs proof
+ *   - Marks route_status = "arrival_due" (NOT "arrived") when ETA passes
+ *   - Sets arrival_due = true, arrival_pending_character_write = true, arrival_due_at = now
+ *   - Updates progress_percent to 100
  *
- *   Stage 2 (completeCharacterArrival, user-scoped):
- *   - Updates Character resolved_current_location_id to destination
- *   - Clears travel_status, traveling_to fields
- *   - Triggered by separate cron or sync process scoped to user
+ *   Stage 2 (completeTravelArrivalVerified, user-scoped):
+ *   - Loads Character via user-scoped RLS
+ *   - Writes Character.resolved_current_location_id = destination
+ *   - Reads back and verifies
+ *   - ONLY THEN sets route_status = "arrived"
  *
  * RULES:
- * - owner_email is the sole ownership source — never created_by
- * - Only process "in_transit" sessions with ETA in past or within 2-min threshold
- * - If session can't be marked, log exact error in route_status = "arrival_failed" + error_reason
- * - Never modify Character here (RLS-blocked for asServiceRole)
- * - Never reset jail, shelter, hotel, or house_arrest state
- * - Blocker characters are detected via character_snapshot for safety
+ * - Never modify Character (RLS-blocked for asServiceRole)
+ * - Never set route_status: "arrived" directly
+ * - Never send character home as fallback
+ * - Confined characters (jail/house_arrest) get session cancelled
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    // Scheduled — no user session
-    try { await base44.auth.me(); } catch { /* ok */ }
+    try { await base44.auth.me(); } catch { /* scheduled — no user session */ }
 
     const now = new Date();
-    const arrived = [];
+    const nowISO = now.toISOString();
+    const due = [];
     const errors = [];
 
     // Load all active in_transit sessions
@@ -46,129 +53,95 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Failed to load sessions: ${e.message}` }, { status: 500 });
     }
 
-    // Filter to sessions where ETA has passed OR is within the arrival threshold (2 minutes).
-    // This prevents characters from getting stuck at 96–99% when the scheduler fires just
-    // before ETA. The 2-minute window matches frontend "Arriving now" display threshold.
-    const ARRIVAL_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
-    const due = sessions.filter(s => {
+    // 2-minute arrival threshold — prevents characters stuck at 96-99% just before ETA
+    const ARRIVAL_THRESHOLD_MS = 2 * 60 * 1000;
+    const dueSessions = sessions.filter(s => {
       if (!s.estimated_arrival_time) return false;
       const eta = new Date(s.estimated_arrival_time).getTime();
-      return eta - now.getTime() <= ARRIVAL_THRESHOLD_MS; // ETA passed OR within 2 min
+      return eta - now.getTime() <= ARRIVAL_THRESHOLD_MS;
     });
 
-    console.log(`[processTravelArrivals] ${sessions.length} in_transit sessions, ${due.length} due for arrival (threshold: ETA ≤ now+2min)`);
+    console.log(`[processTravelArrivals] ${sessions.length} in_transit | ${dueSessions.length} due for arrival_due (threshold: ETA ≤ now+2min)`);
 
-    for (const session of due) {
+    for (const session of dueSessions) {
       try {
-        // Character RLS blocks asServiceRole reads entirely for this entity.
-        // processTravelArrivals runs scheduled (no user session) so cannot use user-scoped API.
-        // SOLUTION: TravelSession stores a character_snapshot (written by createTravelSession at
-        // session creation). Use snapshot for blocker checks + home detection; skip if missing.
-        // For sessions without snapshot, synthesize a minimal char from session fields.
         const charSnap = session.character_snapshot || null;
         const char = charSnap || {
-          id:                          session.character_id,
-          name:                        session.character_name,
-          owner_email:                 session.owner_email,
-          is_jailed:                   false,
-          house_arrest_active:         false,
-          resolved_presence_status:    'traveling',
-          current_home_location_id:    session.character_home_location_id || null,
+          id:                       session.character_id,
+          name:                     session.character_name,
+          owner_email:              session.owner_email,
+          is_jailed:                false,
+          house_arrest_active:      false,
+          resolved_presence_status: 'traveling',
+          current_home_location_id: session.character_home_location_id || null,
         };
-        // Use session fields as ground truth for location context
-        const charHomeId = session.character_home_location_id || char.current_home_location_id || null;
 
-        // Safety guard — do NOT override jail/house_arrest
+        // Safety guard — do NOT arrive jailed/house_arrest characters
         if (char.is_jailed === true || char.house_arrest_active === true) {
           console.log(`[processTravelArrivals] SKIP ${char.name} — confined (jail/house_arrest)`);
           await base44.asServiceRole.entities.TravelSession.update(session.id, {
-            route_status: 'cancelled',
+            route_status:   'cancelled',
             blocker_reason: 'character_confined',
           }).catch(() => {});
           continue;
         }
 
-        // Load destination location — asServiceRole.filter({id:...}) works for LocationReference
+        // Verify destination reference exists before marking arrival_due
         const destLocArr = await base44.asServiceRole.entities.LocationReference.filter(
           { id: session.destination_location_id }, null, 1
         ).catch(() => []);
-        const destLoc = destLocArr?.[0] || null;
+        const destLoc = destLocArr?.[0];
+
         if (!destLoc) {
-          console.warn(`[processTravelArrivals] Destination ${session.destination_location_id} not found`);
-          continue;
-        }
-
-        // Determine arrival presence status
-        // Use charHomeId (from session snapshot) since char may be synthesized without all fields
-        let arrivalPresence = 'visiting';
-        let arrivalLocationType = 'visit';
-        if (destLoc.category === 'home' && (
-          charHomeId === destLoc.id ||
-          char.temporary_housing_location_id === destLoc.id
-        )) {
-          arrivalPresence = 'home';
-          arrivalLocationType = 'home';
-        } else if (session.travel_source === 'work_schedule') {
-          arrivalPresence = 'at_work';
-          arrivalLocationType = 'work';
-        } else if (session.travel_source === 'school_schedule') {
-          arrivalPresence = 'at_school';
-          arrivalLocationType = 'school';
-        }
-
-        // ── ARRIVE: Create arrival completion record ──────────────────────
-        // Cannot update Character directly (RLS blocks service-role writes).
-        // Instead, log the required updates and mark session for post-processing.
-        // A separate user-scoped function will complete the arrival.
-        
-        const arrivalRecord = {
-          session_id: session.id,
-          character_id: char.id,
-          character_name: char.name,
-          destination_id: destLoc.id,
-          destination_name: destLoc.name,
-          arrival_presence: arrivalPresence,
-          arrival_location_type: arrivalLocationType,
-          timestamp: now.toISOString(),
-        };
-
-        try {
-          // Mark session as "arrived" — the canonical source of truth
-          // User-scoped completion functions will handle Character updates
-          await base44.asServiceRole.entities.TravelSession.update(session.id, {
-            route_status:         'arrived',
-            progress_percent:     100,
-            actual_arrival_time:  now.toISOString(),
-            last_progress_update: now.toISOString(),
-          });
-
-          arrived.push(arrivalRecord);
-          console.log(`[processTravelArrivals] ✅ SESSION MARKED ARRIVED: ${char.name} → ${destLoc.name} (Character update pending user-scoped sync)`);
-
-        } catch (sessionErr) {
-          console.error(`[processTravelArrivals] ❌ Session arrival write FAILED: ${sessionErr.message}`);
-          errors.push({
-            session_id: session.id,
-            character_id: char.id,
-            reason: 'session_arrival_write_failed',
-            error: sessionErr.message,
-          });
-          continue;
-        }
-
-        // ── MARK COMMITMENT COMPLETE if linked ────────────────────────────
-        if (session.source_commitment_id) {
-          await base44.asServiceRole.entities.CharacterCommitment.update(session.source_commitment_id, {
-            status: 'completed',
-            travel_arrived_at: now.toISOString(),
-            completion_result: `Arrived at ${destLoc.name}`,
+          console.warn(`[processTravelArrivals] Destination ${session.destination_location_id} not found — marking arrival_failed`);
+          // Log violation immediately — destination reference invalid
+          await base44.asServiceRole.entities.TravelViolation.create({
+            character_id:              session.character_id,
+            character_name:            session.character_name,
+            owner_email:               session.owner_email,
+            session_id:                session.id,
+            origin_location_id:        session.origin_location_id,
+            origin_location_name:      session.origin_location_name,
+            destination_location_id:   session.destination_location_id,
+            destination_location_name: session.destination_location_name,
+            eta:                       session.estimated_arrival_time,
+            route_status_at_violation: 'in_transit',
+            failure_type:              'INVALID_DESTINATION_REFERENCE',
+            blocker_reason:            `destination_id=${session.destination_location_id} not found in LocationReference`,
+            repair_attempted:          false,
+            repair_result:             'not_attempted',
+            readback_matched_destination: false,
+            violation_resolved:        false,
+            detected_at:               nowISO,
           }).catch(() => {});
+
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            route_status:   'arrival_failed',
+            blocker_reason: 'INVALID_DESTINATION_REFERENCE',
+          }).catch(() => {});
+          continue;
         }
 
-        arrived.push({ character: char.name, destination: destLoc.name, session_id: session.id });
+        // ── SET arrival_due (NOT "arrived") ─────────────────────────────────
+        // Character write will happen in completeTravelArrivalVerified (user-scoped)
+        await base44.asServiceRole.entities.TravelSession.update(session.id, {
+          route_status:               'arrival_due',
+          progress_percent:           100,
+          arrival_due:                true,
+          arrival_pending_character_write: true,
+          arrival_due_at:             nowISO,
+          last_progress_update:       nowISO,
+        });
 
-        // Proof log — required fields per spec
-        console.log(`[processTravelArrivals] ARRIVAL PROOF | character_id=${char.id} | character=${char.name} | origin=${session.origin_location_name || session.origin_location_id} | destination=${destLoc.name} | travel_status_before=in_transit | computed_progress=${session.progress_percent || 'unknown'} | arrival_triggered=true | final_location=${destLoc.name} | static_origin_marker_suppressed=true | session_id=${session.id}`);
+        due.push({
+          session_id:     session.id,
+          character_id:   char.id,
+          character_name: char.name,
+          destination:    destLoc.name,
+          owner_email:    session.owner_email,
+        });
+
+        console.log(`[processTravelArrivals] ⏰ ARRIVAL_DUE: ${char.name} → ${destLoc.name} | session=${session.id} | Character write delegated to completeTravelArrivalVerified`);
 
       } catch (e) {
         errors.push({ session_id: session.id, error: e.message });
@@ -176,8 +149,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── UPDATE PROGRESS for sessions not yet due ─────────────────────────
-    const stillTraveling = sessions.filter(s => !due.find(d => d.id === s.id));
+    // ── UPDATE PROGRESS for sessions not yet due ──────────────────────────
+    const stillTraveling = sessions.filter(s => !dueSessions.find(d => d.id === s.id));
     for (const session of stillTraveling) {
       try {
         if (!session.estimated_departure_time || !session.estimated_arrival_time) continue;
@@ -190,20 +163,29 @@ Deno.serve(async (req) => {
         if (Math.abs(progress - (session.progress_percent || 0)) >= 5) {
           await base44.asServiceRole.entities.TravelSession.update(session.id, {
             progress_percent:     progress,
-            last_progress_update: now.toISOString(),
+            last_progress_update: nowISO,
           }).catch(() => {});
         }
       } catch { /* non-fatal */ }
     }
 
+    // ── TRIGGER completeTravelArrivalVerified for owners with due sessions ──
+    const ownersWithDue = [...new Set(due.map(r => r.owner_email).filter(Boolean))];
+    if (ownersWithDue.length > 0) {
+      console.log(`[processTravelArrivals] Triggering completeTravelArrivalVerified for ${ownersWithDue.length} owners`);
+      base44.asServiceRole.functions.invoke('completeTravelArrivalVerified', {}).catch(e => {
+        console.warn(`[processTravelArrivals] completeTravelArrivalVerified trigger failed (non-fatal): ${e.message}`);
+      });
+    }
+
     return Response.json({
       success: true,
       checked: sessions.length,
-      arrived: arrived.length,
-      arrivals: arrived,
+      arrival_due_set: due.length,
+      arrivals_due: due,
       errors,
       still_traveling: stillTraveling.length,
-      timestamp: now.toISOString(),
+      timestamp: nowISO,
     });
 
   } catch (error) {

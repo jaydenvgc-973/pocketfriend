@@ -32,15 +32,24 @@ Deno.serve(async (req) => {
 
     const now = new Date();
 
-    // ── Load all "arrived" sessions (need Character completion verified) ────
-    // Also check "in_transit" sessions where ETA passed > 10 min ago (stale in transit)
-    const arrivedSessions = await base44.asServiceRole.entities.TravelSession.filter(
-      { route_status: 'arrived' },
+    // ── Load sessions needing enforcement ────────────────────────────────────
+    // 1. arrival_due sessions (ETA passed, Character write pending)
+    // 2. arrival_failed sessions (write failed — recheck and retry)
+    // 3. Stale in_transit sessions (ETA passed >10 min ago but still showing in_transit)
+    // 4. "arrived" sessions without actual_arrival_time (may have Character write pending)
+    const arrivalDueSessions = await base44.asServiceRole.entities.TravelSession.filter(
+      { route_status: 'arrival_due' },
       '-updated_date',
       200
     ).catch(() => []);
 
-    // Stale in_transit: ETA passed more than 10 minutes ago but still in_transit
+    const arrivalFailedSessions = await base44.asServiceRole.entities.TravelSession.filter(
+      { route_status: 'arrival_failed' },
+      '-updated_date',
+      50
+    ).catch(() => []);
+
+    // Stale in_transit: ETA passed more than 10 minutes ago — should be arrival_due by now
     const inTransitSessions = await base44.asServiceRole.entities.TravelSession.filter(
       { route_status: 'in_transit' },
       '-updated_date',
@@ -54,15 +63,25 @@ Deno.serve(async (req) => {
       return now.getTime() - eta > STALE_THRESHOLD_MS;
     });
 
-    console.log(`[enforceArrivalIntegrity] Checking ${arrivedSessions.length} arrived sessions, ${staleSessions.length} stale in_transit sessions`);
+    // Legacy "arrived" without actual_arrival_time (before this enforcement system)
+    const arrivedSessions = await base44.asServiceRole.entities.TravelSession.filter(
+      { route_status: 'arrived' },
+      '-updated_date',
+      100
+    ).catch(() => []);
+    const legacyArrivedNoProof = arrivedSessions.filter(s => !s.actual_arrival_time);
 
-    if (arrivedSessions.length === 0 && staleSessions.length === 0) {
+    const allCheckSessions = [...arrivalDueSessions, ...arrivalFailedSessions, ...staleSessions, ...legacyArrivedNoProof];
+
+    console.log(`[enforceArrivalIntegrity] Checking: ${arrivalDueSessions.length} arrival_due | ${arrivalFailedSessions.length} arrival_failed | ${staleSessions.length} stale in_transit | ${legacyArrivedNoProof.length} legacy arrived no proof`);
+
+    if (allCheckSessions.length === 0) {
       return Response.json({ success: true, message: 'No sessions to enforce', violations: [], repaired: [] });
     }
 
     // Group sessions by owner_email so we can do user-scoped character reads
     const sessionsByOwner = {};
-    for (const s of [...arrivedSessions, ...staleSessions]) {
+    for (const s of allCheckSessions) {
       if (!s.owner_email) continue;
       if (!sessionsByOwner[s.owner_email]) sessionsByOwner[s.owner_email] = [];
       sessionsByOwner[s.owner_email].push(s);
@@ -117,6 +136,14 @@ Deno.serve(async (req) => {
         if (isStale) {
           failureType = 'ETA_PASSED_NO_ARRIVAL';
           blockerReason = `in_transit_stale: ETA was ${session.estimated_arrival_time}, now ${now.toISOString()}`;
+          // Promote stale in_transit to arrival_due so the verified pipeline picks it up
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            route_status:               'arrival_due',
+            progress_percent:           100,
+            arrival_due:                true,
+            arrival_pending_character_write: true,
+            arrival_due_at:             now.toISOString(),
+          }).catch(() => {});
         }
 
         // If we have char data, check read-back
@@ -222,26 +249,29 @@ Deno.serve(async (req) => {
           console.error(`[enforceArrivalIntegrity] CANNOT REPAIR ${failureType} for ${session.character_name} — destination ${session.destination_location_id} does not exist`);
 
         } else if (destLoc) {
-          // Attempt forced arrival to destination via completeStuckTravelUserScoped
-          // Mark session as arrived first (so the stuck travel completion picks it up)
+          // Delegate to completeTravelArrivalVerified — the ONLY function that may set "arrived"
+          // NEVER set "arrived" directly here — only after verified Character write
           try {
-            if (isStale) {
+            // Ensure session is in arrival_due state so the verified pipeline processes it
+            if (session.route_status !== 'arrival_due') {
               await base44.asServiceRole.entities.TravelSession.update(session.id, {
-                route_status:        'arrived',
-                progress_percent:    100,
-                actual_arrival_time: now.toISOString(),
-              });
+                route_status:               'arrival_due',
+                progress_percent:           100,
+                arrival_due:                true,
+                arrival_pending_character_write: true,
+                arrival_due_at:             now.toISOString(),
+              }).catch(() => {});
             }
 
-            // Delegate to user-scoped completion
-            const repairRes = await base44.asServiceRole.functions.invoke('completeStuckTravelUserScoped', {
-              _owner_email_hint: ownerEmail,
+            // Delegate to completeTravelArrivalVerified (user-scoped, verified)
+            const repairRes = await base44.asServiceRole.functions.invoke('completeTravelArrivalVerified', {
+              session_id: session.id,
             }).catch(e => ({ data: { error: e.message } }));
 
             const repairData = repairRes?.data || {};
-            const thisCharResult = repairData.results?.find(r => r.session_id === session.id || r.name === session.character_name);
+            const thisCharResult = repairData.results?.find(r => r.session_id === session.id || r.character_name === session.character_name);
 
-            if (thisCharResult?.location_write_verified) {
+            if (thisCharResult?.arrived_set || thisCharResult?.location_write_verified) {
               repairSuccess = true;
               repairDetail = `Repair succeeded via completeStuckTravelUserScoped. Character now at ${thisCharResult.after_location}`;
               violationRecord.final_verified_location_id = session.destination_location_id;
@@ -249,7 +279,7 @@ Deno.serve(async (req) => {
               violationRecord.readback_matched_destination = true;
               violationRecord.violation_resolved = true;
             } else {
-              repairDetail = `completeStuckTravelUserScoped ran but read-back did not confirm destination. result=${JSON.stringify(thisCharResult)}`;
+              repairDetail = `completeTravelArrivalVerified ran but read-back did not confirm destination. result=${JSON.stringify(thisCharResult)}`;
               violationRecord.repair_result = 'partial';
             }
           } catch (repairErr) {

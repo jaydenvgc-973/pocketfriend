@@ -227,13 +227,9 @@ Deno.serve(async (req) => {
       const locationWriteOk = charAfter?.resolved_current_location_id === destLoc.id;
       const travelClearedOk = charAfter?.travel_status === 'not_traveling';
 
-      // Stamp session
-      if (sessionId) {
-        await base44.asServiceRole.entities.TravelSession.update(sessionId, {
-          actual_arrival_time: now.toISOString(),
-          route_status: 'arrived',
-        }).catch(() => {});
-      }
+      // Stamp session — only set "arrived" if read-back verified
+      // DO NOT set "arrived" here — wait for locationWriteOk check below.
+      // This is enforced below after the read-back check.
 
       // READ-BACK ENFORCEMENT: If character is NOT at destination after write → log violation
       if (!locationWriteOk) {
@@ -266,7 +262,27 @@ Deno.serve(async (req) => {
         }).catch(e => console.warn(`[completeStuckTravelUserScoped] Violation log failed: ${e.message}`));
 
         console.error(`[completeStuckTravelUserScoped] VIOLATION: ${failureType} for ${char.name} — expected at ${destLoc.name}, found at ${charAfter?.resolved_current_location_name}`);
+
+        // Keep session as arrival_due for retry — do NOT set arrived
+        if (sessionId) {
+          await base44.asServiceRole.entities.TravelSession.update(sessionId, {
+            route_status:   'arrival_due',
+            arrival_due:    true,
+            arrival_pending_character_write: true,
+            blocker_reason: `${failureType}: read-back failed in completeStuckTravelUserScoped`,
+          }).catch(() => {});
+        }
+
       } else {
+        // ✅ VERIFIED — set "arrived" only now
+        if (sessionId) {
+          await base44.asServiceRole.entities.TravelSession.update(sessionId, {
+            route_status:               'arrived',
+            actual_arrival_time:        now.toISOString(),
+            arrival_due:                false,
+            arrival_pending_character_write: false,
+          }).catch(() => {});
+        }
         console.log(`[completeStuckTravelUserScoped] ✅ ${char.name} → ${destLoc.name} | location_ok=${locationWriteOk} travel_cleared=${travelClearedOk}`);
       }
 
