@@ -407,12 +407,41 @@ function SendImageModal({ image, onClose, onSent }) {
     return groups;
   }, [characters]);
 
+  // Resolve the real conversation_id for a user↔character chat.
+  // Mirrors useChatLoadConvo: filter Conversation by owner_email + character_ids,
+  // exclude world_phone/bilateral threads, pick the most recent direct one.
+  // Creates a new conversation if none exists.
+  const resolveConversationId = async (charId, charName) => {
+    const convos = await base44.entities.Conversation.filter(
+      { owner_email: user.email, character_ids: charId },
+      '-last_message_date',
+      20
+    );
+    const direct = convos.filter(c => {
+      const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
+      return ids.length === 1 && !c.shared_conversation_key && c.channel !== 'world_phone';
+    });
+    if (direct.length > 0) {
+      // Prefer ones with messages, then most recent
+      const withMsgs = direct.filter(c => c.last_message_date).sort((a, b) => new Date(b.last_message_date) - new Date(a.last_message_date));
+      return (withMsgs[0] || direct[0]).id;
+    }
+    // Create a new direct conversation
+    const newConvo = await base44.entities.Conversation.create({
+      title: `chat with ${charName}`,
+      type: 'chat',
+      character_ids: [charId],
+      owner_email: user.email,
+    });
+    return newConvo.id;
+  };
+
   const handleSend = async () => {
     setError(null);
     setLoading(true);
     try {
       if (senderMode === 'user') {
-        // User sending to multiple characters via chat/text
+        // User sending to multiple characters — writes to the real Chat conversation
         if (selectedRecipientCharacterIds.size === 0) {
           setError('Please select at least one character');
           setLoading(false);
@@ -423,18 +452,29 @@ function SendImageModal({ image, onClose, onSent }) {
           const char = characters.find(c => c.id === charId);
           if (!char) continue;
 
-          await base44.entities.Message.create({
-            conversation_id: `${charId}_user`,
+          // Resolve real conversation ID (never use synthetic string IDs)
+          const convoId = await resolveConversationId(charId, char.name || char.display_name);
+
+          const msg = await base44.entities.Message.create({
+            conversation_id: convoId,
             sender_type: 'user',
             character_id: charId,
+            character_name: char.name || char.display_name,
             content: '',
             image_url: image.url,
             image_description: image.imageDescription || '',
             timestamp: new Date().toISOString(),
-            owner_email: user?.email,
+            owner_email: user.email,
           });
+
+          // Update conversation preview so Chat shows the latest send
+          await base44.entities.Conversation.update(convoId, {
+            last_message_preview: '📷 Photo',
+            last_message_date: new Date().toISOString(),
+          }).catch(() => {});
+
+          console.log(`[SendImageModal] User sent image to ${char.name} | convo=${convoId} | msg=${msg?.id} | image_url=${image.url}`);
         }
-        console.log(`[SendImageModal] User sent image to ${selectedRecipientCharacterIds.size} character(s)`);
       } else {
         // Character sending to character(s) via World Phone
         if (!selectedSenderCharacterId) {
@@ -442,67 +482,41 @@ function SendImageModal({ image, onClose, onSent }) {
           setLoading(false);
           return;
         }
-
         if (selectedRecipientCharacterIds.size === 0) {
           setError('Please select at least one recipient character');
           setLoading(false);
           return;
         }
-
-        // Check for self-send
         if (selectedRecipientCharacterIds.has(selectedSenderCharacterId)) {
           setError('Cannot send to the same character you are sending as');
           setLoading(false);
           return;
         }
 
-        // Send image to each selected receiver via World Phone
         for (const receiverId of selectedRecipientCharacterIds) {
-          try {
-            const res = await base44.functions.invoke('sendWorldPhoneMessage', {
-              sender_character_id: selectedSenderCharacterId,
-              recipient_identifier: receiverId,
-              requested_message: '',
-              image_url: image.url,
-              image_description: image.imageDescription || '',
-              message_type: 'image',
-              source: 'media_gallery_send',
-              owner_email: user?.email,
-            });
+          const res = await base44.functions.invoke('sendWorldPhoneMessage', {
+            sender_character_id: selectedSenderCharacterId,
+            recipient_identifier: receiverId,
+            requested_message: '',
+            image_url: image.url,
+            image_description: image.imageDescription || '',
+            message_type: 'image',
+            source: 'media_gallery_send',
+            owner_email: user.email,
+          });
 
-            const proof = res?.data?.proof || {};
-            console.log('[SendImageModal] World Phone image send:', {
-              send_as: 'character',
-              sender_character_id: selectedSenderCharacterId,
-              receiver_character_id: receiverId,
-              image_url: image.url,
-              success: res?.data?.success,
-              message_id: res?.data?.message_id,
-              channel: res?.data?.channel,
-              image_url_saved: proof.image_url_saved,
-              image_url_readback: proof.image_url_readback,
-              message_type_readback: proof.message_type_readback,
-            });
-
-            if (!res?.data?.success) {
-              throw new Error(res?.data?.error || 'World Phone send failed');
-            }
-
-            // Read-back verification: image_url must be persisted
-            if (!proof.image_url_saved || !proof.image_url_readback) {
-              throw new Error(
-                `Image was not saved to World Phone message. ` +
-                `image_url_saved=${proof.image_url_saved} | readback=${proof.image_url_readback || 'null'} | ` +
-                `message_type=${proof.message_type_readback || 'null'}. ` +
-                `Check Message entity schema allows image_url field.`
-              );
-            }
-          } catch (e) {
-            console.error(`[SendImageModal] Failed to send to ${receiverId}:`, e.message);
-            setError(`Failed to send to character: ${e.message}`);
-            setLoading(false);
-            return;
+          if (!res?.data?.success) {
+            throw new Error(res?.data?.error || 'World Phone send failed');
           }
+
+          const proof = res?.data?.proof || {};
+          console.log('[SendImageModal] World Phone image sent:', {
+            sender: selectedSenderCharacterId,
+            receiver: receiverId,
+            msg_id: res.data.message_id,
+            image_url_readback: proof.image_url_readback,
+            message_type: proof.message_type_readback,
+          });
         }
       }
       onSent();
