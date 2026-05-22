@@ -20,13 +20,53 @@ Deno.serve(async (req) => {
     const processed = 0;
 
     for (const char of allChars) {
-      // Skip if no pending relocation
-      if (!char.travel_destination_location_id) continue;
-
-      // Check if character is missing owner_email (legacy) and skip
       if (!char.owner_email) continue;
 
-      // This should never happen, but ensure we're not creating travel sessions
+      // PRIORITY 1: User-confirmed movement commitment (via chat confirmation)
+      if (char.pending_scheduled_relocation_at && char.next_location_id) {
+        const scheduledTime = new Date(char.pending_scheduled_relocation_at);
+        if (now >= scheduledTime) {
+          const fromLocation = char.resolved_current_location_name || 'Home';
+          const toLocation = char.next_location_name || 'Destination';
+
+          await base44.entities.Character.update(char.id, {
+            resolved_current_location_id: char.next_location_id,
+            resolved_current_location_name: toLocation,
+            resolved_presence_status: 'at_location',
+            resolved_location_type: 'visit',
+            resolved_source_reason: 'scheduled_user_confirmed_relocation',
+            resolved_last_updated_at: nowIso,
+            arrived_at: nowIso,
+            // Clear all pending relocation fields
+            pending_scheduled_relocation_at: null,
+            pending_relocation_from: null,
+            pending_relocation_from_name: null,
+            pending_relocation_source: null,
+            pending_relocation_message_id: null,
+            pending_relocation_confirmed_at: null,
+            next_location_id: null,
+            next_location_name: null,
+            travel_status: 'not_traveling',
+            travel_destination_location_id: null,
+            travel_destination_location_name: null,
+            traveling_to_location_id: null,
+            traveling_to_location_name: null,
+          }).catch(() => {});
+
+          relocated.push({
+            character_name: char.name,
+            from: fromLocation,
+            to: toLocation,
+            reason: 'user_confirmed_commitment'
+          });
+          continue;
+        }
+      }
+
+      // PRIORITY 2: Legacy travel_destination (fallback)
+      if (!char.travel_destination_location_id) continue;
+
+      // Clear stale traveling states
       if (char.travel_status === 'traveling' || ['traveling', 'in_transit'].includes(char.resolved_presence_status)) {
         console.warn(`[processScheduledRelocations] Character ${char.name} still marked as traveling. Clearing stale state.`);
         await base44.entities.Character.update(char.id, {
@@ -36,8 +76,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Character should be relocated now (move time was scheduled in past)
-      // Simply update location immediately
+      // Instant relocation at scheduled time
       const result = await base44.entities.Character.update(char.id, {
         resolved_current_location_id: char.travel_destination_location_id,
         resolved_current_location_name: char.travel_destination_location_name,
@@ -55,7 +94,7 @@ Deno.serve(async (req) => {
           character_id: char.id,
           character_name: char.name,
           destination: char.travel_destination_location_name,
-          action: 'instant_relocation'
+          reason: 'legacy_travel_fallback'
         });
       }
     }
