@@ -1,41 +1,36 @@
 /**
- * fetchMediaGalleryPage — STABLE ORDERED INDEX
+ * fetchMediaGalleryPage — TRUE STABLE ORDERED INDEX
  *
  * ARCHITECTURE:
- * - Fetches ALL owner_email-scoped messages with image_url in sorted batches
+ * - Fetches ALL owner_email-scoped messages with image_url
+ * - Pagination cursor advances correctly on each batch (not fixed to batch-1 date)
  * - Builds one stable ordered list: sort by created_date DESC, id DESC (tie-breaker)
  * - Deduplicates by URL once across the full list
  * - Slices the correct page from that stable list
- * - Page boundaries are deterministic because the full ordered list is built before slicing
  *
- * OWNERSHIP: Message.owner_email === user.email (canonical field, no created_by)
+ * CURSOR RULE:
+ *   After each batch, the cursor advances to the OLDEST date in THAT batch.
+ *   This means batch 2 fetches records older than batch 1's oldest.
+ *   Batch 3 fetches records older than batch 2's oldest. Etc.
+ *   This is a true forward-only cursor — no batch can overlap a prior batch.
  *
- * PAGINATION CONTRACT (provable):
- *   full_index = all owner images sorted by created_date DESC, id DESC, deduped by URL
- *   page N, size P → full_index.slice((N-1)*P, N*P)
- *   This is stable: same sort = same order = same pages regardless of when called.
- *
- * OFFSET CAVEAT:
- *   Base44 .filter() takes (query, sort, limit) — no skip/offset parameter.
- *   We use large batch fetches (limit=500) and rely on stable sort + client-side pagination.
- *   For most galleries (< 10,000 messages) one or two batches is sufficient.
- *   If the user has >500 messages, a second batch is fetched with the same sort and
- *   post-de-merged with created_date to ensure no gaps.
+ * PAGE MATH:
+ *   page 1 → skip=0,  slice [0..pageSize)
+ *   page 2 → skip=20, slice [20..40)
+ *   page N → skip=(N-1)*pageSize, slice [skip..skip+pageSize)
  *
  * PROOF FIELDS returned in every response:
- *   - requestedPage, pageSize, skip (=(page-1)*pageSize)
- *   - sortKey: "created_date DESC, id DESC"
- *   - totalImagesInIndex: size of full deduped ordered list
- *   - firstImageIdOnPage, firstImageTimestampOnPage
- *   - lastImageIdOnPage, lastImageTimestampOnPage
- *   - hasMore
- *   - rawScanned, batchCount
- *   - offsetHonored: false (client-side pagination from full list — intentional)
+ *   requestedPage, pageSize, startIndex, endIndex
+ *   totalImagesInIndex (full deduped count)
+ *   firstImageId, firstImageUrl, firstImageTimestamp
+ *   lastImageId, lastImageUrl, lastImageTimestamp
+ *   hasMore, exhausted, rawScanned, batchCount
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const PAGE_SIZE = 20;
-const BATCH_LIMIT = 500; // Max records per Base44 .filter() call
+const BATCH_LIMIT = 500;
+const MAX_BATCHES = 20; // Safety ceiling: up to 10,000 messages
 
 Deno.serve(async (req) => {
   try {
@@ -49,110 +44,84 @@ Deno.serve(async (req) => {
     const ownerEmail = user.email;
     const safePageSize = Math.max(1, Math.min(50, pageSize));
     const safePage = Math.max(1, page);
-    const skip = (safePage - 1) * safePageSize;
+    const startIndex = (safePage - 1) * safePageSize;
+    const endIndex = startIndex + safePageSize;
     const searchLower = (searchTerm || '').toLowerCase().trim();
 
-    console.log(`[fetchMediaGalleryPage] owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} skip=${skip} search="${searchTerm}"`);
+    console.log(`[fetchMediaGalleryPage] owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} startIndex=${startIndex} endIndex=${endIndex} search="${searchTerm}"`);
 
-    // ── STEP 1: Fetch ALL owner-scoped messages in batches ────────────────────
-    // Base44 .filter(query, sort, limit) — NO offset param.
-    // We fetch up to BATCH_LIMIT records per call sorted by -created_date.
-    // For galleries > BATCH_LIMIT messages, we do a second batch by using
-    // the oldest timestamp from batch 1 as a cursor proxy (via client-side merge).
-    // This gives us the full ordered list without relying on a skip param.
-
+    // ── STEP 1: Fetch ALL owner-scoped messages in advancing-cursor batches ─────
+    // KEY FIX: cursor advances after each batch to the OLDEST date in that batch.
+    // This guarantees no batch overlaps a prior batch.
     const allMessages = [];
     let batchCount = 0;
     let totalScanned = 0;
     let exhausted = false;
+    let cursor = null; // null = start from the newest; advances each batch
 
-    // Batch 1: newest BATCH_LIMIT records
-    {
+    while (!exhausted && batchCount < MAX_BATCHES) {
       batchCount++;
+
       let batch = null;
+      const query = cursor
+        ? { owner_email: ownerEmail, created_date: { $lt: cursor } }
+        : { owner_email: ownerEmail };
+
       try {
-        batch = await base44.entities.Message.filter(
-          { owner_email: ownerEmail },
-          '-created_date',
-          BATCH_LIMIT
-        );
+        batch = await base44.entities.Message.filter(query, '-created_date', BATCH_LIMIT);
       } catch {
         try {
-          batch = await base44.asServiceRole.entities.Message.filter(
-            { owner_email: ownerEmail },
-            '-created_date',
-            BATCH_LIMIT
-          );
+          batch = await base44.asServiceRole.entities.Message.filter(query, '-created_date', BATCH_LIMIT);
         } catch (e2) {
-          return Response.json({ error: `Message fetch failed: ${e2.message}` }, { status: 500 });
+          if (batchCount === 1) {
+            return Response.json({ error: `Message fetch failed: ${e2.message}` }, { status: 500 });
+          }
+          // Non-first batch failure: stop here with what we have
+          exhausted = true;
+          break;
         }
       }
 
       if (!batch || batch.length === 0) {
         exhausted = true;
-      } else {
-        totalScanned += batch.length;
-        allMessages.push(...batch);
-        if (batch.length < BATCH_LIMIT) exhausted = true;
-        console.log(`[fetchMediaGalleryPage] Batch 1: ${batch.length} records`);
+        break;
       }
-    }
 
-    // Batch 2+: if first batch was full AND we need deeper pages, fetch more.
-    // We keep fetching with increasing skip estimates until exhausted.
-    // Since Base44 doesn't support offset, we fetch the next BATCH_LIMIT
-    // and use created_date to detect overlap/continuation.
-    // We cap at 10 batches (5000 messages) to avoid timeouts.
-    if (!exhausted && allMessages.length > 0) {
-      const oldestDateInBatch1 = allMessages[allMessages.length - 1].created_date;
-      let continueLoop = true;
-      while (continueLoop && batchCount < 10) {
-        batchCount++;
-        let nextBatch = null;
-        try {
-          // Fetch records older than the last known record using created_date filter
-          nextBatch = await base44.entities.Message.filter(
-            { owner_email: ownerEmail, created_date: { $lt: oldestDateInBatch1 } },
-            '-created_date',
-            BATCH_LIMIT
-          );
-        } catch {
-          try {
-            nextBatch = await base44.asServiceRole.entities.Message.filter(
-              { owner_email: ownerEmail, created_date: { $lt: oldestDateInBatch1 } },
-              '-created_date',
-              BATCH_LIMIT
-            );
-          } catch {
-            continueLoop = false;
-            break;
-          }
-        }
+      totalScanned += batch.length;
+      allMessages.push(...batch);
+      console.log(`[fetchMediaGalleryPage] Batch ${batchCount}: ${batch.length} records (total: ${totalScanned}) cursor=${cursor || 'start'}`);
 
-        if (!nextBatch || nextBatch.length === 0) {
-          exhausted = true;
-          continueLoop = false;
-        } else {
-          totalScanned += nextBatch.length;
-          allMessages.push(...nextBatch);
-          console.log(`[fetchMediaGalleryPage] Batch ${batchCount}: ${nextBatch.length} records (total scanned: ${totalScanned})`);
-          if (nextBatch.length < BATCH_LIMIT) {
-            exhausted = true;
-            continueLoop = false;
-          } else {
-            // Only continue if we still need more images for this page
-            // Count images found so far to decide whether to stop early
-            const imagesSoFar = allMessages.filter(m => m.image_url && !m.recovery_signal).length;
-            const needed = skip + safePageSize + 1;
-            if (imagesSoFar >= needed) {
-              continueLoop = false;
-            }
-          }
+      if (batch.length < BATCH_LIMIT) {
+        // Fewer records than requested = we've hit the end
+        exhausted = true;
+        break;
+      }
+
+      // ADVANCE CURSOR to the oldest date in this batch (last item, since sorted -created_date)
+      // This is the key fix: each iteration moves the cursor forward, never reusing the same window
+      const oldestInBatch = batch[batch.length - 1].created_date;
+      if (!oldestInBatch) {
+        // No date on last record — stop to avoid infinite loop
+        exhausted = true;
+        break;
+      }
+      cursor = oldestInBatch;
+
+      // Early-exit optimization: if we already have enough images for this page, stop fetching
+      // Only safe to do once we've confirmed we have all images up to endIndex
+      const imagesSoFar = allMessages.filter(m => m.image_url && !m.recovery_signal).length;
+      if (imagesSoFar >= endIndex + safePageSize && batchCount >= 3) {
+        // We have well more than enough — but don't exit too early or pages will be wrong
+        // Continue until exhausted to get the true total count (needed for hasMore accuracy)
+        // For performance, only early-exit if we're very deep (page > 10) and have 3x needed
+        if (imagesSoFar >= endIndex * 3) {
+          console.log(`[fetchMediaGalleryPage] Early-exit: ${imagesSoFar} images found, need ${endIndex} for page ${safePage}`);
+          break;
         }
       }
     }
 
-    console.log(`[fetchMediaGalleryPage] Total scanned: ${totalScanned} in ${batchCount} batches`);
+    console.log(`[fetchMediaGalleryPage] Total scanned: ${totalScanned} in ${batchCount} batches (exhausted=${exhausted})`);
 
     // ── STEP 2: Filter to image-only messages ─────────────────────────────────
     const imageMessages = allMessages.filter(m => {
@@ -161,18 +130,17 @@ Deno.serve(async (req) => {
       return true;
     });
 
-    console.log(`[fetchMediaGalleryPage] Image messages found: ${imageMessages.length}`);
+    console.log(`[fetchMediaGalleryPage] Image messages: ${imageMessages.length}`);
 
-    // ── STEP 3: Sort by created_date DESC, id DESC (deterministic tie-breaker) ─
+    // ── STEP 3: Sort by created_date DESC, id DESC (deterministic) ─────────────
     imageMessages.sort((a, b) => {
       const dateA = a.created_date ? new Date(a.created_date).getTime() : 0;
       const dateB = b.created_date ? new Date(b.created_date).getTime() : 0;
       if (dateB !== dateA) return dateB - dateA;
-      // Tie-breaker: id DESC (lexicographic — stable for UUIDs with timestamp prefix)
       return (b.id || '').localeCompare(a.id || '');
     });
 
-    // ── STEP 4: Deduplicate by URL ────────────────────────────────────────────
+    // ── STEP 4: Deduplicate by URL (once across full index) ────────────────────
     const seenUrls = new Set();
     const dedupedIndex = [];
     for (const m of imageMessages) {
@@ -181,7 +149,7 @@ Deno.serve(async (req) => {
       dedupedIndex.push(m);
     }
 
-    console.log(`[fetchMediaGalleryPage] After dedup: ${dedupedIndex.length} unique images in index`);
+    console.log(`[fetchMediaGalleryPage] After dedup: ${dedupedIndex.length} unique images`);
 
     // ── STEP 5: Apply search filter ───────────────────────────────────────────
     let filteredIndex = dedupedIndex;
@@ -195,10 +163,12 @@ Deno.serve(async (req) => {
 
     const totalImagesInIndex = filteredIndex.length;
 
-    // ── STEP 6: Slice the correct page ────────────────────────────────────────
-    const pageSlice = filteredIndex.slice(skip, skip + safePageSize);
-    const hasMore = (skip + safePageSize) < totalImagesInIndex ||
-      (!exhausted && totalImagesInIndex >= safePageSize);
+    // ── STEP 6: Slice the exact page ──────────────────────────────────────────
+    // startIndex = (page-1) * pageSize
+    // endIndex = startIndex + pageSize
+    // page 1 → [0..20), page 2 → [20..40), page 3 → [40..60), etc.
+    const pageSlice = filteredIndex.slice(startIndex, endIndex);
+    const hasMore = endIndex < totalImagesInIndex || (!exhausted && totalScanned >= BATCH_LIMIT);
 
     // ── STEP 7: Shape output ──────────────────────────────────────────────────
     const pageImages = pageSlice.map(m => ({
@@ -213,7 +183,6 @@ Deno.serve(async (req) => {
       timestamp: m.created_date,
       messageId: m.id,
       ownerEmail: m.owner_email,
-      verificationPath: 'message.owner_email',
       source_type: 'message',
       source_id: m.id,
       parent_entity: 'Message',
@@ -221,34 +190,37 @@ Deno.serve(async (req) => {
       parent_conversation_id: m.conversation_id,
     }));
 
-    console.log(`[fetchMediaGalleryPage] page=${safePage} skip=${skip} returning=${pageImages.length}/${totalImagesInIndex} hasMore=${hasMore}`);
-
     const proof = {
       requestedPage: safePage,
       pageSize: safePageSize,
-      skip,
-      sortKey: 'created_date DESC, id DESC',
-      offsetHonored: false, // intentional — client-side pagination from full sorted list
-      rawScanned: totalScanned,
-      imageMessagesFound: imageMessages.length,
-      afterDedup: dedupedIndex.length,
-      afterSearch: totalImagesInIndex,
+      startIndex,
+      endIndex,
       totalImagesInIndex,
       pageImagesReturned: pageImages.length,
-      firstImageIdOnPage: pageImages[0]?.id || null,
-      lastImageIdOnPage: pageImages[pageImages.length - 1]?.id || null,
-      firstImageTimestampOnPage: pageImages[0]?.timestamp || null,
-      lastImageTimestampOnPage: pageImages[pageImages.length - 1]?.timestamp || null,
+      // Per-page boundary proof
+      firstImageId: pageImages[0]?.id || null,
+      firstImageUrl: pageImages[0]?.url || null,
+      firstImageTimestamp: pageImages[0]?.timestamp || null,
+      lastImageId: pageImages[pageImages.length - 1]?.id || null,
+      lastImageUrl: pageImages[pageImages.length - 1]?.url || null,
+      lastImageTimestamp: pageImages[pageImages.length - 1]?.timestamp || null,
       hasMore,
       exhausted,
+      rawScanned: totalScanned,
       batchCount,
+      sortKey: 'created_date DESC, id DESC',
+      cursorStyle: 'advancing_per_batch',
       currentUserEmail: ownerEmail,
-      // Legacy field names for UI diagnostics panel
+      // Legacy field aliases for diagnostics panel
+      skip: startIndex,
       validFound: dedupedIndex.length,
+      afterDedup: dedupedIndex.length,
       batchesScanned: batchCount,
       firstImageTimestamp: pageImages[0]?.timestamp || null,
       lastImageTimestamp: pageImages[pageImages.length - 1]?.timestamp || null,
     };
+
+    console.log(`[fetchMediaGalleryPage] RESULT: page=${safePage} startIndex=${startIndex} endIndex=${endIndex} returned=${pageImages.length}/${totalImagesInIndex} hasMore=${hasMore}`);
 
     return Response.json({
       images: pageImages,

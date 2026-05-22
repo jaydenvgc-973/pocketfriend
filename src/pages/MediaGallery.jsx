@@ -5,10 +5,12 @@ import { motion } from 'framer-motion';
 import { X, Send, Trash2, Search, ArrowLeft, RefreshCw } from 'lucide-react';
 import { lfcRead, lfcWrite, lfcDelete } from '@/lib/localFirstCache';
 
-// Cache key for a specific page+search combination
-function galleryPageCacheKey(page, search, pageSize = 20) {
+// Cache key for a specific owner+page+search combination
+// MUST include ownerEmail so different accounts never share cache
+function galleryPageCacheKey(ownerEmail, page, search, pageSize = 20) {
   const s = (search || '').trim().toLowerCase();
-  return `mediaGallery:page:${page}:ps:${pageSize}:search:${s}`;
+  const owner = (ownerEmail || 'anon').replace(/[^a-z0-9]/gi, '_');
+  return `mediaGallery:v2:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
 }
 
 // Cache key for the total image count (used to know if hasMore)
@@ -44,7 +46,7 @@ export default function MediaGallery() {
     if (!user?.email) return;
     const { forceRefresh = false } = opts;
 
-    const cacheKey = galleryPageCacheKey(page, search);
+    const cacheKey = galleryPageCacheKey(user.email, page, search);
     const requestId = ++activeRequestRef.current;
 
     // ── STEP 1: Serve cache immediately ───────────────────────────────────────
@@ -156,7 +158,7 @@ export default function MediaGallery() {
         setSelectedImage(null);
         // Invalidate cache for this page and force refresh
         // lfcWrite(null) is a no-op — must use lfcDelete to actually clear
-        const cacheKey = galleryPageCacheKey(currentPage, searchTerm);
+        const cacheKey = galleryPageCacheKey(user.email, currentPage, searchTerm);
         lfcDelete(user.email, cacheKey);
         fetchPage(currentPage, searchTerm, { forceRefresh: true });
       } else {
@@ -212,13 +214,14 @@ export default function MediaGallery() {
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
             <div><strong>Gallery Diagnostics — Page {currentPage}</strong></div>
             <div>owner: {user?.email || 'unknown'}</div>
-            <div>skip: {lastProof.skip ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
-            <div>rawScanned: {lastProof.rawScanned} | validFound: {lastProof.validFound}</div>
-            <div>afterDedup: {lastProof.afterDedup} | returned: {lastProof.pageImagesReturned}</div>
+            <div>startIndex: {lastProof.startIndex ?? 'n/a'} | endIndex: {lastProof.endIndex ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
+            <div>totalInIndex: {lastProof.totalImagesInIndex} | returned: {lastProof.pageImagesReturned}</div>
+            <div>rawScanned: {lastProof.rawScanned} | batches: {lastProof.batchCount} | cursor: {lastProof.cursorStyle}</div>
+            <div>firstId: {lastProof.firstImageId || 'n/a'}</div>
             <div>firstTs: {lastProof.firstImageTimestamp || 'n/a'}</div>
+            <div>lastId: {lastProof.lastImageId || 'n/a'}</div>
             <div>lastTs: {lastProof.lastImageTimestamp || 'n/a'}</div>
             <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'} | exhausted: {lastProof.exhausted ? 'yes' : 'no'}</div>
-            <div>batches: {lastProof.batchesScanned}</div>
           </div>
         )}
 
@@ -457,31 +460,45 @@ function SendImageModal({ image, onClose, onSent }) {
   }, [characters]);
 
   // Resolve the real conversation_id for a user↔character chat.
-  // Mirrors useChatLoadConvo: filter Conversation by owner_email + character_ids,
-  // exclude world_phone/bilateral threads, pick the most recent direct one.
-  // Creates a new conversation if none exists.
+  // Fetches all owner conversations and filters CLIENT-SIDE for the direct thread
+  // containing this charId. Array-field filtering via scalar in Base44 query is
+  // unreliable — client-side filter is the correct approach.
   const resolveConversationId = async (charId, charName) => {
+    // Fetch all conversations for this owner, most recent first
     const convos = await base44.entities.Conversation.filter(
-      { owner_email: user.email, character_ids: charId },
+      { owner_email: user.email },
       '-last_message_date',
-      20
+      100
     );
+
+    // Find the direct user↔character conversation (not a world_phone/bilateral thread)
     const direct = convos.filter(c => {
       const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
-      return ids.length === 1 && !c.shared_conversation_key && c.channel !== 'world_phone';
+      const hasChar = ids.includes(charId);
+      const isWorldPhone = !!c.shared_conversation_key || c.channel === 'world_phone' || c.type === 'bilateral';
+      return hasChar && !isWorldPhone;
     });
+
     if (direct.length > 0) {
-      // Prefer ones with messages, then most recent
-      const withMsgs = direct.filter(c => c.last_message_date).sort((a, b) => new Date(b.last_message_date) - new Date(a.last_message_date));
-      return (withMsgs[0] || direct[0]).id;
+      // Prefer the one with the most recent activity
+      const sorted = [...direct].sort((a, b) => {
+        const da = a.last_message_date ? new Date(a.last_message_date).getTime() : 0;
+        const db = b.last_message_date ? new Date(b.last_message_date).getTime() : 0;
+        return db - da;
+      });
+      console.log(`[resolveConversationId] Found direct convo for char=${charId} → convo=${sorted[0].id}`);
+      return sorted[0].id;
     }
-    // Create a new direct conversation
+
+    // No existing conversation found — create a new direct one
+    console.log(`[resolveConversationId] No direct convo found for char=${charId} — creating new`);
     const newConvo = await base44.entities.Conversation.create({
       title: `chat with ${charName}`,
       type: 'chat',
       character_ids: [charId],
       owner_email: user.email,
     });
+    console.log(`[resolveConversationId] Created new convo=${newConvo.id} for char=${charId}`);
     return newConvo.id;
   };
 
