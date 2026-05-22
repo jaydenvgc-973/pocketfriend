@@ -162,42 +162,11 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
-  // LAYER 3: Check active travel state
-  // ONE TRUTH RULE: only display travel if _travelDisplayValid is true (injected by
-  // applySessionProofToCharacters from travelDisplayIntegrity.js).
-  // If _travelDisplayValid is explicitly false, the travel_status is orphaned — skip it.
-  // If _travelDisplayValid is undefined (not yet hydrated), fall through to normal resolution.
-  if (character._travelDisplayValid === true && character.travel_destination_location_id) {
-    const destLocation = locationMap[character.travel_destination_location_id];
-    if (destLocation) {
-      return {
-        resolved_current_location_id: character.travel_destination_location_id,
-        resolved_current_location_name: destLocation.name || 'Traveling',
-        resolved_location_type: 'traveling',
-        resolved_presence_status: 'traveling',
-        resolved_source_reason: character.travel_status || 'in_transit',
-        resolved_zone: null,
-        isTransit: true,
-      };
-    }
-  }
-  // Legacy path: _travelDisplayValid not set (no session hydration) — check raw fields
-  // but ONLY if travel_status is a valid traveling state (not 'not_traveling').
-  if (character._travelDisplayValid === undefined &&
-      character.travel_status && character.travel_status !== 'not_traveling' &&
-      character.travel_destination_location_id) {
-    const destLocation = locationMap[character.travel_destination_location_id];
-    if (destLocation) {
-      return {
-        resolved_current_location_id: character.travel_destination_location_id,
-        resolved_current_location_name: destLocation.name || 'Traveling',
-        resolved_location_type: 'traveling',
-        resolved_presence_status: 'traveling',
-        resolved_source_reason: character.travel_status,
-        resolved_zone: null,
-      };
-    }
-  }
+  // LAYER 3: TRAVEL SYSTEM DEPRECATED — TravelSession is NO LONGER authoritative.
+  // Characters teleport instantly at scheduled time. No slow transit state.
+  // travel_status and TravelSession records must NOT override resolved_current_location_id.
+  // Left here as a comment block so dependent imports don't break.
+  // DO NOT RE-ENABLE without explicit architectural decision.
 
   // ── SLEEP ENFORCEMENT: runs before visit/autonomous layers ──────────────────
   // Resolve valid sleep home
@@ -734,16 +703,10 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     return { status: 'rabbit_hole', label, sublabel: character.rabbit_hole_subtype || null, isTransit: false, isSleeping: false };
   }
 
-  // ── PRIORITY 2: TRANSIT STATE ──────────────────────────────────────────────
-  // ONE TRUTH RULE: only show "Traveling to…" if:
-  //   A) _travelDisplayValid = true (session proof injected), OR
-  //   B) _travelDisplayValid is undefined (not hydrated yet — legacy path)
-  // If _travelDisplayValid = false, the travel_status is orphaned — skip it.
-  if (presenceStatus === 'traveling' && character._travelDisplayValid !== false) {
-    const destLoc = locationMap[character.travel_destination_location_id];
-    const destName = destLoc?.name || character.traveling_to_location_name || 'destination';
-    return { status: 'in_transit', label: `Traveling to ${destName}`, sublabel: null, isTransit: true, isSleeping: false };
-  }
+  // ── PRIORITY 2: TRANSIT STATE — DEPRECATED ────────────────────────────────
+  // TravelSession is no longer authoritative. Characters teleport at scheduled time.
+  // Do NOT show "Traveling to…" — characters are at their current_location_id, period.
+  // If presence_status is 'traveling', it is stale — fall through to current location display.
 
   // ── PRIORITY 3: CONFIRMED PRESENCE ────────────────────────────────────────
   if (presenceStatus === 'at_work') {
@@ -864,12 +827,9 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
     return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT SCHOOL${locName ? ` (${locName})` : ''}. All location references must match this.`;
   }
 
-  // ── TRAVELING ─────────────────────────────────────────────────────────────
-  if (presence === 'traveling') {
-    const destName = character.traveling_to_location_name || locName || 'your destination';
-    if (imageMode) return `[LOCATION LOCKED: character is in transit to ${destName} — use travel/vehicle/street context]`;
-    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently IN TRANSIT to ${destName}. You have NOT arrived yet. Do NOT say you are already there.`;
-  }
+  // ── TRAVELING — DEPRECATED ────────────────────────────────────────────────
+  // Travel state is no longer a valid presence. Characters are always at their current location.
+  // If presence = 'traveling', fall through to location name below (treat as at_location).
 
   // ── VISITING / UNKNOWN ────────────────────────────────────────────────────
   if (locName) {

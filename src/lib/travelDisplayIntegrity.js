@@ -126,123 +126,25 @@ export function validateTravelDisplay(character, activeSessions = []) {
 }
 
 /**
- * Merge session proof onto character objects.
+ * applySessionProofToCharacters — DEPRECATED
  *
- * For each character:
- *   - If a valid in_transit session exists → inject _travelSession and _travelDisplayValid = true
- *   - If NOT → set _travelDisplayValid = false, clear stale travel display fields in-memory
- *     (does NOT write to DB — that is handled by completeStuckTravelUserScoped / autonomousMovement)
- *
- * Returns a new array (does not mutate input).
+ * TravelSession is no longer authoritative for character location.
+ * Characters teleport instantly at scheduled time.
+ * This function now simply returns characters unchanged.
+ * All travel state is ignored — current_location_id is the only authority.
  */
 export function applySessionProofToCharacters(characters, activeSessions = []) {
   if (!characters?.length) return characters || [];
-
-  const sessionsByCharId = {};
-  for (const s of activeSessions) {
-    if (s.route_status === 'in_transit' && s.character_id) {
-      // Keep most recent if multiple (shouldn't happen, but be safe)
-      if (!sessionsByCharId[s.character_id]) {
-        sessionsByCharId[s.character_id] = s;
-      }
-    }
-  }
-
-  const travelingStates = new Set([
-    'traveling_to_work', 'traveling_to_school', 'traveling_to_destination', 'traveling'
-  ]);
-  const travelingPresenceStates = new Set(['traveling', 'in_transit']);
-
-  return characters.map(char => {
-    const session = sessionsByCharId[char.id];
-    const charShowsTravel = travelingStates.has(char.travel_status) ||
-      travelingPresenceStates.has(char.resolved_presence_status);
-
-    if (!charShowsTravel) {
-      // Character doesn't claim travel — no intervention needed
-      return { ...char, _travelSession: null, _travelDisplayValid: false };
-    }
-
-    if (!session) {
-      // Character claims travel but no valid in_transit session — CLEAR display in memory
-      // IMPORTANT: Only clear the display fields used by UI. Do NOT touch resolved_current_location.
-      return {
-        ...char,
-        // Override these fields so UI shows correct state without waiting for DB repair
-        travel_status: 'not_traveling',
-        traveling_to_location_id: null,
-        traveling_to_location_name: null,
-        travel_destination_location_id: null,
-        // Preserve resolved_presence_status only if it wasn't 'traveling'
-        // If it was 'traveling', downgrade to the last known static location state
-        resolved_presence_status: travelingPresenceStates.has(char.resolved_presence_status)
-          ? (char.resolved_location_type === 'home' ? 'home'
-            : char.resolved_location_type === 'work' ? 'at_work'
-            : char.resolved_location_type === 'school' ? 'at_school'
-            : 'home') // safe fallback
-          : char.resolved_presence_status,
-        _travelSession: null,
-        _travelDisplayValid: false,
-        _travelOrphanCleared: true,
-      };
-    }
-
-    // Validate session has complete render proof
-    const validation = validateTravelDisplay(char, [session]);
-    if (!validation.canDisplayTravel) {
-      // Session exists but missing render fields — clear display until session is repaired
-      return {
-        ...char,
-        travel_status: 'not_traveling',
-        traveling_to_location_id: null,
-        traveling_to_location_name: null,
-        travel_destination_location_id: null,
-        resolved_presence_status: travelingPresenceStates.has(char.resolved_presence_status)
-          ? 'home'
-          : char.resolved_presence_status,
-        _travelSession: session,
-        _travelDisplayValid: false,
-        _travelSessionIncomplete: true,
-        _travelSessionMissingFields: validation.reason,
-      };
-    }
-
-    // Valid session — inject session proof
-    return {
-      ...char,
-      // Ensure display fields match session destination (in case they drifted)
-      traveling_to_location_id: session.destination_location_id,
-      traveling_to_location_name: session.destination_location_name,
-      travel_destination_location_id: session.destination_location_id,
-      _travelSession: session,
-      _travelDisplayValid: true,
-    };
-  });
+  // Always return characters as-is. Travel sessions do not affect location display.
+  return characters.map(char => ({ ...char, _travelDisplayValid: false, _travelSession: null }));
 }
 
 /**
- * React hook: load all active in_transit TravelSessions for the owner.
- * Session-aware — only fetches once per 2 minutes.
- * Returns { sessions, isLoading }
+ * useTravelSessions — DEPRECATED
+ *
+ * TravelSession polling is disabled. No longer authoritative.
+ * Returns empty sessions always. Zero network calls.
  */
 export function useTravelSessions(ownerEmail) {
-  const { data: sessions = [], isLoading } = useQuery({
-    queryKey: ['travelSessions', ownerEmail],
-    queryFn: async () => {
-      if (!ownerEmail) return [];
-      return base44.entities.TravelSession.filter(
-        { owner_email: ownerEmail, route_status: 'in_transit' },
-        '-updated_date',
-        50
-      ).catch(() => []);
-    },
-    enabled: !!ownerEmail,
-    staleTime: 2 * 60 * 1000,   // 2 min — travel changes slowly
-    gcTime: 10 * 60 * 1000,
-    refetchOnWindowFocus: false,
-    refetchOnMount: true,
-    refetchInterval: 30 * 1000, // poll every 30s to catch new arrivals
-  });
-
-  return { sessions, isLoading };
+  return { sessions: [], isLoading: false };
 }
