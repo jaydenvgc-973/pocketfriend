@@ -1,36 +1,40 @@
 /**
- * fetchMediaGalleryPage — TRUE STABLE ORDERED INDEX
+ * fetchMediaGalleryPage — IMAGE-UNIT PAGINATION
  *
- * ARCHITECTURE:
- * - Fetches ALL owner_email-scoped messages with image_url
- * - Pagination cursor advances correctly on each batch (not fixed to batch-1 date)
- * - Builds one stable ordered list: sort by created_date DESC, id DESC (tie-breaker)
- * - Deduplicates by URL once across the full list
- * - Slices the correct page from that stable list
+ * CORE RULE: Pagination is measured in IMAGES, not messages.
  *
- * CURSOR RULE:
- *   After each batch, the cursor advances to the OLDEST date in THAT batch.
- *   This means batch 2 fetches records older than batch 1's oldest.
- *   Batch 3 fetches records older than batch 2's oldest. Etc.
- *   This is a true forward-only cursor — no batch can overlap a prior batch.
+ * The backend scans owner_email messages backward from now to 2025-01-01,
+ * collecting image_url records until it has enough UNIQUE IMAGES to satisfy
+ * the requested page plus one (for hasMore proof), or until all messages
+ * in that date range are exhausted.
  *
- * PAGE MATH:
- *   page 1 → skip=0,  slice [0..pageSize)
- *   page 2 → skip=20, slice [20..40)
- *   page N → skip=(N-1)*pageSize, slice [skip..skip+pageSize)
+ * PAGE MATH (image-based, not message-based):
+ *   page 1 → image index [0..20)   → need 21 unique images to prove hasMore
+ *   page 2 → image index [20..40)  → need 41 unique images
+ *   page N → image index [(N-1)*pageSize .. N*pageSize) → need N*pageSize+1
  *
- * PROOF FIELDS returned in every response:
- *   requestedPage, pageSize, startIndex, endIndex
- *   totalImagesInIndex (full deduped count)
- *   firstImageId, firstImageUrl, firstImageTimestamp
- *   lastImageId, lastImageUrl, lastImageTimestamp
- *   hasMore, exhausted, rawScanned, batchCount
+ * CURSOR: After every message batch, cursor advances to the oldest
+ *   created_date in THAT batch. No batch ever overlaps a prior batch.
+ *
+ * SCAN FLOOR: 2025-01-01T00:00:00.000Z
+ *   If all messages back to that date are scanned and still not enough
+ *   images, exhaustedAllMessages=true is returned with honest totals.
+ *
+ * PROOF FIELDS (all returned):
+ *   requestedPage, pageSize, imageStartIndex, imageEndIndex
+ *   uniqueImagesCollected, messagesScanned, batchCount
+ *   exhaustedAllMessages, enoughForRequestedPage
+ *   scanStartDate, scanEndDate (2025-01-01)
+ *   firstImageId, firstImageUrl, firstImageDate (on page)
+ *   lastImageId, lastImageUrl, lastImageDate (on page)
+ *   hasMore
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const PAGE_SIZE = 20;
-const BATCH_LIMIT = 500;
-const MAX_BATCHES = 20; // Safety ceiling: up to 10,000 messages
+const BATCH_SIZE = 200;          // messages per DB fetch (smaller = more precise cursor)
+const SCAN_FLOOR = '2025-01-01T00:00:00.000Z';
+const MAX_BATCHES = 100;         // safety cap: 100 * 200 = 20,000 messages max per request
 
 Deno.serve(async (req) => {
   try {
@@ -44,133 +48,133 @@ Deno.serve(async (req) => {
     const ownerEmail = user.email;
     const safePageSize = Math.max(1, Math.min(50, pageSize));
     const safePage = Math.max(1, page);
-    const startIndex = (safePage - 1) * safePageSize;
-    const endIndex = startIndex + safePageSize;
+    const imageStartIndex = (safePage - 1) * safePageSize;
+    const imageEndIndex = imageStartIndex + safePageSize;
+    // How many unique images we need to collect to satisfy this page + prove hasMore
+    const neededImages = imageEndIndex + 1;
     const searchLower = (searchTerm || '').toLowerCase().trim();
 
-    console.log(`[fetchMediaGalleryPage] owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} startIndex=${startIndex} endIndex=${endIndex} search="${searchTerm}"`);
+    console.log(`[fetchMediaGalleryPage] owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex} imageEnd=${imageEndIndex} neededImages=${neededImages} search="${searchTerm}"`);
 
-    // ── STEP 1: Fetch ALL owner-scoped messages in advancing-cursor batches ─────
-    // KEY FIX: cursor advances after each batch to the OLDEST date in that batch.
-    // This guarantees no batch overlaps a prior batch.
-    const allMessages = [];
+    // ── SCAN LOOP ──────────────────────────────────────────────────────────────
+    // Each iteration fetches the next batch of messages, sorted -created_date.
+    // Cursor starts at null (newest first) and advances to the oldest date seen
+    // in each batch so the next batch fetches strictly older records.
+    // We stop when:
+    //   a) we have >= neededImages unique images, OR
+    //   b) a batch returns fewer records than BATCH_SIZE (all messages consumed), OR
+    //   c) cursor has passed the SCAN_FLOOR (2025-01-01), OR
+    //   d) we hit MAX_BATCHES safety cap
+
+    const seenUrls = new Set();   // dedup tracker
+    const imageIndex = [];        // ordered image records (created_date DESC)
+    let cursor = null;            // null = start from now
     let batchCount = 0;
-    let totalScanned = 0;
-    let exhausted = false;
-    let cursor = null; // null = start from the newest; advances each batch
+    let messagesScanned = 0;
+    let exhaustedAllMessages = false;
+    const scanFloorMs = new Date(SCAN_FLOOR).getTime();
 
-    while (!exhausted && batchCount < MAX_BATCHES) {
+    while (batchCount < MAX_BATCHES) {
       batchCount++;
 
-      let batch = null;
+      // Build query — use cursor only after first batch
       const query = cursor
         ? { owner_email: ownerEmail, created_date: { $lt: cursor } }
         : { owner_email: ownerEmail };
 
+      let batch = null;
       try {
-        batch = await base44.entities.Message.filter(query, '-created_date', BATCH_LIMIT);
+        batch = await base44.entities.Message.filter(query, '-created_date', BATCH_SIZE);
       } catch {
         try {
-          batch = await base44.asServiceRole.entities.Message.filter(query, '-created_date', BATCH_LIMIT);
+          batch = await base44.asServiceRole.entities.Message.filter(query, '-created_date', BATCH_SIZE);
         } catch (e2) {
           if (batchCount === 1) {
             return Response.json({ error: `Message fetch failed: ${e2.message}` }, { status: 500 });
           }
-          // Non-first batch failure: stop here with what we have
-          exhausted = true;
+          // Non-fatal on later batches — treat as exhausted
+          exhaustedAllMessages = true;
           break;
         }
       }
 
       if (!batch || batch.length === 0) {
-        exhausted = true;
+        exhaustedAllMessages = true;
         break;
       }
 
-      totalScanned += batch.length;
-      allMessages.push(...batch);
-      console.log(`[fetchMediaGalleryPage] Batch ${batchCount}: ${batch.length} records (total: ${totalScanned}) cursor=${cursor || 'start'}`);
+      messagesScanned += batch.length;
 
-      if (batch.length < BATCH_LIMIT) {
-        // Fewer records than requested = we've hit the end
-        exhausted = true;
-        break;
-      }
+      // Extract image records from this batch and add to index
+      for (const m of batch) {
+        if (!m.image_url) continue;
+        if (m.recovery_signal === true) continue;
+        if (seenUrls.has(m.image_url)) continue;
 
-      // ADVANCE CURSOR to the oldest date in this batch (last item, since sorted -created_date)
-      // This is the key fix: each iteration moves the cursor forward, never reusing the same window
-      const oldestInBatch = batch[batch.length - 1].created_date;
-      if (!oldestInBatch) {
-        // No date on last record — stop to avoid infinite loop
-        exhausted = true;
-        break;
-      }
-      cursor = oldestInBatch;
-
-      // Early-exit optimization: if we already have enough images for this page, stop fetching
-      // Only safe to do once we've confirmed we have all images up to endIndex
-      const imagesSoFar = allMessages.filter(m => m.image_url && !m.recovery_signal).length;
-      if (imagesSoFar >= endIndex + safePageSize && batchCount >= 3) {
-        // We have well more than enough — but don't exit too early or pages will be wrong
-        // Continue until exhausted to get the true total count (needed for hasMore accuracy)
-        // For performance, only early-exit if we're very deep (page > 10) and have 3x needed
-        if (imagesSoFar >= endIndex * 3) {
-          console.log(`[fetchMediaGalleryPage] Early-exit: ${imagesSoFar} images found, need ${endIndex} for page ${safePage}`);
-          break;
+        // Apply search filter inline so we only count matching images
+        if (searchLower) {
+          const desc = (m.image_description || '').toLowerCase();
+          const sender = (m.character_name || '').toLowerCase();
+          if (!desc.includes(searchLower) && !sender.includes(searchLower)) continue;
         }
+
+        seenUrls.add(m.image_url);
+        imageIndex.push(m);
+      }
+
+      console.log(`[fetchMediaGalleryPage] Batch ${batchCount}: ${batch.length} msgs scanned, ${imageIndex.length} unique images so far`);
+
+      // ADVANCE CURSOR to oldest created_date in this batch
+      const oldestInBatch = batch[batch.length - 1];
+      const oldestDate = oldestInBatch?.created_date;
+
+      if (!oldestDate) {
+        exhaustedAllMessages = true;
+        break;
+      }
+
+      // Check if we've passed the scan floor (2025-01-01)
+      const oldestMs = new Date(oldestDate).getTime();
+      if (oldestMs <= scanFloorMs) {
+        exhaustedAllMessages = true;
+        break;
+      }
+
+      // Batch returned fewer records than requested = no more messages exist
+      if (batch.length < BATCH_SIZE) {
+        exhaustedAllMessages = true;
+        break;
+      }
+
+      cursor = oldestDate;
+
+      // EARLY EXIT: we have enough images to satisfy this page + hasMore proof
+      if (imageIndex.length >= neededImages) {
+        console.log(`[fetchMediaGalleryPage] Early exit: ${imageIndex.length} unique images >= needed ${neededImages}`);
+        break;
       }
     }
 
-    console.log(`[fetchMediaGalleryPage] Total scanned: ${totalScanned} in ${batchCount} batches (exhausted=${exhausted})`);
-
-    // ── STEP 2: Filter to image-only messages ─────────────────────────────────
-    const imageMessages = allMessages.filter(m => {
-      if (!m.image_url) return false;
-      if (m.recovery_signal === true) return false;
-      return true;
-    });
-
-    console.log(`[fetchMediaGalleryPage] Image messages: ${imageMessages.length}`);
-
-    // ── STEP 3: Sort by created_date DESC, id DESC (deterministic) ─────────────
-    imageMessages.sort((a, b) => {
+    // ── SORT (already DESC by scan order, but re-sort for determinism) ────────
+    // Messages come back -created_date per batch, and batches are ordered newest→oldest,
+    // so imageIndex should already be DESC. Re-sort to guarantee correctness.
+    imageIndex.sort((a, b) => {
       const dateA = a.created_date ? new Date(a.created_date).getTime() : 0;
       const dateB = b.created_date ? new Date(b.created_date).getTime() : 0;
       if (dateB !== dateA) return dateB - dateA;
       return (b.id || '').localeCompare(a.id || '');
     });
 
-    // ── STEP 4: Deduplicate by URL (once across full index) ────────────────────
-    const seenUrls = new Set();
-    const dedupedIndex = [];
-    for (const m of imageMessages) {
-      if (seenUrls.has(m.image_url)) continue;
-      seenUrls.add(m.image_url);
-      dedupedIndex.push(m);
-    }
+    const uniqueImagesCollected = imageIndex.length;
+    const enoughForRequestedPage = uniqueImagesCollected > imageStartIndex;
+    const hasMore = uniqueImagesCollected > imageEndIndex || (!exhaustedAllMessages && uniqueImagesCollected >= neededImages - 1);
 
-    console.log(`[fetchMediaGalleryPage] After dedup: ${dedupedIndex.length} unique images`);
+    // ── SLICE THE REQUESTED PAGE ───────────────────────────────────────────────
+    const pageSlice = enoughForRequestedPage
+      ? imageIndex.slice(imageStartIndex, imageEndIndex)
+      : [];
 
-    // ── STEP 5: Apply search filter ───────────────────────────────────────────
-    let filteredIndex = dedupedIndex;
-    if (searchLower) {
-      filteredIndex = dedupedIndex.filter(m => {
-        const desc = (m.image_description || '').toLowerCase();
-        const sender = (m.character_name || '').toLowerCase();
-        return desc.includes(searchLower) || sender.includes(searchLower);
-      });
-    }
-
-    const totalImagesInIndex = filteredIndex.length;
-
-    // ── STEP 6: Slice the exact page ──────────────────────────────────────────
-    // startIndex = (page-1) * pageSize
-    // endIndex = startIndex + pageSize
-    // page 1 → [0..20), page 2 → [20..40), page 3 → [40..60), etc.
-    const pageSlice = filteredIndex.slice(startIndex, endIndex);
-    const hasMore = endIndex < totalImagesInIndex || (!exhausted && totalScanned >= BATCH_LIMIT);
-
-    // ── STEP 7: Shape output ──────────────────────────────────────────────────
+    // ── SHAPE OUTPUT ───────────────────────────────────────────────────────────
     const pageImages = pageSlice.map(m => ({
       id: m.id,
       url: m.image_url,
@@ -191,44 +195,56 @@ Deno.serve(async (req) => {
     }));
 
     const proof = {
+      // Page identity
       requestedPage: safePage,
       pageSize: safePageSize,
-      startIndex,
-      endIndex,
-      totalImagesInIndex,
+      imageStartIndex,
+      imageEndIndex,
+      // Scan results
+      messagesScanned,
+      batchCount,
+      uniqueImagesCollected,
+      exhaustedAllMessages,
+      enoughForRequestedPage,
+      hasMore,
+      scanStartDate: new Date().toISOString(),
+      scanEndDate: SCAN_FLOOR,
+      // Page boundary proof
       pageImagesReturned: pageImages.length,
-      // Per-page boundary proof
       firstImageId: pageImages[0]?.id || null,
       firstImageUrl: pageImages[0]?.url || null,
-      firstImageTimestamp: pageImages[0]?.timestamp || null,
+      firstImageDate: pageImages[0]?.timestamp || null,
       lastImageId: pageImages[pageImages.length - 1]?.id || null,
       lastImageUrl: pageImages[pageImages.length - 1]?.url || null,
-      lastImageTimestamp: pageImages[pageImages.length - 1]?.timestamp || null,
-      hasMore,
-      exhausted,
-      rawScanned: totalScanned,
-      batchCount,
+      lastImageDate: pageImages[pageImages.length - 1]?.timestamp || null,
+      // Alias fields for UI diagnostics panel compatibility
+      skip: imageStartIndex,
+      totalImagesInIndex: uniqueImagesCollected,
       sortKey: 'created_date DESC, id DESC',
-      cursorStyle: 'advancing_per_batch',
-      currentUserEmail: ownerEmail,
-      // Legacy field aliases for diagnostics panel
-      skip: startIndex,
-      validFound: dedupedIndex.length,
-      afterDedup: dedupedIndex.length,
+      cursorStyle: 'advancing_per_batch_image_unit',
+      rawScanned: messagesScanned,
+      validFound: uniqueImagesCollected,
+      afterDedup: uniqueImagesCollected,
       batchesScanned: batchCount,
       firstImageTimestamp: pageImages[0]?.timestamp || null,
       lastImageTimestamp: pageImages[pageImages.length - 1]?.timestamp || null,
+      currentUserEmail: ownerEmail,
     };
 
-    console.log(`[fetchMediaGalleryPage] RESULT: page=${safePage} startIndex=${startIndex} endIndex=${endIndex} returned=${pageImages.length}/${totalImagesInIndex} hasMore=${hasMore}`);
+    console.log(`[fetchMediaGalleryPage] RESULT: page=${safePage} images[${imageStartIndex}..${imageEndIndex}] returned=${pageImages.length} uniqueImages=${uniqueImagesCollected} exhausted=${exhaustedAllMessages} enoughForPage=${enoughForRequestedPage} hasMore=${hasMore} batches=${batchCount} msgsScanned=${messagesScanned}`);
+
+    if (!enoughForRequestedPage) {
+      console.warn(`[fetchMediaGalleryPage] WARNING: Not enough images for page ${safePage}. Only ${uniqueImagesCollected} unique images found (need >${imageStartIndex}). exhausted=${exhaustedAllMessages}`);
+    }
 
     return Response.json({
       images: pageImages,
       currentUserEmail: ownerEmail,
       page: safePage,
       pageSize: safePageSize,
-      totalImages: totalImagesInIndex,
+      totalImages: uniqueImagesCollected,
       hasMore,
+      enoughForRequestedPage,
       proof,
     });
 

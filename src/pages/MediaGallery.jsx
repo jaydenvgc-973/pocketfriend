@@ -90,12 +90,17 @@ export default function MediaGallery() {
       if (!data) throw new Error('No data returned');
 
       const freshImages = data.images || [];
+      const enoughForPage = data.enoughForRequestedPage !== false; // default true for backward compat
 
-      console.log(`[MediaGallery] Fresh page=${page} images=${freshImages.length} total=${data.totalImages} hasMore=${data.hasMore}`);
+      console.log(`[MediaGallery] Fresh page=${page} images=${freshImages.length} total=${data.totalImages} hasMore=${data.hasMore} enoughForPage=${enoughForPage}`);
       console.log(`[MediaGallery] PROOF:`, data.proof);
 
-      // Write to cache
-      const cachePayload = { images: freshImages, hasMore: data.hasMore === true, proof: data.proof };
+      if (!enoughForPage) {
+        console.warn(`[MediaGallery] WARNING: Page ${page} does not have enough images. Gallery exhausted before reaching this page.`);
+      }
+
+      // Write to cache only when we have real images for this page
+      const cachePayload = { images: freshImages, hasMore: data.hasMore === true, proof: data.proof, enoughForPage };
       if (freshImages.length > 0) {
         lfcWrite(user.email, cacheKey, cachePayload);
       }
@@ -214,14 +219,16 @@ export default function MediaGallery() {
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
             <div><strong>Gallery Diagnostics — Page {currentPage}</strong></div>
             <div>owner: {user?.email || 'unknown'}</div>
-            <div>startIndex: {lastProof.startIndex ?? 'n/a'} | endIndex: {lastProof.endIndex ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
-            <div>totalInIndex: {lastProof.totalImagesInIndex} | returned: {lastProof.pageImagesReturned}</div>
-            <div>rawScanned: {lastProof.rawScanned} | batches: {lastProof.batchCount} | cursor: {lastProof.cursorStyle}</div>
+            <div>imageStart: {lastProof.imageStartIndex ?? lastProof.skip ?? 'n/a'} | imageEnd: {lastProof.imageEndIndex ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
+            <div>uniqueImages: {lastProof.uniqueImagesCollected ?? lastProof.validFound ?? 'n/a'} | returned: {lastProof.pageImagesReturned}</div>
+            <div>msgsScanned: {lastProof.messagesScanned ?? lastProof.rawScanned ?? 'n/a'} | batches: {lastProof.batchCount ?? lastProof.batchesScanned}</div>
+            <div>exhausted: {lastProof.exhaustedAllMessages ? 'YES' : 'no'} | enoughForPage: {lastProof.enoughForRequestedPage !== false ? 'YES' : 'NO ⚠️'}</div>
+            <div>scanFloor: {lastProof.scanEndDate || '2025-01-01'}</div>
             <div>firstId: {lastProof.firstImageId || 'n/a'}</div>
-            <div>firstTs: {lastProof.firstImageTimestamp || 'n/a'}</div>
+            <div>firstDate: {lastProof.firstImageDate || lastProof.firstImageTimestamp || 'n/a'}</div>
             <div>lastId: {lastProof.lastImageId || 'n/a'}</div>
-            <div>lastTs: {lastProof.lastImageTimestamp || 'n/a'}</div>
-            <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'} | exhausted: {lastProof.exhausted ? 'yes' : 'no'}</div>
+            <div>lastDate: {lastProof.lastImageDate || lastProof.lastImageTimestamp || 'n/a'}</div>
+            <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'}</div>
           </div>
         )}
 
@@ -243,7 +250,9 @@ export default function MediaGallery() {
           </div>
         ) : pageImages.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
-            {searchTerm ? 'No images match your search.' : 'No media found. Images you send and receive will appear here.'}
+            {lastProof && lastProof.enoughForRequestedPage === false
+              ? `Page ${currentPage} is beyond the gallery. Only ${lastProof.uniqueImagesCollected ?? 0} unique images found (need >${lastProof.imageStartIndex ?? 0}).`
+              : searchTerm ? 'No images match your search.' : 'No media found. Images you send and receive will appear here.'}
           </div>
         ) : (
           <>
