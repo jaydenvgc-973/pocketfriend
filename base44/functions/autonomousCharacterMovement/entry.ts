@@ -227,9 +227,147 @@ function highestUrgencyEntry(vals) {
     .sort((a, b) => b.urgency - a.urgency || a.value - b.value)[0];
 }
 
+// ── NIGHTLIFE / CLUB DETECTION ────────────────────────────────────────────────
+// A location is "nightlife" if its category is 'social' and its name/subtype
+// suggests a club, bar, lounge, or nightlife venue. food_drink (cafés, restaurants)
+// are NOT considered nightlife — only dedicated nightlife venues.
+function isNightlifeVenue(location) {
+  if (location.category !== 'social') return false;
+  const name = (location.name || '').toLowerCase();
+  const subtypes = (location.subtype || []).map(s => s.toLowerCase());
+  const nightlifeKeywords = ['club', 'bar', 'lounge', 'nightclub', 'night club', 'pub', 'tavern', 'disco', 'bottle service', 'vip section'];
+  return nightlifeKeywords.some(k => name.includes(k) || subtypes.includes(k));
+}
+
+// ── NIGHTLIFE ELIGIBILITY CHECK ───────────────────────────────────────────────
+// Returns { allowed: bool, penalty: number, reason: string }
+// Penalty is subtracted from score. Allowed=false means score forced negative.
+function computeNightlifePenalty(char, nowET) {
+  const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+  const dowNow = nowET.getDay(); // 0=Sun
+
+  // DAYTIME BLOCK: clubs/bars don't make sense before 5pm (17:00)
+  if (nowMin < 17 * 60) {
+    return { allowed: false, penalty: 999, reason: 'daytime_block' };
+  }
+
+  // WORK/SCHOOL TOMORROW BLOCK: if character has work or school before 10am tomorrow, penalize heavily
+  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+  const tomorrowDow = (dowNow + 1) % 7;
+  const hasWorkTomorrow = Array.isArray(char.work_days) &&
+    char.work_days.includes(tomorrowDow) &&
+    char.work_start_time &&
+    toMin(char.work_start_time) < 10 * 60;
+  const hasSchoolTomorrow = char.student_status === 'enrolled' && char.education_location_id;
+  // Also block if work is TODAY and shift hasn't started yet but is early
+  const hasEarlyWorkToday = Array.isArray(char.work_days) &&
+    char.work_days.includes(dowNow) &&
+    char.work_start_time &&
+    toMin(char.work_start_time) < 9 * 60;
+
+  // Disciplined characters always skip nightlife before work/school
+  if (char.trait_conscientious || char.trait_law_abiding || char.trait_goody_two_shoes) {
+    if (hasWorkTomorrow || hasSchoolTomorrow || hasEarlyWorkToday) {
+      return { allowed: false, penalty: 999, reason: 'disciplined_before_obligations' };
+    }
+  }
+
+  // Non-disciplined characters: heavy penalty before early work/school
+  let penalty = 0;
+  if (hasWorkTomorrow || hasSchoolTomorrow || hasEarlyWorkToday) {
+    penalty += 4; // significant penalty but not absolute block
+  }
+
+  // FINANCIAL PENALTY: low financial value = character is broke/anxious about money
+  const financial = char.financial_need_value ?? 60;
+  if (financial < 30) {
+    // Bougie characters still go even when broke (denial)
+    if (!char.trait_bougie && !char.trait_risk_taker) {
+      return { allowed: false, penalty: 999, reason: 'financially_blocked' };
+    }
+    penalty += 3;
+  } else if (financial < 50) {
+    penalty += 2; // moderate financial concern
+  }
+
+  // ENERGY PENALTY: tired characters should rest, not party
+  const energy = char.energy_value ?? 75;
+  if (energy < 40) {
+    penalty += 3;
+  } else if (energy < 60) {
+    penalty += 1;
+  }
+
+  // PERSONALITY BONUSES: some traits make nightlife more appropriate
+  if (char.trait_night_owl)     penalty -= 2; // Night owls naturally stay up
+  if (char.trait_risk_taker)    penalty -= 1; // Risk takers embrace nightlife
+  if (char.trait_bougie)        penalty -= 1; // Bougie characters like upscale venues
+  if (char.trait_uninhibited)   penalty -= 1; // Uninhibited characters enjoy parties
+  if (char.trait_insatiable)    penalty -= 1; // Insatiable always wants more
+  if (char.trait_philanderer)   penalty -= 1; // Philanderers frequent bars/clubs
+
+  // PERSONALITY PENALTIES: some traits actively resist nightlife
+  if (char.trait_conscientious) penalty += 2; // Rule-followers avoid late nights
+  if (char.trait_morning_person) penalty += 2; // Morning people go to bed early
+  if (char.trait_parental)      penalty += 2; // Parents don't party randomly
+  if (char.trait_stubborn && char.resolved_source_reason === 'work_schedule') penalty += 1;
+
+  // QUIRK MODIFIERS
+  const quirks = char.quirks || [];
+  for (const q of quirks) {
+    if (!q.active) continue;
+    if (q.quirk_id === 'drinker') penalty -= (q.intensity === 'strong' ? 2 : 1); // drinkers like bars
+    if (q.quirk_id === 'homebody') penalty += (q.intensity === 'strong' ? 3 : 2);
+    if (q.quirk_id === 'disciplined') penalty += (q.intensity === 'strong' ? 3 : 1);
+    if (q.quirk_id === 'thrill_seeker') penalty -= 1;
+    if (q.quirk_id === 'workaholic') penalty += 1;
+  }
+
+  // FREQUENCY CAP: check recent_location_history for nightlife visits
+  // If character went to a nightlife venue in last 2 days, add penalty
+  // If 3+ times in last 7 days, add heavy penalty (cap at realistic frequency)
+  const history = char.recent_location_history || [];
+  const now = nowET.getTime();
+  const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+
+  // Count recent nightlife visits from history (uses destination_location_name heuristic)
+  const nightlifeKeywords = ['club', 'bar', 'lounge', 'nightclub', 'pub', 'tavern', 'disco'];
+  const recentNightlifeVisits = history.filter(h => {
+    if (!h.timestamp && !h.arrived_at) return false;
+    const visitTime = new Date(h.timestamp || h.arrived_at).getTime();
+    if (now - visitTime > sevenDaysMs) return false;
+    const locName = (h.location_name || '').toLowerCase();
+    return nightlifeKeywords.some(k => locName.includes(k));
+  });
+
+  const withinTwoDays = recentNightlifeVisits.filter(h => {
+    const visitTime = new Date(h.timestamp || h.arrived_at).getTime();
+    return now - visitTime <= twoDaysMs;
+  });
+
+  if (withinTwoDays.length >= 1) {
+    penalty += 2; // went recently — not again so soon
+  }
+  if (recentNightlifeVisits.length >= 3) {
+    penalty += 3; // heavy nightlife pattern — pump the brakes
+  }
+  if (recentNightlifeVisits.length >= 5) {
+    // Only night owls, risk-takers, drinkers (strong quirk), or uninhibited can override
+    const hasNightlifePersonality = char.trait_night_owl || char.trait_risk_taker || char.trait_uninhibited ||
+      quirks.some(q => q.active && q.quirk_id === 'drinker' && q.intensity === 'strong');
+    if (!hasNightlifePersonality) {
+      return { allowed: false, penalty: 999, reason: 'nightlife_frequency_cap_exceeded' };
+    }
+    penalty += 2;
+  }
+
+  return { allowed: true, penalty: Math.max(0, penalty), reason: null };
+}
+
 // ── LOCATION SCORER ────────────────────────────────────────────────────────────
 // Score scales with urgency so correct category wins harder when need is worse.
-function scoreLocation(location, char, vals) {
+function scoreLocation(location, char, vals, nowET) {
   let score = 0;
   const cat = location.category || 'generic';
   const se = char.social_energy || 'ambivert';
@@ -261,6 +399,8 @@ function scoreLocation(location, char, vals) {
     if (isIntro) {
       if (cat === 'outdoor' || cat === 'home') score += 2 + socialU;
     } else {
+      // NIGHTLIFE GATE: clubs/bars are NOT the default social solution.
+      // They score the same as other social venues BEFORE the nightlife penalty is applied below.
       if (cat === 'social' || cat === 'food_drink') score += 3 + socialU * 2;
       if (cat === 'outdoor' || cat === 'gym')       score += 2 + socialU;
     }
@@ -295,15 +435,26 @@ function scoreLocation(location, char, vals) {
   if (se === 'extrovert' && ['social', 'food_drink', 'outdoor'].includes(cat))      score += 1;
   if (['introvert', 'mostly_introvert'].includes(se) && ['home', 'outdoor'].includes(cat)) score += 1;
 
+  // ── NIGHTLIFE PENALTY: applied AFTER base scoring ───────────────────────
+  // Only applies to confirmed nightlife venues (clubs, bars, lounges).
+  // cafés, restaurants (food_drink), parks, gyms are unaffected.
+  if (nowET && isNightlifeVenue(location)) {
+    const { allowed, penalty } = computeNightlifePenalty(char, nowET);
+    if (!allowed) {
+      return -999; // Force this location out of selection pool
+    }
+    score -= penalty;
+  }
+
   return score;
 }
 
 // ── BEST LOCATION SELECTOR ─────────────────────────────────────────────────────
-function selectBestLocation(locations, char, vals) {
+function selectBestLocation(locations, char, vals, nowET) {
   if (!locations || locations.length === 0) return null;
 
   const scored = locations
-    .map(loc => ({ location: loc, score: scoreLocation(loc, char, vals) }))
+    .map(loc => ({ location: loc, score: scoreLocation(loc, char, vals, nowET) }))
     .sort((a, b) => b.score - a.score);
 
   // Must score positive — no movement just to move
@@ -1145,6 +1296,40 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ── TRAVEL DISPLAY INTEGRITY: clear orphaned travel_status ──────────────
+        // If character shows travel_status but has NO valid active TravelSession,
+        // the Home/Travel/Chat UI will show "Traveling to…" with no proof (no status bar,
+        // no ETA, no progress, no map movement). This is a one-truth/one-presence violation.
+        // Clear it now so the character's presence displays correctly.
+        const travelingStates = ['traveling_to_work', 'traveling_to_school', 'traveling_to_destination', 'traveling'];
+        if (travelingStates.includes(char.travel_status)) {
+          const orphanCheck = await base44.asServiceRole.entities.TravelSession.filter({
+            owner_email: char.owner_email,
+            character_id: char.id,
+            route_status: 'in_transit',
+          }, null, 1).catch(() => []);
+          if (!orphanCheck || orphanCheck.length === 0) {
+            // No valid session — this travel_status is orphaned. Clear it.
+            console.warn(`[autonomousMovement] ${char.name}: ORPHANED travel_status="${char.travel_status}" with no active TravelSession — clearing display flags`);
+            try {
+              await base44.entities.Character.update(char.id, {
+                travel_status: 'not_traveling',
+                traveling_to_location_id: null,
+                traveling_to_location_name: null,
+                travel_destination_location_id: null,
+              });
+            } catch {
+              await base44.asServiceRole.entities.Character.update(char.id, {
+                travel_status: 'not_traveling',
+                traveling_to_location_id: null,
+                traveling_to_location_name: null,
+                travel_destination_location_id: null,
+              }).catch(() => {});
+            }
+            blockedLog.push(`${char.name}: cleared orphaned travel_status="${char.travel_status}" (no matching TravelSession)`);
+          }
+        }
+
         // ── FILTER OUT CLOSED LOCATIONS ───────────────────────────────────────
         const openLocations = userLocations.filter(loc => isLocationOpen(loc));
 
@@ -1180,7 +1365,7 @@ Deno.serve(async (req) => {
         }
 
         // ── SELECT BEST LOCATION ──────────────────────────────────────────────
-        const bestLocation = selectBestLocation(openLocations, char, vals);
+        const bestLocation = selectBestLocation(openLocations, char, vals, nowET);
 
         if (!bestLocation) {
           const urgentNeeds = Object.entries(vals)
@@ -1213,7 +1398,7 @@ Deno.serve(async (req) => {
             console.warn(`[autonomousMovement] CORRECTION_LOCK: ${msg}`);
             // Re-select excluding the locked location
             const nonLockedOpen = openLocations.filter(loc => loc.id !== char.location_correction_previous_id);
-            const lockFallback = selectBestLocation(nonLockedOpen, char, vals);
+            const lockFallback = selectBestLocation(nonLockedOpen, char, vals, nowET);
             if (!lockFallback) {
               skippedLog.push(`${char.name}: correction lock active, no valid fallback`);
               continue;
@@ -1229,7 +1414,7 @@ Deno.serve(async (req) => {
           console.warn(`[autonomousMovement] BLOCKED_INVALID_HOME_WRITE: ${char.name} → ${finalLocation.name} (not their home). Re-selecting.`);
           blockedLog.push(`${char.name}: BLOCKED_INVALID_HOME_WRITE — ${finalLocation.name} is not their authoritative home`);
           const nonHomeLocations = openLocations.filter(loc => loc.category !== 'home' && loc.category !== 'generic');
-          const homeFallback = selectBestLocation(nonHomeLocations, char, vals);
+          const homeFallback = selectBestLocation(nonHomeLocations, char, vals, nowET);
           if (!homeFallback) {
             console.log(`[autonomousMovement] ${char.name}: no non-home fallback, skipping`);
             skippedLog.push(`${char.name}: blocked wrong home write, no non-home fallback`);
