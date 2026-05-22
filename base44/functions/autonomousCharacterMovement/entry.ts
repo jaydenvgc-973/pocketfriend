@@ -1,5 +1,61 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ── CANONICAL TRAIT REGISTRY (inlined — no local imports in Deno functions) ──
+// Mirrors lib/characterTraitRegistry.js. Keep in sync.
+const TRAIT_COMMITMENT_MODIFIERS = {
+  trait_loyal:           +3,
+  trait_conscientious:   +2,
+  trait_parental:        +1,
+  trait_empathetic:      +1,
+  trait_compassionate:   +1,
+  trait_polite:          +1,
+  trait_overcorrects:    +1,
+  trait_adaptable:       +0.5,
+  trait_stubborn:        +0.5,
+  trait_leader:          +1,
+  trait_goody_two_shoes: +1,
+  trait_law_abiding:     +1,
+  trait_two_faced:       -2,
+  trait_wishy_washy:     -2,
+  trait_toxic:           -1,
+  trait_self_absorbed:   -1,
+  trait_hot_and_cold:    -1,
+  trait_easily_distracted: -1,
+  trait_volatile:        -1,
+  trait_philanderer:     -1,
+  trait_rude:            -0.5,
+  trait_cynical:         -0.5,
+  trait_hard_to_read:    -0.5,
+};
+const QUIRK_COMMITMENT_MODIFIERS = {
+  disciplined:     +2,
+  people_pleaser:  +1,
+  workaholic:      -0.5,
+  unmotivated:     -1,
+  overthinker:     -0.5,
+  thrill_seeker:   -1,
+  drinker:         -0.5,
+};
+
+/**
+ * Compute commitment reliability score for a character from canonical traits/quirks.
+ * Returns a numeric delta. 0 = average. Positive = more reliable. Negative = less reliable.
+ */
+function computeCommitmentReliabilityScore(char) {
+  let score = 0;
+  for (const [key, mod] of Object.entries(TRAIT_COMMITMENT_MODIFIERS)) {
+    if (char[key] === true) score += mod;
+  }
+  const quirks = char.quirks || [];
+  for (const q of quirks) {
+    if (!q.active) continue;
+    const mod = QUIRK_COMMITMENT_MODIFIERS[q.quirk_id] || 0;
+    const mult = q.intensity === 'mild' ? 0.5 : q.intensity === 'strong' ? 1.5 : 1.0;
+    score += mod * mult;
+  }
+  return score;
+}
+
 // Check if location is currently open based on operating hours
 function toMinutes(timeStr) {
   if (!timeStr) return null;
@@ -920,20 +976,15 @@ Deno.serve(async (req) => {
         // Priority order: hard obligations (work/school/jail already handled above) →
         //   active promises/directives → social context → personality → needs-based wandering.
         //
-        // If a character has an active travel_directive or travel_promise, that commitment
-        // takes priority over needs-driven random movement. Needs cannot override a confirmed
-        // meetup, a "I'm on my way" directive, or a scheduled obligation.
-        //
-        // RULES:
-        //   - travel_directive (active/in_progress): character already said they are on the way.
-        //     Route to destination immediately — do NOT let needs divert them.
-        //   - travel_promise (active): character promised to come over/visit.
-        //     Route to destination if the scheduled time is within the next 60 minutes.
-        //   - communication_promise: no location change — handled by processScheduledEvents.
-        //   - All existing hard restrictions still apply (jail, sleep, critical energy already
-        //     handled in higher tiers) — commitments do NOT bypass those.
+        // Commitment reliability is weighted by character personality (canonical trait registry).
+        // Loyal + conscientious characters almost always follow through.
+        // Wishy-washy + two-faced characters have reduced follow-through probability.
+        // But note: the system should only REDUCE travel probability for flaky characters,
+        // NEVER silently null the destination. If a flaky character fails to show, the
+        // commitment must be marked as "bailed" with an in-character reason, not silently lost.
         {
           let commitmentHandled = false;
+          const reliabilityScore = computeCommitmentReliabilityScore(char);
           try {
             const activeCommitments = await base44.asServiceRole.entities.CharacterCommitment.filter(
               { character_id: char.id },
@@ -958,7 +1009,21 @@ Deno.serve(async (req) => {
               if (directive && directive.destination_location_id) {
                 const destLoc = userLocations.find(l => l.id === directive.destination_location_id);
                 if (destLoc) {
-                  if (char.resolved_current_location_id !== destLoc.id) {
+                  // PERSONALITY CHECK: very unreliable characters (score < -3) have a small chance
+                  // of bailing. But this must be VISIBLE — the commitment is marked "bailed" not silently dropped.
+                  // Loyal/conscientious characters (score >= 1) NEVER bail on directives.
+                  const bailChance = reliabilityScore < -3 ? 0.15 : reliabilityScore < -1 ? 0.05 : 0;
+                  const bailRolled = bailChance > 0 && Math.random() < bailChance;
+                  if (bailRolled) {
+                    // Mark commitment as bailed with personality reason — NEVER silent
+                    await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
+                      status: 'cancelled',
+                      cancellation_reason: `personality_bail: reliability_score=${reliabilityScore.toFixed(1)} (${char.trait_wishy_washy ? 'wishy-washy' : char.trait_two_faced ? 'two-faced' : 'unreliable'})`,
+                    }).catch(() => {});
+                    console.log(`[autonomousMovement] ${char.name}: PERSONALITY BAIL on directive (score=${reliabilityScore.toFixed(1)}) — commitment marked cancelled, NOT silently dropped`);
+                    commitmentHandled = true;
+                    skippedLog.push(`${char.name}: personality bail on commitment (reliability=${reliabilityScore.toFixed(1)})`);
+                  } else if (char.resolved_current_location_id !== destLoc.id) {
                     // Create a REAL travel session — character is in transit, NOT teleported
                     const travelRes = await base44.functions.invoke('createTravelSession', {
                       characterId:           char.id,
