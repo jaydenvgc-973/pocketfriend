@@ -102,7 +102,8 @@ Deno.serve(async (req) => {
           allImages.push({
             id: m.id,
             url: m.image_url,
-            description: m.image_description || m.content?.slice(0, 100) || 'Image',
+            description: m.image_description || '',
+            imageDescription: m.image_description || '',
             senderType: m.sender_type,
             senderName: m.character_name || 'You',
             characterId: m.character_id,

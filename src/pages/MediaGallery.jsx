@@ -320,10 +320,12 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
             <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">From</p>
             <p className="text-sm text-foreground">{image.senderName}</p>
           </div>
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Description</p>
-            <p className="text-sm text-foreground whitespace-pre-wrap">{image.description}</p>
-          </div>
+          {image.imageDescription && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Caption</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap">{image.imageDescription}</p>
+            </div>
+          )}
         </div>
 
         {/* Fixed action buttons */}
@@ -425,9 +427,9 @@ function SendImageModal({ image, onClose, onSent }) {
             conversation_id: `${charId}_user`,
             sender_type: 'user',
             character_id: charId,
-            content: image.description || '',
+            content: '',
             image_url: image.url,
-            image_description: image.description || '',
+            image_description: image.imageDescription || '',
             timestamp: new Date().toISOString(),
             owner_email: user?.email,
           });
@@ -460,9 +462,9 @@ function SendImageModal({ image, onClose, onSent }) {
             const res = await base44.functions.invoke('sendWorldPhoneMessage', {
               sender_character_id: selectedSenderCharacterId,
               recipient_identifier: receiverId,
-              requested_message: image.description || 'Sent an image',
+              requested_message: '',
               image_url: image.url,
-              image_description: image.description || '',
+              image_description: image.imageDescription || '',
               message_type: 'image',
               source: 'media_gallery_send',
               owner_email: user?.email,

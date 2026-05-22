@@ -276,7 +276,7 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
       receiver_character_id: recipient.id,
       participant_character_ids: participantIds,
       shared_conversation_key: canonicalKey,
-      content: isImageSend ? (image_description || '') : rewrittenMessage,
+      content: isImageSend ? '' : rewrittenMessage,
       channel: 'world_phone',
       timestamp: now,
       is_read: false,
@@ -333,7 +333,7 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
 
     // Update conversation preview
     const previewText = isImageSend
-      ? (image_description ? image_description.substring(0, 100) : 'Image')
+      ? '📷 Photo'
       : rewrittenMessage.substring(0, 100);
     
     await base44.entities.Conversation.update(conversationId, {
@@ -473,9 +473,12 @@ Respond ONLY with valid JSON:
 
     // ── BILATERAL SYNC: memory + relationship for BOTH characters ──────────────
     // Only write if we have a real exchange (both messages exist)
+    const memoryContent = isImageSend
+      ? (image_description ? `sent a photo: ${image_description}` : 'sent a photo')
+      : rewrittenMessage;
     const fullExchangeContent = recipientResponse
-      ? `${sender.name}: "${rewrittenMessage}" | ${recipient.name}: "${recipientResponse}"`
-      : `${sender.name}: "${rewrittenMessage}"`;
+      ? `${sender.name}: ${memoryContent} | ${recipient.name}: "${recipientResponse}"`
+      : `${sender.name}: ${memoryContent}`;
 
     base44.functions.invoke('syncWorldPhoneMemory', {
       senderCharacterId: sender_character_id,
