@@ -217,17 +217,17 @@ export default function MediaGallery() {
         {/* Diagnostics Panel */}
         {showDiagnostics && lastProof && (
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
-            <div><strong>Gallery Diagnostics — Page {currentPage}</strong></div>
+            <div><strong>Gallery Diagnostics v3 — Page {currentPage}</strong></div>
             <div>owner: {user?.email || 'unknown'}</div>
             <div>imageStart: {lastProof.imageStartIndex ?? lastProof.skip ?? 'n/a'} | imageEnd: {lastProof.imageEndIndex ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
             <div>uniqueImages: {lastProof.uniqueImagesCollected ?? lastProof.validFound ?? 'n/a'} | returned: {lastProof.pageImagesReturned}</div>
             <div>msgsScanned: {lastProof.messagesScanned ?? lastProof.rawScanned ?? 'n/a'} | batches: {lastProof.batchCount ?? lastProof.batchesScanned}</div>
             <div>exhausted: {lastProof.exhaustedAllMessages ? 'YES' : 'no'} | enoughForPage: {lastProof.enoughForRequestedPage !== false ? 'YES' : 'NO ⚠️'}</div>
+            <div>terminated: <strong>{lastProof.terminationReason || 'n/a'}</strong> | runtime: {lastProof.runtimeMs != null ? `${lastProof.runtimeMs}ms` : 'n/a'}</div>
+            <div>dedup: {lastProof.dedupMethod || 'n/a'} | cursor: {lastProof.cursorStyle || 'n/a'}</div>
             <div>scanFloor: {lastProof.scanEndDate || '2025-01-01'}</div>
-            <div>firstId: {lastProof.firstImageId || 'n/a'}</div>
-            <div>firstDate: {lastProof.firstImageDate || lastProof.firstImageTimestamp || 'n/a'}</div>
-            <div>lastId: {lastProof.lastImageId || 'n/a'}</div>
-            <div>lastDate: {lastProof.lastImageDate || lastProof.lastImageTimestamp || 'n/a'}</div>
+            <div>firstId: {lastProof.firstImageId || 'n/a'} | firstDate: {lastProof.firstImageDate || lastProof.firstImageTimestamp || 'n/a'}</div>
+            <div>lastId: {lastProof.lastImageId || 'n/a'} | lastDate: {lastProof.lastImageDate || lastProof.lastImageTimestamp || 'n/a'}</div>
             <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'}</div>
           </div>
         )}
@@ -315,11 +315,16 @@ export default function MediaGallery() {
 
               <button
                 onClick={handleNext}
-                disabled={!hasMore || isLoading}
+                disabled={!hasMore || isLoading || (lastProof && lastProof.enoughForRequestedPage === false)}
                 className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Next
               </button>
+              {lastProof && lastProof.terminationReason === 'runtime_limit' && (
+                <div className="w-full text-center text-xs text-amber-400/80 mt-1">
+                  ⚠ Scan hit time limit — some older images may not be indexed yet. Try refreshing.
+                </div>
+              )}
             </div>
           </>
         )}

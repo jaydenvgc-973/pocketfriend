@@ -323,8 +323,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
                 if (derivedAsleep || isNapping || presence.isSleeping) {
                   IconComponent = Moon;
-                  color = 'text-blue-300';
-                  label = isNapping ? 'napping' : 'sleeping';
+                  // Use rich context label — shows "laying low", "withdrawing", etc. instead of just "sleeping"
+                  color = sleepState.isLikelyStale ? 'text-amber-300' : 'text-blue-300';
+                  label = sleepState.contextLabel || (isNapping ? 'napping' : 'sleeping');
                 } else if (presence.status === 'at_work') {
                   IconComponent = Briefcase;
                   color = 'text-blue-400';

@@ -510,28 +510,51 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                     </div>
                   )}
                   {(() => {
-                    // Only surface repair diagnostics for names that are explicitly
-                    // bracket-tagged as [character] in the source prompt.
-                    // [user] subjects are NEVER Character records — never show warnings for them.
-                    // Names not in the prompt at all (e.g. "Miller (Previous Owner)") are ignored.
+                    // STRICT ISOLATION: Only surface repair diagnostics for names that are
+                    // DIRECTLY relevant to THIS image's subjects. Never show global roster warnings.
+                    //
+                    // Priority order for determining relevant names:
+                    //   1. Names explicitly bracket-tagged [character] in the source prompt
+                    //   2. Names from generationContext.subjects (image's own subject bundle)
+                    //   3. If neither available: show NOTHING (global pool must never leak)
+                    //
+                    // [user] subjects are NEVER Character records — never warn for them.
+                    // Names like "Miller (Previous Owner)", "Jayden" from unrelated roster
+                    // entries must NEVER appear here.
                     const { characterSubjects, allTaggedNames } = parseMediaGridSubjects(originalPrompt || '');
-                    const hasPromptSubjects = allTaggedNames.size > 0;
+                    const hasPromptTags = allTaggedNames.size > 0;
+
+                    // Build image-specific name set from generation context subjects
+                    const imageSubjectNames = new Set();
+                    const ctx = generationContext || {};
+                    if (ctx.subjects?.length > 0) {
+                      ctx.subjects.forEach(s => {
+                        if (s.subject_name && s.subject_type !== 'user') {
+                          imageSubjectNames.add(s.subject_name.trim().toLowerCase());
+                        }
+                      });
+                    }
+                    if (ctx.character_name) {
+                      imageSubjectNames.add(ctx.character_name.trim().toLowerCase());
+                    }
+
+                    // Add bracket-tagged names
+                    characterSubjects.forEach(n => imageSubjectNames.add(n.toLowerCase()));
+
+                    // If we have no image-specific subjects, show nothing — never leak global pool
+                    if (imageSubjectNames.size === 0) return null;
 
                     const relevantDiagnostics = rosterRepairDiagnostics.filter(f => {
                       if (!f.name) return false;
                       const nameLower = f.name.trim().toLowerCase();
-                      // If the prompt has explicit bracket tags, only show warnings for [character] tagged names
-                      if (hasPromptSubjects) {
-                        return characterSubjects.some(n => n.toLowerCase() === nameLower || nameLower.startsWith(n.toLowerCase()));
-                      }
-                      // No bracket tags in prompt — fall back to showing all (legacy behavior)
-                      return true;
+                      return imageSubjectNames.has(nameLower) ||
+                        [...imageSubjectNames].some(n => nameLower.startsWith(n) || n.startsWith(nameLower));
                     });
 
                     if (relevantDiagnostics.length === 0) return null;
                     return (
                       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-400 space-y-1 mb-1">
-                        <p className="font-semibold">Some people need review before they can be selected:</p>
+                        <p className="font-semibold">Some people in this image need review:</p>
                         {relevantDiagnostics.map((f, i) => (
                           <p key={i} className="text-amber-400/80">• <span className="font-medium">{f.name}</span> — {f.failure_reason || 'Confidence too low to auto-resolve'}</p>
                         ))}

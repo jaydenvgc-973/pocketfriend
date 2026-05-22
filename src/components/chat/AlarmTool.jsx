@@ -47,6 +47,7 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
   const sleepState = getCharacterSleepState(character);
   const isAsleep = sleepState.isSleeping;
   const firstName = character.name?.split(" ")[0] || "Character";
+  const sleepContextDesc = sleepState.contextLabel || (sleepState.isNapping ? 'Napping' : 'Sleeping');
 
   const invoke = async (action, extra = {}) => {
     setIsLoading(true);
@@ -71,7 +72,26 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
         setResult({ type: "error", text: data?.error || "Something went wrong." });
       }
     } catch (err) {
-      setResult({ type: "error", text: err.message || "Action failed." });
+      // Never expose raw HTTP error messages (e.g. "Request failed with status code 404")
+      // Map to user-friendly descriptions
+      const rawMsg = err?.message || '';
+      let friendlyMsg = "Could not reach the alarm service. Please try again.";
+      if (rawMsg.includes('404')) {
+        friendlyMsg = "Alarm service unavailable — the wake endpoint could not be reached. Please refresh the app.";
+      } else if (rawMsg.includes('403')) {
+        friendlyMsg = "Permission denied — this character doesn't belong to your account.";
+      } else if (rawMsg.includes('429') || rawMsg.toLowerCase().includes('rate limit')) {
+        friendlyMsg = "Too many requests — please wait a moment and try again.";
+      } else if (rawMsg.includes('401')) {
+        friendlyMsg = "Not signed in — please refresh the page.";
+      } else if (rawMsg.includes('500')) {
+        friendlyMsg = "Server error — the alarm service encountered an issue. Try again in a moment.";
+      } else if (rawMsg.length > 0 && rawMsg.length < 120) {
+        // Only show raw message if it's short and doesn't look like an HTTP error
+        const looksLikeHttpError = /\b(status code|failed with|network error|axios|ERR_)\b/i.test(rawMsg);
+        if (!looksLikeHttpError) friendlyMsg = rawMsg;
+      }
+      setResult({ type: "error", text: friendlyMsg });
     } finally {
       setIsLoading(false);
     }
@@ -137,16 +157,24 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
           </div>
 
           {/* Sleep status banner */}
-          <div className={`px-4 py-3 rounded-xl flex items-center gap-3 ${
+          <div className={`px-4 py-3 rounded-xl flex items-start gap-3 ${
             isAsleep ? "bg-indigo-500/10 border border-indigo-500/20" : "bg-secondary border border-border"
           }`}>
             {isAsleep
-              ? <Moon className="w-4 h-4 text-indigo-400 flex-shrink-0" />
-              : <AlarmClock className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              ? <Moon className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+              : <AlarmClock className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />
             }
-            <p className="text-sm text-foreground">
-              {isAsleep ? `${firstName} is currently sleeping.` : `${firstName} is already awake.`}
-            </p>
+            <div>
+              <p className="text-sm text-foreground">
+                {isAsleep ? `${firstName} is currently ${sleepState.isNapping ? 'napping' : 'sleeping'}.` : `${firstName} is already awake.`}
+              </p>
+              {isAsleep && sleepState.sleepType !== 'scheduled' && sleepState.sleepType !== 'unknown' && (
+                <p className="text-xs text-indigo-300/70 mt-0.5">{sleepContextDesc}</p>
+              )}
+              {isAsleep && sleepState.isLikelyStale && (
+                <p className="text-xs text-amber-400/80 mt-0.5">⚠ Sleep state may be stale — no active reason detected</p>
+              )}
+            </div>
           </div>
 
           {/* Scheduled alarm display */}

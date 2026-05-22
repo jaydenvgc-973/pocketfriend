@@ -1,42 +1,51 @@
 /**
- * fetchMediaGalleryPage — IMAGE-UNIT PAGINATION
+ * fetchMediaGalleryPage — IMAGE-UNIT PAGINATION v3
  *
  * CORE RULE: Pagination is measured in IMAGES, not messages.
  *
- * The backend scans owner_email messages backward from now to 2025-01-01,
- * collecting image_url records until it has enough UNIQUE IMAGES to satisfy
- * the requested page plus one (for hasMore proof), or until all messages
- * in that date range are exhausted.
+ * FIXES IN v3:
+ *   - Compound cursor (date + id) prevents timestamp-collision skips/duplicates
+ *   - URL normalization for dedup (strips querystrings/signed tokens)
+ *   - Simpler, honest hasMore: uniqueImagesCollected > imageEndIndex only
+ *   - Runtime-based termination in addition to batch cap
+ *   - Richer termination_reason in proof for debugging
  *
  * PAGE MATH (image-based, not message-based):
  *   page 1 → image index [0..20)   → need 21 unique images to prove hasMore
- *   page 2 → image index [20..40)  → need 41 unique images
- *   page N → image index [(N-1)*pageSize .. N*pageSize) → need N*pageSize+1
+ *   page N → image index [(N-1)*pageSize .. N*pageSize)
  *
- * CURSOR: After every message batch, cursor advances to the oldest
- *   created_date in THAT batch. No batch ever overlaps a prior batch.
- *
+ * CURSOR: compound (date + id) — deterministic even on timestamp collisions
  * SCAN FLOOR: 2025-01-01T00:00:00.000Z
- *   If all messages back to that date are scanned and still not enough
- *   images, exhaustedAllMessages=true is returned with honest totals.
- *
- * PROOF FIELDS (all returned):
- *   requestedPage, pageSize, imageStartIndex, imageEndIndex
- *   uniqueImagesCollected, messagesScanned, batchCount
- *   exhaustedAllMessages, enoughForRequestedPage
- *   scanStartDate, scanEndDate (2025-01-01)
- *   firstImageId, firstImageUrl, firstImageDate (on page)
- *   lastImageId, lastImageUrl, lastImageDate (on page)
- *   hasMore
+ * DEDUP KEY: normalized URL (path only, no querystring) with message ID as fallback
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const PAGE_SIZE = 20;
-const BATCH_SIZE = 200;          // messages per DB fetch (smaller = more precise cursor)
+const BATCH_SIZE = 200;
 const SCAN_FLOOR = '2025-01-01T00:00:00.000Z';
-const MAX_BATCHES = 100;         // safety cap: 100 * 200 = 20,000 messages max per request
+const MAX_BATCHES = 100;           // safety cap: 100 × 200 = 20,000 messages
+const MAX_RUNTIME_MS = 25000;      // 25s hard runtime cap — stop before Deno timeout
+
+/**
+ * Normalize an image URL for deduplication purposes.
+ * Strips query parameters (signed tokens, CDN params, expiry signatures)
+ * so the same underlying image is never counted twice.
+ */
+function normalizeUrlForDedup(url) {
+  if (!url || typeof url !== 'string') return url;
+  try {
+    const u = new URL(url);
+    // Keep only origin + pathname — strip all querystring and fragments
+    return u.origin + u.pathname;
+  } catch {
+    // If URL is malformed, strip from ? onward
+    const qIdx = url.indexOf('?');
+    return qIdx !== -1 ? url.slice(0, qIdx) : url;
+  }
+}
 
 Deno.serve(async (req) => {
+  const scanStart = Date.now();
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
@@ -50,37 +59,54 @@ Deno.serve(async (req) => {
     const safePage = Math.max(1, page);
     const imageStartIndex = (safePage - 1) * safePageSize;
     const imageEndIndex = imageStartIndex + safePageSize;
-    // How many unique images we need to collect to satisfy this page + prove hasMore
+    // Need imageEndIndex + 1 images to prove hasMore
     const neededImages = imageEndIndex + 1;
     const searchLower = (searchTerm || '').toLowerCase().trim();
 
-    console.log(`[fetchMediaGalleryPage] owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex} imageEnd=${imageEndIndex} neededImages=${neededImages} search="${searchTerm}"`);
+    console.log(`[fetchMediaGalleryPage] v3 owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex} imageEnd=${imageEndIndex} neededImages=${neededImages} search="${searchTerm}"`);
 
     // ── SCAN LOOP ──────────────────────────────────────────────────────────────
-    // Each iteration fetches the next batch of messages, sorted -created_date.
-    // Cursor starts at null (newest first) and advances to the oldest date seen
-    // in each batch so the next batch fetches strictly older records.
-    // We stop when:
-    //   a) we have >= neededImages unique images, OR
-    //   b) a batch returns fewer records than BATCH_SIZE (all messages consumed), OR
-    //   c) cursor has passed the SCAN_FLOOR (2025-01-01), OR
-    //   d) we hit MAX_BATCHES safety cap
-
-    const seenUrls = new Set();   // dedup tracker
-    const imageIndex = [];        // ordered image records (created_date DESC)
-    let cursor = null;            // null = start from now
+    // Compound cursor: (cursorDate, cursorId) — advances past oldest record in each batch.
+    // This prevents both overlaps and skips when multiple messages share the same timestamp.
+    const seenNormalizedUrls = new Set();  // normalized URL → dedup key
+    const imageIndex = [];                  // collected image records (newest→oldest)
+    let cursorDate = null;                  // null = start from now
+    let cursorId = null;                    // companion ID for tie-breaking
     let batchCount = 0;
     let messagesScanned = 0;
     let exhaustedAllMessages = false;
+    let terminationReason = 'in_progress';
     const scanFloorMs = new Date(SCAN_FLOOR).getTime();
 
     while (batchCount < MAX_BATCHES) {
+      // Runtime guard: stop before Deno's execution timeout
+      if (Date.now() - scanStart > MAX_RUNTIME_MS) {
+        terminationReason = 'runtime_limit';
+        console.warn(`[fetchMediaGalleryPage] Runtime limit reached (${MAX_RUNTIME_MS}ms) at batch ${batchCount}`);
+        break;
+      }
+
       batchCount++;
 
-      // Build query — use cursor only after first batch
-      const query = cursor
-        ? { owner_email: ownerEmail, created_date: { $lt: cursor } }
-        : { owner_email: ownerEmail };
+      // ── COMPOUND CURSOR QUERY ──────────────────────────────────────────────
+      // On the first batch, fetch the newest messages (no cursor constraint).
+      // On subsequent batches, use $or to correctly handle timestamp ties:
+      //   - records strictly older than cursorDate, OR
+      //   - records with the same cursorDate but an id that sorts before cursorId (lexically)
+      // This guarantees no gaps and no duplicates even when multiple messages share a timestamp.
+      let query;
+      if (!cursorDate) {
+        query = { owner_email: ownerEmail };
+      } else {
+        query = {
+          owner_email: ownerEmail,
+          $or: [
+            { created_date: { $lt: cursorDate } },
+            // Same date, earlier ID (lexicographic — works with UUIDs and MongoDB ObjectIDs)
+            { created_date: cursorDate, id: { $lt: cursorId || '' } },
+          ],
+        };
+      }
 
       let batch = null;
       try {
@@ -92,72 +118,82 @@ Deno.serve(async (req) => {
           if (batchCount === 1) {
             return Response.json({ error: `Message fetch failed: ${e2.message}` }, { status: 500 });
           }
-          // Non-fatal on later batches — treat as exhausted
+          terminationReason = 'db_error';
           exhaustedAllMessages = true;
           break;
         }
       }
 
       if (!batch || batch.length === 0) {
+        terminationReason = 'exhausted_messages';
         exhaustedAllMessages = true;
         break;
       }
 
       messagesScanned += batch.length;
 
-      // Extract image records from this batch and add to index
+      // ── EXTRACT & DEDUP IMAGES ─────────────────────────────────────────────
       for (const m of batch) {
         if (!m.image_url) continue;
         if (m.recovery_signal === true) continue;
-        if (seenUrls.has(m.image_url)) continue;
 
-        // Apply search filter inline so we only count matching images
+        // Use normalized URL for dedup (strips signed tokens, CDN params, etc.)
+        const dedupKey = normalizeUrlForDedup(m.image_url);
+        if (seenNormalizedUrls.has(dedupKey)) continue;
+
+        // Apply search filter
         if (searchLower) {
           const desc = (m.image_description || '').toLowerCase();
           const sender = (m.character_name || '').toLowerCase();
           if (!desc.includes(searchLower) && !sender.includes(searchLower)) continue;
         }
 
-        seenUrls.add(m.image_url);
+        seenNormalizedUrls.add(dedupKey);
         imageIndex.push(m);
       }
 
-      console.log(`[fetchMediaGalleryPage] Batch ${batchCount}: ${batch.length} msgs scanned, ${imageIndex.length} unique images so far`);
+      console.log(`[fetchMediaGalleryPage] Batch ${batchCount}: ${batch.length} msgs → ${imageIndex.length} unique images`);
 
-      // ADVANCE CURSOR to oldest created_date in this batch
+      // ── ADVANCE COMPOUND CURSOR ────────────────────────────────────────────
       const oldestInBatch = batch[batch.length - 1];
       const oldestDate = oldestInBatch?.created_date;
+      const oldestId = oldestInBatch?.id;
 
       if (!oldestDate) {
+        terminationReason = 'exhausted_messages';
         exhaustedAllMessages = true;
         break;
       }
 
-      // Check if we've passed the scan floor (2025-01-01)
+      // Check scan floor
       const oldestMs = new Date(oldestDate).getTime();
       if (oldestMs <= scanFloorMs) {
+        terminationReason = 'scan_floor_reached';
         exhaustedAllMessages = true;
         break;
       }
 
-      // Batch returned fewer records than requested = no more messages exist
+      // Fewer records than batch size = no more messages
       if (batch.length < BATCH_SIZE) {
+        terminationReason = 'exhausted_messages';
         exhaustedAllMessages = true;
         break;
       }
 
-      cursor = oldestDate;
+      cursorDate = oldestDate;
+      cursorId = oldestId || null;
 
-      // EARLY EXIT: we have enough images to satisfy this page + hasMore proof
+      // EARLY EXIT: collected enough images for this page + hasMore proof
       if (imageIndex.length >= neededImages) {
-        console.log(`[fetchMediaGalleryPage] Early exit: ${imageIndex.length} unique images >= needed ${neededImages}`);
+        terminationReason = 'enough_images';
+        console.log(`[fetchMediaGalleryPage] Early exit at batch ${batchCount}: ${imageIndex.length} images >= needed ${neededImages}`);
         break;
       }
     }
 
-    // ── SORT (already DESC by scan order, but re-sort for determinism) ────────
-    // Messages come back -created_date per batch, and batches are ordered newest→oldest,
-    // so imageIndex should already be DESC. Re-sort to guarantee correctness.
+    if (terminationReason === 'in_progress') terminationReason = 'safety_cap';
+
+    // ── SORT deterministically: created_date DESC, id DESC ────────────────────
     imageIndex.sort((a, b) => {
       const dateA = a.created_date ? new Date(a.created_date).getTime() : 0;
       const dateB = b.created_date ? new Date(b.created_date).getTime() : 0;
@@ -167,7 +203,10 @@ Deno.serve(async (req) => {
 
     const uniqueImagesCollected = imageIndex.length;
     const enoughForRequestedPage = uniqueImagesCollected > imageStartIndex;
-    const hasMore = uniqueImagesCollected > imageEndIndex || (!exhaustedAllMessages && uniqueImagesCollected >= neededImages - 1);
+
+    // SIMPLE, HONEST hasMore: we actually collected more images than this page needs
+    // No fuzzy "probably more" — only confirm hasMore when we have proof
+    const hasMore = uniqueImagesCollected > imageEndIndex;
 
     // ── SLICE THE REQUESTED PAGE ───────────────────────────────────────────────
     const pageSlice = enoughForRequestedPage
@@ -194,6 +233,7 @@ Deno.serve(async (req) => {
       parent_conversation_id: m.conversation_id,
     }));
 
+    const runtimeMs = Date.now() - scanStart;
     const proof = {
       // Page identity
       requestedPage: safePage,
@@ -207,8 +247,13 @@ Deno.serve(async (req) => {
       exhaustedAllMessages,
       enoughForRequestedPage,
       hasMore,
+      terminationReason,
+      runtimeMs,
       scanStartDate: new Date().toISOString(),
       scanEndDate: SCAN_FLOOR,
+      // Compound cursor info
+      cursorStyle: 'compound_date_id_v3',
+      dedupMethod: 'normalized_url_no_querystring',
       // Page boundary proof
       pageImagesReturned: pageImages.length,
       firstImageId: pageImages[0]?.id || null,
@@ -221,7 +266,6 @@ Deno.serve(async (req) => {
       skip: imageStartIndex,
       totalImagesInIndex: uniqueImagesCollected,
       sortKey: 'created_date DESC, id DESC',
-      cursorStyle: 'advancing_per_batch_image_unit',
       rawScanned: messagesScanned,
       validFound: uniqueImagesCollected,
       afterDedup: uniqueImagesCollected,

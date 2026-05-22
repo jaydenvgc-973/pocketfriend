@@ -93,10 +93,17 @@ export default function ChatHeader({
         <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
         {character ? (() => {
           const ss = getCharacterSleepState(character);
-          const sub = ss.isSleeping
-            ? (ss.isNapping ? '💤 napping' : '🌙 sleeping')
-            : (isPhone ? 'Texting' : 'Talking');
-          return <p className="text-xs text-muted-foreground">{sub}</p>;
+          if (ss.isSleeping) {
+            // Use contextLabel for rich sleep context — not just "sleeping"
+            const label = ss.contextLabel || ss.displayLabel || '🌙 sleeping';
+            return (
+              <p className="text-xs text-muted-foreground" title={ss.blockingCondition ? `Blocking: ${ss.blockingCondition}` : undefined}>
+                {label}
+                {ss.isLikelyStale && <span className="ml-1 text-amber-400/70">(may be stale)</span>}
+              </p>
+            );
+          }
+          return <p className="text-xs text-muted-foreground">{isPhone ? 'Texting' : 'Talking'}</p>;
         })() : <p className="text-xs text-muted-foreground">{isPhone ? 'Texting' : 'Talking'}</p>}
       </div>
       <ChatActionsMenu
