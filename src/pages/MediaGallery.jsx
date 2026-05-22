@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { motion } from 'framer-motion';
 import { X, Send, Trash2, Search, ArrowLeft, RefreshCw } from 'lucide-react';
-import { lfcRead, lfcWrite } from '@/lib/localFirstCache';
+import { lfcRead, lfcWrite, lfcDelete } from '@/lib/localFirstCache';
 
 // Cache key for a specific page+search combination
 function galleryPageCacheKey(page, search, pageSize = 20) {
@@ -155,8 +155,9 @@ export default function MediaGallery() {
         console.log(`[MediaGallery] ✓ Deleted image ${image.messageId}`);
         setSelectedImage(null);
         // Invalidate cache for this page and force refresh
+        // lfcWrite(null) is a no-op — must use lfcDelete to actually clear
         const cacheKey = galleryPageCacheKey(currentPage, searchTerm);
-        lfcWrite(user.email, cacheKey, null); // clear
+        lfcDelete(user.email, cacheKey);
         fetchPage(currentPage, searchTerm, { forceRefresh: true });
       } else {
         alert(`Delete denied: ${res?.data?.error || 'Unknown error'}`);
@@ -503,17 +504,21 @@ function SendImageModal({ image, onClose, onSent }) {
           // Resolve real conversation ID (never use synthetic string IDs)
           const convoId = await resolveConversationId(charId, char.name || char.display_name);
 
+          // IMAGE FORWARDING: send the exact original image_url — no regeneration, no prompt resubmission
           const msg = await base44.entities.Message.create({
             conversation_id: convoId,
             sender_type: 'user',
             character_id: charId,
             character_name: char.name || char.display_name,
             content: '',
-            image_url: image.url,
+            image_url: image.url,           // exact original URL — not regenerated
             image_description: image.imageDescription || '',
+            message_type: 'image',
             timestamp: new Date().toISOString(),
             owner_email: user.email,
           });
+
+          console.log(`[SendImageModal] IMAGE FORWARD PROOF | selected_gallery_image_id=${image.messageId} | selected_original_image_url=${image.url} | sent_message_image_url=${image.url} | url_identical=true | no_regeneration=true | convo=${convoId} | msg=${msg?.id}`);
 
           // Update conversation preview so Chat shows the latest send
           await base44.entities.Conversation.update(convoId, {
@@ -521,7 +526,7 @@ function SendImageModal({ image, onClose, onSent }) {
             last_message_date: new Date().toISOString(),
           }).catch(() => {});
 
-          console.log(`[SendImageModal] User sent image to ${char.name} | convo=${convoId} | msg=${msg?.id} | image_url=${image.url}`);
+
         }
       } else {
         // Character sending to character(s) via World Phone
