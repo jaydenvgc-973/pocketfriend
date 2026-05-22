@@ -9,8 +9,8 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get Melody
-    const characters = await base44.entities.Character.filter({ created_by: user.email }, '-created_date', 100);
+    // Get Melody — owner_email scope only (created_by is permanently forbidden)
+    const characters = await base44.entities.Character.filter({ owner_email: user.email }, '-updated_date', 200);
     const melody = characters.find(c => c.name === 'Melody Jackson Perry');
     
     if (!melody) {

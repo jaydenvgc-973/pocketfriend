@@ -62,6 +62,14 @@ function computeAdaptiveSleepWindow(character, etTime) {
   let nextShiftStartMin = null;
   let nextShiftEndMin   = null;
 
+  // PRIORITY 1: Stored schedule wins — matches sleepUtils.js canonical order.
+  if (character.sleep_start_time && character.wake_up_time) {
+    const s = toMin(character.sleep_start_time);
+    const w = toMin(character.wake_up_time);
+    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
+  }
+
+  // PRIORITY 2: No stored schedule — derive from work/school.
   if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
     const isWorkDayToday    = character.work_days.includes(dayOfWeek);
     const isWorkDayTomorrow = character.work_days.includes((dayOfWeek + 1) % 7);
@@ -91,12 +99,7 @@ function computeAdaptiveSleepWindow(character, etTime) {
     }
   }
 
-  if (character.sleep_start_time && character.wake_up_time) {
-    const s = toMin(character.sleep_start_time);
-    const w = toMin(character.wake_up_time);
-    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
-  }
-
+  // PRIORITY 3: Cannot determine.
   return null;
 }
 

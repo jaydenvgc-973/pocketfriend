@@ -66,62 +66,46 @@ function computeAdaptiveSleepWindow(character, etTime) {
 
   const dayOfWeek = etTime.getDay();
 
-  // Check location-specific shift first, then character-level fields
-  // We only need the start/end times — day matching is handled by the work layer
-  const workLocId = character.occupation_location_id || character.current_work_location_id;
-  // NOTE: locationMap is NOT available here (helper is called before locationMap lookup)
-  // So we rely on character-level work_start_time / work_end_time / work_days
-  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
-    // Check if any of the next 2 days is a work day to determine "upcoming" shift
-    const isWorkDayToday = character.work_days.includes(dayOfWeek);
-    const isWorkDayTomorrow = character.work_days.includes((dayOfWeek + 1) % 7);
+  // PRIORITY 1: Stored schedule is the CANONICAL source of truth — always wins if present.
+  // Matches sleepUtils.js priority order. Prevents priority inversion confirmed in live data.
+  if (character.sleep_start_time && character.wake_up_time) {
+    const s = toMin(character.sleep_start_time);
+    const w = toMin(character.wake_up_time);
+    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
+  }
 
+  // PRIORITY 2: No stored schedule — derive from work/school obligation only.
+  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+    const isWorkDayToday    = character.work_days.includes(dayOfWeek);
+    const isWorkDayTomorrow = character.work_days.includes((dayOfWeek + 1) % 7);
     if (isWorkDayToday || isWorkDayTomorrow) {
       nextShiftStartMin = toMin(character.work_start_time);
       nextShiftEndMin   = toMin(character.work_end_time);
     }
   }
 
-  // School obligation
   if (!nextShiftStartMin && character.student_status === 'enrolled' && character.education_location_id) {
-    // Default school hours if no explicit time stored
-    nextShiftStartMin = 8 * 60;   // 8:00 AM
-    nextShiftEndMin   = 15 * 60;  // 3:00 PM
+    nextShiftStartMin = 8 * 60;
+    nextShiftEndMin   = 15 * 60;
   }
 
-  // ── OVERNIGHT WORKER DETECTION ─────────────────────────────────────────────
-  // An overnight shift is one where the shift END crosses midnight relative to start.
-  // e.g. start=22:00 (1320), end=06:00 (360) → endMin < startMin
   const isOvernightShift = nextShiftStartMin !== null && nextShiftEndMin !== null &&
     nextShiftEndMin < nextShiftStartMin;
 
-  const nowMin = etTime.getHours() * 60 + etTime.getMinutes();
-
   if (nextShiftStartMin !== null) {
     if (isOvernightShift) {
-      // Overnight worker: sleep window goes from after shift end → before shift start
-      // e.g. shift 22:00–06:00 → sleep 07:00–15:00 (daytime sleep)
-      const sleepStart = (nextShiftEndMin + 60) % 1440;  // 1hr after shift ends
+      const sleepStart = (nextShiftEndMin + 60) % 1440;
       const wakeTime   = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
       return { sleepStartMin: sleepStart, wakeMin: wakeTime, isOvernightWorker: true };
     } else {
-      // Daytime/standard worker: sleep at night, wake before shift
       const wakeTime   = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
       const sleepStart = (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440;
       return { sleepStartMin: sleepStart, wakeMin: wakeTime, isOvernightWorker: false };
     }
   }
 
-  // ── NO OBLIGATION — fall back to stored schedule ───────────────────────────
-  if (character.sleep_start_time && character.wake_up_time) {
-    const s = toMin(character.sleep_start_time);
-    const w = toMin(character.wake_up_time);
-    if (s !== null && w !== null) {
-      return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
-    }
-  }
-
-  return null; // No sleep schedule determinable
+  // PRIORITY 3: Cannot determine — fail safe (awake).
+  return null;
 }
 
 function isSleeping(character, etTime) {

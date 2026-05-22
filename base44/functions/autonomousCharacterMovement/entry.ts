@@ -127,6 +127,17 @@ function computeAdaptiveSleepWindow(character, etTime) {
   const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
   const dayOfWeek = etTime.getDay();
 
+  // PRIORITY 1: Stored schedule is the CANONICAL source of truth — always wins if present.
+  // This matches sleepUtils.js priority order. Do NOT override stored schedule with derived logic.
+  // A character with sleep_start_time="23:00" and wake_up_time="07:00" sleeps 23:00–07:00
+  // regardless of their work schedule — derived logic was causing priority inversion (root cause confirmed).
+  if (character.sleep_start_time && character.wake_up_time) {
+    const s = toMin(character.sleep_start_time);
+    const w = toMin(character.wake_up_time);
+    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
+  }
+
+  // PRIORITY 2: No stored schedule — derive from work/school obligation only.
   let nextShiftStartMin = null;
   let nextShiftEndMin   = null;
 
@@ -148,14 +159,12 @@ function computeAdaptiveSleepWindow(character, etTime) {
 
   if (nextShiftStartMin !== null) {
     if (isOvernightShift) {
-      // Overnight worker: sleep after shift ends (daytime), wake before shift starts
       return {
         sleepStartMin: (nextShiftEndMin + 60) % 1440,
         wakeMin: (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440,
         isOvernightWorker: true,
       };
     } else {
-      // Standard worker: wake before shift, sleep ~7h before wake
       const wakeTime = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
       return {
         sleepStartMin: (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440,
@@ -165,13 +174,7 @@ function computeAdaptiveSleepWindow(character, etTime) {
     }
   }
 
-  // No obligation — fall back to stored schedule
-  if (character.sleep_start_time && character.wake_up_time) {
-    const s = toMin(character.sleep_start_time);
-    const w = toMin(character.wake_up_time);
-    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
-  }
-
+  // PRIORITY 3: No obligation — cannot assume sleep.
   return null;
 }
 

@@ -1,4 +1,22 @@
 /**
+ * CANONICAL SLEEP PRIORITY ORDER (enforced here and must be matched by all backend copies):
+ *
+ * PRIORITY 1: character.sleep_start_time + character.wake_up_time (stored schedule — ALWAYS wins)
+ * PRIORITY 2: derive from work/school obligation (only when no stored schedule)
+ * PRIORITY 3: no determinable schedule — fail safe = awake (return false)
+ *
+ * This order is duplicated in these backend functions (no local imports in Deno):
+ *   - functions/autonomousCharacterMovement (computeAdaptiveSleepWindow)
+ *   - functions/scheduledLocationEnforcement (computeAdaptiveSleepWindow)
+ *   - functions/enforceCharacterLocationPresence (computeAdaptiveSleepWindow)
+ *   - functions/createTravelSession (inline isAsleepBySchedule)
+ *
+ * Any future change to priority order MUST be applied to ALL locations above.
+ * Root cause of Nathan Parker's 1AM/3AM autonomous travel: backend copies had work-schedule
+ * BEFORE stored schedule, causing sleep window to start at 01:00 instead of 23:00.
+ */
+
+/**
  * Returns detailed sleep state — use this instead of a single boolean flag.
  * Distinguishes: asleep | waking | awake | sleep_interrupted | napping
  *
