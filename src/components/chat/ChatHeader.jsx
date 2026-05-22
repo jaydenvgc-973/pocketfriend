@@ -94,12 +94,11 @@ export default function ChatHeader({
         {character ? (() => {
           const ss = getCharacterSleepState(character);
           if (ss.isSleeping) {
-            // Use contextLabel for rich sleep context — not just "sleeping"
-            const label = ss.contextLabel || ss.displayLabel || '🌙 sleeping';
+            // Show visible label + confidence indicator
+            const confidenceLabel = ss.confidence >= 0.8 ? '✓ confirmed' : ss.confidence > 0 ? '? unverified' : '⚠️ needs diagnosis';
             return (
-              <p className="text-xs text-muted-foreground" title={ss.blockingCondition ? `Blocking: ${ss.blockingCondition}` : undefined}>
-                {label}
-                {ss.isLikelyStale && <span className="ml-1 text-amber-400/70">(may be stale)</span>}
+              <p className="text-xs text-muted-foreground">
+                {ss.visible_label} {confidenceLabel}
               </p>
             );
           }
