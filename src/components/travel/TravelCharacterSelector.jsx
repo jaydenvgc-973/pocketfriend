@@ -126,8 +126,14 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
     const isHome = presenceEntity?.is_home ?? (resolvedStatus === 'home' || resolvedStatus === 'sleeping' || resolvedStatus === 'napping');
     const hasHomeId = !!(char.current_home_location_id || presenceEntity?.residence_location_id);
 
+    // ── SLEEPING / NAPPING override: canonical presence resolver now enforces this ─
+    const isSleepingCanonical = presenceEntity?.is_sleeping ||
+      resolvedStatus === 'sleeping' || resolvedStatus === 'napping';
+
     let currentLocationLabel = null;
-    if (isAvailable && resolvedLocName && !isHome) {
+    if (isSleepingCanonical) {
+      currentLocationLabel = resolvedStatus === 'napping' ? '💤 Napping' : '😴 Sleeping';
+    } else if (isAvailable && resolvedLocName && !isHome) {
       currentLocationLabel = `At ${resolvedLocName}`;
     } else if (isAvailable && (isHome || hasHomeId)) {
       currentLocationLabel = 'At home';

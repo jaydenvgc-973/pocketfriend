@@ -1,11 +1,23 @@
 /**
  * UNIFIED TRAVEL PRESENCE RESOLVER
- * 
+ *
  * Single source of truth for all character presence on the Travel page.
  * Handles: active_created_character, npc_fictitious, npc_family_member, internal family entities
- * 
- * Ensures map pins, location popups, side-panel counts, and vacancy labels all use identical presence data.
+ *
+ * CANONICAL AUTHORITY RULE (2026-05-22):
+ * Travel page, Travel map, and "who's coming" list MUST all use the exact same
+ * presence resolution logic as the Homepage CharacterCard.
+ *
+ * Source of truth: resolveCharacterLocation() from locationResolutionEngine.js
+ * This engine applies: sleep enforcement → work schedule → pre-sleep window →
+ * home contradiction guard → housing resolver.
+ *
+ * The old behavior (reading resolved_current_location_id directly from DB) is
+ * DEPRECATED for presence display. DB fields may be stale (e.g. a character the
+ * DB still has at a bar who is now sleeping at home). The engine recomputes the
+ * canonical state every render cycle, matching the Homepage exactly.
  */
+import { resolveCharacterLocation } from '@/lib/locationResolutionEngine';
 
 
 /**
@@ -137,44 +149,33 @@ export function resolveTravelPresenceEntities({
 /**
  * Normalize a Character record into a presence entity shape.
  *
- * ALL character types: read resolved_current_location_id directly from the DB record.
- * This is the SINGLE SOURCE OF TRUTH for presence on Travel, Map, and popups.
- * Schedules, work logic, and home inference are NOT applied here.
- * The backend enforcer (enforceCharacterLocationPresence / scheduledLocationEnforcement)
- * is responsible for keeping resolved fields accurate.
+ * CANONICAL AUTHORITY: uses resolveCharacterLocation() — the same engine as the
+ * Homepage CharacterCard. Applies sleep enforcement, work schedule, pre-sleep
+ * return window, and home contradiction guard so Travel and Home are always in sync.
  *
- * Rules:
- * - resolved_current_location_id present AND in locationMap → character is present there
- * - resolved_current_location_id missing or not in locationMap → not placed on map (is_currently_present = false)
- * - No home fallback. No schedule inference. No resident-list scanning.
+ * Previously this read resolved_current_location_id directly from the DB record,
+ * which caused divergence when the DB was stale (e.g. character at a bar in DB
+ * but sleeping at home per schedule). That direct-read path is REMOVED.
  */
 function normalizeCharacterToPresenceEntity(char, locationMap) {
-  // Resolve home location ID — source of truth for fallback presence
   const homeLocId = char.current_home_location_id || char.home_location_id || null;
 
-  const currentLocId = char.resolved_current_location_id;
-  let resolvedLocId, resolvedLocName, resolvedStatus, isCurrentlyPresent;
+  // ── CANONICAL RESOLUTION — same engine as Homepage ───────────────────────
+  const canonical = resolveCharacterLocation(char, locationMap);
 
-  // Fallback chain: resolved → home → away
-  if (currentLocId && locationMap[currentLocId]) {
-    // Tier 1: Active resolved location (highest priority)
-    resolvedLocId = currentLocId;
-    resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
-    resolvedStatus = char.resolved_presence_status || 'home';
-    isCurrentlyPresent = true;
-  } else if (homeLocId && locationMap[homeLocId]) {
-    // Tier 2: Fallback to home location (when resolved is stale/missing)
-    resolvedLocId = homeLocId;
-    resolvedLocName = locationMap[homeLocId]?.name;
-    resolvedStatus = 'home';
-    isCurrentlyPresent = true;
-  } else {
-    // Tier 3: No valid location — show as Away
-    resolvedLocId = null;
-    resolvedLocName = null;
-    resolvedStatus = 'away';
-    isCurrentlyPresent = false;
-  }
+  const resolvedLocId   = canonical.resolved_current_location_id || null;
+  const resolvedLocName = canonical.resolved_current_location_name ||
+                          (resolvedLocId ? locationMap[resolvedLocId]?.name : null) || null;
+  const resolvedStatus  = canonical.resolved_presence_status || 'away';
+
+  // Character is "currently present" if the resolver gave them a real location.
+  // Sleeping characters get their home location — they ARE present (at home, asleep).
+  // Only truly locationless characters (no home, no schedule, no visit) are absent.
+  const isCurrentlyPresent = !!resolvedLocId;
+
+  const isSleeping = resolvedStatus === 'sleeping' || resolvedStatus === 'napping';
+
+  console.log(`[travelPresenceResolver:normalize] ${char.name} → loc="${resolvedLocName}" status="${resolvedStatus}" sleeping=${isSleeping} source="${canonical.resolved_source_reason}"`);
 
   return {
     id: char.id,
@@ -189,12 +190,14 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
     resolved_current_location_id: resolvedLocId,
     resolved_current_location_name: resolvedLocName,
     resolved_presence_status: resolvedStatus,
+    resolved_source_reason: canonical.resolved_source_reason,
     residence_location_id: homeLocId,
 
     is_home_resident: !!homeLocId,
     is_currently_present: isCurrentlyPresent,
     is_home: isCurrentlyPresent && !!homeLocId && resolvedLocId === homeLocId,
     is_away: isCurrentlyPresent && !!homeLocId && !!resolvedLocId && resolvedLocId !== homeLocId,
+    is_sleeping: isSleeping,
   };
 }
 

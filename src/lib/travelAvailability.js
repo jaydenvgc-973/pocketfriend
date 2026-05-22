@@ -62,7 +62,14 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
   // Use location resolution engine to determine current state
   const resolved = resolveCharacterLocation(character, locationMap);
   const locationObj = locationMap[resolved.resolved_current_location_id];
-  const isSleeping = resolved.resolved_source_reason === 'home_sleeping';
+  // CANONICAL sleep detection: cover all sleep source_reasons + status fields
+  const SLEEP_SOURCES = new Set([
+    'home_sleeping', 'sleep_location_correction', 'adaptive_sleep_location_lock',
+    'sleep_return_home', 'pass_out_recovery', 'adaptive_pre_sleep_return', 'recovery_nap',
+  ]);
+  const isSleeping = resolved.resolved_presence_status === 'sleeping' ||
+    resolved.resolved_presence_status === 'napping' ||
+    SLEEP_SOURCES.has(resolved.resolved_source_reason);
   const isPraying = resolved.resolved_source_reason === 'praying_at_home';
   const category = locationObj?.category || 'generic';
   

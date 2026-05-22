@@ -924,11 +924,20 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             </div>
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">Active Characters: {activeCharacters.length}</p>
-              {[...activeCharacters].sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(c => (
-                  <div key={c.id} className="text-[10px] text-muted-foreground/70">
-                    • {c.name}: {c.resolved_current_location_name || "unknown"}
+              {[...activeCharacters].sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(c => {
+                const presenceEntity = allPresenceEntities.find(e => e.id === c.id);
+                return (
+                  <div key={c.id} className="text-[10px] space-y-0.5 border-b border-border/30 pb-1">
+                    <span className="text-foreground/80 font-medium">{c.name}</span>
+                    <div className="text-muted-foreground/70 pl-2">
+                      <span className="text-blue-400">canonical: </span>{presenceEntity?.resolved_current_location_name || 'unresolved'}
+                      {' '}(<span className={presenceEntity?.is_sleeping ? 'text-blue-300' : 'text-green-400'}>{presenceEntity?.resolved_presence_status || '?'}</span>)
+                      <span className="text-muted-foreground/50"> src: {presenceEntity?.resolved_source_reason || '?'}</span>
+                    </div>
+                    <div className="text-muted-foreground/50 pl-2">db: {c.resolved_current_location_name || 'none'} / {c.resolved_presence_status || '?'}</div>
                   </div>
-                ))}
+                );
+              })}
             </div>
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">NPC Fictitious: {npcCharacters.length} · Family: {npcFamilyMembers.length}</p>
