@@ -132,7 +132,9 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   } // end if (!hasValidCallout) — work schedule block
 
   // LAYER 2: Check school schedule
-  if (character.student_status === 'enrolled' && character.education_location_id) {
+  // SLEEP PRE-CHECK: if the character is in their sleep window, school must NOT win.
+  // Sleep enforcement (Layer 3.5A) runs after this, but we must not send sleeping characters to school.
+  if (character.student_status === 'enrolled' && character.education_location_id && !isCharacterAsleepFromUtils(character)) {
     const schoolLocation = locationMap[character.education_location_id];
     if (schoolLocation && isLocationOpen(schoolLocation, currentTime) !== false) {
       return {

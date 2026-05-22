@@ -257,14 +257,48 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 2. Asleep
-    const isAsleep = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+    // 2. Asleep — canonical sleep check:
+    // DB status alone can be stale. We check BOTH DB status AND schedule-derived sleep
+    // to catch characters who are in their sleep window but have a stale 'home' DB status.
+    // computeAdaptiveSleepWindow logic inlined here (no local imports in Deno functions):
+    const isAsleepByDB = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+    const isAsleepBySchedule = (() => {
+      // Respect explicit stay-up decision
+      if (char.decided_to_stay_up_until && new Date() < new Date(char.decided_to_stay_up_until)) return false;
+      const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+      const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
+      // Use stored schedule as source of truth (Priority 1)
+      if (char.sleep_start_time && char.wake_up_time) {
+        const s = toMin(char.sleep_start_time), w = toMin(char.wake_up_time);
+        if (s !== null && w !== null) {
+          return s > w ? (currentMinutes >= s || currentMinutes < w) : (currentMinutes >= s && currentMinutes < w);
+        }
+      }
+      // Derive from work schedule (Priority 2)
+      if (char.work_start_time && char.work_end_time && Array.isArray(char.work_days)) {
+        const dayOfWeek = nowET.getDay();
+        if (char.work_days.includes(dayOfWeek) || char.work_days.includes((dayOfWeek + 1) % 7)) {
+          const ws = toMin(char.work_start_time), we = toMin(char.work_end_time);
+          if (ws !== null && we !== null) {
+            const isOvernight = we < ws;
+            const wakeMin = (ws - 60 + 1440) % 1440;
+            const sleepMin = isOvernight ? (we + 60) % 1440 : (wakeMin - 7 * 60 + 1440) % 1440;
+            return sleepMin > wakeMin ? (currentMinutes >= sleepMin || currentMinutes < wakeMin) : (currentMinutes >= sleepMin && currentMinutes < wakeMin);
+          }
+        }
+      }
+      return false; // No determinable schedule — fail safe: awake
+    })();
+    const isAsleep = isAsleepByDB || isAsleepBySchedule;
     if (isAsleep) {
       return Response.json({
         success: false,
         blocked: true,
         blocker: 'asleep',
         blocker_reason: `${char.name} is asleep and cannot travel right now.`,
+        asleep_by_db: isAsleepByDB,
+        asleep_by_schedule: isAsleepBySchedule,
       });
     }
 

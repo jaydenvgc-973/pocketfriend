@@ -6,7 +6,9 @@ import { toDisplay12h } from './timeFormat';
  * Returns availability info for a character for travel.
  * { available: boolean, reason: { iconType, message, color }, availableAt: string|null }
  */
-const NPC_TYPES = ['npc', 'family_npc', 'background', 'promoted_npc', 'npc_fictitious_person'];
+// CANONICAL NPC types: these characters have no work/school schedules, only sleep blocks them.
+// active_created_character goes through resolveCharacterLocation() — NOT this list.
+const NPC_TYPES = ['npc_fictitious', 'npc_family_member', 'npc_regular', 'npc', 'family_npc', 'background', 'promoted_npc', 'npc_fictitious_person'];
 
 export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (!character) return { available: false, reason: { iconType: 'out', message: 'Unknown status', color: 'text-muted-foreground' }, availableAt: null };
