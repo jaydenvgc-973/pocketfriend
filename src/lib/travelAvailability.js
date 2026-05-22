@@ -11,13 +11,17 @@ const NPC_TYPES = ['npc', 'family_npc', 'background', 'promoted_npc', 'npc_ficti
 export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (!character) return { available: false, reason: { iconType: 'out', message: 'Unknown status', color: 'text-muted-foreground' }, availableAt: null };
 
-  // IN TRANSIT: character has an active travel session — cannot start another trip
-  if (
+  // IN TRANSIT: character has an active travel session — cannot start another trip.
+  // ONE TRUTH RULE: only show "already in transit" if:
+  //   A) _travelDisplayValid = true (session proof injected by applySessionProofToCharacters), OR
+  //   B) _travelDisplayValid is undefined (not hydrated — legacy path, allow through)
+  // If _travelDisplayValid = false, the travel_status is orphaned/stale — skip this block.
+  if (character._travelDisplayValid !== false && (
     character.resolved_presence_status === 'traveling' ||
     character.travel_status === 'traveling_to_destination' ||
     character.travel_status === 'traveling_to_work' ||
     character.travel_status === 'traveling_to_school'
-  ) {
+  )) {
     const destName = character.traveling_to_location_name || 'their destination';
     return {
       available: false,

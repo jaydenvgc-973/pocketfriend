@@ -29,6 +29,7 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { useForegroundTask } from "@/hooks/useForegroundTask";
 import { FOREGROUND_TASKS } from "@/lib/foregroundPriority";
+import { useTravelSessions, applySessionProofToCharacters } from "@/lib/travelDisplayIntegrity";
 
 
 export default function Travel() {
@@ -86,6 +87,9 @@ export default function Travel() {
   const safeSettings = settingsObj?.id ? settingsObj : null;
   const settings = settingsObj || {};
 
+  // Load active in_transit sessions — used to gate travel display (ONE TRUTH RULE)
+  const { sessions: activeTravelSessions } = useTravelSessions(currentUser?.email);
+
   // useUserPresence: gives optimistic-aware presence (survives cache staleness and optimistic UI)
   const { userPresence } = useUserPresence(currentUser, safeSettings, safeSettings?.id);
 
@@ -94,6 +98,10 @@ export default function Travel() {
 
   // ALL character records for internal family scanning (parent character lookup)
   const allCharactersForFamilyScan = [...activeCharacters, ...npcCharacters, ...npcFamilyMembers];
+
+  // Apply travel display integrity — inject session proof onto all characters.
+  // This gates "already in transit" display on a valid in_transit TravelSession.
+  const verifiedTravelCompanions = applySessionProofToCharacters(travelCompanions, activeTravelSessions);
 
   // Build a synthetic userSettings object that merges server data with optimistic presence
   // so resolveTravelPresenceEntities always sees the current user location (not stale DB value)
@@ -293,7 +301,7 @@ export default function Travel() {
   };
 
   const toggleCharacter = (charId) => {
-    const char = travelCompanions.find(c => c.id === charId);
+    const char = verifiedTravelCompanions.find(c => c.id === charId);
     if (!char) return;
     
     // Check age-based travel restrictions
@@ -444,7 +452,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     const unavailable = selectedCharacterIds
       .filter(id => !convincedCharacterIds.includes(id))
       .map(id => {
-        const char = travelCompanions.find(c => c.id === id);
+        const char = verifiedTravelCompanions.find(c => c.id === id);
         if (!char) return null;
         const avail = getCharacterTravelAvailability(char, locationMap);
         return avail.available ? null : { character: char, reason: avail.reason, availableAt: avail.availableAt };
@@ -588,7 +596,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Who's coming?</p>
           </div>
           <TravelCharacterSelector
-            characters={travelCompanions}
+            characters={verifiedTravelCompanions}
             currentUser={currentUser}
             displayName={displayName}
             selectedIds={selectedCharacterIds}

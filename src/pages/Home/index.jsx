@@ -23,6 +23,7 @@ import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { usePageContext } from "@/hooks/usePageContext";
 import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
+import { useTravelSessions, applySessionProofToCharacters } from "@/lib/travelDisplayIntegrity";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -323,6 +324,9 @@ export default function Home() {
   // Register page context so simulationGate knows home is active (no specific character/location)
   usePageContext({ page: 'home' });
 
+  // Load active in_transit sessions — used to gate travel display (ONE TRUTH RULE)
+  const { sessions: activeTravelSessions } = useTravelSessions(currentUser?.email);
+
   const defaultChar = allCharacters.find(c => c.is_default);
   const customChars = allCharacters.filter(c => !c.is_default && c.status !== "deleted");
   
@@ -362,6 +366,9 @@ export default function Home() {
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;
   const showPerformanceWarning = activeCustomChars.length >= 7;
+
+  // Apply travel display integrity — gate "Traveling to…" on valid in_transit sessions
+  const verifiedActiveCustomChars = applySessionProofToCharacters(activeCustomChars, activeTravelSessions);
 
   return (
     <div className="min-h-screen bg-background">
@@ -463,7 +470,7 @@ export default function Home() {
               </div>
             )}
             <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters ({activeCustomChars.length})</p>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters ({verifiedActiveCustomChars.length})</p>
               {canCreate && (
                 <Link to="/create">
                   <motion.button whileTap={{ scale: 0.95 }} className="flex items-center gap-1.5 text-xs text-primary font-medium">
@@ -484,7 +491,7 @@ export default function Home() {
               </Link>
             ) : (
               <div className="grid gap-3">
-                {activeCustomChars.map(c => (
+                {verifiedActiveCustomChars.map(c => (
                   <CharacterCard key={c.id} character={c}
                     onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
                     onMoveAway={(id) => moveAwayMutation.mutate(id)}

@@ -161,7 +161,29 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   }
 
   // LAYER 3: Check active travel state
-  if (character.travel_status && character.travel_status !== 'not_traveling' && character.travel_destination_location_id) {
+  // ONE TRUTH RULE: only display travel if _travelDisplayValid is true (injected by
+  // applySessionProofToCharacters from travelDisplayIntegrity.js).
+  // If _travelDisplayValid is explicitly false, the travel_status is orphaned — skip it.
+  // If _travelDisplayValid is undefined (not yet hydrated), fall through to normal resolution.
+  if (character._travelDisplayValid === true && character.travel_destination_location_id) {
+    const destLocation = locationMap[character.travel_destination_location_id];
+    if (destLocation) {
+      return {
+        resolved_current_location_id: character.travel_destination_location_id,
+        resolved_current_location_name: destLocation.name || 'Traveling',
+        resolved_location_type: 'traveling',
+        resolved_presence_status: 'traveling',
+        resolved_source_reason: character.travel_status || 'in_transit',
+        resolved_zone: null,
+        isTransit: true,
+      };
+    }
+  }
+  // Legacy path: _travelDisplayValid not set (no session hydration) — check raw fields
+  // but ONLY if travel_status is a valid traveling state (not 'not_traveling').
+  if (character._travelDisplayValid === undefined &&
+      character.travel_status && character.travel_status !== 'not_traveling' &&
+      character.travel_destination_location_id) {
     const destLocation = locationMap[character.travel_destination_location_id];
     if (destLocation) {
       return {
@@ -711,7 +733,11 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   }
 
   // ── PRIORITY 2: TRANSIT STATE ──────────────────────────────────────────────
-  if (presenceStatus === 'traveling') {
+  // ONE TRUTH RULE: only show "Traveling to…" if:
+  //   A) _travelDisplayValid = true (session proof injected), OR
+  //   B) _travelDisplayValid is undefined (not hydrated yet — legacy path)
+  // If _travelDisplayValid = false, the travel_status is orphaned — skip it.
+  if (presenceStatus === 'traveling' && character._travelDisplayValid !== false) {
     const destLoc = locationMap[character.travel_destination_location_id];
     const destName = destLoc?.name || character.traveling_to_location_name || 'destination';
     return { status: 'in_transit', label: `Traveling to ${destName}`, sublabel: null, isTransit: true, isSleeping: false };
