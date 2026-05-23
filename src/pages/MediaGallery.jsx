@@ -5,13 +5,20 @@ import { motion } from 'framer-motion';
 import { X, Send, Trash2, Search, ArrowLeft, RefreshCw } from 'lucide-react';
 import { lfcRead, lfcWrite, lfcDelete } from '@/lib/localFirstCache';
 
+// CACHE VERSION: v5 — cache is DISPLAY-FALLBACK ONLY. Never used to limit pagination.
+// Any response with fewer uniqueImagesCollected than the best known is rejected as poisoned.
+const GALLERY_CACHE_VERSION = 'v5';
+
 function galleryPageCacheKey(ownerEmail, page, search, pageSize = 20) {
   const s = (search || '').trim().toLowerCase();
   const owner = (ownerEmail || 'anon').replace(/[^a-z0-9]/gi, '_');
-  return `mediaGallery:v4:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
+  return `mediaGallery:${GALLERY_CACHE_VERSION}:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
 }
 
-const GALLERY_STALE_MS = 5 * 60 * 1000;
+// Best-known unique image count for this session — used to reject poison responses
+// that report fewer images than a prior successful scan.
+// Keyed by "page:search" so each page tracks independently.
+const SESSION_BEST_COUNT = {};
 
 export default function MediaGallery() {
   const navigate = useNavigate();
@@ -30,57 +37,48 @@ export default function MediaGallery() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [pageJumpValue, setPageJumpValue] = useState('');
 
-  // PER-REQUEST DEDUP: reset on every page fetch (page-based pagination, not infinite scroll)
-  // Must NOT accumulate across pages — page 2 legitimately re-uses IDs scanned in the backend
-  // for prior pages. Cross-page dedup via frontend ref causes empty results after refresh.
   const seenImageIdsRef = useRef(new Set());
-  const activeRequestRef = useRef(0);
-  const cacheCleanedRef = useRef(false); // Track if cache was cleared on this mount
+  const activeRequestRef = useRef(0);   // Increments on every fetch — stale responders check against this
+  const completedRequestRef = useRef(0); // Tracks the highest requestId that completed a successful write
+  const cacheCleanedRef = useRef(false);
 
   useEffect(() => {
     base44.auth.me().then(u => {
       setUser(u);
-      // SYNCHRONOUS cache clear on first mount (before any fetches occur)
+      // On mount: nuke ALL gallery cache keys for this user (all versions, all pages)
       if (!cacheCleanedRef.current && u?.email) {
-        const prefix = `mediaGallery:v4:${u.email.replace(/[^a-z0-9]/gi, '_')}`;
+        const owner = u.email.replace(/[^a-z0-9]/gi, '_');
         const keysToDelete = [];
         for (const key of Object.keys(localStorage)) {
-          if (key.startsWith(prefix)) {
+          // Clear all versions (v1..v5+) to prevent stale cross-version reads
+          if (key.includes(`mediaGallery`) && key.includes(owner)) {
             keysToDelete.push(key);
           }
         }
-        keysToDelete.forEach(key => {
-          localStorage.removeItem(key);
-          console.log(`[MediaGallery] Cleared cache on mount: ${key}`);
-        });
-        console.log(`[MediaGallery] Cache cleared synchronously on mount — ${keysToDelete.length} keys removed`);
+        keysToDelete.forEach(key => localStorage.removeItem(key));
+        console.log(`[MediaGallery] Mount cache bust: removed ${keysToDelete.length} keys`);
         cacheCleanedRef.current = true;
       }
     }).catch(() => {});
   }, []);
 
-  const fetchPage = useCallback(async (page, search, opts = {}) => {
+  const fetchPage = useCallback(async (page, search) => {
     if (!user?.email) return;
-    const { forceRefresh = false } = opts;
 
     const cacheKey = galleryPageCacheKey(user.email, page, search);
     const requestId = ++activeRequestRef.current;
+    const sessionKey = `${page}:${(search || '').trim()}`;
 
-    // ── CRITICAL: Reset per-request dedup FRESH on every fetch ──────────────────
-    // Page-based pagination: backend already deduped within its full scan.
-    // Frontend dedup here only prevents duplicates within this single response.
-    // Cross-page accumulation (stale IDs from prior sessions) causes empty results.
-    // MUST be a new Set() instance, not .clear() on old ref (clear doesn't help if ref held old pointers).
     seenImageIdsRef.current = new Set();
-    console.log(`[MediaGallery] Fetch initiated: page=${page} requestId=${requestId} seenImages reset`);
 
-    // ── STEP 1: ALWAYS CLEAR CACHE BEFORE FETCH (even on pagination changes) ────
+    // Always delete cache before fetching — no stale reads allowed
     await lfcDelete(user.email, cacheKey);
-    console.log(`[MediaGallery] Fetching fresh page=${page} (cache cleared before fetch)`);
-    setIsLoading(page === 1);
 
-    // ── STEP 2: Always fetch fresh backend (no cache bypass) ─────────────────────
-    setIsRefreshing(page > 1);
+    setIsLoading(true);
+    setIsRefreshing(true);
+
+    console.log(`[MediaGallery] fetchPage start page=${page} requestId=${requestId}`);
+
     try {
       const res = await base44.functions.invoke('fetchMediaGalleryPage', {
         page,
@@ -88,20 +86,35 @@ export default function MediaGallery() {
         searchTerm: search,
       });
 
+      // ── STALE REQUEST GUARD: discard if a newer request finished after us ──────
       if (requestId !== activeRequestRef.current) {
-        console.log(`[MediaGallery] Stale response for page=${page} — discarded`);
+        console.warn(`[MediaGallery] STALE RESPONSE discarded page=${page} requestId=${requestId} current=${activeRequestRef.current}`);
         return;
       }
 
       const data = res?.data;
-      if (!data) throw new Error('No data returned');
+      if (!data) throw new Error('No data returned from backend');
 
       const freshImages = data.images || [];
+      const proof = data.proof || {};
+      const uniqueFromBackend = proof.uniqueImagesCollected ?? 0;
 
-      // ── DEDUP: within this single response only (NOT across pages) ─────────────
-      // The backend already handles full-dataset dedup via normalized URL.
-      // This frontend dedup only catches cases where the same message appears
-      // twice in a single backend response (should not happen, but defensive).
+      // ── POISON DETECTION: reject responses that collapse the known index ────────
+      // If we previously saw N unique images for page 1 (total index), and this
+      // response reports far fewer, it is a partial/stale backend scan. Reject it.
+      const bestKnown = SESSION_BEST_COUNT[sessionKey] || 0;
+      if (page === 1 && uniqueFromBackend > 0 && bestKnown > 0 && uniqueFromBackend < bestKnown * 0.8) {
+        console.warn(`[MediaGallery] POISON REJECTED page=${page}: backend uniqueImages=${uniqueFromBackend} < 80% of best known=${bestKnown}. Keeping current display.`);
+        return;
+      }
+
+      // Update best-known count for this session key
+      if (uniqueFromBackend > bestKnown) {
+        SESSION_BEST_COUNT[sessionKey] = uniqueFromBackend;
+        console.log(`[MediaGallery] Best known index updated: ${uniqueFromBackend} unique images`);
+      }
+
+      // ── INTRA-RESPONSE DEDUP ──────────────────────────────────────────────────
       const responseDedup = new Set();
       const dedupedImages = freshImages.filter(img => {
         const key = img.id || img.messageId;
@@ -111,37 +124,43 @@ export default function MediaGallery() {
         return true;
       });
 
-      const dupCount = freshImages.length - dedupedImages.length;
-      if (dupCount > 0) {
-        console.warn(`[MediaGallery] Page=${page} intra-response duplicates removed: ${dupCount}`);
-      }
-      console.log(
-        `[MediaGallery] Page=${page} backend=${freshImages.length} dedupedThisPage=${dedupedImages.length} hasMore=${data.hasMore} uniqueImagesInBackendIndex=${data.proof?.uniqueImagesCollected ?? '?'}`
-      );
+      const promptCount = dedupedImages.filter(img => !!(img.displayPrompt || img.description)).length;
+      console.log(`[MediaGallery] Page=${page} returned=${dedupedImages.length} withPrompts=${promptCount} uniqueBackendIndex=${uniqueFromBackend} hasMore=${data.hasMore}`);
 
-      // ── BACKEND DATA IS SOURCE OF TRUTH — always update from fresh response ──
-      // Backend wins regardless of cache state.
-      // Only skip update if backend returned 0 images AND cache has valid data
-      // (protects against transient backend errors wiping a good gallery).
+      // ── WRITE TO DISPLAY — backend is always source of truth ──────────────────
       if (dedupedImages.length > 0) {
+        // Final stale check before writing to state
+        if (requestId !== activeRequestRef.current) return;
+
         setPageImages(dedupedImages);
-        lfcWrite(user.email, cacheKey, {
+        completedRequestRef.current = requestId;
+
+        // Write to cache WITH proof metadata for poison detection on cache reads
+        await lfcWrite(user.email, cacheKey, {
           images: dedupedImages,
           hasMore: data.hasMore === true,
-          proof: data.proof,
+          proof: {
+            ...proof,
+            _cacheWrittenAt: Date.now(),
+            _requestId: requestId,
+            _imageCount: dedupedImages.length,
+            _promptCount: promptCount,
+            _uniqueBackendIndex: uniqueFromBackend,
+          },
         });
       } else {
-        // Backend returned 0 images — legitimately empty or past end
+        // Legitimately empty page (past end of gallery)
+        if (requestId !== activeRequestRef.current) return;
         setPageImages([]);
-        console.log(`[MediaGallery] Page=${page} — backend returned 0 images. proof:`, data.proof);
+        console.log(`[MediaGallery] Page=${page} legitimately empty (past end). proof:`, proof);
       }
 
       setHasMore(data.hasMore === true);
-      setLastProof(data.proof || null);
+      setLastProof(proof);
 
     } catch (e) {
-      console.error('[MediaGallery] fetchPage error:', e.message);
-      // On error: keep showing cache if available, do not blank the gallery
+      console.error(`[MediaGallery] fetchPage error page=${page}:`, e.message);
+      // On error: do not blank gallery — keep existing pageImages visible
     } finally {
       if (requestId === activeRequestRef.current) {
         setIsLoading(false);
@@ -153,6 +172,7 @@ export default function MediaGallery() {
 
   useEffect(() => {
     if (user?.email) {
+      // Always fetch fresh — no cache read path
       fetchPage(currentPage, searchTerm);
     }
   }, [user?.email, currentPage, searchTerm, fetchPage]);
@@ -181,12 +201,18 @@ export default function MediaGallery() {
   };
 
   const handleManualRefresh = () => {
-    // Manual refresh: bypass cache entirely
-    if (user?.email) {
-      const cacheKey = galleryPageCacheKey(user.email, currentPage, searchTerm);
-      lfcDelete(user.email, cacheKey);
+    if (!user?.email) return;
+    // Nuke ALL gallery cache keys for this user, not just current page
+    const owner = user.email.replace(/[^a-z0-9]/gi, '_');
+    for (const key of Object.keys(localStorage)) {
+      if (key.includes('mediaGallery') && key.includes(owner)) {
+        localStorage.removeItem(key);
+      }
     }
-    fetchPage(currentPage, searchTerm, { forceRefresh: true });
+    // Also reset best-known counts so poison detection resets on manual refresh
+    Object.keys(SESSION_BEST_COUNT).forEach(k => delete SESSION_BEST_COUNT[k]);
+    console.log('[MediaGallery] Manual refresh: all cache busted, session counts reset');
+    fetchPage(currentPage, searchTerm);
   };
 
   const handleSelectImage = (image) => {
@@ -203,10 +229,16 @@ export default function MediaGallery() {
       });
       if (res?.data?.success) {
         setSelectedImage(null);
-        const cacheKey = galleryPageCacheKey(user.email, currentPage, searchTerm);
-        lfcDelete(user.email, cacheKey);
+        // Nuke all gallery cache keys to prevent deleted image reappearing
+        const owner = user.email.replace(/[^a-z0-9]/gi, '_');
+        for (const key of Object.keys(localStorage)) {
+          if (key.includes('mediaGallery') && key.includes(owner)) {
+            localStorage.removeItem(key);
+          }
+        }
+        Object.keys(SESSION_BEST_COUNT).forEach(k => delete SESSION_BEST_COUNT[k]);
         seenImageIdsRef.current = new Set();
-        fetchPage(currentPage, searchTerm, { forceRefresh: true });
+        fetchPage(currentPage, searchTerm);
       } else {
         alert(`Delete denied: ${res?.data?.error || 'Unknown error'}`);
       }
