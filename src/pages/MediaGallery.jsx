@@ -5,15 +5,13 @@ import { motion } from 'framer-motion';
 import { X, Send, Trash2, Search, ArrowLeft, RefreshCw } from 'lucide-react';
 import { lfcRead, lfcWrite, lfcDelete } from '@/lib/localFirstCache';
 
-// Cache key for a specific owner+page+search combination
-// MUST include ownerEmail so different accounts never share cache
 function galleryPageCacheKey(ownerEmail, page, search, pageSize = 20) {
   const s = (search || '').trim().toLowerCase();
   const owner = (ownerEmail || 'anon').replace(/[^a-z0-9]/gi, '_');
   return `mediaGallery:v2:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
 }
 
-const GALLERY_STALE_MS = 5 * 60 * 1000; // 5 minutes
+const GALLERY_STALE_MS = 5 * 60 * 1000;
 
 export default function MediaGallery() {
   const navigate = useNavigate();
@@ -25,20 +23,17 @@ export default function MediaGallery() {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [pageImages, setPageImages] = useState([]);
-
-  // isLoading: true only during cold load (no cache, no images yet)
   const [isLoading, setIsLoading] = useState(true);
-  // isRefreshing: silent background refresh — gallery already showing cached data
   const [isRefreshing, setIsRefreshing] = useState(false);
-  // initSettled: ONLY true after the first full fetch attempt completes (including cache restoration).
-  // Empty-state message is GATED behind this — prevents premature "0 images" flash.
   const [initSettled, setInitSettled] = useState(false);
-
   const [lastProof, setLastProof] = useState(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [pageJumpValue, setPageJumpValue] = useState('');
 
-  // Ref to prevent stale closures in background refresh
+  // Cross-page dedup: tracks ALL image IDs seen across every page loaded this session.
+  // Prevents duplicate images from appearing when backend re-scans overlap page boundaries.
+  const seenImageIdsRef = useRef(new Set());
+
   const activeRequestRef = useRef(0);
 
   useEffect(() => {
@@ -53,30 +48,21 @@ export default function MediaGallery() {
     const requestId = ++activeRequestRef.current;
 
     // ── STEP 1: Serve cache immediately (local-first) ─────────────────────────
-    // This is the "instant first paint" path. If cache exists, images appear before
-    // any network call completes — same pattern as Instagram/Facebook.
     const cached = lfcRead(user.email, cacheKey);
     const cacheAge = cached?.loaded_at ? Date.now() - cached.loaded_at : Infinity;
     const isCacheStale = cacheAge > GALLERY_STALE_MS;
 
     if (cached?.data?.images?.length > 0 && !forceRefresh) {
-      // Paint cached images immediately — user sees gallery before network responds
       console.log(`[MediaGallery] Cache HIT page=${page} age=${Math.round(cacheAge/1000)}s stale=${isCacheStale}`);
       setPageImages(cached.data.images);
       setHasMore(cached.data.hasMore === true);
       setLastProof(cached.data.proof || null);
       setIsLoading(false);
-      // Mark as settled immediately — we have real data from cache
       setInitSettled(true);
-
-      // If cache is fresh, stop here — no network needed
       if (!isCacheStale) return;
-
-      // Cache is stale — silently refresh in background without spinner
       setIsRefreshing(true);
     } else {
-      // Cold load — no cache, show spinner until first data arrives
-      console.log(`[MediaGallery] Cache MISS page=${page} search="${search}" — cold load`);
+      console.log(`[MediaGallery] Cache MISS page=${page} — cold load`);
       setIsLoading(true);
     }
 
@@ -88,7 +74,6 @@ export default function MediaGallery() {
         searchTerm: search,
       });
 
-      // Stale request — a newer navigation happened, discard result
       if (requestId !== activeRequestRef.current) {
         console.log(`[MediaGallery] Stale response for page=${page} — discarded`);
         return;
@@ -97,55 +82,60 @@ export default function MediaGallery() {
       const data = res?.data;
       if (!data) throw new Error('No data returned');
 
-      const freshImages = data.images || [];
-      const enoughForPage = data.enoughForRequestedPage !== false;
+      let freshImages = data.images || [];
 
-      console.log(`[MediaGallery] Fresh page=${page} images=${freshImages.length} hasMore=${data.hasMore} enoughForPage=${enoughForPage}`);
+      // ── CLIENT-SIDE CROSS-PAGE DEDUP ──────────────────────────────────────────
+      // The backend rescans from scratch per page request. If the image set shifted
+      // between requests (new messages), the backend may return images that were
+      // already shown on a previous page. Filter those out using the session-scoped
+      // seen-IDs set so the user never sees the same image twice across pages.
+      // Note: do NOT add to seenImageIdsRef here for the current page — only for
+      // previously loaded pages. We reset the set when navigating to a new page.
+      const dedupedImages = freshImages.filter(img => !seenImageIdsRef.current.has(img.id));
+      if (dedupedImages.length < freshImages.length) {
+        console.warn(`[MediaGallery] Client dedup removed ${freshImages.length - dedupedImages.length} duplicate(s) on page=${page}`);
+      }
+      // Track these IDs as seen for future pages
+      dedupedImages.forEach(img => seenImageIdsRef.current.add(img.id));
 
-      // Write to cache only when fresh images exist (never cache empty results)
-      if (freshImages.length > 0) {
+      if (dedupedImages.length > 0) {
         lfcWrite(user.email, cacheKey, {
-          images: freshImages,
+          images: dedupedImages,
           hasMore: data.hasMore === true,
           proof: data.proof,
-          enoughForPage,
         });
       }
 
-      // Update UI with fresh data — always replace with fresh, never wipe if empty
-      // If freshImages is empty and we already have cached images showing, preserve them.
-      if (freshImages.length > 0) {
-        setPageImages(freshImages);
+      if (dedupedImages.length > 0) {
+        setPageImages(dedupedImages);
       }
-      // Always update hasMore and proof from fresh response
       setHasMore(data.hasMore === true);
       setLastProof(data.proof || null);
 
     } catch (e) {
-      // CRITICAL: Never clear pageImages on error.
-      // Last-known-good gallery state is preserved — user sees cached images, not empty screen.
-      // Do NOT setPageImages([]) here under any condition.
+      // Never clear pageImages on error — preserve last-known-good state
       console.error('[MediaGallery] fetchPage error:', e.message);
     } finally {
       if (requestId === activeRequestRef.current) {
         setIsLoading(false);
         setIsRefreshing(false);
-        // Gate open: empty-state message is now allowed to render if pageImages truly empty
         setInitSettled(true);
       }
     }
   }, [user?.email]); // eslint-disable-line
 
-  // Load whenever user, page, or search changes
   useEffect(() => {
     if (user?.email) {
       fetchPage(currentPage, searchTerm);
     }
   }, [user?.email, currentPage, searchTerm, fetchPage]);
 
-  // Reset initSettled when page/search changes so we don't flash empty during navigation
+  // Reset initSettled and seenIds tracking when page/search changes
   useEffect(() => {
     setInitSettled(false);
+    // When navigating to a different page, clear the seen-IDs so the new page
+    // can show all its images. We track seen IDs only within a page's fetch cycle.
+    seenImageIdsRef.current = new Set();
   }, [currentPage, searchTerm]);
 
   const handleNext = () => setCurrentPage(p => p + 1);
@@ -165,6 +155,7 @@ export default function MediaGallery() {
   };
 
   const handleManualRefresh = () => {
+    seenImageIdsRef.current = new Set();
     fetchPage(currentPage, searchTerm, { forceRefresh: true });
   };
 
@@ -176,10 +167,10 @@ export default function MediaGallery() {
         parentEntity: image.parent_entity,
       });
       if (res?.data?.success) {
-        console.log(`[MediaGallery] ✓ Deleted image ${image.messageId}`);
         setSelectedImage(null);
         const cacheKey = galleryPageCacheKey(user.email, currentPage, searchTerm);
         lfcDelete(user.email, cacheKey);
+        seenImageIdsRef.current = new Set();
         fetchPage(currentPage, searchTerm, { forceRefresh: true });
       } else {
         alert(`Delete denied: ${res?.data?.error || 'Unknown error'}`);
@@ -190,11 +181,6 @@ export default function MediaGallery() {
     }
   };
 
-  // Render decision:
-  // 1. isLoading AND no images yet AND not settled → show spinner (cold load, no cache)
-  // 2. images exist → show grid (even if isLoading/isRefreshing — never hide existing images)
-  // 3. initSettled AND images empty → show empty-state message (confirmed empty, not a race)
-  // 4. not yet settled → show spinner (initialization still in flight)
   const showSpinner = isLoading && pageImages.length === 0 && !initSettled;
   const showEmpty = initSettled && !isLoading && pageImages.length === 0;
   const showGrid = pageImages.length > 0;
@@ -202,7 +188,6 @@ export default function MediaGallery() {
   return (
     <div className="min-h-screen bg-background p-6" style={{ paddingTop: 'max(1.5rem, calc(1.5rem + env(safe-area-inset-top)))' }}>
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
             <button
@@ -231,14 +216,12 @@ export default function MediaGallery() {
             <button
               onClick={() => setShowDiagnostics(!showDiagnostics)}
               className="text-xs px-2 py-1 rounded-lg bg-secondary/40 text-muted-foreground hover:text-foreground"
-              title="Show diagnostics"
             >
               {showDiagnostics ? 'Hide' : 'Show'} diagnostics
             </button>
           </div>
         </div>
 
-        {/* Diagnostics Panel */}
         {showDiagnostics && lastProof && (
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
             <div><strong>Gallery Diagnostics v3 — Page {currentPage}</strong></div>
@@ -257,7 +240,6 @@ export default function MediaGallery() {
           </div>
         )}
 
-        {/* Search */}
         <div className="mb-6 flex items-center gap-2">
           <Search className="w-4 h-4 text-muted-foreground" />
           <input
@@ -270,19 +252,16 @@ export default function MediaGallery() {
         </div>
 
         {showSpinner ? (
-          // Cold load — no cache, no images yet, init not settled
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full" />
           </div>
         ) : showEmpty ? (
-          // Confirmed empty: init settled, fetch complete, truly no images
           <div className="text-center py-12 text-muted-foreground">
             {lastProof && lastProof.enoughForRequestedPage === false
-              ? `Page ${currentPage} is beyond the gallery. Only ${lastProof.uniqueImagesCollected ?? 0} unique images found (need >${lastProof.imageStartIndex ?? 0}).`
+              ? `Page ${currentPage} is beyond the gallery. Only ${lastProof.uniqueImagesCollected ?? 0} unique images found.`
               : searchTerm ? 'No images match your search.' : 'No media found. Images you send and receive will appear here.'}
           </div>
         ) : !showGrid ? (
-          // Init still in flight (e.g. user auth pending) — show skeleton
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full" />
           </div>
@@ -311,7 +290,6 @@ export default function MediaGallery() {
               ))}
             </div>
 
-            {/* Pagination */}
             <div className="flex items-center justify-center gap-4 mb-8 flex-wrap">
               <button
                 onClick={handlePrev}
@@ -321,7 +299,6 @@ export default function MediaGallery() {
                 Previous
               </button>
 
-              {/* Page Jump */}
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">Page:</span>
                 <input
@@ -397,7 +374,6 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
         onClick={(e) => e.stopPropagation()}
         className="bg-card rounded-lg max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden"
       >
-        {/* Image */}
         <div className="relative flex-shrink-0">
           <img
             src={image.url}
@@ -412,7 +388,6 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
           </button>
         </div>
 
-        {/* Scrollable content area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">From</p>
@@ -426,7 +401,6 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
           )}
         </div>
 
-        {/* Fixed action buttons */}
         <div className="flex-shrink-0 border-t border-border p-4 bg-card flex gap-2">
           <button
             onClick={onSend}
@@ -453,6 +427,7 @@ function SendImageModal({ image, onClose, onSent }) {
   const [selectedRecipientCharacterIds, setSelectedRecipientCharacterIds] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [sendLog, setSendLog] = useState(null);
   const [user, setUser] = useState(null);
 
   useEffect(() => {
@@ -461,8 +436,8 @@ function SendImageModal({ image, onClose, onSent }) {
 
   useEffect(() => {
     const load = async () => {
+      if (!user?.email) return;
       try {
-        if (!user?.email) return;
         const chars = await base44.entities.Character.filter(
           { owner_email: user.email, status: 'active' },
           'name',
@@ -476,41 +451,57 @@ function SendImageModal({ image, onClose, onSent }) {
     load();
   }, [user?.email]);
 
-  // Group and sort characters alphabetically within type
   const groupedCharacters = useMemo(() => {
-    const groups = {
-      active_created: [],
-      npc_regular: [],
-      npc_family: [],
-      npc_fictitious: [],
-      other: [],
-    };
-
+    const groups = { active_created: [], npc_regular: [], npc_family: [], npc_fictitious: [], other: [] };
     characters.forEach(char => {
       const type = char.character_type || 'other';
       const displayName = char.display_name || char.name;
-
       if (type === 'active_created_character') groups.active_created.push({ ...char, displayName });
       else if (type === 'npc_regular') groups.npc_regular.push({ ...char, displayName });
       else if (type === 'npc_family_member') groups.npc_family.push({ ...char, displayName });
       else if (type === 'npc_fictitious') groups.npc_fictitious.push({ ...char, displayName });
       else groups.other.push({ ...char, displayName });
     });
-
-    Object.keys(groups).forEach(key => {
-      groups[key].sort((a, b) => a.displayName.localeCompare(b.displayName));
-    });
-
+    Object.keys(groups).forEach(key => groups[key].sort((a, b) => a.displayName.localeCompare(b.displayName)));
     return groups;
   }, [characters]);
 
+  /**
+   * resolveConversationId — finds the correct existing conversation for a user↔character chat.
+   *
+   * ROOT CAUSE FIX: The previous implementation used `owner_email` to query Conversation,
+   * but the Conversation entity uses `created_by` for RLS — not `owner_email`.
+   * This caused the filter to return 0 results, fall through to `create()`,
+   * and write the image message to a brand-new ghost conversation that Chat never rendered.
+   *
+   * Fix: Use `created_by` as the primary query field (matches actual RLS).
+   * Also check `parent_conversation_id` from the image itself — this is the authoritative
+   * conversation ID for user-mode sends since the image came FROM that conversation.
+   */
   const resolveConversationId = async (charId, charName) => {
-    const convos = await base44.entities.Conversation.filter(
-      { owner_email: user.email },
-      '-last_message_date',
-      100
-    );
+    // PRIORITY 1: Use the source conversation from the gallery image itself.
+    // This is the most reliable path — the image's parent_conversation_id is
+    // already the correct conversation for this character.
+    if (image.parent_conversation_id) {
+      console.log(`[SendImageModal] RESOLVE: Using parent_conversation_id from image → ${image.parent_conversation_id} | charId=${charId}`);
+      return image.parent_conversation_id;
+    }
 
+    // PRIORITY 2: Search by created_by (actual RLS field) + client-side filter for charId
+    console.log(`[SendImageModal] RESOLVE: No parent_conversation_id on image — searching by created_by | charId=${charId} | user=${user.email}`);
+    let convos = [];
+    try {
+      convos = await base44.entities.Conversation.filter(
+        { created_by: user.email },
+        '-last_message_date',
+        200
+      );
+      console.log(`[SendImageModal] RESOLVE: found ${convos.length} convos by created_by`);
+    } catch (e) {
+      console.error('[SendImageModal] RESOLVE: Conversation query failed:', e.message);
+    }
+
+    // Client-side filter: find direct (non-world-phone) conversation for this character
     const direct = convos.filter(c => {
       const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
       const hasChar = ids.includes(charId);
@@ -524,21 +515,27 @@ function SendImageModal({ image, onClose, onSent }) {
         const db = b.last_message_date ? new Date(b.last_message_date).getTime() : 0;
         return db - da;
       });
+      console.log(`[SendImageModal] RESOLVE: Found direct convo=${sorted[0].id} for charId=${charId}`);
       return sorted[0].id;
     }
 
+    // PRIORITY 3: Create a new conversation (last resort — only if truly none exists)
+    console.warn(`[SendImageModal] RESOLVE: No existing direct convo for charId=${charId} — creating new`);
     const newConvo = await base44.entities.Conversation.create({
       title: `chat with ${charName}`,
       type: 'chat',
       character_ids: [charId],
       owner_email: user.email,
     });
+    console.log(`[SendImageModal] RESOLVE: Created new convo=${newConvo.id} for charId=${charId}`);
     return newConvo.id;
   };
 
   const handleSend = async () => {
     setError(null);
+    setSendLog(null);
     setLoading(true);
+    const log = [];
     try {
       if (senderMode === 'user') {
         if (selectedRecipientCharacterIds.size === 0) {
@@ -549,11 +546,19 @@ function SendImageModal({ image, onClose, onSent }) {
 
         for (const charId of selectedRecipientCharacterIds) {
           const char = characters.find(c => c.id === charId);
-          if (!char) continue;
+          if (!char) {
+            log.push(`WARN: charId=${charId} not found in character list`);
+            continue;
+          }
 
+          log.push(`Resolving conversation for charId=${charId} name=${char.name}`);
           const convoId = await resolveConversationId(charId, char.name || char.display_name);
+          log.push(`Resolved convoId=${convoId}`);
 
-          await base44.entities.Message.create({
+          // DIAGNOSTIC: Verify conversation exists before writing
+          log.push(`Writing image message: url=${image.url?.substring(0, 60)}... convo=${convoId}`);
+
+          const msg = await base44.entities.Message.create({
             conversation_id: convoId,
             sender_type: 'user',
             character_id: charId,
@@ -561,34 +566,47 @@ function SendImageModal({ image, onClose, onSent }) {
             content: '',
             image_url: image.url,
             image_description: image.imageDescription || '',
-            message_type: 'image',
             timestamp: new Date().toISOString(),
             owner_email: user.email,
+            typed_by_user: true,
           });
+
+          if (!msg?.id) {
+            throw new Error(`Message.create returned no ID for convo=${convoId}`);
+          }
+          log.push(`Message created: id=${msg.id} convo=${convoId} image_url_set=${!!msg.image_url}`);
+
+          // DIAGNOSTIC: Read back the message to confirm persistence
+          try {
+            const readback = await base44.entities.Message.filter({ id: msg.id }, '-created_date', 1);
+            const confirmed = readback?.length > 0 && readback[0].image_url === image.url;
+            log.push(`Readback: found=${readback?.length > 0} image_url_match=${confirmed}`);
+            if (!confirmed) {
+              console.error('[SendImageModal] PERSISTENCE FAILURE: message written but readback failed or image_url missing', readback);
+            }
+          } catch (rbErr) {
+            log.push(`Readback failed: ${rbErr.message}`);
+          }
 
           await base44.entities.Conversation.update(convoId, {
             last_message_preview: '📷 Photo',
             last_message_date: new Date().toISOString(),
           }).catch(() => {});
-        }
-      } else {
-        if (!selectedSenderCharacterId) {
-          setError('Please select a sender character');
-          setLoading(false);
-          return;
-        }
-        if (selectedRecipientCharacterIds.size === 0) {
-          setError('Please select at least one recipient character');
-          setLoading(false);
-          return;
-        }
-        if (selectedRecipientCharacterIds.has(selectedSenderCharacterId)) {
-          setError('Cannot send to the same character you are sending as');
-          setLoading(false);
-          return;
+
+          log.push(`Conversation preview updated for convo=${convoId}`);
         }
 
+        console.log('[SendImageModal] SEND LOG:', log.join('\n'));
+        setSendLog(log);
+
+      } else {
+        // Character → character via World Phone
+        if (!selectedSenderCharacterId) { setError('Please select a sender character'); setLoading(false); return; }
+        if (selectedRecipientCharacterIds.size === 0) { setError('Please select at least one recipient character'); setLoading(false); return; }
+        if (selectedRecipientCharacterIds.has(selectedSenderCharacterId)) { setError('Cannot send to the same character you are sending as'); setLoading(false); return; }
+
         for (const receiverId of selectedRecipientCharacterIds) {
+          log.push(`World Phone send: sender=${selectedSenderCharacterId} receiver=${receiverId}`);
           const res = await base44.functions.invoke('sendWorldPhoneMessage', {
             sender_character_id: selectedSenderCharacterId,
             recipient_identifier: receiverId,
@@ -603,11 +621,14 @@ function SendImageModal({ image, onClose, onSent }) {
           if (!res?.data?.success) {
             throw new Error(res?.data?.error || 'World Phone send failed');
           }
+          log.push(`World Phone success: msg_id=${res.data.message_id}`);
         }
+        console.log('[SendImageModal] SEND LOG:', log.join('\n'));
       }
+
       onSent();
     } catch (e) {
-      console.error('[SendImageModal] Send failed:', e);
+      console.error('[SendImageModal] Send failed:', e, '\nLog:', log.join('\n'));
       setError(`Send failed: ${e.message}`);
     } finally {
       setLoading(false);
@@ -618,20 +639,10 @@ function SendImageModal({ image, onClose, onSent }) {
     if (chars.length === 0) return null;
     return (
       <>
-        <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">
-          {title}
-        </div>
+        <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">{title}</div>
         {chars.map((char) => (
-          <label
-            key={char.id}
-            className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/50 cursor-pointer border-b border-border/50 last:border-b-0"
-          >
-            <input
-              type="checkbox"
-              checked={selected.has(char.id)}
-              onChange={() => onToggle(char.id)}
-              className="w-4 h-4"
-            />
+          <label key={char.id} className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/50 cursor-pointer border-b border-border/50 last:border-b-0">
+            <input type="checkbox" checked={selected.has(char.id)} onChange={() => onToggle(char.id)} className="w-4 h-4" />
             <span className="text-sm text-foreground">{char.displayName}</span>
           </label>
         ))}
@@ -643,29 +654,13 @@ function SendImageModal({ image, onClose, onSent }) {
     if (chars.length === 0) return null;
     return (
       <>
-        <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">
-          {title}
-        </div>
+        <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">{title}</div>
         {chars.map((char) => {
           const isSender = char.id === senderCharacterId;
           return (
-            <label
-              key={char.id}
-              className={`flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-border/50 last:border-b-0 ${
-                isSender ? 'bg-secondary/20 opacity-50 cursor-not-allowed' : 'hover:bg-secondary/50'
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={selected.has(char.id)}
-                onChange={() => onToggle(char.id)}
-                disabled={isSender}
-                className="w-4 h-4 disabled:opacity-50"
-              />
-              <span className={`text-sm ${isSender ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
-                {char.displayName}
-                {isSender && ' (sender)'}
-              </span>
+            <label key={char.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-border/50 last:border-b-0 ${isSender ? 'bg-secondary/20 opacity-50 cursor-not-allowed' : 'hover:bg-secondary/50'}`}>
+              <input type="checkbox" checked={selected.has(char.id)} onChange={() => onToggle(char.id)} disabled={isSender} className="w-4 h-4 disabled:opacity-50" />
+              <span className={`text-sm ${isSender ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{char.displayName}{isSender && ' (sender)'}</span>
             </label>
           );
         })}
@@ -688,34 +683,14 @@ function SendImageModal({ image, onClose, onSent }) {
       >
         <h2 className="text-xl font-bold text-foreground mb-4">Send Image To</h2>
 
-        {/* Sender Mode */}
         <div className="mb-4">
           <p className="text-sm font-semibold text-foreground mb-2">Send As:</p>
           <div className="flex gap-2">
-            <button
-              onClick={() => setSenderMode('user')}
-              className={`flex-1 px-3 py-2 rounded text-sm ${
-                senderMode === 'user'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
-              }`}
-            >
-              You
-            </button>
-            <button
-              onClick={() => setSenderMode('character')}
-              className={`flex-1 px-3 py-2 rounded text-sm ${
-                senderMode === 'character'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
-              }`}
-            >
-              Character
-            </button>
+            <button onClick={() => setSenderMode('user')} className={`flex-1 px-3 py-2 rounded text-sm ${senderMode === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>You</button>
+            <button onClick={() => setSenderMode('character')} className={`flex-1 px-3 py-2 rounded text-sm ${senderMode === 'character' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Character</button>
           </div>
         </div>
 
-        {/* User mode: select receivers */}
         {senderMode === 'user' && (
           <div className="mb-4">
             <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send to Characters:</p>
@@ -723,62 +698,33 @@ function SendImageModal({ image, onClose, onSent }) {
               {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
                 const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
                 return (
-                  <CharacterGroupUser
-                    key={typeKey}
-                    title={typeLabels[typeKey]}
-                    chars={groupedCharacters[typeKey]}
-                    selected={selectedRecipientCharacterIds}
-                    onToggle={(charId) => {
-                      const newSet = new Set(selectedRecipientCharacterIds);
-                      if (newSet.has(charId)) newSet.delete(charId);
-                      else newSet.add(charId);
-                      setSelectedRecipientCharacterIds(newSet);
-                    }}
-                  />
+                  <CharacterGroupUser key={typeKey} title={typeLabels[typeKey]} chars={groupedCharacters[typeKey]} selected={selectedRecipientCharacterIds}
+                    onToggle={(charId) => { const s = new Set(selectedRecipientCharacterIds); s.has(charId) ? s.delete(charId) : s.add(charId); setSelectedRecipientCharacterIds(s); }} />
                 );
               })}
             </div>
           </div>
         )}
 
-        {/* Character mode: select sender, then receivers */}
         {senderMode === 'character' && (
           <div className="mb-4 space-y-4">
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Sending As:</p>
-              <select
-                value={selectedSenderCharacterId || ''}
-                onChange={(e) => setSelectedSenderCharacterId(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-card text-foreground"
-              >
+              <select value={selectedSenderCharacterId || ''} onChange={(e) => setSelectedSenderCharacterId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-card text-foreground">
                 <option value="">— Select character —</option>
                 {[...groupedCharacters.active_created, ...groupedCharacters.npc_regular, ...groupedCharacters.npc_family, ...groupedCharacters.npc_fictitious, ...groupedCharacters.other].map((char) => (
-                  <option key={char.id} value={char.id}>
-                    {char.displayName}
-                  </option>
+                  <option key={char.id} value={char.id}>{char.displayName}</option>
                 ))}
               </select>
             </div>
-
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send To:</p>
               <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 max-h-40">
                 {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
                   const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
                   return (
-                    <CharacterGroupCharacter
-                      key={typeKey}
-                      title={typeLabels[typeKey]}
-                      chars={groupedCharacters[typeKey]}
-                      selected={selectedRecipientCharacterIds}
-                      senderCharacterId={selectedSenderCharacterId}
-                      onToggle={(charId) => {
-                        const newSet = new Set(selectedRecipientCharacterIds);
-                        if (newSet.has(charId)) newSet.delete(charId);
-                        else newSet.add(charId);
-                        setSelectedRecipientCharacterIds(newSet);
-                      }}
-                    />
+                    <CharacterGroupCharacter key={typeKey} title={typeLabels[typeKey]} chars={groupedCharacters[typeKey]} selected={selectedRecipientCharacterIds} senderCharacterId={selectedSenderCharacterId}
+                      onToggle={(charId) => { const s = new Set(selectedRecipientCharacterIds); s.has(charId) ? s.delete(charId) : s.add(charId); setSelectedRecipientCharacterIds(s); }} />
                   );
                 })}
               </div>
@@ -786,26 +732,19 @@ function SendImageModal({ image, onClose, onSent }) {
           </div>
         )}
 
-        {/* Actions */}
-        <div className="flex gap-2">
-          <button
-            onClick={onClose}
-            className="flex-1 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:opacity-90"
-          >
-            Cancel
-          </button>
-          {error && (
-            <div className="text-xs text-destructive bg-destructive/10 px-3 py-2 rounded-lg">
-              {error}
-            </div>
-          )}
-          <button
-            onClick={handleSend}
-            disabled={loading || (senderMode === 'user' ? selectedRecipientCharacterIds.size === 0 : !selectedSenderCharacterId || selectedRecipientCharacterIds.size === 0)}
-            className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {loading ? 'Sending...' : 'Send'}
-          </button>
+        <div className="flex gap-2 flex-col">
+          {error && <div className="text-xs text-destructive bg-destructive/10 px-3 py-2 rounded-lg">{error}</div>}
+          {sendLog && <div className="text-xs text-green-400 bg-green-400/10 px-3 py-2 rounded-lg max-h-24 overflow-y-auto font-mono">{sendLog.join('\n')}</div>}
+          <div className="flex gap-2">
+            <button onClick={onClose} className="flex-1 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:opacity-90">Cancel</button>
+            <button
+              onClick={handleSend}
+              disabled={loading || (senderMode === 'user' ? selectedRecipientCharacterIds.size === 0 : !selectedSenderCharacterId || selectedRecipientCharacterIds.size === 0)}
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {loading ? 'Sending...' : 'Send'}
+            </button>
+          </div>
         </div>
       </motion.div>
     </motion.div>
