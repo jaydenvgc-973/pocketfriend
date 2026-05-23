@@ -3,22 +3,21 @@ import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { motion } from 'framer-motion';
 import { X, Send, Trash2, Search, ArrowLeft, RefreshCw } from 'lucide-react';
-import { lfcRead, lfcWrite, lfcDelete } from '@/lib/localFirstCache';
 
-// CACHE VERSION: v5 — cache is DISPLAY-FALLBACK ONLY. Never used to limit pagination.
-// Any response with fewer uniqueImagesCollected than the best known is rejected as poisoned.
-const GALLERY_CACHE_VERSION = 'v5';
-
-function galleryPageCacheKey(ownerEmail, page, search, pageSize = 20) {
-  const s = (search || '').trim().toLowerCase();
-  const owner = (ownerEmail || 'anon').replace(/[^a-z0-9]/gi, '_');
-  return `mediaGallery:${GALLERY_CACHE_VERSION}:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
+// ── CACHE NUKE: Remove ALL MediaGallery cache keys (all versions, all formats) ──
+// No gallery cache survives a mount or refresh. Backend is the ONLY source of truth.
+function nukeAllGalleryCache() {
+  const keysToDelete = [];
+  for (const key of Object.keys(localStorage)) {
+    if (key.includes('mediaGallery') || key.includes('gallery_page') || key.includes('MediaGallery')) {
+      keysToDelete.push(key);
+    }
+  }
+  keysToDelete.forEach(k => localStorage.removeItem(k));
+  if (keysToDelete.length > 0) {
+    console.log(`[MediaGallery] Nuked ${keysToDelete.length} stale cache keys`);
+  }
 }
-
-// Best-known unique image count for this session — used to reject poison responses
-// that report fewer images than a prior successful scan.
-// Keyed by "page:search" so each page tracks independently.
-const SESSION_BEST_COUNT = {};
 
 export default function MediaGallery() {
   const navigate = useNavigate();
@@ -37,47 +36,27 @@ export default function MediaGallery() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [pageJumpValue, setPageJumpValue] = useState('');
 
-  const seenImageIdsRef = useRef(new Set());
-  const activeRequestRef = useRef(0);   // Increments on every fetch — stale responders check against this
-  const completedRequestRef = useRef(0); // Tracks the highest requestId that completed a successful write
-  const cacheCleanedRef = useRef(false);
+  // Monotonically increasing request counter — any response with requestId < activeRequestRef is stale
+  const activeRequestRef = useRef(0);
+  // Per-page best known result — used to detect and reject poisoned responses
+  // { [page]: { imageCount, promptCount, firstId, requestId, completedAt } }
+  const bestResultRef = useRef({});
 
   useEffect(() => {
-    base44.auth.me().then(u => {
-      setUser(u);
-      // On mount: nuke ALL gallery cache keys for this user (all versions, all pages)
-      if (!cacheCleanedRef.current && u?.email) {
-        const owner = u.email.replace(/[^a-z0-9]/gi, '_');
-        const keysToDelete = [];
-        for (const key of Object.keys(localStorage)) {
-          // Clear all versions (v1..v5+) to prevent stale cross-version reads
-          if (key.includes(`mediaGallery`) && key.includes(owner)) {
-            keysToDelete.push(key);
-          }
-        }
-        keysToDelete.forEach(key => localStorage.removeItem(key));
-        console.log(`[MediaGallery] Mount cache bust: removed ${keysToDelete.length} keys`);
-        cacheCleanedRef.current = true;
-      }
-    }).catch(() => {});
+    // Nuke ALL gallery cache on every mount — navigation away/back, hard refresh, etc.
+    // No stale cache can poison the gallery state.
+    nukeAllGalleryCache();
+    base44.auth.me().then(u => setUser(u)).catch(() => {});
   }, []);
 
   const fetchPage = useCallback(async (page, search) => {
     if (!user?.email) return;
 
-    const cacheKey = galleryPageCacheKey(user.email, page, search);
     const requestId = ++activeRequestRef.current;
-    const sessionKey = `${page}:${(search || '').trim()}`;
-
-    seenImageIdsRef.current = new Set();
-
-    // Always delete cache before fetching — no stale reads allowed
-    await lfcDelete(user.email, cacheKey);
+    console.log(`[MediaGallery] Fetch initiated: page=${page} requestId=${requestId}`);
 
     setIsLoading(true);
-    setIsRefreshing(true);
-
-    console.log(`[MediaGallery] fetchPage start page=${page} requestId=${requestId}`);
+    setIsRefreshing(false);
 
     try {
       const res = await base44.functions.invoke('fetchMediaGalleryPage', {
@@ -86,35 +65,19 @@ export default function MediaGallery() {
         searchTerm: search,
       });
 
-      // ── STALE REQUEST GUARD: discard if a newer request finished after us ──────
+      // ── STALE REQUEST GUARD ───────────────────────────────────────────────────
+      // If a newer request was started while this one was in-flight, discard this result.
       if (requestId !== activeRequestRef.current) {
-        console.warn(`[MediaGallery] STALE RESPONSE discarded page=${page} requestId=${requestId} current=${activeRequestRef.current}`);
+        console.log(`[MediaGallery] Stale response discarded: page=${page} requestId=${requestId} current=${activeRequestRef.current}`);
         return;
       }
 
       const data = res?.data;
-      if (!data) throw new Error('No data returned from backend');
+      if (!data) throw new Error('No data returned');
 
       const freshImages = data.images || [];
-      const proof = data.proof || {};
-      const uniqueFromBackend = proof.uniqueImagesCollected ?? 0;
 
-      // ── POISON DETECTION: reject responses that collapse the known index ────────
-      // If we previously saw N unique images for page 1 (total index), and this
-      // response reports far fewer, it is a partial/stale backend scan. Reject it.
-      const bestKnown = SESSION_BEST_COUNT[sessionKey] || 0;
-      if (page === 1 && uniqueFromBackend > 0 && bestKnown > 0 && uniqueFromBackend < bestKnown * 0.8) {
-        console.warn(`[MediaGallery] POISON REJECTED page=${page}: backend uniqueImages=${uniqueFromBackend} < 80% of best known=${bestKnown}. Keeping current display.`);
-        return;
-      }
-
-      // Update best-known count for this session key
-      if (uniqueFromBackend > bestKnown) {
-        SESSION_BEST_COUNT[sessionKey] = uniqueFromBackend;
-        console.log(`[MediaGallery] Best known index updated: ${uniqueFromBackend} unique images`);
-      }
-
-      // ── INTRA-RESPONSE DEDUP ──────────────────────────────────────────────────
+      // ── INTRA-RESPONSE DEDUP (defensive only) ────────────────────────────────
       const responseDedup = new Set();
       const dedupedImages = freshImages.filter(img => {
         const key = img.id || img.messageId;
@@ -124,43 +87,54 @@ export default function MediaGallery() {
         return true;
       });
 
-      const promptCount = dedupedImages.filter(img => !!(img.displayPrompt || img.description)).length;
-      console.log(`[MediaGallery] Page=${page} returned=${dedupedImages.length} withPrompts=${promptCount} uniqueBackendIndex=${uniqueFromBackend} hasMore=${data.hasMore}`);
+      const newImageCount = dedupedImages.length;
+      const newPromptCount = dedupedImages.filter(img => !!img.displayPrompt).length;
+      const best = bestResultRef.current[page];
 
-      // ── WRITE TO DISPLAY — backend is always source of truth ──────────────────
+      console.log(`[MediaGallery] Page=${page} requestId=${requestId} images=${newImageCount} prompts=${newPromptCount} hasMore=${data.hasMore} totalIndex=${data.proof?.uniqueImagesCollected ?? '?'}`);
+
+      // ── POISON DETECTION ─────────────────────────────────────────────────────
+      // Reject any response that is significantly worse than our best known result
+      // for this page. "Worse" = >20% fewer images OR >20% fewer prompts.
+      // This blocks stale background scans from overwriting a good full scan.
+      if (best && newImageCount > 0) {
+        const promptCollapse = best.promptCount > 0 && newPromptCount < best.promptCount * 0.8;
+        const imageCollapse = best.imageCount > 0 && newImageCount < best.imageCount * 0.8;
+        if (promptCollapse || imageCollapse) {
+          console.warn(
+            `[MediaGallery] POISON REJECTED page=${page}: ` +
+            `new(imgs=${newImageCount},prompts=${newPromptCount}) vs best(imgs=${best.imageCount},prompts=${best.promptCount}) — keeping best`
+          );
+          // Do NOT update state or bestResult — the existing display is better
+          return;
+        }
+      }
+
+      // ── UPDATE BEST KNOWN RESULT ─────────────────────────────────────────────
+      if (!best || newImageCount >= best.imageCount) {
+        bestResultRef.current[page] = {
+          imageCount: newImageCount,
+          promptCount: newPromptCount,
+          firstId: dedupedImages[0]?.id || null,
+          requestId,
+          completedAt: Date.now(),
+        };
+      }
+
       if (dedupedImages.length > 0) {
-        // Final stale check before writing to state
-        if (requestId !== activeRequestRef.current) return;
-
         setPageImages(dedupedImages);
-        completedRequestRef.current = requestId;
-
-        // Write to cache WITH proof metadata for poison detection on cache reads
-        await lfcWrite(user.email, cacheKey, {
-          images: dedupedImages,
-          hasMore: data.hasMore === true,
-          proof: {
-            ...proof,
-            _cacheWrittenAt: Date.now(),
-            _requestId: requestId,
-            _imageCount: dedupedImages.length,
-            _promptCount: promptCount,
-            _uniqueBackendIndex: uniqueFromBackend,
-          },
-        });
       } else {
-        // Legitimately empty page (past end of gallery)
-        if (requestId !== activeRequestRef.current) return;
+        // Legitimately empty page (past end of gallery, empty search, etc.)
         setPageImages([]);
-        console.log(`[MediaGallery] Page=${page} legitimately empty (past end). proof:`, proof);
+        console.log(`[MediaGallery] Page=${page} — 0 images returned. proof:`, data.proof);
       }
 
       setHasMore(data.hasMore === true);
-      setLastProof(proof);
+      setLastProof(data.proof || null);
 
     } catch (e) {
-      console.error(`[MediaGallery] fetchPage error page=${page}:`, e.message);
-      // On error: do not blank gallery — keep existing pageImages visible
+      console.error('[MediaGallery] fetchPage error:', e.message);
+      // On error: keep existing display (do not blank the gallery)
     } finally {
       if (requestId === activeRequestRef.current) {
         setIsLoading(false);
@@ -172,7 +146,6 @@ export default function MediaGallery() {
 
   useEffect(() => {
     if (user?.email) {
-      // Always fetch fresh — no cache read path
       fetchPage(currentPage, searchTerm);
     }
   }, [user?.email, currentPage, searchTerm, fetchPage]);
@@ -192,26 +165,19 @@ export default function MediaGallery() {
   };
 
   const handleSearchChange = (val) => {
-    // Search change: clear cache keys related to search (new search = new dataset)
     setSearchTerm(val);
     setCurrentPage(1);
     setHasMore(true);
     setPageImages([]);
     setInitSettled(false);
+    // Clear best results on search change — new dataset
+    bestResultRef.current = {};
   };
 
   const handleManualRefresh = () => {
-    if (!user?.email) return;
-    // Nuke ALL gallery cache keys for this user, not just current page
-    const owner = user.email.replace(/[^a-z0-9]/gi, '_');
-    for (const key of Object.keys(localStorage)) {
-      if (key.includes('mediaGallery') && key.includes(owner)) {
-        localStorage.removeItem(key);
-      }
-    }
-    // Also reset best-known counts so poison detection resets on manual refresh
-    Object.keys(SESSION_BEST_COUNT).forEach(k => delete SESSION_BEST_COUNT[k]);
-    console.log('[MediaGallery] Manual refresh: all cache busted, session counts reset');
+    // On manual refresh: nuke cache, reset best results, re-fetch
+    nukeAllGalleryCache();
+    bestResultRef.current = {};
     fetchPage(currentPage, searchTerm);
   };
 
@@ -229,15 +195,8 @@ export default function MediaGallery() {
       });
       if (res?.data?.success) {
         setSelectedImage(null);
-        // Nuke all gallery cache keys to prevent deleted image reappearing
-        const owner = user.email.replace(/[^a-z0-9]/gi, '_');
-        for (const key of Object.keys(localStorage)) {
-          if (key.includes('mediaGallery') && key.includes(owner)) {
-            localStorage.removeItem(key);
-          }
-        }
-        Object.keys(SESSION_BEST_COUNT).forEach(k => delete SESSION_BEST_COUNT[k]);
-        seenImageIdsRef.current = new Set();
+        nukeAllGalleryCache();
+        bestResultRef.current = {};
         fetchPage(currentPage, searchTerm);
       } else {
         alert(`Delete denied: ${res?.data?.error || 'Unknown error'}`);
@@ -291,7 +250,7 @@ export default function MediaGallery() {
 
         {showDiagnostics && lastProof && (
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
-            <div><strong>Gallery Diagnostics v4 (offset-based) — Page {currentPage}</strong></div>
+            <div><strong>Gallery Diagnostics v5 (no-cache) — Page {currentPage}</strong></div>
             <div>owner: {user?.email || 'unknown'}</div>
             <div>initSettled: {initSettled ? 'YES' : 'no'} | isLoading: {isLoading ? 'yes' : 'NO'} | isRefreshing: {isRefreshing ? 'yes' : 'NO'}</div>
             <div>imageStart: {lastProof.imageStartIndex ?? lastProof.skip ?? 'n/a'} | imageEnd: {lastProof.imageEndIndex ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
@@ -304,6 +263,7 @@ export default function MediaGallery() {
             <div>firstId: {lastProof.firstImageId || 'n/a'} | firstDate: {lastProof.firstImageDate || lastProof.firstImageTimestamp || 'n/a'}</div>
             <div>lastId: {lastProof.lastImageId || 'n/a'} | lastDate: {lastProof.lastImageDate || lastProof.lastImageTimestamp || 'n/a'}</div>
             <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'}</div>
+            <div>bestKnown[p{currentPage}]: imgs={bestResultRef.current[currentPage]?.imageCount ?? 'n/a'} prompts={bestResultRef.current[currentPage]?.promptCount ?? 'n/a'}</div>
             {lastProof.terminationReason === 'runtime_limit' && (
               <div className="text-amber-400">⚠ Scan hit time limit — some older images may not be indexed. Try refreshing.</div>
             )}
@@ -679,7 +639,6 @@ function SendImageModal({ image, onClose, onSent }) {
 
           const recipientIsInImage = image.subjectIds && image.subjectIds.includes(charId);
           const subjectNamesStr = image.subjectNames && image.subjectNames.length > 0 ? image.subjectNames.join(', ') : null;
-          // Use backend-cleaned displayPrompt; it's already sanitized
           const resolvedDisplayPrompt = image.displayPrompt || image.imageDescription || null;
 
           const parts = [];
@@ -735,7 +694,6 @@ function SendImageModal({ image, onClose, onSent }) {
 
         for (const receiverId of selectedRecipientCharacterIds) {
          log.push(`World Phone: sender=${selectedSenderCharacterId} → receiver=${receiverId}`);
-         // Use backend-cleaned displayPrompt for World Phone
          const wpResolvedPrompt = image.displayPrompt || image.imageDescription || null;
          const wpDescription = wpResolvedPrompt || image.imageDescription || '';
           log.push(`World Phone: image_url=${image.url?.substring(0,60)}... descLen=${wpDescription.length}`);
