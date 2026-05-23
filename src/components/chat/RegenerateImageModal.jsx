@@ -119,6 +119,22 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   // Diagnostics for the failure panel
   const [rosterDiagnostics, setRosterDiagnostics] = useState(null);
 
+  // ── PROMPT-DERIVED IDENTITY ────────────────────────────────────────────────
+  // Parse [CHARACTER] Name or [CHARACTER] FirstName from prompt as authoritative subject identity.
+  // This is a first-class identity source — survives roster failure.
+  // Returns { name: string|null, token: string|null }
+  const parsedPromptIdentity = (() => {
+    const src = originalPrompt || generationContext?.scene_prompt || generationContext?.prompt || '';
+    if (!src) return { name: null, token: null };
+    // Match [CHARACTER] Name — capture multi-word name up to comma/period/end
+    const m = src.match(/^\[CHARACTER\]\s+([A-Za-z][A-Za-z\s'-]{1,40}?)(?:\s*[,.]|$|\s+(?:sitting|standing|lying|in |at |on |with |looking|wearing|shirtless|groggy|smiling|holding|walking|running|leaning|facing|near|by ))/i);
+    if (m) return { name: m[1].trim(), token: '[CHARACTER]' };
+    // Fallback: any [CHARACTER] at start of prompt
+    const m2 = src.match(/^\[CHARACTER\]\s+(\S+(?:\s+\S+)?)/i);
+    if (m2) return { name: m2[1].trim(), token: '[CHARACTER]' };
+    return { name: null, token: null };
+  })();
+
   useEffect(() => {
     base44.auth.me().then(u => {
       if (u?.email) {
@@ -459,21 +475,51 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
               ) : rosterLoadStatus === 'error' ? (
                 <>
                   {/* Current chat character fallback — always usable even when full roster fails */}
-                  {generationContext?.character_id && (
-                    <div className="rounded-xl border border-border bg-card p-2 mb-2">
-                      <p className="text-[10px] text-muted-foreground px-1 mb-1">Character from this image (roster load failed):</p>
-                      <button
-                        onClick={() => toggleSubject(generationContext.character_id)}
-                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${selectedSubjectIds.includes(generationContext.character_id) ? 'bg-primary/10 text-primary border border-primary/30' : 'text-foreground hover:bg-secondary'}`}
-                      >
-                        {selectedSubjectIds.includes(generationContext.character_id) && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
-                        <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">
-                          {(generationContext.character_name || '?')[0].toUpperCase()}
-                        </div>
-                        <span className="font-medium">{generationContext.character_name || 'Character'}</span>
-                      </button>
-                    </div>
-                  )}
+                  {(() => {
+                    // Resolve the best available character name:
+                    // Priority: ctx.character_name → ctx.subjects[0].subject_name → prompt-derived [CHARACTER] Name
+                    // If no real name is resolvable, do NOT show a "Character" generic placeholder
+                    // that would allow generation with unknown identity → Caucasian default.
+                    const resolvedName =
+                      generationContext?.character_name ||
+                      (generationContext?.subjects?.find(s => s.subject_type !== 'user')?.subject_name) ||
+                      parsedPromptIdentity.name ||
+                      null;
+                    const resolvedId = generationContext?.character_id || null;
+                    const identityConfident = !!(resolvedName && resolvedId);
+
+                    if (!resolvedId && !resolvedName) return null;
+
+                    return (
+                      <div className="rounded-xl border border-border bg-card p-2 mb-2">
+                        <p className="text-[10px] text-muted-foreground px-1 mb-1">
+                          {identityConfident
+                            ? 'Character from this image (roster load failed):'
+                            : 'Character identity (from prompt — roster unavailable):'}
+                        </p>
+                        {!identityConfident && (
+                          <div className="mb-1.5 px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-400">
+                            ⚠️ Character ID missing. Load the roster before regenerating to ensure identity lock.
+                          </div>
+                        )}
+                        {resolvedId && (
+                          <button
+                            onClick={() => toggleSubject(resolvedId)}
+                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${selectedSubjectIds.includes(resolvedId) ? 'bg-primary/10 text-primary border border-primary/30' : 'text-foreground hover:bg-secondary'}`}
+                          >
+                            {selectedSubjectIds.includes(resolvedId) && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                            <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">
+                              {(resolvedName || '?')[0].toUpperCase()}
+                            </div>
+                            <span className="font-medium">{resolvedName || 'Unknown character'}</span>
+                            {!resolvedName && (
+                              <span className="text-[10px] text-amber-400 ml-1">(name unknown)</span>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive space-y-1.5">
                     <p className="font-medium">Character list failed to load.</p>
                     <p className="text-destructive/70">Could not fetch your characters. This is a load failure — not an empty account.</p>
@@ -615,22 +661,50 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                   </div>
                 </>
               )}
-              <div className="flex gap-2">
-                <button
-                  onClick={() => { setShowSubjectPicker(false); setSelectedSubjectIds([]); }}
-                  className="flex-1 py-2.5 rounded-2xl border border-border text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Back
-                </button>
-                <button
-                  onClick={handleConfirmSubjectPicker}
-                  disabled={selectedSubjectIds.length === 0 || isRegenerating}
-                  className="flex-1 py-2.5 rounded-2xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {isRegenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                  Regenerate
-                </button>
-              </div>
+              {(() => {
+                // IDENTITY LOCK GATE: Block Regenerate when roster failed AND none of the
+                // selected subjects can be verified as a real named character.
+                // This prevents "Character" (unknown) placeholder from triggering generation
+                // with no identity = Caucasian default substitution.
+                const rosterFailed = rosterLoadStatus === 'error';
+                const hasVerifiedSubject = selectedSubjectIds.some(id => {
+                  if (id === '__user__') return true; // user persona is always valid
+                  // Check if this ID has a known name from roster OR from context/prompt
+                  const rosterEntry = allCharacters.find(c => (c.canonical_person_id || c.id) === id);
+                  if (rosterEntry?.name) return true;
+                  // Fallback: check context
+                  const ctxName = generationContext?.character_name ||
+                    generationContext?.subjects?.find(s => s.subject_id === id)?.subject_name ||
+                    parsedPromptIdentity.name;
+                  return !!(ctxName && ctxName.trim().length > 0);
+                });
+                const blocked = rosterFailed && !hasVerifiedSubject;
+                return (
+                  <div className="space-y-2">
+                    {blocked && (
+                      <div className="px-2 py-1.5 rounded-xl bg-destructive/10 border border-destructive/30 text-[10px] text-destructive">
+                        Character identity could not be confirmed. Retry loading the roster first — the app will not generate a replacement person.
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setShowSubjectPicker(false); setSelectedSubjectIds([]); }}
+                        className="flex-1 py-2.5 rounded-2xl border border-border text-sm text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        Back
+                      </button>
+                      <button
+                        onClick={handleConfirmSubjectPicker}
+                        disabled={selectedSubjectIds.length === 0 || isRegenerating || blocked}
+                        className="flex-1 py-2.5 rounded-2xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {isRegenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                        Regenerate
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           ) : showLocationPicker ? (
             <div className="p-4 space-y-3">
@@ -721,15 +795,48 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                 {promptMode === "dont_like" && (
                   <div className="space-y-1.5">
                     <p className="text-[10px] text-muted-foreground/60">Original prompt pre-loaded below. Every word is treated as a mandatory visual requirement — edit to adjust the scene.</p>
-                    {generationContext?.subjects?.length > 0 || generationContext?.character_id ? (
-                      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                        <span className="text-[10px] text-blue-400 font-medium">Subject locked:</span>
-                        <span className="text-[10px] text-blue-300">
-                          {generationContext?.subjects?.map(s => s.subject_name).filter(Boolean).join(' + ') ||
-                           generationContext?.character_name || 'the character in this image'}
-                        </span>
-                      </div>
-                    ) : null}
+                    {(() => {
+                      // Resolve locked subject name using full priority chain:
+                      // 1. ctx.subjects names  2. ctx.character_name  3. prompt [CHARACTER] token
+                      const subjectNames = (generationContext?.subjects || [])
+                        .map(s => s.subject_name).filter(Boolean);
+                      const resolvedSubjectDisplay =
+                        subjectNames.length > 0
+                          ? subjectNames.join(' + ')
+                          : generationContext?.character_name ||
+                            parsedPromptIdentity.name ||
+                            null;
+                      const hasId = !!(generationContext?.character_id || generationContext?.subjects?.length > 0);
+                      const identitySource = subjectNames.length > 0 ? 'subjects_bundle'
+                        : generationContext?.character_name ? 'ctx_character_name'
+                        : parsedPromptIdentity.name ? 'prompt_token'
+                        : 'unresolved';
+                      if (!resolvedSubjectDisplay && !hasId) return null;
+                      return (
+                        <div className="space-y-1">
+                          <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border ${
+                            identitySource === 'unresolved'
+                              ? 'bg-amber-500/10 border-amber-500/20'
+                              : 'bg-blue-500/10 border-blue-500/20'
+                          }`}>
+                            <span className={`text-[10px] font-medium ${identitySource === 'unresolved' ? 'text-amber-400' : 'text-blue-400'}`}>
+                              Subject locked:
+                            </span>
+                            <span className={`text-[10px] ${identitySource === 'unresolved' ? 'text-amber-300' : 'text-blue-300'}`}>
+                              {resolvedSubjectDisplay || 'ID only (name unknown — load roster for full lock)'}
+                            </span>
+                            {identitySource === 'prompt_token' && (
+                              <span className="text-[9px] text-blue-400/60 ml-auto">(from prompt)</span>
+                            )}
+                          </div>
+                          {identitySource === 'unresolved' && (
+                            <p className="text-[9px] text-amber-400/70 px-1">
+                              Character name could not be resolved. The backend will attempt name resolution from the prompt before generating.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
                 <textarea

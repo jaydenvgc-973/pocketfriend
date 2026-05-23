@@ -675,28 +675,20 @@ Deno.serve(async (req) => {
     } else if (reason === 'custom_prompt' && customPrompt?.trim()) {
       scenePromptRaw = customPrompt.trim();
     }
-    // CAUCASIAN-DEFAULT GUARD: If the prompt is blank, do NOT generate a generic person.
-    // A blank prompt with no identity data will produce a Caucasian default — block this.
-    if (!scenePromptRaw) {
-      if (!effectiveCharId && !originalCharId) {
-        console.error(`[regenerateImageWithReason] ❌ CAUCASIAN-DEFAULT GUARD: blank prompt + no character ID. Blocking.`);
-        return Response.json({
-          success: false,
-          error: 'The original image prompt is missing. Regeneration is blocked until the subject is confirmed — the app will not invent a default person.',
-          identity_missing: true,
-          caucasian_default_blocked: true,
-        });
-      }
-      scenePromptRaw = 'candid natural moment, everyday life';
-    }
 
     // ── PROMPT-NAMED SUBJECT RESOLUTION ──────────────────────────────────────
-    // For dont_like / custom_prompt: the prompt is the AUTHORITY on who the subject is.
-    // If the prompt explicitly names a character (e.g. "Ethan at the gym"), we must load
-    // THAT character's identity — not blindly use whoever was the sender.
-    // This prevents the sender's identity from overriding the actual named subject.
+    // Run for ALL reasons — the prompt is always a valid identity authority.
+    // A [CHARACTER] Name token in the prompt is the highest-confidence named identity source.
+    // This prevents a missing/null generation_context.character_id from causing Caucasian-default
+    // generation when the prompt already explicitly names the subject.
+    //
+    // Identity resolution order:
+    //   1. Explicit [CHARACTER] token parsed from start of prompt (highest priority)
+    //   2. Full name match anywhere in prompt
+    //   3. First-name match (4+ chars, fallback)
+    //   → Falls through to originalCharId if prompt name scan fails
     let promptNamedCharId = null;
-    if ((reason === 'dont_like' || reason === 'custom_prompt') && scenePromptRaw) {
+    if (scenePromptRaw) {
       try {
         const allChars = await base44.asServiceRole.entities.Character.filter(
           { owner_email: requestingUser }, null, 100
@@ -704,13 +696,35 @@ Deno.serve(async (req) => {
         const promptLowerForName = scenePromptRaw.toLowerCase();
         // Sort by name length descending so "Jordan Smith" matches before "Jordan"
         const sortedChars = [...allChars].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+
+        // Phase 0: [CHARACTER] token — parse name from start of prompt (HIGHEST PRIORITY)
+        // e.g. "[CHARACTER] Ethan Thompson sitting on..." → "Ethan Thompson"
+        const characterTokenMatch = scenePromptRaw.match(/^\[CHARACTER\]\s+([A-Za-z][A-Za-z\s'-]{1,40}?)(?:\s*[,.]|$|\s+(?:sitting|standing|lying|in |at |on |with |looking|wearing|shirtless|groggy|smiling|holding|walking|running|leaning|facing|near|by ))/i);
+        const characterTokenName = characterTokenMatch ? characterTokenMatch[1].trim().toLowerCase() : null;
+        if (characterTokenName) {
+          const tokenMatch = sortedChars.find(c =>
+            c.name && c.status !== 'deleted' && c.status !== 'soft_deleted' &&
+            (c.name.toLowerCase() === characterTokenName ||
+             c.name.toLowerCase().startsWith(characterTokenName) ||
+             characterTokenName.startsWith(c.name.toLowerCase()))
+          );
+          if (tokenMatch) {
+            promptNamedCharId = tokenMatch.id;
+            console.log(`[regenerateImageWithReason] ✅ [CHARACTER] token resolved: "${tokenMatch.name}" (id=${tokenMatch.id}) from token="${characterTokenName}"`);
+          } else {
+            console.warn(`[regenerateImageWithReason] ⚠️ [CHARACTER] token found ("${characterTokenName}") but no roster match — will try full-name scan`);
+          }
+        }
+
         // Phase 1: exact full-name match (most collision-safe)
-        for (const c of sortedChars) {
-          if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted') continue;
-          if (promptLowerForName.includes(c.name.toLowerCase())) {
-            promptNamedCharId = c.id;
-            console.log(`[regenerateImageWithReason] ✅ Prompt names character (full name): "${c.name}" (id=${c.id})`);
-            break;
+        if (!promptNamedCharId) {
+          for (const c of sortedChars) {
+            if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted') continue;
+            if (promptLowerForName.includes(c.name.toLowerCase())) {
+              promptNamedCharId = c.id;
+              console.log(`[regenerateImageWithReason] ✅ Prompt names character (full name): "${c.name}" (id=${c.id})`);
+              break;
+            }
           }
         }
         // Phase 2: first-name match (fallback — 4+ chars to avoid short-name false positives)
@@ -730,6 +744,21 @@ Deno.serve(async (req) => {
       }
     }
 
+    // CAUCASIAN-DEFAULT GUARD: If the prompt is blank AND we have no identity at all, block.
+    // A blank prompt with no identity data will produce a Caucasian default.
+    if (!scenePromptRaw && !promptNamedCharId && !originalCharId) {
+      console.error(`[regenerateImageWithReason] ❌ CAUCASIAN-DEFAULT GUARD: blank prompt + no character ID. Blocking.`);
+      return Response.json({
+        success: false,
+        error: 'The original image prompt is missing. Regeneration is blocked until the subject is confirmed — the app will not invent a default person.',
+        identity_missing: true,
+        caucasian_default_blocked: true,
+      });
+    }
+    if (!scenePromptRaw) {
+      scenePromptRaw = 'candid natural moment, everyday life';
+    }
+
     // ── ROLE-AWARE SUBJECT SEPARATION ────────────────────────────────────────
     // intendedSubjectIds may contain '__user__' (user/world persona) AND real Character IDs.
     // '__user__' is NEVER a Character.id — it must be separated before any Character lookup.
@@ -738,7 +767,8 @@ Deno.serve(async (req) => {
     const intendedCharacterIds = (intendedSubjectIds || []).filter(id => id !== '__user__');
 
     // For no_avatar: user explicitly selected who the image was supposed to show.
-    // For dont_like/custom_prompt: use prompt-named character if found, else original.
+    // For all reasons: prompt-named character (including [CHARACTER] token) takes priority over originalCharId.
+    // This ensures prompt identity always wins over stale/null generation_context.character_id.
     const effectiveCharId = (reason === 'no_avatar' && intendedCharacterIds.length > 0)
       ? intendedCharacterIds[0]
       : (promptNamedCharId || originalCharId);
@@ -1166,11 +1196,14 @@ Deno.serve(async (req) => {
     console.log(`[IdentityAudit][regen] zone_resolved:           ${resolvedZoneName || 'none'}`);
     console.log(`[IdentityAudit][regen] subject_source:          ${
       reason === 'no_avatar' && intendedSubjectIds?.length > 0 ? 'user_picker_selection' :
+      promptNamedCharId && scenePromptRaw?.match(/^\[CHARACTER\]/i) ? 'prompt_character_token' :
       promptNamedCharId ? 'prompt_name_scan' :
       firstStructuredSubjectId ? 'structured_subjects_array' :
       ctx.character_id ? 'ctx_character_id_legacy' :
       'message_character_id_fallback'
     }`);
+    console.log(`[IdentityAudit][regen] prompt_token_present:    ${!!scenePromptRaw?.match(/^\[CHARACTER\]/i)}`);
+    console.log(`[IdentityAudit][regen] prompt_named_char_id:    ${promptNamedCharId || 'none'}`);
     console.log(`[IdentityAudit][regen] ══════════════════════════════════════════════`);
 
     console.log(`[regenerateImageWithReason] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | reason=${reason} | includeUser=${!!includeUserSubject}`);
