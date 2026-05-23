@@ -407,8 +407,15 @@ export default function MediaGallery() {
 }
 
 function ImageDetailModal({ image, onClose, onSend, onDelete }) {
-  // Resolve the best display prompt, in priority order
-  const displayPrompt = image.originalPrompt || image.generationPrompt || image.scenePrompt || null;
+  // Resolve the best display prompt — full fallback chain matching backend output.
+  // image.description is already the resolved value from fetchMediaGalleryPage.
+  const displayPrompt =
+    image.originalPrompt ||
+    image.generationPrompt ||
+    image.scenePrompt ||
+    image.description ||
+    image.imageDescription ||
+    null;
   const hasSubjects = image.subjectNames && image.subjectNames.length > 0;
 
   return (
@@ -676,10 +683,20 @@ function SendImageModal({ image, onClose, onSent }) {
           // Build a compact image_description for the recipient that combines
           // vision analysis + prompt context + subject identity.
           // This is what the character LLM reads when deciding how to respond.
+          // Resolve the best available description for character context injection.
+          // Use the same chain as the gallery display so the character always gets real context.
+          const resolvedDisplayPrompt =
+            image.originalPrompt ||
+            image.generationPrompt ||
+            image.scenePrompt ||
+            image.description ||
+            image.imageDescription ||
+            null;
+
           const parts = [];
           if (image.imageDescription) parts.push(image.imageDescription);
-          if (image.originalPrompt && image.originalPrompt !== image.imageDescription) {
-            parts.push(`[Original prompt: ${image.originalPrompt}]`);
+          if (resolvedDisplayPrompt && resolvedDisplayPrompt !== image.imageDescription) {
+            parts.push(`[Original prompt: ${resolvedDisplayPrompt}]`);
           }
           if (subjectNamesStr) parts.push(`[People shown: ${subjectNamesStr}]`);
           if (image.locationName) parts.push(`[Location: ${image.locationName}${image.zoneName ? ' — ' + image.zoneName : ''}]`);
@@ -690,15 +707,26 @@ function SendImageModal({ image, onClose, onSent }) {
           // generation_context carries the full subject/prompt metadata through to the
           // character response pipeline. ALIGNED WITH ForwardMessageModal: do NOT write
           // owner_email — it can cause RLS scope issues preventing Chat page readback.
+          // Merge resolved_description into generation_context so the LLM always has it.
+          const mergedGenerationContext = image.generationContext
+            ? {
+                ...image.generationContext,
+                resolved_description: resolvedDisplayPrompt || composedDescription || undefined,
+                original_raw_prompt: image.generationContext.original_raw_prompt || image.originalPrompt || resolvedDisplayPrompt || undefined,
+              }
+            : resolvedDisplayPrompt
+            ? { resolved_description: resolvedDisplayPrompt, original_raw_prompt: resolvedDisplayPrompt }
+            : undefined;
+
           const msg = await base44.entities.Message.create({
             conversation_id: destConvoId,
             sender_type: 'user',
             content: '',
             image_url: image.url,
-            image_description: composedDescription,
-            image_analysis_status: composedDescription ? 'complete' : 'pending',
+            image_description: composedDescription || resolvedDisplayPrompt || undefined,
+            image_analysis_status: (composedDescription || resolvedDisplayPrompt) ? 'complete' : 'pending',
             // Carry generation_context so character response pipeline has full subject metadata
-            generation_context: image.generationContext || undefined,
+            generation_context: mergedGenerationContext,
             timestamp: new Date().toISOString(),
           });
 

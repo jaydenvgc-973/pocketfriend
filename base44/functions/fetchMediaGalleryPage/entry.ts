@@ -227,7 +227,23 @@ Deno.serve(async (req) => {
       //   2. generation_context.prompt (the final assembled prompt sent to image API)
       //   3. generation_context.scene_prompt
       //   4. image_description (vision-analyzed description)
-      const originalPrompt = gc?.original_raw_prompt || gc?.prompt || gc?.scene_prompt || null;
+      // Resolve the best available prompt/description — full fallback chain.
+      // Priority: typed original prompt → assembled prompt → scene prompt → vision description
+      const originalPrompt =
+        gc?.original_raw_prompt ||
+        gc?.prompt ||
+        gc?.scene_prompt ||
+        m.image_description ||
+        null;
+
+      // Resolved display description — what the gallery modal shows under PROMPT / CONTEXT.
+      // This is the single field the UI should trust for display.
+      const resolvedDescription =
+        gc?.original_raw_prompt ||
+        gc?.prompt ||
+        gc?.scene_prompt ||
+        m.image_description ||
+        null;
 
       // Extract subject metadata (people/characters shown in the image)
       const subjects = gc?.subjects || [];
@@ -237,7 +253,7 @@ Deno.serve(async (req) => {
       return {
         id: m.id,
         url: m.image_url,
-        description: m.image_description || '',
+        description: resolvedDescription || '',
         imageDescription: m.image_description || '',
         // ── RESTORED PROMPT/CONTEXT FIELDS ──
         originalPrompt,
