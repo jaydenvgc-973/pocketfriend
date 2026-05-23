@@ -295,7 +295,7 @@ Deno.serve(async (req) => {
     //   1. The gallery detail view can display the original prompt/caption.
     //   2. Send-to-character writes this context onto the recipient message so the
     //      receiving character's LLM knows who/what is in the image.
-    const pageImages = pageSlice.map(m => {
+    const pageImages = pageSlice.map((m, idx) => {
       const gc = m.generation_context || null;
 
       // Extract the most descriptive prompt available, in priority order:
@@ -309,7 +309,7 @@ Deno.serve(async (req) => {
       // It must NEVER be used as the display description — it's unreadable and not the scene.
       // gc.scene_prompt and m.image_description are the clean human-readable values.
       const gcPromptIfShort = (gc?.prompt && gc.prompt.length < 400) ? gc.prompt : null;
-      const originalPrompt =
+      const displayPrompt =
         gc?.original_raw_prompt ||
         gc?.scene_prompt ||
         m.image_description ||
@@ -318,8 +318,8 @@ Deno.serve(async (req) => {
         null;
 
       // Resolved display description — what the gallery modal shows under PROMPT / CONTEXT.
-      // Same priority chain as originalPrompt.
-      const resolvedDescription = originalPrompt;
+      // Same priority chain as displayPrompt.
+      const resolvedDescription = displayPrompt;
 
       // Extract subject metadata (people/characters shown in the image)
       const subjects = gc?.subjects || [];
@@ -331,8 +331,9 @@ Deno.serve(async (req) => {
         url: m.image_url,
         description: resolvedDescription || null,
         imageDescription: m.image_description || '',
+        displayPrompt,
         // ── RESTORED PROMPT/CONTEXT FIELDS ──
-        originalPrompt,
+        originalPrompt: displayPrompt,
         generationPrompt: gc?.prompt || null,
         scenePrompt: gc?.scene_prompt || null,
         imageType: gc?.image_type || gc?.subject_type || null,
@@ -346,6 +347,15 @@ Deno.serve(async (req) => {
         zoneName: gc?.zone_name || gc?.zoneName || null,
         // Full generation_context — passed through for send-to-character
         generationContext: gc,
+        // ── DIAGNOSTIC FIELDS (for proof the data made it through) ──
+        _diag: {
+          hasGenerationContext: !!gc,
+          gcPromptLength: gc?.prompt?.length || 0,
+          hasScenePrompt: !!gc?.scene_prompt,
+          hasOriginalRawPrompt: !!gc?.original_raw_prompt,
+          hasImageDescription: !!m.image_description,
+          resolvedDescriptionLength: resolvedDescription?.length || 0,
+        },
         // ── SENDER / SOURCE ──
         senderType: m.sender_type || 'user',
         senderName: m.sender_type === 'user' ? 'You' : (m.character_name || 'Character'),

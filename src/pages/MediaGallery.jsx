@@ -133,9 +133,19 @@ export default function MediaGallery() {
         `firstKey=${dedupedImages[0]?.id || 'n/a'} lastKey=${dedupedImages[dedupedImages.length-1]?.id || 'n/a'}`
       );
 
-      if (dedupedImages.length > 0) {
+      // ── CACHE MERGE LOGIC: Backend wins when it has more complete data ──
+      // Never overwrite non-empty description with empty cached value.
+      const mergedImages = dedupedImages.map(backendImg => {
+        // If backend has description, use it fully — do not let stale cache shadow it
+        if (backendImg.description && backendImg.description.length > 5) {
+          return backendImg; // Fresh backend data takes priority
+        }
+        return backendImg; // Even if empty, use what backend returned
+      });
+
+      if (mergedImages.length > 0) {
         lfcWrite(user.email, cacheKey, {
-          images: dedupedImages,
+          images: mergedImages,
           hasMore: data.hasMore === true,
           proof: data.proof,
         });
@@ -143,8 +153,8 @@ export default function MediaGallery() {
 
       // Update images — if dedup removed everything but we had cache, keep cache showing.
       // Do not wipe the grid with an empty array just because this page returned all-dups.
-      if (dedupedImages.length > 0) {
-        setPageImages(dedupedImages);
+      if (mergedImages.length > 0) {
+        setPageImages(mergedImages);
       }
       setHasMore(data.hasMore === true);
       setLastProof(data.proof || null);
@@ -197,6 +207,22 @@ export default function MediaGallery() {
     // Full manual refresh = intentional rebuild. Reset session dedup index.
     seenImageIdsRef.current = new Set();
     fetchPage(currentPage, searchTerm, { forceRefresh: true });
+  };
+
+  const handleSelectImage = (image) => {
+    // DIAGNOSTIC: Log the exact backend item before modal receives it
+    console.log('[MediaGallery] Image selected for modal:', {
+      id: image.id,
+      url: image.url?.substring(0, 80),
+      description: image.description?.substring(0, 200),
+      displayPrompt: image.displayPrompt?.substring(0, 200),
+      hasDescription: !!image.description && image.description.length > 5,
+      hasDisplayPrompt: !!image.displayPrompt && image.displayPrompt.length > 5,
+      _diag: image._diag,
+      gcScenePrompt: image.generationContext?.scene_prompt?.substring(0, 100),
+      gcOriginalRaw: image.generationContext?.original_raw_prompt?.substring(0, 100),
+    });
+    setSelectedImage(image);
   };
 
   const handleDeleteImage = async (image) => {
@@ -314,7 +340,7 @@ export default function MediaGallery() {
                 <div
                   key={item.id}
                   className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer border border-border hover:border-primary/50 transition-all"
-                  onClick={() => setSelectedImage(item)}
+                  onClick={() => handleSelectImage(item)}
                 >
                   <img
                     src={item.url}
@@ -414,6 +440,7 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
   // Never use it as a display value. Use originalPrompt, scenePrompt, or description.
   const gc = image.generationContext || {};
   const displayPrompt =
+    image.displayPrompt ||
     image.originalPrompt ||
     image.scenePrompt ||
     image.description ||
@@ -422,6 +449,22 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
     gc.scene_prompt ||
     gc.resolved_description ||
     null;
+
+  // DIAGNOSTIC: Log what the modal received
+  React.useEffect(() => {
+    console.log('[ImageDetailModal] Opened with:', {
+      id: image.id,
+      description: image.description?.substring(0, 200),
+      displayPrompt: displayPrompt?.substring(0, 200),
+      hasDescription: !!image.description && image.description.length > 5,
+      hasDisplayPrompt: !!displayPrompt && displayPrompt.length > 5,
+      originalPrompt: image.originalPrompt?.substring(0, 100),
+      scenePrompt: image.scenePrompt?.substring(0, 100),
+      imageDescription: image.imageDescription?.substring(0, 100),
+      _diag: image._diag,
+    });
+  }, [image]);
+
   const hasSubjects = image.subjectNames && image.subjectNames.length > 0;
 
   return (
@@ -454,7 +497,14 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
           {displayPrompt ? (
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Prompt / Context</p>
-              <p className="text-sm text-foreground whitespace-pre-wrap">{displayPrompt}</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap">
+                {/* Strip internal [NAME REFERENCE KEY] scaffolding — user should only see clean scene description */}
+                {displayPrompt
+                  .replace(/\[NAME REFERENCE KEY[^\]]*?\]/g, '')
+                  .replace(/\[END NAME REFERENCE KEY\]/g, '')
+                  .replace(/\n\n+/g, '\n\n')
+                  .trim()}
+              </p>
             </div>
           ) : (
             <div>
