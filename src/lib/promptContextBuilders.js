@@ -1006,6 +1006,116 @@ Even when forming a bond, the institution surrounds it.
 ════════════════════════════════════`;
 }
 
+// ── RECEIVED IMAGE CONTEXT BUILDER ───────────────────────────────────────────
+
+/**
+ * buildReceivedImageContext
+ *
+ * When the most recent user message is an image (from Media Gallery or upload),
+ * build a rich context block that tells the character LLM what they are looking at.
+ *
+ * Priority source order:
+ *   1. message.generation_context.original_raw_prompt — the actual text the user typed
+ *   2. message.generation_context.scene_prompt — sanitized prompt
+ *   3. message.generation_context.subjects[] — who is in the image (by ID and name)
+ *   4. message.image_description — vision-analyzed description
+ *   5. message.generation_context.location_name / zone_name — where it was taken
+ *
+ * Character recognition:
+ *   If the receiving character's ID appears in generation_context.subjects[].subject_id,
+ *   the block explicitly tells the LLM "YOU are in this image."
+ *
+ * Never defaults to Caucasian/generic identity — only injects what metadata actually says.
+ *
+ * @param {object[]} recentMessages - Recent messages in the conversation (last ~10)
+ * @param {string} receivingCharacterId - The character's ID (to detect self-recognition)
+ * @param {string} receivingCharacterName - The character's name (display in prompt)
+ * @returns {string}
+ */
+export function buildReceivedImageContext(recentMessages, receivingCharacterId, receivingCharacterName) {
+  if (!recentMessages || recentMessages.length === 0) return '';
+
+  // Find the most recent message with an image_url (from user or character)
+  // Focus on the last few messages — the image the character is responding to
+  const recentImgMsg = [...recentMessages].reverse().find(m =>
+    m.image_url && (m.sender_type === 'user' || m.sender_type === 'character')
+  );
+
+  if (!recentImgMsg) return '';
+
+  const gc = recentImgMsg.generation_context || null;
+  const imageDesc = recentImgMsg.image_description || null;
+
+  // Build the best available prompt/context text
+  const originalPrompt = gc?.original_raw_prompt || gc?.scene_prompt || gc?.prompt || null;
+  const subjects = gc?.subjects || [];
+  const locationName = gc?.location_name || gc?.locationName || null;
+  const zoneName = gc?.zone_name || gc?.zoneName || null;
+  const senderType = recentImgMsg.sender_type;
+  const senderName = senderType === 'character' ? (recentImgMsg.character_name || 'the character') : 'the user';
+
+  // Nothing useful to inject
+  if (!originalPrompt && !imageDesc && subjects.length === 0) return '';
+
+  const lines = [];
+  lines.push(`\n\n════════════════════════════════════`);
+  lines.push(`IMAGE CONTEXT — WHAT YOU ARE LOOKING AT (authoritative metadata — do NOT guess or contradict this)`);
+  lines.push(`════════════════════════════════════`);
+  lines.push(`An image was just shared with you by ${senderName}.`);
+  lines.push(`This metadata tells you exactly what the image shows. Respond based on this — do NOT invent a different scene.`);
+
+  if (originalPrompt) {
+    lines.push(`\nORIGINAL IMAGE PROMPT/DESCRIPTION:`);
+    lines.push(`"${originalPrompt}"`);
+    lines.push(`This is what the image was created to show. Treat this as ground truth for what you see.`);
+  }
+
+  if (imageDesc && imageDesc !== originalPrompt) {
+    lines.push(`\nIMAGE ANALYSIS DESCRIPTION:`);
+    lines.push(`${imageDesc}`);
+  }
+
+  if (locationName) {
+    lines.push(`\nLOCATION SHOWN: ${locationName}${zoneName ? ` (${zoneName})` : ''}`);
+  }
+
+  // Subject identity — who is in the image
+  if (subjects.length > 0) {
+    lines.push(`\nPEOPLE SHOWN IN THIS IMAGE:`);
+    let selfRecognized = false;
+    for (const s of subjects) {
+      const name = s.subject_name || s.subject_id || 'unknown';
+      const type = s.subject_type || 'person';
+      const isSelf = receivingCharacterId && s.subject_id === receivingCharacterId;
+      if (isSelf) {
+        lines.push(`• YOU (${receivingCharacterName}) — You are one of the people shown in this image. You should recognize yourself.`);
+        selfRecognized = true;
+      } else if (type === 'user') {
+        lines.push(`• The user / your conversation partner is shown in this image.`);
+      } else {
+        lines.push(`• ${name} — a ${type} shown in this image.`);
+      }
+    }
+    if (!selfRecognized && receivingCharacterId) {
+      lines.push(`• You (${receivingCharacterName}) are NOT shown in this image.`);
+    }
+  } else if (gc) {
+    // generation_context exists but no subjects — still useful to know
+    lines.push(`\nSUBJECT INFO: Subject metadata not stored for this image.`);
+  }
+
+  lines.push(`\nCRITICAL RULES:`);
+  lines.push(`• Do NOT describe a different scene than what is stated above.`);
+  lines.push(`• Do NOT hallucinate who is in the image if metadata says who it is.`);
+  lines.push(`• If you appear in the image, acknowledge yourself naturally — do not pretend you cannot see yourself.`);
+  lines.push(`• If another named person is in the image, recognize them if the metadata identifies them.`);
+  lines.push(`• If the image is of an object or place (not people), respond to that actual content.`);
+  lines.push(`• The visible chat shows only the image — you do not repeat the prompt text to the user.`);
+  lines.push(`════════════════════════════════════`);
+
+  return lines.join('\n');
+}
+
 // ── LOCATION RESPONSE VALIDATOR ───────────────────────────────────────────────
 
 /**
