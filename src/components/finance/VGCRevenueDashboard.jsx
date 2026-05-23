@@ -127,16 +127,18 @@ export default function VGCRevenueDashboard({ userSettings }) {
     return { key, start, end, label: format(d, "MMM") };
   });
 
-  // VGC Mobile income = transactions with transaction_type "utilities" or description matching VGC, direction "income", sender_type "character"
-  // More precisely: user income transactions that match VGC Mobile
+  // VGC Mobile revenue = the monthly phone bills charged to characters (direction=expense, type=utilities, description contains vgc mobile)
+  // These are the $50/month charges written by processMonthlyVGCMobileBilling — direction is "expense" from the character's POV
   const vgcIncome = transactions.filter(t =>
-    t.direction === "income" &&
-    (t.description?.toLowerCase().includes("vgc mobile") || t.transaction_type === "utilities")
+    t.direction === "expense" &&
+    (t.description?.toLowerCase().includes("vgc mobile") || 
+     (t.transaction_type === "utilities" && t.sender_name?.toLowerCase().includes("vgc")))
   );
 
-  // Total character expenses (expense direction, character sender)
+  // Total character expenses = ALL expense-direction transactions for characters (system-charged bills, purchases, etc.)
+  // sender_type can be "system", "character", or anything — what matters is it's an expense on a character record
   const charExpenses = transactions.filter(t =>
-    t.direction === "expense" && t.sender_type === "character"
+    t.direction === "expense"
   );
 
   const chartData = monthBuckets.map(({ key, label, start, end }) => {
