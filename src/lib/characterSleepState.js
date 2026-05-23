@@ -104,6 +104,41 @@ export function getCharacterSleepState(character) {
   const status = character.resolved_presence_status || '';
   const reason = character.resolved_source_reason || '';
 
+  // ── DB TRUTH FIRST: if DB says sleeping/napping, trust it — same source Travel/Text use ──
+  // Do NOT override a sleeping DB status with energy checks. The DB is the one truth.
+  // enforceSlowdownSleep writes sleeping into DB; this must respect that write.
+  if (status === 'sleeping') {
+    return {
+      isSleeping: true,
+      isNapping: false,
+      displayLabel: 'sleeping',
+      contextLabel: 'Asleep',
+      visible_label: 'Asleep',
+      confirmed_reason: reason || 'db_sleeping',
+      evidence_source: 'resolved_presence_status',
+      confidence: 1,
+      stale_risk: false,
+      isLikelyStale: false,
+      blockingCondition: null,
+    };
+  }
+
+  if (status === 'napping') {
+    return {
+      isSleeping: true,
+      isNapping: true,
+      displayLabel: 'napping',
+      contextLabel: 'Resting',
+      visible_label: 'Resting',
+      confirmed_reason: reason || 'db_napping',
+      evidence_source: 'resolved_presence_status',
+      confidence: 1,
+      stale_risk: false,
+      isLikelyStale: false,
+      blockingCondition: null,
+    };
+  }
+
   // ── NOT SLEEPING: Route by character type ──────────────────────────────────
   if (status !== 'sleeping' && status !== 'napping') {
     const isActiveCreated = character.character_type === 'active_created_character';

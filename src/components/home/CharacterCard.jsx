@@ -325,9 +325,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   IconComponent = Moon;
                   // confidence >= 0.8 covers scheduled, recovery, and stale-DB-detected sleep paths
                   color = sleepState.confidence >= 0.8 ? 'text-blue-300' : 'text-amber-300';
+                  // Use clean text label — icon already provides visual cue, no emoji duplication
                   label = sleepState.confidence >= 0.8
-                    ? (sleepState.visible_label || '🌙 sleeping')
-                    : 'unverified sleep';
+                    ? (isNapping ? 'Resting' : 'Asleep')
+                    : 'Asleep';
                 } else if (presence.status === 'at_work') {
                   IconComponent = Briefcase;
                   color = 'text-blue-400';

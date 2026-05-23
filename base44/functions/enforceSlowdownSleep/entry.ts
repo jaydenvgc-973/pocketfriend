@@ -186,23 +186,26 @@ Deno.serve(async (req) => {
       let sleepReason = null;
 
       if (isActiveCreated) {
-        // Autonomous evidence required
-        const energyLow = char.energy_value !== undefined && char.energy_value < 45;
-        const sleepDebt = char.sleep_debt_hours && char.sleep_debt_hours > 0;
-        if (energyLow || sleepDebt) {
-          shouldSleep = true;
-          sleepReason = energyLow ? 'autonomous_energy_below_threshold' : 'autonomous_sleep_debt';
-        } else {
-          // No autonomous evidence — flag but do not force
-          entry.skipped = true;
-          entry.skip_reason = 'active_created_no_autonomous_evidence';
-          entry.miss_reason = `active_created_character_awake_during_slowdown: energy=${char.energy_value ?? 'unknown'}, sleep_debt=${char.sleep_debt_hours ?? 0}, status=${status}. Autonomous sleep pipeline did not trigger. Field: resolved_presence_status written by locationResolutionEngine/simulateActiveCharacterNeeds.`;
-          entry.status_after = status;
-          entry.location_after = entry.location_before;
-          skippedNoEvidence++;
-          results.push(entry);
-          continue;
-        }
+        // During slowdown period, active created characters are asleep — period.
+        // High energy at 5 AM is a bug in the needs pipeline, NOT a valid awake exception.
+        // Flag anomalies for diagnostics but do not let them block the sleep correction.
+        shouldSleep = true;
+        sleepReason = 'active_created_slowdown_period';
+
+        const energyHigh = char.energy_value !== undefined && char.energy_value >= 45;
+        const noSleepDebt = !char.sleep_debt_hours || char.sleep_debt_hours === 0;
+        const needsLastRun = char.last_need_simulated_at || null;
+        const needsStale = !needsLastRun || (Date.now() - new Date(needsLastRun).getTime()) > 4 * 60 * 60 * 1000; // > 4h ago
+
+        const anomalies = [];
+        if (energyHigh) anomalies.push('energy_anomaly_high_during_sleep_period');
+        if (noSleepDebt) anomalies.push('sleep_debt_not_accumulating');
+        if (needsStale) anomalies.push('needs_decay_not_running');
+        anomalies.push('active_created_sleep_pipeline_skip');
+
+        entry.anomalies = anomalies;
+        entry.needs_last_run = needsLastRun;
+        entry.miss_reason = `active_created_character awake during slowdown. energy=${char.energy_value ?? 'unknown'}, sleep_debt=${char.sleep_debt_hours ?? 0}, last_needs_run=${needsLastRun || 'never'}. Anomalies: ${anomalies.join(', ')}. Root cause: simulateActiveCharacterNeeds did not drain energy overnight. Field: resolved_presence_status written by locationResolutionEngine/simulateActiveCharacterNeeds.`;
       } else {
         // NPC / family / untyped — use schedule window
         const inWindow = isInScheduledSleepWindow(char, nowMin, dayOfWeek);
