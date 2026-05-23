@@ -8,7 +8,8 @@ import { lfcRead, lfcWrite, lfcDelete } from '@/lib/localFirstCache';
 function galleryPageCacheKey(ownerEmail, page, search, pageSize = 20) {
   const s = (search || '').trim().toLowerCase();
   const owner = (ownerEmail || 'anon').replace(/[^a-z0-9]/gi, '_');
-  return `mediaGallery:v2:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
+  // v3: bumped to bust stale cache entries that had empty description fields
+  return `mediaGallery:v3:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
 }
 
 const GALLERY_STALE_MS = 5 * 60 * 1000;
