@@ -70,7 +70,8 @@ export default function MessageBubble({ message, character, showName = false, on
   // Track retry count for force-reloading the same URL (cache-bust on imgLoadError)
   const [imgRetryKey, setImgRetryKey] = useState(0);
   // After AUTO_LOAD_TIMEOUT_MS with no image_url arriving, promote to actionable failure card
-  const AUTO_LOAD_TIMEOUT_MS = 90000; // 90s — generous window for backend generation
+  // 3 attempts × ~40s each (provider + validation) = up to 120s. Set 150s to prevent premature expiry.
+  const AUTO_LOAD_TIMEOUT_MS = 150000; // 150s — covers full 3-attempt generation + validation pipeline
   const [autoLoadExpired, setAutoLoadExpired] = useState(false);
 
   // Sync if parent passes a new image_url (e.g. from real-time subscription or direct hydration).
@@ -112,13 +113,18 @@ export default function MessageBubble({ message, character, showName = false, on
       base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
         .then(res => {
           if (!isMountedRef.current) return;
+          // recoverSingleImage returns image_url in ALL success cases
+          // (source: 'existing' = already in DB, source: 'recovered' = just generated)
           const url = res?.data?.image_url;
           if (url && url.startsWith('http')) {
+            console.log(`[MessageBubble] Auto-recovery success (source=${res?.data?.source}): ${url.substring(0, 60)}...`);
             setLocalImageUrl(normalizeImageUrl(url));
             setImgLoadError(false);
             setImgRetryKey(0);
+            setAutoLoadExpired(false); // clear expired flag — image is now available
             onImageLoaded?.(message.id, url);
           } else {
+            console.warn(`[MessageBubble] Auto-recovery returned no URL — marking failed. Response:`, res?.data);
             setImageRetryFailed(true);
           }
         })
