@@ -26,41 +26,63 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     // ── QUERY 1: User-owned locations (scoped by owner_email) ─────────────────
-    // Critical: Use service-role bypass for owned locations to catch legacy records.
-    // The standard filter({owner_email}) was silently dropping CGV Jail.
-    // Service-role read fetches all, then manually filter by owner_email for safety.
+    // Use owner_email-scoped filter — avoids rate limits from broad global list.
+    // Two-pass: first try service-role with owner_email filter, then fall back to user-scoped.
     let ownedLocations = [];
     try {
-      // Fetch a broader set to ensure we don't miss legacy records
-      const allLocs = await base44.asServiceRole.entities.LocationReference.list('-created_date', 500);
-      // Filter server-side by owner_email for RLS compliance
-      ownedLocations = allLocs.filter(loc => loc.owner_email === user.email);
-      console.log(`[fetchAllLocationsForUser] Query 1 fetched ${ownedLocations.length} owned locations (from ${allLocs.length} total)`);
-    } catch (e) {
-      console.warn(`[fetchAllLocationsForUser] Query 1 service-role fallback failed:`, e.message);
-      // Fall back to standard filter if service-role fails
-      ownedLocations = await base44.entities.LocationReference.filter(
+      // Service-role filter scoped to this user's owner_email — catches legacy records
+      // while avoiding the 500-record global list that caused 429s.
+      const pass1 = await base44.asServiceRole.entities.LocationReference.filter(
         { owner_email: user.email },
         '-created_date',
         500
-      );
+      ).catch(() => null);
+      if (pass1 && pass1.length > 0) {
+        ownedLocations = pass1;
+        console.log(`[fetchAllLocationsForUser] Query 1 fetched ${ownedLocations.length} owned locations (service-role scoped)`);
+      } else {
+        // Fallback: user-scoped filter
+        const pass2 = await base44.entities.LocationReference.filter(
+          { owner_email: user.email },
+          '-created_date',
+          500
+        ).catch(() => []);
+        ownedLocations = pass2;
+        console.log(`[fetchAllLocationsForUser] Query 1 fetched ${ownedLocations.length} owned locations (user-scoped fallback)`);
+      }
+    } catch (e) {
+      console.warn(`[fetchAllLocationsForUser] Query 1 failed:`, e.message);
+      // Last resort: created_by filter
+      ownedLocations = await base44.entities.LocationReference.filter(
+        { owner_email: user.email },
+        '-created_date',
+        200
+      ).catch(() => []);
     }
 
     // ── QUERY 2: Admin-shared locations (scoped by scope + created_by_role) ───
     // These are the ONLY cross-account visible locations — admin-created and explicitly shared.
+    // Non-blocking: if rate-limited, skip shared locations rather than crashing.
     const sharedLocations = await base44.asServiceRole.entities.LocationReference.filter(
       { scope: 'shared', created_by_role: 'admin' },
       '-created_date',
       100
-    );
+    ).catch(e => {
+      console.warn(`[fetchAllLocationsForUser] Query 2 (shared locations) failed — skipping: ${e.message}`);
+      return [];
+    });
 
     // ── QUERY 3: User's characters — needed to resolve character-linked location IDs ──
     // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    // Non-blocking: if rate-limited, skip character-linked lookups.
     const userCharacters = await base44.entities.Character.filter(
       { owner_email: user.email },
       '-created_date',
       200
-    );
+    ).catch(e => {
+      console.warn(`[fetchAllLocationsForUser] Query 3 (characters) failed — skipping: ${e.message}`);
+      return [];
+    });
 
     // Build set of character IDs for character-specific location matching
     const userCharacterIds = new Set(userCharacters.map(c => c.id));
