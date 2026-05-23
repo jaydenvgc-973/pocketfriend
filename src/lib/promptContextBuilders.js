@@ -1116,6 +1116,78 @@ export function buildReceivedImageContext(recentMessages, receivingCharacterId, 
   return lines.join('\n');
 }
 
+// ── CONVERSATION LOG BUILDER ──────────────────────────────────────────────────
+
+/**
+ * buildConversationLog
+ *
+ * ROOT CAUSE FIX: Media Gallery images sent to a character have content="" but image_url set.
+ * The previous inline `chatHistory.map(m => \`${m._speakerName}: ${m.content}\`).join("\n")`
+ * rendered these as "User: " — a completely empty/invisible entry that the LLM ignores.
+ * The character therefore never knew an image was sent.
+ *
+ * This function is the canonical conversation log builder for ALL chat paths.
+ * It must be used instead of inline `m.content` concatenation everywhere.
+ *
+ * RULES:
+ * - If message has text content → use it as-is
+ * - If message has NO text but HAS image_url → synthesize [IMAGE SENT] entry with metadata
+ * - The synthesized entry matches the image_description, prompt, subjects, and location
+ *   already injected by buildReceivedImageContext — both must be consistent
+ *
+ * @param {object[]} recentMsgs - Recent messages in the conversation (raw Message records)
+ * @param {string} characterName - Name of the character for speaker labeling
+ * @param {string|null} userWorldName - User's fictional world name
+ * @returns {string} - Ready-to-inject conversation log string
+ */
+export function buildConversationLog(recentMsgs, characterName, userWorldName) {
+  if (!recentMsgs || recentMsgs.length === 0) return '';
+
+  return recentMsgs.map(m => {
+    const speakerName = m.sender_type === 'user'
+      ? (m.played_as_character_name || userWorldName || 'User')
+      : (m.character_name || characterName || 'Character');
+
+    const txt = m.content?.trim();
+
+    // IMAGE MESSAGE: content is empty but image_url exists — synthesize readable entry
+    if (!txt && m.image_url) {
+      const gc = m.generation_context || {};
+      // Best available description — same priority chain as buildReceivedImageContext
+      const desc = m.image_description
+        || gc.original_raw_prompt
+        || gc.scene_prompt
+        || gc.resolved_description
+        || gc.prompt
+        || null;
+      const subjectNames = (gc.subjects || []).map(s => s.subject_name).filter(Boolean).join(', ');
+      const locationStr = gc.location_name || gc.locationName || null;
+      const sourcePath = gc.source_path || 'media_gallery';
+
+      // Build a clear, LLM-readable label — must match what buildReceivedImageContext says
+      let imageLine = `[IMAGE SENT — source: ${sourcePath}]`;
+      if (desc) imageLine += ` Scene: "${desc.substring(0, 200)}"`;
+      if (subjectNames) imageLine += ` People shown: ${subjectNames}.`;
+      if (locationStr) imageLine += ` Location: ${locationStr}.`;
+      if (!desc && !subjectNames) {
+        imageLine += ' (Full details in IMAGE CONTEXT block above — do NOT claim no image was sent)';
+      }
+
+      console.log(`[buildConversationLog] IMAGE ENTRY: speaker=${speakerName} source=${sourcePath} desc_len=${desc?.length || 0} subjects="${subjectNames || 'none'}" location="${locationStr || 'none'}"`);
+
+      return `${speakerName}: ${imageLine}`;
+    }
+
+    // Text message — skip empty entries except for diagnosed cases
+    if (!txt) {
+      // Narrative or system message with no content — skip entirely to avoid "User: " clutter
+      return null;
+    }
+
+    return `${speakerName}: ${txt}`;
+  }).filter(Boolean).join('\n');
+}
+
 // ── LOCATION RESPONSE VALIDATOR ───────────────────────────────────────────────
 
 /**

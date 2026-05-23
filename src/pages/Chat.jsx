@@ -30,7 +30,7 @@ import { resolvePhotoSubject } from "@/lib/photoSubjectResolver";
 import ChatApprovals from "@/components/chat/ChatApprovals";
 import LogHousingChangeModal from "@/components/housing/LogHousingChangeModal";
 import { callLLMWithRetry } from "@/lib/llmUtils";
-import { buildEducationContext, buildSongsContext, buildDynamicContexts, buildImageRule, validateLocationInResponse, buildLinkContext, buildFinancialContext, buildCommitmentsContext, buildHouseholdCoPresenceContext, buildConfinementImageOverride, buildJailConfinementContext, buildReceivedImageContext } from "@/lib/promptContextBuilders";
+import { buildEducationContext, buildSongsContext, buildDynamicContexts, buildImageRule, validateLocationInResponse, buildLinkContext, buildFinancialContext, buildCommitmentsContext, buildHouseholdCoPresenceContext, buildConfinementImageOverride, buildJailConfinementContext, buildReceivedImageContext, buildConversationLog } from "@/lib/promptContextBuilders";
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
 import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
 import { useApprovalEvents } from "@/hooks/useApprovalEvents";
@@ -1174,8 +1174,11 @@ Respond to ${worldName} naturally as you normally would.`;
         lastImagePromptSnippet,
       });
 
-      // conversationLog uses per-message speaker names — historical accuracy, no bleeding
-      const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
+      // conversationLog — uses buildConversationLog which surfaces image messages correctly.
+      // ROOT CAUSE FIX: Media Gallery images have content="" so the old inline map rendered
+      // them as "User: " (empty/invisible). The LLM saw nothing and ignored the image entirely.
+      // buildConversationLog synthesizes "[IMAGE SENT]" entries with metadata for image messages.
+      const conversationLog = buildConversationLog(recentMsgs, character.name, userSettings.fictional_world_name);
 
       const evidenceInstruction = `\n\nEVIDENCE PRIORITY & CONTEXT RULES:
 ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth for this turn.\n• New evidence OVERRIDES vague or prior assumptions. Treat it as an intentional correction.` : `• Focus on the CURRENT user request as the primary goal.`}
