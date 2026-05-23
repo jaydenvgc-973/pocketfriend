@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -7,6 +7,7 @@ import {
 } from "recharts";
 import { TrendingUp, DollarSign, Phone, Users } from "lucide-react";
 import { format, subMonths, startOfMonth, endOfMonth } from "date-fns";
+import { resolveUserScopedCharacters } from "@/lib/characterEditableListResolver";
 
 function StatCard({ icon: Icon, label, value, sub, color = "text-primary" }) {
   return (
@@ -32,22 +33,63 @@ export default function VGCRevenueDashboard({ userSettings }) {
     queryFn: () => base44.auth.me(),
   });
 
-  // Fetch financial transactions for current user only
+  // Fetch financial transactions for current user only (owner_email scoped — not created_by)
   const { data: transactions = [], isLoading: txLoading } = useQuery({
     queryKey: ["allFinancialTransactions", currentUser?.email],
-    queryFn: () => base44.entities.FinancialTransaction.filter({ created_by: currentUser.email }, "-timestamp", 500),
+    queryFn: () => base44.entities.FinancialTransaction.filter({ owner_email: currentUser.email }, "-timestamp", 500),
     enabled: !!currentUser?.email,
   });
 
-  // Fetch only active characters owned by current user
-  const { data: activeCharacters = [] } = useQuery({
-    queryKey: ["activeCharacters", currentUser?.email],
-    queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email, status: "active" }, null, 100),
+  // ── AUTHORITATIVE CHARACTER ROSTER ───────────────────────────────────────────
+  // Mirrors EXACTLY the same query path as Settings/useSettingsCharacters:
+  //   1. RLS query by owner_email (handles legacy + migrated records)
+  //   2. Backend fetchNPCsForUser (catches service-created records)
+  //   3. resolveUserScopedCharacters for type resolution (legacy-safe)
+  // This ensures the dashboard count matches the Settings "Active Characters (N)" header.
+
+  const { data: rlsCharacters = [] } = useQuery({
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date", 300),
     enabled: !!currentUser?.email,
   });
 
-  // Filter to ONLY active created characters (character_type === "active") — excludes NPCs, family NPCs, background, etc.
-  const createdActiveCharacters = activeCharacters.filter(c => c.character_type === "active");
+  const { data: npcFictitiousRaw = [] } = useQuery({
+    queryKey: ["npc-characters", currentUser?.id],
+    queryFn: async () => {
+      if (!currentUser?.id) return [];
+      const res = await base44.functions.invoke("fetchNPCsForUser", {});
+      return res?.data?.npcs || [];
+    },
+    enabled: !!currentUser?.id,
+  });
+
+  // Merge + deduplicate (same logic as useSettingsCharacters)
+  const allCharacters = useMemo(() => {
+    const seen = new Set();
+    return [...rlsCharacters, ...npcFictitiousRaw].filter(c => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  }, [rlsCharacters, npcFictitiousRaw]);
+
+  // Resolve types via the same authoritative resolver used by Settings
+  // This handles legacy null types, migrated records, and all character variants
+  const scopedCharacters = useMemo(
+    () => resolveUserScopedCharacters(allCharacters, currentUser?.id, currentUser?.email),
+    [allCharacters, currentUser?.id, currentUser?.email]
+  );
+
+  // Active created characters — same classification as Settings "Active Characters" section
+  // Excludes: deleted, soft_deleted, merged, NPCs, family members
+  const createdActiveCharacters = useMemo(
+    () => scopedCharacters.filter(c =>
+      c._resolvedType === 'active_created_character' &&
+      !['deleted', 'soft_deleted', 'merged'].includes(c.status)
+    ),
+    [scopedCharacters]
+  );
+
   const createdActiveCharIds = new Set(createdActiveCharacters.map(c => c.id));
 
   // Fetch ALL character financials — records are created by backend service, not the user
