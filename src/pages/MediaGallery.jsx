@@ -30,7 +30,9 @@ export default function MediaGallery() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [pageJumpValue, setPageJumpValue] = useState('');
 
-  // SESSION DEDUP: accumulate across all pages in this gallery session
+  // PER-REQUEST DEDUP: reset on every page fetch (page-based pagination, not infinite scroll)
+  // Must NOT accumulate across pages — page 2 legitimately re-uses IDs scanned in the backend
+  // for prior pages. Cross-page dedup via frontend ref causes empty results after refresh.
   const seenImageIdsRef = useRef(new Set());
   const activeRequestRef = useRef(0);
 
@@ -45,18 +47,25 @@ export default function MediaGallery() {
     const cacheKey = galleryPageCacheKey(user.email, page, search);
     const requestId = ++activeRequestRef.current;
 
+    // ── CRITICAL: Reset per-request dedup on every fetch ─────────────────────────
+    // Page-based pagination: backend already deduped within its full scan.
+    // Frontend dedup here only prevents duplicates within this single response.
+    // Cross-page accumulation causes empty results after refresh (stale IDs filter fresh data).
+    seenImageIdsRef.current = new Set();
+
     // ── STEP 1: Show cache while loading fresh (UI responsiveness) ────────────────
-    // Backend is source of truth. Cache is fallback display only.
+    // Backend is source of truth. Cache is a visual fallback only — never source of truth.
+    // Cache must NEVER prevent a backend fetch from completing.
     const cached = lfcRead(user.email, cacheKey);
-    if (cached?.data?.images?.length > 0) {
-      console.log(`[MediaGallery] Cache DISPLAY page=${page} (will fetch fresh)`);
+    if (cached?.data?.images?.length > 0 && !forceRefresh) {
+      console.log(`[MediaGallery] Cache DISPLAY page=${page} age=${cached.loaded_at ? Math.round((Date.now()-cached.loaded_at)/1000) : '?'}s (fetching fresh in background)`);
       setPageImages(cached.data.images);
       setHasMore(cached.data.hasMore === true);
       setLastProof(cached.data.proof || null);
       setIsLoading(false);
       setInitSettled(true);
     } else {
-      console.log(`[MediaGallery] Cache MISS page=${page} — loading from backend`);
+      console.log(`[MediaGallery] Cache MISS/FORCE page=${page} — loading from backend`);
       setIsLoading(true);
     }
 
@@ -79,25 +88,31 @@ export default function MediaGallery() {
 
       const freshImages = data.images || [];
 
-      // ── DEDUP: accumulates across entire session ──────────────────────────────
-      const seenBefore = seenImageIdsRef.current.size;
+      // ── DEDUP: within this single response only (NOT across pages) ─────────────
+      // The backend already handles full-dataset dedup via normalized URL.
+      // This frontend dedup only catches cases where the same message appears
+      // twice in a single backend response (should not happen, but defensive).
+      const responseDedup = new Set();
       const dedupedImages = freshImages.filter(img => {
         const key = img.id || img.messageId;
         if (!key) return true;
-        return !seenImageIdsRef.current.has(key);
-      });
-
-      dedupedImages.forEach(img => {
-        const key = img.id || img.messageId;
-        if (key) seenImageIdsRef.current.add(key);
+        if (responseDedup.has(key)) return false;
+        responseDedup.add(key);
+        return true;
       });
 
       const dupCount = freshImages.length - dedupedImages.length;
+      if (dupCount > 0) {
+        console.warn(`[MediaGallery] Page=${page} intra-response duplicates removed: ${dupCount}`);
+      }
       console.log(
-        `[MediaGallery] Page=${page} backend=${freshImages.length} dedup=${dupCount} new=${dedupedImages.length} totalSeen=${seenImageIdsRef.current.size}`
+        `[MediaGallery] Page=${page} backend=${freshImages.length} dedupedThisPage=${dedupedImages.length} hasMore=${data.hasMore} uniqueImagesInBackendIndex=${data.proof?.uniqueImagesCollected ?? '?'}`
       );
 
-      // ── BACKEND DATA IS SOURCE OF TRUTH ────────────────────────────────────────
+      // ── BACKEND DATA IS SOURCE OF TRUTH — always update from fresh response ──
+      // Backend wins regardless of cache state.
+      // Only skip update if backend returned 0 images AND cache has valid data
+      // (protects against transient backend errors wiping a good gallery).
       if (dedupedImages.length > 0) {
         setPageImages(dedupedImages);
         lfcWrite(user.email, cacheKey, {
@@ -106,16 +121,21 @@ export default function MediaGallery() {
           proof: data.proof,
         });
       } else if (!cached?.data?.images?.length) {
-        // No cache and no new images — show empty
+        // Truly empty: no cache, no backend data
         setPageImages([]);
+        console.log(`[MediaGallery] Page=${page} — backend and cache both empty`);
+      } else {
+        // Backend returned empty but cache has data — possible transient error or legitimately past end.
+        // Keep showing cache, log as mismatch.
+        console.warn(`[MediaGallery] Page=${page} — backend returned 0 images but cache has ${cached.data.images.length}. Keeping cache. proof:`, data.proof);
       }
-      // else: keep showing cache if backend returned all dups
 
       setHasMore(data.hasMore === true);
       setLastProof(data.proof || null);
 
     } catch (e) {
       console.error('[MediaGallery] fetchPage error:', e.message);
+      // On error: keep showing cache if available, do not blank the gallery
     } finally {
       if (requestId === activeRequestRef.current) {
         setIsLoading(false);
@@ -146,14 +166,20 @@ export default function MediaGallery() {
   };
 
   const handleSearchChange = (val) => {
-    seenImageIdsRef.current = new Set();
+    // Search change: clear cache keys related to search (new search = new dataset)
     setSearchTerm(val);
     setCurrentPage(1);
     setHasMore(true);
+    setPageImages([]);
+    setInitSettled(false);
   };
 
   const handleManualRefresh = () => {
-    seenImageIdsRef.current = new Set();
+    // Manual refresh: bypass cache entirely
+    if (user?.email) {
+      const cacheKey = galleryPageCacheKey(user.email, currentPage, searchTerm);
+      lfcDelete(user.email, cacheKey);
+    }
     fetchPage(currentPage, searchTerm, { forceRefresh: true });
   };
 
@@ -227,11 +253,22 @@ export default function MediaGallery() {
 
         {showDiagnostics && lastProof && (
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
-            <div><strong>Gallery Diagnostics — Page {currentPage}</strong></div>
+            <div><strong>Gallery Diagnostics v4 (offset-based) — Page {currentPage}</strong></div>
             <div>owner: {user?.email || 'unknown'}</div>
-            <div>uniqueImages: {lastProof.uniqueImagesCollected ?? 'n/a'} | batches: {lastProof.batchCount ?? 'n/a'}</div>
-            <div>msgsScanned: {lastProof.messagesScanned ?? 'n/a'} | runtime: {lastProof.runtimeMs ?? 'n/a'}ms</div>
-            <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'} | terminationReason: {lastProof.terminationReason || 'n/a'}</div>
+            <div>initSettled: {initSettled ? 'YES' : 'no'} | isLoading: {isLoading ? 'yes' : 'NO'} | isRefreshing: {isRefreshing ? 'yes' : 'NO'}</div>
+            <div>imageStart: {lastProof.imageStartIndex ?? lastProof.skip ?? 'n/a'} | imageEnd: {lastProof.imageEndIndex ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
+            <div>uniqueImages: {lastProof.uniqueImagesCollected ?? lastProof.validFound ?? 'n/a'} | returned: {lastProof.pageImagesReturned}</div>
+            <div>msgsScanned: {lastProof.messagesScanned ?? lastProof.rawScanned ?? 'n/a'} | batches: {lastProof.batchCount ?? lastProof.batchesScanned}</div>
+            <div>exhausted: {lastProof.exhaustedAllMessages ? 'YES' : 'no'} | enoughForPage: {lastProof.enoughForRequestedPage !== false ? 'YES' : 'NO ⚠️'}</div>
+            <div>terminated: <strong>{lastProof.terminationReason || 'n/a'}</strong> | runtime: {lastProof.runtimeMs != null ? `${lastProof.runtimeMs}ms` : 'n/a'}</div>
+            <div>dedup: {lastProof.dedupMethod || 'n/a'} | cursor: {lastProof.cursorStyle || 'n/a'}</div>
+            <div>scanFloor: {lastProof.scanEndDate || '2025-01-01'}</div>
+            <div>firstId: {lastProof.firstImageId || 'n/a'} | firstDate: {lastProof.firstImageDate || lastProof.firstImageTimestamp || 'n/a'}</div>
+            <div>lastId: {lastProof.lastImageId || 'n/a'} | lastDate: {lastProof.lastImageDate || lastProof.lastImageTimestamp || 'n/a'}</div>
+            <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'}</div>
+            {lastProof.terminationReason === 'runtime_limit' && (
+              <div className="text-amber-400">⚠ Scan hit time limit — some older images may not be indexed. Try refreshing.</div>
+            )}
           </div>
         )}
 
@@ -410,10 +447,82 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {displayPrompt && (
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">From</p>
+            <p className="text-sm text-foreground">{image.senderName}</p>
+          </div>
+
+          {/* Category-specific prompt/context display */}
+          {image.imageCategory === 'ai_generated_with_context' && displayPrompt && (
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Prompt / Description</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Generation Prompt / Context</p>
               <p className="text-sm text-foreground whitespace-pre-wrap">{stripInternalMetadata(displayPrompt)}</p>
+            </div>
+          )}
+
+          {image.imageCategory === 'ai_generated_missing_context' && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">⚠ Context Missing</p>
+              <p className="text-xs text-amber-600/80">This image was AI-generated but the generation context was not saved. Original prompt is unrecoverable.</p>
+            </div>
+          )}
+
+          {image.imageCategory === 'user_uploaded' && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">User-Uploaded Image</p>
+              {image.imageDescription ? (
+                <>
+                  <p className="text-xs text-muted-foreground mb-1">No generation prompt — this was uploaded by you.</p>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase mt-2 mb-1">Image Description</p>
+                  <p className="text-sm text-foreground">{image.imageDescription}</p>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">This image was uploaded by you — no generation prompt.</p>
+              )}
+            </div>
+          )}
+
+          {image.imageCategory === 'character_sent_image' && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Character-Sent Image</p>
+              {image.imageDescription ? (
+                <>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase mt-2 mb-1">Image Description</p>
+                  <p className="text-sm text-foreground">{image.imageDescription}</p>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">This image was sent by {image.senderName}.</p>
+              )}
+            </div>
+          )}
+
+          {(image.imageCategory === 'legacy_missing_context' || image.imageCategory === 'unknown') && displayPrompt && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Description</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap">{stripInternalMetadata(displayPrompt)}</p>
+            </div>
+          )}
+
+          {(image.imageCategory === 'legacy_missing_context' || image.imageCategory === 'unknown') && !displayPrompt && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Legacy Image</p>
+              <p className="text-xs text-muted-foreground">This is a legacy image with no recoverable prompt or context data.</p>
+            </div>
+          )}
+
+          {/* Subjects shown in the image */}
+          {image.subjectNames && image.subjectNames.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">People in Image</p>
+              <p className="text-sm text-foreground">{image.subjectNames.join(', ')}</p>
+            </div>
+          )}
+
+          {/* Location context */}
+          {image.locationName && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Location</p>
+              <p className="text-sm text-foreground">{image.locationName}{image.zoneName ? ` — ${image.zoneName}` : ''}</p>
             </div>
           )}
         </div>
@@ -617,12 +726,17 @@ function SendImageModal({ image, onClose, onSent }) {
 
         for (const receiverId of selectedRecipientCharacterIds) {
           log.push(`World Phone: sender=${selectedSenderCharacterId} → receiver=${receiverId}`);
+          // Resolve best available description for World Phone — same priority chain as user-send path
+          const wpResolvedPrompt = image.originalPrompt || image.scenePrompt || image.description || image.imageDescription || null;
+          const wpDescription = wpResolvedPrompt || image.imageDescription || '';
+          log.push(`World Phone: image_url=${image.url?.substring(0,60)}... descLen=${wpDescription.length}`);
           const res = await base44.functions.invoke('sendWorldPhoneMessage', {
             sender_character_id: selectedSenderCharacterId,
             recipient_identifier: receiverId,
             requested_message: '',
             image_url: image.url,
-            image_description: image.imageDescription || '',
+            image_description: wpDescription,
+            generation_context: image.generationContext || undefined,
             message_type: 'image',
             source: 'media_gallery_send',
             owner_email: user.email,

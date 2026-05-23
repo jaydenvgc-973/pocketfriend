@@ -67,28 +67,67 @@ Deno.serve(async (req) => {
     console.log(`[fetchMediaGalleryPage] v4 owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex} neededImages=${neededImages}`);
 
     // ── FETCH CONVERSATIONS ──────────────────────────────────────────────────
-    // Scoped by created_by (Conversation entity's user scope field).
+    // Scoped by created_by (Conversation entity's legacy Base44 scope field).
+    // NOTE: Conversation-only legacy scoping exception — created_by is the user ownership
+    // field for Conversations in Base44. This is documented as a legacy exception.
+    // owner_email is preferred for Characters and Messages; future Conversation writes
+    // should include owner_email but created_by remains the query path for existing records.
+    //
+    // Paginated fetch to avoid 500-record cap that could miss older conversations.
     let userConversations = [];
-    try {
-      userConversations = await base44.entities.Conversation.filter(
-        { created_by: ownerEmail },
-        '-created_date',
-        500
-      );
-    } catch {
+    const CONVO_BATCH = 500;
+    let convoOffset = 0;
+    let convoExhausted = false;
+
+    while (!convoExhausted) {
+      let batch = [];
       try {
-        userConversations = await base44.asServiceRole.entities.Conversation.filter(
+        batch = await base44.entities.Conversation.filter(
           { created_by: ownerEmail },
           '-created_date',
-          500
+          CONVO_BATCH,
+          convoOffset
         );
-      } catch (e) {
-        return Response.json({ error: `Conversation fetch failed: ${e.message}` }, { status: 500 });
+      } catch {
+        try {
+          batch = await base44.asServiceRole.entities.Conversation.filter(
+            { created_by: ownerEmail },
+            '-created_date',
+            CONVO_BATCH,
+            convoOffset
+          );
+        } catch (e) {
+          if (convoOffset === 0) {
+            return Response.json({ error: `Conversation fetch failed: ${e.message}` }, { status: 500 });
+          }
+          // Partial failure after first batch — use what we have
+          convoExhausted = true;
+          break;
+        }
+      }
+
+      if (!batch || batch.length === 0) {
+        convoExhausted = true;
+        break;
+      }
+
+      userConversations = userConversations.concat(batch);
+      convoOffset += CONVO_BATCH;
+
+      if (batch.length < CONVO_BATCH) {
+        convoExhausted = true;
+        break;
+      }
+
+      // Safety cap: max 5000 conversations
+      if (userConversations.length >= 5000) {
+        console.warn(`[fetchMediaGalleryPage] Conversation cap hit at ${userConversations.length}`);
+        break;
       }
     }
 
     const conversationIds = (userConversations || []).map(c => c.id).filter(Boolean);
-    console.log(`[fetchMediaGalleryPage] ${conversationIds.length} conversations`);
+    console.log(`[fetchMediaGalleryPage] ${conversationIds.length} conversations (fetched in ${Math.ceil(convoOffset/CONVO_BATCH)} batches)`);
 
     if (conversationIds.length === 0) {
       const emptyProof = {
