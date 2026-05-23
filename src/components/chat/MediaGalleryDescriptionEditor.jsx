@@ -1,0 +1,178 @@
+import React, { useState } from "react";
+import { motion } from "framer-motion";
+import { base44 } from "@/api/base44Client";
+import { X, Wand2, Save, RotateCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { resolveBestImageDescription } from "@/lib/descriptionResolver";
+
+export default function MediaGalleryDescriptionEditor({ image, onClose, onSaved }) {
+  const [mode, setMode] = useState("view"); // view | edit | generating
+  const [editText, setEditText] = useState("");
+  const [error, setError] = useState(null);
+
+  const currentDescription = resolveBestImageDescription(image);
+  const hasDescription = !!currentDescription;
+
+  const handleEditStart = () => {
+    setEditText(currentDescription || "");
+    setMode("edit");
+    setError(null);
+  };
+
+  const handleSaveEdit = async () => {
+    const trimmed = editText.trim();
+    if (!trimmed || trimmed.length < 5) {
+      setError("Description must be at least 5 characters.");
+      return;
+    }
+
+    try {
+      setMode("view");
+      await base44.entities.Message.update(image.id, {
+        user_edited_description: trimmed,
+        description_last_edited_by_user: true,
+        description_edit_timestamp: new Date().toISOString(),
+        description_source: "user_edited",
+        image_analysis_status: "manual",
+      });
+      onSaved?.();
+    } catch (err) {
+      setError(`Failed to save: ${err.message}`);
+      setMode("edit");
+    }
+  };
+
+  const handleGenerateDescription = async () => {
+    setMode("generating");
+    setError(null);
+    try {
+      const analysisResult = await base44.integrations.Core.InvokeLLM({
+        prompt: `Provide a detailed, factual visual description of this image in 2-4 sentences.
+Describe exactly what you see: people (appearance, expressions, clothing), objects, setting, lighting, and notable details.
+Do NOT interpret meaning or make assumptions beyond what is literally visible.
+Return ONLY the description text, nothing else.`,
+        file_urls: [image.url],
+      });
+
+      const description = (typeof analysisResult === "string" ? analysisResult : "").trim();
+      if (!description || description.length < 10) {
+        throw new Error("Analysis returned insufficient detail.");
+      }
+
+      await base44.entities.Message.update(image.id, {
+        image_description: description,
+        image_analysis_status: "complete",
+        image_analysis_source: "media_gallery_manual_generate",
+        image_analysis_is_inferred: true,
+        description_source: "visual_analysis",
+      });
+
+      setMode("view");
+      onSaved?.();
+    } catch (err) {
+      setError(`Generation failed: ${err.message}`);
+      setMode("view");
+    }
+  };
+
+  const handleCancel = () => {
+    setMode("view");
+    setEditText("");
+    setError(null);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 10 }}
+      className="space-y-3 border-t border-border pt-4"
+    >
+      {mode === "view" && (
+        <>
+          {hasDescription ? (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase">Image Description</p>
+              <p className="text-sm text-foreground leading-relaxed">{currentDescription}</p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleEditStart}
+                  className="text-xs"
+                >
+                  Edit Description
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase">No Description</p>
+              <p className="text-xs text-muted-foreground">This image has no usable description. Generate one or add it manually.</p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleGenerateDescription}
+                  className="text-xs flex items-center gap-1"
+                >
+                  <Wand2 className="w-3 h-3" /> Generate
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleEditStart}
+                  className="text-xs"
+                >
+                  Add Manually
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {mode === "edit" && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase">Edit Description</p>
+          <textarea
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            placeholder="Describe what you see in the image..."
+            className="w-full px-3 py-2 rounded-lg border border-border bg-card text-foreground text-sm resize-none focus:outline-none focus:border-primary"
+            rows={4}
+            autoFocus
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={handleSaveEdit}
+              className="text-xs flex items-center gap-1 bg-primary hover:bg-primary/90"
+            >
+              <Save className="w-3 h-3" /> Save
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleCancel}
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {mode === "generating" && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase">Generating Description</p>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+            <p className="text-xs text-muted-foreground">Analyzing image...</p>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}

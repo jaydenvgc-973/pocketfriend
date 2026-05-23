@@ -61,18 +61,68 @@
       "type": "string",
       "description": "Vision-analyzed description of the attached image. Stored durably. Injected into character prompt context."
     },
+    "inferred_image_description": {
+      "type": "string",
+      "description": "Image description inferred from post-send visual analysis (promptless gallery sends). Separate from original image_description."
+    },
+    "visual_analysis_description": {
+      "type": "string",
+      "description": "Rich visual analysis description from detailed analysis pipeline."
+    },
+    "user_edited_description": {
+      "type": "string",
+      "description": "User-manually-edited image description. Locked from auto-overwrite. Takes priority over all auto-generated descriptions."
+    },
+    "description_last_edited_by_user": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if user has manually edited the image description."
+    },
+    "description_edit_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the user last edited the image description."
+    },
+    "description_source": {
+      "type": "string",
+      "enum": [
+        "user_edited",
+        "visual_analysis",
+        "inferred_analysis",
+        "image_description",
+        "original_prompt",
+        "manual_generation",
+        "none"
+      ],
+      "description": "Source of the currently active image description."
+    },
     "image_analysis_status": {
       "type": "string",
       "enum": [
         "pending",
         "complete",
-        "failed"
+        "failed",
+        "manual"
       ],
       "description": "Status of the image visual analysis pipeline"
     },
     "image_analysis_error": {
       "type": "string",
       "description": "Error message if image analysis failed"
+    },
+    "image_analysis_is_transport_metadata": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if the stored description is transport metadata (routing label), not visual content."
+    },
+    "image_analysis_source": {
+      "type": "string",
+      "description": "Source label for image analysis (e.g., 'media_gallery_send_visual_analysis', 'user_manual_media_gallery_description')."
+    },
+    "image_analysis_is_inferred": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if description came from inferred/post-send analysis, not original generation context."
     },
     "audio_url": {
       "type": "string",
@@ -136,20 +186,16 @@
       "additionalProperties": true,
       "properties": {
         "generation_context_version": {
-          "type": "number",
-          "description": "Schema version. 2 = modern sealed subject bundle format. Absence = legacy flat-only context."
+          "type": "number"
         },
         "context_origin": {
-          "type": "string",
-          "description": "Which generation pathway created this context: chat_image | media_grid | regenerate | recovery"
+          "type": "string"
         },
         "schema_written_at": {
-          "type": "string",
-          "description": "ISO timestamp when this generation_context was written. Used to detect stale or pre-fix contexts."
+          "type": "string"
         },
         "prompt": {
-          "type": "string",
-          "description": "The original user-facing scene prompt (without system instructions)"
+          "type": "string"
         },
         "character_id": {
           "type": "string"
@@ -176,19 +222,16 @@
           }
         },
         "subject_type": {
-          "type": "string",
-          "description": "character | user | joint | multi"
+          "type": "string"
         },
         "image_type": {
-          "type": "string",
-          "description": "character | user | joint | multi"
+          "type": "string"
         },
         "subject_count": {
           "type": "number"
         },
         "subjects": {
           "type": "array",
-          "description": "Structured per-subject identity data for multi-person and joint images. MUST persist with additionalProperties:true on items.",
           "items": {
             "type": "object",
             "additionalProperties": true,
@@ -215,8 +258,7 @@
                 }
               },
               "subject_fingerprint": {
-                "type": "string",
-                "description": "Identity checksum: stable_id:ref_count. Used by regen/video systems to detect missing or swapped subject bundles."
+                "type": "string"
               },
               "appearance_lock_snapshot": {
                 "type": "object",
@@ -242,7 +284,6 @@
         },
         "resolved_outfit_metadata": {
           "type": "array",
-          "description": "Per-subject outfit metadata used at generation time. Each entry: { subjectType, name, text, source }",
           "items": {
             "type": "object",
             "additionalProperties": true,
@@ -291,7 +332,6 @@
         },
         "attempts": {
           "type": "array",
-          "description": "All generation attempts (accepted and rejected) for audit and camera enforcement.",
           "items": {
             "type": "object",
             "additionalProperties": true,
@@ -381,33 +421,26 @@
       "description": "Character location share card \u2014 populated when character shares their real verified location",
       "properties": {
         "location_id": {
-          "type": "string",
-          "description": "ID of the LocationReference record"
+          "type": "string"
         },
         "location_name": {
-          "type": "string",
-          "description": "Display name of the location"
+          "type": "string"
         },
         "presence_status": {
-          "type": "string",
-          "description": "Character's presence status at this location"
+          "type": "string"
         },
         "location_category": {
-          "type": "string",
-          "description": "Category of the location"
+          "type": "string"
         },
         "character_avatar_url": {
-          "type": "string",
-          "description": "Character avatar URL for display in the card"
+          "type": "string"
         },
         "note": {
-          "type": "string",
-          "description": "Optional note from the character about why they're sharing"
+          "type": "string"
         },
         "timestamp": {
           "type": "string",
-          "format": "date-time",
-          "description": "When the location was shared"
+          "format": "date-time"
         }
       }
     },
@@ -416,32 +449,26 @@
       "description": "Money transfer card \u2014 populated when user sends money to a character or vice versa",
       "properties": {
         "amount": {
-          "type": "number",
-          "description": "Amount transferred in USD"
+          "type": "number"
         },
         "direction": {
           "type": "string",
           "enum": [
             "sent",
             "received"
-          ],
-          "description": "Direction from the user's perspective"
+          ]
         },
         "recipient_name": {
-          "type": "string",
-          "description": "Display name of who received the money"
+          "type": "string"
         },
         "recipient_id": {
-          "type": "string",
-          "description": "Character ID of recipient"
+          "type": "string"
         },
         "sender_name": {
-          "type": "string",
-          "description": "Display name of who sent the money"
+          "type": "string"
         },
         "reason": {
-          "type": "string",
-          "description": "Optional reason for the transfer"
+          "type": "string"
         },
         "timestamp": {
           "type": "string",
@@ -544,36 +571,63 @@
       "type": "string",
       "description": "Error message if bilateral sync failed"
     },
+    "is_forwarded": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this message was forwarded from another conversation"
+    },
+    "forwarded_from": {
+      "type": "string",
+      "description": "Character or user name this message was forwarded from"
+    },
     "source_message_id": {
       "type": "string",
-      "description": "ID of the user message this character response was generated from. Used for idempotency and linking replies to sources."
+      "description": "ID of the user message that triggered this character response. Used as the idempotency anchor to prevent duplicate character replies. Every character text response MUST have this set to the ID of the originating user message."
     },
     "reply_to_message_id": {
       "type": "string",
-      "description": "ID of the message this is replying to (may be same as source_message_id or a previous character message)."
+      "description": "ID of the message this is a direct reply to (same as source_message_id for text responses)."
     },
     "idempotency_key": {
       "type": "string",
-      "description": "Unique key for idempotent saves across retries, recoveries, and proactive sends. Format depends on path: proactive::email::charId::channel::timebucket OR group_chat::charId::convoId::sourceMessageId OR recovery::email::charId::channel::sourceMessageId::stage"
+      "description": "Composite idempotency key that uniquely identifies this message generation attempt. Format varies by path: 'recovery::email::charId::channel::sourceId::stage', 'group_chat::charId::convoId::sourceId', 'proactive::email::charId::channel::hourBucket'. Prevents duplicate saves on retry."
     },
     "generation_lock_id": {
       "type": "string",
-      "description": "ID of the generation lock that guarded this message's creation (Chat/Text/World Phone paths). Null for Group Chat and Proactive."
+      "description": "ID of the generation lock that was held during this message's creation. Used for audit trails."
     },
     "recovery_signal": {
       "type": "boolean",
       "default": false,
-      "description": "True if this message is a technical failure signal or transient recovery placeholder. False for real character dialogue. CRITICAL: recovery_signal=true messages must NEVER trigger memory or relationship updates."
+      "description": "CRITICAL CLASSIFICATION FIELD. false = real character dialogue (memory/relationship eligible). true = technical failure state signal (never dialogue, never memory-eligible, never relationship-eligible). Must be explicitly set on EVERY character text message. Absence treated as false (real message) for backward compatibility."
     },
     "memory_eligible": {
       "type": "boolean",
       "default": true,
-      "description": "True if this message can be read by memory extraction and relationship pipelines. False for fallback signals or messages that failed eligibility checks. Controls whether syncGroupChatMemories and related functions process this message."
+      "description": "When true, this message may be read by memory extraction pipelines. When false, it must be excluded from all memory writes. Set to false for recovery signals, fallback placeholders, and system-generated failure state messages."
     },
     "relationship_eligible": {
       "type": "boolean",
       "default": true,
-      "description": "True if this message can trigger relationship level updates and progression changes. False for fallback signals or transient recovery messages. Controls whether relationship sync reads this message."
+      "description": "When true, this message may trigger relationship score updates. When false, it must be excluded from all relationship progression. Set to false for recovery signals, fallback placeholders, and system-generated failure state messages."
+    },
+    "source_media_message_id": {
+      "type": "string",
+      "description": "ID of original Media Gallery message if this image was sent from gallery."
+    },
+    "source_media_url": {
+      "type": "string",
+      "description": "Original image URL if sent from Media Gallery."
+    },
+    "source_media_had_prompt": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if the original gallery image had a generation prompt/context."
+    },
+    "source_media_had_generation_context": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if the original gallery image had generation context metadata."
     }
   },
   "required": [

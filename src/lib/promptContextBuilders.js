@@ -1008,24 +1008,16 @@ Even when forming a bond, the institution surrounds it.
 
 // ── RECEIVED IMAGE CONTEXT BUILDER ───────────────────────────────────────────
 
+import { resolveBestImageDescription } from "@/lib/descriptionResolver";
+
 /**
  * buildReceivedImageContext
  *
  * When the most recent user message is an image (from Media Gallery or upload),
  * build a rich context block that tells the character LLM what they are looking at.
  *
- * Priority source order:
- *   1. message.generation_context.original_raw_prompt — the actual text the user typed
- *   2. message.generation_context.scene_prompt — sanitized prompt
- *   3. message.generation_context.subjects[] — who is in the image (by ID and name)
- *   4. message.image_description — vision-analyzed description
- *   5. message.generation_context.location_name / zone_name — where it was taken
- *
- * Character recognition:
- *   If the receiving character's ID appears in generation_context.subjects[].subject_id,
- *   the block explicitly tells the LLM "YOU are in this image."
- *
- * Never defaults to Caucasian/generic identity — only injects what metadata actually says.
+ * Uses the centralized description resolver to ensure consistent description priority
+ * across all systems (Chat, Media Gallery, World Phone, character memory).
  *
  * @param {object[]} recentMessages - Recent messages in the conversation (last ~10)
  * @param {string} receivingCharacterId - The character's ID (to detect self-recognition)
@@ -1043,39 +1035,21 @@ export function buildReceivedImageContext(recentMessages, receivingCharacterId, 
 
   if (!recentImgMsg) return '';
 
-  const gc = recentImgMsg.generation_context || null;
+  // CRITICAL: Use centralized resolver to get the best description
+  // This respects user edits, validated visual analysis, and rejects transport metadata
+  const resolvedDescription = resolveBestImageDescription(recentImgMsg);
   
-  // CRITICAL: REJECT TRANSPORT METADATA — Only accept validated visual descriptions
-  if (recentImgMsg.image_analysis_is_transport_metadata === true) {
-    console.warn(
-      `[buildReceivedImageContext] BLOCKING transport metadata on msg=${recentImgMsg.id}: "${recentImgMsg.image_description}"`
-    );
-    return ''; // Character will not receive this as image context
+  if (!resolvedDescription) {
+    // No usable description found
+    return '';
   }
 
-  // imageDesc: check both durable analysis field AND inferred-on-send field (promptless gallery sends)
-  const imageDesc = recentImgMsg.image_description
-    || recentImgMsg.inferred_image_description
-    || recentImgMsg.visual_analysis_description
-    || null;
-
-  // Build the best available prompt/context text.
-  // CRITICAL: gc.prompt is the 10,000-char provider instruction blob — never use it as display text.
-  // Only use gc.prompt if it is short (< 400 chars), meaning it's a simple user-written prompt.
-  const gcPromptIfShort = (gc?.prompt && gc.prompt.length < 400) ? gc.prompt : null;
-  const originalPrompt = gc?.original_raw_prompt || gc?.scene_prompt || imageDesc || gc?.resolved_description || gcPromptIfShort || null;
-
-  // Inferred description label for LLM context block
-  const isInferredDesc = !gc?.original_raw_prompt && !gc?.scene_prompt && !recentImgMsg.image_description
-    && !!(recentImgMsg.inferred_image_description || recentImgMsg.visual_analysis_description);
+  const gc = recentImgMsg.generation_context || null;
   const subjects = gc?.subjects || [];
   const locationName = gc?.location_name || gc?.locationName || null;
   const zoneName = gc?.zone_name || gc?.zoneName || null;
   const senderType = recentImgMsg.sender_type;
   const senderName = senderType === 'character' ? (recentImgMsg.character_name || 'the character') : 'the user';
-
-  // Nothing useful to inject
-  if (!originalPrompt && !imageDesc && subjects.length === 0) return '';
 
   const lines = [];
   lines.push(`\n\n════════════════════════════════════`);
@@ -1084,22 +1058,9 @@ export function buildReceivedImageContext(recentMessages, receivingCharacterId, 
   lines.push(`An image was just shared with you by ${senderName}.`);
   lines.push(`This metadata tells you exactly what the image shows. Respond based on this — do NOT invent a different scene.`);
 
-  if (originalPrompt) {
-    if (isInferredDesc) {
-      lines.push(`\nVISUAL ANALYSIS DESCRIPTION (inferred — no original prompt exists for this image):`);
-      lines.push(`"${originalPrompt}"`);
-      lines.push(`This is a visual analysis of what the image shows. Treat this as ground truth for what you see.`);
-    } else {
-      lines.push(`\nORIGINAL IMAGE PROMPT/DESCRIPTION:`);
-      lines.push(`"${originalPrompt}"`);
-      lines.push(`This is what the image was created to show. Treat this as ground truth for what you see.`);
-    }
-  }
-
-  if (imageDesc && imageDesc !== originalPrompt) {
-    lines.push(`\nIMAGE ANALYSIS DESCRIPTION:`);
-    lines.push(`${imageDesc}`);
-  }
+  lines.push(`\nVISUAL UNDERSTANDING:`);
+  lines.push(`"${resolvedDescription}"`);
+  lines.push(`This is the authoritative visual understanding of what the image shows. Respond based on this description alone.`);
 
   if (locationName) {
     lines.push(`\nLOCATION SHOWN: ${locationName}${zoneName ? ` (${zoneName})` : ''}`);

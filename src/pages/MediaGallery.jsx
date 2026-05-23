@@ -572,9 +572,14 @@ export default function MediaGallery() {
 }
 
 // Modal components and SendImageModal follow...
+import MediaGalleryDescriptionEditor from "@/components/chat/MediaGalleryDescriptionEditor";
+import { resolveBestImageDescription } from "@/lib/descriptionResolver";
+
 function ImageDetailModal({ image, onClose, onSend, onDelete }) {
-  // Backend returns pre-cleaned displayPrompt — use it directly
-  const displayPrompt = image.displayPrompt || image.description || null;
+  const [refreshKey, setRefreshKey] = useState(0);
+  
+  // Use the centralized description resolver
+  const displayDescription = resolveBestImageDescription(image);
 
   return (
     <motion.div
@@ -602,64 +607,6 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
             <p className="text-sm text-foreground">{image.senderName}</p>
           </div>
 
-          {/* Category-specific prompt/context display */}
-          {image.imageCategory === 'ai_generated_with_context' && displayPrompt && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Generation Prompt / Context</p>
-              <p className="text-sm text-foreground whitespace-pre-wrap">{displayPrompt}</p>
-            </div>
-          )}
-
-          {image.imageCategory === 'ai_generated_missing_context' && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">⚠ Context Missing</p>
-              <p className="text-xs text-amber-600/80">This image was AI-generated but the generation context was not saved. Original prompt is unrecoverable.</p>
-            </div>
-          )}
-
-          {image.imageCategory === 'user_uploaded' && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">User-Uploaded Image</p>
-              {image.imageDescription ? (
-                <>
-                  <p className="text-xs text-muted-foreground mb-1">No generation prompt — this was uploaded by you.</p>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase mt-2 mb-1">Image Description</p>
-                  <p className="text-sm text-foreground">{image.imageDescription}</p>
-                </>
-              ) : (
-                <p className="text-xs text-muted-foreground">This image was uploaded by you — no generation prompt.</p>
-              )}
-            </div>
-          )}
-
-          {image.imageCategory === 'character_sent_image' && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Character-Sent Image</p>
-              {image.imageDescription ? (
-                <>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase mt-2 mb-1">Image Description</p>
-                  <p className="text-sm text-foreground">{image.imageDescription}</p>
-                </>
-              ) : (
-                <p className="text-xs text-muted-foreground">This image was sent by {image.senderName}.</p>
-              )}
-            </div>
-          )}
-
-          {(image.imageCategory === 'legacy_missing_context' || image.imageCategory === 'unknown') && displayPrompt && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Description</p>
-              <p className="text-sm text-foreground whitespace-pre-wrap">{displayPrompt}</p>
-            </div>
-          )}
-
-          {(image.imageCategory === 'legacy_missing_context' || image.imageCategory === 'unknown') && !displayPrompt && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Legacy Image</p>
-              <p className="text-xs text-muted-foreground">This is a legacy image with no recoverable prompt or context data.</p>
-            </div>
-          )}
-
           {/* Subjects shown in the image */}
           {image.subjectNames && image.subjectNames.length > 0 && (
             <div>
@@ -675,6 +622,16 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
               <p className="text-sm text-foreground">{image.locationName}{image.zoneName ? ` — ${image.zoneName}` : ''}</p>
             </div>
           )}
+
+          {/* Description editor — centralized UI for all description types */}
+          <MediaGalleryDescriptionEditor
+            key={refreshKey}
+            image={image}
+            onClose={onClose}
+            onSaved={() => {
+              setRefreshKey(k => k + 1); // Refresh to show updated description
+            }}
+          />
         </div>
         <div className="flex-shrink-0 border-t border-border p-4 bg-card flex gap-2">
           <button onClick={onSend} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 flex items-center justify-center gap-2 text-sm font-medium">
