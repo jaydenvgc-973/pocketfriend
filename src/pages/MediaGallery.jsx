@@ -452,6 +452,7 @@ function SendImageModal({ image, onClose, onSent }) {
   const [selectedSenderCharacterId, setSelectedSenderCharacterId] = useState(null);
   const [selectedRecipientCharacterIds, setSelectedRecipientCharacterIds] = useState(new Set());
   const [loading, setLoading] = useState(false);
+  const [sent, setSent] = useState(false);
   const [error, setError] = useState(null);
   const [sendLog, setSendLog] = useState([]);
   const [user, setUser] = useState(null);
@@ -485,74 +486,109 @@ function SendImageModal({ image, onClose, onSent }) {
   /**
    * resolveDestinationConversationId
    *
-   * VERIFIED ROOT CAUSE (Issue 2):
-   * The previous implementation used image.parent_conversation_id as the destination.
-   * That is the SOURCE conversation — where the image originally came from.
-   * When the user selects a DIFFERENT character as recipient, using the source
-   * conversation writes the image to the wrong thread.
+   * ROOT CAUSE (confirmed by comparing ForwardMessageModal which WORKS):
    *
-   * CORRECT BEHAVIOR:
-   * The SELECTED RECIPIENT (charId) controls the destination.
-   * The source image conversation is irrelevant to where we are sending.
+   * ForwardMessageModal (working) queries:
+   *   Conversation.filter({ type: "direct", character_ids: [charId] })
+   *   — no owner_email in the filter
+   *   — client-side: character_ids.length === 1 && character_ids[0] === charId
    *
-   * WORKING QUERY PATH (proven in useChatLoadConvo.js line 173):
-   * Conversation.filter({ owner_email, type: chatType, character_ids: characterId })
-   * This is the exact same query the Chat page uses to load conversations.
-   * Using owner_email (not created_by) with character_ids is the working pattern.
+   * Previous SendImageModal (broken) queried:
+   *   Conversation.filter({ owner_email: user.email, character_ids: charId })
+   *   — combining owner_email + character_ids array filter may return 0 results
+   *     if character_ids is stored differently or indexed differently in the DB
+   *   — 0 results → creates a ghost conversation → image written to ghost thread
+   *   — Chat page never sees the ghost thread → image never appears in chat
    *
-   * We try both 'chat' and 'direct' types since different conversations may use either.
-   * Client-side we exclude world_phone/bilateral threads exactly as Chat page does.
+   * FIX: mirror the ForwardMessageModal conversation query exactly.
+   * Step 1: try { type: "direct", character_ids: [charId] } — same as Forward
+   * Step 2: try { type: "chat", character_ids: [charId] } — Chat page creates type:"chat"
+   * Step 3: try { character_ids: charId } — broadest fallback, no type restriction
+   * Client-side filter: single-character, non-world-phone/bilateral threads only.
+   * Only create a new conversation if all three queries return 0 direct results.
    */
   const resolveDestinationConversationId = async (charId, charName, log) => {
-    log.push(`RESOLVE: finding destination convo for recipient charId=${charId} name=${charName}`);
-    log.push(`RESOLVE: image source convo=${image.parent_conversation_id || 'none'} — NOT used as destination`);
+    log.push(`RESOLVE: charId=${charId} name=${charName}`);
+    log.push(`RESOLVE: source convo=${image.parent_conversation_id || 'none'} — NOT used as destination`);
 
-    // Query using the SAME pattern as useChatLoadConvo — proven working path.
-    // Try 'chat' type first (most common), then fall back to any type.
-    let convos = [];
-    try {
-      convos = await base44.entities.Conversation.filter(
-        { owner_email: user.email, character_ids: charId },
-        '-last_message_date',
-        50
-      );
-      log.push(`RESOLVE: Conversation.filter returned ${convos.length} results for charId=${charId}`);
-    } catch (e) {
-      log.push(`RESOLVE: Conversation.filter ERROR: ${e.message}`);
-    }
-
-    // Exclude world_phone/bilateral threads — same logic as useChatLoadConvo line 206-216
-    const directConvos = convos.filter(c => {
+    // Client-side exclusion filter — identical to ForwardMessageModal + useChatLoadConvo
+    const isDirectUserConvo = (c) => {
       const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
-      const isCharToChar = ids.length > 1;
-      const isBilateral = !!c.shared_conversation_key;
-      const isWorldPhone = c.channel === 'world_phone' || c.type === 'bilateral';
-      return !isCharToChar && !isBilateral && !isWorldPhone;
-    });
+      if (ids.length !== 1 || ids[0] !== charId) return false;
+      if (c.shared_conversation_key) return false;
+      if (c.channel === 'world_phone') return false;
+      if (c.type === 'bilateral') return false;
+      return true;
+    };
 
-    log.push(`RESOLVE: after excluding world_phone/bilateral: ${directConvos.length} direct convos`);
-
-    if (directConvos.length > 0) {
-      // Prefer most recently active
-      const sorted = [...directConvos].sort((a, b) => {
-        const da = a.last_message_date ? new Date(a.last_message_date).getTime() : 0;
-        const db = b.last_message_date ? new Date(b.last_message_date).getTime() : 0;
-        return db - da;
-      });
-      log.push(`RESOLVE: Selected destination convo=${sorted[0].id} last_msg=${sorted[0].last_message_date || 'none'}`);
-      return sorted[0].id;
+    // Step 1: type:"direct" — matches ForwardMessageModal exactly
+    try {
+      const r1 = await base44.entities.Conversation.filter(
+        { type: 'direct', character_ids: [charId] },
+        '-last_message_date', 20
+      );
+      log.push(`RESOLVE: type=direct query returned ${r1.length}`);
+      const direct1 = r1.filter(isDirectUserConvo);
+      if (direct1.length > 0) {
+        const best = direct1.sort((a, b) =>
+          (b.last_message_date ? new Date(b.last_message_date).getTime() : 0) -
+          (a.last_message_date ? new Date(a.last_message_date).getTime() : 0)
+        )[0];
+        log.push(`RESOLVE: Found via type=direct convo=${best.id}`);
+        return best.id;
+      }
+    } catch (e) {
+      log.push(`RESOLVE: type=direct query error: ${e.message}`);
     }
 
-    // No direct conversation exists for this recipient — create one.
-    // This is the SAME fallback used by useChatLoadConvo (line 347).
-    log.push(`RESOLVE: No direct convo found — creating new conversation for charId=${charId}`);
+    // Step 2: type:"chat" — Chat page creates conversations with type:"chat"
+    try {
+      const r2 = await base44.entities.Conversation.filter(
+        { type: 'chat', character_ids: [charId] },
+        '-last_message_date', 20
+      );
+      log.push(`RESOLVE: type=chat query returned ${r2.length}`);
+      const direct2 = r2.filter(isDirectUserConvo);
+      if (direct2.length > 0) {
+        const best = direct2.sort((a, b) =>
+          (b.last_message_date ? new Date(b.last_message_date).getTime() : 0) -
+          (a.last_message_date ? new Date(a.last_message_date).getTime() : 0)
+        )[0];
+        log.push(`RESOLVE: Found via type=chat convo=${best.id}`);
+        return best.id;
+      }
+    } catch (e) {
+      log.push(`RESOLVE: type=chat query error: ${e.message}`);
+    }
+
+    // Step 3: broadest — no type restriction, just character_ids
+    try {
+      const r3 = await base44.entities.Conversation.filter(
+        { character_ids: charId },
+        '-last_message_date', 50
+      );
+      log.push(`RESOLVE: broad query returned ${r3.length}`);
+      const direct3 = r3.filter(isDirectUserConvo);
+      if (direct3.length > 0) {
+        const best = direct3.sort((a, b) =>
+          (b.last_message_date ? new Date(b.last_message_date).getTime() : 0) -
+          (a.last_message_date ? new Date(a.last_message_date).getTime() : 0)
+        )[0];
+        log.push(`RESOLVE: Found via broad query convo=${best.id}`);
+        return best.id;
+      }
+    } catch (e) {
+      log.push(`RESOLVE: broad query error: ${e.message}`);
+    }
+
+    // Step 4: create — only if truly no conversation exists
+    log.push(`RESOLVE: No existing convo found — creating new`);
     const newConvo = await base44.entities.Conversation.create({
-      title: `chat with ${charName}`,
-      type: 'chat',
+      title: `direct with ${charName}`,
+      type: 'direct',
       character_ids: [charId],
-      owner_email: user.email,
     });
-    log.push(`RESOLVE: Created new convo=${newConvo.id} for charId=${charId}`);
+    log.push(`RESOLVE: Created new convo=${newConvo.id}`);
     return newConvo.id;
   };
 
@@ -587,17 +623,16 @@ function SendImageModal({ image, onClose, onSent }) {
             log.push(`NOTE: destination matches source convo — recipient is same character that sent this image originally`);
           }
 
+          // ALIGNED WITH ForwardMessageModal: do NOT write owner_email on the Message.
+          // ForwardMessageModal works without it. Writing owner_email may create RLS
+          // scope issues that prevent Chat page from reading the message back.
           const msg = await base44.entities.Message.create({
             conversation_id: destConvoId,
             sender_type: 'user',
-            character_id: charId,
-            character_name: char.name || char.display_name,
             content: '',
             image_url: image.url,
             image_description: image.imageDescription || '',
             timestamp: new Date().toISOString(),
-            owner_email: user.email,
-            typed_by_user: true,
           });
 
           if (!msg?.id) {
@@ -633,6 +668,9 @@ function SendImageModal({ image, onClose, onSent }) {
 
         console.log('[SendImageModal] SEND COMPLETE:\n' + log.join('\n'));
         setSendLog(log);
+        setSent(true);
+        setTimeout(onSent, 1200);
+        return; // early return — onSent called via timeout below
 
       } else {
         // Character → character via World Phone (existing working path — do not change)
@@ -660,9 +698,10 @@ function SendImageModal({ image, onClose, onSent }) {
         }
         console.log('[SendImageModal] WORLD PHONE SEND:\n' + log.join('\n'));
         setSendLog(log);
+        setSent(true);
+        setTimeout(onSent, 1200);
+        return;
       }
-
-      onSent();
     } catch (e) {
       console.error('[SendImageModal] Send failed:', e.message, '\nLog:\n' + log.join('\n'));
       setError(`Send failed: ${e.message}`);
@@ -780,10 +819,10 @@ function SendImageModal({ image, onClose, onSent }) {
             <button onClick={onClose} className="flex-1 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:opacity-90">Cancel</button>
             <button
               onClick={handleSend}
-              disabled={loading || (senderMode === 'user' ? selectedRecipientCharacterIds.size === 0 : !selectedSenderCharacterId || selectedRecipientCharacterIds.size === 0)}
+              disabled={loading || sent || (senderMode === 'user' ? selectedRecipientCharacterIds.size === 0 : !selectedSenderCharacterId || selectedRecipientCharacterIds.size === 0)}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? 'Sending...' : 'Send'}
+              {sent ? '✓ Sent!' : loading ? 'Sending...' : 'Send'}
             </button>
           </div>
         </div>
