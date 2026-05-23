@@ -35,19 +35,19 @@ export default function VGCRevenueDashboard({ userSettings }) {
   // Fetch financial transactions for current user only
   const { data: transactions = [], isLoading: txLoading } = useQuery({
     queryKey: ["allFinancialTransactions", currentUser?.email],
-    queryFn: () => base44.entities.FinancialTransaction.filter({ created_by: currentUser.email }, "-timestamp", 500),
+    queryFn: () => base44.entities.FinancialTransaction.filter({ character_id: { $exists: true } }, "-timestamp", 500),
     enabled: !!currentUser?.email,
   });
 
   // Fetch only active characters owned by current user
   const { data: activeCharacters = [] } = useQuery({
     queryKey: ["activeCharacters", currentUser?.email],
-    queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email, status: "active" }, null, 100),
+    queryFn: () => base44.entities.Character.filter({ owner_email: currentUser.email, status: "active" }, null, 200),
     enabled: !!currentUser?.email,
   });
 
-  // Filter to ONLY active created characters (character_type === "active") — excludes NPCs, family NPCs, background, etc.
-  const createdActiveCharacters = activeCharacters.filter(c => c.character_type === "active");
+  // Filter to ONLY active_created_character type — excludes NPCs, family NPCs, background, etc.
+  const createdActiveCharacters = activeCharacters.filter(c => c.character_type === "active_created_character");
   const createdActiveCharIds = new Set(createdActiveCharacters.map(c => c.id));
 
   // Fetch ALL character financials — records are created by backend service, not the user
