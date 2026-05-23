@@ -51,21 +51,34 @@ export default function ChatMessageList({
     if (!latestCharMsg?.content) return null;
 
     const content = latestCharMsg.content.toLowerCase();
-    const patterns = [
-      /(?:i'll|i will|i'm|i am).*?(?:be|go|head|get).*?(?:there|to|at).+?(?:in|at|in about|within|around|in\s+\d+)/i,
-      /(?:i'll|i will).*?(?:there|go).*?(?:in|at|within|about|around)\s+(?:about\s+)?(\d+)\s*(?:minutes?|mins?|hours?|hour)/i,
-      /(?:getting|heading|going).*?to\s+(.+?)\s+(?:in|at|within).+?(?:\d+\s*(?:minutes?|mins?|hours?))/i,
+
+    // Exact phrase list per system spec
+    const commitmentPhrases = [
+      /\bi'?m\s+on\s+my\s+way\b/i,
+      /\bi'?m\s+leaving\s+(now|right\s+now)?\b/i,
+      /\bi'?m\s+(heading|coming|going)\s+(there|over|out|to\s+you)\b/i,
+      /\bi'?m\s+about\s+to\s+(leave|head\s+out|go)\b/i,
+      /\bi\s+need\s+to\s+(go|leave|head\s+out)\b/i,
+      /\bi'?ll\s+meet\s+you\s+there\b/i,
+      /\bi'?m\s+coming\b/i,
+      /\bi'?ll\s+be\s+there\s+in\s+\d+/i,
+      /\bheading\s+out\s+now\b/i,
+      /\bjust\s+left\b/i,
+      /\bsee\s+you\s+(in\s+\d+|soon|there)\b/i,
+      /\bi'?ll\s+(come|head|stop|swing|drop)\s+(over|by|there)\b/i,
     ];
 
-    const matches = patterns.some(p => p.test(content));
-    if (!matches) return null;
+    const matched = commitmentPhrases.some(p => p.test(content));
+    if (!matched) return null;
 
-    // Extract destination and time estimate
-    const destMatch = content.match(/(?:to|at|in)\s+([A-Z][^.!?]*?(?:Bar|Park|Home|Shop|Café|Restaurant|Store|Location|Hall|Office|Gym))/i);
-    const timeMatch = content.match(/(?:in|at|within|around|in\s+about)\s+(?:about\s+)?(\d+)\s*(?:minutes?|mins?|hours?)/i);
+    // Extract destination
+    const destMatch = latestCharMsg.content.match(/(?:to|at|heading\s+to|going\s+to|meet\s+(?:you\s+)?at)\s+([A-Za-z0-9][^.!?,\n]{2,40}?)(?:\s+in\s+\d|\s+at\s+\d|[.!?,]|$)/i);
+    const timeMatch = content.match(/in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)/i);
 
     const destination = destMatch?.[1]?.trim() || null;
-    const minutes = timeMatch?.[1] ? parseInt(timeMatch[1]) : 10;
+    const rawMinutes = timeMatch?.[1] ? parseInt(timeMatch[1]) : null;
+    const isHours = timeMatch?.[2]?.startsWith('h');
+    const minutes = rawMinutes ? (isHours ? rawMinutes * 60 : rawMinutes) : 15;
 
     return {
       messageId: latestCharMsg.id,

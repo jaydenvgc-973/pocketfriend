@@ -408,9 +408,9 @@ export default function MessageBubble({ message, character, showName = false, on
                   </>
                 ) : imageRetryFailed ? (
                   <>
-                    <ImageIcon className="w-7 h-7 text-muted-foreground/40" />
-                    <p className="text-xs text-muted-foreground text-center font-medium">Image unavailable</p>
-                    <p className="text-[10px] text-muted-foreground/60 text-center">Recovery failed — try regenerating</p>
+                    <ImageIcon className="w-7 h-7 text-destructive/50" />
+                    <p className="text-xs text-foreground text-center font-semibold">Image failed to load</p>
+                    <ImageFailureReason message={message} localImageUrl={localImageUrl} />
                     {showPromptEditor ? (
                       <div className="w-full mt-1 flex flex-col gap-1.5" onClick={e => e.stopPropagation()}>
                         <textarea
@@ -927,6 +927,53 @@ function MoneyTransferCard({ transfer }) {
         {transfer.reason && <p className="text-xs text-muted-foreground italic mt-0.5 leading-snug">{transfer.reason}</p>}
         <p className="text-[10px] text-muted-foreground mt-1">{transfer.timestamp ? format(new Date(transfer.timestamp), "h:mm a") : "Now"}</p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * ImageFailureReason
+ * Shows the actual reason an image failed — not a generic label.
+ * Diagnoses from message fields + URL state.
+ */
+function ImageFailureReason({ message, localImageUrl }) {
+  let reason = null;
+  let hint = null;
+
+  const content = message?.content || '';
+  const url = localImageUrl || message?.image_url || '';
+
+  if (content === '[IMAGE_FAILED]') {
+    reason = 'Generation failed';
+    hint = 'The image generation pipeline reported a failure.';
+  } else if (content === '[IMAGE_CONTEXT_UNVERIFIED]') {
+    reason = 'Context unverified';
+    hint = 'Image was generated but metadata could not be confirmed.';
+  } else if (url && url.includes('expired')) {
+    reason = 'URL expired';
+    hint = 'The image link has expired. Regenerate to get a fresh one.';
+  } else if (url && !url.startsWith('http')) {
+    reason = 'Invalid URL';
+    hint = 'The stored image URL is not valid.';
+  } else if (url && (url.includes('private') || url.includes('permission'))) {
+    reason = 'Permission issue';
+    hint = 'The image is stored in private storage and cannot be accessed.';
+  } else if (!url && !content) {
+    reason = 'Upload failure';
+    hint = 'No image URL was saved — the upload may not have completed.';
+  } else if (!url) {
+    reason = 'Missing file';
+    hint = 'The image URL was never attached to this message.';
+  } else {
+    // URL exists but browser rejected it — most common causes
+    reason = 'Load error';
+    hint = 'The image URL is present but failed to load. This can be a network error, CDN issue, or rate limit.';
+  }
+
+  return (
+    <div className="w-full bg-destructive/10 border border-destructive/20 rounded-lg px-2 py-1.5 text-center">
+      <p className="text-[10px] font-semibold text-destructive">{reason}</p>
+      {hint && <p className="text-[9px] text-muted-foreground mt-0.5 leading-snug">{hint}</p>}
     </div>
   );
 }
