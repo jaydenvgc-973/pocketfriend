@@ -8,8 +8,8 @@ import { lfcRead, lfcWrite, lfcDelete } from '@/lib/localFirstCache';
 function galleryPageCacheKey(ownerEmail, page, search, pageSize = 20) {
   const s = (search || '').trim().toLowerCase();
   const owner = (ownerEmail || 'anon').replace(/[^a-z0-9]/gi, '_');
-  // v3: bumped to bust stale cache entries that had empty description fields
-  return `mediaGallery:v3:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
+  // v4: bumped to bust stale cursor-based cache — now uses offset pagination
+  return `mediaGallery:v4:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
 }
 
 const GALLERY_STALE_MS = 5 * 60 * 1000;
@@ -133,14 +133,25 @@ export default function MediaGallery() {
         `firstKey=${dedupedImages[0]?.id || 'n/a'} lastKey=${dedupedImages[dedupedImages.length-1]?.id || 'n/a'}`
       );
 
-      // ── CACHE MERGE LOGIC: Backend wins when it has more complete data ──
-      // Never overwrite non-empty description with empty cached value.
+      // ── CACHE MERGE LOGIC: Backend wins, but never overwrite valid description with null ──
+      // Rule: If backend description is null/empty but cache has a valid description,
+      //       preserve the cached description to prevent cache-overwrite regression.
+      // This protects against rare race conditions where backend returns incomplete data.
+      const cachedData = cached?.data?.images || [];
+      const cachedById = {};
+      cachedData.forEach(ci => { if (ci.id) cachedById[ci.id] = ci; });
+
       const mergedImages = dedupedImages.map(backendImg => {
-        // If backend has description, use it fully — do not let stale cache shadow it
+        const cachedImg = cachedById[backendImg.id];
+        // If backend has a valid description, always use backend (fresh data wins)
         if (backendImg.description && backendImg.description.length > 5) {
-          return backendImg; // Fresh backend data takes priority
+          return backendImg;
         }
-        return backendImg; // Even if empty, use what backend returned
+        // If backend has no description but cache has one, preserve the cached description
+        if (cachedImg?.description && cachedImg.description.length > 5) {
+          return { ...backendImg, description: cachedImg.description, displayPrompt: backendImg.displayPrompt || cachedImg.displayPrompt };
+        }
+        return backendImg;
       });
 
       if (mergedImages.length > 0) {
@@ -291,7 +302,7 @@ export default function MediaGallery() {
 
         {showDiagnostics && lastProof && (
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
-            <div><strong>Gallery Diagnostics v3 — Page {currentPage}</strong></div>
+            <div><strong>Gallery Diagnostics v4 (offset-based) — Page {currentPage}</strong></div>
             <div>owner: {user?.email || 'unknown'}</div>
             <div>initSettled: {initSettled ? 'YES' : 'no'} | isLoading: {isLoading ? 'yes' : 'NO'} | isRefreshing: {isRefreshing ? 'yes' : 'NO'}</div>
             <div>sessionDedup: {seenImageIdsRef.current.size} total unique IDs seen this session</div>
@@ -486,8 +497,14 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
       .replace(/\[PROVIDER INSTRUCTION[^\]]*?\]/g, '')
       // Remove character ID references like "(ID: 69c0d59d7e382cc866ded9c9)"
       .replace(/\(ID:\s*[a-z0-9]+\)/gi, '')
-      // Remove character assignment lines like "\"Name\" = Full Name ..."
-      .replace(/^"[^"]*"\s*=\s*[^\n]*$/gm, '')
+      // Remove character assignment lines like "\"Name\" = Full Name ..." at any indentation
+      .replace(/^\s*"[^"]*"\s*=\s*[^\n]*$/gm, '')
+      // Remove subject role markers like [CHARACTER], [USER], [JOINT] at start of prompt
+      .replace(/^\[CHARACTER\]\s*/i, '')
+      .replace(/^\[USER\]\s*/i, '')
+      .replace(/^\[JOINT\]\s*/i, '')
+      // Remove "Generated character photo. Scene:" prefix from image_description fallbacks
+      .replace(/^Generated character photo\.\s*Scene:\s*/i, '')
       // Remove multiple blank lines and leading/trailing spaces
       .replace(/\n\n+/g, '\n\n')
       .replace(/^\s+|\s+$/gm, '')

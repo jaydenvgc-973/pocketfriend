@@ -1,44 +1,46 @@
 /**
- * fetchMediaGalleryPage — IMAGE-UNIT PAGINATION v3
+ * fetchMediaGalleryPage — IMAGE-UNIT PAGINATION v4 (OFFSET-BASED)
  *
- * CORE RULE: Pagination is measured in IMAGES, not messages.
+ * ROOT CAUSE FIX: Date-cursor pagination ($lt on created_date) does not work
+ * in the Base44 SDK. Verified by diagnoseCursorBehavior: compound cursor and
+ * simple $lt cursor both return empty after batch 1. Only offset pagination works.
  *
- * FIXES IN v3:
- *   - Compound cursor (date + id) prevents timestamp-collision skips/duplicates
- *   - URL normalization for dedup (strips querystrings/signed tokens)
- *   - Simpler, honest hasMore: uniqueImagesCollected > imageEndIndex only
- *   - Runtime-based termination in addition to batch cap
- *   - Richer termination_reason in proof for debugging
+ * CHANGE: Replaced cursor-based scan with offset-based scan.
+ * PRESERVED: All dedup logic, metadata fields, generation_context, classification,
+ *            ownership scoping, sorting, and proof structure.
  *
- * PAGE MATH (image-based, not message-based):
- *   page 1 → image index [0..20)   → need 21 unique images to prove hasMore
- *   page N → image index [(N-1)*pageSize .. N*pageSize)
+ * PAGINATION MODEL:
+ *   - Scan ALL messages in batches using offset increment
+ *   - Collect unique images (dedup by normalized URL)
+ *   - Sort by created_date DESC, id DESC (stable)
+ *   - Slice page [imageStart..imageEnd)
+ *   - hasMore = collected > imageEnd
  *
- * CURSOR: compound (date + id) — deterministic even on timestamp collisions
+ * OWNERSHIP:
+ *   - Conversations scoped by created_by (Base44 built-in field)
+ *   - Justification: Conversation entity uses created_by for user scoping
+ *   - Characters use owner_email (different entity, different field)
+ *   - This is the same path the app uses for all conversation queries
+ *
  * SCAN FLOOR: 2025-01-01T00:00:00.000Z
- * DEDUP KEY: normalized URL (path only, no querystring) with message ID as fallback
+ * MAX RUNTIME: 25 seconds
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const PAGE_SIZE = 20;
 const BATCH_SIZE = 200;
 const SCAN_FLOOR = '2025-01-01T00:00:00.000Z';
-const MAX_BATCHES = 100;           // safety cap: 100 × 200 = 20,000 messages
-const MAX_RUNTIME_MS = 25000;      // 25s hard runtime cap — stop before Deno timeout
+const MAX_RUNTIME_MS = 25000;
 
 /**
- * Normalize an image URL for deduplication purposes.
- * Strips query parameters (signed tokens, CDN params, expiry signatures)
- * so the same underlying image is never counted twice.
+ * Normalize URL for deduplication — strips query strings (signed tokens, CDN params).
  */
 function normalizeUrlForDedup(url) {
   if (!url || typeof url !== 'string') return url;
   try {
     const u = new URL(url);
-    // Keep only origin + pathname — strip all querystring and fragments
     return u.origin + u.pathname;
   } catch {
-    // If URL is malformed, strip from ? onward
     const qIdx = url.indexOf('?');
     return qIdx !== -1 ? url.slice(0, qIdx) : url;
   }
@@ -59,15 +61,13 @@ Deno.serve(async (req) => {
     const safePage = Math.max(1, page);
     const imageStartIndex = (safePage - 1) * safePageSize;
     const imageEndIndex = imageStartIndex + safePageSize;
-    // Need imageEndIndex + 1 images to prove hasMore
-    const neededImages = imageEndIndex + 1;
+    const neededImages = imageEndIndex + 1; // +1 to prove hasMore
     const searchLower = (searchTerm || '').toLowerCase().trim();
 
-    console.log(`[fetchMediaGalleryPage] v3 owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex} imageEnd=${imageEndIndex} neededImages=${neededImages} search="${searchTerm}"`);
+    console.log(`[fetchMediaGalleryPage] v4 owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex} neededImages=${neededImages}`);
 
-    // ── FETCH CONVERSATIONS OWNED BY USER ──────────────────────────────────────
-    // Messages are scoped by conversation, not created_by. Fetch conversations
-    // owned by ownerEmail, then scan their messages.
+    // ── FETCH CONVERSATIONS ──────────────────────────────────────────────────
+    // Scoped by created_by (Conversation entity's user scope field).
     let userConversations = [];
     try {
       userConversations = await base44.entities.Conversation.filter(
@@ -88,101 +88,66 @@ Deno.serve(async (req) => {
     }
 
     const conversationIds = (userConversations || []).map(c => c.id).filter(Boolean);
+    console.log(`[fetchMediaGalleryPage] ${conversationIds.length} conversations`);
+
     if (conversationIds.length === 0) {
-      // No conversations — no messages to scan
-      return Response.json({
-        images: [],
+      const emptyProof = {
+        requestedPage: safePage, pageSize: safePageSize, imageStartIndex, imageEndIndex,
+        messagesScanned: 0, batchCount: 0, uniqueImagesCollected: 0,
+        exhaustedAllMessages: true, enoughForRequestedPage: false, hasMore: false,
+        terminationReason: 'no_conversations', runtimeMs: Date.now() - scanStart,
+        scanEndDate: SCAN_FLOOR, cursorStyle: 'offset_v4',
+        dedupMethod: 'normalized_url_no_querystring',
+        pageImagesReturned: 0, skip: imageStartIndex,
+        firstImageId: null, lastImageId: null,
+        rawScanned: 0, validFound: 0, batchesScanned: 0,
         currentUserEmail: ownerEmail,
-        page: safePage,
-        pageSize: safePageSize,
-        totalImages: 0,
-        hasMore: false,
-        enoughForRequestedPage: false,
-        proof: {
-          requestedPage: safePage,
-          pageSize: safePageSize,
-          imageStartIndex,
-          imageEndIndex,
-          messagesScanned: 0,
-          batchCount: 0,
-          uniqueImagesCollected: 0,
-          exhaustedAllMessages: true,
-          enoughForRequestedPage: false,
-          hasMore: false,
-          terminationReason: 'no_conversations',
-          runtimeMs: Date.now() - scanStart,
-          scanStartDate: new Date().toISOString(),
-          scanEndDate: SCAN_FLOOR,
-          cursorStyle: 'compound_date_id_v3',
-          dedupMethod: 'normalized_url_no_querystring',
-          pageImagesReturned: 0,
-          firstImageId: null,
-          firstImageUrl: null,
-          firstImageDate: null,
-          lastImageId: null,
-          lastImageUrl: null,
-          lastImageDate: null,
-          skip: imageStartIndex,
-          totalImagesInIndex: 0,
-          sortKey: 'created_date DESC, id DESC',
-          rawScanned: 0,
-          validFound: 0,
-          afterDedup: 0,
-          batchesScanned: 0,
-          firstImageTimestamp: null,
-          lastImageTimestamp: null,
-          currentUserEmail: ownerEmail,
-        },
-      });
+      };
+      return Response.json({ images: [], currentUserEmail: ownerEmail, page: safePage, pageSize: safePageSize, totalImages: 0, hasMore: false, enoughForRequestedPage: false, proof: emptyProof });
     }
 
-    // ── SCAN LOOP ──────────────────────────────────────────────────────────────
-    // Compound cursor: (cursorDate, cursorId) — advances past oldest record in each batch.
-    // This prevents both overlaps and skips when multiple messages share the same timestamp.
-    const seenNormalizedUrls = new Set();  // normalized URL → dedup key
-    const imageIndex = [];                  // collected image records (newest→oldest)
-    let cursorDate = null;                  // null = start from now
-    let cursorId = null;                    // companion ID for tie-breaking
+    // ── OFFSET-BASED SCAN LOOP ───────────────────────────────────────────────
+    // Uses offset increment instead of cursor — proven to work by diagnoseCursorBehavior.
+    const seenNormalizedUrls = new Set();
+    const imageIndex = [];
+    let offset = 0;
     let batchCount = 0;
     let messagesScanned = 0;
     let exhaustedAllMessages = false;
     let terminationReason = 'in_progress';
     const scanFloorMs = new Date(SCAN_FLOOR).getTime();
 
-    while (batchCount < MAX_BATCHES) {
-      // Runtime guard: stop before Deno's execution timeout
+    while (true) {
+      // Runtime guard
       if (Date.now() - scanStart > MAX_RUNTIME_MS) {
         terminationReason = 'runtime_limit';
-        console.warn(`[fetchMediaGalleryPage] Runtime limit reached (${MAX_RUNTIME_MS}ms) at batch ${batchCount}`);
+        console.warn(`[fetchMediaGalleryPage] Runtime limit at offset=${offset} images=${imageIndex.length}`);
+        break;
+      }
+
+      // Early exit: have enough images for this page + hasMore proof
+      if (imageIndex.length >= neededImages) {
+        terminationReason = 'enough_images';
         break;
       }
 
       batchCount++;
-
-      // ── COMPOUND CURSOR QUERY ──────────────────────────────────────────────
-      // Query messages from user's conversations by conversation_id in list.
-      // On the first batch, fetch the newest messages (no cursor constraint).
-      // On subsequent batches, use $or to correctly handle timestamp ties.
-      let query;
-      if (!cursorDate) {
-        query = { conversation_id: { $in: conversationIds } };
-      } else {
-        query = {
-          conversation_id: { $in: conversationIds },
-          $or: [
-            { created_date: { $lt: cursorDate } },
-            // Same date, earlier ID (lexicographic — works with UUIDs and MongoDB ObjectIDs)
-            { created_date: cursorDate, id: { $lt: cursorId || '' } },
-          ],
-        };
-      }
-
-      let batch = null;
+      let batch;
       try {
-        batch = await base44.entities.Message.filter(query, '-created_date', BATCH_SIZE);
+        batch = await base44.entities.Message.filter(
+          { conversation_id: { $in: conversationIds } },
+          '-created_date',
+          BATCH_SIZE,
+          offset
+        );
       } catch {
         try {
-          batch = await base44.asServiceRole.entities.Message.filter(query, '-created_date', BATCH_SIZE);
+          batch = await base44.asServiceRole.entities.Message.filter(
+            { conversation_id: { $in: conversationIds } },
+            '-created_date',
+            BATCH_SIZE,
+            offset
+          );
         } catch (e2) {
           if (batchCount === 1) {
             return Response.json({ error: `Message fetch failed: ${e2.message}` }, { status: 500 });
@@ -201,16 +166,21 @@ Deno.serve(async (req) => {
 
       messagesScanned += batch.length;
 
-      // ── EXTRACT & DEDUP IMAGES ─────────────────────────────────────────────
+      // ── EXTRACT & DEDUP IMAGES ────────────────────────────────────────────
       for (const m of batch) {
         if (!m.image_url) continue;
         if (m.recovery_signal === true) continue;
 
-        // Use normalized URL for dedup (strips signed tokens, CDN params, etc.)
+        // Check scan floor
+        if (m.created_date) {
+          const msgMs = new Date(m.created_date).getTime();
+          if (msgMs < scanFloorMs) continue; // skip pre-floor messages
+        }
+
         const dedupKey = normalizeUrlForDedup(m.image_url);
         if (seenNormalizedUrls.has(dedupKey)) continue;
 
-        // Apply search filter — search all available description fields
+        // Apply search filter
         if (searchLower) {
           const gc = m.generation_context || {};
           const desc = [
@@ -228,48 +198,21 @@ Deno.serve(async (req) => {
         imageIndex.push(m);
       }
 
-      console.log(`[fetchMediaGalleryPage] Batch ${batchCount}: ${batch.length} msgs → ${imageIndex.length} unique images`);
+      console.log(`[fetchMediaGalleryPage] Batch ${batchCount} offset=${offset}: ${batch.length} msgs → ${imageIndex.length} unique images`);
 
-      // ── ADVANCE COMPOUND CURSOR ────────────────────────────────────────────
-      const oldestInBatch = batch[batch.length - 1];
-      const oldestDate = oldestInBatch?.created_date;
-      const oldestId = oldestInBatch?.id;
+      offset += BATCH_SIZE;
 
-      if (!oldestDate) {
-        terminationReason = 'exhausted_messages';
-        exhaustedAllMessages = true;
-        break;
-      }
-
-      // Check scan floor
-      const oldestMs = new Date(oldestDate).getTime();
-      if (oldestMs <= scanFloorMs) {
-        terminationReason = 'scan_floor_reached';
-        exhaustedAllMessages = true;
-        break;
-      }
-
-      // Fewer records than batch size = no more messages
+      // Check if we hit the end
       if (batch.length < BATCH_SIZE) {
         terminationReason = 'exhausted_messages';
         exhaustedAllMessages = true;
-        break;
-      }
-
-      cursorDate = oldestDate;
-      cursorId = oldestId || null;
-
-      // EARLY EXIT: collected enough images for this page + hasMore proof
-      if (imageIndex.length >= neededImages) {
-        terminationReason = 'enough_images';
-        console.log(`[fetchMediaGalleryPage] Early exit at batch ${batchCount}: ${imageIndex.length} images >= needed ${neededImages}`);
         break;
       }
     }
 
     if (terminationReason === 'in_progress') terminationReason = 'safety_cap';
 
-    // ── SORT deterministically: created_date DESC, id DESC ────────────────────
+    // ── SORT DETERMINISTICALLY: created_date DESC, id DESC ──────────────────
     imageIndex.sort((a, b) => {
       const dateA = a.created_date ? new Date(a.created_date).getTime() : 0;
       const dateB = b.created_date ? new Date(b.created_date).getTime() : 0;
@@ -279,69 +222,49 @@ Deno.serve(async (req) => {
 
     const uniqueImagesCollected = imageIndex.length;
     const enoughForRequestedPage = uniqueImagesCollected > imageStartIndex;
-
-    // SIMPLE, HONEST hasMore: we actually collected more images than this page needs
-    // No fuzzy "probably more" — only confirm hasMore when we have proof
     const hasMore = uniqueImagesCollected > imageEndIndex;
 
-    // ── SLICE THE REQUESTED PAGE ───────────────────────────────────────────────
+    // ── SLICE THE REQUESTED PAGE ─────────────────────────────────────────────
     const pageSlice = enoughForRequestedPage
       ? imageIndex.slice(imageStartIndex, imageEndIndex)
       : [];
 
-    // ── SHAPE OUTPUT ───────────────────────────────────────────────────────────
-    // CRITICAL: generation_context carries the original prompt, subjects, character IDs,
-    // location, and outfit metadata. It MUST be passed through so:
-    //   1. The gallery detail view can display the original prompt/caption.
-    //   2. Send-to-character writes this context onto the recipient message so the
-    //      receiving character's LLM knows who/what is in the image.
-    const pageImages = pageSlice.map((m, idx) => {
+    // ── SHAPE OUTPUT ─────────────────────────────────────────────────────────
+    const pageImages = pageSlice.map((m) => {
       const gc = m.generation_context || null;
 
-      // Extract the most descriptive prompt available, in priority order:
-      //   1. generation_context.original_raw_prompt (the user's original typed request)
-      //   2. generation_context.scene_prompt (sanitized scene description — human-readable)
-      //   3. image_description on the message (written by generateImageAsync as clean sanitizedPrompt)
-      //   4. generation_context.resolved_description
-      //   5. generation_context.prompt ONLY if short (< 400 chars) — the full prompt blob is 10,000+ chars
-      //
-      // CRITICAL: gc.prompt is the full 10,000-character provider instruction string.
-      // It must NEVER be used as the display description — it's unreadable and not the scene.
-      // gc.scene_prompt and m.image_description are the clean human-readable values.
-      const gcPromptIfShort = (gc?.prompt && gc.prompt.length < 400) ? gc.prompt : null;
+      // Best display prompt — in priority order, never using the large provider blob.
+      // gc.prompt can be:
+      //   - modern: 10,000+ char provider instruction blob (never display)
+      //   - legacy: short readable scene description stored before scene_prompt was added
+      // Threshold: 2000 chars. Above 2000 chars is almost certainly a provider blob.
+      const gcPromptIfReadable = (gc?.prompt && gc.prompt.length < 2000) ? gc.prompt : null;
       const displayPrompt =
         gc?.original_raw_prompt ||
         gc?.scene_prompt ||
         m.image_description ||
         gc?.resolved_description ||
-        gcPromptIfShort ||
+        gcPromptIfReadable ||
         null;
 
-      // Resolved display description — what the gallery modal shows under PROMPT / CONTEXT.
-      // Same priority chain as displayPrompt.
       const resolvedDescription = displayPrompt;
 
-      // Extract subject metadata (people/characters shown in the image)
+      // Subject metadata
       const subjects = gc?.subjects || [];
       const subjectIds = subjects.map(s => s.subject_id).filter(Boolean);
       const subjectNames = subjects.map(s => s.subject_name).filter(Boolean);
 
-      // ── IMAGE CLASSIFICATION ──────────────────────────────────────────────
-      // Classify this image for proper UI categorization and fallback behavior
+      // Image classification
       let imageCategory = 'unknown';
       if (gc) {
-        // Has generation_context — AI-generated
         imageCategory = (gc.prompt || gc.original_raw_prompt || gc.scene_prompt)
           ? 'ai_generated_with_context'
           : 'ai_generated_missing_context';
       } else if (m.sender_type === 'character') {
-        // Character-sent image
         imageCategory = 'character_sent_image';
       } else if (m.sender_type === 'user') {
-        // User-uploaded/user-sent
         imageCategory = 'user_uploaded';
       } else {
-        // Legacy image with unknown source
         imageCategory = 'legacy_missing_context';
       }
 
@@ -351,12 +274,10 @@ Deno.serve(async (req) => {
         description: resolvedDescription || null,
         imageDescription: m.image_description || '',
         displayPrompt,
-        // ── RESTORED PROMPT/CONTEXT FIELDS ──
         originalPrompt: displayPrompt,
         generationPrompt: gc?.prompt || null,
         scenePrompt: gc?.scene_prompt || null,
         imageType: gc?.image_type || gc?.subject_type || null,
-        // Subject identity metadata — who is in the image
         subjects,
         subjectIds,
         subjectNames,
@@ -364,11 +285,8 @@ Deno.serve(async (req) => {
         locationName: gc?.location_name || gc?.locationName || null,
         locationId: gc?.location_id || null,
         zoneName: gc?.zone_name || gc?.zoneName || null,
-        // Full generation_context — passed through for send-to-character
         generationContext: gc,
-        // ── IMAGE CATEGORY FOR UI CLASSIFICATION ──
         imageCategory,
-        // ── DIAGNOSTIC FIELDS (for proof the data made it through) ──
         _diag: {
           hasGenerationContext: !!gc,
           gcPromptLength: gc?.prompt?.length || 0,
@@ -378,7 +296,6 @@ Deno.serve(async (req) => {
           resolvedDescriptionLength: resolvedDescription?.length || 0,
           imageCategory,
         },
-        // ── SENDER / SOURCE ──
         senderType: m.sender_type || 'user',
         senderName: m.sender_type === 'user' ? 'You' : (m.character_name || 'Character'),
         senderCharacterId: m.character_id || null,
@@ -397,12 +314,10 @@ Deno.serve(async (req) => {
 
     const runtimeMs = Date.now() - scanStart;
     const proof = {
-      // Page identity
       requestedPage: safePage,
       pageSize: safePageSize,
       imageStartIndex,
       imageEndIndex,
-      // Scan results
       messagesScanned,
       batchCount,
       uniqueImagesCollected,
@@ -413,10 +328,8 @@ Deno.serve(async (req) => {
       runtimeMs,
       scanStartDate: new Date().toISOString(),
       scanEndDate: SCAN_FLOOR,
-      // Compound cursor info
-      cursorStyle: 'compound_date_id_v3',
+      cursorStyle: 'offset_v4',
       dedupMethod: 'normalized_url_no_querystring',
-      // Page boundary proof
       pageImagesReturned: pageImages.length,
       firstImageId: pageImages[0]?.id || null,
       firstImageUrl: pageImages[0]?.url || null,
@@ -424,7 +337,6 @@ Deno.serve(async (req) => {
       lastImageId: pageImages[pageImages.length - 1]?.id || null,
       lastImageUrl: pageImages[pageImages.length - 1]?.url || null,
       lastImageDate: pageImages[pageImages.length - 1]?.timestamp || null,
-      // Alias fields for UI diagnostics panel compatibility
       skip: imageStartIndex,
       totalImagesInIndex: uniqueImagesCollected,
       sortKey: 'created_date DESC, id DESC',
@@ -437,10 +349,10 @@ Deno.serve(async (req) => {
       currentUserEmail: ownerEmail,
     };
 
-    console.log(`[fetchMediaGalleryPage] RESULT: page=${safePage} images[${imageStartIndex}..${imageEndIndex}] returned=${pageImages.length} uniqueImages=${uniqueImagesCollected} exhausted=${exhaustedAllMessages} enoughForPage=${enoughForRequestedPage} hasMore=${hasMore} batches=${batchCount} msgsScanned=${messagesScanned}`);
+    console.log(`[fetchMediaGalleryPage] RESULT: page=${safePage} returned=${pageImages.length} uniqueImages=${uniqueImagesCollected} batches=${batchCount} msgsScanned=${messagesScanned} hasMore=${hasMore} runtime=${runtimeMs}ms`);
 
     if (!enoughForRequestedPage) {
-      console.warn(`[fetchMediaGalleryPage] WARNING: Not enough images for page ${safePage}. Only ${uniqueImagesCollected} unique images found (need >${imageStartIndex}). exhausted=${exhaustedAllMessages}`);
+      console.warn(`[fetchMediaGalleryPage] WARNING: Not enough for page ${safePage}. Only ${uniqueImagesCollected} unique images found.`);
     }
 
     return Response.json({
