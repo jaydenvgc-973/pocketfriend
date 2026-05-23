@@ -260,7 +260,7 @@ Deno.serve(async (req) => {
       return {
         id: m.id,
         url: m.image_url,
-        description: resolvedDescription || '',
+        description: resolvedDescription || null,
         imageDescription: m.image_description || '',
         // ── RESTORED PROMPT/CONTEXT FIELDS ──
         originalPrompt,

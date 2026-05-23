@@ -411,11 +411,15 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
   // image.description is already the resolved value from fetchMediaGalleryPage.
   // CRITICAL: image.generationPrompt = gc.prompt = 10,000-char provider instruction blob.
   // Never use it as a display value. Use originalPrompt, scenePrompt, or description.
+  const gc = image.generationContext || {};
   const displayPrompt =
     image.originalPrompt ||
     image.scenePrompt ||
     image.description ||
     image.imageDescription ||
+    gc.original_raw_prompt ||
+    gc.scene_prompt ||
+    gc.resolved_description ||
     null;
   const hasSubjects = image.subjectNames && image.subjectNames.length > 0;
 
