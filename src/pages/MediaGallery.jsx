@@ -75,7 +75,7 @@ export default function MediaGallery() {
     console.log(`[MediaGallery] Fetch initiated: page=${page} requestId=${requestId} seenImages reset`);
 
     // ── STEP 1: ALWAYS CLEAR CACHE BEFORE FETCH (even on pagination changes) ────
-    lfcDelete(user.email, cacheKey);
+    await lfcDelete(user.email, cacheKey);
     console.log(`[MediaGallery] Fetching fresh page=${page} (cache cleared before fetch)`);
     setIsLoading(page === 1);
 
