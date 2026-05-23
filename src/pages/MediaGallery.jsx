@@ -409,9 +409,10 @@ export default function MediaGallery() {
 function ImageDetailModal({ image, onClose, onSend, onDelete }) {
   // Resolve the best display prompt — full fallback chain matching backend output.
   // image.description is already the resolved value from fetchMediaGalleryPage.
+  // CRITICAL: image.generationPrompt = gc.prompt = 10,000-char provider instruction blob.
+  // Never use it as a display value. Use originalPrompt, scenePrompt, or description.
   const displayPrompt =
     image.originalPrompt ||
-    image.generationPrompt ||
     image.scenePrompt ||
     image.description ||
     image.imageDescription ||
@@ -684,10 +685,11 @@ function SendImageModal({ image, onClose, onSent }) {
           // vision analysis + prompt context + subject identity.
           // This is what the character LLM reads when deciding how to respond.
           // Resolve the best available description for character context injection.
-          // Use the same chain as the gallery display so the character always gets real context.
+          // CRITICAL: image.generationPrompt = gc.prompt = 10,000-char provider blob — SKIP IT.
+          // Use image.originalPrompt (gc.original_raw_prompt) or image.scenePrompt (gc.scene_prompt)
+          // or image.description (already resolved by fetchMediaGalleryPage from the best field).
           const resolvedDisplayPrompt =
             image.originalPrompt ||
-            image.generationPrompt ||
             image.scenePrompt ||
             image.description ||
             image.imageDescription ||

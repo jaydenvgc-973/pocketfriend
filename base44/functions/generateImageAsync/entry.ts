@@ -1892,11 +1892,13 @@ All reference images (if any) are environment/location refs only — do NOT trea
         const reason = isFirstGeneration ? 'first generation (no prior camera)' : `${diffCount} camera variables changed`;
         console.log(`[generateImageAsync] ✅ Camera ACCEPTED — attempt ${attempt} (${reason})`);
 
-        // Build a compact image_description from the sanitized prompt so that
-        // downstream consumers (group chat, world contacts, memory extraction) can
-        // reference what this generated image actually shows without re-running vision.
+        // image_description = the original user-facing scene prompt (clean, no prefix).
+        // CRITICAL: do NOT prefix with "Generated character photo." — that prefix pollutes
+        // the gallery description field and is what causes "No prompt/context saved" to appear.
+        // The clean sanitizedPrompt IS the scene description — write it directly.
+        // This is what appears in the Media Gallery under "Prompt / Context".
         const generatedImageDescription = sanitizedPrompt
-          ? `Generated character photo. Scene: ${sanitizedPrompt.substring(0, 300)}${sanitizedPrompt.length > 300 ? '…' : ''}`
+          ? sanitizedPrompt.substring(0, 500)
           : null;
 
         // Write staging data + final image atomically

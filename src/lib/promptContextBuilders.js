@@ -1046,8 +1046,11 @@ export function buildReceivedImageContext(recentMessages, receivingCharacterId, 
   const gc = recentImgMsg.generation_context || null;
   const imageDesc = recentImgMsg.image_description || null;
 
-  // Build the best available prompt/context text
-  const originalPrompt = gc?.original_raw_prompt || gc?.scene_prompt || gc?.prompt || null;
+  // Build the best available prompt/context text.
+  // CRITICAL: gc.prompt is the 10,000-char provider instruction blob — never use it as display text.
+  // Only use gc.prompt if it is short (< 400 chars), meaning it's a simple user-written prompt.
+  const gcPromptIfShort = (gc?.prompt && gc.prompt.length < 400) ? gc.prompt : null;
+  const originalPrompt = gc?.original_raw_prompt || gc?.scene_prompt || imageDesc || gc?.resolved_description || gcPromptIfShort || null;
   const subjects = gc?.subjects || [];
   const locationName = gc?.location_name || gc?.locationName || null;
   const zoneName = gc?.zone_name || gc?.zoneName || null;

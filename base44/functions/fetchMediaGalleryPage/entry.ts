@@ -141,9 +141,16 @@ Deno.serve(async (req) => {
         const dedupKey = normalizeUrlForDedup(m.image_url);
         if (seenNormalizedUrls.has(dedupKey)) continue;
 
-        // Apply search filter
+        // Apply search filter — search all available description fields
         if (searchLower) {
-          const desc = (m.image_description || '').toLowerCase();
+          const gc = m.generation_context || {};
+          const desc = [
+            m.image_description,
+            gc.scene_prompt,
+            gc.original_raw_prompt,
+            (gc.prompt && gc.prompt.length < 400) ? gc.prompt : null,
+            gc.resolved_description,
+          ].filter(Boolean).join(' ').toLowerCase();
           const sender = (m.character_name || '').toLowerCase();
           if (!desc.includes(searchLower) && !sender.includes(searchLower)) continue;
         }
@@ -223,27 +230,27 @@ Deno.serve(async (req) => {
       const gc = m.generation_context || null;
 
       // Extract the most descriptive prompt available, in priority order:
-      //   1. generation_context.original_raw_prompt (the literal text the user typed)
-      //   2. generation_context.prompt (the final assembled prompt sent to image API)
-      //   3. generation_context.scene_prompt
-      //   4. image_description (vision-analyzed description)
-      // Resolve the best available prompt/description — full fallback chain.
-      // Priority: typed original prompt → assembled prompt → scene prompt → vision description
+      //   1. generation_context.original_raw_prompt (the user's original typed request)
+      //   2. generation_context.scene_prompt (sanitized scene description — human-readable)
+      //   3. image_description on the message (written by generateImageAsync as clean sanitizedPrompt)
+      //   4. generation_context.resolved_description
+      //   5. generation_context.prompt ONLY if short (< 400 chars) — the full prompt blob is 10,000+ chars
+      //
+      // CRITICAL: gc.prompt is the full 10,000-character provider instruction string.
+      // It must NEVER be used as the display description — it's unreadable and not the scene.
+      // gc.scene_prompt and m.image_description are the clean human-readable values.
+      const gcPromptIfShort = (gc?.prompt && gc.prompt.length < 400) ? gc.prompt : null;
       const originalPrompt =
         gc?.original_raw_prompt ||
-        gc?.prompt ||
         gc?.scene_prompt ||
         m.image_description ||
+        gc?.resolved_description ||
+        gcPromptIfShort ||
         null;
 
       // Resolved display description — what the gallery modal shows under PROMPT / CONTEXT.
-      // This is the single field the UI should trust for display.
-      const resolvedDescription =
-        gc?.original_raw_prompt ||
-        gc?.prompt ||
-        gc?.scene_prompt ||
-        m.image_description ||
-        null;
+      // Same priority chain as originalPrompt.
+      const resolvedDescription = originalPrompt;
 
       // Extract subject metadata (people/characters shown in the image)
       const subjects = gc?.subjects || [];
