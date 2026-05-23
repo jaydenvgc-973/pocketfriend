@@ -29,6 +29,14 @@ Deno.serve(async (req) => {
 
     // ── CASE B: PROMOTED TO ACTIVE → Remove from VGC Towers travel ───────────
     if (wasNPC && isNowActive) {
+      // SLEEP RHYTHM PRESERVATION RULE: promotion must never erase sleep fields.
+      // Active created autonomous sleep uses the existing rhythm as its baseline.
+      // Only backfill if fields are genuinely missing — never overwrite valid values.
+      const sleepPreserve = {};
+      if (!char.sleep_start_time) sleepPreserve.sleep_start_time = '23:00';
+      if (!char.wake_up_time) sleepPreserve.wake_up_time = '07:00';
+      if (char.sleep_debt_hours === undefined || char.sleep_debt_hours === null) sleepPreserve.sleep_debt_hours = 0;
+
       const updates = {
         character_type: 'active',
         // Clear NPC travel fields — active characters are not eligible for VGC distribution
@@ -42,6 +50,8 @@ Deno.serve(async (req) => {
         resolved_presence_status: 'home',
         resolved_location_type: 'home',
         resolved_source_reason: 'promoted_to_active',
+        // Preserve/backfill sleep rhythm — active created autonomy requires a baseline
+        ...sleepPreserve,
       };
 
       await base44.entities.Character.update(characterId, updates);

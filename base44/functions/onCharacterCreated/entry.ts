@@ -77,6 +77,12 @@ Deno.serve(async (req) => {
 
           if (userVGC) {
             const now = new Date().toISOString();
+            // Initialize sleep rhythm — backfill only if missing (preserve existing schedules)
+            const sleepPatch = {};
+            if (!character.sleep_start_time) sleepPatch.sleep_start_time = '23:00';
+            if (!character.wake_up_time) sleepPatch.wake_up_time = '07:00';
+            if (character.sleep_debt_hours === undefined || character.sleep_debt_hours === null) sleepPatch.sleep_debt_hours = 0;
+
             await base44.asServiceRole.entities.Character.update(character.id, {
               current_home_location_id: userVGC.id,
               resolved_current_location_id: userVGC.id,
@@ -88,6 +94,7 @@ Deno.serve(async (req) => {
               location_status: 'home',
               travel_status: 'not_traveling',
               location_visibility_state: 'visible',
+              ...sleepPatch,
             });
 
             const residentIds = Array.from(new Set([...(userVGC.resident_character_ids || []), character.id]));
