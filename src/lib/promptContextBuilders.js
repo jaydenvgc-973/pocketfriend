@@ -1044,13 +1044,21 @@ export function buildReceivedImageContext(recentMessages, receivingCharacterId, 
   if (!recentImgMsg) return '';
 
   const gc = recentImgMsg.generation_context || null;
-  const imageDesc = recentImgMsg.image_description || null;
+  // imageDesc: check both durable analysis field AND inferred-on-send field (promptless gallery sends)
+  const imageDesc = recentImgMsg.image_description
+    || recentImgMsg.inferred_image_description
+    || recentImgMsg.visual_analysis_description
+    || null;
 
   // Build the best available prompt/context text.
   // CRITICAL: gc.prompt is the 10,000-char provider instruction blob — never use it as display text.
   // Only use gc.prompt if it is short (< 400 chars), meaning it's a simple user-written prompt.
   const gcPromptIfShort = (gc?.prompt && gc.prompt.length < 400) ? gc.prompt : null;
   const originalPrompt = gc?.original_raw_prompt || gc?.scene_prompt || imageDesc || gc?.resolved_description || gcPromptIfShort || null;
+
+  // Inferred description label for LLM context block
+  const isInferredDesc = !gc?.original_raw_prompt && !gc?.scene_prompt && !recentImgMsg.image_description
+    && !!(recentImgMsg.inferred_image_description || recentImgMsg.visual_analysis_description);
   const subjects = gc?.subjects || [];
   const locationName = gc?.location_name || gc?.locationName || null;
   const zoneName = gc?.zone_name || gc?.zoneName || null;
@@ -1068,9 +1076,15 @@ export function buildReceivedImageContext(recentMessages, receivingCharacterId, 
   lines.push(`This metadata tells you exactly what the image shows. Respond based on this — do NOT invent a different scene.`);
 
   if (originalPrompt) {
-    lines.push(`\nORIGINAL IMAGE PROMPT/DESCRIPTION:`);
-    lines.push(`"${originalPrompt}"`);
-    lines.push(`This is what the image was created to show. Treat this as ground truth for what you see.`);
+    if (isInferredDesc) {
+      lines.push(`\nVISUAL ANALYSIS DESCRIPTION (inferred — no original prompt exists for this image):`);
+      lines.push(`"${originalPrompt}"`);
+      lines.push(`This is a visual analysis of what the image shows. Treat this as ground truth for what you see.`);
+    } else {
+      lines.push(`\nORIGINAL IMAGE PROMPT/DESCRIPTION:`);
+      lines.push(`"${originalPrompt}"`);
+      lines.push(`This is what the image was created to show. Treat this as ground truth for what you see.`);
+    }
   }
 
   if (imageDesc && imageDesc !== originalPrompt) {
@@ -1157,7 +1171,10 @@ export function buildConversationLog(recentMsgs, characterName, userWorldName) {
     if (!txt && m.image_url) {
       const gc = m.generation_context || {};
       // Best available description — same priority chain as buildReceivedImageContext
+      // Includes inferred_image_description for promptless gallery sends
       const desc = m.image_description
+        || m.inferred_image_description
+        || m.visual_analysis_description
         || gc.original_raw_prompt
         || gc.scene_prompt
         || gc.resolved_description

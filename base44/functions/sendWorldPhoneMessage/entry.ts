@@ -36,12 +36,19 @@ Deno.serve(async (req) => {
       requested_message,          // raw message content to send
       image_url,                  // optional: image URL for image sends
       image_description,          // optional: caption/description for image
+      image_analysis_status,      // optional: 'complete' | 'pending' | 'failed'
       message_type,               // optional: 'text' | 'image' (default: 'text')
       source,                     // "user_instruction" | "character_action"
       current_chat_message_id,    // source message ID in the active chat conversation
       current_conversation_id,    // active chat conversation ID (not the WP thread)
       owner_email,
       generate_recipient_response, // optional: if true, generate Character B's response now
+      // Media Gallery send tracking (non-destructive, written to new message only)
+      needs_visual_analysis,      // true = no original context, trigger analysis post-save
+      source_media_message_id,    // original gallery message ID
+      source_media_url,           // original gallery image URL
+      source_media_had_prompt,    // was original context present
+      source_media_had_generation_context,
     } = await req.json();
 
     if (!sender_character_id || !recipient_identifier) {
@@ -293,8 +300,15 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
     // Add image fields if this is an image send
     if (isImageSend && image_url) {
       messagePayload.image_url = image_url;
-      messagePayload.image_description = image_description || '';
-      messagePayload.image_analysis_status = 'complete';
+      messagePayload.image_description = image_description || undefined;
+      // If no description and needs_visual_analysis=true, mark pending so the LLM context
+      // builder knows to wait for / use the inferred description when it arrives.
+      messagePayload.image_analysis_status = image_analysis_status || (image_description ? 'complete' : 'pending');
+      // Source tracking — written only to this new message, never to original gallery record
+      if (source_media_message_id) messagePayload.source_media_message_id = source_media_message_id;
+      if (source_media_url) messagePayload.source_media_url = source_media_url;
+      if (source_media_had_prompt !== undefined) messagePayload.source_media_had_prompt = source_media_had_prompt;
+      if (source_media_had_generation_context !== undefined) messagePayload.source_media_had_generation_context = source_media_had_generation_context;
     }
 
     const savedMessage = await base44.entities.Message.create(messagePayload);
@@ -307,6 +321,44 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
         conversation_id: conversationId,
         shared_key: canonicalKey,
       });
+    }
+
+    // ── VISUAL ANALYSIS FOR PROMPTLESS GALLERY IMAGE SENDS ────────────────────────
+    // Reuses the SAME pipeline as Chat uploaded images (InvokeLLM + store on message).
+    // Only runs when no description was available from the original gallery item.
+    // Stores image_description + image_analysis_status on THIS new message only.
+    // Never modifies the original gallery record.
+    if (isImageSend && image_url && needs_visual_analysis && !image_description) {
+      try {
+        console.log(`[sendWorldPhoneMessage] Running visual analysis on promptless gallery image for msg=${savedMessage.id}`);
+        const analysisRes = await base44.integrations.Core.InvokeLLM({
+          prompt: `Analyze this image and provide a detailed, factual visual description in 2-4 sentences.
+Describe exactly what you see: people (appearance, expressions, clothing, pose), objects, setting/environment, text visible, colors, lighting, and any notable details.
+Do NOT interpret meaning or make assumptions beyond what is literally visible.
+If the image is blurry, dark, or unclear, describe that explicitly.
+Return ONLY the description text, nothing else.`,
+          file_urls: [image_url],
+        });
+        const inferred = (typeof analysisRes === 'string' ? analysisRes : '').trim();
+        if (inferred && inferred.length > 5) {
+          await base44.asServiceRole.entities.Message.update(savedMessage.id, {
+            image_description: inferred,
+            image_analysis_status: 'complete',
+          }).catch(e => console.warn(`[sendWorldPhoneMessage] Failed to store visual analysis: ${e.message}`));
+          console.log(`[sendWorldPhoneMessage] Visual analysis stored on msg=${savedMessage.id} len=${inferred.length}`);
+        } else {
+          await base44.asServiceRole.entities.Message.update(savedMessage.id, {
+            image_analysis_status: 'failed',
+            image_analysis_error: 'Visual analysis returned empty result',
+          }).catch(() => {});
+        }
+      } catch (analysisErr) {
+        console.warn(`[sendWorldPhoneMessage] Visual analysis failed (non-fatal): ${analysisErr.message}`);
+        await base44.asServiceRole.entities.Message.update(savedMessage.id, {
+          image_analysis_status: 'failed',
+          image_analysis_error: analysisErr.message,
+        }).catch(() => {});
+      }
     }
 
     // ── READ-BACK VERIFICATION for image sends ──────────────────────────────────
