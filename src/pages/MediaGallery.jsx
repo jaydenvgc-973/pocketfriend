@@ -74,12 +74,13 @@ export default function MediaGallery() {
     seenImageIdsRef.current = new Set();
     console.log(`[MediaGallery] Fetch initiated: page=${page} requestId=${requestId} seenImages reset`);
 
-    // ── STEP 1: Cache was already cleared on mount. Always fetch fresh first. ────
-    console.log(`[MediaGallery] Fetching fresh page=${page} (cache pre-cleared on mount)`);
-    setIsLoading(true);
+    // ── STEP 1: ALWAYS CLEAR CACHE BEFORE FETCH (even on pagination changes) ────
+    lfcDelete(user.email, cacheKey);
+    console.log(`[MediaGallery] Fetching fresh page=${page} (cache cleared before fetch)`);
+    setIsLoading(page === 1);
 
     // ── STEP 2: Always fetch fresh backend (no cache bypass) ─────────────────────
-    setIsRefreshing(true);
+    setIsRefreshing(page > 1);
     try {
       const res = await base44.functions.invoke('fetchMediaGalleryPage', {
         page,
