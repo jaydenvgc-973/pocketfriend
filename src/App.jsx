@@ -43,6 +43,7 @@ import Locations from './pages/Locations';
 
 import Finance from './pages/Finance';
 import EditCharacterTraits from './pages/EditCharacterTraits';
+import ImageGenerationDiagnostics from './pages/ImageGenerationDiagnostics';
 import EditCharacterReligion from './pages/EditCharacterReligion';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 import { LocationEditProvider } from '@/components/location/LocationEditConflictManager';
@@ -143,6 +144,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/admin-verification" element={<AdminVerification />} />
       <Route path="/travel" element={<Travel />} />
       <Route path="/scene" element={<Scene />} />
+      <Route path="/image-diagnostics" element={<ImageGenerationDiagnostics />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
