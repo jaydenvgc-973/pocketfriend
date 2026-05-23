@@ -11,6 +11,17 @@ import { isCharacterInPrayer } from './religionUtils';
 export function getCharacterStatus(character) {
   if (!character) return 'available';
 
+  // ── DB TRUTH FIRST: resolved_presence_status is the authoritative single source of truth ──
+  // This MUST be checked before any schedule-based inference. A character with
+  // resolved_presence_status = 'sleeping' or 'napping' IS asleep — regardless of
+  // what schedule logic computes, regardless of energy value, regardless of missing fields.
+  // This is the same field read by Home cards, Travel page, and co-presence resolver.
+  const resolvedPS = character.resolved_presence_status;
+  if (resolvedPS === 'sleeping' || resolvedPS === 'napping') return 'asleep';
+
+  // ── SCHEDULE FALLBACK: only when DB has no sleep signal ──
+  // isCharacterAsleep() is a schedule-window computation — it must only run when
+  // resolved_presence_status does NOT already confirm the sleep state.
   if (isCharacterAsleep(character)) return 'asleep';
 
   // Prayer check
