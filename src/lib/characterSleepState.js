@@ -104,46 +104,110 @@ export function getCharacterSleepState(character) {
   const status = character.resolved_presence_status || '';
   const reason = character.resolved_source_reason || '';
 
-  // ── SCHEDULE-DRIVEN SLEEP DETECTION (catches stale DB status) ──────────────
-  // If the character is within their scheduled sleep window, treat them as asleep
-  // regardless of what resolved_presence_status says. This is the primary fix for
-  // characters who should be asleep at 5 AM but whose DB status was never updated.
-  // Exceptions: characters actively at work, at school, or jailed are not overridden.
-  const isConfinedOrWorking = character.is_jailed ||
-    status === 'at_work' ||
-    status === 'at_school' ||
-    status === 'house_arrest';
-
-  if (!isConfinedOrWorking && status !== 'sleeping' && status !== 'napping') {
-    const scheduleAsleep = isScheduledSleeping(character, nowET);
-    if (scheduleAsleep) {
-      const window = computeAdaptiveSleepWindow(character, nowET);
-      const wakeMin = window?.wakeMin ?? null;
-      const wakeHour = wakeMin !== null ? Math.floor(wakeMin / 60) : null;
-      const wakeMinPart = wakeMin !== null ? wakeMin % 60 : null;
-      const wakeLabel = wakeHour !== null
-        ? `${wakeHour % 12 || 12}:${String(wakeMinPart).padStart(2, '0')} ${wakeHour >= 12 ? 'PM' : 'AM'}`
-        : null;
-      return {
-        isSleeping: true,
-        isNapping: false,
-        displayLabel: 'sleeping',
-        contextLabel: `🌙 sleeping (scheduled window)`,
-        visible_label: `🌙 sleeping`,
-        wake_label: wakeLabel,
-        confirmed_reason: 'scheduled_sleep_window_stale_db',
-        evidence_source: `schedule_window_source:${window?.source || 'unknown'}`,
-        confidence: 0.85,
-        stale_risk: false,
-        isLikelyStale: false,
-        blockingCondition: null,
-        stale_db_detected: true,
-      };
-    }
-  }
-
-  // ── NOT SLEEPING ───────────────────────────────────────────────────────────
+  // ── NOT SLEEPING: Route by character type ──────────────────────────────────
   if (status !== 'sleeping' && status !== 'napping') {
+    const isActiveCreated = character.character_type === 'active_created_character';
+    const isConfinedOrWorking = character.is_jailed ||
+      status === 'at_work' ||
+      status === 'at_school' ||
+      status === 'house_arrest';
+
+    if (!isConfinedOrWorking) {
+      if (isActiveCreated) {
+        // ACTIVE CREATED CHARACTERS: autonomous sleep only — never forced by schedule window alone.
+        // Check for autonomous sleep evidence during the app's late-night/early-morning slowdown (midnight–6 AM ET).
+        // Evidence = tiredness/energy threshold, sleep debt, explicit awake override expired.
+        const nowHour = nowET.getHours();
+        const isSlowdownHour = nowHour >= 0 && nowHour < 6;
+        const hasAwakeOverride = character.decided_to_stay_up_until &&
+          new Date(character.decided_to_stay_up_until) > nowET;
+
+        if (isSlowdownHour && !hasAwakeOverride) {
+          const energyLow = character.energy_value !== undefined && character.energy_value < 30;
+          const sleepDebt = character.sleep_debt_hours && character.sleep_debt_hours > 0;
+          const tiredEnough = character.energy_value !== undefined && character.energy_value < 45;
+
+          if (energyLow || sleepDebt || tiredEnough) {
+            // Autonomous evidence supports sleep — treat as asleep, flag that DB status is stale
+            return {
+              isSleeping: true,
+              isNapping: false,
+              displayLabel: 'sleeping',
+              contextLabel: '🌙 sleeping (autonomous — stale DB)',
+              visible_label: '🌙 sleeping',
+              confirmed_reason: 'autonomous_sleep_stale_db',
+              evidence_source: energyLow ? 'energy_low' : sleepDebt ? 'sleep_debt' : 'tiredness_threshold',
+              confidence: 0.8,
+              stale_risk: false,
+              isLikelyStale: false,
+              blockingCondition: null,
+              stale_db_detected: true,
+              active_created_sleep_model: true,
+            };
+          }
+
+          // No autonomous evidence — awake with no exception during slowdown. Flag for diagnostics.
+          return {
+            isSleeping: false,
+            isNapping: false,
+            displayLabel: 'awake',
+            contextLabel: null,
+            visible_label: null,
+            confirmed_reason: null,
+            evidence_source: null,
+            confidence: 1,
+            stale_risk: false,
+            isLikelyStale: false,
+            blockingCondition: null,
+            diagnostic_flag: 'active_created_character_awake_during_expected_sleep_window',
+          };
+        }
+
+        // Outside slowdown hours or has awake override — normal awake
+        return {
+          isSleeping: false,
+          isNapping: false,
+          displayLabel: 'awake',
+          contextLabel: null,
+          visible_label: null,
+          confirmed_reason: null,
+          evidence_source: null,
+          confidence: 1,
+          stale_risk: false,
+          isLikelyStale: false,
+          blockingCondition: null,
+        };
+      } else {
+        // NPC / FAMILY / UNTYPED: schedule-window override is appropriate for these character types.
+        const scheduleAsleep = isScheduledSleeping(character, nowET);
+        if (scheduleAsleep) {
+          const window = computeAdaptiveSleepWindow(character, nowET);
+          const wakeMin = window?.wakeMin ?? null;
+          const wakeHour = wakeMin !== null ? Math.floor(wakeMin / 60) : null;
+          const wakeMinPart = wakeMin !== null ? wakeMin % 60 : null;
+          const wakeLabel = wakeHour !== null
+            ? `${wakeHour % 12 || 12}:${String(wakeMinPart).padStart(2, '0')} ${wakeHour >= 12 ? 'PM' : 'AM'}`
+            : null;
+          return {
+            isSleeping: true,
+            isNapping: false,
+            displayLabel: 'sleeping',
+            contextLabel: '🌙 sleeping (scheduled window)',
+            visible_label: '🌙 sleeping',
+            wake_label: wakeLabel,
+            confirmed_reason: 'scheduled_sleep_window_stale_db',
+            evidence_source: `schedule_window_source:${window?.source || 'unknown'}`,
+            confidence: 0.85,
+            stale_risk: false,
+            isLikelyStale: false,
+            blockingCondition: null,
+            stale_db_detected: true,
+          };
+        }
+      }
+    }
+
+    // Confined/working or no sleep evidence — awake
     return {
       isSleeping: false,
       isNapping: false,
