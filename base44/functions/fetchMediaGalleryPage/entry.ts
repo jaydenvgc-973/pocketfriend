@@ -326,6 +326,25 @@ Deno.serve(async (req) => {
       const subjectIds = subjects.map(s => s.subject_id).filter(Boolean);
       const subjectNames = subjects.map(s => s.subject_name).filter(Boolean);
 
+      // ── IMAGE CLASSIFICATION ──────────────────────────────────────────────
+      // Classify this image for proper UI categorization and fallback behavior
+      let imageCategory = 'unknown';
+      if (gc) {
+        // Has generation_context — AI-generated
+        imageCategory = (gc.prompt || gc.original_raw_prompt || gc.scene_prompt)
+          ? 'ai_generated_with_context'
+          : 'ai_generated_missing_context';
+      } else if (m.sender_type === 'character') {
+        // Character-sent image
+        imageCategory = 'character_sent_image';
+      } else if (m.sender_type === 'user') {
+        // User-uploaded/user-sent
+        imageCategory = 'user_uploaded';
+      } else {
+        // Legacy image with unknown source
+        imageCategory = 'legacy_missing_context';
+      }
+
       return {
         id: m.id,
         url: m.image_url,
@@ -347,6 +366,8 @@ Deno.serve(async (req) => {
         zoneName: gc?.zone_name || gc?.zoneName || null,
         // Full generation_context — passed through for send-to-character
         generationContext: gc,
+        // ── IMAGE CATEGORY FOR UI CLASSIFICATION ──
+        imageCategory,
         // ── DIAGNOSTIC FIELDS (for proof the data made it through) ──
         _diag: {
           hasGenerationContext: !!gc,
@@ -355,6 +376,7 @@ Deno.serve(async (req) => {
           hasOriginalRawPrompt: !!gc?.original_raw_prompt,
           hasImageDescription: !!m.image_description,
           resolvedDescriptionLength: resolvedDescription?.length || 0,
+          imageCategory,
         },
         // ── SENDER / SOURCE ──
         senderType: m.sender_type || 'user',

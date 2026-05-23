@@ -454,6 +454,7 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
   React.useEffect(() => {
     console.log('[ImageDetailModal] Opened with:', {
       id: image.id,
+      imageCategory: image.imageCategory,
       description: image.description?.substring(0, 200),
       displayPrompt: displayPrompt?.substring(0, 200),
       hasDescription: !!image.description && image.description.length > 5,
@@ -461,9 +462,34 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
       originalPrompt: image.originalPrompt?.substring(0, 100),
       scenePrompt: image.scenePrompt?.substring(0, 100),
       imageDescription: image.imageDescription?.substring(0, 100),
+      senderType: image.senderType,
       _diag: image._diag,
     });
   }, [image]);
+
+  /**
+   * stripInternalMetadata
+   * Removes ALL internal scaffolding, character IDs, provider instructions,
+   * identity-lock directives, and system markers from the displayed prompt.
+   */
+  const stripInternalMetadata = (text) => {
+    if (!text) return text;
+    return text
+      // Remove [NAME REFERENCE KEY] blocks and contents
+      .replace(/\[NAME REFERENCE KEY[^\]]*?\]/g, '')
+      .replace(/\[END NAME REFERENCE KEY\]/g, '')
+      // Remove other system markers
+      .replace(/\[REFERENCE KEY[^\]]*?\]/g, '')
+      .replace(/\[END REFERENCE KEY\]/g, '')
+      .replace(/\[CHARACTER ID[^\]]*?\]/g, '')
+      .replace(/\[IDENTITY LOCK[^\]]*?\]/g, '')
+      .replace(/\[PROVIDER INSTRUCTION[^\]]*?\]/g, '')
+      // Remove character ID references like "(ID: 69c0d59d7e382cc866ded9c9)"
+      .replace(/\(ID:\s*[a-z0-9]+\)/gi, '')
+      // Remove multiple blank lines
+      .replace(/\n\n+/g, '\n\n')
+      .trim();
+  };
 
   const hasSubjects = image.subjectNames && image.subjectNames.length > 0;
 
@@ -493,33 +519,62 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
             <p className="text-sm text-foreground">{image.senderName}</p>
           </div>
 
-          {/* Original generation prompt — required metadata */}
-          {displayPrompt ? (
+          {/* Category-specific prompt/context display */}
+          {image.imageCategory === 'ai_generated_with_context' && displayPrompt && (
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Prompt / Context</p>
-              <p className="text-sm text-foreground whitespace-pre-wrap">
-                {/* Strip internal [NAME REFERENCE KEY] scaffolding — user should only see clean scene description */}
-                {displayPrompt
-                  .replace(/\[NAME REFERENCE KEY[^\]]*?\]/g, '')
-                  .replace(/\[END NAME REFERENCE KEY\]/g, '')
-                  .replace(/\n\n+/g, '\n\n')
-                  .trim()}
-              </p>
-            </div>
-          ) : (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Prompt / Context</p>
-              <p className="text-xs text-muted-foreground italic">No prompt/context saved for this image</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Generation Prompt / Context</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap">{stripInternalMetadata(displayPrompt)}</p>
             </div>
           )}
 
-          {/* Vision-analyzed description (separate from prompt) */}
-          {image.imageDescription && image.imageDescription !== displayPrompt && (
+          {image.imageCategory === 'ai_generated_missing_context' && (
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Image Description</p>
-              <p className="text-sm text-foreground whitespace-pre-wrap">{image.imageDescription}</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">⚠ Context Missing</p>
+              <p className="text-xs text-amber-600/80">This image was AI-generated but the generation context was not saved. Original prompt is unrecoverable.</p>
             </div>
           )}
+
+          {image.imageCategory === 'user_uploaded' && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">User-Uploaded Image</p>
+              <p className="text-xs text-muted-foreground">This image was uploaded by you — no generation prompt.</p>
+              {image.imageDescription && (
+                <>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase mt-3 mb-1">Image Description</p>
+                  <p className="text-sm text-foreground">{image.imageDescription}</p>
+                </>
+              )}
+            </div>
+          )}
+
+          {image.imageCategory === 'character_sent_image' && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Character-Sent Image</p>
+              <p className="text-xs text-muted-foreground">This image was sent by {image.senderName}.</p>
+              {image.imageDescription && (
+                <>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase mt-3 mb-1">Image Description</p>
+                  <p className="text-sm text-foreground">{image.imageDescription}</p>
+                </>
+              )}
+            </div>
+          )}
+
+          {image.imageCategory === 'legacy_missing_context' && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Legacy Image</p>
+              <p className="text-xs text-muted-foreground">This is a legacy image with no recoverable prompt/context data.</p>
+            </div>
+          )}
+
+          {image.imageCategory === 'unknown' && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Unclassified Image</p>
+              <p className="text-xs text-muted-foreground">Image category could not be determined.</p>
+            </div>
+          )}
+
+
 
           {/* Subjects shown in the image */}
           {hasSubjects && (
