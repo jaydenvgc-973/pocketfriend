@@ -1592,9 +1592,17 @@ Deno.serve(async (req) => {
           msg.includes('moderation') ||
           msg.includes('safety filter') ||
           msg.includes('flagged by our safety') ||
-          msg.includes('cannot generate') && msg.includes('explicit') ||
+          (msg.includes('cannot generate') && msg.includes('explicit')) ||
+          // Vertex AI specific phrases
+          msg.includes('violated vertex') ||
+          msg.includes('violated google') ||
+          msg.includes('vertex ai') ||
+          msg.includes('unable to show') ||
+          msg.includes('filtered out') ||
+          msg.includes('imagen') ||
+          msg.includes('responsible ai') ||
           // HTTP 400 with specific safety/policy payload (not generic 400s)
-          (statusCode === 400 && (msg.includes('safety') || msg.includes('policy') || msg.includes('blocked_by_safety')))
+          (statusCode === 400 && (msg.includes('safety') || msg.includes('policy') || msg.includes('blocked_by_safety') || msg.includes('blocked') || msg.includes('filter')))
         );
 
         if (isRealContentPolicyBlock) {

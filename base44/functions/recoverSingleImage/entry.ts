@@ -355,29 +355,111 @@ Use ONLY the reference images and character description below for appearance. No
 `;
     imagePrompt = caucasianGuardRecover + imagePrompt;
 
+    // ── STEP 5b: INJECT OUTFIT INTO CHARESC IF MISSING ───────────────────────
+    // Mirrors the outfit injection logic in generateImageAsync exactly.
+    // If charDesc already has "Currently wearing:" (from ctx), skip re-injection.
+    if (subjectCharRecord && !/Currently wearing:/i.test(charDesc)) {
+      const promptLowerForOutfit = (imagePrompt || '').toLowerCase();
+      const sleepWakeKws = ['sleeping','asleep','in bed','woke up','waking up','just woke','getting up','lying in bed','napping','nap','going to bed','bedtime'];
+      const isSleepWake = (subjectCharRecord?.resolved_presence_status === 'sleeping' || subjectCharRecord?.resolved_presence_status === 'napping')
+        || sleepWakeKws.some(kw => promptLowerForOutfit.includes(kw));
+
+      if (isSleepWake) {
+        const closetItems = (subjectCharRecord.character_closet || []).filter(o => o.outfit_id);
+        const sleepItem = closetItems.find(o => o.category === 'sleepwear' || o.category === 'lounge');
+        const co = subjectCharRecord.current_outfit;
+        let sleepText = null;
+        if (sleepItem) {
+          sleepText = [sleepItem.top, sleepItem.bottom, sleepItem.shoes, sleepItem.outerwear, sleepItem.accessories]
+            .filter(Boolean).map(p => { const t = p.trim(); return /^(n\/?a|none|-)$/i.test(t) ? null : t; }).filter(Boolean).join(', ') || sleepItem.full_description || null;
+        } else if (co && (co.category === 'sleepwear' || co.category === 'lounge')) {
+          sleepText = [co.top, co.bottom, co.shoes, co.outerwear, co.accessories]
+            .filter(Boolean).map(p => { const t = p.trim(); return /^(n\/?a|none|-)$/i.test(t) ? null : t; }).filter(Boolean).join(', ') || co.full_description || null;
+        } else {
+          const g = (subjectCharRecord.gender || '').toLowerCase();
+          sleepText = g === 'female' ? 'soft cotton pajama set or oversized sleep shirt and shorts'
+            : g === 'male' ? 'pajama bottoms or boxer shorts, no shirt or plain sleep shirt'
+            : 'comfortable pajama set';
+        }
+        if (sleepText) {
+          charDesc = charDesc ? `${charDesc}. Currently wearing: ${sleepText}` : `Currently wearing: ${sleepText}`;
+          console.log(`[recoverSingleImage][SleepWakeOutfit] ✅ Override: "${sleepText.substring(0, 80)}"`);
+        }
+      }
+
+      // Normal closet resolution (after sleep path — only runs if sleep didn't set it already)
+      if (!/Currently wearing:/i.test(charDesc)) {
+        const co = subjectCharRecord.current_outfit;
+        let outfitText = null;
+        if (co?.outfit_id || co?.label) {
+          outfitText = [co.top, co.bottom, co.shoes, co.outerwear, co.accessories]
+            .filter(Boolean).map(p => { const t = p.trim(); return /^(n\/?a|none|-)$/i.test(t) ? null : t; }).filter(Boolean).join(', ') || co.full_description || null;
+        }
+        if (!outfitText) {
+          const closetItems = (subjectCharRecord.character_closet || []).filter(o => o.outfit_id);
+          if (closetItems.length > 0) {
+            outfitText = [closetItems[0].top, closetItems[0].bottom, closetItems[0].shoes, closetItems[0].outerwear, closetItems[0].accessories]
+              .filter(Boolean).map(p => { const t = p.trim(); return /^(n\/?a|none|-)$/i.test(t) ? null : t; }).filter(Boolean).join(', ') || closetItems[0].full_description || null;
+          }
+        }
+        if (outfitText) {
+          charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitText}` : `Currently wearing: ${outfitText}`;
+          console.log(`[recoverSingleImage][Outfit] ✅ Closet outfit injected: "${outfitText.substring(0, 80)}"`);
+        }
+      }
+    }
+
     // ── STEP 6: BUILD STRUCTURED PROMPT ──────────────────────────────────────
-    const finalPrompt = `
+    const charOutfitSnap = charDesc?.match(/Currently wearing:\s*(.+?)(?:\.|$)/)?.[1] || null;
+    const envEnd = envCount;
+    const charStart = envCount + 1;
+    const charEnd = envCount + identityRefs.length;
+
+    const finalPrompt = `════════════════════════════════════════════════════════════
+⛔ IDENTITY DEFAULT PROHIBITION — NON-NEGOTIABLE
+════════════════════════════════════════════════════════════
+UNKNOWN IDENTITY ≠ CAUCASIAN / WHITE.
+⛔ DO NOT default to Caucasian, white, fair-skinned, or any assumed ethnicity, gender, age, or body type.
+⛔ DO NOT use training-data priors for "generic person" — those priors skew heavily Caucasian.
+✅ Use ONLY: reference images, character description, appearance lock below.
+✅ If ethnicities are specified, render EXACTLY those. No whitewashing. No lightening skin tone.
+════════════════════════════════════════════════════════════
+
 STRICT SUBJECT RULE:
 The ONLY required subject is "${charName}".
-If the prompt mentions another person only as context, do NOT include that other person unless the prompt explicitly says they are physically present in the image.
+Do NOT include any other person unless explicitly named as physically present in the image.
 
-USER/STORED PHOTO PROMPT:
+${envCount > 0 ? `REFERENCE IMAGES — ENVIRONMENT (Images 1–${envEnd}):
+These are photographs of the location "${resolvedLocationName || 'the location'}${resolvedZoneName ? ' — ' + resolvedZoneName : ''}".
+Use for: room layout, furniture types, architecture, materials, spatial logic ONLY.
+⛔ Do NOT copy lighting, camera angle, or background into the character's pose.
+⛔ Do NOT composite the character onto the photo — render a unified 3D scene.
+
+` : ''}${identityRefs.length > 0 ? `REFERENCE IMAGES — IDENTITY (Images ${charStart}–${charEnd}):
+These are face/identity reference photographs of "${charName}".
+Extract ONLY: face structure, skin tone, eye shape, nose, mouth, hair color/length/texture, facial hair, body type.
+⛔ DISCARD everything else: pose, background, clothing, lighting from these reference photos.
+⛔ Do NOT reproduce the reference photo's background or camera angle.
+
+` : ''}CHARACTER IDENTITY — "${charName}":
+${charDesc || `Generate "${charName}" from the reference images provided — match face, skin tone, hair, and body type exactly.`}
+
+${charOutfitSnap ? `🔒 CLOSET OUTFIT LOCK — CANONICAL LAW:
+${charOutfitSnap.split(',').map(s => `  • ${s.trim()}`).join('\n')}
+⛔ Do NOT substitute, modify, or add any clothing item.
+⛔ Do NOT invent clothing from scene context.
+${/no shirt \/ bare torso/i.test(charOutfitSnap) ? '⛔ BARE TORSO — absolutely NO shirt, tank, hoodie, or robe on this character.\n✅ Torso must be completely bare.' : ''}
+` : ''}
+SCENE PROMPT:
 ${imagePrompt}
 
-CHARACTER IDENTITY LOCK:
-${charDesc || `Use the reference image(s) to preserve ${charName}'s face, age, body type, hair, skin tone, and overall identity.`}
-
-REFERENCE IMAGE RULES:
-${envCount > 0 ? `Images 1-${envCount}: environment/location reference only. Use for room layout, lighting, furniture, architecture, and spatial logic.` : ''}
-${identityRefs.length > 0 ? `Remaining image(s): ${charName}'s identity reference. Use for face/body identity only. Do not copy background from avatar/reference portraits.` : ''}
-
-LOCATION:
-${resolvedLocationName || ctx.location_name || 'Use the setting described in the prompt.'}
-${resolvedZoneName ? `Zone: ${resolvedZoneName}` : ''}
+LOCATION: ${resolvedLocationName || ctx.location_name || 'Use the setting described in the prompt.'}${resolvedZoneName ? '\nZone: ' + resolvedZoneName : ''}
 
 OUTPUT REQUIREMENTS:
-Photorealistic image. Correct named subject. Correct location. Natural candid composition. No duplicate people. No wrong character substitution. No sender-character contamination.
-`.trim();
+Photorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.
+Correct named subject only. Correct location. Natural candid composition.
+No duplicate people. No wrong character substitution. No sender contamination.
+Character physically integrated into scene — same lighting, perspective, floor plane.`.trim();
 
     console.log(`[recoverSingleImage] Generating image for "${charName}" with ${referenceImages.length} refs (env=${envCount} identity=${identityRefs.length})`);
 

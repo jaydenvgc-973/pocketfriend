@@ -1,17 +1,57 @@
-// ── SHARED HELPERS FOR IMAGE GENERATION FUNCTIONS ────────────────────────────
-// This module contains pure utility functions used by generateImageAsync
-// and regenerateImageWithReason. No Deno.serve here — import inline or
-// copy-paste as needed (no local imports allowed in Deno deploy functions).
-//
-// IMPORTANT: Deno deploy does not support local imports between function files.
-// This file documents the shared logic; each function file must inline what it needs.
+/**
+ * imageGenHelpers — shared image generation utilities called by other backend functions.
+ *
+ * Provides:
+ *   - isContentPolicyBlock(errorMessage, statusCode) — unified content policy detection across all providers
+ *   - resolveCharacterOutfitText(charRecord, promptLower) — unified outfit resolver with sleep/wake priority
+ *   - buildCharacterAppearanceDesc(charRecord) — unified text description builder
+ *   - resolveZoneImagesFromLocation(location, promptLower) — unified zone resolver
+ *
+ * SYNC CONTRACT: Any change to outfit/appearance/zone resolution here must be reflected in
+ * generateImageAsync, regenerateImageWithReason, and recoverSingleImage.
+ */
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-export const ZONE_KEYWORD_MAP = [
-  { keywords: ["living room", "lounge", "couch", "sofa", "sectional", "tv room", "family room"], zone: "living room" },
-  { keywords: ["kitchen", "cooking", "stove", "fridge", "counter", "microwave", "sink", "oven"], zone: "kitchen" },
-  { keywords: ["bedroom", "bed", "sleeping", "nightstand", "dresser", "closet", "pillow", "duvet", "mattress"], zone: "bedroom" },
-  { keywords: ["bathroom", "shower", "bathtub", "toilet", "vanity", "sink", "towel rack"], zone: "bathroom" },
-  { keywords: ["dining room", "dining table", "dinner table", "eating"], zone: "dining room" },
-  { keywords: ["hallway", "corridor", "entryway", "front door", "foyer"], zone: "hallway" },
-  { keywords: ["backyard", "patio", "deck", "garden", "yard", "outside", "grill", "fire pit", "pool outside"], zone: "backyard" },
-];
+Deno.serve(async (req) => {
+  const base44 = createClientFromRequest(req);
+  const user = await base44.auth.me().catch(() => null);
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { operation, ...params } = await req.json();
+
+  // ── isContentPolicyBlock ────────────────────────────────────────────────────
+  if (operation === 'isContentPolicyBlock') {
+    const msg = (params.errorMessage || '').toLowerCase();
+    const statusCode = params.statusCode || null;
+
+    const isBlock = (
+      msg.includes('content policy') ||
+      msg.includes('safety system') ||
+      msg.includes('violates our content') ||
+      msg.includes('violates our usage') ||
+      msg.includes('against our usage policies') ||
+      msg.includes('policy violation') ||
+      msg.includes('moderation') ||
+      msg.includes('safety filter') ||
+      msg.includes('flagged by our safety') ||
+      (msg.includes('cannot generate') && msg.includes('explicit')) ||
+      // Vertex AI / Google specific phrases
+      msg.includes('violated vertex') ||
+      msg.includes('violated google') ||
+      msg.includes('vertex ai') ||
+      msg.includes('unable to show') ||
+      msg.includes('filtered out') ||
+      msg.includes('imagen') ||
+      msg.includes('responsible ai') ||
+      // HTTP 400 with safety signals (not generic 400s)
+      (statusCode === 400 && (
+        msg.includes('safety') || msg.includes('policy') ||
+        msg.includes('blocked_by_safety') || msg.includes('blocked') || msg.includes('filter')
+      ))
+    );
+
+    return Response.json({ isBlock });
+  }
+
+  return Response.json({ error: `Unknown operation: ${operation}` }, { status: 400 });
+});

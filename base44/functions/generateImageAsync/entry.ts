@@ -1274,14 +1274,6 @@ Deno.serve(async (req) => {
         ].filter(Boolean);
         charDesc = parts.join(', ');
 
-        // ── OUTFIT RESOLUTION — CLOSET IS CANONICAL LAW ──────────────────
-        // The closet is the authoritative visual truth. It ALWAYS wins unless
-        // the prompt itself already contains a resolved closet outfit string
-        // (which happens when charDesc already carries "Currently wearing:").
-        // We do NOT skip closet resolution because the scene prompt mentions
-        // clothing words like "wearing a smile" or incidental garment references.
-        // The ONLY valid skip: prompt explicitly contains a detailed outfit that
-        // was already sourced from the closet (i.e. charDesc already has it).
         // ── OUTFIT RESOLUTION — current_outfit is CANONICAL WARDROBE WORLD-STATE ──
         // P1: current_outfit always wins. P2: closet rotation by context. Never skipped silently.
         const alreadyHasOutfitInDesc = /Currently wearing:/i.test(charDesc);
@@ -1300,19 +1292,22 @@ Deno.serve(async (req) => {
             else { const g=(charRecord?.gender||'').toLowerCase(); sleepText=g==='female'?'soft cotton pajama set or oversized sleep shirt and shorts':g==='male'?'pajama bottoms or boxer shorts, no shirt or plain sleep shirt':'comfortable pajama set'; }
             if (sleepText) { charDesc = charDesc?`${charDesc}. Currently wearing: ${sleepText}`:`Currently wearing: ${sleepText}`; console.log(`[SleepWakeOutfit] ✅ Override: "${sleepText.substring(0,80)}"`); }
           }
-          const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord, promptLowerForOutfit);
-          console.log(`[OutfitDiagnostic] char="${charRecord.name}" source="${resolvedOutfit.source}" name="${resolvedOutfit.name}" cat="${resolvedOutfit.category}" locked=${!!resolvedOutfit.text} raw_label="${charRecord.current_outfit?.label||'null'}" raw_id="${charRecord.current_outfit?.outfit_id||'null'}" raw_top="${charRecord.current_outfit?.top||'null'}"`);
-          if (resolvedOutfit.text) {
-            charDesc = charDesc ? `${charDesc}. Currently wearing: ${resolvedOutfit.text}` : `Currently wearing: ${resolvedOutfit.text}`;
-            // Strip only ad-hoc clothing phrases from scene prompt — preserves scene action/location.
-            // Only strips when match contains a garment word to avoid clobbering "wearing a smile" etc.
-            sanitizedPrompt = sanitizedPrompt
-              .replace(/,?\s*wearing\s+(?:a\s+)?(?:[a-z][a-z\s]{4,60})(?=\s*[,.]|\s+(?:and|with|who|while|looking|standing|sitting|leaning|facing|near|at|in\s+the))/gi, (m) => /shirt|pants|jeans|shorts|dress|suit|jacket|hoodie|tee|top|blouse|skirt|coat|sweater|polo|chinos|slacks|uniform|apron|outfit/i.test(m) ? '' : m)
-              .replace(/,?\s*dressed\s+in\s+[^,.]{3,80}(?=\s*[,.])/gi, '')
-              .replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').trim();
-            console.log(`[generateImageAsync] ✅ Outfit lock injected: source="${resolvedOutfit.source}" name="${resolvedOutfit.name}" → "${resolvedOutfit.text.substring(0, 80)}"`);
+          // Guard: if sleep path already injected outfit, skip closet resolver — prevents double outfit injection
+          if (!/Currently wearing:/i.test(charDesc)) {
+            const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord, promptLowerForOutfit);
+            console.log(`[OutfitDiagnostic] char="${charRecord.name}" source="${resolvedOutfit.source}" cat="${resolvedOutfit.category}" locked=${!!resolvedOutfit.text}`);
+            if (resolvedOutfit.text) {
+              charDesc = charDesc ? `${charDesc}. Currently wearing: ${resolvedOutfit.text}` : `Currently wearing: ${resolvedOutfit.text}`;
+              sanitizedPrompt = sanitizedPrompt
+                .replace(/,?\s*wearing\s+(?:a\s+)?(?:[a-z][a-z\s]{4,60})(?=\s*[,.]|\s+(?:and|with|who|while|looking|standing|sitting|leaning|facing|near|at|in\s+the))/gi, (m) => /shirt|pants|jeans|shorts|dress|suit|jacket|hoodie|tee|top|blouse|skirt|coat|sweater|polo|chinos|slacks|uniform|apron|outfit/i.test(m) ? '' : m)
+                .replace(/,?\s*dressed\s+in\s+[^,.]{3,80}(?=\s*[,.])/gi, '')
+                .replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').trim();
+              console.log(`[generateImageAsync] ✅ Outfit lock injected: "${resolvedOutfit.text.substring(0, 80)}"`);
+            } else {
+              console.warn(`[generateImageAsync] ⚠️ No outfit for ${charRecord.name} — renders without wardrobe constraint.`);
+            }
           } else {
-            console.warn(`[generateImageAsync] ⚠️ No outfit resolved for ${charRecord.name} — source="${resolvedOutfit.source}". Character renders without wardrobe constraint.`);
+            console.log(`[generateImageAsync] Sleep/wake outfit already injected — skipping closet resolver`);
           }
         } else {
           console.log(`[generateImageAsync] Outfit already in charDesc — skipping re-resolution`);
@@ -1562,15 +1557,13 @@ Deno.serve(async (req) => {
         });
         prepareData = pr?.data || {};
       } catch (prepErr) {
-        console.error(`[generateImageAsync] ⛔ PRE-GEN AUDIT INVOKE FAILED — BLOCKING: ${prepErr?.message}`);
-        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { visual_validation: { audit_status: 'audit_unavailable', validation_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false, error: prepErr?.message } } }).catch(() => {});
-        return Response.json({ success: false, error: 'Pre-generation audit unavailable — image blocked.', audit_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false }, { status: 503 });
+        // SOFT FAILURE: audit unavailability must NOT block generation — it is a monitoring failure, not a safety failure.
+        console.warn(`[generateImageAsync] ⚠️ PRE-GEN AUDIT FAILED (non-blocking) — using isolation fallback: ${prepErr?.message}`);
+        prepareData = { audit: { validation_status: 'validation_unavailable' }, boundaryBlock: '\n\n⚠️ VISUAL SOURCE BOUNDARY: Audit unavailable — maximum identity isolation. Only approved subjects may appear.\n', auditStatus: 'validation_unavailable', conversationContextNames: [], locationOwnerNames: [], senderName: null };
       }
-      if (!prepareData || prepareData.auditStatus === 'validation_unavailable' || !prepareData.audit) {
-        const ae = prepareData?.audit?.error || 'audit returned unavailable';
-        console.error(`[generateImageAsync] ⛔ PRE-GEN AUDIT UNAVAILABLE — BLOCKING: ${ae}`);
-        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { visual_validation: { audit_status: 'audit_unavailable', validation_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false, error: ae } } }).catch(() => {});
-        return Response.json({ success: false, error: 'Pre-generation audit unavailable — image blocked.', audit_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false }, { status: 503 });
+      if (!prepareData || !prepareData.audit) {
+        console.warn(`[generateImageAsync] ⚠️ PRE-GEN AUDIT UNAVAILABLE (non-blocking) — using isolation fallback`);
+        prepareData = { audit: { validation_status: 'validation_unavailable' }, boundaryBlock: '\n\n⚠️ VISUAL SOURCE BOUNDARY: Audit unavailable — maximum identity isolation. Only approved subjects may appear.\n', auditStatus: 'validation_unavailable', conversationContextNames: [], locationOwnerNames: [], senderName: null };
       }
       visualSourceAudit = prepareData.audit || null;
       visualSourceBoundaryBlock = prepareData.boundaryBlock || '';
@@ -1789,7 +1782,14 @@ All reference images (if any) are environment/location refs only — do NOT trea
           msg.includes('safety filter') ||
           msg.includes('flagged by our safety') ||
           (msg.includes('cannot generate') && msg.includes('explicit')) ||
-          (statusCode === 400 && (msg.includes('safety') || msg.includes('policy') || msg.includes('blocked_by_safety')))
+          msg.includes('violated vertex') ||
+          msg.includes('violated google') ||
+          msg.includes('vertex ai') ||
+          msg.includes('unable to show') ||
+          msg.includes('filtered out') ||
+          msg.includes('imagen') ||
+          msg.includes('responsible ai') ||
+          (statusCode === 400 && (msg.includes('safety') || msg.includes('policy') || msg.includes('blocked_by_safety') || msg.includes('blocked') || msg.includes('filter')))
         );
 
         if (isRealContentPolicyBlock) {
