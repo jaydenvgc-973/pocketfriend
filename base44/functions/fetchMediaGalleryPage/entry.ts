@@ -197,6 +197,16 @@ Deno.serve(async (req) => {
         seenNormalizedUrls.add(dedupKey);
         imageIndex.push(m);
       }
+      
+      // Diagnostic: log messages without resolvable displayPrompt
+      const emptyPromptCount = imageIndex.filter(m => {
+        const gc = m.generation_context || {};
+        const hasPrompt = gc?.original_raw_prompt || gc?.scene_prompt || m.image_description || gc?.resolved_description || (gc?.prompt && gc.prompt.length < 2000);
+        return !hasPrompt;
+      }).length;
+      if (emptyPromptCount > 0) {
+        console.warn(`[fetchMediaGalleryPage] Batch ${batchCount}: ${emptyPromptCount} images have no resolvable displayPrompt`);
+      }
 
       console.log(`[fetchMediaGalleryPage] Batch ${batchCount} offset=${offset}: ${batch.length} msgs → ${imageIndex.length} unique images`);
 

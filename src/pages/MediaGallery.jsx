@@ -133,26 +133,11 @@ export default function MediaGallery() {
         `firstKey=${dedupedImages[0]?.id || 'n/a'} lastKey=${dedupedImages[dedupedImages.length-1]?.id || 'n/a'}`
       );
 
-      // ── CACHE MERGE LOGIC: Backend wins, but never overwrite valid description with null ──
-      // Rule: If backend description is null/empty but cache has a valid description,
-      //       preserve the cached description to prevent cache-overwrite regression.
-      // This protects against rare race conditions where backend returns incomplete data.
-      const cachedData = cached?.data?.images || [];
-      const cachedById = {};
-      cachedData.forEach(ci => { if (ci.id) cachedById[ci.id] = ci; });
-
-      const mergedImages = dedupedImages.map(backendImg => {
-        const cachedImg = cachedById[backendImg.id];
-        // If backend has a valid description, always use backend (fresh data wins)
-        if (backendImg.description && backendImg.description.length > 5) {
-          return backendImg;
-        }
-        // If backend has no description but cache has one, preserve the cached description
-        if (cachedImg?.description && cachedImg.description.length > 5) {
-          return { ...backendImg, description: cachedImg.description, displayPrompt: backendImg.displayPrompt || cachedImg.displayPrompt };
-        }
-        return backendImg;
-      });
+      // ── CACHE MERGE LOGIC: Always prefer fresh backend data ──
+      // Cache merge is only for fallback display during initial load.
+      // Once backend responds, backend data is source of truth.
+      // Never let stale cache overwrite fresh backend fields.
+      const mergedImages = dedupedImages.map(backendImg => backendImg);
 
       if (mergedImages.length > 0) {
         lfcWrite(user.email, cacheKey, {
@@ -834,7 +819,19 @@ function SendImageModal({ image, onClose, onSent }) {
           if (image.locationName) parts.push(`[Location: ${image.locationName}${image.zoneName ? ' — ' + image.zoneName : ''}]`);
           if (recipientIsInImage) parts.push(`[Note: ${char.name} is one of the people shown in this image]`);
 
-          const composedDescription = parts.join(' ') || '';
+          // CRITICAL: Never save empty image_description. If no parts collected, 
+          // use fallback so backend always has something to display.
+          let composedDescription = parts.join(' ').trim();
+          if (!composedDescription && resolvedDisplayPrompt) {
+            composedDescription = resolvedDisplayPrompt;
+          }
+          if (!composedDescription && image.imageDescription) {
+            composedDescription = image.imageDescription;
+          }
+          if (!composedDescription) {
+            // Ultimate fallback: generic description with metadata
+            composedDescription = `Image sent to ${char.name}${image.locationName ? ` at ${image.locationName}` : ''}`;
+          }
 
           // generation_context carries the full subject/prompt metadata through to the
           // character response pipeline. ALIGNED WITH ForwardMessageModal: do NOT write
@@ -851,15 +848,17 @@ function SendImageModal({ image, onClose, onSent }) {
             : undefined;
 
           const msg = await base44.entities.Message.create({
-            conversation_id: destConvoId,
-            sender_type: 'user',
-            content: '',
-            image_url: image.url,
-            image_description: composedDescription || resolvedDisplayPrompt || undefined,
-            image_analysis_status: (composedDescription || resolvedDisplayPrompt) ? 'complete' : 'pending',
-            // Carry generation_context so character response pipeline has full subject metadata
-            generation_context: mergedGenerationContext,
-            timestamp: new Date().toISOString(),
+           conversation_id: destConvoId,
+           sender_type: 'user',
+           content: '',
+           image_url: image.url,
+           image_description: composedDescription || resolvedDisplayPrompt || undefined,
+           image_analysis_status: (composedDescription || resolvedDisplayPrompt) ? 'complete' : 'pending',
+           // Carry generation_context so character response pipeline has full subject metadata
+           generation_context: mergedGenerationContext,
+           timestamp: new Date().toISOString(),
+           // CRITICAL: Set owner_email for gallery ownership scoping
+           owner_email: user.email,
           });
 
           log.push(`CONTEXT: recipientInImage=${recipientIsInImage} subjects="${subjectNamesStr || 'none'}" descLen=${composedDescription.length}`);
