@@ -46,6 +46,45 @@ function normalizeUrlForDedup(url) {
   }
 }
 
+/**
+ * Strip internal metadata from prompts — CANONICAL SANITIZER.
+ * Must match the frontend modal's stripInternalMetadata exactly.
+ * Used for backend displayPrompt resolution AND for preparing
+ * prompts before sending to characters.
+ */
+function stripInternalMetadata(text) {
+  if (!text) return text;
+  
+  // Remove multiline blocks: [NAME REFERENCE KEY ... [END NAME REFERENCE KEY]
+  // This must happen FIRST, before other replacements, to catch multiline content
+  let result = text.replace(
+    /\[NAME REFERENCE KEY[^\]]*?\][\s\S]*?\[END NAME REFERENCE KEY\]/g,
+    ''
+  );
+  
+  result = result
+    .replace(/\[REFERENCE KEY[^\]]*?\][\s\S]*?\[END REFERENCE KEY\]/g, '')
+    .replace(/\[CHARACTER ID[^\]]*?\]/g, '')
+    .replace(/\[IDENTITY LOCK[^\]]*?\]/g, '')
+    .replace(/\[PROVIDER INSTRUCTION[^\]]*?\]/g, '')
+    .replace(/\(ID:\s*[a-z0-9]+\)/gi, '')
+    // Character assignment lines: "Name" = Full Name — description
+    .replace(/^\s*"[^"]*"\s*=\s*[^\n]*$/gm, '')
+    // Remove "[CHARACTER]", "[USER]", "[JOINT]" markers
+    .replace(/^\[CHARACTER\]\s*/im, '')
+    .replace(/^\[USER\]\s*/im, '')
+    .replace(/^\[JOINT\]\s*/im, '')
+    // Remove "Generated character photo. Scene:" prefix
+    .replace(/^Generated character photo\.\s*Scene:\s*/im, '')
+    // Collapse multiple newlines
+    .replace(/\n\n+/g, '\n\n')
+    // Trim all lines
+    .replace(/^\s+|\s+$/gm, '')
+    .trim();
+  
+  return result;
+}
+
 Deno.serve(async (req) => {
   const scanStart = Date.now();
   try {
@@ -282,13 +321,15 @@ Deno.serve(async (req) => {
     const pageImages = pageSlice.map((m) => {
       const gc = m.generation_context || null;
 
-      // Best display prompt — in priority order, never using the large provider blob.
+      // Best display prompt — in priority order, with metadata stripping.
       // gc.prompt can be:
       //   - modern: 10,000+ char provider instruction blob (never display)
       //   - legacy: short readable scene description stored before scene_prompt was added
       // Threshold: 2000 chars. Above 2000 chars is almost certainly a provider blob.
       const gcPromptIfReadable = (gc?.prompt && gc.prompt.length < 2000) ? gc.prompt : null;
-      const displayPrompt =
+      
+      // Resolve raw prompt first, then strip metadata
+      const rawDisplayPrompt =
         gc?.original_raw_prompt ||
         gc?.scene_prompt ||
         m.image_description ||
@@ -296,7 +337,8 @@ Deno.serve(async (req) => {
         gcPromptIfReadable ||
         null;
 
-      const resolvedDescription = displayPrompt;
+      // Strip internal metadata from the resolved prompt
+      const displayPrompt = rawDisplayPrompt ? stripInternalMetadata(rawDisplayPrompt) : null;
 
       // Subject metadata
       const subjects = gc?.subjects || [];
@@ -320,10 +362,10 @@ Deno.serve(async (req) => {
       return {
         id: m.id,
         url: m.image_url,
-        description: resolvedDescription || null,
+        description: displayPrompt || null,  // Already cleaned
         imageDescription: m.image_description || '',
-        displayPrompt,
-        originalPrompt: displayPrompt,
+        displayPrompt,  // Cleaned, human-readable prompt
+        originalPrompt: displayPrompt,  // For backward compat
         generationPrompt: gc?.prompt || null,
         scenePrompt: gc?.scene_prompt || null,
         imageType: gc?.image_type || gc?.subject_type || null,
@@ -334,7 +376,14 @@ Deno.serve(async (req) => {
         locationName: gc?.location_name || gc?.locationName || null,
         locationId: gc?.location_id || null,
         zoneName: gc?.zone_name || gc?.zoneName || null,
-        generationContext: gc,
+        // Provide both raw and cleaned generation_context for send-to-character
+        generationContext: gc ? {
+          ...gc,
+          // Add cleaned versions for send-to-character paths
+          _cleaned_original_raw_prompt: gc?.original_raw_prompt ? stripInternalMetadata(gc.original_raw_prompt) : null,
+          _cleaned_scene_prompt: gc?.scene_prompt ? stripInternalMetadata(gc.scene_prompt) : null,
+          _cleaned_resolved_description: gc?.resolved_description ? stripInternalMetadata(gc.resolved_description) : null,
+        } : null,
         imageCategory,
         _diag: {
           hasGenerationContext: !!gc,
@@ -342,8 +391,9 @@ Deno.serve(async (req) => {
           hasScenePrompt: !!gc?.scene_prompt,
           hasOriginalRawPrompt: !!gc?.original_raw_prompt,
           hasImageDescription: !!m.image_description,
-          resolvedDescriptionLength: resolvedDescription?.length || 0,
+          displayPromptLength: displayPrompt?.length || 0,
           imageCategory,
+          metadataWasStripped: rawDisplayPrompt !== displayPrompt,
         },
         senderType: m.sender_type || 'user',
         senderName: m.sender_type === 'user' ? 'You' : (m.character_name || 'Character'),

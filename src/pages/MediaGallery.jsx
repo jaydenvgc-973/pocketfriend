@@ -393,38 +393,8 @@ export default function MediaGallery() {
 
 // Modal components and SendImageModal follow...
 function ImageDetailModal({ image, onClose, onSend, onDelete }) {
-  const gc = image.generationContext || {};
-  const displayPrompt =
-    image.displayPrompt ||
-    image.originalPrompt ||
-    image.scenePrompt ||
-    image.description ||
-    image.imageDescription ||
-    gc.original_raw_prompt ||
-    gc.scene_prompt ||
-    gc.resolved_description ||
-    null;
-
-  const stripInternalMetadata = (text) => {
-    if (!text) return text;
-    return text
-      .replace(/\[NAME REFERENCE KEY[^\]]*?\]/g, '')
-      .replace(/\[END NAME REFERENCE KEY\]/g, '')
-      .replace(/\[REFERENCE KEY[^\]]*?\]/g, '')
-      .replace(/\[END REFERENCE KEY\]/g, '')
-      .replace(/\[CHARACTER ID[^\]]*?\]/g, '')
-      .replace(/\[IDENTITY LOCK[^\]]*?\]/g, '')
-      .replace(/\[PROVIDER INSTRUCTION[^\]]*?\]/g, '')
-      .replace(/\(ID:\s*[a-z0-9]+\)/gi, '')
-      .replace(/^\s*"[^"]*"\s*=\s*[^\n]*$/gm, '')
-      .replace(/^\[CHARACTER\]\s*/i, '')
-      .replace(/^\[USER\]\s*/i, '')
-      .replace(/^\[JOINT\]\s*/i, '')
-      .replace(/^Generated character photo\.\s*Scene:\s*/i, '')
-      .replace(/\n\n+/g, '\n\n')
-      .replace(/^\s+|\s+$/gm, '')
-      .trim();
-  };
+  // Backend returns pre-cleaned displayPrompt — use it directly
+  const displayPrompt = image.displayPrompt || image.description || null;
 
   return (
     <motion.div
@@ -456,7 +426,7 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
           {image.imageCategory === 'ai_generated_with_context' && displayPrompt && (
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Generation Prompt / Context</p>
-              <p className="text-sm text-foreground whitespace-pre-wrap">{stripInternalMetadata(displayPrompt)}</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap">{displayPrompt}</p>
             </div>
           )}
 
@@ -499,7 +469,7 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
           {(image.imageCategory === 'legacy_missing_context' || image.imageCategory === 'unknown') && displayPrompt && (
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Description</p>
-              <p className="text-sm text-foreground whitespace-pre-wrap">{stripInternalMetadata(displayPrompt)}</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap">{displayPrompt}</p>
             </div>
           )}
 
@@ -671,7 +641,8 @@ function SendImageModal({ image, onClose, onSent }) {
 
           const recipientIsInImage = image.subjectIds && image.subjectIds.includes(charId);
           const subjectNamesStr = image.subjectNames && image.subjectNames.length > 0 ? image.subjectNames.join(', ') : null;
-          const resolvedDisplayPrompt = image.originalPrompt || image.scenePrompt || image.description || image.imageDescription || null;
+          // Use backend-cleaned displayPrompt; it's already sanitized
+          const resolvedDisplayPrompt = image.displayPrompt || image.imageDescription || null;
 
           const parts = [];
           if (image.imageDescription) parts.push(image.imageDescription);
@@ -725,10 +696,10 @@ function SendImageModal({ image, onClose, onSent }) {
         if (selectedRecipientCharacterIds.has(selectedSenderCharacterId)) { setError('Cannot send to the same character'); setLoading(false); return; }
 
         for (const receiverId of selectedRecipientCharacterIds) {
-          log.push(`World Phone: sender=${selectedSenderCharacterId} → receiver=${receiverId}`);
-          // Resolve best available description for World Phone — same priority chain as user-send path
-          const wpResolvedPrompt = image.originalPrompt || image.scenePrompt || image.description || image.imageDescription || null;
-          const wpDescription = wpResolvedPrompt || image.imageDescription || '';
+         log.push(`World Phone: sender=${selectedSenderCharacterId} → receiver=${receiverId}`);
+         // Use backend-cleaned displayPrompt for World Phone
+         const wpResolvedPrompt = image.displayPrompt || image.imageDescription || null;
+         const wpDescription = wpResolvedPrompt || image.imageDescription || '';
           log.push(`World Phone: image_url=${image.url?.substring(0,60)}... descLen=${wpDescription.length}`);
           const res = await base44.functions.invoke('sendWorldPhoneMessage', {
             sender_character_id: selectedSenderCharacterId,
