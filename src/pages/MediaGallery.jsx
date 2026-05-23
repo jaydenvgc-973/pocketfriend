@@ -29,16 +29,42 @@ export default function MediaGallery() {
   const [lastProof, setLastProof] = useState(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [pageJumpValue, setPageJumpValue] = useState('');
+  const [isFirstLoad, setIsFirstLoad] = useState(true); // Detect full page refresh
 
   // PER-REQUEST DEDUP: reset on every page fetch (page-based pagination, not infinite scroll)
   // Must NOT accumulate across pages — page 2 legitimately re-uses IDs scanned in the backend
   // for prior pages. Cross-page dedup via frontend ref causes empty results after refresh.
   const seenImageIdsRef = useRef(new Set());
   const activeRequestRef = useRef(0);
+  const sessionIdRef = useRef(Math.random()); // Detect if user returned after hard refresh
 
   useEffect(() => {
     base44.auth.me().then(u => setUser(u)).catch(() => {});
   }, []);
+
+  // On first load: detect if this is a fresh session and clear stale cache from previous session
+  useEffect(() => {
+    if (!isFirstLoad || !user?.email) return;
+
+    const sessionKey = `mediaGallery:session:${user.email}`;
+    const storedSessionId = sessionStorage.getItem(sessionKey);
+
+    // If session ID changed, we're in a fresh browser session (hard refresh, new tab, etc.)
+    // Clear all localStorage cache for this user to prevent stale pagination poisoning
+    if (storedSessionId !== String(sessionIdRef.current)) {
+      console.log('[MediaGallery] Session detected as fresh (or first load) — clearing poisoned cache');
+      const prefix = `mediaGallery:v4:${user.email.replace(/[^a-z0-9]/gi, '_')}`;
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith(prefix)) {
+          localStorage.removeItem(key);
+          console.log(`[MediaGallery] Cleared cache key: ${key}`);
+        }
+      }
+      sessionStorage.setItem(sessionKey, String(sessionIdRef.current));
+    }
+
+    setIsFirstLoad(false);
+  }, [isFirstLoad, user?.email]);
 
   const fetchPage = useCallback(async (page, search, opts = {}) => {
     if (!user?.email) return;
@@ -47,17 +73,21 @@ export default function MediaGallery() {
     const cacheKey = galleryPageCacheKey(user.email, page, search);
     const requestId = ++activeRequestRef.current;
 
-    // ── CRITICAL: Reset per-request dedup on every fetch ─────────────────────────
+    // ── CRITICAL: Reset per-request dedup FRESH on every fetch ──────────────────
     // Page-based pagination: backend already deduped within its full scan.
     // Frontend dedup here only prevents duplicates within this single response.
-    // Cross-page accumulation causes empty results after refresh (stale IDs filter fresh data).
+    // Cross-page accumulation (stale IDs from prior sessions) causes empty results.
+    // MUST be a new Set() instance, not .clear() on old ref (clear doesn't help if ref held old pointers).
     seenImageIdsRef.current = new Set();
+    console.log(`[MediaGallery] Fetch initiated: page=${page} requestId=${requestId} seenImages reset`);
 
-    // ── STEP 1: Show cache while loading fresh (UI responsiveness) ────────────────
-    // Backend is source of truth. Cache is a visual fallback only — never source of truth.
-    // Cache must NEVER prevent a backend fetch from completing.
-    const cached = lfcRead(user.email, cacheKey);
-    if (cached?.data?.images?.length > 0 && !forceRefresh) {
+    // ── STEP 1: Skip cache on first load to prevent poisoning after refresh ──────
+    // After a hard refresh or session restart, cache is stale and poisons pagination.
+    // Force backend fetch first, then cache can be used as fallback on subsequent navigations.
+    const skipCacheOnFirstLoad = isFirstLoad;
+    const cached = !skipCacheOnFirstLoad ? lfcRead(user.email, cacheKey) : null;
+    
+    if (cached?.data?.images?.length > 0 && !forceRefresh && !skipCacheOnFirstLoad) {
       console.log(`[MediaGallery] Cache DISPLAY page=${page} age=${cached.loaded_at ? Math.round((Date.now()-cached.loaded_at)/1000) : '?'}s (fetching fresh in background)`);
       setPageImages(cached.data.images);
       setHasMore(cached.data.hasMore === true);
@@ -65,7 +95,7 @@ export default function MediaGallery() {
       setIsLoading(false);
       setInitSettled(true);
     } else {
-      console.log(`[MediaGallery] Cache MISS/FORCE page=${page} — loading from backend`);
+      console.log(`[MediaGallery] Cache SKIP/FORCE page=${page} — loading from backend (firstLoad=${skipCacheOnFirstLoad})`);
       setIsLoading(true);
     }
 
