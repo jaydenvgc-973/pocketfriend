@@ -96,10 +96,10 @@ Deno.serve(async (req) => {
       // This guarantees no gaps and no duplicates even when multiple messages share a timestamp.
       let query;
       if (!cursorDate) {
-        query = { owner_email: ownerEmail };
+        query = { created_by: ownerEmail };
       } else {
         query = {
-          owner_email: ownerEmail,
+          created_by: ownerEmail,
           $or: [
             { created_date: { $lt: cursorDate } },
             // Same date, earlier ID (lexicographic — works with UUIDs and MongoDB ObjectIDs)
