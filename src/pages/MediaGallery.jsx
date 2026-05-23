@@ -823,21 +823,21 @@ function SendImageModal({ image, onClose, onSent }) {
           const subjectNamesStr = image.subjectNames && image.subjectNames.length > 0 ? image.subjectNames.join(', ') : null;
           const resolvedDisplayPrompt = image.displayPrompt || image.imageDescription || null;
 
-          // Analysis result placeholder — populated after message creation for promptless images
-          let analysisResult = null;
+          // For promptless images: run detailed visual analysis
+          // For images with context: compose from existing sources
+          let composedDescription = null;
+          let needsVisualAnalysis = false;
 
-          const parts = [];
-          if (image.imageDescription) parts.push(image.imageDescription);
-          if (resolvedDisplayPrompt && resolvedDisplayPrompt !== image.imageDescription) {
-            parts.push(`[Original prompt: ${resolvedDisplayPrompt}]`);
+          if (resolvedDisplayPrompt) {
+            // Has original context from gallery — use it
+            composedDescription = resolvedDisplayPrompt;
+          } else if (image.imageDescription) {
+            // Has user-uploaded description
+            composedDescription = image.imageDescription;
+          } else {
+            // Promptless gallery image — will trigger analysis after message creation
+            needsVisualAnalysis = true;
           }
-          if (subjectNamesStr) parts.push(`[People shown: ${subjectNamesStr}]`);
-          if (image.locationName) parts.push(`[Location: ${image.locationName}${image.zoneName ? ' — ' + image.zoneName : ''}]`);
-          if (recipientIsInImage) parts.push(`[Note: ${char.name} is one of the people shown in this image]`);
-
-          let composedDescription = parts.join(' ').trim();
-          if (!composedDescription && resolvedDisplayPrompt) composedDescription = resolvedDisplayPrompt;
-          if (!composedDescription && image.imageDescription) composedDescription = image.imageDescription;
           // Note: if no description exists yet, we'll run visual analysis AFTER message creation
 
           const mergedGenerationContext = image.generationContext
@@ -856,8 +856,10 @@ function SendImageModal({ image, onClose, onSent }) {
             content: '',
             image_url: image.url,
             image_description: composedDescription || undefined,
-            // If no description: set pending — analyzeImageForCharacterContext will update to complete/failed
+            // If promptless: set pending so character context knows to wait for inferred description
+            // If has context: set complete
             image_analysis_status: composedDescription ? 'complete' : 'pending',
+            image_analysis_is_transport_metadata: false,
             generation_context: mergedGenerationContext,
             timestamp: new Date().toISOString(),
             owner_email: user.email,
@@ -875,20 +877,23 @@ function SendImageModal({ image, onClose, onSent }) {
           log.push(`WRITE: message created id=${msg.id}`);
 
           // ── POST-CREATION VISUAL ANALYSIS (reuses the SAME pipeline as Chat uploads) ──
-          // Only runs when the gallery image had no usable context.
-          // analyzeImageForCharacterContext stores image_description + image_analysis_status
-          // durably on the NEW message — never on the original gallery record.
-          if (!composedDescription && image.url) {
-            log.push(`Running visual analysis on new message (no original context)...`);
+          // Only runs when the gallery image had no usable context (needsVisualAnalysis=true).
+          // Runs detailed visual analysis and stores result durably on the NEW message.
+          // Character context will read the inferred_image_description when present.
+          if (needsVisualAnalysis && image.url) {
+            log.push(`Running detailed visual analysis on promptless gallery image...`);
             analyzeImageForCharacterContext({
               imageUrl: image.url,
               messageId: msg.id,
               context: 'media_gallery_send',
-            }).then(({ imageDescription }) => {
-              if (imageDescription) {
+              requireDetailedAnalysis: true,
+            }).then(({ imageDescription, analysisStatus }) => {
+              if (imageDescription && analysisStatus === 'complete') {
                 log.push(`Analysis complete: ${imageDescription.substring(0, 80)}...`);
-              } else {
+              } else if (analysisStatus === 'failed') {
                 log.push(`Analysis failed — character will see "cannot inspect image" notice`);
+              } else {
+                log.push(`Analysis unclear status: ${analysisStatus}`);
               }
             }).catch(e => {
               log.push(`Analysis error (non-fatal): ${e.message}`);
@@ -910,8 +915,9 @@ function SendImageModal({ image, onClose, onSent }) {
         for (const receiverId of selectedRecipientCharacterIds) {
          log.push(`World Phone: sender=${selectedSenderCharacterId} → receiver=${receiverId}`);
          const wpResolvedPrompt = image.displayPrompt || image.imageDescription || null;
+         const wpHasContext = !!wpResolvedPrompt;
          const wpDescription = wpResolvedPrompt || image.imageDescription || '';
-          log.push(`World Phone: image_url=${image.url?.substring(0,60)}... descLen=${wpDescription.length} hasContext=${!!wpResolvedPrompt}`);
+          log.push(`World Phone: image_url=${image.url?.substring(0,60)}... descLen=${wpDescription.length} hasContext=${wpHasContext}`);
           
           const wpPayload = {
             sender_character_id: selectedSenderCharacterId,
@@ -919,19 +925,21 @@ function SendImageModal({ image, onClose, onSent }) {
             requested_message: '',
             image_url: image.url,
             image_description: wpDescription || undefined,
-            // Let sendWorldPhoneMessage set image_analysis_status = pending if no description
-            image_analysis_status: wpDescription ? 'complete' : 'pending',
+            // Promptless: set pending so character context knows to wait for detailed inferred description
+            // Has context: set complete
+            image_analysis_status: wpHasContext ? 'complete' : 'pending',
+            image_analysis_is_transport_metadata: false,
             generation_context: image.generationContext || undefined,
             message_type: 'image',
             source: 'media_gallery_send',
             owner_email: user.email,
-            // Source tracking — never written back to original gallery record
+            // Source tracking — written only to new message, never to original gallery record
             source_media_message_id: image.id || undefined,
             source_media_url: image.url || undefined,
-            source_media_had_prompt: !!wpResolvedPrompt,
+            source_media_had_prompt: wpHasContext,
             source_media_had_generation_context: !!(image.generationContext?.original_raw_prompt || image.generationContext?.scene_prompt),
-            // Flag: if true, sendWorldPhoneMessage should trigger visual analysis on the new message
-            needs_visual_analysis: !wpResolvedPrompt && !!image.url,
+            // Flag: if true, sendWorldPhoneMessage should trigger detailed visual analysis on the new message
+            needs_detailed_visual_analysis: !wpHasContext && !!image.url,
           };
 
           const res = await base44.functions.invoke('sendWorldPhoneMessage', wpPayload);

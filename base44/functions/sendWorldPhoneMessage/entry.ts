@@ -37,6 +37,7 @@ Deno.serve(async (req) => {
       image_url,                  // optional: image URL for image sends
       image_description,          // optional: caption/description for image
       image_analysis_status,      // optional: 'complete' | 'pending' | 'failed'
+      image_analysis_is_transport_metadata, // true = description is routing metadata, not image analysis
       message_type,               // optional: 'text' | 'image' (default: 'text')
       source,                     // "user_instruction" | "character_action"
       current_chat_message_id,    // source message ID in the active chat conversation
@@ -44,7 +45,7 @@ Deno.serve(async (req) => {
       owner_email,
       generate_recipient_response, // optional: if true, generate Character B's response now
       // Media Gallery send tracking (non-destructive, written to new message only)
-      needs_visual_analysis,      // true = no original context, trigger analysis post-save
+      needs_detailed_visual_analysis, // true = no original context, trigger detailed visual analysis
       source_media_message_id,    // original gallery message ID
       source_media_url,           // original gallery image URL
       source_media_had_prompt,    // was original context present
@@ -301,9 +302,10 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
     if (isImageSend && image_url) {
       messagePayload.image_url = image_url;
       messagePayload.image_description = image_description || undefined;
-      // If no description and needs_visual_analysis=true, mark pending so the LLM context
+      // If no description and needs_detailed_visual_analysis=true, mark pending so the LLM context
       // builder knows to wait for / use the inferred description when it arrives.
       messagePayload.image_analysis_status = image_analysis_status || (image_description ? 'complete' : 'pending');
+      messagePayload.image_analysis_is_transport_metadata = false;
       // Source tracking — written only to this new message, never to original gallery record
       if (source_media_message_id) messagePayload.source_media_message_id = source_media_message_id;
       if (source_media_url) messagePayload.source_media_url = source_media_url;
@@ -323,37 +325,59 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
       });
     }
 
-    // ── VISUAL ANALYSIS FOR PROMPTLESS GALLERY IMAGE SENDS ────────────────────────
-    // Reuses the SAME pipeline as Chat uploaded images (InvokeLLM + store on message).
-    // Only runs when no description was available from the original gallery item.
-    // Stores image_description + image_analysis_status on THIS new message only.
+    // ── DETAILED VISUAL ANALYSIS FOR PROMPTLESS GALLERY IMAGE SENDS ────────────────
+    // For World Phone character-to-character sends of gallery images without original context,
+    // run rich visual analysis (not just transport metadata).
+    // Stores inferred_image_description + image_analysis_status on THIS new message only.
     // Never modifies the original gallery record.
-    if (isImageSend && image_url && needs_visual_analysis && !image_description) {
+    if (isImageSend && image_url && needs_detailed_visual_analysis && !image_description) {
       try {
-        console.log(`[sendWorldPhoneMessage] Running visual analysis on promptless gallery image for msg=${savedMessage.id}`);
+        console.log(`[sendWorldPhoneMessage] Running detailed visual analysis on promptless gallery image for msg=${savedMessage.id}`);
         const analysisRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `Analyze this image and provide a detailed, factual visual description in 2-4 sentences.
-Describe exactly what you see: people (appearance, expressions, clothing, pose), objects, setting/environment, text visible, colors, lighting, and any notable details.
-Do NOT interpret meaning or make assumptions beyond what is literally visible.
-If the image is blurry, dark, or unclear, describe that explicitly.
+          prompt: `Provide a rich, detailed visual description of this image.
+Include ALL of the following that are visible:
+- People shown: apparent age range, gender presentation, clothing details, expressions, poses
+- Objects visible: food, drinks, furniture, decorations, vehicles, any notable items
+- Setting and environment: indoor/outdoor, type of location (restaurant, home, park, etc.)
+- Lighting and atmosphere: warm/cool, time of day, mood
+- Relationship or context clues: are people together? What are they doing?
+- Any text, signs, or notable details visible
+
+Be specific, factual, and thorough. Minimum 3-5 sentences.
+Do NOT speculate beyond what is literally visible.
 Return ONLY the description text, nothing else.`,
           file_urls: [image_url],
         });
         const inferred = (typeof analysisRes === 'string' ? analysisRes : '').trim();
-        if (inferred && inferred.length > 5) {
+        
+        // CRITICAL: Reject transport metadata — only accept real visual descriptions
+        const TRANSPORT_REJECT = /image sent to|photo shared|sent to [A-Z]|shared with [A-Z]|image attachment/i;
+        if (TRANSPORT_REJECT.test(inferred)) {
+          console.error(`[sendWorldPhoneMessage] LLM returned transport metadata: "${inferred}"`);
           await base44.asServiceRole.entities.Message.update(savedMessage.id, {
-            image_description: inferred,
+            image_analysis_status: 'failed',
+            image_analysis_error: 'LLM returned transport metadata, not visual description',
+            image_analysis_is_transport_metadata: true,
+          }).catch(() => {});
+        } else if (inferred && inferred.length > 40) {
+          // Store as inferred_image_description — signals it came from post-send visual analysis
+          await base44.asServiceRole.entities.Message.update(savedMessage.id, {
+            inferred_image_description: inferred,
             image_analysis_status: 'complete',
+            image_analysis_source: 'media_gallery_send_visual_analysis',
+            image_analysis_is_inferred: true,
+            image_analysis_is_transport_metadata: false,
+            source_media_had_prompt: false,
           }).catch(e => console.warn(`[sendWorldPhoneMessage] Failed to store visual analysis: ${e.message}`));
-          console.log(`[sendWorldPhoneMessage] Visual analysis stored on msg=${savedMessage.id} len=${inferred.length}`);
+          console.log(`[sendWorldPhoneMessage] Detailed visual analysis stored on msg=${savedMessage.id} len=${inferred.length}`);
         } else {
           await base44.asServiceRole.entities.Message.update(savedMessage.id, {
             image_analysis_status: 'failed',
-            image_analysis_error: 'Visual analysis returned empty result',
+            image_analysis_error: 'Visual analysis returned insufficient detail',
           }).catch(() => {});
         }
       } catch (analysisErr) {
-        console.warn(`[sendWorldPhoneMessage] Visual analysis failed (non-fatal): ${analysisErr.message}`);
+        console.warn(`[sendWorldPhoneMessage] Detailed visual analysis failed (non-fatal): ${analysisErr.message}`);
         await base44.asServiceRole.entities.Message.update(savedMessage.id, {
           image_analysis_status: 'failed',
           image_analysis_error: analysisErr.message,

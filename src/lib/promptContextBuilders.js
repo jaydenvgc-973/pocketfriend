@@ -1044,6 +1044,15 @@ export function buildReceivedImageContext(recentMessages, receivingCharacterId, 
   if (!recentImgMsg) return '';
 
   const gc = recentImgMsg.generation_context || null;
+  
+  // CRITICAL: REJECT TRANSPORT METADATA — Only accept validated visual descriptions
+  if (recentImgMsg.image_analysis_is_transport_metadata === true) {
+    console.warn(
+      `[buildReceivedImageContext] BLOCKING transport metadata on msg=${recentImgMsg.id}: "${recentImgMsg.image_description}"`
+    );
+    return ''; // Character will not receive this as image context
+  }
+
   // imageDesc: check both durable analysis field AND inferred-on-send field (promptless gallery sends)
   const imageDesc = recentImgMsg.image_description
     || recentImgMsg.inferred_image_description
@@ -1170,9 +1179,14 @@ export function buildConversationLog(recentMsgs, characterName, userWorldName) {
     // IMAGE MESSAGE: content is empty but image_url exists — synthesize readable entry
     if (!txt && m.image_url) {
       const gc = m.generation_context || {};
+      
+      // CRITICAL: Never use transport metadata as image description
+      // Transport metadata like "Image sent to X" must not feed character context
+      const rawImageDesc = m.image_analysis_is_transport_metadata === true ? null : m.image_description;
+      
       // Best available description — same priority chain as buildReceivedImageContext
-      // Includes inferred_image_description for promptless gallery sends
-      const desc = m.image_description
+      // inferred_image_description is from post-send visual analysis of promptless gallery images
+      const desc = rawImageDesc
         || m.inferred_image_description
         || m.visual_analysis_description
         || gc.original_raw_prompt
