@@ -13,25 +13,6 @@ const NPC_TYPES = ['npc_fictitious', 'npc_family_member', 'npc_regular', 'npc', 
 export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (!character) return { available: false, reason: { iconType: 'out', message: 'Unknown status', color: 'text-muted-foreground' }, availableAt: null };
 
-  // IN TRANSIT: character has an active travel session — cannot start another trip.
-  // ONE TRUTH RULE: only show "already in transit" if:
-  //   A) _travelDisplayValid = true (session proof injected by applySessionProofToCharacters), OR
-  //   B) _travelDisplayValid is undefined (not hydrated — legacy path, allow through)
-  // If _travelDisplayValid = false, the travel_status is orphaned/stale — skip this block.
-  if (character._travelDisplayValid !== false && (
-    character.resolved_presence_status === 'traveling' ||
-    character.travel_status === 'traveling_to_destination' ||
-    character.travel_status === 'traveling_to_work' ||
-    character.travel_status === 'traveling_to_school'
-  )) {
-    const destName = character.traveling_to_location_name || 'their destination';
-    return {
-      available: false,
-      reason: { iconType: 'out', message: `${character.name} is already in transit to ${destName}.`, color: 'text-blue-400' },
-      availableAt: 'Will be free after they arrive',
-    };
-  }
-
   // JAIL/PRISON CONFINEMENT: hard block — confined characters cannot travel until released.
   // This mirrors how "at work" and "asleep" block travel — jail is a locked presence state.
   if (character.is_jailed === true) {
@@ -152,6 +133,7 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
  */
 export function isCharacterHome(character, locationMap = {}) {
   // Use the authoritative DB field first — avoids drift between recomputed and stored state
+  // NOTE: 'traveling' is NOT a home state — but it is also NOT a blocker in the new system.
   const status = character.resolved_presence_status;
   if (status === 'home' || status === 'sleeping' || status === 'napping') return true;
   // Fallback: check if resolved location matches their home

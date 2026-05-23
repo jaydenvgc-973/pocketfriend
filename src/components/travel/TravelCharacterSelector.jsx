@@ -130,12 +130,19 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
     const isSleepingCanonical = presenceEntity?.is_sleeping ||
       resolvedStatus === 'sleeping' || resolvedStatus === 'napping';
 
+    // In the new instant-relocation system, 'traveling' is a stale/legacy status.
+    // Treat it the same as any other non-home presence: show the resolved location name.
+    const isStaleTravel = resolvedStatus === 'traveling';
+
     let currentLocationLabel = null;
     if (isSleepingCanonical) {
       currentLocationLabel = resolvedStatus === 'napping' ? '💤 Napping' : '😴 Sleeping';
-    } else if (isAvailable && resolvedLocName && !isHome) {
-      currentLocationLabel = `At ${resolvedLocName}`;
-    } else if (isAvailable && (isHome || hasHomeId)) {
+    } else if (resolvedLocName && !isHome && !isStaleTravel) {
+      currentLocationLabel = `Currently at ${resolvedLocName}`;
+    } else if (isStaleTravel && resolvedLocName) {
+      // Stale travel status — show the destination as current location, not "in transit"
+      currentLocationLabel = `Currently at ${resolvedLocName}`;
+    } else if (isHome || hasHomeId) {
       currentLocationLabel = 'At home';
     }
 
