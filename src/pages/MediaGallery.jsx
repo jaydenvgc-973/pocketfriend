@@ -822,6 +822,26 @@ function SendImageModal({ image, onClose, onSent }) {
           const subjectNamesStr = image.subjectNames && image.subjectNames.length > 0 ? image.subjectNames.join(', ') : null;
           const resolvedDisplayPrompt = image.displayPrompt || image.imageDescription || null;
 
+          // Run visual analysis if no usable context
+          let analysisResult = null;
+          if (!resolvedDisplayPrompt) {
+            log.push(`Analyzing image context...`);
+            try {
+              const res = await base44.functions.invoke('analyzeMediaGalleryImageForSend', {
+                image_url: image.url,
+                displayPrompt: image.displayPrompt,
+                imageDescription: image.imageDescription,
+                generationContext: image.generationContext,
+              });
+              analysisResult = res?.data;
+              if (analysisResult) {
+                log.push(`Analysis status: ${analysisResult.image_analysis_status}${analysisResult.image_analysis_error ? ` (${analysisResult.image_analysis_error})` : ''}`);
+              }
+            } catch (e) {
+              log.push(`Analysis error: ${e.message}`);
+            }
+          }
+
           const parts = [];
           if (image.imageDescription) parts.push(image.imageDescription);
           if (resolvedDisplayPrompt && resolvedDisplayPrompt !== image.imageDescription) {
@@ -834,6 +854,7 @@ function SendImageModal({ image, onClose, onSent }) {
           let composedDescription = parts.join(' ').trim();
           if (!composedDescription && resolvedDisplayPrompt) composedDescription = resolvedDisplayPrompt;
           if (!composedDescription && image.imageDescription) composedDescription = image.imageDescription;
+          if (!composedDescription && analysisResult?.inferred_image_description) composedDescription = analysisResult.inferred_image_description;
           if (!composedDescription) composedDescription = `Image sent to ${char.name}${image.locationName ? ` at ${image.locationName}` : ''}`;
 
           const mergedGenerationContext = image.generationContext
@@ -846,17 +867,31 @@ function SendImageModal({ image, onClose, onSent }) {
             ? { resolved_description: resolvedDisplayPrompt, original_raw_prompt: resolvedDisplayPrompt }
             : undefined;
 
-          const msg = await base44.entities.Message.create({
+          const msgPayload = {
             conversation_id: destConvoId,
             sender_type: 'user',
             content: '',
             image_url: image.url,
             image_description: composedDescription,
-            image_analysis_status: composedDescription ? 'complete' : 'pending',
+            image_analysis_status: analysisResult?.image_analysis_status || (composedDescription ? 'complete' : 'pending'),
             generation_context: mergedGenerationContext,
             timestamp: new Date().toISOString(),
             owner_email: user.email,
-          });
+          };
+
+          // Add inferred analysis metadata if no original context
+          if (!resolvedDisplayPrompt && analysisResult) {
+            msgPayload.inferred_image_description = analysisResult.inferred_image_description;
+            msgPayload.image_analysis_source = analysisResult.image_analysis_source;
+            msgPayload.image_analysis_is_inferred = analysisResult.image_analysis_is_inferred;
+            msgPayload.image_analysis_error = analysisResult.image_analysis_error;
+            if (image.id) msgPayload.source_media_message_id = image.id;
+            if (image.url) msgPayload.source_media_url = image.url;
+            msgPayload.source_media_had_prompt = analysisResult.source_media_had_prompt;
+            msgPayload.source_media_had_generation_context = analysisResult.source_media_had_generation_context;
+          }
+
+          const msg = await base44.entities.Message.create(msgPayload);
 
           if (!msg?.id) throw new Error(`Message.create returned no ID`);
           log.push(`WRITE: message created id=${msg.id}`);
@@ -876,9 +911,31 @@ function SendImageModal({ image, onClose, onSent }) {
         for (const receiverId of selectedRecipientCharacterIds) {
          log.push(`World Phone: sender=${selectedSenderCharacterId} → receiver=${receiverId}`);
          const wpResolvedPrompt = image.displayPrompt || image.imageDescription || null;
-         const wpDescription = wpResolvedPrompt || image.imageDescription || '';
+         
+         // Run visual analysis if no usable context
+         let wpAnalysisResult = null;
+         if (!wpResolvedPrompt) {
+           log.push(`Analyzing image context for World Phone...`);
+           try {
+             const res = await base44.functions.invoke('analyzeMediaGalleryImageForSend', {
+               image_url: image.url,
+               displayPrompt: image.displayPrompt,
+               imageDescription: image.imageDescription,
+               generationContext: image.generationContext,
+             });
+             wpAnalysisResult = res?.data;
+             if (wpAnalysisResult) {
+               log.push(`Analysis status: ${wpAnalysisResult.image_analysis_status}`);
+             }
+           } catch (e) {
+             log.push(`Analysis error: ${e.message}`);
+           }
+         }
+         
+         const wpDescription = wpResolvedPrompt || wpAnalysisResult?.inferred_image_description || image.imageDescription || '';
           log.push(`World Phone: image_url=${image.url?.substring(0,60)}... descLen=${wpDescription.length}`);
-          const res = await base44.functions.invoke('sendWorldPhoneMessage', {
+          
+          const wpPayload = {
             sender_character_id: selectedSenderCharacterId,
             recipient_identifier: receiverId,
             requested_message: '',
@@ -888,7 +945,21 @@ function SendImageModal({ image, onClose, onSent }) {
             message_type: 'image',
             source: 'media_gallery_send',
             owner_email: user.email,
-          });
+          };
+
+          // Add inferred analysis metadata if no original context
+          if (!wpResolvedPrompt && wpAnalysisResult) {
+            wpPayload.inferred_image_description = wpAnalysisResult.inferred_image_description;
+            wpPayload.image_analysis_source = wpAnalysisResult.image_analysis_source;
+            wpPayload.image_analysis_is_inferred = wpAnalysisResult.image_analysis_is_inferred;
+            wpPayload.image_analysis_error = wpAnalysisResult.image_analysis_error;
+            if (image.id) wpPayload.source_media_message_id = image.id;
+            if (image.url) wpPayload.source_media_url = image.url;
+            wpPayload.source_media_had_prompt = wpAnalysisResult.source_media_had_prompt;
+            wpPayload.source_media_had_generation_context = wpAnalysisResult.source_media_had_generation_context;
+          }
+
+          const res = await base44.functions.invoke('sendWorldPhoneMessage', wpPayload);
 
           if (!res?.data?.success) {
             throw new Error(res?.data?.error || 'World Phone send failed');
