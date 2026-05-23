@@ -65,6 +65,77 @@ Deno.serve(async (req) => {
 
     console.log(`[fetchMediaGalleryPage] v3 owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex} imageEnd=${imageEndIndex} neededImages=${neededImages} search="${searchTerm}"`);
 
+    // ── FETCH CONVERSATIONS OWNED BY USER ──────────────────────────────────────
+    // Messages are scoped by conversation, not created_by. Fetch conversations
+    // owned by ownerEmail, then scan their messages.
+    let userConversations = [];
+    try {
+      userConversations = await base44.entities.Conversation.filter(
+        { created_by: ownerEmail },
+        '-created_date',
+        500
+      );
+    } catch {
+      try {
+        userConversations = await base44.asServiceRole.entities.Conversation.filter(
+          { created_by: ownerEmail },
+          '-created_date',
+          500
+        );
+      } catch (e) {
+        return Response.json({ error: `Conversation fetch failed: ${e.message}` }, { status: 500 });
+      }
+    }
+
+    const conversationIds = (userConversations || []).map(c => c.id).filter(Boolean);
+    if (conversationIds.length === 0) {
+      // No conversations — no messages to scan
+      return Response.json({
+        images: [],
+        currentUserEmail: ownerEmail,
+        page: safePage,
+        pageSize: safePageSize,
+        totalImages: 0,
+        hasMore: false,
+        enoughForRequestedPage: false,
+        proof: {
+          requestedPage: safePage,
+          pageSize: safePageSize,
+          imageStartIndex,
+          imageEndIndex,
+          messagesScanned: 0,
+          batchCount: 0,
+          uniqueImagesCollected: 0,
+          exhaustedAllMessages: true,
+          enoughForRequestedPage: false,
+          hasMore: false,
+          terminationReason: 'no_conversations',
+          runtimeMs: Date.now() - scanStart,
+          scanStartDate: new Date().toISOString(),
+          scanEndDate: SCAN_FLOOR,
+          cursorStyle: 'compound_date_id_v3',
+          dedupMethod: 'normalized_url_no_querystring',
+          pageImagesReturned: 0,
+          firstImageId: null,
+          firstImageUrl: null,
+          firstImageDate: null,
+          lastImageId: null,
+          lastImageUrl: null,
+          lastImageDate: null,
+          skip: imageStartIndex,
+          totalImagesInIndex: 0,
+          sortKey: 'created_date DESC, id DESC',
+          rawScanned: 0,
+          validFound: 0,
+          afterDedup: 0,
+          batchesScanned: 0,
+          firstImageTimestamp: null,
+          lastImageTimestamp: null,
+          currentUserEmail: ownerEmail,
+        },
+      });
+    }
+
     // ── SCAN LOOP ──────────────────────────────────────────────────────────────
     // Compound cursor: (cursorDate, cursorId) — advances past oldest record in each batch.
     // This prevents both overlaps and skips when multiple messages share the same timestamp.
@@ -89,17 +160,15 @@ Deno.serve(async (req) => {
       batchCount++;
 
       // ── COMPOUND CURSOR QUERY ──────────────────────────────────────────────
+      // Query messages from user's conversations by conversation_id in list.
       // On the first batch, fetch the newest messages (no cursor constraint).
-      // On subsequent batches, use $or to correctly handle timestamp ties:
-      //   - records strictly older than cursorDate, OR
-      //   - records with the same cursorDate but an id that sorts before cursorId (lexically)
-      // This guarantees no gaps and no duplicates even when multiple messages share a timestamp.
+      // On subsequent batches, use $or to correctly handle timestamp ties.
       let query;
       if (!cursorDate) {
-        query = { created_by: ownerEmail };
+        query = { conversation_id: { $in: conversationIds } };
       } else {
         query = {
-          created_by: ownerEmail,
+          conversation_id: { $in: conversationIds },
           $or: [
             { created_date: { $lt: cursorDate } },
             // Same date, earlier ID (lexicographic — works with UUIDs and MongoDB ObjectIDs)
