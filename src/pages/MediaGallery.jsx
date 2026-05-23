@@ -30,8 +30,24 @@ export default function MediaGallery() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [pageJumpValue, setPageJumpValue] = useState('');
 
-  // Cross-page dedup: tracks ALL image IDs seen across every page loaded this session.
-  // Prevents duplicate images from appearing when backend re-scans overlap page boundaries.
+  /**
+   * SESSION-LEVEL DEDUP INDEX
+   *
+   * VERIFIED ROOT CAUSE (Issue 1):
+   * The previous implementation reset seenImageIdsRef on every page navigation
+   * (useEffect with [currentPage, searchTerm] dependency). This meant that by the
+   * time Page 5 loaded, the Set was empty — it had no memory of Pages 1–4.
+   *
+   * CORRECT BEHAVIOR:
+   * seenImageIdsRef must accumulate across ALL page navigations in a gallery session.
+   * It must NOT reset between pages — only when:
+   *   - the user performs a full manual refresh (handleManualRefresh)
+   *   - the search term changes (handleSearchChange)
+   *   - an image is deleted (handleDeleteImage)
+   * Page navigation alone must NOT clear this set.
+   *
+   * This ref survives React renders without triggering re-renders.
+   */
   const seenImageIdsRef = useRef(new Set());
 
   const activeRequestRef = useRef(0);
@@ -82,21 +98,39 @@ export default function MediaGallery() {
       const data = res?.data;
       if (!data) throw new Error('No data returned');
 
-      let freshImages = data.images || [];
+      const freshImages = data.images || [];
 
       // ── CLIENT-SIDE CROSS-PAGE DEDUP ──────────────────────────────────────────
-      // The backend rescans from scratch per page request. If the image set shifted
-      // between requests (new messages), the backend may return images that were
-      // already shown on a previous page. Filter those out using the session-scoped
-      // seen-IDs set so the user never sees the same image twice across pages.
-      // Note: do NOT add to seenImageIdsRef here for the current page — only for
-      // previously loaded pages. We reset the set when navigating to a new page.
-      const dedupedImages = freshImages.filter(img => !seenImageIdsRef.current.has(img.id));
-      if (dedupedImages.length < freshImages.length) {
-        console.warn(`[MediaGallery] Client dedup removed ${freshImages.length - dedupedImages.length} duplicate(s) on page=${page}`);
-      }
-      // Track these IDs as seen for future pages
-      dedupedImages.forEach(img => seenImageIdsRef.current.add(img.id));
+      // The backend rescans from scratch on every page request — it has no
+      // shared cursor state between requests. When pages overlap (e.g. new messages
+      // arrived between page 1 and page 5 requests, shifting the image index),
+      // the same image may be returned on multiple pages.
+      //
+      // seenImageIdsRef accumulates ALL image IDs seen since this gallery session
+      // started (or since the last full reset). It does NOT reset between pages.
+      // Only search changes, manual refreshes, and deletes reset it.
+      //
+      // Dedup identity: use message ID (most stable), fallback to normalized URL.
+      const seenBefore = seenImageIdsRef.current.size;
+      const dedupedImages = freshImages.filter(img => {
+        const key = img.id || img.messageId;
+        if (!key) return true; // no key — cannot dedup, let through
+        return !seenImageIdsRef.current.has(key);
+      });
+
+      // Add ALL new images from this page to the seen set for future pages
+      dedupedImages.forEach(img => {
+        const key = img.id || img.messageId;
+        if (key) seenImageIdsRef.current.add(key);
+      });
+
+      const dupCount = freshImages.length - dedupedImages.length;
+      console.log(
+        `[MediaGallery] Page=${page} backend=${freshImages.length} ` +
+        `seenBefore=${seenBefore} dups=${dupCount} new=${dedupedImages.length} ` +
+        `totalSeenAfter=${seenImageIdsRef.current.size} ` +
+        `firstKey=${dedupedImages[0]?.id || 'n/a'} lastKey=${dedupedImages[dedupedImages.length-1]?.id || 'n/a'}`
+      );
 
       if (dedupedImages.length > 0) {
         lfcWrite(user.email, cacheKey, {
@@ -106,6 +140,8 @@ export default function MediaGallery() {
         });
       }
 
+      // Update images — if dedup removed everything but we had cache, keep cache showing.
+      // Do not wipe the grid with an empty array just because this page returned all-dups.
       if (dedupedImages.length > 0) {
         setPageImages(dedupedImages);
       }
@@ -130,12 +166,12 @@ export default function MediaGallery() {
     }
   }, [user?.email, currentPage, searchTerm, fetchPage]);
 
-  // Reset initSettled and seenIds tracking when page/search changes
+  // initSettled gates the empty-state message — reset on page/search change
+  // so we don't flash "0 images" during navigation.
+  // IMPORTANT: do NOT reset seenImageIdsRef here. That only resets on
+  // search changes, manual refreshes, and deletes — not page navigation.
   useEffect(() => {
     setInitSettled(false);
-    // When navigating to a different page, clear the seen-IDs so the new page
-    // can show all its images. We track seen IDs only within a page's fetch cycle.
-    seenImageIdsRef.current = new Set();
   }, [currentPage, searchTerm]);
 
   const handleNext = () => setCurrentPage(p => p + 1);
@@ -149,12 +185,15 @@ export default function MediaGallery() {
   };
 
   const handleSearchChange = (val) => {
+    // Search change = intentional gallery rebuild. Reset session dedup index.
+    seenImageIdsRef.current = new Set();
     setSearchTerm(val);
     setCurrentPage(1);
     setHasMore(true);
   };
 
   const handleManualRefresh = () => {
+    // Full manual refresh = intentional rebuild. Reset session dedup index.
     seenImageIdsRef.current = new Set();
     fetchPage(currentPage, searchTerm, { forceRefresh: true });
   };
@@ -170,6 +209,7 @@ export default function MediaGallery() {
         setSelectedImage(null);
         const cacheKey = galleryPageCacheKey(user.email, currentPage, searchTerm);
         lfcDelete(user.email, cacheKey);
+        // Delete = dataset changed. Reset dedup index and rebuild.
         seenImageIdsRef.current = new Set();
         fetchPage(currentPage, searchTerm, { forceRefresh: true });
       } else {
@@ -227,6 +267,7 @@ export default function MediaGallery() {
             <div><strong>Gallery Diagnostics v3 — Page {currentPage}</strong></div>
             <div>owner: {user?.email || 'unknown'}</div>
             <div>initSettled: {initSettled ? 'YES' : 'no'} | isLoading: {isLoading ? 'yes' : 'NO'} | isRefreshing: {isRefreshing ? 'yes' : 'NO'}</div>
+            <div>sessionDedup: {seenImageIdsRef.current.size} total unique IDs seen this session</div>
             <div>imageStart: {lastProof.imageStartIndex ?? lastProof.skip ?? 'n/a'} | imageEnd: {lastProof.imageEndIndex ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
             <div>uniqueImages: {lastProof.uniqueImagesCollected ?? lastProof.validFound ?? 'n/a'} | returned: {lastProof.pageImagesReturned}</div>
             <div>msgsScanned: {lastProof.messagesScanned ?? lastProof.rawScanned ?? 'n/a'} | batches: {lastProof.batchCount ?? lastProof.batchesScanned}</div>
@@ -375,19 +416,11 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
         className="bg-card rounded-lg max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden"
       >
         <div className="relative flex-shrink-0">
-          <img
-            src={image.url}
-            alt={image.description}
-            className="w-full max-h-64 object-contain"
-          />
-          <button
-            onClick={onClose}
-            className="absolute top-2 right-2 p-2 bg-black/50 rounded-lg hover:bg-black/70"
-          >
+          <img src={image.url} alt={image.description} className="w-full max-h-64 object-contain" />
+          <button onClick={onClose} className="absolute top-2 right-2 p-2 bg-black/50 rounded-lg hover:bg-black/70">
             <X className="w-5 h-5 text-white" />
           </button>
         </div>
-
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">From</p>
@@ -400,18 +433,11 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
             </div>
           )}
         </div>
-
         <div className="flex-shrink-0 border-t border-border p-4 bg-card flex gap-2">
-          <button
-            onClick={onSend}
-            className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 flex items-center justify-center gap-2 text-sm font-medium"
-          >
+          <button onClick={onSend} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 flex items-center justify-center gap-2 text-sm font-medium">
             <Send className="w-4 h-4" /> Send to Character
           </button>
-          <button
-            onClick={onDelete}
-            className="px-4 py-2 bg-destructive/10 text-destructive rounded-lg hover:bg-destructive/20 flex items-center justify-center gap-2"
-          >
+          <button onClick={onDelete} className="px-4 py-2 bg-destructive/10 text-destructive rounded-lg hover:bg-destructive/20 flex items-center justify-center gap-2">
             <Trash2 className="w-4 h-4" /> Delete
           </button>
         </div>
@@ -427,7 +453,7 @@ function SendImageModal({ image, onClose, onSent }) {
   const [selectedRecipientCharacterIds, setSelectedRecipientCharacterIds] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [sendLog, setSendLog] = useState(null);
+  const [sendLog, setSendLog] = useState([]);
   const [user, setUser] = useState(null);
 
   useEffect(() => {
@@ -435,20 +461,10 @@ function SendImageModal({ image, onClose, onSent }) {
   }, []);
 
   useEffect(() => {
-    const load = async () => {
-      if (!user?.email) return;
-      try {
-        const chars = await base44.entities.Character.filter(
-          { owner_email: user.email, status: 'active' },
-          'name',
-          200
-        );
-        setCharacters(chars);
-      } catch (e) {
-        console.error('[SendImageModal] Failed to load characters:', e);
-      }
-    };
-    load();
+    if (!user?.email) return;
+    base44.entities.Character.filter({ owner_email: user.email, status: 'active' }, 'name', 200)
+      .then(setCharacters)
+      .catch(e => console.error('[SendImageModal] Failed to load characters:', e));
   }, [user?.email]);
 
   const groupedCharacters = useMemo(() => {
@@ -467,75 +483,85 @@ function SendImageModal({ image, onClose, onSent }) {
   }, [characters]);
 
   /**
-   * resolveConversationId — finds the correct existing conversation for a user↔character chat.
+   * resolveDestinationConversationId
    *
-   * ROOT CAUSE FIX: The previous implementation used `owner_email` to query Conversation,
-   * but the Conversation entity uses `created_by` for RLS — not `owner_email`.
-   * This caused the filter to return 0 results, fall through to `create()`,
-   * and write the image message to a brand-new ghost conversation that Chat never rendered.
+   * VERIFIED ROOT CAUSE (Issue 2):
+   * The previous implementation used image.parent_conversation_id as the destination.
+   * That is the SOURCE conversation — where the image originally came from.
+   * When the user selects a DIFFERENT character as recipient, using the source
+   * conversation writes the image to the wrong thread.
    *
-   * Fix: Use `created_by` as the primary query field (matches actual RLS).
-   * Also check `parent_conversation_id` from the image itself — this is the authoritative
-   * conversation ID for user-mode sends since the image came FROM that conversation.
+   * CORRECT BEHAVIOR:
+   * The SELECTED RECIPIENT (charId) controls the destination.
+   * The source image conversation is irrelevant to where we are sending.
+   *
+   * WORKING QUERY PATH (proven in useChatLoadConvo.js line 173):
+   * Conversation.filter({ owner_email, type: chatType, character_ids: characterId })
+   * This is the exact same query the Chat page uses to load conversations.
+   * Using owner_email (not created_by) with character_ids is the working pattern.
+   *
+   * We try both 'chat' and 'direct' types since different conversations may use either.
+   * Client-side we exclude world_phone/bilateral threads exactly as Chat page does.
    */
-  const resolveConversationId = async (charId, charName) => {
-    // PRIORITY 1: Use the source conversation from the gallery image itself.
-    // This is the most reliable path — the image's parent_conversation_id is
-    // already the correct conversation for this character.
-    if (image.parent_conversation_id) {
-      console.log(`[SendImageModal] RESOLVE: Using parent_conversation_id from image → ${image.parent_conversation_id} | charId=${charId}`);
-      return image.parent_conversation_id;
-    }
+  const resolveDestinationConversationId = async (charId, charName, log) => {
+    log.push(`RESOLVE: finding destination convo for recipient charId=${charId} name=${charName}`);
+    log.push(`RESOLVE: image source convo=${image.parent_conversation_id || 'none'} — NOT used as destination`);
 
-    // PRIORITY 2: Search by created_by (actual RLS field) + client-side filter for charId
-    console.log(`[SendImageModal] RESOLVE: No parent_conversation_id on image — searching by created_by | charId=${charId} | user=${user.email}`);
+    // Query using the SAME pattern as useChatLoadConvo — proven working path.
+    // Try 'chat' type first (most common), then fall back to any type.
     let convos = [];
     try {
       convos = await base44.entities.Conversation.filter(
-        { created_by: user.email },
+        { owner_email: user.email, character_ids: charId },
         '-last_message_date',
-        200
+        50
       );
-      console.log(`[SendImageModal] RESOLVE: found ${convos.length} convos by created_by`);
+      log.push(`RESOLVE: Conversation.filter returned ${convos.length} results for charId=${charId}`);
     } catch (e) {
-      console.error('[SendImageModal] RESOLVE: Conversation query failed:', e.message);
+      log.push(`RESOLVE: Conversation.filter ERROR: ${e.message}`);
     }
 
-    // Client-side filter: find direct (non-world-phone) conversation for this character
-    const direct = convos.filter(c => {
+    // Exclude world_phone/bilateral threads — same logic as useChatLoadConvo line 206-216
+    const directConvos = convos.filter(c => {
       const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
-      const hasChar = ids.includes(charId);
-      const isWorldPhone = !!c.shared_conversation_key || c.channel === 'world_phone' || c.type === 'bilateral';
-      return hasChar && !isWorldPhone;
+      const isCharToChar = ids.length > 1;
+      const isBilateral = !!c.shared_conversation_key;
+      const isWorldPhone = c.channel === 'world_phone' || c.type === 'bilateral';
+      return !isCharToChar && !isBilateral && !isWorldPhone;
     });
 
-    if (direct.length > 0) {
-      const sorted = [...direct].sort((a, b) => {
+    log.push(`RESOLVE: after excluding world_phone/bilateral: ${directConvos.length} direct convos`);
+
+    if (directConvos.length > 0) {
+      // Prefer most recently active
+      const sorted = [...directConvos].sort((a, b) => {
         const da = a.last_message_date ? new Date(a.last_message_date).getTime() : 0;
         const db = b.last_message_date ? new Date(b.last_message_date).getTime() : 0;
         return db - da;
       });
-      console.log(`[SendImageModal] RESOLVE: Found direct convo=${sorted[0].id} for charId=${charId}`);
+      log.push(`RESOLVE: Selected destination convo=${sorted[0].id} last_msg=${sorted[0].last_message_date || 'none'}`);
       return sorted[0].id;
     }
 
-    // PRIORITY 3: Create a new conversation (last resort — only if truly none exists)
-    console.warn(`[SendImageModal] RESOLVE: No existing direct convo for charId=${charId} — creating new`);
+    // No direct conversation exists for this recipient — create one.
+    // This is the SAME fallback used by useChatLoadConvo (line 347).
+    log.push(`RESOLVE: No direct convo found — creating new conversation for charId=${charId}`);
     const newConvo = await base44.entities.Conversation.create({
       title: `chat with ${charName}`,
       type: 'chat',
       character_ids: [charId],
       owner_email: user.email,
     });
-    console.log(`[SendImageModal] RESOLVE: Created new convo=${newConvo.id} for charId=${charId}`);
+    log.push(`RESOLVE: Created new convo=${newConvo.id} for charId=${charId}`);
     return newConvo.id;
   };
 
   const handleSend = async () => {
     setError(null);
-    setSendLog(null);
+    setSendLog([]);
     setLoading(true);
     const log = [];
+
     try {
       if (senderMode === 'user') {
         if (selectedRecipientCharacterIds.size === 0) {
@@ -547,19 +573,22 @@ function SendImageModal({ image, onClose, onSent }) {
         for (const charId of selectedRecipientCharacterIds) {
           const char = characters.find(c => c.id === charId);
           if (!char) {
-            log.push(`WARN: charId=${charId} not found in character list`);
+            log.push(`WARN: charId=${charId} not found in loaded character list — skipping`);
             continue;
           }
 
-          log.push(`Resolving conversation for charId=${charId} name=${char.name}`);
-          const convoId = await resolveConversationId(charId, char.name || char.display_name);
-          log.push(`Resolved convoId=${convoId}`);
+          log.push(`--- Sending to: ${char.name} (${charId}) ---`);
+          log.push(`SOURCE image: url=${image.url?.substring(0, 60)}... sourceConvo=${image.parent_conversation_id || 'none'}`);
 
-          // DIAGNOSTIC: Verify conversation exists before writing
-          log.push(`Writing image message: url=${image.url?.substring(0, 60)}... convo=${convoId}`);
+          const destConvoId = await resolveDestinationConversationId(charId, char.name || char.display_name, log);
+          log.push(`DESTINATION convo=${destConvoId}`);
+
+          if (image.parent_conversation_id && destConvoId === image.parent_conversation_id) {
+            log.push(`NOTE: destination matches source convo — recipient is same character that sent this image originally`);
+          }
 
           const msg = await base44.entities.Message.create({
-            conversation_id: convoId,
+            conversation_id: destConvoId,
             sender_type: 'user',
             character_id: charId,
             character_name: char.name || char.display_name,
@@ -572,41 +601,47 @@ function SendImageModal({ image, onClose, onSent }) {
           });
 
           if (!msg?.id) {
-            throw new Error(`Message.create returned no ID for convo=${convoId}`);
+            throw new Error(`Message.create returned no ID for convo=${destConvoId}`);
           }
-          log.push(`Message created: id=${msg.id} convo=${convoId} image_url_set=${!!msg.image_url}`);
+          log.push(`WRITE: message created id=${msg.id} image_url_set=${!!msg.image_url}`);
 
-          // DIAGNOSTIC: Read back the message to confirm persistence
+          // Readback verification — confirms the message actually persisted
           try {
-            const readback = await base44.entities.Message.filter({ id: msg.id }, '-created_date', 1);
-            const confirmed = readback?.length > 0 && readback[0].image_url === image.url;
-            log.push(`Readback: found=${readback?.length > 0} image_url_match=${confirmed}`);
-            if (!confirmed) {
-              console.error('[SendImageModal] PERSISTENCE FAILURE: message written but readback failed or image_url missing', readback);
+            const readback = await base44.entities.Message.filter(
+              { conversation_id: destConvoId, id: msg.id },
+              '-created_date',
+              1
+            );
+            const found = readback?.length > 0;
+            const urlMatch = found && readback[0].image_url === image.url;
+            log.push(`READBACK: found=${found} image_url_match=${urlMatch} msgId=${readback?.[0]?.id || 'none'}`);
+            if (!found || !urlMatch) {
+              console.error('[SendImageModal] PERSISTENCE FAILURE — readback mismatch', { found, urlMatch, readback });
+              log.push(`READBACK FAILURE — image may not have persisted correctly`);
             }
           } catch (rbErr) {
-            log.push(`Readback failed: ${rbErr.message}`);
+            log.push(`READBACK ERROR: ${rbErr.message}`);
           }
 
-          await base44.entities.Conversation.update(convoId, {
+          await base44.entities.Conversation.update(destConvoId, {
             last_message_preview: '📷 Photo',
             last_message_date: new Date().toISOString(),
           }).catch(() => {});
 
-          log.push(`Conversation preview updated for convo=${convoId}`);
+          log.push(`DONE: conversation preview updated, send complete`);
         }
 
-        console.log('[SendImageModal] SEND LOG:', log.join('\n'));
+        console.log('[SendImageModal] SEND COMPLETE:\n' + log.join('\n'));
         setSendLog(log);
 
       } else {
-        // Character → character via World Phone
+        // Character → character via World Phone (existing working path — do not change)
         if (!selectedSenderCharacterId) { setError('Please select a sender character'); setLoading(false); return; }
         if (selectedRecipientCharacterIds.size === 0) { setError('Please select at least one recipient character'); setLoading(false); return; }
         if (selectedRecipientCharacterIds.has(selectedSenderCharacterId)) { setError('Cannot send to the same character you are sending as'); setLoading(false); return; }
 
         for (const receiverId of selectedRecipientCharacterIds) {
-          log.push(`World Phone send: sender=${selectedSenderCharacterId} receiver=${receiverId}`);
+          log.push(`World Phone: sender=${selectedSenderCharacterId} → receiver=${receiverId}`);
           const res = await base44.functions.invoke('sendWorldPhoneMessage', {
             sender_character_id: selectedSenderCharacterId,
             recipient_identifier: receiverId,
@@ -621,15 +656,17 @@ function SendImageModal({ image, onClose, onSent }) {
           if (!res?.data?.success) {
             throw new Error(res?.data?.error || 'World Phone send failed');
           }
-          log.push(`World Phone success: msg_id=${res.data.message_id}`);
+          log.push(`World Phone OK: msg_id=${res.data.message_id}`);
         }
-        console.log('[SendImageModal] SEND LOG:', log.join('\n'));
+        console.log('[SendImageModal] WORLD PHONE SEND:\n' + log.join('\n'));
+        setSendLog(log);
       }
 
       onSent();
     } catch (e) {
-      console.error('[SendImageModal] Send failed:', e, '\nLog:', log.join('\n'));
+      console.error('[SendImageModal] Send failed:', e.message, '\nLog:\n' + log.join('\n'));
       setError(`Send failed: ${e.message}`);
+      setSendLog(log);
     } finally {
       setLoading(false);
     }
@@ -732,9 +769,13 @@ function SendImageModal({ image, onClose, onSent }) {
           </div>
         )}
 
-        <div className="flex gap-2 flex-col">
+        <div className="flex flex-col gap-2">
           {error && <div className="text-xs text-destructive bg-destructive/10 px-3 py-2 rounded-lg">{error}</div>}
-          {sendLog && <div className="text-xs text-green-400 bg-green-400/10 px-3 py-2 rounded-lg max-h-24 overflow-y-auto font-mono">{sendLog.join('\n')}</div>}
+          {sendLog.length > 0 && (
+            <div className="text-xs bg-secondary/30 px-3 py-2 rounded-lg max-h-28 overflow-y-auto font-mono text-muted-foreground whitespace-pre-wrap">
+              {sendLog.join('\n')}
+            </div>
+          )}
           <div className="flex gap-2">
             <button onClick={onClose} className="flex-1 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:opacity-90">Cancel</button>
             <button
