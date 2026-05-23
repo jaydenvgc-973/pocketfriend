@@ -4,6 +4,64 @@ import { base44 } from '@/api/base44Client';
 import { motion } from 'framer-motion';
 import { X, Send, Trash2, Search, ArrowLeft, RefreshCw } from 'lucide-react';
 
+// ── CENTRALIZED STATE MUTATION LOGGER ──────────────────────────────────────────
+// Every write to gallery state (pageImages, hasMore, proof, etc) gets logged with:
+// WHO (function), WHEN (timestamp), image count, prompt count, uniqueImagesCollected
+const STATE_WRITE_LOG = [];
+function logStateWrite(source, data) {
+  const entry = {
+    timestamp: Date.now(),
+    source,
+    pageImagesCount: data.pageImages?.length ?? null,
+    pageImagesWithPrompts: data.pageImages?.filter(img => !!img.displayPrompt).length ?? null,
+    hasMore: data.hasMore ?? null,
+    uniqueImagesCollected: data.proof?.uniqueImagesCollected ?? null,
+    totalIndex: data.proof?.totalImagesInIndex ?? null,
+    proof: data.proof ?? null,
+  };
+  STATE_WRITE_LOG.push(entry);
+  console.log(
+    `[StateWrite] ${source} | imgs=${entry.pageImagesCount} prompts=${entry.pageImagesWithPrompts} unique=${entry.uniqueImagesCollected} hasMore=${entry.hasMore}`
+  );
+}
+
+// ── POISON DETECTION MIDDLEWARE ────────────────────────────────────────────────
+// Block any state write that is significantly worse than the last known-good write
+let LAST_GOOD_STATE = { images: 0, prompts: 0, unique: 0, source: null };
+function isPoisonWrite(newState) {
+  if (!LAST_GOOD_STATE.images || !newState.pageImages) return false;
+  
+  const newImages = newState.pageImages?.length ?? 0;
+  const newPrompts = newState.pageImages?.filter(img => !!img.displayPrompt).length ?? 0;
+  const newUnique = newState.proof?.uniqueImagesCollected ?? 0;
+  
+  // If >20% fewer images OR >20% fewer prompts, it's poison
+  const imageCollapse = newImages > 0 && newImages < LAST_GOOD_STATE.images * 0.8;
+  const promptCollapse = newPrompts > 0 && LAST_GOOD_STATE.prompts > 0 && newPrompts < LAST_GOOD_STATE.prompts * 0.8;
+  
+  if (imageCollapse || promptCollapse) {
+    console.warn(
+      `[POISON WRITER BLOCKED] ATTEMPTED WRITE: images=${newImages} prompts=${newPrompts} unique=${newUnique} ` +
+      `vs LAST_GOOD: images=${LAST_GOOD_STATE.images} prompts=${LAST_GOOD_STATE.prompts} unique=${LAST_GOOD_STATE.unique} ` +
+      `from ${LAST_GOOD_STATE.source}`
+    );
+    return true;
+  }
+  
+  return false;
+}
+
+function updateLastGoodState(source, data) {
+  const images = data.pageImages?.length ?? 0;
+  const prompts = data.pageImages?.filter(img => !!img.displayPrompt).length ?? 0;
+  const unique = data.proof?.uniqueImagesCollected ?? 0;
+  
+  if (images > 0) {
+    LAST_GOOD_STATE = { images, prompts, unique, source };
+    console.log(`[LastGoodState] Updated from ${source}: images=${images} prompts=${prompts} unique=${unique}`);
+  }
+}
+
 // ── CACHE NUKE: Remove ALL MediaGallery cache keys (all versions, all formats) ──
 // No gallery cache survives a mount or refresh. Backend is the ONLY source of truth.
 function nukeAllGalleryCache() {
@@ -47,13 +105,37 @@ export default function MediaGallery() {
     // No stale cache can poison the gallery state.
     nukeAllGalleryCache();
     base44.auth.me().then(u => setUser(u)).catch(() => {});
+
+    // ── BLOCK AUTO-REFETCH ON FOCUS ──────────────────────────────────────────────
+    // Log whenever the window regains focus so we can detect if an auto-refetch happens
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('[MediaGallery] App backgrounded (hidden=true)');
+      } else {
+        console.log('[MediaGallery] App foreground (hidden=false) — monitoring for unwanted refetch');
+      }
+    };
+
+    const handleFocus = () => {
+      console.log('[MediaGallery] Window focus event — if a backend request starts now, it means React Query auto-refetch is still active somewhere');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   const fetchPage = useCallback(async (page, search) => {
     if (!user?.email) return;
 
     const requestId = ++activeRequestRef.current;
-    console.log(`[MediaGallery] Fetch initiated: page=${page} requestId=${requestId}`);
+    const stackTrace = new Error().stack; // Capture call stack to see WHO called fetchPage
+    console.log(`[MediaGallery] FETCH INITIATED: page=${page} requestId=${requestId}`);
+    console.log(`  Stack: ${stackTrace?.split('\n').slice(1, 4).join(' → ')}`);
 
     setIsLoading(true);
     setIsRefreshing(false);
@@ -121,6 +203,21 @@ export default function MediaGallery() {
         };
       }
 
+      // ── POISON DETECTION BLOCK ──────────────────────────────────────────────
+      const stateToWrite = {
+        pageImages: dedupedImages,
+        hasMore: data.hasMore === true,
+        proof: data.proof || null,
+      };
+      
+      if (isPoisonWrite(stateToWrite)) {
+        // BLOCKED — this write is worse than the last good state
+        console.warn(`[MediaGallery] POISON WRITE REJECTED for page=${page}. Keeping current display.`);
+        logStateWrite(`fetchPage[REJECTED:poison] page=${page}`, stateToWrite);
+        return;
+      }
+
+      // Safe to write
       if (dedupedImages.length > 0) {
         setPageImages(dedupedImages);
       } else {
@@ -131,6 +228,10 @@ export default function MediaGallery() {
 
       setHasMore(data.hasMore === true);
       setLastProof(data.proof || null);
+      
+      // Log successful write and update last-good-state
+      logStateWrite(`fetchPage[OK] page=${page} requestId=${requestId}`, stateToWrite);
+      updateLastGoodState(`fetchPage page=${page}`, stateToWrite);
 
     } catch (e) {
       console.error('[MediaGallery] fetchPage error:', e.message);
@@ -248,9 +349,9 @@ export default function MediaGallery() {
           </div>
         </div>
 
-        {showDiagnostics && lastProof && (
+        {showDiagnostics && (
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
-            <div><strong>Gallery Diagnostics v5 (no-cache) — Page {currentPage}</strong></div>
+            <div><strong>Gallery Diagnostics v6 (poison-blocked, state-logged) — Page {currentPage}</strong></div>
             <div>owner: {user?.email || 'unknown'}</div>
             <div>initSettled: {initSettled ? 'YES' : 'no'} | isLoading: {isLoading ? 'yes' : 'NO'} | isRefreshing: {isRefreshing ? 'yes' : 'NO'}</div>
             <div>imageStart: {lastProof.imageStartIndex ?? lastProof.skip ?? 'n/a'} | imageEnd: {lastProof.imageEndIndex ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
@@ -264,9 +365,20 @@ export default function MediaGallery() {
             <div>lastId: {lastProof.lastImageId || 'n/a'} | lastDate: {lastProof.lastImageDate || lastProof.lastImageTimestamp || 'n/a'}</div>
             <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'}</div>
             <div>bestKnown[p{currentPage}]: imgs={bestResultRef.current[currentPage]?.imageCount ?? 'n/a'} prompts={bestResultRef.current[currentPage]?.promptCount ?? 'n/a'}</div>
-            {lastProof.terminationReason === 'runtime_limit' && (
+            {lastProof && lastProof.terminationReason === 'runtime_limit' && (
               <div className="text-amber-400">⚠ Scan hit time limit — some older images may not be indexed. Try refreshing.</div>
             )}
+            <div className="border-t border-border/50 mt-3 pt-3">
+              <div><strong>Last Good State:</strong> images={LAST_GOOD_STATE.images} prompts={LAST_GOOD_STATE.prompts} unique={LAST_GOOD_STATE.unique} from {LAST_GOOD_STATE.source}</div>
+              <div><strong>State Writes Log (last 10):</strong></div>
+              <div className="max-h-32 overflow-y-auto bg-black/20 p-1 rounded">
+                {STATE_WRITE_LOG.slice(-10).map((entry, i) => (
+                  <div key={i} className="text-[10px] leading-tight mb-0.5">
+                    {new Date(entry.timestamp).toLocaleTimeString()} {entry.source} — imgs={entry.pageImagesCount} prompts={entry.pageImagesWithPrompts} unique={entry.uniqueImagesCollected}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
