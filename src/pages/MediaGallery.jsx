@@ -432,7 +432,9 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
 
 function SendImageModal({ image, onClose, onSent }) {
   const [characters, setCharacters] = useState([]);
-  const [selectedCharacterIds, setSelectedCharacterIds] = useState(new Set());
+  const [senderMode, setSenderMode] = useState('user');
+  const [selectedSenderCharacterId, setSelectedSenderCharacterId] = useState(null);
+  const [selectedRecipientCharacterIds, setSelectedRecipientCharacterIds] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(null);
@@ -465,6 +467,75 @@ function SendImageModal({ image, onClose, onSent }) {
     return groups;
   }, [characters]);
 
+  const resolveDestinationConversationId = async (charId, charName, log) => {
+    log.push(`RESOLVE: charId=${charId} name=${charName}`);
+    const isDirectUserConvo = (c) => {
+      const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
+      if (ids.length !== 1 || ids[0] !== charId) return false;
+      if (c.shared_conversation_key) return false;
+      if (c.channel === 'world_phone') return false;
+      if (c.type === 'bilateral') return false;
+      return true;
+    };
+
+    try {
+      const r1 = await base44.entities.Conversation.filter({ type: 'direct', character_ids: [charId] }, '-last_message_date', 20);
+      log.push(`RESOLVE: type=direct query returned ${r1.length}`);
+      const direct1 = r1.filter(isDirectUserConvo);
+      if (direct1.length > 0) {
+        const best = direct1.sort((a, b) =>
+          (b.last_message_date ? new Date(b.last_message_date).getTime() : 0) -
+          (a.last_message_date ? new Date(a.last_message_date).getTime() : 0)
+        )[0];
+        log.push(`RESOLVE: Found via type=direct convo=${best.id}`);
+        return best.id;
+      }
+    } catch (e) {
+      log.push(`RESOLVE: type=direct query error: ${e.message}`);
+    }
+
+    try {
+      const r2 = await base44.entities.Conversation.filter({ type: 'chat', character_ids: [charId] }, '-last_message_date', 20);
+      log.push(`RESOLVE: type=chat query returned ${r2.length}`);
+      const direct2 = r2.filter(isDirectUserConvo);
+      if (direct2.length > 0) {
+        const best = direct2.sort((a, b) =>
+          (b.last_message_date ? new Date(b.last_message_date).getTime() : 0) -
+          (a.last_message_date ? new Date(a.last_message_date).getTime() : 0)
+        )[0];
+        log.push(`RESOLVE: Found via type=chat convo=${best.id}`);
+        return best.id;
+      }
+    } catch (e) {
+      log.push(`RESOLVE: type=chat query error: ${e.message}`);
+    }
+
+    try {
+      const r3 = await base44.entities.Conversation.filter({ character_ids: charId }, '-last_message_date', 50);
+      log.push(`RESOLVE: broad query returned ${r3.length}`);
+      const direct3 = r3.filter(isDirectUserConvo);
+      if (direct3.length > 0) {
+        const best = direct3.sort((a, b) =>
+          (b.last_message_date ? new Date(b.last_message_date).getTime() : 0) -
+          (a.last_message_date ? new Date(a.last_message_date).getTime() : 0)
+        )[0];
+        log.push(`RESOLVE: Found via broad query convo=${best.id}`);
+        return best.id;
+      }
+    } catch (e) {
+      log.push(`RESOLVE: broad query error: ${e.message}`);
+    }
+
+    log.push(`RESOLVE: No existing convo found — creating new`);
+    const newConvo = await base44.entities.Conversation.create({
+      title: `direct with ${charName}`,
+      type: 'direct',
+      character_ids: [charId],
+    });
+    log.push(`RESOLVE: Created new convo=${newConvo.id}`);
+    return newConvo.id;
+  };
+
   const handleSend = async () => {
     setError(null);
     setSendLog([]);
@@ -472,66 +543,142 @@ function SendImageModal({ image, onClose, onSent }) {
     const log = [];
 
     try {
-      if (selectedCharacterIds.size === 0) {
-        setError('Please select at least one character');
-        setLoading(false);
+      if (senderMode === 'user') {
+        if (selectedRecipientCharacterIds.size === 0) {
+          setError('Please select at least one character');
+          setLoading(false);
+          return;
+        }
+
+        for (const charId of selectedRecipientCharacterIds) {
+          const char = characters.find(c => c.id === charId);
+          if (!char) {
+            log.push(`WARN: charId=${charId} not found`);
+            continue;
+          }
+
+          log.push(`--- Sending to: ${char.name} ---`);
+          const destConvoId = await resolveDestinationConversationId(charId, char.name || char.display_name, log);
+
+          const recipientIsInImage = image.subjectIds && image.subjectIds.includes(charId);
+          const subjectNamesStr = image.subjectNames && image.subjectNames.length > 0 ? image.subjectNames.join(', ') : null;
+          const resolvedDisplayPrompt = image.originalPrompt || image.scenePrompt || image.description || image.imageDescription || null;
+
+          const parts = [];
+          if (image.imageDescription) parts.push(image.imageDescription);
+          if (resolvedDisplayPrompt && resolvedDisplayPrompt !== image.imageDescription) {
+            parts.push(`[Original prompt: ${resolvedDisplayPrompt}]`);
+          }
+          if (subjectNamesStr) parts.push(`[People shown: ${subjectNamesStr}]`);
+          if (image.locationName) parts.push(`[Location: ${image.locationName}${image.zoneName ? ' — ' + image.zoneName : ''}]`);
+          if (recipientIsInImage) parts.push(`[Note: ${char.name} is one of the people shown in this image]`);
+
+          let composedDescription = parts.join(' ').trim();
+          if (!composedDescription && resolvedDisplayPrompt) composedDescription = resolvedDisplayPrompt;
+          if (!composedDescription && image.imageDescription) composedDescription = image.imageDescription;
+          if (!composedDescription) composedDescription = `Image sent to ${char.name}${image.locationName ? ` at ${image.locationName}` : ''}`;
+
+          const mergedGenerationContext = image.generationContext
+            ? {
+                ...image.generationContext,
+                resolved_description: resolvedDisplayPrompt || composedDescription || undefined,
+                original_raw_prompt: image.generationContext.original_raw_prompt || image.originalPrompt || resolvedDisplayPrompt || undefined,
+              }
+            : resolvedDisplayPrompt
+            ? { resolved_description: resolvedDisplayPrompt, original_raw_prompt: resolvedDisplayPrompt }
+            : undefined;
+
+          const msg = await base44.entities.Message.create({
+            conversation_id: destConvoId,
+            sender_type: 'user',
+            content: '',
+            image_url: image.url,
+            image_description: composedDescription,
+            image_analysis_status: composedDescription ? 'complete' : 'pending',
+            generation_context: mergedGenerationContext,
+            timestamp: new Date().toISOString(),
+            owner_email: user.email,
+          });
+
+          if (!msg?.id) throw new Error(`Message.create returned no ID`);
+          log.push(`WRITE: message created id=${msg.id}`);
+        }
+
+        console.log('[SendImageModal] SEND COMPLETE:\n' + log.join('\n'));
+        setSendLog(log);
+        setSent(true);
+        setTimeout(onSent, 1200);
+        return;
+
+      } else {
+        if (!selectedSenderCharacterId) { setError('Please select a sender character'); setLoading(false); return; }
+        if (selectedRecipientCharacterIds.size === 0) { setError('Please select at least one recipient character'); setLoading(false); return; }
+        if (selectedRecipientCharacterIds.has(selectedSenderCharacterId)) { setError('Cannot send to the same character'); setLoading(false); return; }
+
+        for (const receiverId of selectedRecipientCharacterIds) {
+          log.push(`World Phone: sender=${selectedSenderCharacterId} → receiver=${receiverId}`);
+          const res = await base44.functions.invoke('sendWorldPhoneMessage', {
+            sender_character_id: selectedSenderCharacterId,
+            recipient_identifier: receiverId,
+            requested_message: '',
+            image_url: image.url,
+            image_description: image.imageDescription || '',
+            message_type: 'image',
+            source: 'media_gallery_send',
+            owner_email: user.email,
+          });
+
+          if (!res?.data?.success) {
+            throw new Error(res?.data?.error || 'World Phone send failed');
+          }
+          log.push(`World Phone OK: msg_id=${res.data.message_id}`);
+        }
+        console.log('[SendImageModal] WORLD PHONE SEND:\n' + log.join('\n'));
+        setSendLog(log);
+        setSent(true);
+        setTimeout(onSent, 1200);
         return;
       }
-
-      for (const charId of selectedCharacterIds) {
-        const char = characters.find(c => c.id === charId);
-        if (!char) continue;
-
-        const destConvoId = await resolveConversationId(charId);
-        const resolvedDisplayPrompt = image.displayPrompt || image.originalPrompt || image.scenePrompt || image.description || null;
-        let composedDescription = resolvedDisplayPrompt || `Image sent to ${char.name}`;
-
-        const msg = await base44.entities.Message.create({
-          conversation_id: destConvoId,
-          sender_type: 'user',
-          content: '',
-          image_url: image.url,
-          image_description: composedDescription,
-          image_analysis_status: 'complete',
-          generation_context: image.generationContext || undefined,
-          timestamp: new Date().toISOString(),
-          owner_email: user.email,
-        });
-
-        if (!msg?.id) throw new Error('Message creation failed');
-        log.push(`Sent to ${char.name}`);
-      }
-
-      setSendLog(log);
-      setSent(true);
-      setTimeout(onSent, 1200);
     } catch (e) {
-      console.error('[SendImageModal] Send failed:', e);
+      console.error('[SendImageModal] Send failed:', e.message);
       setError(`Send failed: ${e.message}`);
+      setSendLog(log);
     } finally {
       setLoading(false);
     }
   };
 
-  const resolveConversationId = async (charId) => {
-    try {
-      const r1 = await base44.entities.Conversation.filter({ type: 'direct', character_ids: [charId] }, '-last_message_date', 20);
-      const direct1 = r1.filter(c => Array.isArray(c.character_ids) && c.character_ids.length === 1 && c.character_ids[0] === charId);
-      if (direct1.length > 0) return direct1[0].id;
+  const CharacterGroupUser = ({ title, chars, selected, onToggle }) => {
+    if (chars.length === 0) return null;
+    return (
+      <>
+        <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">{title}</div>
+        {chars.map((char) => (
+          <label key={char.id} className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/50 cursor-pointer border-b border-border/50 last:border-b-0">
+            <input type="checkbox" checked={selected.has(char.id)} onChange={() => onToggle(char.id)} className="w-4 h-4" />
+            <span className="text-sm text-foreground">{char.displayName}</span>
+          </label>
+        ))}
+      </>
+    );
+  };
 
-      const r2 = await base44.entities.Conversation.filter({ type: 'chat', character_ids: [charId] }, '-last_message_date', 20);
-      const direct2 = r2.filter(c => Array.isArray(c.character_ids) && c.character_ids.length === 1 && c.character_ids[0] === charId);
-      if (direct2.length > 0) return direct2[0].id;
-
-      const newConvo = await base44.entities.Conversation.create({
-        title: `chat with ${characters.find(c => c.id === charId)?.name || charId}`,
-        type: 'direct',
-        character_ids: [charId],
-      });
-      return newConvo.id;
-    } catch (e) {
-      throw new Error(`Failed to resolve conversation: ${e.message}`);
-    }
+  const CharacterGroupCharacter = ({ title, chars, selected, senderCharacterId, onToggle }) => {
+    if (chars.length === 0) return null;
+    return (
+      <>
+        <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">{title}</div>
+        {chars.map((char) => {
+          const isSender = char.id === senderCharacterId;
+          return (
+            <label key={char.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-border/50 last:border-b-0 ${isSender ? 'bg-secondary/20 opacity-50 cursor-not-allowed' : 'hover:bg-secondary/50'}`}>
+              <input type="checkbox" checked={selected.has(char.id)} onChange={() => onToggle(char.id)} disabled={isSender} className="w-4 h-4 disabled:opacity-50" />
+              <span className={`text-sm ${isSender ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{char.displayName}{isSender && ' (sender)'}</span>
+            </label>
+          );
+        })}
+      </>
+    );
   };
 
   return (
@@ -549,32 +696,67 @@ function SendImageModal({ image, onClose, onSent }) {
       >
         <h2 className="text-xl font-bold text-foreground mb-4">Send Image To</h2>
 
-        <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 mb-4 max-h-56">
-          {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
-            const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
-            const chars = groupedCharacters[typeKey];
-            if (chars.length === 0) return null;
-            return (
-              <div key={typeKey}>
-                <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">{typeLabels[typeKey]}</div>
-                {chars.map((char) => (
-                  <label key={char.id} className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/50 cursor-pointer border-b border-border/50 last:border-b-0">
-                    <input type="checkbox" checked={selectedCharacterIds.has(char.id)} onChange={() => { const s = new Set(selectedCharacterIds); s.has(char.id) ? s.delete(char.id) : s.add(char.id); setSelectedCharacterIds(s); }} className="w-4 h-4" />
-                    <span className="text-sm text-foreground">{char.displayName}</span>
-                  </label>
-                ))}
-              </div>
-            );
-          })}
+        <div className="mb-4">
+          <p className="text-sm font-semibold text-foreground mb-2">Send As:</p>
+          <div className="flex gap-2">
+            <button onClick={() => setSenderMode('user')} className={`flex-1 px-3 py-2 rounded text-sm ${senderMode === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>You</button>
+            <button onClick={() => setSenderMode('character')} className={`flex-1 px-3 py-2 rounded text-sm ${senderMode === 'character' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Character</button>
+          </div>
         </div>
+
+        {senderMode === 'user' && (
+          <div className="mb-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send to Characters:</p>
+            <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 max-h-56">
+              {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
+                const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
+                return (
+                  <CharacterGroupUser key={typeKey} title={typeLabels[typeKey]} chars={groupedCharacters[typeKey]} selected={selectedRecipientCharacterIds}
+                    onToggle={(charId) => { const s = new Set(selectedRecipientCharacterIds); s.has(charId) ? s.delete(charId) : s.add(charId); setSelectedRecipientCharacterIds(s); }} />
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {senderMode === 'character' && (
+          <div className="mb-4 space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Sending As:</p>
+              <select value={selectedSenderCharacterId || ''} onChange={(e) => setSelectedSenderCharacterId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-card text-foreground">
+                <option value="">— Select character —</option>
+                {[...groupedCharacters.active_created, ...groupedCharacters.npc_regular, ...groupedCharacters.npc_family, ...groupedCharacters.npc_fictitious, ...groupedCharacters.other].map((char) => (
+                  <option key={char.id} value={char.id}>{char.displayName}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send To:</p>
+              <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 max-h-40">
+                {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
+                  const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
+                  return (
+                    <CharacterGroupCharacter key={typeKey} title={typeLabels[typeKey]} chars={groupedCharacters[typeKey]} selected={selectedRecipientCharacterIds} senderCharacterId={selectedSenderCharacterId}
+                      onToggle={(charId) => { const s = new Set(selectedRecipientCharacterIds); s.has(charId) ? s.delete(charId) : s.add(charId); setSelectedRecipientCharacterIds(s); }} />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-col gap-2">
           {error && <div className="text-xs text-destructive bg-destructive/10 px-3 py-2 rounded-lg">{error}</div>}
+          {sendLog.length > 0 && (
+            <div className="text-xs bg-secondary/30 px-3 py-2 rounded-lg max-h-28 overflow-y-auto font-mono text-muted-foreground whitespace-pre-wrap">
+              {sendLog.join('\n')}
+            </div>
+          )}
           <div className="flex gap-2">
             <button onClick={onClose} className="flex-1 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:opacity-90">Cancel</button>
             <button
               onClick={handleSend}
-              disabled={loading || sent || selectedCharacterIds.size === 0}
+              disabled={loading || sent || (senderMode === 'user' ? selectedRecipientCharacterIds.size === 0 : !selectedSenderCharacterId || selectedRecipientCharacterIds.size === 0)}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {sent ? '✓ Sent!' : loading ? 'Sending...' : 'Send'}
