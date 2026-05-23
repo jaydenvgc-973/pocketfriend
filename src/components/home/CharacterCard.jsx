@@ -323,8 +323,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
                 if (derivedAsleep || isNapping || presence.isSleeping) {
                   IconComponent = Moon;
+                  // confidence >= 0.8 covers scheduled, recovery, and stale-DB-detected sleep paths
                   color = sleepState.confidence >= 0.8 ? 'text-blue-300' : 'text-amber-300';
-                  label = sleepState.confidence >= 0.8 ? sleepState.visible_label : 'unverified sleep';
+                  label = sleepState.confidence >= 0.8
+                    ? (sleepState.visible_label || '🌙 sleeping')
+                    : 'unverified sleep';
                 } else if (presence.status === 'at_work') {
                   IconComponent = Briefcase;
                   color = 'text-blue-400';

@@ -104,6 +104,44 @@ export function getCharacterSleepState(character) {
   const status = character.resolved_presence_status || '';
   const reason = character.resolved_source_reason || '';
 
+  // ── SCHEDULE-DRIVEN SLEEP DETECTION (catches stale DB status) ──────────────
+  // If the character is within their scheduled sleep window, treat them as asleep
+  // regardless of what resolved_presence_status says. This is the primary fix for
+  // characters who should be asleep at 5 AM but whose DB status was never updated.
+  // Exceptions: characters actively at work, at school, or jailed are not overridden.
+  const isConfinedOrWorking = character.is_jailed ||
+    status === 'at_work' ||
+    status === 'at_school' ||
+    status === 'house_arrest';
+
+  if (!isConfinedOrWorking && status !== 'sleeping' && status !== 'napping') {
+    const scheduleAsleep = isScheduledSleeping(character, nowET);
+    if (scheduleAsleep) {
+      const window = computeAdaptiveSleepWindow(character, nowET);
+      const wakeMin = window?.wakeMin ?? null;
+      const wakeHour = wakeMin !== null ? Math.floor(wakeMin / 60) : null;
+      const wakeMinPart = wakeMin !== null ? wakeMin % 60 : null;
+      const wakeLabel = wakeHour !== null
+        ? `${wakeHour % 12 || 12}:${String(wakeMinPart).padStart(2, '0')} ${wakeHour >= 12 ? 'PM' : 'AM'}`
+        : null;
+      return {
+        isSleeping: true,
+        isNapping: false,
+        displayLabel: 'sleeping',
+        contextLabel: `🌙 sleeping (scheduled window)`,
+        visible_label: `🌙 sleeping`,
+        wake_label: wakeLabel,
+        confirmed_reason: 'scheduled_sleep_window_stale_db',
+        evidence_source: `schedule_window_source:${window?.source || 'unknown'}`,
+        confidence: 0.85,
+        stale_risk: false,
+        isLikelyStale: false,
+        blockingCondition: null,
+        stale_db_detected: true,
+      };
+    }
+  }
+
   // ── NOT SLEEPING ───────────────────────────────────────────────────────────
   if (status !== 'sleeping' && status !== 'napping') {
     return {
