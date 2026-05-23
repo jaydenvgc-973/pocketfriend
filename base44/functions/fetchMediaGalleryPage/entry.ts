@@ -30,7 +30,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 const PAGE_SIZE = 20;
 const BATCH_SIZE = 200;
 const SCAN_FLOOR = '2025-01-01T00:00:00.000Z';
-const MAX_RUNTIME_MS = 25000;
+const MAX_RUNTIME_MS = 35000;
 
 /**
  * Normalize URL for deduplication — strips query strings (signed tokens, CDN params).
