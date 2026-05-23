@@ -575,11 +575,22 @@ export default function MediaGallery() {
 import MediaGalleryDescriptionEditor from "@/components/chat/MediaGalleryDescriptionEditor";
 import { resolveBestImageDescription } from "@/lib/descriptionResolver";
 
-function ImageDetailModal({ image, onClose, onSend, onDelete }) {
-  const [refreshKey, setRefreshKey] = useState(0);
+function ImageDetailModal({ image: initialImage, onClose, onSend, onDelete }) {
+  const [image, setImage] = useState(initialImage);
   
   // Use the centralized description resolver
   const displayDescription = resolveBestImageDescription(image);
+
+  const handleDescriptionSaved = async (updatedImage) => {
+    // Refetch full image data from backend to ensure consistency
+    try {
+      const refreshed = await base44.entities.Message.read(updatedImage.id);
+      setImage(refreshed);
+    } catch (err) {
+      console.error('[MediaGallery] Failed to refetch after description save:', err);
+      setImage(updatedImage); // Fallback to passed data
+    }
+  };
 
   return (
     <motion.div
@@ -625,12 +636,9 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
 
           {/* Description editor — centralized UI for all description types */}
           <MediaGalleryDescriptionEditor
-            key={refreshKey}
             image={image}
             onClose={onClose}
-            onSaved={() => {
-              setRefreshKey(k => k + 1); // Refresh to show updated description
-            }}
+            onSaved={handleDescriptionSaved}
           />
         </div>
         <div className="flex-shrink-0 border-t border-border p-4 bg-card flex gap-2">

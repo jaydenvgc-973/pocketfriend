@@ -27,7 +27,6 @@ export default function MediaGalleryDescriptionEditor({ image, onClose, onSaved 
     }
 
     try {
-      setMode("view");
       await base44.entities.Message.update(image.id, {
         user_edited_description: trimmed,
         description_last_edited_by_user: true,
@@ -35,7 +34,16 @@ export default function MediaGalleryDescriptionEditor({ image, onClose, onSaved 
         description_source: "user_edited",
         image_analysis_status: "manual",
       });
-      onSaved?.();
+
+      // Refetch the image to verify save
+      const updated = await base44.entities.Message.read(image.id);
+      if (updated.user_edited_description !== trimmed) {
+        throw new Error("Description was not saved correctly.");
+      }
+
+      setMode("view");
+      setEditText("");
+      onSaved?.(updated); // Pass updated data to parent
     } catch (err) {
       setError(`Failed to save: ${err.message}`);
       setMode("edit");
@@ -46,6 +54,11 @@ export default function MediaGalleryDescriptionEditor({ image, onClose, onSaved 
     setMode("generating");
     setError(null);
     try {
+      // Confirm image URL is accessible and valid
+      if (!image.url || image.url.trim().length === 0) {
+        throw new Error("Image URL is missing or invalid.");
+      }
+
       const analysisResult = await base44.integrations.Core.InvokeLLM({
         prompt: `Provide a detailed, factual visual description of this image in 2-4 sentences.
 Describe exactly what you see: people (appearance, expressions, clothing), objects, setting, lighting, and notable details.
@@ -55,10 +68,16 @@ Return ONLY the description text, nothing else.`,
       });
 
       const description = (typeof analysisResult === "string" ? analysisResult : "").trim();
+      
+      // Reject transport metadata and empty/generic descriptions
       if (!description || description.length < 10) {
-        throw new Error("Analysis returned insufficient detail.");
+        throw new Error("Analysis returned no usable description.");
+      }
+      if (/image sent to|photo shared|image attachment/i.test(description)) {
+        throw new Error("Analysis returned transport metadata instead of visual description.");
       }
 
+      // Save to backend
       await base44.entities.Message.update(image.id, {
         image_description: description,
         image_analysis_status: "complete",
@@ -67,8 +86,15 @@ Return ONLY the description text, nothing else.`,
         description_source: "visual_analysis",
       });
 
+      // Refetch to verify save
+      const updated = await base44.entities.Message.read(image.id);
+      if (!updated.image_description || updated.image_description !== description) {
+        throw new Error("Generated description was not saved correctly.");
+      }
+
       setMode("view");
-      onSaved?.();
+      setEditText("");
+      onSaved?.(updated); // Pass updated data to parent
     } catch (err) {
       setError(`Generation failed: ${err.message}`);
       setMode("view");
