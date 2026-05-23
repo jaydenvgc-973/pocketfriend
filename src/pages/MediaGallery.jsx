@@ -486,8 +486,11 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
       .replace(/\[PROVIDER INSTRUCTION[^\]]*?\]/g, '')
       // Remove character ID references like "(ID: 69c0d59d7e382cc866ded9c9)"
       .replace(/\(ID:\s*[a-z0-9]+\)/gi, '')
-      // Remove multiple blank lines
+      // Remove character assignment lines like "\"Name\" = Full Name ..."
+      .replace(/^"[^"]*"\s*=\s*[^\n]*$/gm, '')
+      // Remove multiple blank lines and leading/trailing spaces
       .replace(/\n\n+/g, '\n\n')
+      .replace(/^\s+|\s+$/gm, '')
       .trim();
   };
 
