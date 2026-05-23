@@ -157,9 +157,9 @@ export default function VGCRevenueDashboard({ userSettings }) {
   });
 
   // UserSettings.vgc_mobile_revenue is the authoritative accumulated total written by processMonthlyVGCMobileBilling
-  // Use it as the all-time VGC revenue figure; fall back to summing transactions if not set
   const totalVGCRevenue = userSettings?.vgc_mobile_revenue ?? vgcIncome.reduce((s, t) => s + (t.amount || 0), 0);
-  const totalCharExp = charExpenses.reduce((s, t) => s + (t.amount || 0), 0);
+  // Total character expenses: sum total_expenses from each character's CharacterFinancial record (authoritative running total)
+  const totalCharExp = Object.values(charFinancialMap).reduce((s, cf) => s + (cf.total_expenses || 0), 0);
   const userBalance = userSettings?.user_balance ?? 0;
   const activeCharCount = createdActiveCharacters.length;
 
