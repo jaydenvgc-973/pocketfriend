@@ -214,24 +214,62 @@ Deno.serve(async (req) => {
       : [];
 
     // ── SHAPE OUTPUT ───────────────────────────────────────────────────────────
-    const pageImages = pageSlice.map(m => ({
-      id: m.id,
-      url: m.image_url,
-      description: m.image_description || '',
-      imageDescription: m.image_description || '',
-      senderType: m.sender_type || 'user',
-      senderName: m.sender_type === 'user' ? 'You' : (m.character_name || 'Character'),
-      characterId: m.character_id || null,
-      conversationId: m.conversation_id || null,
-      timestamp: m.created_date,
-      messageId: m.id,
-      ownerEmail: m.owner_email,
-      source_type: 'message',
-      source_id: m.id,
-      parent_entity: 'Message',
-      parent_owner_email: m.owner_email,
-      parent_conversation_id: m.conversation_id,
-    }));
+    // CRITICAL: generation_context carries the original prompt, subjects, character IDs,
+    // location, and outfit metadata. It MUST be passed through so:
+    //   1. The gallery detail view can display the original prompt/caption.
+    //   2. Send-to-character writes this context onto the recipient message so the
+    //      receiving character's LLM knows who/what is in the image.
+    const pageImages = pageSlice.map(m => {
+      const gc = m.generation_context || null;
+
+      // Extract the most descriptive prompt available, in priority order:
+      //   1. generation_context.original_raw_prompt (the literal text the user typed)
+      //   2. generation_context.prompt (the final assembled prompt sent to image API)
+      //   3. generation_context.scene_prompt
+      //   4. image_description (vision-analyzed description)
+      const originalPrompt = gc?.original_raw_prompt || gc?.prompt || gc?.scene_prompt || null;
+
+      // Extract subject metadata (people/characters shown in the image)
+      const subjects = gc?.subjects || [];
+      const subjectIds = subjects.map(s => s.subject_id).filter(Boolean);
+      const subjectNames = subjects.map(s => s.subject_name).filter(Boolean);
+
+      return {
+        id: m.id,
+        url: m.image_url,
+        description: m.image_description || '',
+        imageDescription: m.image_description || '',
+        // ── RESTORED PROMPT/CONTEXT FIELDS ──
+        originalPrompt,
+        generationPrompt: gc?.prompt || null,
+        scenePrompt: gc?.scene_prompt || null,
+        imageType: gc?.image_type || gc?.subject_type || null,
+        // Subject identity metadata — who is in the image
+        subjects,
+        subjectIds,
+        subjectNames,
+        subjectCount: gc?.subject_count || subjects.length || 0,
+        locationName: gc?.location_name || gc?.locationName || null,
+        locationId: gc?.location_id || null,
+        zoneName: gc?.zone_name || gc?.zoneName || null,
+        // Full generation_context — passed through for send-to-character
+        generationContext: gc,
+        // ── SENDER / SOURCE ──
+        senderType: m.sender_type || 'user',
+        senderName: m.sender_type === 'user' ? 'You' : (m.character_name || 'Character'),
+        senderCharacterId: m.character_id || null,
+        characterId: m.character_id || null,
+        conversationId: m.conversation_id || null,
+        timestamp: m.created_date,
+        messageId: m.id,
+        ownerEmail: m.owner_email,
+        source_type: 'message',
+        source_id: m.id,
+        parent_entity: 'Message',
+        parent_owner_email: m.owner_email,
+        parent_conversation_id: m.conversation_id,
+      };
+    });
 
     const runtimeMs = Date.now() - scanStart;
     const proof = {

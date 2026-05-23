@@ -324,6 +324,12 @@ export default function MediaGallery() {
                       e.target.src = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23333%22 width=%22200%22 height=%22200%22/%3E%3C/svg%3E';
                     }}
                   />
+                  {/* Context indicator — shows whether this image has prompt metadata */}
+                  {(item.originalPrompt || item.generationPrompt) && (
+                    <div className="absolute bottom-1 left-1 px-1 py-0.5 bg-black/60 rounded text-[9px] text-white/80 pointer-events-none">
+                      📝
+                    </div>
+                  )}
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                     <Send className="w-5 h-5 text-white" />
                   </div>
@@ -401,6 +407,10 @@ export default function MediaGallery() {
 }
 
 function ImageDetailModal({ image, onClose, onSend, onDelete }) {
+  // Resolve the best display prompt, in priority order
+  const displayPrompt = image.originalPrompt || image.generationPrompt || image.scenePrompt || null;
+  const hasSubjects = image.subjectNames && image.subjectNames.length > 0;
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -426,10 +436,41 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
             <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">From</p>
             <p className="text-sm text-foreground">{image.senderName}</p>
           </div>
-          {image.imageDescription && (
+
+          {/* Original generation prompt — required metadata */}
+          {displayPrompt ? (
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Caption</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Prompt / Context</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap">{displayPrompt}</p>
+            </div>
+          ) : (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Prompt / Context</p>
+              <p className="text-xs text-muted-foreground italic">No prompt/context saved for this image</p>
+            </div>
+          )}
+
+          {/* Vision-analyzed description (separate from prompt) */}
+          {image.imageDescription && image.imageDescription !== displayPrompt && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Image Description</p>
               <p className="text-sm text-foreground whitespace-pre-wrap">{image.imageDescription}</p>
+            </div>
+          )}
+
+          {/* Subjects shown in the image */}
+          {hasSubjects && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">People in Image</p>
+              <p className="text-sm text-foreground">{image.subjectNames.join(', ')}</p>
+            </div>
+          )}
+
+          {/* Location context */}
+          {image.locationName && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Location</p>
+              <p className="text-sm text-foreground">{image.locationName}{image.zoneName ? ` — ${image.zoneName}` : ''}</p>
             </div>
           )}
         </div>
@@ -623,22 +664,50 @@ function SendImageModal({ image, onClose, onSent }) {
             log.push(`NOTE: destination matches source convo — recipient is same character that sent this image originally`);
           }
 
-          // ALIGNED WITH ForwardMessageModal: do NOT write owner_email on the Message.
-          // ForwardMessageModal works without it. Writing owner_email may create RLS
-          // scope issues that prevent Chat page from reading the message back.
+          // Build image context block for the recipient character.
+          // This tells the receiving character who/what is in the image so they
+          // don't hallucinate. Includes: original prompt, subjects, location, and
+          // whether the recipient character is IN the image.
+          const recipientIsInImage = image.subjectIds && image.subjectIds.includes(charId);
+          const subjectNamesStr = image.subjectNames && image.subjectNames.length > 0
+            ? image.subjectNames.join(', ')
+            : null;
+
+          // Build a compact image_description for the recipient that combines
+          // vision analysis + prompt context + subject identity.
+          // This is what the character LLM reads when deciding how to respond.
+          const parts = [];
+          if (image.imageDescription) parts.push(image.imageDescription);
+          if (image.originalPrompt && image.originalPrompt !== image.imageDescription) {
+            parts.push(`[Original prompt: ${image.originalPrompt}]`);
+          }
+          if (subjectNamesStr) parts.push(`[People shown: ${subjectNamesStr}]`);
+          if (image.locationName) parts.push(`[Location: ${image.locationName}${image.zoneName ? ' — ' + image.zoneName : ''}]`);
+          if (recipientIsInImage) parts.push(`[Note: ${char.name} is one of the people shown in this image]`);
+
+          const composedDescription = parts.join(' ') || '';
+
+          // generation_context carries the full subject/prompt metadata through to the
+          // character response pipeline. ALIGNED WITH ForwardMessageModal: do NOT write
+          // owner_email — it can cause RLS scope issues preventing Chat page readback.
           const msg = await base44.entities.Message.create({
             conversation_id: destConvoId,
             sender_type: 'user',
             content: '',
             image_url: image.url,
-            image_description: image.imageDescription || '',
+            image_description: composedDescription,
+            image_analysis_status: composedDescription ? 'complete' : 'pending',
+            // Carry generation_context so character response pipeline has full subject metadata
+            generation_context: image.generationContext || undefined,
             timestamp: new Date().toISOString(),
           });
+
+          log.push(`CONTEXT: recipientInImage=${recipientIsInImage} subjects="${subjectNamesStr || 'none'}" descLen=${composedDescription.length}`);
 
           if (!msg?.id) {
             throw new Error(`Message.create returned no ID for convo=${destConvoId}`);
           }
-          log.push(`WRITE: message created id=${msg.id} image_url_set=${!!msg.image_url}`);
+          log.push(`WRITE: message created id=${msg.id} image_url_set=${!!msg.image_url} image_description_len=${composedDescription.length} has_generation_context=${!!(image.generationContext)}`);
 
           // Readback verification — confirms the message actually persisted
           try {
