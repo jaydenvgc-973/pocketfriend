@@ -339,7 +339,15 @@ export default function MediaGallery() {
 
   const handleSelectImage = (image) => {
     console.log('[MediaGallery] Image selected:', { id: image.id, hasPrompt: !!image.displayPrompt });
-    setSelectedImage(image);
+    // Fetch the full Message record so editor has all fields (user_edited_description, visual_analysis_description, etc.)
+    base44.entities.Message.read(image.messageId || image.id).then(fullMsg => {
+      console.log('[MediaGallery] Full message loaded:', { id: fullMsg.id, fields: Object.keys(fullMsg) });
+      setSelectedImage(fullMsg);
+    }).catch(err => {
+      console.error('[MediaGallery] Failed to fetch full message:', err);
+      // Fallback to gallery shape if fetch fails
+      setSelectedImage(image);
+    });
   };
 
   const handleDeleteImage = async (image) => {

@@ -13,6 +13,19 @@ export default function MediaGalleryDescriptionEditor({ image, onClose, onSaved 
   const currentDescription = resolveBestImageDescription(image);
   const hasDescription = !!currentDescription;
 
+  // Debug: log what resolver is returning
+  console.log('[MediaGalleryDescriptionEditor] image fields:', {
+    id: image.id,
+    user_edited_description: image.user_edited_description,
+    image_description: image.image_description,
+    visual_analysis_description: image.visual_analysis_description,
+    inferred_image_description: image.inferred_image_description,
+    imageDescription: image.imageDescription,
+    displayPrompt: image.displayPrompt,
+    resolved: currentDescription?.substring(0, 100),
+    hasDescription
+  });
+
   const handleEditStart = () => {
     setEditText(currentDescription || "");
     setMode("edit");
