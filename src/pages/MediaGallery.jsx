@@ -96,6 +96,22 @@ export default function MediaGallery() {
 
   // Monotonically increasing request counter — any response with requestId < activeRequestRef is stale
   const activeRequestRef = useRef(0);
+  
+  // ── GALLERY INDEX PROOF (immutable floor of gallery size) ──────────────────────
+  // This is the SOURCE OF TRUTH for how large the gallery actually is.
+  // Only grows when a larger scan is discovered. Never shrinks.
+  // Any scan returning fewer images/prompts than this proof is permanently rejected.
+  const galleryIndexProofRef = useRef({
+    highestPageReached: 0,
+    highestUniqueImageCount: 0,
+    highestPromptCount: 0,
+    exhaustedAtPage: null,
+    exhaustedAtImageCount: null,
+    lastSuccessfulFullScanAt: null,
+    lastRejectedPoisonScanAt: null,
+    rejectedReasons: [],
+  });
+  
   // Per-page best known result — used to detect and reject poisoned responses
   // { [page]: { imageCount, promptCount, firstId, requestId, completedAt } }
   const bestResultRef = useRef({});
@@ -175,19 +191,32 @@ export default function MediaGallery() {
 
       console.log(`[MediaGallery] Page=${page} requestId=${requestId} images=${newImageCount} prompts=${newPromptCount} hasMore=${data.hasMore} totalIndex=${data.proof?.uniqueImagesCollected ?? '?'}`);
 
-      // ── POISON DETECTION ─────────────────────────────────────────────────────
-      // Reject any response that is significantly worse than our best known result
-      // for this page. "Worse" = >20% fewer images OR >20% fewer prompts.
-      // This blocks stale background scans from overwriting a good full scan.
+      // ── POISON DETECTION AGAINST IMMUTABLE GALLERY INDEX PROOF ────────────────
+      // The proof is the SOURCE OF TRUTH for gallery size. It only grows.
+      // Any scan returning fewer images/prompts than the proof is PERMANENTLY rejected.
+      const proof = galleryIndexProofRef.current;
+      const poisonedByProof =
+        (newImageCount > 0 && proof.highestUniqueImageCount > 0 && newImageCount < proof.highestUniqueImageCount * 0.8) ||
+        (newPromptCount >= 0 && proof.highestPromptCount > 0 && newPromptCount < proof.highestPromptCount * 0.8);
+
+      if (poisonedByProof) {
+        const reason = `page=${page} new(imgs=${newImageCount},prompts=${newPromptCount}) vs PROOF(imgs=${proof.highestUniqueImageCount},prompts=${proof.highestPromptCount})`;
+        console.warn(`[MediaGallery] POISON REJECTED (IMMUTABLE PROOF): ${reason}`);
+        proof.rejectedReasons.push(reason);
+        proof.lastRejectedPoisonScanAt = Date.now();
+        logStateWrite(`fetchPage[REJECTED:immutableProof] ${reason}`, { pageImages: [], hasMore: false });
+        return;
+      }
+
+      // ── ALSO CHECK BEST-KNOWN-PER-PAGE (extra safety) ──────────────────────────
       if (best && newImageCount > 0) {
         const promptCollapse = best.promptCount > 0 && newPromptCount < best.promptCount * 0.8;
         const imageCollapse = best.imageCount > 0 && newImageCount < best.imageCount * 0.8;
         if (promptCollapse || imageCollapse) {
           console.warn(
-            `[MediaGallery] POISON REJECTED page=${page}: ` +
-            `new(imgs=${newImageCount},prompts=${newPromptCount}) vs best(imgs=${best.imageCount},prompts=${best.promptCount}) — keeping best`
+            `[MediaGallery] POISON REJECTED (per-page best): ` +
+            `page=${page} new(imgs=${newImageCount},prompts=${newPromptCount}) vs best(imgs=${best.imageCount},prompts=${best.promptCount})`
           );
-          // Do NOT update state or bestResult — the existing display is better
           return;
         }
       }
@@ -202,6 +231,29 @@ export default function MediaGallery() {
           completedAt: Date.now(),
         };
       }
+
+      // ── UPDATE IMMUTABLE GALLERY INDEX PROOF ──────────────────────────────────
+      // Only grows. Never shrinks. This is the permanent record of gallery size.
+      // (indexProof alias to avoid shadowing the poison-check `proof` const above)
+      const indexProof = galleryIndexProofRef.current;
+      if (newImageCount > indexProof.highestUniqueImageCount) {
+        indexProof.highestUniqueImageCount = newImageCount;
+        console.log(`[GalleryIndexProof] Highest unique images updated: ${newImageCount}`);
+      }
+      if (newPromptCount > indexProof.highestPromptCount) {
+        indexProof.highestPromptCount = newPromptCount;
+        console.log(`[GalleryIndexProof] Highest prompts updated: ${newPromptCount}`);
+      }
+      if (page > indexProof.highestPageReached) {
+        indexProof.highestPageReached = page;
+        console.log(`[GalleryIndexProof] Highest page reached: ${page}`);
+      }
+      if (data.proof?.exhaustedAllMessages === true && !indexProof.exhaustedAtPage) {
+        indexProof.exhaustedAtPage = page;
+        indexProof.exhaustedAtImageCount = newImageCount;
+        console.log(`[GalleryIndexProof] Exhausted signal at page=${page} with ${newImageCount} images`);
+      }
+      indexProof.lastSuccessfulFullScanAt = Date.now();
 
       // ── POISON DETECTION BLOCK ──────────────────────────────────────────────
       const stateToWrite = {
@@ -276,9 +328,11 @@ export default function MediaGallery() {
   };
 
   const handleManualRefresh = () => {
-    // On manual refresh: nuke cache, reset best results, re-fetch
+    // On manual refresh: nuke cache, reset per-page results, but preserve immutable proof
+    const proof = galleryIndexProofRef.current;
     nukeAllGalleryCache();
     bestResultRef.current = {};
+    console.log('[MediaGallery] Manual refresh: cache busted. Immutable proof preserved:', proof);
     fetchPage(currentPage, searchTerm);
   };
 
@@ -296,8 +350,10 @@ export default function MediaGallery() {
       });
       if (res?.data?.success) {
         setSelectedImage(null);
+        const proof = galleryIndexProofRef.current;
         nukeAllGalleryCache();
         bestResultRef.current = {};
+        console.log('[MediaGallery] Image deleted. Immutable proof preserved:', proof);
         fetchPage(currentPage, searchTerm);
       } else {
         alert(`Delete denied: ${res?.data?.error || 'Unknown error'}`);
@@ -369,7 +425,20 @@ export default function MediaGallery() {
               <div className="text-amber-400">⚠ Scan hit time limit — some older images may not be indexed. Try refreshing.</div>
             )}
             <div className="border-t border-border/50 mt-3 pt-3">
-              <div><strong>Last Good State:</strong> images={LAST_GOOD_STATE.images} prompts={LAST_GOOD_STATE.prompts} unique={LAST_GOOD_STATE.unique} from {LAST_GOOD_STATE.source}</div>
+              <div><strong>Gallery Index Proof (IMMUTABLE):</strong></div>
+              <div className="ml-2 text-[10px] space-y-0.5">
+                <div>highestPageReached: {galleryIndexProofRef.current.highestPageReached}</div>
+                <div>highestUniqueImages: {galleryIndexProofRef.current.highestUniqueImageCount}</div>
+                <div>highestPrompts: {galleryIndexProofRef.current.highestPromptCount}</div>
+                <div>exhaustedAtPage: {galleryIndexProofRef.current.exhaustedAtPage ?? 'not yet'}</div>
+                <div>exhaustedAtImageCount: {galleryIndexProofRef.current.exhaustedAtImageCount ?? 'not yet'}</div>
+                <div>lastSuccessfulScan: {galleryIndexProofRef.current.lastSuccessfulFullScanAt ? new Date(galleryIndexProofRef.current.lastSuccessfulFullScanAt).toLocaleTimeString() : 'never'}</div>
+                <div>rejectedScans: {galleryIndexProofRef.current.rejectedReasons.length}</div>
+                {galleryIndexProofRef.current.rejectedReasons.length > 0 && (
+                  <div className="text-amber-400">Latest rejection: {galleryIndexProofRef.current.rejectedReasons[galleryIndexProofRef.current.rejectedReasons.length - 1]}</div>
+                )}
+              </div>
+              <div className="mt-2"><strong>Last Good State:</strong> images={LAST_GOOD_STATE.images} prompts={LAST_GOOD_STATE.prompts} unique={LAST_GOOD_STATE.unique} from {LAST_GOOD_STATE.source}</div>
               <div><strong>State Writes Log (last 10):</strong></div>
               <div className="max-h-32 overflow-y-auto bg-black/20 p-1 rounded">
                 {STATE_WRITE_LOG.slice(-10).map((entry, i) => (
