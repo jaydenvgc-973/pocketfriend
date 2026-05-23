@@ -8,7 +8,6 @@ import { lfcRead, lfcWrite, lfcDelete } from '@/lib/localFirstCache';
 function galleryPageCacheKey(ownerEmail, page, search, pageSize = 20) {
   const s = (search || '').trim().toLowerCase();
   const owner = (ownerEmail || 'anon').replace(/[^a-z0-9]/gi, '_');
-  // v4: bumped to bust stale cursor-based cache — now uses offset pagination
   return `mediaGallery:v4:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
 }
 
@@ -31,26 +30,8 @@ export default function MediaGallery() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [pageJumpValue, setPageJumpValue] = useState('');
 
-  /**
-   * SESSION-LEVEL DEDUP INDEX
-   *
-   * VERIFIED ROOT CAUSE (Issue 1):
-   * The previous implementation reset seenImageIdsRef on every page navigation
-   * (useEffect with [currentPage, searchTerm] dependency). This meant that by the
-   * time Page 5 loaded, the Set was empty — it had no memory of Pages 1–4.
-   *
-   * CORRECT BEHAVIOR:
-   * seenImageIdsRef must accumulate across ALL page navigations in a gallery session.
-   * It must NOT reset between pages — only when:
-   *   - the user performs a full manual refresh (handleManualRefresh)
-   *   - the search term changes (handleSearchChange)
-   *   - an image is deleted (handleDeleteImage)
-   * Page navigation alone must NOT clear this set.
-   *
-   * This ref survives React renders without triggering re-renders.
-   */
+  // SESSION DEDUP: accumulate across all pages in this gallery session
   const seenImageIdsRef = useRef(new Set());
-
   const activeRequestRef = useRef(0);
 
   useEffect(() => {
@@ -64,26 +45,23 @@ export default function MediaGallery() {
     const cacheKey = galleryPageCacheKey(user.email, page, search);
     const requestId = ++activeRequestRef.current;
 
-    // ── STEP 1: Serve cache immediately (local-first) ─────────────────────────
+    // ── STEP 1: Show cache while loading fresh (UI responsiveness) ────────────────
+    // Backend is source of truth. Cache is fallback display only.
     const cached = lfcRead(user.email, cacheKey);
-    const cacheAge = cached?.loaded_at ? Date.now() - cached.loaded_at : Infinity;
-    const isCacheStale = cacheAge > GALLERY_STALE_MS;
-
-    if (cached?.data?.images?.length > 0 && !forceRefresh) {
-      console.log(`[MediaGallery] Cache HIT page=${page} age=${Math.round(cacheAge/1000)}s stale=${isCacheStale}`);
+    if (cached?.data?.images?.length > 0) {
+      console.log(`[MediaGallery] Cache DISPLAY page=${page} (will fetch fresh)`);
       setPageImages(cached.data.images);
       setHasMore(cached.data.hasMore === true);
       setLastProof(cached.data.proof || null);
       setIsLoading(false);
       setInitSettled(true);
-      if (!isCacheStale) return;
-      setIsRefreshing(true);
     } else {
-      console.log(`[MediaGallery] Cache MISS page=${page} — cold load`);
+      console.log(`[MediaGallery] Cache MISS page=${page} — loading from backend`);
       setIsLoading(true);
     }
 
-    // ── STEP 2: Fetch from backend ─────────────────────────────────────────────
+    // ── STEP 2: Always fetch fresh backend (no cache bypass) ─────────────────────
+    setIsRefreshing(true);
     try {
       const res = await base44.functions.invoke('fetchMediaGalleryPage', {
         page,
@@ -101,25 +79,14 @@ export default function MediaGallery() {
 
       const freshImages = data.images || [];
 
-      // ── CLIENT-SIDE CROSS-PAGE DEDUP ──────────────────────────────────────────
-      // The backend rescans from scratch on every page request — it has no
-      // shared cursor state between requests. When pages overlap (e.g. new messages
-      // arrived between page 1 and page 5 requests, shifting the image index),
-      // the same image may be returned on multiple pages.
-      //
-      // seenImageIdsRef accumulates ALL image IDs seen since this gallery session
-      // started (or since the last full reset). It does NOT reset between pages.
-      // Only search changes, manual refreshes, and deletes reset it.
-      //
-      // Dedup identity: use message ID (most stable), fallback to normalized URL.
+      // ── DEDUP: accumulates across entire session ──────────────────────────────
       const seenBefore = seenImageIdsRef.current.size;
       const dedupedImages = freshImages.filter(img => {
         const key = img.id || img.messageId;
-        if (!key) return true; // no key — cannot dedup, let through
+        if (!key) return true;
         return !seenImageIdsRef.current.has(key);
       });
 
-      // Add ALL new images from this page to the seen set for future pages
       dedupedImages.forEach(img => {
         const key = img.id || img.messageId;
         if (key) seenImageIdsRef.current.add(key);
@@ -127,36 +94,27 @@ export default function MediaGallery() {
 
       const dupCount = freshImages.length - dedupedImages.length;
       console.log(
-        `[MediaGallery] Page=${page} backend=${freshImages.length} ` +
-        `seenBefore=${seenBefore} dups=${dupCount} new=${dedupedImages.length} ` +
-        `totalSeenAfter=${seenImageIdsRef.current.size} ` +
-        `firstKey=${dedupedImages[0]?.id || 'n/a'} lastKey=${dedupedImages[dedupedImages.length-1]?.id || 'n/a'}`
+        `[MediaGallery] Page=${page} backend=${freshImages.length} dedup=${dupCount} new=${dedupedImages.length} totalSeen=${seenImageIdsRef.current.size}`
       );
 
-      // ── CACHE MERGE LOGIC: Always prefer fresh backend data ──
-      // Cache merge is only for fallback display during initial load.
-      // Once backend responds, backend data is source of truth.
-      // Never let stale cache overwrite fresh backend fields.
-      const mergedImages = dedupedImages.map(backendImg => backendImg);
-
-      if (mergedImages.length > 0) {
+      // ── BACKEND DATA IS SOURCE OF TRUTH ────────────────────────────────────────
+      if (dedupedImages.length > 0) {
+        setPageImages(dedupedImages);
         lfcWrite(user.email, cacheKey, {
-          images: mergedImages,
+          images: dedupedImages,
           hasMore: data.hasMore === true,
           proof: data.proof,
         });
+      } else if (!cached?.data?.images?.length) {
+        // No cache and no new images — show empty
+        setPageImages([]);
       }
+      // else: keep showing cache if backend returned all dups
 
-      // Update images — if dedup removed everything but we had cache, keep cache showing.
-      // Do not wipe the grid with an empty array just because this page returned all-dups.
-      if (mergedImages.length > 0) {
-        setPageImages(mergedImages);
-      }
       setHasMore(data.hasMore === true);
       setLastProof(data.proof || null);
 
     } catch (e) {
-      // Never clear pageImages on error — preserve last-known-good state
       console.error('[MediaGallery] fetchPage error:', e.message);
     } finally {
       if (requestId === activeRequestRef.current) {
@@ -165,7 +123,7 @@ export default function MediaGallery() {
         setInitSettled(true);
       }
     }
-  }, [user?.email]); // eslint-disable-line
+  }, [user?.email]);
 
   useEffect(() => {
     if (user?.email) {
@@ -173,10 +131,6 @@ export default function MediaGallery() {
     }
   }, [user?.email, currentPage, searchTerm, fetchPage]);
 
-  // initSettled gates the empty-state message — reset on page/search change
-  // so we don't flash "0 images" during navigation.
-  // IMPORTANT: do NOT reset seenImageIdsRef here. That only resets on
-  // search changes, manual refreshes, and deletes — not page navigation.
   useEffect(() => {
     setInitSettled(false);
   }, [currentPage, searchTerm]);
@@ -192,7 +146,6 @@ export default function MediaGallery() {
   };
 
   const handleSearchChange = (val) => {
-    // Search change = intentional gallery rebuild. Reset session dedup index.
     seenImageIdsRef.current = new Set();
     setSearchTerm(val);
     setCurrentPage(1);
@@ -200,24 +153,12 @@ export default function MediaGallery() {
   };
 
   const handleManualRefresh = () => {
-    // Full manual refresh = intentional rebuild. Reset session dedup index.
     seenImageIdsRef.current = new Set();
     fetchPage(currentPage, searchTerm, { forceRefresh: true });
   };
 
   const handleSelectImage = (image) => {
-    // DIAGNOSTIC: Log the exact backend item before modal receives it
-    console.log('[MediaGallery] Image selected for modal:', {
-      id: image.id,
-      url: image.url?.substring(0, 80),
-      description: image.description?.substring(0, 200),
-      displayPrompt: image.displayPrompt?.substring(0, 200),
-      hasDescription: !!image.description && image.description.length > 5,
-      hasDisplayPrompt: !!image.displayPrompt && image.displayPrompt.length > 5,
-      _diag: image._diag,
-      gcScenePrompt: image.generationContext?.scene_prompt?.substring(0, 100),
-      gcOriginalRaw: image.generationContext?.original_raw_prompt?.substring(0, 100),
-    });
+    console.log('[MediaGallery] Image selected:', { id: image.id, hasPrompt: !!image.displayPrompt });
     setSelectedImage(image);
   };
 
@@ -232,7 +173,6 @@ export default function MediaGallery() {
         setSelectedImage(null);
         const cacheKey = galleryPageCacheKey(user.email, currentPage, searchTerm);
         lfcDelete(user.email, cacheKey);
-        // Delete = dataset changed. Reset dedup index and rebuild.
         seenImageIdsRef.current = new Set();
         fetchPage(currentPage, searchTerm, { forceRefresh: true });
       } else {
@@ -287,20 +227,11 @@ export default function MediaGallery() {
 
         {showDiagnostics && lastProof && (
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
-            <div><strong>Gallery Diagnostics v4 (offset-based) — Page {currentPage}</strong></div>
+            <div><strong>Gallery Diagnostics — Page {currentPage}</strong></div>
             <div>owner: {user?.email || 'unknown'}</div>
-            <div>initSettled: {initSettled ? 'YES' : 'no'} | isLoading: {isLoading ? 'yes' : 'NO'} | isRefreshing: {isRefreshing ? 'yes' : 'NO'}</div>
-            <div>sessionDedup: {seenImageIdsRef.current.size} total unique IDs seen this session</div>
-            <div>imageStart: {lastProof.imageStartIndex ?? lastProof.skip ?? 'n/a'} | imageEnd: {lastProof.imageEndIndex ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
-            <div>uniqueImages: {lastProof.uniqueImagesCollected ?? lastProof.validFound ?? 'n/a'} | returned: {lastProof.pageImagesReturned}</div>
-            <div>msgsScanned: {lastProof.messagesScanned ?? lastProof.rawScanned ?? 'n/a'} | batches: {lastProof.batchCount ?? lastProof.batchesScanned}</div>
-            <div>exhausted: {lastProof.exhaustedAllMessages ? 'YES' : 'no'} | enoughForPage: {lastProof.enoughForRequestedPage !== false ? 'YES' : 'NO ⚠️'}</div>
-            <div>terminated: <strong>{lastProof.terminationReason || 'n/a'}</strong> | runtime: {lastProof.runtimeMs != null ? `${lastProof.runtimeMs}ms` : 'n/a'}</div>
-            <div>dedup: {lastProof.dedupMethod || 'n/a'} | cursor: {lastProof.cursorStyle || 'n/a'}</div>
-            <div>scanFloor: {lastProof.scanEndDate || '2025-01-01'}</div>
-            <div>firstId: {lastProof.firstImageId || 'n/a'} | firstDate: {lastProof.firstImageDate || lastProof.firstImageTimestamp || 'n/a'}</div>
-            <div>lastId: {lastProof.lastImageId || 'n/a'} | lastDate: {lastProof.lastImageDate || lastProof.lastImageTimestamp || 'n/a'}</div>
-            <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'}</div>
+            <div>uniqueImages: {lastProof.uniqueImagesCollected ?? 'n/a'} | batches: {lastProof.batchCount ?? 'n/a'}</div>
+            <div>msgsScanned: {lastProof.messagesScanned ?? 'n/a'} | runtime: {lastProof.runtimeMs ?? 'n/a'}ms</div>
+            <div>hasMore: {lastProof.hasMore ? 'yes' : 'no'} | terminationReason: {lastProof.terminationReason || 'n/a'}</div>
           </div>
         )}
 
@@ -322,8 +253,8 @@ export default function MediaGallery() {
         ) : showEmpty ? (
           <div className="text-center py-12 text-muted-foreground">
             {lastProof && lastProof.enoughForRequestedPage === false
-              ? `Page ${currentPage} is beyond the gallery. Only ${lastProof.uniqueImagesCollected ?? 0} unique images found.`
-              : searchTerm ? 'No images match your search.' : 'No media found. Images you send and receive will appear here.'}
+              ? `Page ${currentPage} is beyond the gallery.`
+              : searchTerm ? 'No images match your search.' : 'No media found.'}
           </div>
         ) : !showGrid ? (
           <div className="flex items-center justify-center h-64">
@@ -347,7 +278,6 @@ export default function MediaGallery() {
                       e.target.src = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23333%22 width=%22200%22 height=%22200%22/%3E%3C/svg%3E';
                     }}
                   />
-                  {/* Context indicator — shows whether this image has prompt metadata */}
                   {(item.originalPrompt || item.generationPrompt) && (
                     <div className="absolute bottom-1 left-1 px-1 py-0.5 bg-black/60 rounded text-[9px] text-white/80 pointer-events-none">
                       📝
@@ -399,11 +329,6 @@ export default function MediaGallery() {
               >
                 Next
               </button>
-              {lastProof && lastProof.terminationReason === 'runtime_limit' && (
-                <div className="w-full text-center text-xs text-amber-400/80 mt-1">
-                  ⚠ Scan hit time limit — some older images may not be indexed yet. Try refreshing.
-                </div>
-              )}
             </div>
           </>
         )}
@@ -429,11 +354,8 @@ export default function MediaGallery() {
   );
 }
 
+// Modal components and SendImageModal follow...
 function ImageDetailModal({ image, onClose, onSend, onDelete }) {
-  // Resolve the best display prompt — full fallback chain matching backend output.
-  // image.description is already the resolved value from fetchMediaGalleryPage.
-  // CRITICAL: image.generationPrompt = gc.prompt = 10,000-char provider instruction blob.
-  // Never use it as a display value. Use originalPrompt, scenePrompt, or description.
   const gc = image.generationContext || {};
   const displayPrompt =
     image.displayPrompt ||
@@ -446,57 +368,26 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
     gc.resolved_description ||
     null;
 
-  // DIAGNOSTIC: Log what the modal received
-  React.useEffect(() => {
-    console.log('[ImageDetailModal] Opened with:', {
-      id: image.id,
-      imageCategory: image.imageCategory,
-      description: image.description?.substring(0, 200),
-      displayPrompt: displayPrompt?.substring(0, 200),
-      hasDescription: !!image.description && image.description.length > 5,
-      hasDisplayPrompt: !!displayPrompt && displayPrompt.length > 5,
-      originalPrompt: image.originalPrompt?.substring(0, 100),
-      scenePrompt: image.scenePrompt?.substring(0, 100),
-      imageDescription: image.imageDescription?.substring(0, 100),
-      senderType: image.senderType,
-      _diag: image._diag,
-    });
-  }, [image]);
-
-  /**
-   * stripInternalMetadata
-   * Removes ALL internal scaffolding, character IDs, provider instructions,
-   * identity-lock directives, and system markers from the displayed prompt.
-   */
   const stripInternalMetadata = (text) => {
     if (!text) return text;
     return text
-      // Remove [NAME REFERENCE KEY] blocks and contents
       .replace(/\[NAME REFERENCE KEY[^\]]*?\]/g, '')
       .replace(/\[END NAME REFERENCE KEY\]/g, '')
-      // Remove other system markers
       .replace(/\[REFERENCE KEY[^\]]*?\]/g, '')
       .replace(/\[END REFERENCE KEY\]/g, '')
       .replace(/\[CHARACTER ID[^\]]*?\]/g, '')
       .replace(/\[IDENTITY LOCK[^\]]*?\]/g, '')
       .replace(/\[PROVIDER INSTRUCTION[^\]]*?\]/g, '')
-      // Remove character ID references like "(ID: 69c0d59d7e382cc866ded9c9)"
       .replace(/\(ID:\s*[a-z0-9]+\)/gi, '')
-      // Remove character assignment lines like "\"Name\" = Full Name ..." at any indentation
       .replace(/^\s*"[^"]*"\s*=\s*[^\n]*$/gm, '')
-      // Remove subject role markers like [CHARACTER], [USER], [JOINT] at start of prompt
       .replace(/^\[CHARACTER\]\s*/i, '')
       .replace(/^\[USER\]\s*/i, '')
       .replace(/^\[JOINT\]\s*/i, '')
-      // Remove "Generated character photo. Scene:" prefix from image_description fallbacks
       .replace(/^Generated character photo\.\s*Scene:\s*/i, '')
-      // Remove multiple blank lines and leading/trailing spaces
       .replace(/\n\n+/g, '\n\n')
       .replace(/^\s+|\s+$/gm, '')
       .trim();
   };
-
-  const hasSubjects = image.subjectNames && image.subjectNames.length > 0;
 
   return (
     <motion.div
@@ -519,81 +410,10 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">From</p>
-            <p className="text-sm text-foreground">{image.senderName}</p>
-          </div>
-
-          {/* Category-specific prompt/context display */}
-          {image.imageCategory === 'ai_generated_with_context' && displayPrompt && (
+          {displayPrompt && (
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Generation Prompt / Context</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Prompt / Description</p>
               <p className="text-sm text-foreground whitespace-pre-wrap">{stripInternalMetadata(displayPrompt)}</p>
-            </div>
-          )}
-
-          {image.imageCategory === 'ai_generated_missing_context' && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">⚠ Context Missing</p>
-              <p className="text-xs text-amber-600/80">This image was AI-generated but the generation context was not saved. Original prompt is unrecoverable.</p>
-            </div>
-          )}
-
-          {image.imageCategory === 'user_uploaded' && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">User-Uploaded Image</p>
-              <p className="text-xs text-muted-foreground">This image was uploaded by you — no generation prompt.</p>
-              {image.imageDescription && (
-                <>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase mt-3 mb-1">Image Description</p>
-                  <p className="text-sm text-foreground">{image.imageDescription}</p>
-                </>
-              )}
-            </div>
-          )}
-
-          {image.imageCategory === 'character_sent_image' && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Character-Sent Image</p>
-              <p className="text-xs text-muted-foreground">This image was sent by {image.senderName}.</p>
-              {image.imageDescription && (
-                <>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase mt-3 mb-1">Image Description</p>
-                  <p className="text-sm text-foreground">{image.imageDescription}</p>
-                </>
-              )}
-            </div>
-          )}
-
-          {image.imageCategory === 'legacy_missing_context' && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Legacy Image</p>
-              <p className="text-xs text-muted-foreground">This is a legacy image with no recoverable prompt/context data.</p>
-            </div>
-          )}
-
-          {image.imageCategory === 'unknown' && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Unclassified Image</p>
-              <p className="text-xs text-muted-foreground">Image category could not be determined.</p>
-            </div>
-          )}
-
-
-
-          {/* Subjects shown in the image */}
-          {hasSubjects && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">People in Image</p>
-              <p className="text-sm text-foreground">{image.subjectNames.join(', ')}</p>
-            </div>
-          )}
-
-          {/* Location context */}
-          {image.locationName && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Location</p>
-              <p className="text-sm text-foreground">{image.locationName}{image.zoneName ? ` — ${image.zoneName}` : ''}</p>
             </div>
           )}
         </div>
@@ -612,9 +432,7 @@ function ImageDetailModal({ image, onClose, onSend, onDelete }) {
 
 function SendImageModal({ image, onClose, onSent }) {
   const [characters, setCharacters] = useState([]);
-  const [senderMode, setSenderMode] = useState('user');
-  const [selectedSenderCharacterId, setSelectedSenderCharacterId] = useState(null);
-  const [selectedRecipientCharacterIds, setSelectedRecipientCharacterIds] = useState(new Set());
+  const [selectedCharacterIds, setSelectedCharacterIds] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(null);
@@ -647,115 +465,6 @@ function SendImageModal({ image, onClose, onSent }) {
     return groups;
   }, [characters]);
 
-  /**
-   * resolveDestinationConversationId
-   *
-   * ROOT CAUSE (confirmed by comparing ForwardMessageModal which WORKS):
-   *
-   * ForwardMessageModal (working) queries:
-   *   Conversation.filter({ type: "direct", character_ids: [charId] })
-   *   — no owner_email in the filter
-   *   — client-side: character_ids.length === 1 && character_ids[0] === charId
-   *
-   * Previous SendImageModal (broken) queried:
-   *   Conversation.filter({ owner_email: user.email, character_ids: charId })
-   *   — combining owner_email + character_ids array filter may return 0 results
-   *     if character_ids is stored differently or indexed differently in the DB
-   *   — 0 results → creates a ghost conversation → image written to ghost thread
-   *   — Chat page never sees the ghost thread → image never appears in chat
-   *
-   * FIX: mirror the ForwardMessageModal conversation query exactly.
-   * Step 1: try { type: "direct", character_ids: [charId] } — same as Forward
-   * Step 2: try { type: "chat", character_ids: [charId] } — Chat page creates type:"chat"
-   * Step 3: try { character_ids: charId } — broadest fallback, no type restriction
-   * Client-side filter: single-character, non-world-phone/bilateral threads only.
-   * Only create a new conversation if all three queries return 0 direct results.
-   */
-  const resolveDestinationConversationId = async (charId, charName, log) => {
-    log.push(`RESOLVE: charId=${charId} name=${charName}`);
-    log.push(`RESOLVE: source convo=${image.parent_conversation_id || 'none'} — NOT used as destination`);
-
-    // Client-side exclusion filter — identical to ForwardMessageModal + useChatLoadConvo
-    const isDirectUserConvo = (c) => {
-      const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
-      if (ids.length !== 1 || ids[0] !== charId) return false;
-      if (c.shared_conversation_key) return false;
-      if (c.channel === 'world_phone') return false;
-      if (c.type === 'bilateral') return false;
-      return true;
-    };
-
-    // Step 1: type:"direct" — matches ForwardMessageModal exactly
-    try {
-      const r1 = await base44.entities.Conversation.filter(
-        { type: 'direct', character_ids: [charId] },
-        '-last_message_date', 20
-      );
-      log.push(`RESOLVE: type=direct query returned ${r1.length}`);
-      const direct1 = r1.filter(isDirectUserConvo);
-      if (direct1.length > 0) {
-        const best = direct1.sort((a, b) =>
-          (b.last_message_date ? new Date(b.last_message_date).getTime() : 0) -
-          (a.last_message_date ? new Date(a.last_message_date).getTime() : 0)
-        )[0];
-        log.push(`RESOLVE: Found via type=direct convo=${best.id}`);
-        return best.id;
-      }
-    } catch (e) {
-      log.push(`RESOLVE: type=direct query error: ${e.message}`);
-    }
-
-    // Step 2: type:"chat" — Chat page creates conversations with type:"chat"
-    try {
-      const r2 = await base44.entities.Conversation.filter(
-        { type: 'chat', character_ids: [charId] },
-        '-last_message_date', 20
-      );
-      log.push(`RESOLVE: type=chat query returned ${r2.length}`);
-      const direct2 = r2.filter(isDirectUserConvo);
-      if (direct2.length > 0) {
-        const best = direct2.sort((a, b) =>
-          (b.last_message_date ? new Date(b.last_message_date).getTime() : 0) -
-          (a.last_message_date ? new Date(a.last_message_date).getTime() : 0)
-        )[0];
-        log.push(`RESOLVE: Found via type=chat convo=${best.id}`);
-        return best.id;
-      }
-    } catch (e) {
-      log.push(`RESOLVE: type=chat query error: ${e.message}`);
-    }
-
-    // Step 3: broadest — no type restriction, just character_ids
-    try {
-      const r3 = await base44.entities.Conversation.filter(
-        { character_ids: charId },
-        '-last_message_date', 50
-      );
-      log.push(`RESOLVE: broad query returned ${r3.length}`);
-      const direct3 = r3.filter(isDirectUserConvo);
-      if (direct3.length > 0) {
-        const best = direct3.sort((a, b) =>
-          (b.last_message_date ? new Date(b.last_message_date).getTime() : 0) -
-          (a.last_message_date ? new Date(a.last_message_date).getTime() : 0)
-        )[0];
-        log.push(`RESOLVE: Found via broad query convo=${best.id}`);
-        return best.id;
-      }
-    } catch (e) {
-      log.push(`RESOLVE: broad query error: ${e.message}`);
-    }
-
-    // Step 4: create — only if truly no conversation exists
-    log.push(`RESOLVE: No existing convo found — creating new`);
-    const newConvo = await base44.entities.Conversation.create({
-      title: `direct with ${charName}`,
-      type: 'direct',
-      character_ids: [charId],
-    });
-    log.push(`RESOLVE: Created new convo=${newConvo.id}`);
-    return newConvo.id;
-  };
-
   const handleSend = async () => {
     setError(null);
     setSendLog([]);
@@ -763,213 +472,66 @@ function SendImageModal({ image, onClose, onSent }) {
     const log = [];
 
     try {
-      if (senderMode === 'user') {
-        if (selectedRecipientCharacterIds.size === 0) {
-          setError('Please select at least one character');
-          setLoading(false);
-          return;
-        }
-
-        for (const charId of selectedRecipientCharacterIds) {
-          const char = characters.find(c => c.id === charId);
-          if (!char) {
-            log.push(`WARN: charId=${charId} not found in loaded character list — skipping`);
-            continue;
-          }
-
-          log.push(`--- Sending to: ${char.name} (${charId}) ---`);
-          log.push(`SOURCE image: url=${image.url?.substring(0, 60)}... sourceConvo=${image.parent_conversation_id || 'none'}`);
-
-          const destConvoId = await resolveDestinationConversationId(charId, char.name || char.display_name, log);
-          log.push(`DESTINATION convo=${destConvoId}`);
-
-          if (image.parent_conversation_id && destConvoId === image.parent_conversation_id) {
-            log.push(`NOTE: destination matches source convo — recipient is same character that sent this image originally`);
-          }
-
-          // Build image context block for the recipient character.
-          // This tells the receiving character who/what is in the image so they
-          // don't hallucinate. Includes: original prompt, subjects, location, and
-          // whether the recipient character is IN the image.
-          const recipientIsInImage = image.subjectIds && image.subjectIds.includes(charId);
-          const subjectNamesStr = image.subjectNames && image.subjectNames.length > 0
-            ? image.subjectNames.join(', ')
-            : null;
-
-          // Build a compact image_description for the recipient that combines
-          // vision analysis + prompt context + subject identity.
-          // This is what the character LLM reads when deciding how to respond.
-          // Resolve the best available description for character context injection.
-          // CRITICAL: image.generationPrompt = gc.prompt = 10,000-char provider blob — SKIP IT.
-          // Use image.originalPrompt (gc.original_raw_prompt) or image.scenePrompt (gc.scene_prompt)
-          // or image.description (already resolved by fetchMediaGalleryPage from the best field).
-          const resolvedDisplayPrompt =
-            image.originalPrompt ||
-            image.scenePrompt ||
-            image.description ||
-            image.imageDescription ||
-            null;
-
-          const parts = [];
-          if (image.imageDescription) parts.push(image.imageDescription);
-          if (resolvedDisplayPrompt && resolvedDisplayPrompt !== image.imageDescription) {
-            parts.push(`[Original prompt: ${resolvedDisplayPrompt}]`);
-          }
-          if (subjectNamesStr) parts.push(`[People shown: ${subjectNamesStr}]`);
-          if (image.locationName) parts.push(`[Location: ${image.locationName}${image.zoneName ? ' — ' + image.zoneName : ''}]`);
-          if (recipientIsInImage) parts.push(`[Note: ${char.name} is one of the people shown in this image]`);
-
-          // CRITICAL: Never save empty image_description. If no parts collected, 
-          // use fallback so backend always has something to display.
-          let composedDescription = parts.join(' ').trim();
-          if (!composedDescription && resolvedDisplayPrompt) {
-            composedDescription = resolvedDisplayPrompt;
-          }
-          if (!composedDescription && image.imageDescription) {
-            composedDescription = image.imageDescription;
-          }
-          if (!composedDescription) {
-            // Ultimate fallback: generic description with metadata
-            composedDescription = `Image sent to ${char.name}${image.locationName ? ` at ${image.locationName}` : ''}`;
-          }
-
-          // generation_context carries the full subject/prompt metadata through to the
-          // character response pipeline. ALIGNED WITH ForwardMessageModal: do NOT write
-          // owner_email — it can cause RLS scope issues preventing Chat page readback.
-          // Merge resolved_description into generation_context so the LLM always has it.
-          const mergedGenerationContext = image.generationContext
-            ? {
-                ...image.generationContext,
-                resolved_description: resolvedDisplayPrompt || composedDescription || undefined,
-                original_raw_prompt: image.generationContext.original_raw_prompt || image.originalPrompt || resolvedDisplayPrompt || undefined,
-              }
-            : resolvedDisplayPrompt
-            ? { resolved_description: resolvedDisplayPrompt, original_raw_prompt: resolvedDisplayPrompt }
-            : undefined;
-
-          const msg = await base44.entities.Message.create({
-           conversation_id: destConvoId,
-           sender_type: 'user',
-           content: '',
-           image_url: image.url,
-           image_description: composedDescription || resolvedDisplayPrompt || undefined,
-           image_analysis_status: (composedDescription || resolvedDisplayPrompt) ? 'complete' : 'pending',
-           // Carry generation_context so character response pipeline has full subject metadata
-           generation_context: mergedGenerationContext,
-           timestamp: new Date().toISOString(),
-           // CRITICAL: Set owner_email for gallery ownership scoping
-           owner_email: user.email,
-          });
-
-          log.push(`CONTEXT: recipientInImage=${recipientIsInImage} subjects="${subjectNamesStr || 'none'}" descLen=${composedDescription.length}`);
-
-          if (!msg?.id) {
-            throw new Error(`Message.create returned no ID for convo=${destConvoId}`);
-          }
-          log.push(`WRITE: message created id=${msg.id} image_url_set=${!!msg.image_url} image_description_len=${composedDescription.length} has_generation_context=${!!(image.generationContext)}`);
-
-          // Readback verification — confirms the message actually persisted
-          try {
-            const readback = await base44.entities.Message.filter(
-              { conversation_id: destConvoId, id: msg.id },
-              '-created_date',
-              1
-            );
-            const found = readback?.length > 0;
-            const urlMatch = found && readback[0].image_url === image.url;
-            log.push(`READBACK: found=${found} image_url_match=${urlMatch} msgId=${readback?.[0]?.id || 'none'}`);
-            if (!found || !urlMatch) {
-              console.error('[SendImageModal] PERSISTENCE FAILURE — readback mismatch', { found, urlMatch, readback });
-              log.push(`READBACK FAILURE — image may not have persisted correctly`);
-            }
-          } catch (rbErr) {
-            log.push(`READBACK ERROR: ${rbErr.message}`);
-          }
-
-          await base44.entities.Conversation.update(destConvoId, {
-            last_message_preview: '📷 Photo',
-            last_message_date: new Date().toISOString(),
-          }).catch(() => {});
-
-          log.push(`DONE: conversation preview updated, send complete`);
-        }
-
-        console.log('[SendImageModal] SEND COMPLETE:\n' + log.join('\n'));
-        setSendLog(log);
-        setSent(true);
-        setTimeout(onSent, 1200);
-        return; // early return — onSent called via timeout below
-
-      } else {
-        // Character → character via World Phone (existing working path — do not change)
-        if (!selectedSenderCharacterId) { setError('Please select a sender character'); setLoading(false); return; }
-        if (selectedRecipientCharacterIds.size === 0) { setError('Please select at least one recipient character'); setLoading(false); return; }
-        if (selectedRecipientCharacterIds.has(selectedSenderCharacterId)) { setError('Cannot send to the same character you are sending as'); setLoading(false); return; }
-
-        for (const receiverId of selectedRecipientCharacterIds) {
-          log.push(`World Phone: sender=${selectedSenderCharacterId} → receiver=${receiverId}`);
-          const res = await base44.functions.invoke('sendWorldPhoneMessage', {
-            sender_character_id: selectedSenderCharacterId,
-            recipient_identifier: receiverId,
-            requested_message: '',
-            image_url: image.url,
-            image_description: image.imageDescription || '',
-            message_type: 'image',
-            source: 'media_gallery_send',
-            owner_email: user.email,
-          });
-
-          if (!res?.data?.success) {
-            throw new Error(res?.data?.error || 'World Phone send failed');
-          }
-          log.push(`World Phone OK: msg_id=${res.data.message_id}`);
-        }
-        console.log('[SendImageModal] WORLD PHONE SEND:\n' + log.join('\n'));
-        setSendLog(log);
-        setSent(true);
-        setTimeout(onSent, 1200);
+      if (selectedCharacterIds.size === 0) {
+        setError('Please select at least one character');
+        setLoading(false);
         return;
       }
-    } catch (e) {
-      console.error('[SendImageModal] Send failed:', e.message, '\nLog:\n' + log.join('\n'));
-      setError(`Send failed: ${e.message}`);
+
+      for (const charId of selectedCharacterIds) {
+        const char = characters.find(c => c.id === charId);
+        if (!char) continue;
+
+        const destConvoId = await resolveConversationId(charId);
+        const resolvedDisplayPrompt = image.displayPrompt || image.originalPrompt || image.scenePrompt || image.description || null;
+        let composedDescription = resolvedDisplayPrompt || `Image sent to ${char.name}`;
+
+        const msg = await base44.entities.Message.create({
+          conversation_id: destConvoId,
+          sender_type: 'user',
+          content: '',
+          image_url: image.url,
+          image_description: composedDescription,
+          image_analysis_status: 'complete',
+          generation_context: image.generationContext || undefined,
+          timestamp: new Date().toISOString(),
+          owner_email: user.email,
+        });
+
+        if (!msg?.id) throw new Error('Message creation failed');
+        log.push(`Sent to ${char.name}`);
+      }
+
       setSendLog(log);
+      setSent(true);
+      setTimeout(onSent, 1200);
+    } catch (e) {
+      console.error('[SendImageModal] Send failed:', e);
+      setError(`Send failed: ${e.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const CharacterGroupUser = ({ title, chars, selected, onToggle }) => {
-    if (chars.length === 0) return null;
-    return (
-      <>
-        <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">{title}</div>
-        {chars.map((char) => (
-          <label key={char.id} className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/50 cursor-pointer border-b border-border/50 last:border-b-0">
-            <input type="checkbox" checked={selected.has(char.id)} onChange={() => onToggle(char.id)} className="w-4 h-4" />
-            <span className="text-sm text-foreground">{char.displayName}</span>
-          </label>
-        ))}
-      </>
-    );
-  };
+  const resolveConversationId = async (charId) => {
+    try {
+      const r1 = await base44.entities.Conversation.filter({ type: 'direct', character_ids: [charId] }, '-last_message_date', 20);
+      const direct1 = r1.filter(c => Array.isArray(c.character_ids) && c.character_ids.length === 1 && c.character_ids[0] === charId);
+      if (direct1.length > 0) return direct1[0].id;
 
-  const CharacterGroupCharacter = ({ title, chars, selected, senderCharacterId, onToggle }) => {
-    if (chars.length === 0) return null;
-    return (
-      <>
-        <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">{title}</div>
-        {chars.map((char) => {
-          const isSender = char.id === senderCharacterId;
-          return (
-            <label key={char.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-border/50 last:border-b-0 ${isSender ? 'bg-secondary/20 opacity-50 cursor-not-allowed' : 'hover:bg-secondary/50'}`}>
-              <input type="checkbox" checked={selected.has(char.id)} onChange={() => onToggle(char.id)} disabled={isSender} className="w-4 h-4 disabled:opacity-50" />
-              <span className={`text-sm ${isSender ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{char.displayName}{isSender && ' (sender)'}</span>
-            </label>
-          );
-        })}
-      </>
-    );
+      const r2 = await base44.entities.Conversation.filter({ type: 'chat', character_ids: [charId] }, '-last_message_date', 20);
+      const direct2 = r2.filter(c => Array.isArray(c.character_ids) && c.character_ids.length === 1 && c.character_ids[0] === charId);
+      if (direct2.length > 0) return direct2[0].id;
+
+      const newConvo = await base44.entities.Conversation.create({
+        title: `chat with ${characters.find(c => c.id === charId)?.name || charId}`,
+        type: 'direct',
+        character_ids: [charId],
+      });
+      return newConvo.id;
+    } catch (e) {
+      throw new Error(`Failed to resolve conversation: ${e.message}`);
+    }
   };
 
   return (
@@ -987,67 +549,32 @@ function SendImageModal({ image, onClose, onSent }) {
       >
         <h2 className="text-xl font-bold text-foreground mb-4">Send Image To</h2>
 
-        <div className="mb-4">
-          <p className="text-sm font-semibold text-foreground mb-2">Send As:</p>
-          <div className="flex gap-2">
-            <button onClick={() => setSenderMode('user')} className={`flex-1 px-3 py-2 rounded text-sm ${senderMode === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>You</button>
-            <button onClick={() => setSenderMode('character')} className={`flex-1 px-3 py-2 rounded text-sm ${senderMode === 'character' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Character</button>
-          </div>
-        </div>
-
-        {senderMode === 'user' && (
-          <div className="mb-4">
-            <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send to Characters:</p>
-            <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 max-h-56">
-              {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
-                const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
-                return (
-                  <CharacterGroupUser key={typeKey} title={typeLabels[typeKey]} chars={groupedCharacters[typeKey]} selected={selectedRecipientCharacterIds}
-                    onToggle={(charId) => { const s = new Set(selectedRecipientCharacterIds); s.has(charId) ? s.delete(charId) : s.add(charId); setSelectedRecipientCharacterIds(s); }} />
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {senderMode === 'character' && (
-          <div className="mb-4 space-y-4">
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Sending As:</p>
-              <select value={selectedSenderCharacterId || ''} onChange={(e) => setSelectedSenderCharacterId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-card text-foreground">
-                <option value="">— Select character —</option>
-                {[...groupedCharacters.active_created, ...groupedCharacters.npc_regular, ...groupedCharacters.npc_family, ...groupedCharacters.npc_fictitious, ...groupedCharacters.other].map((char) => (
-                  <option key={char.id} value={char.id}>{char.displayName}</option>
+        <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 mb-4 max-h-56">
+          {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
+            const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
+            const chars = groupedCharacters[typeKey];
+            if (chars.length === 0) return null;
+            return (
+              <div key={typeKey}>
+                <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase bg-secondary/30 border-t border-border">{typeLabels[typeKey]}</div>
+                {chars.map((char) => (
+                  <label key={char.id} className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/50 cursor-pointer border-b border-border/50 last:border-b-0">
+                    <input type="checkbox" checked={selectedCharacterIds.has(char.id)} onChange={() => { const s = new Set(selectedCharacterIds); s.has(char.id) ? s.delete(char.id) : s.add(char.id); setSelectedCharacterIds(s); }} className="w-4 h-4" />
+                    <span className="text-sm text-foreground">{char.displayName}</span>
+                  </label>
                 ))}
-              </select>
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send To:</p>
-              <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 max-h-40">
-                {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
-                  const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
-                  return (
-                    <CharacterGroupCharacter key={typeKey} title={typeLabels[typeKey]} chars={groupedCharacters[typeKey]} selected={selectedRecipientCharacterIds} senderCharacterId={selectedSenderCharacterId}
-                      onToggle={(charId) => { const s = new Set(selectedRecipientCharacterIds); s.has(charId) ? s.delete(charId) : s.add(charId); setSelectedRecipientCharacterIds(s); }} />
-                  );
-                })}
               </div>
-            </div>
-          </div>
-        )}
+            );
+          })}
+        </div>
 
         <div className="flex flex-col gap-2">
           {error && <div className="text-xs text-destructive bg-destructive/10 px-3 py-2 rounded-lg">{error}</div>}
-          {sendLog.length > 0 && (
-            <div className="text-xs bg-secondary/30 px-3 py-2 rounded-lg max-h-28 overflow-y-auto font-mono text-muted-foreground whitespace-pre-wrap">
-              {sendLog.join('\n')}
-            </div>
-          )}
           <div className="flex gap-2">
             <button onClick={onClose} className="flex-1 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:opacity-90">Cancel</button>
             <button
               onClick={handleSend}
-              disabled={loading || sent || (senderMode === 'user' ? selectedRecipientCharacterIds.size === 0 : !selectedSenderCharacterId || selectedRecipientCharacterIds.size === 0)}
+              disabled={loading || sent || selectedCharacterIds.size === 0}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {sent ? '✓ Sent!' : loading ? 'Sending...' : 'Send'}
