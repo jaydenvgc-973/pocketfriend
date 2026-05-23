@@ -5,19 +5,18 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  *
  * AUTHORITATIVE PRESENCE WRITER — Single source of truth for character location.
  *
- * Writes to the canonical resolved_* fields that every UI surface reads from:
- *   - Home page character cards
- *   - Travel page + all popups
- *   - Scene page presence check
- *   - Chat / narrative context
- *   - Image generation
+ * OWNERSHIP RULE: Always resolves character via user-scoped roster (owner_email path).
+ * NEVER uses created_by. NEVER uses hardcoded IDs. NEVER uses service-role Character queries.
  *
- * RULE: One character = one location at a time. This function atomically:
- *   1. Sets the new resolved location fields
- *   2. Clears any conflicting stale state (travel, previous location)
- *   3. Returns the full updated presence record
- *
- * Never writes to the legacy current_location_id or current_location_name fields.
+ * Lookup chain:
+ *   1. Load full roster via base44.entities.Character.list() [user-scoped — the only working path]
+ *   2. Match character by ID (if characterId provided) OR normalized name (if characterName provided)
+ *   3. Verify match before writing
+ *   4. Load location via base44.entities.LocationReference.list() 
+ *   5. Match location by ID (if locationId provided) OR normalized name (if locationName provided)
+ *   6. Write to matched character's real ID
+ *   7. Read back to verify
+ *   8. Return proof: matched name, matched ID, previous location, new location, write_confirmed
  */
 Deno.serve(async (req) => {
   try {
@@ -25,49 +24,115 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, locationId, locationName, presenceStatus, locationType, sourceReason } = await req.json();
-    if (!characterId || !locationId) {
-      return Response.json({ error: 'Missing characterId or locationId' }, { status: 400 });
+    const body = await req.json();
+    const { characterId, characterName, locationId, locationName, presenceStatus, locationType, sourceReason } = body;
+
+    if (!characterId && !characterName) {
+      return Response.json({ error: 'Must provide characterId or characterName' }, { status: 400 });
+    }
+    if (!locationId && !locationName) {
+      return Response.json({ error: 'Must provide locationId or locationName' }, { status: 400 });
     }
 
-    const chars = await base44.entities.Character.filter({ id: characterId });
-    if (chars.length === 0) {
-      return Response.json({ error: 'Character not found' }, { status: 404 });
+    // STEP 1: Load full roster via user-scoped path (ONLY working path — service-role returns 0)
+    const allChars = await base44.entities.Character.list(null, 500);
+    if (!allChars || allChars.length === 0) {
+      return Response.json({ error: 'Roster returned empty — cannot safely update', roster_count: 0 }, { status: 500 });
     }
 
+    // STEP 2: Match character
+    let matched = null;
+    if (characterId) {
+      matched = allChars.find(c => c.id === characterId);
+    } else {
+      const normalizedTarget = characterName.trim().toLowerCase();
+      matched = allChars.find(c => c.name && c.name.trim().toLowerCase() === normalizedTarget);
+    }
+
+    if (!matched) {
+      return Response.json({
+        error: 'Character not found in user-scoped roster',
+        searched_by: characterId ? `id=${characterId}` : `name=${characterName}`,
+        roster_count: allChars.length,
+        roster_names: allChars.map(c => c.name)
+      }, { status: 404 });
+    }
+
+    // STEP 3: Load locations via user-scoped path
+    const allLocs = await base44.entities.LocationReference.list(null, 500);
+
+    // STEP 4: Match location
+    let matchedLoc = null;
+    if (locationId) {
+      matchedLoc = allLocs.find(l => l.id === locationId);
+    } else {
+      const normalizedLocTarget = locationName.trim().toLowerCase();
+      matchedLoc = allLocs.find(l => l.name && l.name.trim().toLowerCase() === normalizedLocTarget);
+    }
+
+    if (!matchedLoc) {
+      return Response.json({
+        error: 'Location not found',
+        searched_by: locationId ? `id=${locationId}` : `name=${locationName}`,
+        available_locations: allLocs.map(l => l.name)
+      }, { status: 404 });
+    }
+
+    const previousLocationId = matched.resolved_current_location_id || null;
+    const previousLocationName = matched.resolved_current_location_name || null;
     const now = new Date().toISOString();
 
-    // Derive sensible defaults from context
     const resolvedStatus = presenceStatus || 'visiting';
     const resolvedType = locationType || 'visit';
 
-    // ATOMIC WRITE: set new location, clear all conflicting stale state
-    const updates = {
-      // ── AUTHORITATIVE resolved fields (read by ALL UI surfaces) ──
-      resolved_current_location_id: locationId,
-      resolved_current_location_name: locationName || 'Unknown Location',
+    // STEP 5: Write using the verified matched character's real ID
+    await base44.entities.Character.update(matched.id, {
+      resolved_current_location_id: matchedLoc.id,
+      resolved_current_location_name: matchedLoc.name,
       resolved_location_type: resolvedType,
       resolved_presence_status: resolvedStatus,
       resolved_source_reason: sourceReason || 'manual_update',
       resolved_last_updated_at: now,
-      // ── Clear travel/transit state to prevent split presence ──
+      // Clear all stale travel fields
       travel_status: 'not_traveling',
       travel_destination_location_id: null,
       traveling_to_location_id: null,
       traveling_to_location_name: null,
-    };
+      presence_stay_lock: false,
+    });
 
-    await base44.entities.Character.update(characterId, updates);
+    // STEP 6: Read back to verify the write persisted
+    const verifyList = await base44.entities.Character.list(null, 500);
+    const verified = verifyList.find(c => c.id === matched.id);
+
+    const writeConfirmed = verified?.resolved_current_location_id === matchedLoc.id;
+
+    if (!writeConfirmed) {
+      return Response.json({
+        success: false,
+        write_confirmed: false,
+        error: 'Write was not verified — read-back shows different location',
+        matched_character_name: matched.name,
+        matched_character_id: matched.id,
+        expected_location_id: matchedLoc.id,
+        actual_location_id_after_write: verified?.resolved_current_location_id || null,
+      }, { status: 500 });
+    }
 
     return Response.json({
       success: true,
-      characterId,
-      locationId,
-      locationName: locationName || 'Unknown Location',
-      resolvedStatus,
-      resolvedType,
-      updatedAt: now,
+      write_confirmed: true,
+      matched_character_name: matched.name,
+      matched_character_id: matched.id,
+      previous_location_id: previousLocationId,
+      previous_location_name: previousLocationName,
+      new_location_id: matchedLoc.id,
+      new_location_name: matchedLoc.name,
+      new_presence_status: resolvedStatus,
+      new_location_type: resolvedType,
+      updated_at: now,
     });
+
   } catch (error) {
     console.error('[updateCharacterLocation]', error.message);
     return Response.json({ error: error.message }, { status: 500 });
