@@ -992,7 +992,22 @@ Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. No
   // visualSourceBoundaryBlock is injected externally from the pre-generation audit call
   // (see step 5c below). It contains the runtime-computed forbidden entity list,
   // approved roster, and anonymity enforcement — not static text.
-  return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}{{VISUAL_SOURCE_BOUNDARY_BLOCK}}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`;
+  const caucasianGuard = `
+════════════════════════════════════════════════════════════
+⛔ IDENTITY DEFAULT PROHIBITION — NON-NEGOTIABLE
+════════════════════════════════════════════════════════════
+UNKNOWN IDENTITY ≠ CAUCASIAN / WHITE.
+⛔ DO NOT default to Caucasian, white, fair-skinned, or any other assumed ethnicity.
+⛔ DO NOT default to a specific gender, age, or body type when not provided.
+⛔ DO NOT infer race or appearance from name, location, or scene theme.
+⛔ DO NOT use training-data priors for "generic person" — those priors skew heavily Caucasian.
+✅ Use ONLY: reference images, skin_tone field, ethnicities field, appearance lock, avatar description.
+✅ If ethnicities are specified (e.g. Latino, Black, Asian, Indigenous, Mixed), render EXACTLY those.
+✅ No whitewashing. No lightening skin tone. No softening features. No European defaults.
+This applies to every subject in every image — no exceptions.
+════════════════════════════════════════════════════════════
+`;
+  return `${caucasianGuard}${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}{{VISUAL_SOURCE_BOUNDARY_BLOCK}}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`;
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
@@ -1329,14 +1344,16 @@ Deno.serve(async (req) => {
       }
 
       // If still no refs AND no charDesc: fail visibly rather than generating a random person.
-      // Silent wrong-person generation is worse than an explicit error.
+      // CAUCASIAN-DEFAULT GUARD: Never invent race, ethnicity, skin tone, gender, age, or body type.
+      // AI systems default to Caucasian when identity data is missing — this must be blocked.
       if (charRefs.length === 0 && !charDesc) {
-        console.error(`[generateImageAsync] ❌ IDENTITY MISSING for "${characterName || characterId}" — no reference_image_urls, no avatar_url, no appearance description. Cannot generate identity-locked image.`);
+        console.error(`[generateImageAsync] ❌ IDENTITY MISSING — Caucasian-default guard triggered for "${characterName || characterId}". Blocking generation to prevent whitewashed default.`);
         await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
         return Response.json({
           success: false,
-          error: `No identity data for ${characterName || 'this character'}. Add reference photos or an appearance description to enable photo generation.`,
+          error: `Subject identity is missing. Add reference photos or an appearance description before generating — the app will not invent a default person.`,
           identity_missing: true,
+          caucasian_default_blocked: true,
         });
       }
 

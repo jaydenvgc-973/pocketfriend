@@ -330,9 +330,30 @@ Based on this context, write a vivid image generation prompt (1-3 sentences) des
       imagePrompt = String(promptGuess || '').trim();
     }
 
+    // CAUCASIAN-DEFAULT GUARD: If no prompt is stored AND no character identity data exists,
+    // block recovery rather than generating a Caucasian default person.
     if (!imagePrompt) {
-      imagePrompt = `${charName} in a realistic candid photo, matching their saved appearance exactly.`;
+      if (!subjectCharRecord && !subjectCharId) {
+        console.error(`[recoverSingleImage] ❌ CAUCASIAN-DEFAULT GUARD: no stored prompt, no character record, no subject ID. Blocking recovery.`);
+        return Response.json({
+          success: false,
+          error: 'The original image prompt is missing and no character identity is linked to this message. Recovery is blocked — the app will not generate a default person.',
+          identity_missing: true,
+          caucasian_default_blocked: true,
+        });
+      }
+      // Character record exists but no stored prompt — use minimal neutral fallback.
+      // The identity will be locked by charDesc and reference images, so this is safe.
+      imagePrompt = `${charName} in a candid everyday moment.`;
     }
+
+    // CAUCASIAN-DEFAULT GUARD INJECTION: Always inject the no-default rule into the prompt.
+    const caucasianGuardRecover = `
+⛔ IDENTITY DEFAULT PROHIBITION: Unknown identity DOES NOT equal Caucasian/white.
+DO NOT default to Caucasian, white, or any assumed ethnicity, gender, age, or body type.
+Use ONLY the reference images and character description below for appearance. No exceptions.
+`;
+    imagePrompt = caucasianGuardRecover + imagePrompt;
 
     // ── STEP 6: BUILD STRUCTURED PROMPT ──────────────────────────────────────
     const finalPrompt = `

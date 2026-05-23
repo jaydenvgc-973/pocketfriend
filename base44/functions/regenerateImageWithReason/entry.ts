@@ -508,7 +508,20 @@ Photographs of "${place}". PRESERVE: walls, floor, furniture identity, rug, curt
   ⛔ BOTH subjects must be physically integrated — same lighting, same floor plane, same perspective.`;
   }
 
-  return `${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${reasonBlock}${identityLock}`;
+  const caucasianGuardRegen = `
+════════════════════════════════════════════════════════════
+⛔ IDENTITY DEFAULT PROHIBITION — NON-NEGOTIABLE
+════════════════════════════════════════════════════════════
+UNKNOWN IDENTITY ≠ CAUCASIAN / WHITE.
+⛔ DO NOT default to Caucasian, white, fair-skinned appearance.
+⛔ DO NOT default to any assumed gender, age, or body type.
+⛔ DO NOT infer race from a name, location, or scene theme.
+✅ Use ONLY: reference images, skin_tone, ethnicities field, appearance lock, avatar description.
+✅ If ethnicities are specified, render EXACTLY those — no whitewashing, no lightening, no softening.
+This applies to all subjects. No exceptions.
+════════════════════════════════════════════════════════════
+`;
+  return `${caucasianGuardRegen}${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${reasonBlock}${identityLock}`;
 }
 
 // ── ZONE RESOLUTION — STRICT ZONE ISOLATION ────────────────────────────────────
@@ -662,7 +675,20 @@ Deno.serve(async (req) => {
     } else if (reason === 'custom_prompt' && customPrompt?.trim()) {
       scenePromptRaw = customPrompt.trim();
     }
-    if (!scenePromptRaw) scenePromptRaw = 'candid natural moment, everyday life';
+    // CAUCASIAN-DEFAULT GUARD: If the prompt is blank, do NOT generate a generic person.
+    // A blank prompt with no identity data will produce a Caucasian default — block this.
+    if (!scenePromptRaw) {
+      if (!effectiveCharId && !originalCharId) {
+        console.error(`[regenerateImageWithReason] ❌ CAUCASIAN-DEFAULT GUARD: blank prompt + no character ID. Blocking.`);
+        return Response.json({
+          success: false,
+          error: 'The original image prompt is missing. Regeneration is blocked until the subject is confirmed — the app will not invent a default person.',
+          identity_missing: true,
+          caucasian_default_blocked: true,
+        });
+      }
+      scenePromptRaw = 'candid natural moment, everyday life';
+    }
 
     // ── PROMPT-NAMED SUBJECT RESOLUTION ──────────────────────────────────────
     // For dont_like / custom_prompt: the prompt is the AUTHORITY on who the subject is.
