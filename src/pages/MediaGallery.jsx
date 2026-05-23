@@ -13,8 +13,6 @@ function galleryPageCacheKey(ownerEmail, page, search, pageSize = 20) {
   return `mediaGallery:v2:${owner}:page:${page}:ps:${pageSize}:search:${s}`;
 }
 
-// Cache key for the total image count (used to know if hasMore)
-const GALLERY_META_KEY = 'mediaGallery:meta';
 const GALLERY_STALE_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function MediaGallery() {
@@ -27,10 +25,15 @@ export default function MediaGallery() {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [pageImages, setPageImages] = useState([]);
-  // isLoading: true only when no cached data available (cold load)
-  const [isLoading, setIsLoading] = useState(false);
+
+  // isLoading: true only during cold load (no cache, no images yet)
+  const [isLoading, setIsLoading] = useState(true);
   // isRefreshing: silent background refresh — gallery already showing cached data
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // initSettled: ONLY true after the first full fetch attempt completes (including cache restoration).
+  // Empty-state message is GATED behind this — prevents premature "0 images" flash.
+  const [initSettled, setInitSettled] = useState(false);
+
   const [lastProof, setLastProof] = useState(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [pageJumpValue, setPageJumpValue] = useState('');
@@ -49,25 +52,30 @@ export default function MediaGallery() {
     const cacheKey = galleryPageCacheKey(user.email, page, search);
     const requestId = ++activeRequestRef.current;
 
-    // ── STEP 1: Serve cache immediately ───────────────────────────────────────
+    // ── STEP 1: Serve cache immediately (local-first) ─────────────────────────
+    // This is the "instant first paint" path. If cache exists, images appear before
+    // any network call completes — same pattern as Instagram/Facebook.
     const cached = lfcRead(user.email, cacheKey);
     const cacheAge = cached?.loaded_at ? Date.now() - cached.loaded_at : Infinity;
     const isCacheStale = cacheAge > GALLERY_STALE_MS;
 
-    if (cached?.data && !forceRefresh) {
-      // Show cached data instantly — no spinner needed
-      console.log(`[MediaGallery] Cache HIT page=${page} search="${search}" age=${Math.round(cacheAge/1000)}s stale=${isCacheStale}`);
-      setPageImages(cached.data.images || []);
+    if (cached?.data?.images?.length > 0 && !forceRefresh) {
+      // Paint cached images immediately — user sees gallery before network responds
+      console.log(`[MediaGallery] Cache HIT page=${page} age=${Math.round(cacheAge/1000)}s stale=${isCacheStale}`);
+      setPageImages(cached.data.images);
       setHasMore(cached.data.hasMore === true);
       setLastProof(cached.data.proof || null);
+      setIsLoading(false);
+      // Mark as settled immediately — we have real data from cache
+      setInitSettled(true);
 
-      // If cache is fresh enough, skip background refresh
-      if (!isCacheStale && !forceRefresh) return;
+      // If cache is fresh, stop here — no network needed
+      if (!isCacheStale) return;
 
-      // Cache is stale — do a silent background refresh without showing a spinner
+      // Cache is stale — silently refresh in background without spinner
       setIsRefreshing(true);
     } else {
-      // Cold load — show spinner
+      // Cold load — no cache, show spinner until first data arrives
       console.log(`[MediaGallery] Cache MISS page=${page} search="${search}" — cold load`);
       setIsLoading(true);
     }
@@ -80,7 +88,7 @@ export default function MediaGallery() {
         searchTerm: search,
       });
 
-      // Stale request — a newer navigation happened, discard
+      // Stale request — a newer navigation happened, discard result
       if (requestId !== activeRequestRef.current) {
         console.log(`[MediaGallery] Stale response for page=${page} — discarded`);
         return;
@@ -90,36 +98,40 @@ export default function MediaGallery() {
       if (!data) throw new Error('No data returned');
 
       const freshImages = data.images || [];
-      const enoughForPage = data.enoughForRequestedPage !== false; // default true for backward compat
+      const enoughForPage = data.enoughForRequestedPage !== false;
 
-      console.log(`[MediaGallery] Fresh page=${page} images=${freshImages.length} total=${data.totalImages} hasMore=${data.hasMore} enoughForPage=${enoughForPage}`);
-      console.log(`[MediaGallery] PROOF:`, data.proof);
+      console.log(`[MediaGallery] Fresh page=${page} images=${freshImages.length} hasMore=${data.hasMore} enoughForPage=${enoughForPage}`);
 
-      if (!enoughForPage) {
-        console.warn(`[MediaGallery] WARNING: Page ${page} does not have enough images. Gallery exhausted before reaching this page.`);
-      }
-
-      // Write to cache only when we have real images for this page
-      const cachePayload = { images: freshImages, hasMore: data.hasMore === true, proof: data.proof, enoughForPage };
+      // Write to cache only when fresh images exist (never cache empty results)
       if (freshImages.length > 0) {
-        lfcWrite(user.email, cacheKey, cachePayload);
+        lfcWrite(user.email, cacheKey, {
+          images: freshImages,
+          hasMore: data.hasMore === true,
+          proof: data.proof,
+          enoughForPage,
+        });
       }
 
-      // Update UI — preserve existing images during background refresh (no wipe)
-      setPageImages(freshImages);
+      // Update UI with fresh data — always replace with fresh, never wipe if empty
+      // If freshImages is empty and we already have cached images showing, preserve them.
+      if (freshImages.length > 0) {
+        setPageImages(freshImages);
+      }
+      // Always update hasMore and proof from fresh response
       setHasMore(data.hasMore === true);
       setLastProof(data.proof || null);
 
     } catch (e) {
-      // Only log — cached data (if any) remains showing
+      // CRITICAL: Never clear pageImages on error.
+      // Last-known-good gallery state is preserved — user sees cached images, not empty screen.
+      // Do NOT setPageImages([]) here under any condition.
       console.error('[MediaGallery] fetchPage error:', e.message);
-      if (requestId === activeRequestRef.current && pageImages.length === 0) {
-        setPageImages([]);
-      }
     } finally {
       if (requestId === activeRequestRef.current) {
         setIsLoading(false);
         setIsRefreshing(false);
+        // Gate open: empty-state message is now allowed to render if pageImages truly empty
+        setInitSettled(true);
       }
     }
   }, [user?.email]); // eslint-disable-line
@@ -130,6 +142,11 @@ export default function MediaGallery() {
       fetchPage(currentPage, searchTerm);
     }
   }, [user?.email, currentPage, searchTerm, fetchPage]);
+
+  // Reset initSettled when page/search changes so we don't flash empty during navigation
+  useEffect(() => {
+    setInitSettled(false);
+  }, [currentPage, searchTerm]);
 
   const handleNext = () => setCurrentPage(p => p + 1);
   const handlePrev = () => { if (currentPage > 1) setCurrentPage(p => p - 1); };
@@ -161,8 +178,6 @@ export default function MediaGallery() {
       if (res?.data?.success) {
         console.log(`[MediaGallery] ✓ Deleted image ${image.messageId}`);
         setSelectedImage(null);
-        // Invalidate cache for this page and force refresh
-        // lfcWrite(null) is a no-op — must use lfcDelete to actually clear
         const cacheKey = galleryPageCacheKey(user.email, currentPage, searchTerm);
         lfcDelete(user.email, cacheKey);
         fetchPage(currentPage, searchTerm, { forceRefresh: true });
@@ -174,6 +189,15 @@ export default function MediaGallery() {
       alert(`Delete failed: ${e.message}`);
     }
   };
+
+  // Render decision:
+  // 1. isLoading AND no images yet AND not settled → show spinner (cold load, no cache)
+  // 2. images exist → show grid (even if isLoading/isRefreshing — never hide existing images)
+  // 3. initSettled AND images empty → show empty-state message (confirmed empty, not a race)
+  // 4. not yet settled → show spinner (initialization still in flight)
+  const showSpinner = isLoading && pageImages.length === 0 && !initSettled;
+  const showEmpty = initSettled && !isLoading && pageImages.length === 0;
+  const showGrid = pageImages.length > 0;
 
   return (
     <div className="min-h-screen bg-background p-6" style={{ paddingTop: 'max(1.5rem, calc(1.5rem + env(safe-area-inset-top)))' }}>
@@ -219,6 +243,7 @@ export default function MediaGallery() {
           <div className="mb-6 p-4 rounded-lg bg-secondary/20 border border-border text-xs font-mono text-muted-foreground space-y-1">
             <div><strong>Gallery Diagnostics v3 — Page {currentPage}</strong></div>
             <div>owner: {user?.email || 'unknown'}</div>
+            <div>initSettled: {initSettled ? 'YES' : 'no'} | isLoading: {isLoading ? 'yes' : 'NO'} | isRefreshing: {isRefreshing ? 'yes' : 'NO'}</div>
             <div>imageStart: {lastProof.imageStartIndex ?? lastProof.skip ?? 'n/a'} | imageEnd: {lastProof.imageEndIndex ?? 'n/a'} | pageSize: {lastProof.pageSize}</div>
             <div>uniqueImages: {lastProof.uniqueImagesCollected ?? lastProof.validFound ?? 'n/a'} | returned: {lastProof.pageImagesReturned}</div>
             <div>msgsScanned: {lastProof.messagesScanned ?? lastProof.rawScanned ?? 'n/a'} | batches: {lastProof.batchCount ?? lastProof.batchesScanned}</div>
@@ -244,15 +269,22 @@ export default function MediaGallery() {
           />
         </div>
 
-        {isLoading ? (
+        {showSpinner ? (
+          // Cold load — no cache, no images yet, init not settled
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full" />
           </div>
-        ) : pageImages.length === 0 ? (
+        ) : showEmpty ? (
+          // Confirmed empty: init settled, fetch complete, truly no images
           <div className="text-center py-12 text-muted-foreground">
             {lastProof && lastProof.enoughForRequestedPage === false
               ? `Page ${currentPage} is beyond the gallery. Only ${lastProof.uniqueImagesCollected ?? 0} unique images found (need >${lastProof.imageStartIndex ?? 0}).`
               : searchTerm ? 'No images match your search.' : 'No media found. Images you send and receive will appear here.'}
+          </div>
+        ) : !showGrid ? (
+          // Init still in flight (e.g. user auth pending) — show skeleton
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full" />
           </div>
         ) : (
           <>
@@ -465,7 +497,6 @@ function SendImageModal({ image, onClose, onSent }) {
       else groups.other.push({ ...char, displayName });
     });
 
-    // Sort each group alphabetically by display name
     Object.keys(groups).forEach(key => {
       groups[key].sort((a, b) => a.displayName.localeCompare(b.displayName));
     });
@@ -473,19 +504,13 @@ function SendImageModal({ image, onClose, onSent }) {
     return groups;
   }, [characters]);
 
-  // Resolve the real conversation_id for a user↔character chat.
-  // Fetches all owner conversations and filters CLIENT-SIDE for the direct thread
-  // containing this charId. Array-field filtering via scalar in Base44 query is
-  // unreliable — client-side filter is the correct approach.
   const resolveConversationId = async (charId, charName) => {
-    // Fetch all conversations for this owner, most recent first
     const convos = await base44.entities.Conversation.filter(
       { owner_email: user.email },
       '-last_message_date',
       100
     );
 
-    // Find the direct user↔character conversation (not a world_phone/bilateral thread)
     const direct = convos.filter(c => {
       const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
       const hasChar = ids.includes(charId);
@@ -494,25 +519,20 @@ function SendImageModal({ image, onClose, onSent }) {
     });
 
     if (direct.length > 0) {
-      // Prefer the one with the most recent activity
       const sorted = [...direct].sort((a, b) => {
         const da = a.last_message_date ? new Date(a.last_message_date).getTime() : 0;
         const db = b.last_message_date ? new Date(b.last_message_date).getTime() : 0;
         return db - da;
       });
-      console.log(`[resolveConversationId] Found direct convo for char=${charId} → convo=${sorted[0].id}`);
       return sorted[0].id;
     }
 
-    // No existing conversation found — create a new direct one
-    console.log(`[resolveConversationId] No direct convo found for char=${charId} — creating new`);
     const newConvo = await base44.entities.Conversation.create({
       title: `chat with ${charName}`,
       type: 'chat',
       character_ids: [charId],
       owner_email: user.email,
     });
-    console.log(`[resolveConversationId] Created new convo=${newConvo.id} for char=${charId}`);
     return newConvo.id;
   };
 
@@ -521,7 +541,6 @@ function SendImageModal({ image, onClose, onSent }) {
     setLoading(true);
     try {
       if (senderMode === 'user') {
-        // User sending to multiple characters — writes to the real Chat conversation
         if (selectedRecipientCharacterIds.size === 0) {
           setError('Please select at least one character');
           setLoading(false);
@@ -532,35 +551,27 @@ function SendImageModal({ image, onClose, onSent }) {
           const char = characters.find(c => c.id === charId);
           if (!char) continue;
 
-          // Resolve real conversation ID (never use synthetic string IDs)
           const convoId = await resolveConversationId(charId, char.name || char.display_name);
 
-          // IMAGE FORWARDING: send the exact original image_url — no regeneration, no prompt resubmission
-          const msg = await base44.entities.Message.create({
+          await base44.entities.Message.create({
             conversation_id: convoId,
             sender_type: 'user',
             character_id: charId,
             character_name: char.name || char.display_name,
             content: '',
-            image_url: image.url,           // exact original URL — not regenerated
+            image_url: image.url,
             image_description: image.imageDescription || '',
             message_type: 'image',
             timestamp: new Date().toISOString(),
             owner_email: user.email,
           });
 
-          console.log(`[SendImageModal] IMAGE FORWARD PROOF | selected_gallery_image_id=${image.messageId} | selected_original_image_url=${image.url} | sent_message_image_url=${image.url} | url_identical=true | no_regeneration=true | convo=${convoId} | msg=${msg?.id}`);
-
-          // Update conversation preview so Chat shows the latest send
           await base44.entities.Conversation.update(convoId, {
             last_message_preview: '📷 Photo',
             last_message_date: new Date().toISOString(),
           }).catch(() => {});
-
-
         }
       } else {
-        // Character sending to character(s) via World Phone
         if (!selectedSenderCharacterId) {
           setError('Please select a sender character');
           setLoading(false);
@@ -592,15 +603,6 @@ function SendImageModal({ image, onClose, onSent }) {
           if (!res?.data?.success) {
             throw new Error(res?.data?.error || 'World Phone send failed');
           }
-
-          const proof = res?.data?.proof || {};
-          console.log('[SendImageModal] World Phone image sent:', {
-            sender: selectedSenderCharacterId,
-            receiver: receiverId,
-            msg_id: res.data.message_id,
-            image_url_readback: proof.image_url_readback,
-            message_type: proof.message_type_readback,
-          });
         }
       }
       onSent();
@@ -742,7 +744,6 @@ function SendImageModal({ image, onClose, onSent }) {
         {/* Character mode: select sender, then receivers */}
         {senderMode === 'character' && (
           <div className="mb-4 space-y-4">
-            {/* Sender selection */}
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Sending As:</p>
               <select
@@ -759,7 +760,6 @@ function SendImageModal({ image, onClose, onSent }) {
               </select>
             </div>
 
-            {/* Receiver selection */}
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send To:</p>
               <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 max-h-40">
