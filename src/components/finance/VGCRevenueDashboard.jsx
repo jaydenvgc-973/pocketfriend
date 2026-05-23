@@ -33,10 +33,11 @@ export default function VGCRevenueDashboard({ userSettings }) {
     queryFn: () => base44.auth.me(),
   });
 
-  // Fetch financial transactions for current user only (owner_email scoped — not created_by)
+  // Fetch financial transactions scoped by character_id (VGC Mobile bills have no owner_email — written by service role)
+  // We fetch all transactions and filter client-side by character IDs belonging to this user
   const { data: transactions = [], isLoading: txLoading } = useQuery({
     queryKey: ["allFinancialTransactions", currentUser?.email],
-    queryFn: () => base44.entities.FinancialTransaction.filter({ owner_email: currentUser.email }, "-timestamp", 500),
+    queryFn: () => base44.entities.FinancialTransaction.list("-timestamp", 1000),
     enabled: !!currentUser?.email,
   });
 
@@ -127,17 +128,19 @@ export default function VGCRevenueDashboard({ userSettings }) {
     return { key, start, end, label: format(d, "MMM") };
   });
 
-  // VGC Mobile revenue = the monthly phone bills charged to characters (direction=expense, type=utilities, description contains vgc mobile)
-  // These are the $50/month charges written by processMonthlyVGCMobileBilling — direction is "expense" from the character's POV
+  // Scope all transaction metrics to this user's characters only
+  const userCharacterIds = new Set(allCharacters.map(c => c.id));
+
+  // VGC Mobile bills: expense transactions from VGC Mobile system for user's characters
   const vgcIncome = transactions.filter(t =>
+    userCharacterIds.has(t.character_id) &&
     t.direction === "expense" &&
-    (t.description?.toLowerCase().includes("vgc mobile") || 
-     (t.transaction_type === "utilities" && t.sender_name?.toLowerCase().includes("vgc")))
+    t.sender_name === "VGC Mobile"
   );
 
-  // Total character expenses = ALL expense-direction transactions for characters (system-charged bills, purchases, etc.)
-  // sender_type can be "system", "character", or anything — what matters is it's an expense on a character record
+  // Total character expenses = ALL expense-direction transactions for user's characters
   const charExpenses = transactions.filter(t =>
+    userCharacterIds.has(t.character_id) &&
     t.direction === "expense"
   );
 
@@ -153,7 +156,9 @@ export default function VGCRevenueDashboard({ userSettings }) {
     return { label, vgcRevenue: Math.round(vgcRev), charExpenses: Math.round(totalExp) };
   });
 
-  const totalVGCRevenue = vgcIncome.reduce((s, t) => s + (t.amount || 0), 0);
+  // UserSettings.vgc_mobile_revenue is the authoritative accumulated total written by processMonthlyVGCMobileBilling
+  // Use it as the all-time VGC revenue figure; fall back to summing transactions if not set
+  const totalVGCRevenue = userSettings?.vgc_mobile_revenue ?? vgcIncome.reduce((s, t) => s + (t.amount || 0), 0);
   const totalCharExp = charExpenses.reduce((s, t) => s + (t.amount || 0), 0);
   const userBalance = userSettings?.user_balance ?? 0;
   const activeCharCount = createdActiveCharacters.length;
