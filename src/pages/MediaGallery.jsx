@@ -777,7 +777,7 @@ function SendImageModal({ image, onClose, onSent }) {
         initial={{ scale: 0.9 }}
         animate={{ scale: 1 }}
         onClick={(e) => e.stopPropagation()}
-        className="bg-card rounded-lg max-w-md w-full p-6 flex flex-col max-h-[90vh]"
+        className="bg-card rounded-lg max-w-md w-full p-6 flex flex-col max-h-[95vh] overflow-hidden"
       >
         <h2 className="text-xl font-bold text-foreground mb-4">Send Image To</h2>
 
@@ -790,9 +790,9 @@ function SendImageModal({ image, onClose, onSent }) {
         </div>
 
         {senderMode === 'user' && (
-          <div className="mb-4 flex flex-col flex-1 min-h-0">
-            <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send to Characters:</p>
-            <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 min-h-40">
+          <div className="mb-4 flex-1 flex flex-col min-h-0">
+            <p className="text-xs font-semibold text-muted-foreground uppercase mb-2 flex-shrink-0">Send to Characters:</p>
+            <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20">
               {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
                 const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
                 return (
@@ -805,8 +805,8 @@ function SendImageModal({ image, onClose, onSent }) {
         )}
 
         {senderMode === 'character' && (
-          <div className="mb-4 space-y-4 flex flex-col flex-1 min-h-0">
-            <div>
+          <div className="mb-4 flex-1 flex flex-col min-h-0 gap-4">
+            <div className="flex-shrink-0">
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Sending As:</p>
               <select value={selectedSenderCharacterId || ''} onChange={(e) => setSelectedSenderCharacterId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-card text-foreground">
                 <option value="">— Select character —</option>
@@ -816,8 +816,8 @@ function SendImageModal({ image, onClose, onSent }) {
               </select>
             </div>
             <div className="flex-1 flex flex-col min-h-0">
-              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Send To:</p>
-              <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20 min-h-40">
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-2 flex-shrink-0">Send To:</p>
+              <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20">
                 {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
                   const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
                   return (
@@ -830,10 +830,10 @@ function SendImageModal({ image, onClose, onSent }) {
             </div>
         )}
 
-        <div className="flex flex-col gap-2">
+        <div className="flex-shrink-0 border-t border-border pt-2 flex flex-col gap-2">
           {error && <div className="text-xs text-destructive bg-destructive/10 px-3 py-2 rounded-lg">{error}</div>}
           {sendLog.length > 0 && (
-            <div className="text-xs bg-secondary/30 px-3 py-2 rounded-lg max-h-28 overflow-y-auto font-mono text-muted-foreground whitespace-pre-wrap">
+            <div className="text-xs bg-secondary/30 px-3 py-2 rounded-lg max-h-24 overflow-y-auto font-mono text-muted-foreground whitespace-pre-wrap">
               {sendLog.join('\n')}
             </div>
           )}
