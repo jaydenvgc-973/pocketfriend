@@ -28,8 +28,8 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const PAGE_SIZE = 20;
-const BATCH_SIZE = 200;
-const SCAN_FLOOR = '2025-01-01T00:00:00.000Z';
+const BATCH_SIZE = 500; // Larger batches = fewer API calls = less rate limiting
+const SCAN_FLOOR = '2023-01-01T00:00:00.000Z'; // Extended back to catch all historical images
 const MAX_RUNTIME_MS = 35000;
 
 /**
@@ -54,35 +54,74 @@ function normalizeUrlForDedup(url) {
  */
 function stripInternalMetadata(text) {
   if (!text) return text;
-  
-  // Remove multiline blocks: [NAME REFERENCE KEY ... [END NAME REFERENCE KEY]
-  // This must happen FIRST, before other replacements, to catch multiline content
-  let result = text.replace(
-    /\[NAME REFERENCE KEY[^\]]*?\][\s\S]*?\[END NAME REFERENCE KEY\]/g,
-    ''
-  );
-  
-  result = result
-    .replace(/\[REFERENCE KEY[^\]]*?\][\s\S]*?\[END REFERENCE KEY\]/g, '')
-    .replace(/\[CHARACTER ID[^\]]*?\]/g, '')
-    .replace(/\[IDENTITY LOCK[^\]]*?\]/g, '')
-    .replace(/\[PROVIDER INSTRUCTION[^\]]*?\]/g, '')
-    .replace(/\(ID:\s*[a-z0-9]+\)/gi, '')
-    // Character assignment lines: "Name" = Full Name — description
-    .replace(/^\s*"[^"]*"\s*=\s*[^\n]*$/gm, '')
-    // Remove "[CHARACTER]", "[USER]", "[JOINT]" markers
-    .replace(/^\[CHARACTER\]\s*/im, '')
-    .replace(/^\[USER\]\s*/im, '')
-    .replace(/^\[JOINT\]\s*/im, '')
-    // Remove "Generated character photo. Scene:" prefix
-    .replace(/^Generated character photo\.\s*Scene:\s*/im, '')
-    // Collapse multiple newlines
-    .replace(/\n\n+/g, '\n\n')
-    // Trim all lines
-    .replace(/^\s+|\s+$/gm, '')
-    .trim();
-  
-  return result;
+
+  // Split into lines to safely strip only header/footer blocks, never mid-content
+  const lines = text.split('\n');
+  const cleaned = [];
+  let inBlock = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Detect opening of a metadata block
+    if (
+      /^\[NAME REFERENCE KEY/i.test(trimmed) ||
+      /^\[REFERENCE KEY/i.test(trimmed) ||
+      /^\[PROVIDER INSTRUCTION/i.test(trimmed)
+    ) {
+      inBlock = true;
+      continue;
+    }
+    // Detect closing of a metadata block
+    if (
+      /^\[END NAME REFERENCE KEY\]/i.test(trimmed) ||
+      /^\[END REFERENCE KEY\]/i.test(trimmed)
+    ) {
+      inBlock = false;
+      continue;
+    }
+    if (inBlock) continue;
+
+    // Strip inline metadata markers from the line (non-destructive to surrounding text)
+    let l = line
+      .replace(/\[CHARACTER ID[^\]]*\]/gi, '')
+      .replace(/\[IDENTITY LOCK[^\]]*\]/gi, '')
+      .replace(/\(ID:\s*[a-z0-9]+\)/gi, '');
+
+    // Skip pure assignment lines: "Name" = Full Name — desc
+    if (/^\s*"[^"]*"\s*=\s*[^\n]*$/.test(l)) continue;
+    // Strip [CHARACTER] / [USER] / [JOINT] as prefix or standalone
+    l = l.replace(/^\s*\[(CHARACTER|USER|JOINT)\]\s*/i, '');
+    // Strip leading "Generated character photo. Scene:" prefix
+    l = l.replace(/^Generated character photo\.\s*Scene:\s*/i, '');
+
+    cleaned.push(l);
+  }
+
+  return cleaned.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * Fetch a batch with retry on 429 rate limit errors.
+ */
+async function fetchBatchWithRetry(base44, conversationIds, sortField, batchSize, offset, maxRetries = 3) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await base44.entities.Message.filter(
+        { conversation_id: { $in: conversationIds } },
+        sortField,
+        batchSize,
+        offset
+      );
+    } catch (e) {
+      const is429 = e?.message?.includes('429') || e?.message?.includes('Rate limit');
+      if (is429 && attempt < maxRetries) {
+        const delay = 500 * Math.pow(2, attempt); // 500ms, 1s, 2s
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 Deno.serve(async (req) => {
@@ -212,12 +251,7 @@ Deno.serve(async (req) => {
       batchCount++;
       let batch;
       try {
-        batch = await base44.entities.Message.filter(
-          { conversation_id: { $in: conversationIds } },
-          '-created_date',
-          BATCH_SIZE,
-          offset
-        );
+        batch = await fetchBatchWithRetry(base44, conversationIds, '-created_date', BATCH_SIZE, offset);
       } catch {
         try {
           batch = await base44.asServiceRole.entities.Message.filter(
@@ -322,19 +356,18 @@ Deno.serve(async (req) => {
       const gc = m.generation_context || null;
 
       // Best display prompt — in priority order, with metadata stripping.
-      // gc.prompt can be:
-      //   - modern: 10,000+ char provider instruction blob (never display)
-      //   - legacy: short readable scene description stored before scene_prompt was added
-      // Threshold: 2000 chars. Above 2000 chars is almost certainly a provider blob.
-      const gcPromptIfReadable = (gc?.prompt && gc.prompt.length < 2000) ? gc.prompt : null;
-      
+      // gc.prompt can be a large provider blob OR a short legacy scene description.
+      // We use original_raw_prompt and scene_prompt first (most reliable).
+      // gc.prompt is used as last resort — stripped of metadata regardless of length.
+      const gcPromptIfUsable = gc?.prompt || null;
+
       // Resolve raw prompt first, then strip metadata
       const rawDisplayPrompt =
         gc?.original_raw_prompt ||
         gc?.scene_prompt ||
         m.image_description ||
         gc?.resolved_description ||
-        gcPromptIfReadable ||
+        gcPromptIfUsable ||
         null;
 
       // Strip internal metadata from the resolved prompt
