@@ -338,14 +338,18 @@ export default function MediaGallery() {
   };
 
   const handleSelectImage = (image) => {
-    console.log('[MediaGallery] Image selected:', { id: image.id, hasPrompt: !!image.displayPrompt });
+    const msgId = image.messageId || image.id;
     // Fetch the full Message record so editor has all fields (user_edited_description, visual_analysis_description, etc.)
-    base44.entities.Message.read(image.messageId || image.id).then(fullMsg => {
-      console.log('[MediaGallery] Full message loaded:', { id: fullMsg.id, fields: Object.keys(fullMsg) });
-      setSelectedImage(fullMsg);
+    base44.entities.Message.filter({ id: msgId }, '-created_date', 1).then(results => {
+      const fullMsg = results?.[0];
+      if (fullMsg) {
+        // Merge gallery shape fields (url, displayPrompt, etc.) with full Message record
+        setSelectedImage({ ...image, ...fullMsg, url: image.url });
+      } else {
+        setSelectedImage(image);
+      }
     }).catch(err => {
       console.error('[MediaGallery] Failed to fetch full message:', err);
-      // Fallback to gallery shape if fetch fails
       setSelectedImage(image);
     });
   };
@@ -592,11 +596,16 @@ function ImageDetailModal({ image: initialImage, onClose, onSend, onDelete }) {
   const handleDescriptionSaved = async (updatedImage) => {
     // Refetch full image data from backend to ensure consistency
     try {
-      const refreshed = await base44.entities.Message.read(updatedImage.id);
-      setImage(refreshed);
+      const results = await base44.entities.Message.filter({ id: updatedImage.id }, '-created_date', 1);
+      const refreshed = results?.[0];
+      if (refreshed) {
+        setImage(prev => ({ ...prev, ...refreshed, url: prev.url }));
+      } else {
+        setImage(updatedImage);
+      }
     } catch (err) {
       console.error('[MediaGallery] Failed to refetch after description save:', err);
-      setImage(updatedImage); // Fallback to passed data
+      setImage(updatedImage);
     }
   };
 

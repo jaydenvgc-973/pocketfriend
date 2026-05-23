@@ -49,8 +49,9 @@ export default function MediaGalleryDescriptionEditor({ image, onClose, onSaved 
       });
 
       // Refetch the image to verify save
-      const updated = await base44.entities.Message.read(image.id);
-      if (updated.user_edited_description !== trimmed) {
+      const results = await base44.entities.Message.filter({ id: image.id }, '-created_date', 1);
+      const updated = results?.[0];
+      if (!updated || updated.user_edited_description !== trimmed) {
         throw new Error("Description was not saved correctly.");
       }
 
@@ -100,8 +101,9 @@ Return ONLY the description text, nothing else.`,
       });
 
       // Refetch to verify save
-      const updated = await base44.entities.Message.read(image.id);
-      if (!updated.image_description || updated.image_description !== description) {
+      const results = await base44.entities.Message.filter({ id: image.id }, '-created_date', 1);
+      const updated = results?.[0];
+      if (!updated || updated.image_description !== description) {
         throw new Error("Generated description was not saved correctly.");
       }
 
