@@ -29,13 +29,21 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
 
   // NPCs (standalone or family-embedded) are always available for travel —
   // they have no jobs, school, or strict schedules to block them.
-  // Only sleep can block an NPC, handled below via isCharacterAsleep.
+  // Only sleep can block an NPC.
+  //
+  // SINGLE TRUTH SOURCE: resolved_presence_status in DB is authoritative — same source
+  // used by Home, Text, and Chat pages. isCharacterAsleep() is a secondary schedule-window
+  // check only used when DB status is NOT sleeping (stale/missing case).
   if (NPC_TYPES.includes(character.character_type)) {
-    if (isCharacterAsleep(character)) {
+    const dbStatus = character.resolved_presence_status;
+    const isSleepingByDB = dbStatus === 'sleeping' || dbStatus === 'napping';
+    const isSleepingBySchedule = !isSleepingByDB && isCharacterAsleep(character);
+
+    if (isSleepingByDB || isSleepingBySchedule) {
       const wakeTime = character.wake_up_time || '07:00';
       return {
         available: false,
-        reason: { iconType: 'sleep', message: `${character.name} is asleep right now and can't join.`, color: 'text-blue-300' },
+        reason: { iconType: 'sleep', message: `${character.name} is asleep right now and unavailable`, color: 'text-blue-300' },
         availableAt: `May be free after ${toDisplay12h(wakeTime)}`,
       };
     }
