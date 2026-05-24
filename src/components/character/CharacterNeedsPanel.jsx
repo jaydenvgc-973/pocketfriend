@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQueryClient } from '@tanstack/react-query';
-import SleepDebtPanel from './SleepDebtPanel';
 
 const NEEDS = [
   { label: 'Hunger',    key: 'hunger_value',         emoji: '🍽️', description: 'How hungry they are' },
@@ -154,10 +153,15 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
         })}
       </div>
 
-      {/* Sleep Debt — separate system from Energy */}
-      <div className="mt-3">
-        <SleepDebtPanel character={character} />
-      </div>
+      {/* Sleep Debt — separate visibility from Energy */}
+      {character?.sleep_debt_hours > 0 && (
+        <div className="mt-3 px-3 py-2 rounded-xl bg-secondary/40 border border-border flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">😴 Sleep Debt</span>
+          <span className={`font-semibold ${character.sleep_debt_hours >= 4 ? 'text-destructive' : character.sleep_debt_hours >= 2 ? 'text-amber-400' : 'text-blue-400'}`}>
+            {character.sleep_debt_hours.toFixed(1)}h owed
+          </span>
+        </div>
+      )}
 
       {/* Debug panel — exposes raw backend state */}
       {showDebug && (
