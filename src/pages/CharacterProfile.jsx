@@ -185,6 +185,16 @@ export default function CharacterProfile() {
     staleTime: 60000,
   });
 
+  const { data: characterFinancial = null } = useQuery({
+    queryKey: ['characterFinancial', characterId],
+    queryFn: async () => {
+      const results = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
+      return results[0] || null;
+    },
+    enabled: !!characterId,
+    staleTime: 60000,
+  });
+
   const { data: workLocations = [] } = useQuery({
     queryKey: ['workLocations', characterId, character?.occupation_location_id, (character?.additional_occupation_locations || []).map(l => l.location_id).join(',')],
     queryFn: async () => {
@@ -522,12 +532,7 @@ export default function CharacterProfile() {
                   )}
                 </div>
                 <div>
-                  <p className="text-muted-foreground uppercase tracking-wider mb-1">Home Location</p>
-                  <p className="text-foreground font-medium">
-                    {character.current_home_location_id 
-                      ? workLocations.find(l => l.id === character.current_home_location_id)?.name || "—"
-                      : "—"}
-                  </p>
+                  <HomeLocationField character={character} currentUser={currentUser} />
                 </div>
               </div>
             </div>
@@ -712,50 +717,25 @@ export default function CharacterProfile() {
           </div>
 
           <CollapsibleProfileSection icon={Briefcase} title="Income Sources">
-            {(() => {
-              const resolveScheduleFromLocation = (locationId) => {
-                if (!locationId) return null;
-                const loc = workLocations.find(l => l.id === locationId);
-                if (!loc) return null;
-                const shift = loc.worker_shifts?.[characterId];
-                if (!shift?.start || !shift?.end) return null;
-                const fmt = (t) => {
-                  const [h, m] = t.split(':').map(Number);
-                  return `${h % 12 || 12}:${String(m).padStart(2, '0')}${h >= 12 ? 'pm' : 'am'}`;
-                };
-                const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-                const days = shift.days?.length > 0 ? shift.days.map(d => DAY_LABELS[d]).join('/') : '';
-                return `${fmt(shift.start)}–${fmt(shift.end)}${days ? ' · ' + days : ''}`;
-              };
-
-              const financial = character.financial || {};
-              return (
-                <div className="space-y-2">
-                  {(financial.income_sources || []).map((src, idx) => {
-                    const estMonthly = src.monthly_estimate
-                      || (src.weekly_hours ? (src.pay_amount || 0) * src.weekly_hours * 4.33 : null)
-                      || (src.pay_type === 'annual' ? (src.pay_amount || 0) / 12 : null);
-                    return (
-                      <div key={idx} className="flex items-center justify-between text-xs pb-2 border-b border-border last:border-b-0">
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <Briefcase className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-muted-foreground truncate">
-                              {src.location_name}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="text-right flex-shrink-0 ml-2">
-                          <div className="font-semibold text-green-300">
-                            ${src.pay_amount?.toFixed(2) || '0.00'} {src.pay_type === 'hourly' ? '/hr' : '/yr'}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+            <div className="space-y-2">
+              {!characterFinancial && (
+                <p className="text-xs text-muted-foreground italic">No financial record found.</p>
+              )}
+              {characterFinancial && (characterFinancial.income_sources || []).length === 0 && (
+                <p className="text-xs text-muted-foreground italic">No income sources recorded yet.</p>
+              )}
+              {(characterFinancial?.income_sources || []).map((src, idx) => (
+                <div key={idx} className="flex items-center justify-between text-xs pb-2 border-b border-border last:border-b-0">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <Briefcase className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+                    <span className="text-muted-foreground truncate">{src.location_name}</span>
+                  </div>
+                  <div className="text-right flex-shrink-0 ml-2 font-semibold text-green-300">
+                    ${src.pay_amount?.toFixed(2) || '0.00'} {src.pay_type === 'hourly' ? '/hr' : '/yr'}
+                  </div>
                 </div>
-              );
-            })()}
+              ))}
+            </div>
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection icon={HomeIcon} title="Businesses / Properties">
