@@ -324,8 +324,9 @@ subject_authority_lock_active: true
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me().catch(() => null);
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    // NOTE: This function is called by imageGenerationValidator via service-role invoke.
+    // Do NOT gate on user auth here — service-role callers have no user session.
+    // Authorization is enforced at the generateImageAsync level (owner_email check).
 
     const body = await req.json();
     const { mode } = body;
