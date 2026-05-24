@@ -1266,9 +1266,9 @@ Deno.serve(async (req) => {
         console.log(`[IdentityAudit] avatar_description_text:  ${charRecord.avatar_description_text ? 'present' : 'absent'}`);
         console.log(`[IdentityAudit] ══════════════════════════════════════════════`);
 
-        // Build appearance descriptor — rich text description used when no reference photos exist
-        // This is the PRIMARY identity source for characters without reference_image_urls
-        // CRITICAL: Include appearance_lock details (hair, facial_hair, skin_tone) as absolute identity traits
+        // GUARD: strip AI generation prompt language from avatar_description_text and appearance_notes.
+        // Cinematic/editorial/chiaroscuro prompts in these fields cause severe identity drift.
+        const isAIPromptText = (t) => !t ? false : /\b(cinematic|chiaroscuro|dramatic lighting|editorial photography|fine art|low-key lighting|sculptural anatomy|artistic composition|museum.quality|photorealistic|ultra.detailed|high.resolution|bokeh|dramatic shadow|noir atmosphere|hyper.realistic|studio lighting|professional photography|stock photo)\b/i.test(t);
         const parts = [
           charRecord.age_range ? `${charRecord.age_range} years old` : null,
           charRecord.gender,
@@ -1277,8 +1277,8 @@ Deno.serve(async (req) => {
           charRecord.appearance_lock?.hairstyle ? `${charRecord.appearance_lock.hairstyle} hairstyle` : null,
           charRecord.appearance_lock?.hair_type ? `${charRecord.appearance_lock.hair_type} hair` : null,
           charRecord.appearance_lock?.facial_hair ? `${charRecord.appearance_lock.facial_hair}` : null,
-          charRecord.appearance_notes || null,
-          charRecord.avatar_description_text || null, // text description from photo uploader
+          !isAIPromptText(charRecord.appearance_notes) ? charRecord.appearance_notes || null : null,
+          !isAIPromptText(charRecord.avatar_description_text) ? charRecord.avatar_description_text || null : null,
         ].filter(Boolean);
         charDesc = parts.join(', ');
 

@@ -78,6 +78,15 @@ function selectCameraPosition(prompt = '') {
 // ── OUTFIT RESOLVER — inlined (Deno cannot import local lib files) ────────────
 // Source of truth: lib/outfitRotationEngine.js. Keep in sync with generateImageAsync.
 
+// ── AI PROMPT CONTAMINATION GUARD ────────────────────────────────────────────
+// Detects if a string is an AI image generation prompt rather than a real description.
+// These strings poison the identity descriptor and cause the model to render stock-photo
+// editorial imagery instead of matching the character's actual face from reference photos.
+function isAIGenerationPrompt(text) {
+  if (!text || typeof text !== 'string') return false;
+  return /\b(cinematic|chiaroscuro|dramatic lighting|editorial photography|fine art|low-key lighting|sculptural anatomy|artistic composition|museum.quality|photorealistic|ultra.detailed|high.resolution|bokeh|shallow depth of field|dramatic shadow|noir atmosphere|moody atmosphere|hyper.realistic|8k|4k resolution|studio lighting|professional photography|stock photo)\b/i.test(text);
+}
+
 function buildOutfitTextRegen(outfit) {
   if (!outfit) return null;
   const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
@@ -85,7 +94,7 @@ function buildOutfitTextRegen(outfit) {
     .map(p => { const t = p.trim(); if(/^(n\/?a|none|-)$/i.test(t)) return null; const s=t.replace(/^n\/?a[,\-–]\s*/i,'').trim(); return /^(shirtless|no top|no shirt)$/i.test(s)?'No shirt / bare torso':(s||null); })
     .filter(Boolean);
   if (parts.length > 0) return parts.join(', ');
-  if (outfit.full_description) {
+  if (outfit.full_description && !isAIGenerationPrompt(outfit.full_description)) {
     return outfit.full_description
       .replace(/^in [^,.]+(,|\.) ?/i, '')
       .replace(/^a (man|woman|person)[^,.]*(,|\.) ?/i, '')
@@ -807,6 +816,13 @@ Deno.serve(async (req) => {
         console.log(`[regenerateImageWithReason] Character "${charName}" — identity refs: ${charRefs.length} (max 2, no generated images, no avatar)`);
         
         // Build appearance descriptor for text-based generation — CRITICAL: include appearance_lock traits as immutable truth
+        // GUARD: avatar_description_text and appearance_notes may contain AI generation prompts
+        // (cinematic, chiaroscuro, editorial photography, etc.) — these contaminate identity and
+        // cause the model to render stock-photo aesthetics instead of matching the person's face.
+        const safeAvatarDesc = charRecord.avatar_description_text && !isAIGenerationPrompt(charRecord.avatar_description_text)
+          ? charRecord.avatar_description_text : null;
+        const safeAppearanceNotes = charRecord.appearance_notes && !isAIGenerationPrompt(charRecord.appearance_notes)
+          ? charRecord.appearance_notes : null;
         const charDescParts = [
           charRecord.age_range ? `${charRecord.age_range} years old` : null,
           charRecord.gender,
@@ -815,8 +831,8 @@ Deno.serve(async (req) => {
           charRecord.appearance_lock?.hairstyle ? `${charRecord.appearance_lock.hairstyle} hairstyle` : null,
           charRecord.appearance_lock?.hair_type ? `${charRecord.appearance_lock.hair_type} hair` : null,
           charRecord.appearance_lock?.facial_hair ? `${charRecord.appearance_lock.facial_hair}` : null,
-          charRecord.appearance_notes || null,
-          charRecord.avatar_description_text || null,
+          safeAppearanceNotes,
+          safeAvatarDesc,
         ].filter(Boolean);
         // Wire charDesc to outer scope so buildRegenPrompt can use it for text-only identity lock
         charDesc = charDescParts.join(', ');
