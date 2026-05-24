@@ -387,190 +387,149 @@ export default function CharacterProfile() {
         <ImageLightbox src={lightboxSrc} alt={character.name} onClose={() => setLightboxSrc(null)} />
 
         {/* ══ LOCKED TOP PROFILE AREA ══ */}
-        <div className="px-6 py-6 space-y-6 border-b border-border">
-          {/* Avatar and Basic Info */}
-        <div className="flex flex-col items-center gap-4">
-          <button onClick={() => character.avatar_url && setLightboxSrc(character.avatar_url)} className={character.avatar_url ? "cursor-pointer" : "cursor-default"}>
-            <CharacterAvatar character={character} size="xl" />
-          </button>
-          <div className="text-center">
-            <h1 className="text-2xl font-semibold text-foreground">{character.name}</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              {character.personality_summary?.split(".")[0] || character.current_situation?.split(".")[0] || null}
-            </p>
-          </div>
-        </div>
-
-          {/* Financial Summary */}
-          <CharacterFinancialSummary characterId={characterId} />
-
-          {/* Narrative Biography */}
-          {(character.profile_summary || character.backstory || character.background_story || character.personality_summary) && (
-            <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-              {character.profile_summary && (
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Overview</p>
-                  <p className="text-sm text-foreground leading-relaxed">{character.profile_summary}</p>
-                </div>
-              )}
-              {character.backstory && (
-                <div className={character.profile_summary ? 'pt-3 border-t border-border' : ''}>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Backstory</p>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{character.backstory}</p>
-                </div>
-              )}
-              {character.background_story && (
-                <div className={character.profile_summary || character.backstory ? 'pt-3 border-t border-border' : ''}>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Background</p>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Your Connection */}
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">Your Connection</p>
-              {(() => {
-                const reciprocal = getReciprocal();
-                const settings = userSettings[0];
-                const assignedRole = settings?.user_relatives?.[character?.id];
-                return reciprocal ? (
-                  <div className="space-y-0.5 text-right">
-                    <div className="flex items-center gap-1 text-xs text-pink-400">
-                      <Heart className="w-3 h-3 fill-current" />
-                      <span className="capitalize">{getRelationshipLabel(assignedRole)} ↔ {getRelationshipLabel(reciprocal)}</span>
-                    </div>
-                  </div>
-                ) : null;
-              })()}
-            </div>
-            <div className="space-y-3">
-              {[
-                { label: "Respect", value: character.user_respect_level ?? 50 },
-                { label: "Trust", value: character.trust_level ?? 50 },
-                { label: "Friendship", value: character.friendship_level ?? 75 },
-                { label: "Romantic", value: character.romantic_level ?? 0 },
-                { label: "Social Pull", value: character.attraction_level ?? 0 },
-                { label: "Chosen Family", value: character.chosen_family_level ?? 0 },
-                { label: "Jealousy", value: Math.round(((character.relational_jealousy ?? 0) + (character.envy_jealousy ?? 0)) / 2), sublabel: `relational ${character.relational_jealousy ?? 0}% · envy ${character.envy_jealousy ?? 0}%` }
-              ].map(({ label, value, sublabel }) => (
-                <div key={label}>
-                  <div className="flex justify-between mb-1">
-                    <span className="text-xs font-medium text-foreground">{label}</span>
-                    <span className="text-xs text-muted-foreground">{value}%</span>
-                  </div>
-                  {sublabel && <p className="text-[10px] text-muted-foreground/60 mb-1">{sublabel}</p>}
-                  <div className="h-2 bg-secondary rounded-full overflow-hidden">
-                    <div className="h-full bg-primary transition-all" style={{ width: `${value}%` }} />
-                  </div>
-                </div>
-              ))}
-              <CharacterFeelingsCard character={character} onRespectCorrected={refetch} />
-            </div>
-          </div>
-
-          {/* Main Identity / Profile Information — Age, Location, Gender, Ethnicity, Orientation, Home Location, Birthday & Zodiac */}
-        <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-          {(age !== null || character.age_range) && (
-            <div className="flex items-center gap-2 pb-2 border-b border-border">
-              <User className="w-4 h-4 text-primary" />
-              <span className="text-sm text-foreground font-medium">
-                {age !== null ? `${age} years old` : character.age_range}
-              </span>
-              {age !== null && character.age_range && (
-                <span className="text-xs text-muted-foreground">({character.age_range})</span>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            {character.is_default ? (
-              <>
-                <NonEditableField label="City" value={character.city} />
-                <NonEditableField label="State" value={character.state} />
-              </>
-            ) : (
-              <>
-                <EditableTextField character={character} field="city" label="City" placeholder="City" />
-                <EditableTextField character={character} field="state" label="State" placeholder="State" />
-              </>
-            )}
-          </div>
-
-          <NonEditableField label="Gender" value={character.gender} />
-
-          {character.is_default ? (
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Ethnic Background</p>
-              <div className="flex flex-wrap gap-1.5">
-                {(character.ethnicities || []).length > 0
-                  ? character.ethnicities.map(eth => (
-                      <span key={eth} className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">{eth}</span>
-                    ))
-                  : <span className="text-sm text-muted-foreground italic">Not set</span>
-                }
+          <div className="px-6 py-6 space-y-6 border-b border-border">
+            {/* Avatar, Name, Bio in one row */}
+            <div className="flex gap-4 items-start">
+              <button onClick={() => character.avatar_url && setLightboxSrc(character.avatar_url)} className={character.avatar_url ? "cursor-pointer flex-shrink-0" : "cursor-default flex-shrink-0"}>
+                <CharacterAvatar character={character} size="lg" />
+              </button>
+              <div className="flex-1 min-w-0">
+                <h1 className="text-2xl font-semibold text-foreground">{character.name}</h1>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {character.personality_summary?.split(".")[0] || character.current_situation?.split(".")[0] || null}
+                </p>
               </div>
             </div>
-          ) : (
-            <EditableEthnicityField character={character} />
-          )}
 
-          <NonEditableField label="Orientation" value={character.sexual_orientation} />
+            {/* Financial Summary */}
+            <CharacterFinancialSummary characterId={characterId} />
 
-          {/* Home Location — inline in identity card */}
-          <div className="pt-2 border-t border-border">
-            <HomeLocationField character={character} currentUser={currentUser} />
-          </div>
-
-          {/* Birthday & Zodiac — inline in identity card */}
-          <div className="pt-2 border-t border-border">
-            <div className="flex items-center gap-2 mb-3">
-              <Cake className="w-4 h-4 text-primary" />
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">Birthday & Zodiac</p>
-            </div>
-            {character.birthday ? (
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-foreground font-medium">
-                    {format(new Date(character.birthday), "MMMM d")}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {format(new Date(character.birthday), "EEEE")}
-                  </p>
-                </div>
-                {zodiacData && (
-                  <div className="text-right">
-                    <p className="text-3xl">{zodiacData.emoji}</p>
-                    <p className="text-xs text-muted-foreground mt-1 capitalize">{zodiacSign}</p>
-                    <p className="text-xs text-muted-foreground">{zodiacData.dates}</p>
+            {/* Narrative Biography */}
+            {(character.profile_summary || character.backstory || character.background_story || character.personality_summary) && (
+              <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+                {character.profile_summary && (
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Overview</p>
+                    <p className="text-sm text-foreground leading-relaxed">{character.profile_summary}</p>
+                  </div>
+                )}
+                {character.backstory && (
+                  <div className={character.profile_summary ? 'pt-3 border-t border-border' : ''}>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Backstory</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{character.backstory}</p>
+                  </div>
+                )}
+                {character.background_story && (
+                  <div className={character.profile_summary || character.backstory ? 'pt-3 border-t border-border' : ''}>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Background</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
                   </div>
                 )}
               </div>
-            ) : !character.is_default ? (
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground italic">No birthday set. Pick a zodiac sign to auto-generate one.</p>
-                <div className="grid grid-cols-3 gap-2">
-                  {Object.keys(ZODIAC_SIGNS).map(sign => (
-                    <button
-                      key={sign}
-                      onClick={() => handleZodiacSelect(sign)}
-                      disabled={isSavingZodiac}
-                      className="flex flex-col items-center gap-1 p-2 rounded-lg border border-border hover:border-primary/40 transition-colors disabled:opacity-50"
-                    >
-                      <span className="text-2xl">{ZODIAC_SIGNS[sign].emoji}</span>
-                      <span className="text-xs capitalize text-muted-foreground hover:text-foreground">{sign}</span>
-                    </button>
+            )}
+
+            {/* Your Connection & Main Identity side by side */}
+            <div className="grid grid-cols-2 gap-4">
+              {/* Your Connection — Left */}
+              <div className="bg-card border border-border rounded-2xl p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Your Connection</p>
+                  {(() => {
+                    const reciprocal = getReciprocal();
+                    const settings = userSettings[0];
+                    const assignedRole = settings?.user_relatives?.[character?.id];
+                    return reciprocal ? (
+                      <div className="space-y-0.5 text-right">
+                        <div className="flex items-center gap-1 text-xs text-pink-400">
+                          <Heart className="w-3 h-3 fill-current" />
+                          <span className="capitalize text-[10px]">{getRelationshipLabel(assignedRole)} ↔ {getRelationshipLabel(reciprocal)}</span>
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
+                </div>
+                <div className="space-y-3">
+                  {[
+                    { label: "Respect", value: character.user_respect_level ?? 50 },
+                    { label: "Trust", value: character.trust_level ?? 50 },
+                    { label: "Friendship", value: character.friendship_level ?? 75 },
+                    { label: "Romantic", value: character.romantic_level ?? 0 },
+                    { label: "Social Pull", value: character.attraction_level ?? 0 },
+                    { label: "Chosen Family", value: character.chosen_family_level ?? 0 },
+                    { label: "Jealousy", value: Math.round(((character.relational_jealousy ?? 0) + (character.envy_jealousy ?? 0)) / 2), sublabel: `relational ${character.relational_jealousy ?? 0}% · envy ${character.envy_jealousy ?? 0}%` }
+                  ].map(({ label, value, sublabel }) => (
+                    <div key={label}>
+                      <div className="flex justify-between mb-1">
+                        <span className="text-xs font-medium text-foreground">{label}</span>
+                        <span className="text-xs text-muted-foreground">{value}%</span>
+                      </div>
+                      {sublabel && <p className="text-[10px] text-muted-foreground/60 mb-1">{sublabel}</p>}
+                      <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                        <div className="h-full bg-primary transition-all" style={{ width: `${value}%` }} />
+                      </div>
+                    </div>
                   ))}
+                  <CharacterFeelingsCard character={character} onRespectCorrected={refetch} />
                 </div>
               </div>
-            ) : (
-              <p className="text-sm text-muted-foreground italic">No birthday set</p>
-            )}
+
+              {/* Main Identity — Right */}
+              <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+                {(age !== null || character.age_range) && (
+                  <div className="flex items-center gap-2 pb-2 border-b border-border">
+                    <User className="w-4 h-4 text-primary" />
+                    <span className="text-sm text-foreground font-medium">
+                      {age !== null ? `${age} years old` : character.age_range}
+                    </span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <p className="text-muted-foreground uppercase tracking-wider mb-1">City</p>
+                    <p className="text-foreground font-medium">{character.city || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground uppercase tracking-wider mb-1">State</p>
+                    <p className="text-foreground font-medium">{character.state || "—"}</p>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-muted-foreground uppercase tracking-wider mb-1 text-xs">Gender</p>
+                  <p className="text-foreground text-sm">{character.gender || "—"}</p>
+                </div>
+
+                <div>
+                  <p className="text-muted-foreground uppercase tracking-wider mb-1 text-xs">Ethnicity</p>
+                  <p className="text-foreground text-sm">{(character.ethnicities || []).join(", ") || "—"}</p>
+                </div>
+
+                <div>
+                  <p className="text-muted-foreground uppercase tracking-wider mb-1 text-xs">Orientation</p>
+                  <p className="text-foreground text-sm">{character.sexual_orientation || "—"}</p>
+                </div>
+
+                <div className="pt-2 border-t border-border col-span-2">
+                  <p className="text-muted-foreground uppercase tracking-wider mb-1 text-xs">Birthday & Zodiac</p>
+                  {character.birthday ? (
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-foreground font-medium">
+                        {format(new Date(character.birthday), "MMM d")}
+                      </div>
+                      {zodiacData && (
+                        <div className="text-right text-xs">
+                          <p className="text-lg">{zodiacData.emoji}</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground italic">Not set</p>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-        </div>
 
         {/* ══ SCROLLABLE COLLAPSIBLE GROUPS ══ */}
         <div className="flex-1 overflow-y-auto">
@@ -1039,51 +998,6 @@ export default function CharacterProfile() {
         </div>
         </div>
       </div>
-        {(character.completed_education?.length > 0) && (() => {
-          const now = new Date();
-          const completedItems = (character.completed_education || []).filter(edu => {
-            if (!edu.completion_date) return false;
-            return new Date(edu.completion_date) <= now;
-          });
-          if (completedItems.length === 0) return null;
-          return (
-            <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <GraduationCap className="w-4 h-4 text-primary" />
-                <p className="text-xs text-muted-foreground uppercase tracking-wider">Completed Education</p>
-              </div>
-              <div className="space-y-1">
-                {completedItems.map((edu, idx) => {
-                  const modeLabel = edu.mode === 'in_person' ? 'In-Person' : edu.mode === 'remote_scheduled' ? 'Remote' : edu.mode === 'on_demand' ? 'On-Demand' : null;
-                  return (
-                    <div key={idx}>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm text-muted-foreground">
-                          {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
-                        </p>
-                        {modeLabel && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border">{modeLabel}</span>
-                        )}
-                      </div>
-                      {edu.completion_date && (
-                        <p className="text-xs text-muted-foreground/60">
-                          Completed {format(new Date(edu.completion_date), "MMM yyyy")}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* 5. Criminal Record */}
-        <div className="bg-card border border-border rounded-2xl p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Criminal Record</p>
-          <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
-        </div>
-
 
 
 
