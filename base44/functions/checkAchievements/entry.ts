@@ -143,6 +143,55 @@ function detectTextPatternAchievements(msg, existingKeys, ownerEmail, characterI
     if (patterns.some(p => p.test(text))) toUnlock.push('bad_influence');
   }
 
+  // let_them_in — user opened up personally
+  if (!has('let_them_in')) {
+    if (/i\s+(feel|felt|have\s+been)\s+(so\s+)?(scared|alone|anxious|lost|broken|hurt|struggling)|i\s+never\s+told\s+(anyone|you)|something\s+i\s+don't\s+share|honestly[,\s]+i\s+|to\s+be\s+honest[,\s]/i.test(text)) {
+      toUnlock.push('let_them_in');
+    }
+  }
+
+  // hard_truth
+  if (!has('hard_truth')) {
+    if (/i\s+(have|need)\s+to\s+(be\s+honest|tell\s+you\s+(something|the truth))|the\s+truth\s+is|honestly[,\s]+(you|this|that)\s+(need|should)|you\s+might\s+not\s+(want\s+to\s+)?hear\s+this/i.test(text)) {
+      toUnlock.push('hard_truth');
+    }
+  }
+
+  // apologized
+  if (!has('apologized')) {
+    if (/i('m|\s+am)\s+(so\s+)?sorry|my\s+bad|i\s+apologize|i\s+was\s+wrong|that\s+was\s+(my\s+fault|on\s+me)|i\s+shouldn't\s+have/i.test(text)) {
+      toUnlock.push('apologized');
+    }
+  }
+
+  // stayed_calm
+  if (!has('stayed_calm')) {
+    if (/i\s+understand|i\s+hear\s+you|let('s|\s+us)\s+(calm|talk|work)|i('m|\s+am)\s+not\s+trying\s+to\s+fight|we\s+can\s+(figure|work|talk)|i\s+don't\s+want\s+to\s+fight|can\s+we\s+talk\s+about/i.test(text)) {
+      toUnlock.push('stayed_calm');
+    }
+  }
+
+  // healthy_choice
+  if (!has('healthy_choice')) {
+    if (/i('m|\s+am)\s+(going\s+to\s+)?(take\s+a\s+break|step\s+back|breathe|take\s+care\s+of\s+myself)|choosing\s+(to\s+)?(let\s+it\s+go|stay\s+(calm|positive))|not\s+worth\s+(my\s+)?(energy|stress)/i.test(text)) {
+      toUnlock.push('healthy_choice');
+    }
+  }
+
+  // night_out
+  if (!has('night_out')) {
+    if (/\b(bar|club|nightclub|lounge|we\s+went\s+out|night\s+out|went\s+to\s+the\s+(bar|club)|drinks?\s+(tonight|last night)|clubbing)\b/i.test(text)) {
+      toUnlock.push('night_out');
+    }
+  }
+
+  // financial_clutch
+  if (!has('financial_clutch')) {
+    if (/sent\s+(you\s+)?(money|funds|cash|\$|dollars)|help(ing)?\s+(with|pay|cover)\s+(your\s+)?(rent|bill|expense)|i('ll|\s+will)\s+(cover|pay|help\s+with)/i.test(text)) {
+      toUnlock.push('financial_clutch');
+    }
+  }
+
   return toUnlock;
 }
 
