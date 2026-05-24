@@ -428,7 +428,7 @@ export default function CharacterProfile() {
              </div>
             )}
 
-            {/* Your Connection & In Their Own Words side by side */}
+            {/* Your Connection & Main Identity side by side */}
             <div className="grid grid-cols-2 gap-4">
               {/* Your Connection — Left */}
               <div className="bg-card border border-border rounded-2xl p-4">
@@ -473,64 +473,56 @@ export default function CharacterProfile() {
                 </div>
               </div>
 
-              {/* In Their Own Words — Right */}
+              {/* Main Identity — Right */}
               <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-                <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">In Their Own Words</p>
-                {character.personality_summary && (
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Personality</p>
-                    <p className="text-sm text-foreground leading-relaxed">{character.personality_summary}</p>
+                <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Main Identity</p>
+                {(age !== null || character.age_range) && (
+                  <div className="flex items-center gap-2 pb-2 border-b border-border">
+                    <User className="w-4 h-4 text-primary" />
+                    <span className="text-sm text-foreground font-medium">
+                      {age !== null ? `${age} years old` : character.age_range}
+                    </span>
                   </div>
                 )}
-                {character.communication_style && (
-                  <div className={character.personality_summary ? 'pt-3 border-t border-border' : ''}>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">How They Talk</p>
-                    <p className="text-sm text-foreground leading-relaxed">{character.communication_style}</p>
-                  </div>
-                )}
-                {character.current_situation && (
-                  <div className={(character.personality_summary || character.communication_style) ? 'pt-3 border-t border-border' : ''}>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Current Situation</p>
-                    <p className="text-sm text-foreground leading-relaxed">{character.current_situation}</p>
-                  </div>
-                )}
-              </div>
-            </div>
 
-            {/* Main Identity — Full Width Below */}
-            <div className="bg-card border border-border rounded-2xl p-4">
-              <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-4">Main Identity</p>
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Age</p>
-                  <p className="text-sm text-foreground font-medium">
-                    {age !== null ? `${age} years old` : character.age_range || "—"}
-                  </p>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <p className="text-muted-foreground uppercase tracking-wider mb-1">City</p>
+                    <p className="text-foreground font-medium">{character.city || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground uppercase tracking-wider mb-1">State</p>
+                    <p className="text-foreground font-medium">{character.state || "—"}</p>
+                  </div>
                 </div>
+
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Location</p>
-                  <p className="text-sm text-foreground font-medium">
-                    {character.city ? `${character.city}${character.state ? ', ' + character.state : ''}` : "—"}
-                  </p>
+                  <p className="text-muted-foreground uppercase tracking-wider mb-1 text-xs">Gender</p>
+                  <p className="text-foreground text-sm">{character.gender || "—"}</p>
                 </div>
+
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Gender</p>
-                  <p className="text-sm text-foreground font-medium">{character.gender || "—"}</p>
+                  <p className="text-muted-foreground uppercase tracking-wider mb-1 text-xs">Ethnicity</p>
+                  <p className="text-foreground text-sm">{(character.ethnicities || []).join(", ") || "—"}</p>
                 </div>
+
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Ethnicity</p>
-                  <p className="text-sm text-foreground font-medium">{(character.ethnicities || []).join(", ") || "—"}</p>
+                  <p className="text-muted-foreground uppercase tracking-wider mb-1 text-xs">Orientation</p>
+                  <p className="text-foreground text-sm">{character.sexual_orientation || "—"}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Orientation</p>
-                  <p className="text-sm text-foreground font-medium">{character.sexual_orientation || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Birthday & Zodiac</p>
+
+                <div className="pt-2 border-t border-border col-span-2">
+                  <p className="text-muted-foreground uppercase tracking-wider mb-1 text-xs">Birthday & Zodiac</p>
                   {character.birthday ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-foreground font-medium">{format(new Date(character.birthday), "MMM d")}</span>
-                      {zodiacData && <span className="text-lg">{zodiacData.emoji}</span>}
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-foreground font-medium">
+                        {format(new Date(character.birthday), "MMM d")}
+                      </div>
+                      {zodiacData && (
+                        <div className="text-right text-xs">
+                          <p className="text-lg">{zodiacData.emoji}</p>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <p className="text-sm text-muted-foreground italic">Not set</p>
