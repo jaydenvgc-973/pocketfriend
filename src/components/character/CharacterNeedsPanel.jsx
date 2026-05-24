@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQueryClient } from '@tanstack/react-query';
+import SleepDebtPanel from './SleepDebtPanel';
 
 const NEEDS = [
   { label: 'Hunger',    key: 'hunger_value',         emoji: '🍽️', description: 'How hungry they are' },
@@ -28,8 +29,11 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
   const [validationIssues, setValidationIssues] = useState([]);
   const queryClient = useQueryClient();
 
-  // Only show for active created characters (HARD RULE: character_type must be exactly 'active_created_character')
-  const isActiveCreated = character?.character_type === 'active_created_character' && character?.status === 'active';
+  // Show for active_created_character (or legacy characters missing character_type — never hide valid characters)
+  const isActiveCreated = (
+    character?.character_type === 'active_created_character' ||
+    (!character?.character_type && character?.status === 'active')
+  ) && character?.status === 'active';
 
   // Run simulation on mount — staggered 3s to avoid 429 alongside other profile queries
   useEffect(() => {
@@ -148,6 +152,11 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
             </div>
           );
         })}
+      </div>
+
+      {/* Sleep Debt — separate system from Energy */}
+      <div className="mt-3">
+        <SleepDebtPanel character={character} />
       </div>
 
       {/* Debug panel — exposes raw backend state */}
