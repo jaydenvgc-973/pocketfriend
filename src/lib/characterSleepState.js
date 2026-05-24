@@ -290,7 +290,9 @@ export function getCharacterSleepState(character) {
 
   const hasValidOversleep = (() => {
     if (character.decided_to_stay_up_until && new Date(character.decided_to_stay_up_until) > nowET) return false;
-    if (character.sleep_debt_hours && character.sleep_debt_hours > 0) return true;
+    // Only valid oversleep with debt IF debt is in valid range [0, 2.0].
+    // Values > 2.0 are corrupted and must not trigger valid oversleep — character should wake instead.
+    if (character.sleep_debt_hours && character.sleep_debt_hours > 0 && character.sleep_debt_hours <= 2.0) return true;
     if (validOversleepReasons.some(r => reason.includes(r))) return true;
     if (character.health_value !== undefined && character.health_value < 30) return true;
     if (character.mental_value !== undefined && character.mental_value < 25) return true;

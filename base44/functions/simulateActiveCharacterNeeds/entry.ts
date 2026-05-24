@@ -448,15 +448,20 @@ Deno.serve(async (req) => {
         );
       }
 
-      // ── SLEEP DEBT DECAY while sleeping ────────────────────────────────────
+      // ── SLEEP DEBT DECAY while sleeping + BASELINE CLEARING ─────────────────
       // Sleeping reduces debt at 1x rate (1 hour sleeping = 1 hour debt paid off).
       // This ensures debt always converges to 0 and never traps characters asleep.
+      // When debt reaches 0, clear sleep_interrupted_at baseline so old timestamps cannot regenerate debt.
       let sleepDebtUpdate = {};
-      const currentDebt = char.sleep_debt_hours || 0;
+      const currentDebt = Math.min(char.sleep_debt_hours || 0, 2.0); // CAP: never allow > 2.0 to enter simulation
       if (currentDebt > 0 && (context === 'sleeping' || corrective.stateWrites?.resolved_presence_status === 'sleeping')) {
         const debtPaid = Math.min(currentDebt, cappedHours);
         const newDebt = Math.max(0, Math.round((currentDebt - debtPaid) * 10) / 10);
         sleepDebtUpdate = { sleep_debt_hours: newDebt };
+        // BASELINE CLEAR: When debt reaches 0, clear sleep_interrupted_at so old timestamps cannot regenerate debt
+        if (newDebt === 0) {
+          sleepDebtUpdate.sleep_interrupted_at = null;
+        }
       }
 
       // Build final data payload — needs values + corrective state writes
