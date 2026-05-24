@@ -44,20 +44,18 @@ function cdnFilter(urls) {
 
 function buildOutfitText(outfit) {
   if (!outfit) return null;
-  // Normalize: strip N/A markers, translate bare-torso language to explicit model-safe instruction
+  // Priority 1: Individual atomic fields (top, bottom, shoes, outerwear, accessories).
+  // These are always canonical when present — never override with full_description.
   const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
     .filter(Boolean)
     .map(p => { const t = p.trim(); if(/^(n\/?a|none|-)$/i.test(t)) return null; const s=t.replace(/^n\/?a[,\-–]\s*/i,'').trim(); return /^(shirtless|no top|no shirt)$/i.test(s)?'No shirt / bare torso':(s||null); })
     .filter(Boolean);
   if (parts.length > 0) return parts.join(', ');
-  if (outfit.full_description) {
-    const stripped = outfit.full_description
-      .replace(/^in [^,.]+(,|\.) ?/i, '')
-      .replace(/^a (man|woman|person)[^,.]*(,|\.) ?/i, '')
-      .replace(/^[^,.]+(stands|sits|lounges|poses)[^,.]*(,|\.) ?/i, '')
-      .trim();
-    return stripped || outfit.full_description;
-  }
+  // Priority 2: full_description — used as-is. Do NOT strip or rewrite it.
+  // Previous aggressive regex stripping was discarding legitimate outfit descriptions
+  // that happened to start with natural language like "In a white button-down..." etc.
+  // The full_description IS the canonical outfit text when individual fields are absent.
+  if (outfit.full_description?.trim()) return outfit.full_description.trim();
   return null;
 }
 
@@ -1430,16 +1428,17 @@ Deno.serve(async (req) => {
     let resolvedZoneName = null;
 
     if (charRecord) {
-      // Priority order for location ID
-      const locationId =
-        charRecord.resolved_current_location_id ||
-        charRecord.current_home_location_id ||
-        charRecord.home_location_id ||
-        charRecord.current_work_location_id ||
-        charRecord.occupation_location_id ||
-        null;
-
-      console.log(`[generateImageAsync] Location ID from character record: ${locationId || 'NOT FOUND'}`);
+      // PROMPT-INTENT LOCATION RESOLUTION:
+      // The prompt's narrative scene location OVERRIDES the character's live resolved_current_location_id.
+      // "at work" prompt → use work location refs even if character is currently at home, and vice versa.
+      const _pl = (sanitizedPrompt || prompt || '').toLowerCase();
+      const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house))\b/.test(_pl);
+      const _work = /\b(at (my |his |her )?(work|job|office|workplace|store|restaurant|bar|studio)|on the job|during (my|his|her) (shift|work day)|busy day at work|work today|yesterday at work|busy at work|at the (office|store|restaurant|bar|studio|workplace)|his (job|office|shift)|her (job|office|shift))\b/.test(_pl);
+      const _school = /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus))\b/.test(_pl);
+      let locationId = _home ? (charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null) : _work ? (charRecord.current_work_location_id || charRecord.occupation_location_id || null) : _school ? (charRecord.current_school_location_id || charRecord.education_location_id || null) : null;
+      const _locSrc = _home ? 'prompt_home' : _work ? 'prompt_work' : _school ? 'prompt_school' : 'resolved_current';
+      if (!locationId) locationId = charRecord.resolved_current_location_id || charRecord.current_home_location_id || charRecord.home_location_id || charRecord.current_work_location_id || charRecord.occupation_location_id || null;
+      console.log(`[generateImageAsync] Location ID: ${locationId || 'NOT FOUND'} (src: ${_locSrc})`);
 
       if (locationId) {
         // Use service-role directly — avoids user-scoped 429 failures that silently drop the location
