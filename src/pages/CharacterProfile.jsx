@@ -473,16 +473,14 @@ export default function CharacterProfile() {
                 </div>
               </div>
 
-              {/* In Their Own Words — Right (Relationship Reflection) */}
+              {/* In Their Own Words — Right (User Respect Statement) */}
               <div className="bg-card border border-border rounded-2xl p-4">
                 <div className="flex items-center gap-2 mb-4">
                   <Heart className="w-4 h-4 text-primary" />
                   <p className="text-xs text-primary font-semibold uppercase tracking-wider">In Their Own Words</p>
                 </div>
                 <p className="text-sm text-foreground leading-relaxed italic">
-                  {character.nickname_for_user 
-                    ? `I know ${character.nickname_for_user} as someone special in my life.`
-                    : "They're an important part of my world."}
+                  {character.loyalty_view || character.upset_reaction || "They hold an important place in my world."}
                 </p>
               </div>
             </div>
