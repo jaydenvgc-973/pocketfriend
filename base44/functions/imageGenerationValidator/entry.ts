@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
       let auditStatus = 'success';
 
       try {
-        const auditRes = await base44.functions.invoke('imageVisualSourceValidator', {
+        const auditRes = await base44.asServiceRole.functions.invoke('imageVisualSourceValidator', {
           mode: 'audit',
           prompt: sanitizedPrompt,
           approvedSubjects: approvedSubjects || [],
@@ -171,7 +171,7 @@ Deno.serve(async (req) => {
       }
 
       try {
-        const validateRes = await base44.functions.invoke('imageVisualSourceValidator', {
+        const validateRes = await base44.asServiceRole.functions.invoke('imageVisualSourceValidator', {
           mode: 'validate',
           imageUrl,
           audit: audit || { final_visual_roster: [], conversation_entities_detected: [], location_entities_detected: [], expected_human_count: expectedHumanCount || 1 },
