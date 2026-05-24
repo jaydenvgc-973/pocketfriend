@@ -961,6 +961,71 @@ function EducationEditor({ character }) {
   );
 }
 
+// ── Sleep Debt Editor ─────────────────────────────────────────────────────────
+function SleepDebtEditor({ character }) {
+  const queryClient = useQueryClient();
+  const [value, setValue] = useState(character.sleep_debt_hours ?? 0);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { setValue(character.sleep_debt_hours ?? 0); }, [character.sleep_debt_hours]);
+
+  const handleSave = async () => {
+    const clamped = Math.max(0, Math.min(24, parseFloat(value) || 0));
+    setValue(clamped);
+    setIsSaving(true);
+    try {
+      await base44.entities.Character.update(character.id, { sleep_debt_hours: clamped });
+      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const debtColor = value >= 4 ? "text-destructive" : value >= 2 ? "text-amber-400" : "text-blue-400";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Moon className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className={`text-sm font-semibold ${debtColor}`}>{value.toFixed(1)}h owed</span>
+        {saved && <span className="text-[10px] text-green-400 ml-auto">Saved</span>}
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={24}
+        step={0.5}
+        value={value}
+        onChange={e => setValue(parseFloat(e.target.value))}
+        className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+        style={{ accentColor: value >= 4 ? '#ef4444' : value >= 2 ? '#f59e0b' : '#60a5fa' }}
+      />
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={0}
+          max={24}
+          step={0.5}
+          value={value}
+          onChange={e => setValue(parseFloat(e.target.value) || 0)}
+          className="w-24 bg-secondary text-foreground text-sm rounded-lg px-3 py-1.5 border border-border outline-none focus:border-primary/50"
+        />
+        <span className="text-xs text-muted-foreground">hours (0–24)</span>
+        <button
+          onClick={handleSave}
+          disabled={isSaving}
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
+          {saved ? <><Check className="w-3 h-3" /> Saved!</> : isSaving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Panel ────────────────────────────────────────────────────────────────
 export default function CharacterEditSettingsPanel({ isOpen, onClose, character, allCharacters, currentUser }) {
   const queryClient = useQueryClient();
