@@ -8,26 +8,33 @@ export default function CharacterFinancialSummary({ characterId }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const timer = setTimeout(async () => {
+    let cancelled = false;
+
+    // Primary query: load CharacterFinancial — fires first, sets loading=false immediately on completion
+    // so the UI is always stable regardless of what happens to the secondary rent query.
+    const primaryTimer = setTimeout(async () => {
       try {
-        // Load CharacterFinancial record
         const results = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
-        if (results.length > 0) setFinancial(results[0]);
+        if (!cancelled && results.length > 0) setFinancial(results[0]);
+      } catch (_) {
+        // Silently handle — financial display stays as null (hidden), not flickering
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 600);
 
-        // Stagger rent query to respect rate limits (other components may be loading simultaneously)
-        await new Promise(resolve => setTimeout(resolve, 300));
-
-        // Load recent rent income transactions — scoped to this owner via character_id
+    // Secondary query: rent income — fires later, fully independent, never affects loading state
+    // Wrapped in its own try/catch so a rate limit here never disrupts the primary display
+    const rentTimer = setTimeout(async () => {
+      try {
         const fortyFiveDaysAgo = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
         const rentTxns = await base44.entities.FinancialTransaction.filter({
           character_id: characterId,
           transaction_type: 'rent',
           direction: 'income',
-        }, '-timestamp', 50).catch(() => []);
-
+        }, '-timestamp', 50);
+        if (cancelled) return;
         const recentRent = rentTxns.filter(t => t.timestamp && t.timestamp >= fortyFiveDaysAgo);
-
-        // Group by location to produce one row per owned property
         const byLoc = {};
         for (const txn of recentRent) {
           const key = txn.location_id || txn.location_name || 'unknown';
@@ -41,12 +48,17 @@ export default function CharacterFinancialSummary({ characterId }) {
           location_name: loc.location_name,
           monthly_amount: Math.round((loc.total / Math.max(loc.count, 1)) * 100) / 100,
         }));
-        setRentIncomeSources(rentSources);
-      } finally {
-        setLoading(false);
+        if (!cancelled) setRentIncomeSources(rentSources);
+      } catch (_) {
+        // Rate limit or error on secondary query — silently skip, never affect primary display
       }
-    }, 2200);
-    return () => clearTimeout(timer);
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(primaryTimer);
+      clearTimeout(rentTimer);
+    };
   }, [characterId]);
 
   if (loading) return <div className="h-32 bg-secondary/30 rounded-xl animate-pulse" />;

@@ -64,6 +64,17 @@ export default function CharacterQuirksPanel({ character }) {
     await saveQuirks(quirks.map(q => q.quirk_id === quirk_id ? { ...q, intensity } : q));
   };
 
+  // ── TRAIT INTENSITY (stored in character.trait_intensities object) ────────────
+  const traitIntensities = character?.trait_intensities || {};
+
+  const updateTraitIntensity = async (traitKey, intensity) => {
+    setSaving(true);
+    const updated = { ...traitIntensities, [traitKey]: intensity };
+    await base44.entities.Character.update(character.id, { trait_intensities: updated });
+    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+    setSaving(false);
+  };
+
   // ── TRAIT ACTIONS ─────────────────────────────────────────────────────────────
   const addTrait = async (entry) => {
     if (character?.[entry.key]) return;
@@ -148,6 +159,7 @@ export default function CharacterQuirksPanel({ character }) {
           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Active Traits</p>
           {selectedTraits.map(t => {
             const inConflict = conflictIds.has(t.key);
+            const currentIntensity = traitIntensities[t.key] || 'moderate';
             return (
               <div
                 key={t.key}
@@ -163,9 +175,24 @@ export default function CharacterQuirksPanel({ character }) {
                     {inConflict && <AlertTriangle className="w-3 h-3 text-amber-400" />}
                   </div>
                   {t.desc && <p className="text-[10px] text-muted-foreground mt-0.5">{t.desc}</p>}
+                  <div className="flex items-center gap-2 mt-1">
+                    {INTENSITY_OPTIONS.map(intensity => (
+                      <button
+                        key={intensity}
+                        onClick={() => updateTraitIntensity(t.key, intensity)}
+                        disabled={saving}
+                        className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors capitalize ${
+                          currentIntensity === intensity
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'border-border text-muted-foreground hover:border-primary/40'
+                        }`}
+                      >
+                        {intensity}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="text-[10px] px-2 py-1 rounded-lg bg-primary text-primary-foreground font-medium">On</span>
                   <button
                     onClick={() => removeTrait(t)}
                     disabled={saving}
