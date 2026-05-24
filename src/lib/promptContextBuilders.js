@@ -201,6 +201,10 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 - "Send me a pic of us / together" → subject is BOTH. Start prompt with "[JOINT]".
 - Default (no explicit subject): "[CHARACTER]".
 - image_generation_prompt is INTERNAL ONLY — it is never shown to the user.
+
+WORD PROHIBITION — NEVER USE IN ANY IMAGE PROMPT:
+- NEVER write the word "shirtless" — use "no shirt" or "no top" instead.
+- NEVER write the word "intimate" — use "close", "tender", "affectionate", or describe the specific action instead.
 ${userNameForPrompts ? `- WORLD NAME RULE: When referencing the person you're talking to in an image prompt (e.g. for [USER] or [JOINT] shots), always use their name "${userNameForPrompts}" — NEVER write "the user" or "user" in any image prompt.\n- CRITICAL: If the user's name "${userNameForPrompts}" appears in the prompt as a subject of the photo, start the image prompt with "[USER]" — NOT "[CHARACTER]".` : `- WORLD NAME RULE: You don't know their name yet. For [USER] or [JOINT] shots, describe them by appearance only — NEVER write "the user" or "user".`}
 
 3D ROOM SPATIAL RULE — MANDATORY:
