@@ -123,30 +123,47 @@ Deno.serve(async (req) => {
     console.log(`[recoverSingleImage] messageId=${messageId} | prompt="${(imagePrompt || '').substring(0, 100)}" | forceRegenerate=${forceRegenerate}`);
 
     // ── STEP 2: RESOLVE THE SUBJECT CHARACTER ────────────────────────────────
-    // RULE: The prompt is the AUTHORITY on who is in this photo.
-    // If the prompt names Character A, render Character A — even if Character B sent the message.
-    // NEVER default to the sender if the prompt names a different person.
+    // RESOLUTION HIERARCHY (strict — DO NOT reorder):
+    // 1. generation_context.subjects[0].subject_id — structured, written at generation time, most reliable
+    // 2. generation_context.character_id — legacy direct field
+    // 3. message.character_id — sender (last resort)
+    // 4. Prompt name-scan — ONLY used when ALL of the above are absent/unresolvable
+    //
+    // CRITICAL: The stored IDs in generation_context are the AUTHORITY on who is in this photo.
+    // Prompt name-scanning must NEVER override a valid stored ID — prompts contain scene context
+    // (e.g. "at Jordan's house") which can false-match a different character's name.
 
-    // RESOLUTION HIERARCHY:
-    // 1. Prompt name-scan (full name first, then first-name ≥4 chars) — HIGHEST PRIORITY
-    // 2. generation_context.subjects[0].subject_id (new structured format from generateImageAsync)
-    // 3. generation_context.character_id (legacy field)
-    // 4. message.character_id (sender — last resort)
-
-    // Read structured subjects first — new format written by generateImageAsync
+    // Priority 1: structured subjects array (written by generateImageAsync)
     const firstStructuredSubjectId = ctx.subjects?.length > 0
       ? (ctx.subjects.find(s => s.role === 'primary')?.subject_id || ctx.subjects[0]?.subject_id)
       : null;
 
+    // Priority 2: legacy ctx.character_id
+    // Priority 3: message.character_id
     let subjectCharId = firstStructuredSubjectId || ctx.character_id || message.character_id || null;
 
-    if (firstStructuredSubjectId && firstStructuredSubjectId !== ctx.character_id) {
-      console.log(`[recoverSingleImage] Using structured subjects[0].subject_id=${firstStructuredSubjectId} (overrides legacy ctx.character_id=${ctx.character_id || 'null'})`);
+    if (firstStructuredSubjectId) {
+      console.log(`[recoverSingleImage] Subject from structured subjects[0].subject_id=${firstStructuredSubjectId}`);
+    } else if (ctx.character_id) {
+      console.log(`[recoverSingleImage] Subject from ctx.character_id=${ctx.character_id}`);
+    } else if (message.character_id) {
+      console.log(`[recoverSingleImage] Subject from message.character_id=${message.character_id} (last resort)`);
     }
+
     let subjectCharRecord = null;
 
-    // Parse prompt for explicitly named character — highest priority
-    if (imagePrompt) {
+    // Load the character record from the resolved ID first
+    if (subjectCharId) {
+      subjectCharRecord = await base44.asServiceRole.entities.Character.get(subjectCharId).catch(() => null);
+      if (!subjectCharRecord) {
+        const charList = await base44.asServiceRole.entities.Character.filter({ id: subjectCharId }, null, 1).catch(() => []);
+        subjectCharRecord = charList?.[0] || null;
+      }
+    }
+
+    // Priority 4: Prompt name-scan — ONLY when no ID was resolved or character record not found
+    // This is a last-resort fallback for very old messages with no generation_context at all.
+    if (!subjectCharRecord && imagePrompt) {
       try {
         const allChars = await base44.asServiceRole.entities.Character.filter(
           { owner_email: requestingUser }, null, 100
@@ -156,25 +173,24 @@ Deno.serve(async (req) => {
         // Sort by name length descending: "Jordan Smith" before "Jordan"
         const sortedChars = [...allChars].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
 
-        // Phase 1: exact full-name match (most specific — prevents false first-name collisions)
+        // Phase 1: exact full-name match
         let nameMatchChar = null;
         for (const c of sortedChars) {
           if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted') continue;
           if (promptLowerForSubject.includes(c.name.toLowerCase())) {
             nameMatchChar = c;
-            console.log(`[recoverSingleImage] ✅ Full name match: "${c.name}" (id=${c.id})`);
+            console.log(`[recoverSingleImage] ✅ Name-scan fallback full-name match: "${c.name}" (id=${c.id})`);
             break;
           }
         }
-        // Phase 2: first-name match (fallback — only when no full-name matched)
-        // Require 4+ char first names to avoid matching short names like "Sam", "Kim", "Ana" incorrectly.
+        // Phase 2: first-name match (4+ chars only)
         if (!nameMatchChar) {
           for (const c of sortedChars) {
             if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted') continue;
             const firstName = c.name.split(' ')[0].toLowerCase();
             if (firstName.length >= 4 && promptLowerForSubject.includes(firstName)) {
               nameMatchChar = c;
-              console.log(`[recoverSingleImage] ✅ First-name match (4+ chars): "${c.name}" via "${firstName}" (id=${c.id})`);
+              console.log(`[recoverSingleImage] ✅ Name-scan fallback first-name match: "${c.name}" via "${firstName}" (id=${c.id})`);
               break;
             }
           }
@@ -185,15 +201,6 @@ Deno.serve(async (req) => {
         }
       } catch (nameErr) {
         console.warn(`[recoverSingleImage] Name scan failed (non-blocking): ${nameErr?.message}`);
-      }
-    }
-
-    // Load character record if not already loaded from name scan
-    if (!subjectCharRecord && subjectCharId) {
-      subjectCharRecord = await base44.asServiceRole.entities.Character.get(subjectCharId).catch(() => null);
-      if (!subjectCharRecord) {
-        const charList = await base44.asServiceRole.entities.Character.filter({ id: subjectCharId }, null, 1).catch(() => []);
-        subjectCharRecord = charList?.[0] || null;
       }
     }
 
@@ -295,9 +302,10 @@ Deno.serve(async (req) => {
     console.log(`[IdentityAudit][recover] ctx_char_id_legacy:      ${ctx.character_id || 'null'}`);
     console.log(`[IdentityAudit][recover] msg_char_id_fallback:    ${message.character_id || 'null'}`);
     console.log(`[IdentityAudit][recover] subject_source:          ${
-      subjectCharRecord && imagePrompt
-        ? 'prompt_name_scan' : firstStructuredSubjectId ? 'structured_subjects_array'
-        : ctx.character_id ? 'ctx_character_id_legacy' : 'message_character_id_fallback'
+      firstStructuredSubjectId ? 'structured_subjects_array'
+        : ctx.character_id ? 'ctx_character_id_legacy'
+        : message.character_id ? 'message_character_id_fallback'
+        : 'prompt_name_scan_last_resort'
     }`);
     console.log(`[IdentityAudit][recover] char_desc_built:         ${!!charDesc}`);
     console.log(`[IdentityAudit][recover] location_resolved:       ${resolvedLocationName || 'none'}`);
