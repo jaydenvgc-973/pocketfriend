@@ -45,7 +45,7 @@ export default function CharacterFinancialSummary({ characterId }) {
       } finally {
         setLoading(false);
       }
-    }, 1200);
+    }, 2200);
     return () => clearTimeout(timer);
   }, [characterId]);
 
