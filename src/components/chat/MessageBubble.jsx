@@ -88,102 +88,95 @@ export default function MessageBubble({ message, character, showName = false, on
   }, [message.image_url]); // eslint-disable-line
 
   // Auto-recover when imgLoadError fires: URL exists but browser failed to load it.
-  // First attempt a browser-side cache-bust. If that fails (imgLoadError persists after key change),
-  // after 3s auto-trigger backend recovery to get a fresh URL.
+  // Immediately escalate to backend recovery — no delay needed since we already have
+  // proof the current URL is broken (onError fired).
   useEffect(() => {
     if (!imgLoadError || !localImageUrl) return;
     if (imageRetrying) return;
-    // First: cache-bust reload (handled inline in onError — imgRetryKey already incremented).
-    // After 5s with imgLoadError still true, escalate to backend recovery.
-    const t = setTimeout(() => {
-      if (!isMountedRef.current || !imgLoadError) return;
-      if (isImageRecoveryDone(message.id)) return;
-      markImageRecoveryDone(message.id);
-      console.log(`[MessageBubble] imgLoadError persisted — escalating to backend recovery: ${message.id}`);
-      setImageRetrying(true);
-      setImageRetryStatus('recovering');
-      base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
-        .then(res => {
-          if (!isMountedRef.current) return;
-          const url = res?.data?.image_url;
-          if (url && url.startsWith('http')) {
-            setLocalImageUrl(normalizeImageUrl(url));
-            setImgLoadError(false);
-            setImgRetryKey(0);
-            onImageLoaded?.(message.id, url);
-          } else {
-            setImageRetryFailed(true);
-          }
-        })
-        .catch(err => {
-          if (!isMountedRef.current) return;
-          const is429 = err?.message?.includes('429') || err?.status === 429;
-          if (is429) clearImageRecoveryCooldown(message.id);
-          else setImageRetryFailed(true);
-        })
-        .finally(() => {
-          if (isMountedRef.current) { setImageRetrying(false); setImageRetryStatus('idle'); }
-        });
-    }, 5000);
-    return () => clearTimeout(t);
+    if (isImageRecoveryDone(message.id)) return;
+    markImageRecoveryDone(message.id);
+    console.log(`[MessageBubble] imgLoadError — escalating immediately to backend recovery: ${message.id}`);
+    setImageRetrying(true);
+    setImageRetryStatus('recovering');
+    base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
+      .then(res => {
+        if (!isMountedRef.current) return;
+        const url = res?.data?.image_url;
+        if (url && url.startsWith('http')) {
+          setLocalImageUrl(normalizeImageUrl(url));
+          setImgLoadError(false);
+          setImgRetryKey(0);
+          setImageRetryFailed(false);
+          onImageLoaded?.(message.id, url);
+        } else {
+          setImageRetryFailed(true);
+        }
+      })
+      .catch(err => {
+        if (!isMountedRef.current) return;
+        const is429 = err?.message?.includes('429') || err?.status === 429;
+        if (is429) clearImageRecoveryCooldown(message.id);
+        else setImageRetryFailed(true);
+      })
+      .finally(() => {
+        if (isMountedRef.current) { setImageRetrying(false); setImageRetryStatus('idle'); }
+      });
   }, [imgLoadError, message.id]); // eslint-disable-line
 
   // Auto-load: if message has no image yet and content is "" (actively generating),
   // silently wait for the subscription to push the URL. After timeout, escalate to recovery.
   const isWaitingForGeneration = !isUser && !message.is_narrative && !message.location_share && !localImageUrl && message.content === "" && !autoLoadExpired && !imageRetrying;
 
-  // Immediate auto-recovery for definitively failed images (IMAGE_FAILED content or imgLoadError).
-  // These are already broken — no need to wait. Fire recovery on mount with a short stagger (2s)
-  // to avoid competing with initial render and subscription hydration.
+  // Definitively failed: content is [IMAGE_FAILED] or [IMAGE_CONTEXT_UNVERIFIED] and no URL exists.
+  // These messages are already broken — start recovery immediately on mount (no timeout).
   const isDefinitivelyFailed = !isUser && !message.is_narrative && !message.location_share &&
     !localImageUrl && (message.content === '[IMAGE_FAILED]' || message.content === '[IMAGE_CONTEXT_UNVERIFIED]');
 
   useEffect(() => {
     if (!isDefinitivelyFailed) return;
+    // If already in progress (e.g. from the waiting-gen timer), don't double-fire
     if (imageRetrying) return;
+    // If cooldown hasn't expired, still show spinner — don't show buttons yet.
+    // clearImageRecoveryCooldown clears this for manual retries.
     if (isImageRecoveryDone(message.id)) return;
 
-    const t = setTimeout(() => {
-      if (!isMountedRef.current) return;
-      if (isImageRecoveryDone(message.id)) return;
-      markImageRecoveryDone(message.id);
+    markImageRecoveryDone(message.id);
+    console.log(`[MessageBubble] Auto-recovering definitively-failed image immediately: ${message.id}`);
+    setImageRetrying(true);
+    setImageRetryStatus('recovering');
 
-      console.log(`[MessageBubble] Auto-recovering definitively-failed image: ${message.id}`);
-      setImageRetrying(true);
-      setImageRetryStatus('recovering');
-
-      base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
-        .then(res => {
-          if (!isMountedRef.current) return;
-          const url = res?.data?.image_url;
-          if (url && url.startsWith('http')) {
-            setLocalImageUrl(normalizeImageUrl(url));
-            setImgLoadError(false);
-            setImgRetryKey(0);
-            setAutoLoadExpired(false);
-            onImageLoaded?.(message.id, url);
-          } else {
-            setImageRetryFailed(true);
-          }
-        })
-        .catch(err => {
-          if (!isMountedRef.current) return;
-          const is429 = err?.message?.includes('429') || err?.status === 429;
-          if (is429) {
-            // Rate limited — clear cooldown so it can retry in a minute
-            clearImageRecoveryCooldown(message.id);
-          } else {
-            setImageRetryFailed(true);
-          }
-        })
-        .finally(() => {
-          if (isMountedRef.current) {
-            setImageRetrying(false);
-            setImageRetryStatus('idle');
-          }
-        });
-    }, 2000); // 2s stagger — let subscription hydrate first
-    return () => clearTimeout(t);
+    base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
+      .then(res => {
+        if (!isMountedRef.current) return;
+        const url = res?.data?.image_url;
+        if (url && url.startsWith('http')) {
+          setLocalImageUrl(normalizeImageUrl(url));
+          setImgLoadError(false);
+          setImgRetryKey(0);
+          setAutoLoadExpired(false);
+          setImageRetryFailed(false);
+          onImageLoaded?.(message.id, url);
+        } else {
+          setImageRetryFailed(true);
+        }
+      })
+      .catch(err => {
+        if (!isMountedRef.current) return;
+        const is429 = err?.message?.includes('429') || err?.status === 429;
+        if (is429) {
+          clearImageRecoveryCooldown(message.id);
+          // On rate limit: stay in spinner for 30s then surface retry buttons
+          setTimeout(() => { if (isMountedRef.current) setImageRetryFailed(true); }, 30000);
+        } else {
+          setImageRetryFailed(true);
+        }
+      })
+      .finally(() => {
+        if (isMountedRef.current) {
+          setImageRetrying(false);
+          setImageRetryStatus('idle');
+        }
+      });
   }, [message.id, isDefinitivelyFailed]); // eslint-disable-line
 
   // Start the expiry timer only while actively waiting.
@@ -247,6 +240,9 @@ export default function MessageBubble({ message, character, showName = false, on
   // isImagePlaceholder = show the placeholder card (spinner or action buttons)
   // Do NOT show if we're passively waiting for generation (isWaitingForGeneration handles that separately)
   const isImagePlaceholder = !isUser && !isNarrative && !isLocationShare && !isWaitingForGeneration && ((!localImageUrl && (message.content === "" || message.content === '[IMAGE_FAILED]' || message.content === '[IMAGE_CONTEXT_UNVERIFIED]')) || imgLoadError);
+  // isAutoRecovering: definitively failed AND either actively retrying OR still within cooldown
+  // (cooldown = recovery was dispatched this session). Show spinner, not buttons.
+  const isAutoRecovering = isDefinitivelyFailed && (imageRetrying || isImageRecoveryDone(message.id));
 
   const handleImageRetry = async (forceRegenerate = false) => {
     // If the URL already exists but just failed to load in the browser (imgLoadError),
@@ -512,7 +508,7 @@ export default function MessageBubble({ message, character, showName = false, on
             {/* Image placeholder: character tried to send an image but URL never attached */}
             {isImagePlaceholder && (
               <div className="w-56 flex flex-col items-center justify-center gap-2 rounded-2xl border border-border/50 bg-secondary/60 p-4 py-5">
-                {imageRetrying ? (
+                {(imageRetrying || isAutoRecovering) ? (
                   <>
                     <Loader2 className="w-8 h-8 text-primary/60 animate-spin" />
                     <p className="text-xs text-muted-foreground text-center">
