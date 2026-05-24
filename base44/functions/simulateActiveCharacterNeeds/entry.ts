@@ -448,6 +448,17 @@ Deno.serve(async (req) => {
         );
       }
 
+      // ── SLEEP DEBT DECAY while sleeping ────────────────────────────────────
+      // Sleeping reduces debt at 1x rate (1 hour sleeping = 1 hour debt paid off).
+      // This ensures debt always converges to 0 and never traps characters asleep.
+      let sleepDebtUpdate = {};
+      const currentDebt = char.sleep_debt_hours || 0;
+      if (currentDebt > 0 && (context === 'sleeping' || corrective.stateWrites?.resolved_presence_status === 'sleeping')) {
+        const debtPaid = Math.min(currentDebt, cappedHours);
+        const newDebt = Math.max(0, Math.round((currentDebt - debtPaid) * 10) / 10);
+        sleepDebtUpdate = { sleep_debt_hours: newDebt };
+      }
+
       // Build final data payload — needs values + corrective state writes
       const updateData = {
         hunger_value:           Math.round(newNeeds.hunger),
@@ -461,6 +472,8 @@ Deno.serve(async (req) => {
         last_need_simulated_at: now.toISOString(),
         // Merge corrective state changes (may override resolved_presence_status / current_activity)
         ...corrective.stateWrites,
+        // Merge sleep debt decay
+        ...sleepDebtUpdate,
       };
 
       updates.push({

@@ -159,7 +159,8 @@ export function getCharacterSleepState(character) {
 
         if (isSlowdownHour && !hasAwakeOverride) {
           const energyLow = character.energy_value !== undefined && character.energy_value < 30;
-          const sleepDebt = character.sleep_debt_hours && character.sleep_debt_hours > 0;
+          // Require meaningful debt (>= 0.5h) — do not trigger autonomous sleep for tiny debt fragments
+          const sleepDebt = character.sleep_debt_hours && character.sleep_debt_hours >= 0.5;
           const tiredEnough = character.energy_value !== undefined && character.energy_value < 45;
 
           if (energyLow || sleepDebt || tiredEnough) {

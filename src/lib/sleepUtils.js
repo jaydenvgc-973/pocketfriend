@@ -104,8 +104,11 @@ export function classifySleepState(character) {
     return { isStale: false, isValid: true, reason: 'emotional_crash_sleep', consequence_tags: ['emotional', 'exhausted'] };
   }
 
-  // 6. High sleep debt — character legitimately oversleeping to recover
-  if ((character.sleep_debt_hours || 0) >= 2) {
+  // 6. Significant sleep debt — character legitimately oversleeping to recover.
+  // Threshold is 1.0h (not > 0) to prevent 15-minute debt fragments from triggering valid oversleep.
+  // With lightweight recovery ratio (max 2h debt), this means a character needs to have missed
+  // at least 4 real hours of sleep before debt keeps them sleeping past their wake time.
+  if ((character.sleep_debt_hours || 0) >= 1.0) {
     return { isStale: false, isValid: true, reason: 'oversleeping_sleep_debt', consequence_tags: ['tired', 'oversleeping'] };
   }
 
@@ -250,12 +253,18 @@ export function buildSleepInterruptionUpdate(character) {
   const wakeH  = parseInt((character.wake_up_time || '07:00').split(':')[0]);
   const scheduledSleepHours = wakeH > sleepH ? wakeH - sleepH : (24 - sleepH) + wakeH;
 
+  // LIGHTWEIGHT RECOVERY RATIO: 1 hour missed = 15 minutes (0.25h) of debt owed.
+  // This prevents sleep debt explosion from 1:1 accumulation causing infinite oversleep loops.
   const missedHours = Math.max(0, scheduledSleepHours - sleptHours);
+  const newDebtIncrement = Math.round(missedHours * 0.25 * 10) / 10; // 15 min per hour missed
+  const existingDebt = character.sleep_debt_hours || 0;
+  // Hard cap: debt never exceeds 2 hours total to prevent endless recovery loops
+  const newDebt = Math.min(2.0, Math.round((existingDebt + newDebtIncrement) * 10) / 10);
 
   return {
     sleep_interrupted_at: now.toISOString(),
     wake_source: 'user_chat',
-    sleep_debt_hours: (character.sleep_debt_hours || 0) + Math.round(missedHours * 10) / 10,
+    sleep_debt_hours: newDebt,
     // Energy recovery is partial — only credit what was actually slept
     energy_value: Math.min(100, (character.energy_value || 50) + Math.round(sleptHours * 8)),
   };
