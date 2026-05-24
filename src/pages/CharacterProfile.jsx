@@ -406,26 +406,26 @@ export default function CharacterProfile() {
 
             {/* Narrative Biography */}
             {(character.profile_summary || character.backstory || character.background_story || character.personality_summary) && (
-              <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-                {character.profile_summary && (
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Overview</p>
-                    <p className="text-sm text-foreground leading-relaxed">{character.profile_summary}</p>
-                  </div>
-                )}
-                {character.backstory && (
-                  <div className={character.profile_summary ? 'pt-3 border-t border-border' : ''}>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Backstory</p>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{character.backstory}</p>
-                  </div>
-                )}
-                {character.background_story && (
-                  <div className={character.profile_summary || character.backstory ? 'pt-3 border-t border-border' : ''}>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Background</p>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
-                  </div>
-                )}
-              </div>
+             <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+               {character.profile_summary && (
+                 <div>
+                   <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Biography / Background</p>
+                   <p className="text-sm text-foreground leading-relaxed">{character.profile_summary}</p>
+                 </div>
+               )}
+               {character.backstory && (
+                 <div className={character.profile_summary ? 'pt-3 border-t border-border' : ''}>
+                   <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Backstory</p>
+                   <p className="text-sm text-muted-foreground leading-relaxed">{character.backstory}</p>
+                 </div>
+               )}
+               {character.background_story && (
+                 <div className={character.profile_summary || character.backstory ? 'pt-3 border-t border-border' : ''}>
+                   <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Background</p>
+                   <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
+                 </div>
+               )}
+             </div>
             )}
 
             {/* Your Connection & Main Identity side by side */}
@@ -433,7 +433,7 @@ export default function CharacterProfile() {
               {/* Your Connection — Left */}
               <div className="bg-card border border-border rounded-2xl p-4">
                 <div className="flex items-center justify-between mb-4">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Your Connection</p>
+                  <p className="text-xs text-primary font-semibold uppercase tracking-wider">Your Connection</p>
                   {(() => {
                     const reciprocal = getReciprocal();
                     const settings = userSettings[0];
@@ -475,6 +475,7 @@ export default function CharacterProfile() {
 
               {/* Main Identity — Right */}
               <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+                <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Main Identity</p>
                 {(age !== null || character.age_range) && (
                   <div className="flex items-center gap-2 pb-2 border-b border-border">
                     <User className="w-4 h-4 text-primary" />
@@ -536,7 +537,7 @@ export default function CharacterProfile() {
           {/* ══ GROUP 1: HOW THEY ARE DOING / WHAT SHAPED THEM ══ */}
         <div className="bg-card border-b border-border">
           <div className="px-4 py-2 bg-secondary/30">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">How They Are Doing / What Shaped Them</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary">How They Are Doing / What Shaped Them</p>
           </div>
           
           <CollapsibleProfileSection icon={BarChart3} title="Life Needs">
@@ -677,7 +678,7 @@ export default function CharacterProfile() {
         {/* ══ GROUP 2: HOW THEY COMMUNICATE ══ */}
         <div className="bg-card border-b border-border">
           <div className="px-4 py-2 bg-secondary/30">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">How They Communicate</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary">How They Communicate</p>
           </div>
 
           {character.personality_traits && character.personality_traits.length > 0 && (
@@ -706,7 +707,7 @@ export default function CharacterProfile() {
         {/* ══ GROUP 3: HOW THEIR LIFE FUNCTIONS ══ */}
         <div className="bg-card border-b border-border">
           <div className="px-4 py-2 bg-secondary/30">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">How Their Life Functions</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary">How Their Life Functions</p>
           </div>
 
           <CollapsibleProfileSection icon={Briefcase} title="Income Sources">
@@ -772,7 +773,7 @@ export default function CharacterProfile() {
         {/* ══ GROUP 4: HOW THEY PRESENT THEMSELVES ══ */}
         <div className="bg-card border-b border-border">
           <div className="px-4 py-2 bg-secondary/30">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">How They Present Themselves</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary">How They Present Themselves</p>
           </div>
 
           <CollapsibleProfileSection icon={Shirt} title="Appearance Lock">
@@ -799,7 +800,7 @@ export default function CharacterProfile() {
         {/* ══ GROUP 5: EMOTIONAL & SOCIAL WORLD ══ */}
         <div className="bg-card border-b border-border">
           <div className="px-4 py-2 bg-secondary/30">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Emotional & Social World</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Emotional & Social World</p>
           </div>
 
           {(character.emotional_baggage || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
