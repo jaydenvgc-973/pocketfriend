@@ -30,9 +30,15 @@ export default function MessageBubble({ message, character, showName = false, on
   const [editedNarrative, setEditedNarrative] = useState(message.content || "");
   const [isSavingNarrative, setIsSavingNarrative] = useState(false);
   const [showImageDelete, setShowImageDelete] = useState(false);
-  const [imageRetrying, setImageRetrying] = useState(false);
+  // For definitively-failed messages ([IMAGE_FAILED] / [IMAGE_CONTEXT_UNVERIFIED] with no URL),
+  // initialize imageRetrying=true immediately so the spinner shows from the very first render —
+  // no button flash while the useEffect fires on the next tick.
+  const isDefinitivelyFailedInit = !message.image_url &&
+    (message.content === '[IMAGE_FAILED]' || message.content === '[IMAGE_CONTEXT_UNVERIFIED]') &&
+    message.sender_type !== 'user' && !message.is_narrative && !message.location_share;
+  const [imageRetrying, setImageRetrying] = useState(isDefinitivelyFailedInit);
   const [imageRetryFailed, setImageRetryFailed] = useState(false);
-  const [imageRetryStatus, setImageRetryStatus] = useState('idle'); // idle | recovering | regenerating | failed
+  const [imageRetryStatus, setImageRetryStatus] = useState(isDefinitivelyFailedInit ? 'recovering' : 'idle');
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenError, setRegenError] = useState(null);
