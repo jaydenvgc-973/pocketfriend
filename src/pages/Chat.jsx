@@ -26,7 +26,6 @@ import ForwardMessageModal from "@/components/chat/ForwardMessageModal";
 import GameLauncher from "@/components/games/GameLauncher";
 import ShoppingApp from "@/components/chat/ShoppingApp";
 import { dispatchImageGeneration } from "@/components/chat/ChatImageDispatch";
-import { resolvePhotoSubject } from "@/lib/photoSubjectResolver";
 import ChatApprovals from "@/components/chat/ChatApprovals";
 import LogHousingChangeModal from "@/components/housing/LogHousingChangeModal";
 import { callLLMWithRetry } from "@/lib/llmUtils";
@@ -1425,58 +1424,16 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     const createImageMessage = async (imageGenPrompt, delayMs = 500) => {
       const navigatedAway = !isMountedRef.current;
 
-      // ── PHOTO SUBJECT ROUTING ────────────────────────────────────────────────
-      // Resolve WHO appears in the photo before dispatching.
-      // Sender ≠ subject unless the photo is a selfie or explicit sender-shot.
-      const allCachedChars = queryClient.getQueryData(["characters", currentUser?.email]) || [];
-      const subjectResolution = resolvePhotoSubject({
-        imageGenPrompt,
-        userMessage: text,
-        senderCharacterId: characterId,
-        senderCharacterName: character.name,
-        allCharacters: allCachedChars,
-      });
+      // IDENTITY: The sender is always the subject for character-sent photos.
+      // generateImageAsync handles third-party detection on the backend using its own
+      // isThirdPartyPhoto guard. Running a second resolution here was stripping the
+      // sender's identity refs before they reached the backend, causing Caucasian defaults.
+      const resolvedCharRefs = charRefs;
+      const resolvedCharacterId = characterId;
+      const resolvedSubjectType = 'character';
+      const finalImageGenPrompt = imageGenPrompt;
 
-      // Determine which refs and subjectType to send to generateImageAsync
-      const resolvedSubjectType = subjectResolution.photo_subject_type === 'group_photo'
-        ? 'joint'
-        : subjectResolution.photo_subject_type === 'selfie'
-        ? 'character'
-        : subjectResolution.main_focal_character_id && subjectResolution.main_focal_character_id !== characterId
-        ? 'known_character'
-        : 'character';
-
-      // If the subject is a known saved character (not the sender), resolve their refs
-      let resolvedCharRefs = charRefs;
-      let resolvedCharacterId = characterId;
-      if (
-        subjectResolution.main_focal_character_id &&
-        subjectResolution.main_focal_character_id !== characterId
-      ) {
-        const subjectChar = allCachedChars.find(c => c.id === subjectResolution.main_focal_character_id);
-        if (subjectChar) {
-          resolvedCharRefs = (subjectChar.reference_image_urls || []).slice(0, 2);
-          resolvedCharacterId = subjectChar.id;
-        } else {
-          resolvedCharRefs = [];
-          resolvedCharacterId = null;
-        }
-      } else if (!subjectResolution.use_sender_refs) {
-        // Third party / location — do not use sender refs
-        resolvedCharRefs = [];
-        resolvedCharacterId = null;
-      }
-
-      // Build final prompt: if subject is a described third party, prepend clear subject instruction
-      let finalImageGenPrompt = imageGenPrompt;
-      if (
-        subjectResolution.photo_subject_type === 'described_third_party' &&
-        subjectResolution.subject_override_desc
-      ) {
-        finalImageGenPrompt = `[PHOTO SUBJECT — NOT THE SENDER]: ${subjectResolution.subject_override_desc}. Context: ${imageGenPrompt}`;
-      }
-
-      console.log(`[Chat] Photo subject resolved: type=${subjectResolution.photo_subject_type} | focalCharId=${subjectResolution.main_focal_character_id || 'none'} | useSenderRefs=${subjectResolution.use_sender_refs} | sender=${character.name}`);
+      console.log(`[Chat] Image dispatch: sender="${character.name}" (${characterId}) | refs=${resolvedCharRefs.length} | prompt="${finalImageGenPrompt.substring(0, 80)}"`);
 
       let imgMsg;
       try {
@@ -1500,9 +1457,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
             prompt: imageGenPrompt,
             character_id: characterId,
             character_reference_images: resolvedCharRefs,
-            subject_character_id: subjectResolution.main_focal_character_id || null,
-            subject_description: subjectResolution.subject_description || null,
-            photo_subject_type: subjectResolution.photo_subject_type,
           },
         });
       } catch (err) {
@@ -1514,13 +1468,13 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
       }
       const targetMsgId = imgMsg.id;
-      console.log(`[Chat] Image msg created: ${targetMsgId} | sender=${character.name} | subject_type=${subjectResolution.photo_subject_type} | focal_char=${resolvedCharacterId || 'none'} | prompt="${finalImageGenPrompt.substring(0, 80)}"`);
+      console.log(`[Chat] Image msg created: ${targetMsgId} | sender=${character.name} | focal_char=${resolvedCharacterId || 'none'} | prompt="${finalImageGenPrompt.substring(0, 80)}"`);
       setTimeout(() => dispatchImageGeneration({
         targetMsgId,
         imageGenPrompt: finalImageGenPrompt,
         charRefs: resolvedCharRefs,
         userRefImages,
-        useUserRefs: subjectResolution.photo_subject_type === 'group_photo',
+        useUserRefs: false,
         character,
         userSettings,
         currentUser,
