@@ -878,6 +878,36 @@ export default function CharacterProfile() {
         {/* 3. Monthly Expenses */}
         <CharacterExpenseManager characterId={characterId} readOnly={false} />
 
+        {/* 3.5 Narrative Biography */}
+        {(character.profile_summary || character.backstory || character.background_story || character.personality_summary) && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+            {character.profile_summary && (
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Overview</p>
+                <p className="text-sm text-foreground leading-relaxed">{character.profile_summary}</p>
+              </div>
+            )}
+            {character.backstory && (
+              <div className={character.profile_summary ? 'pt-3 border-t border-border' : ''}>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Backstory</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{character.backstory}</p>
+              </div>
+            )}
+            {character.background_story && (
+              <div className={character.profile_summary || character.backstory ? 'pt-3 border-t border-border' : ''}>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Background</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
+              </div>
+            )}
+            {character.personality_summary && (
+              <div className={character.profile_summary || character.backstory || character.background_story ? 'pt-3 border-t border-border' : ''}>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Personality</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{character.personality_summary}</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* 4. Monthly Statement */}
         <MonthlyStatementPanel characterId={characterId} />
 
