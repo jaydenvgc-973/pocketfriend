@@ -79,17 +79,17 @@ export default function CharacterBusinessesPanel({ characterId }) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Briefcase className="w-4 h-4 text-primary" />
-            <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses</p>
-          </div>
-          <button
+            <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses / Properties</p>
+            </div>
+            <button
             onClick={() => setShowModal(true)}
             className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
             title="Add business"
-          >
+            >
             <Plus className="w-4 h-4" />
-          </button>
-        </div>
-        <p className="text-sm text-muted-foreground italic">No businesses yet</p>
+            </button>
+            </div>
+            <p className="text-sm text-muted-foreground italic">No businesses yet</p>
         {showModal && (
           <CharacterBusinessModal
             characterId={characterId}
@@ -106,7 +106,7 @@ export default function CharacterBusinessesPanel({ characterId }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Briefcase className="w-4 h-4 text-primary" />
-          <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses</p>
+          <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses / Properties</p>
         </div>
         <button
           onClick={() => setShowModal(true)}

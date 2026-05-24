@@ -385,6 +385,7 @@ export default function CharacterProfile() {
       <div className="max-w-lg mx-auto px-6 py-6 space-y-6">
         <ImageLightbox src={lightboxSrc} alt={character.name} onClose={() => setLightboxSrc(null)} />
 
+        {/* ══ LOCKED TOP HEADER ══ */}
         {/* Avatar and Basic Info */}
         <div className="flex flex-col items-center gap-4">
           <button onClick={() => character.avatar_url && setLightboxSrc(character.avatar_url)} className={character.avatar_url ? "cursor-pointer" : "cursor-default"}>
@@ -400,12 +401,6 @@ export default function CharacterProfile() {
 
         {/* Financial Summary */}
         <CharacterFinancialSummary characterId={characterId} />
-
-        {/* Monthly Statement */}
-        <MonthlyStatementPanel characterId={characterId} />
-
-        {/* Monthly Expenses */}
-        <CharacterExpenseManager characterId={characterId} readOnly={false} />
 
         {/* Your Connection */}
         <div className="bg-card border border-border rounded-2xl p-4">
@@ -448,12 +443,12 @@ export default function CharacterProfile() {
                   />
                 </div>
               </div>
-              ))}
+            ))}
             <CharacterFeelingsCard character={character} onRespectCorrected={refetch} />
           </div>
         </div>
 
-        {/* Age, Location, Identity */}
+        {/* Main Identity / Profile Information — Age, Location, Gender, Ethnicity, Orientation, Home Location, Birthday & Zodiac */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
           {(age !== null || character.age_range) && (
             <div className="flex items-center gap-2 pb-2 border-b border-border">
@@ -500,74 +495,236 @@ export default function CharacterProfile() {
           )}
 
           <NonEditableField label="Orientation" value={character.sexual_orientation} />
+
+          {/* Home Location — inline in identity card */}
+          <div className="pt-2 border-t border-border">
+            <HomeLocationField character={character} currentUser={currentUser} />
+          </div>
+
+          {/* Birthday & Zodiac — inline in identity card */}
+          <div className="pt-2 border-t border-border">
+            <div className="flex items-center gap-2 mb-3">
+              <Cake className="w-4 h-4 text-primary" />
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Birthday & Zodiac</p>
+            </div>
+            {character.birthday ? (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-foreground font-medium">
+                    {format(new Date(character.birthday), "MMMM d")}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {format(new Date(character.birthday), "EEEE")}
+                  </p>
+                </div>
+                {zodiacData && (
+                  <div className="text-right">
+                    <p className="text-3xl">{zodiacData.emoji}</p>
+                    <p className="text-xs text-muted-foreground mt-1 capitalize">{zodiacSign}</p>
+                    <p className="text-xs text-muted-foreground">{zodiacData.dates}</p>
+                  </div>
+                )}
+              </div>
+            ) : !character.is_default ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground italic">No birthday set. Pick a zodiac sign to auto-generate one.</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {Object.keys(ZODIAC_SIGNS).map(sign => (
+                    <button
+                      key={sign}
+                      onClick={() => handleZodiacSelect(sign)}
+                      disabled={isSavingZodiac}
+                      className="flex flex-col items-center gap-1 p-2 rounded-lg border border-border hover:border-primary/40 transition-colors disabled:opacity-50"
+                    >
+                      <span className="text-2xl">{ZODIAC_SIGNS[sign].emoji}</span>
+                      <span className="text-xs capitalize text-muted-foreground hover:text-foreground">{sign}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">No birthday set</p>
+            )}
+          </div>
         </div>
 
-        {/* Birthday & Zodiac */}
-        <div className="bg-card border border-border rounded-2xl p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Cake className="w-4 h-4 text-primary" />
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Birthday & Zodiac</p>
-          </div>
-          {character.birthday ? (
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-foreground font-medium">
-                  {format(new Date(character.birthday), "MMMM d")}
+        {/* ══ SECTION DIVIDER: HOW THEY ARE DOING / WHAT SHAPED THEM ══ */}
+        <div className="flex items-center gap-3 pt-2">
+          <div className="flex-1 h-px bg-border" />
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 whitespace-nowrap">How They Are Doing / What Shaped Them</p>
+          <div className="flex-1 h-px bg-border" />
+        </div>
+
+        {/* 1. Life Needs */}
+        <CharacterNeedsPanel character={character} onRefresh={() => refetch()} />
+        <ManualNeedsEditor character={character} />
+
+        {/* 2. Life Journal */}
+        <LifeJournal characterId={characterId} character={character} />
+
+        {/* 3. What They've Been Through */}
+        {(() => {
+          const memories = character.memories || [];
+          const categoryMeta = {
+            challenges: { label: "Challenges", color: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/20" },
+            positive: { label: "Positive Experiences", color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+            growth: { label: "Growth & Resilience", color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
+          };
+          const categorized = { challenges: [], positive: [], growth: [], uncategorized: [] };
+          memories.forEach(m => {
+            const cat = m.category && categorized[m.category] !== undefined ? m.category : 'uncategorized';
+            categorized[cat].push(m);
+          });
+          const hasAnyCategory = categorized.challenges.length > 0 || categorized.positive.length > 0 || categorized.growth.length > 0;
+          return (
+            <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">What They've Been Through</p>
+              {memories.length === 0 && (
+                <p className="text-xs text-muted-foreground italic">
+                  No experiences recorded yet. Experiences are added through the Edit Emotions &amp; Experiences page or as major life events occur.
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {format(new Date(character.birthday), "EEEE")}
-                </p>
-              </div>
-              {zodiacData && (
-                <div className="text-right">
-                  <p className="text-3xl">{zodiacData.emoji}</p>
-                  <p className="text-xs text-muted-foreground mt-1 capitalize">{zodiacSign}</p>
-                  <p className="text-xs text-muted-foreground">{zodiacData.dates}</p>
+              )}
+              {hasAnyCategory && (
+                <div className="space-y-3">
+                  {['challenges', 'positive', 'growth'].map(cat => {
+                    const mems = categorized[cat];
+                    if (mems.length === 0) return null;
+                    const meta = categoryMeta[cat];
+                    return (
+                      <div key={cat}>
+                        <p className={`text-[10px] font-bold uppercase tracking-widest ${meta.color} mb-1.5`}>{meta.label}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {mems.map((m, i) => {
+                            const key = `${cat}-${i}`;
+                            const isExpanded = expandedMemory === key;
+                            const hasDetails = m.description || m.emotional_impact || m.lesson_learned;
+                            return (
+                              <div key={i} className="w-full">
+                                <button
+                                  onClick={() => hasDetails && setExpandedMemory(isExpanded ? null : key)}
+                                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${meta.bg} ${meta.color} ${meta.border} ${hasDetails ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+                                >
+                                  {m.title}{hasDetails ? ' ›' : ''}
+                                </button>
+                                {isExpanded && hasDetails && (
+                                  <div className={`mt-1.5 mb-1 ml-1 p-3 rounded-xl border text-xs space-y-1 ${meta.bg} ${meta.border}`}>
+                                    {m.description && <p className="text-foreground/80 leading-relaxed">{m.description}</p>}
+                                    {m.emotional_impact && <p className={`${meta.color} mt-1`}><span className="font-medium">Impact: </span>{m.emotional_impact}</p>}
+                                    {m.lesson_learned && <p className="text-muted-foreground mt-1"><span className="font-medium">Lesson: </span>{m.lesson_learned}</p>}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {categorized.uncategorized.length > 0 && (
+                <div className={`space-y-3 ${hasAnyCategory ? 'pt-3 border-t border-border' : ''}`}>
+                  {hasAnyCategory && <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Key Memories</p>}
+                  {categorized.uncategorized.map((memory, idx) => (
+                    <div key={idx} className="pb-3 border-b border-border last:border-b-0">
+                      <p className="text-sm font-medium text-foreground">{memory.title}</p>
+                      {memory.description && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{memory.description}</p>}
+                      {memory.emotional_impact && <p className="text-xs text-muted-foreground/70 mt-2"><span className="font-medium">Impact:</span> {memory.emotional_impact}</p>}
+                      {memory.lesson_learned && <p className="text-xs text-muted-foreground/70 mt-1"><span className="font-medium">Lesson:</span> {memory.lesson_learned}</p>}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-          ) : !character.is_default ? (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground italic">No birthday set. Pick a zodiac sign to auto-generate one.</p>
-              <div className="grid grid-cols-3 gap-2">
-                {Object.keys(ZODIAC_SIGNS).map(sign => (
-                  <button
-                    key={sign}
-                    onClick={() => handleZodiacSelect(sign)}
-                    disabled={isSavingZodiac}
-                    className="flex flex-col items-center gap-1 p-2 rounded-lg border border-border hover:border-primary/40 transition-colors disabled:opacity-50"
-                  >
-                    <span className="text-2xl">{ZODIAC_SIGNS[sign].emoji}</span>
-                    <span className="text-xs capitalize text-muted-foreground hover:text-foreground">{sign}</span>
-                  </button>
-                ))}
+          );
+        })()}
+
+        {/* 4. Completed Education */}
+        {(character.completed_education?.length > 0) && (() => {
+          const now = new Date();
+          const completedItems = (character.completed_education || []).filter(edu => {
+            if (!edu.completion_date) return false;
+            return new Date(edu.completion_date) <= now;
+          });
+          if (completedItems.length === 0) return null;
+          return (
+            <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <GraduationCap className="w-4 h-4 text-primary" />
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Completed Education</p>
+              </div>
+              <div className="space-y-1">
+                {completedItems.map((edu, idx) => {
+                  const modeLabel = edu.mode === 'in_person' ? 'In-Person' : edu.mode === 'remote_scheduled' ? 'Remote' : edu.mode === 'on_demand' ? 'On-Demand' : null;
+                  return (
+                    <div key={idx}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm text-muted-foreground">
+                          {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
+                        </p>
+                        {modeLabel && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border">{modeLabel}</span>
+                        )}
+                      </div>
+                      {edu.completion_date && (
+                        <p className="text-xs text-muted-foreground/60">
+                          Completed {format(new Date(edu.completion_date), "MMM yyyy")}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground italic">No birthday set</p>
-          )}
+          );
+        })()}
+
+        {/* 5. Criminal Record */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Criminal Record</p>
+          <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
         </div>
 
-        {/* Biography & Background */}
-        {(character.background_story || character.current_situation) && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Biography & Background</p>
-            {character.background_story && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-2">Background</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
-              </div>
-            )}
-            {character.current_situation && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-2">Current Situation</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{character.current_situation}</p>
-              </div>
-            )}
+        {/* ══ SECTION DIVIDER: HOW THEY COMMUNICATE ══ */}
+        <div className="flex items-center gap-3 pt-2">
+          <div className="flex-1 h-px bg-border" />
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 whitespace-nowrap">How They Communicate</p>
+          <div className="flex-1 h-px bg-border" />
+        </div>
+
+        {/* 1. Vibes */}
+        {character.personality_traits && character.personality_traits.length > 0 && (
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Vibes</p>
+            <div className="flex flex-wrap gap-2">
+              {character.personality_traits.map(trait => (
+                <span key={trait} className="px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+                  {trait}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 
-        {/* Work / School Details */}
+        {/* 2. How They Talk */}
+        {character.communication_style && (
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">How They Talk</p>
+            <p className="text-sm text-foreground leading-relaxed">{character.communication_style}</p>
+          </div>
+        )}
+
+        {/* 3. Traits & Quirks */}
+        <CharacterQuirksPanel character={character} />
+
+        {/* ══ SECTION DIVIDER: HOW THEIR LIFE FUNCTIONS ══ */}
+        <div className="flex items-center gap-3 pt-2">
+          <div className="flex-1 h-px bg-border" />
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 whitespace-nowrap">How Their Life Functions</p>
+          <div className="flex-1 h-px bg-border" />
+        </div>
+
+        {/* 1. Income Sources (Work / School Details) */}
         {(() => {
           // Build job list directly from character file job entries.
           // Schedule is resolved ONLY from the matching location's worker_shifts[characterId].
@@ -761,162 +918,97 @@ export default function CharacterProfile() {
           );
         })()}
 
-        {/* Businesses */}
+        {/* 2. Businesses / Properties */}
         <CharacterBusinessesPanel characterId={characterId} />
 
-        {/* Completed Education — kept separate so history is not lost */}
-        {(character.completed_education?.length > 0) && (() => {
-          const now = new Date();
-          const completedItems = (character.completed_education || []).filter(edu => {
-            if (!edu.completion_date) return false;
-            return new Date(edu.completion_date) <= now;
-          });
-          if (completedItems.length === 0) return null;
-          return (
-            <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <GraduationCap className="w-4 h-4 text-primary" />
-                <p className="text-xs text-muted-foreground uppercase tracking-wider">Completed Education</p>
-              </div>
-              <div className="space-y-1">
-                {completedItems.map((edu, idx) => {
-                  const modeLabel = edu.mode === 'in_person' ? 'In-Person' : edu.mode === 'remote_scheduled' ? 'Remote' : edu.mode === 'on_demand' ? 'On-Demand' : null;
-                  return (
-                    <div key={idx}>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm text-muted-foreground">
-                          {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
-                        </p>
-                        {modeLabel && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border">{modeLabel}</span>
-                        )}
-                      </div>
-                      {edu.completion_date && (
-                        <p className="text-xs text-muted-foreground/60">
-                          Completed {format(new Date(edu.completion_date), "MMM yyyy")}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
+        {/* 3. Monthly Expenses */}
+        <CharacterExpenseManager characterId={characterId} readOnly={false} />
 
-        {/* Home Location */}
-        <HomeLocationField character={character} currentUser={currentUser} />
+        {/* 4. Monthly Statement */}
+        <MonthlyStatementPanel characterId={characterId} />
 
-        {/* Criminal Record */}
-        <div className="bg-card border border-border rounded-2xl p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Criminal Record</p>
-          <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
+        {/* ══ SECTION DIVIDER: HOW THEY PRESENT THEMSELVES ══ */}
+        <div className="flex items-center gap-3 pt-2">
+          <div className="flex-1 h-px bg-border" />
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 whitespace-nowrap">How They Present Themselves</p>
+          <div className="flex-1 h-px bg-border" />
         </div>
 
-        {/* Life Journal */}
-        <LifeJournal characterId={characterId} character={character} />
+        {/* 1. Appearance Lock */}
+        <AppearanceLockEditor character={character} />
 
-        {/* Live Needs — Active Created Characters only */}
-        <CharacterNeedsPanel
-          character={character}
-          onRefresh={() => refetch()}
-        />
+        {/* 2. Appearance (Image Generation) */}
+        <AppearanceAgeField character={character} />
 
-        {/* Manual Needs Override — for debugging/repair */}
-        <ManualNeedsEditor character={character} />
+        {/* 3. Character Closet */}
+        <CharacterClosetPanel character={character} />
 
-        {/* Key Life Events & Memories — grouped by category when available */}
-        {(() => {
-          const memories = character.memories || [];
-          const categoryMeta = {
-            challenges: { label: "Challenges", color: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/20" },
-            positive: { label: "Positive Experiences", color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
-            growth: { label: "Growth & Resilience", color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
-          };
-          const categorized = { challenges: [], positive: [], growth: [], uncategorized: [] };
-          memories.forEach(m => {
-            const cat = m.category && categorized[m.category] !== undefined ? m.category : 'uncategorized';
-            categorized[cat].push(m);
-          });
-          const hasAnyCategory = categorized.challenges.length > 0 || categorized.positive.length > 0 || categorized.growth.length > 0;
+        {/* 4. What They Call You */}
+        <NicknameForUserField character={character} />
 
-          return (
-            <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">What They've Been Through</p>
+        {/* 5. Aliases / Also Known As */}
+        <CharacterAliasEditor character={character} />
 
-              {memories.length === 0 && (
-                <p className="text-xs text-muted-foreground italic">
-                  No experiences recorded yet. Experiences are added through the Edit Emotions &amp; Experiences page or as major life events occur.
-                </p>
-              )}
+        {/* ══ SECTION DIVIDER: EMOTIONAL & SOCIAL WORLD ══ */}
+        <div className="flex items-center gap-3 pt-2">
+          <div className="flex-1 h-px bg-border" />
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 whitespace-nowrap">Emotional & Social World</p>
+          <div className="flex-1 h-px bg-border" />
+        </div>
 
-              {/* Categorized preset memories — expandable chips showing full details */}
-              {hasAnyCategory && (
-                <div className="space-y-3">
-                  {['challenges', 'positive', 'growth'].map(cat => {
-                    const mems = categorized[cat];
-                    if (mems.length === 0) return null;
-                    const meta = categoryMeta[cat];
-                    return (
-                      <div key={cat}>
-                        <p className={`text-[10px] font-bold uppercase tracking-widest ${meta.color} mb-1.5`}>{meta.label}</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {mems.map((m, i) => {
-                            const key = `${cat}-${i}`;
-                            const isExpanded = expandedMemory === key;
-                            const hasDetails = m.description || m.emotional_impact || m.lesson_learned;
-                            return (
-                              <div key={i} className="w-full">
-                                <button
-                                  onClick={() => hasDetails && setExpandedMemory(isExpanded ? null : key)}
-                                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${meta.bg} ${meta.color} ${meta.border} ${hasDetails ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
-                                >
-                                  {m.title}{hasDetails ? ' ›' : ''}
-                                </button>
-                                {isExpanded && hasDetails && (
-                                  <div className={`mt-1.5 mb-1 ml-1 p-3 rounded-xl border text-xs space-y-1 ${meta.bg} ${meta.border}`}>
-                                    {m.description && <p className="text-foreground/80 leading-relaxed">{m.description}</p>}
-                                    {m.emotional_impact && <p className={`${meta.color} mt-1`}><span className="font-medium">Impact: </span>{m.emotional_impact}</p>}
-                                    {m.lesson_learned && <p className="text-muted-foreground mt-1"><span className="font-medium">Lesson: </span>{m.lesson_learned}</p>}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Uncategorized / AI-generated memories — shown as full detail cards */}
-              {categorized.uncategorized.length > 0 && (
-                <div className={`space-y-3 ${hasAnyCategory ? 'pt-3 border-t border-border' : ''}`}>
-                  {hasAnyCategory && <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Key Memories</p>}
-                  {categorized.uncategorized.map((memory, idx) => (
-                    <div key={idx} className="pb-3 border-b border-border last:border-b-0">
-                      <p className="text-sm font-medium text-foreground">{memory.title}</p>
-                      {memory.description && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{memory.description}</p>}
-                      {memory.emotional_impact && (
-                        <p className="text-xs text-muted-foreground/70 mt-2"><span className="font-medium">Impact:</span> {memory.emotional_impact}</p>
-                      )}
-                      {memory.lesson_learned && (
-                        <p className="text-xs text-muted-foreground/70 mt-1"><span className="font-medium">Lesson:</span> {memory.lesson_learned}</p>
-                      )}
-                    </div>
+        {/* 1. Emotional Profile */}
+        {(character.emotional_baggage || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Emotional Profile</p>
+            {character.emotional_baggage && (
+              <div>
+                <p className="text-xs font-medium text-foreground mb-1">What They Carry</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{character.emotional_baggage}</p>
+              </div>
+            )}
+            {character.upset_reaction && (
+              <div>
+                <p className="text-xs font-medium text-foreground mb-1">When They're Upset</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{character.upset_reaction}</p>
+              </div>
+            )}
+            {character.emotional_triggers_high?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-rose-400 mb-1.5">High Triggers</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {character.emotional_triggers_high.map((t, i) => (
+                    <span key={i} className="px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 text-xs border border-rose-500/20">{t}</span>
                   ))}
                 </div>
-              )}
-            </div>
-          );
-        })()}
+              </div>
+            )}
+            {character.emotional_triggers_medium?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-amber-400 mb-1.5">Medium Triggers</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {character.emotional_triggers_medium.map((t, i) => (
+                    <span key={i} className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs border border-amber-500/20">{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {character.emotional_triggers_deep?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-blue-400 mb-1.5">Deep Triggers</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {character.emotional_triggers_deep.map((t, i) => (
+                    <span key={i} className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
-        {/* Family Members */}
-
+        {/* 2. Family */}
         <FamilyEditor character={character} readOnly={false} allCharacters={allCharacters} currentUser={currentUser} userSettings={userSettings[0]} />
 
-        {/* Family History */}
+        {/* 3. Family History */}
         {character.family_history && (
           <div className="bg-card border border-border rounded-2xl p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Family History</p>
@@ -924,7 +1016,7 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Characters They Know */}
+        {/* 4. Characters They Know */}
         {(true) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
             <div className="flex items-center gap-2 mb-2">
@@ -1014,7 +1106,7 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* NPC / Fictional World Characters + Transient Encounters */}
+        {/* 5. People In Their World */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <Ghost className="w-4 h-4 text-primary" />
@@ -1181,111 +1273,6 @@ export default function CharacterProfile() {
             </div>
           )}
         </div>
-
-        {/* Emotional Profile — triggers, baggage, reaction */}
-        {(character.emotional_baggage || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Emotional Profile</p>
-            {character.emotional_baggage && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-1">What They Carry</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{character.emotional_baggage}</p>
-              </div>
-            )}
-            {character.upset_reaction && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-1">When They're Upset</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{character.upset_reaction}</p>
-              </div>
-            )}
-            {character.emotional_triggers_high?.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-rose-400 mb-1.5">High Triggers</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {character.emotional_triggers_high.map((t, i) => (
-                    <span key={i} className="px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 text-xs border border-rose-500/20">{t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {character.emotional_triggers_medium?.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-amber-400 mb-1.5">Medium Triggers</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {character.emotional_triggers_medium.map((t, i) => (
-                    <span key={i} className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs border border-amber-500/20">{t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {character.emotional_triggers_deep?.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-blue-400 mb-1.5">Deep Triggers</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {character.emotional_triggers_deep.map((t, i) => (
-                    <span key={i} className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">{t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Personality Traits */}
-        {character.personality_traits && character.personality_traits.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Vibes</p>
-            <div className="flex flex-wrap gap-2">
-              {character.personality_traits.map(trait => (
-                <span key={trait} className="px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
-                  {trait}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Communication Style */}
-        {character.communication_style && (
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">How They Talk</p>
-            <p className="text-sm text-foreground leading-relaxed">{character.communication_style}</p>
-          </div>
-        )}
-
-        {/* Aliases */}
-        <CharacterAliasEditor character={character} />
-
-        {/* Appearance Age override for image generation */}
-        <AppearanceAgeField character={character} />
-
-        {/* Appearance Lock */}
-        <AppearanceLockEditor character={character} />
-
-        {/* Personality Quirks */}
-        <CharacterQuirksPanel character={character} />
-
-        {/* Character Closet */}
-        <CharacterClosetPanel character={character} />
-
-        {/* Share Outfit with Character */}
-        {!character.is_default && character?.fictional_relationships?.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">Share Your Outfit</p>
-              <button
-                onClick={() => setShowOutfitSharer(true)}
-                className="text-xs text-primary font-medium hover:opacity-70 transition-opacity"
-              >
-                Send an outfit
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground/70">Give a character one of your outfits to show your style.</p>
-          </div>
-        )}
-
-        {/* Nickname for User */}
-        <NicknameForUserField character={character} />
 
       </div>
 
