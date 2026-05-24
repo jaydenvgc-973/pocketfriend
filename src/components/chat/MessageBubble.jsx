@@ -8,7 +8,7 @@ import { filterDashes } from "@/lib/dashFilter";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import MusicPreviewPlayer from "@/components/chat/MusicPreviewPlayer";
 import VideoPreviewCard from "@/components/chat/VideoPreviewCard";
-import { isImageRecoveryDone, markImageRecoveryDone } from "@/lib/backgroundThrottle";
+import { isImageRecoveryDone, markImageRecoveryDone, clearImageRecoveryCooldown } from "@/lib/backgroundThrottle";
 
 const emotionalColors = {
   calm: "bg-secondary",
@@ -70,8 +70,8 @@ export default function MessageBubble({ message, character, showName = false, on
   // Track retry count for force-reloading the same URL (cache-bust on imgLoadError)
   const [imgRetryKey, setImgRetryKey] = useState(0);
   // After AUTO_LOAD_TIMEOUT_MS with no image_url arriving, promote to actionable failure card
-  // 3 attempts × ~40s each (provider + validation) = up to 120s. Set 150s to prevent premature expiry.
-  const AUTO_LOAD_TIMEOUT_MS = 150000; // 150s — covers full 3-attempt generation + validation pipeline
+  // Set to 15s — if the subscription hasn't pushed a URL in 15s, trigger auto-recovery immediately.
+  const AUTO_LOAD_TIMEOUT_MS = 15000; // 15s — fast recovery trigger
   const [autoLoadExpired, setAutoLoadExpired] = useState(false);
 
   // Sync if parent passes a new image_url (e.g. from real-time subscription or direct hydration).
@@ -87,9 +87,104 @@ export default function MessageBubble({ message, character, showName = false, on
     }
   }, [message.image_url]); // eslint-disable-line
 
+  // Auto-recover when imgLoadError fires: URL exists but browser failed to load it.
+  // First attempt a browser-side cache-bust. If that fails (imgLoadError persists after key change),
+  // after 3s auto-trigger backend recovery to get a fresh URL.
+  useEffect(() => {
+    if (!imgLoadError || !localImageUrl) return;
+    if (imageRetrying) return;
+    // First: cache-bust reload (handled inline in onError — imgRetryKey already incremented).
+    // After 5s with imgLoadError still true, escalate to backend recovery.
+    const t = setTimeout(() => {
+      if (!isMountedRef.current || !imgLoadError) return;
+      if (isImageRecoveryDone(message.id)) return;
+      markImageRecoveryDone(message.id);
+      console.log(`[MessageBubble] imgLoadError persisted — escalating to backend recovery: ${message.id}`);
+      setImageRetrying(true);
+      setImageRetryStatus('recovering');
+      base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
+        .then(res => {
+          if (!isMountedRef.current) return;
+          const url = res?.data?.image_url;
+          if (url && url.startsWith('http')) {
+            setLocalImageUrl(normalizeImageUrl(url));
+            setImgLoadError(false);
+            setImgRetryKey(0);
+            onImageLoaded?.(message.id, url);
+          } else {
+            setImageRetryFailed(true);
+          }
+        })
+        .catch(err => {
+          if (!isMountedRef.current) return;
+          const is429 = err?.message?.includes('429') || err?.status === 429;
+          if (is429) clearImageRecoveryCooldown(message.id);
+          else setImageRetryFailed(true);
+        })
+        .finally(() => {
+          if (isMountedRef.current) { setImageRetrying(false); setImageRetryStatus('idle'); }
+        });
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [imgLoadError, message.id]); // eslint-disable-line
+
   // Auto-load: if message has no image yet and content is "" (actively generating),
   // silently wait for the subscription to push the URL. After timeout, escalate to recovery.
   const isWaitingForGeneration = !isUser && !message.is_narrative && !message.location_share && !localImageUrl && message.content === "" && !autoLoadExpired && !imageRetrying;
+
+  // Immediate auto-recovery for definitively failed images (IMAGE_FAILED content or imgLoadError).
+  // These are already broken — no need to wait. Fire recovery on mount with a short stagger (2s)
+  // to avoid competing with initial render and subscription hydration.
+  const isDefinitivelyFailed = !isUser && !message.is_narrative && !message.location_share &&
+    !localImageUrl && (message.content === '[IMAGE_FAILED]' || message.content === '[IMAGE_CONTEXT_UNVERIFIED]');
+
+  useEffect(() => {
+    if (!isDefinitivelyFailed) return;
+    if (imageRetrying) return;
+    if (isImageRecoveryDone(message.id)) return;
+
+    const t = setTimeout(() => {
+      if (!isMountedRef.current) return;
+      if (isImageRecoveryDone(message.id)) return;
+      markImageRecoveryDone(message.id);
+
+      console.log(`[MessageBubble] Auto-recovering definitively-failed image: ${message.id}`);
+      setImageRetrying(true);
+      setImageRetryStatus('recovering');
+
+      base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
+        .then(res => {
+          if (!isMountedRef.current) return;
+          const url = res?.data?.image_url;
+          if (url && url.startsWith('http')) {
+            setLocalImageUrl(normalizeImageUrl(url));
+            setImgLoadError(false);
+            setImgRetryKey(0);
+            setAutoLoadExpired(false);
+            onImageLoaded?.(message.id, url);
+          } else {
+            setImageRetryFailed(true);
+          }
+        })
+        .catch(err => {
+          if (!isMountedRef.current) return;
+          const is429 = err?.message?.includes('429') || err?.status === 429;
+          if (is429) {
+            // Rate limited — clear cooldown so it can retry in a minute
+            clearImageRecoveryCooldown(message.id);
+          } else {
+            setImageRetryFailed(true);
+          }
+        })
+        .finally(() => {
+          if (isMountedRef.current) {
+            setImageRetrying(false);
+            setImageRetryStatus('idle');
+          }
+        });
+    }, 2000); // 2s stagger — let subscription hydrate first
+    return () => clearTimeout(t);
+  }, [message.id, isDefinitivelyFailed]); // eslint-disable-line
 
   // Start the expiry timer only while actively waiting.
   // SESSION DEDUP: if this message ID was already recovered this session (module-level Set),
@@ -165,6 +260,8 @@ export default function MessageBubble({ message, character, showName = false, on
       return;
     }
 
+    // Manual retry always clears cooldown — user explicitly requested it
+    clearImageRecoveryCooldown(message.id);
     setImageRetrying(true);
     setImageRetryFailed(false);
     setImageRetryStatus(forceRegenerate ? 'regenerating' : 'recovering');

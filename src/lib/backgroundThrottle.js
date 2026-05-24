@@ -43,16 +43,24 @@ export function getCooldownRemaining(key, cooldownMs) {
 }
 
 // ── Image recovery dedup ─────────────────────────────────────────────────────
-// Session-level Set: once a message ID has been recovered (or attempted and failed),
-// never attempt again in this session. Prevents MessageBubble remount loops.
-const _recoveredMessageIds = new Set();
+// Cooldown-based: prevents rapid-fire duplicate recovery for the same message,
+// but allows retry after 5 minutes if the previous attempt failed.
+// Using a timestamp map instead of a permanent Set — failed recoveries can be retried.
+const _recoveredMessageTimestamps = {};
+const IMAGE_RECOVERY_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown between auto-recovery attempts
 
 export function isImageRecoveryDone(messageId) {
-  return _recoveredMessageIds.has(messageId);
+  const last = _recoveredMessageTimestamps[messageId] || 0;
+  return (Date.now() - last) < IMAGE_RECOVERY_COOLDOWN_MS;
 }
 
 export function markImageRecoveryDone(messageId) {
-  if (messageId) _recoveredMessageIds.add(messageId);
+  if (messageId) _recoveredMessageTimestamps[messageId] = Date.now();
+}
+
+// Allow forcing a retry regardless of cooldown (used when user manually triggers recovery)
+export function clearImageRecoveryCooldown(messageId) {
+  if (messageId) delete _recoveredMessageTimestamps[messageId];
 }
 
 // ── Per-page query refresh cooldown ─────────────────────────────────────────
@@ -172,6 +180,6 @@ export function debugBackgroundThrottle() {
   return {
     activeCooldowns: active,
     inFlightKeys: inFlight,
-    recoveredMessageCount: _recoveredMessageIds.size,
+    recoveredMessageCount: Object.keys(_recoveredMessageTimestamps).length,
   };
 }
