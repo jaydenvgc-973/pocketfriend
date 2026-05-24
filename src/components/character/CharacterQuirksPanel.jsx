@@ -61,7 +61,9 @@ export default function CharacterQuirksPanel({ character }) {
   };
 
   const updateIntensity = async (quirk_id, intensity) => {
+    setSaving(true);
     await saveQuirks(quirks.map(q => q.quirk_id === quirk_id ? { ...q, intensity } : q));
+    setSaving(false);
   };
 
   // ── TRAIT INTENSITY (stored in character.trait_intensities object) ────────────
