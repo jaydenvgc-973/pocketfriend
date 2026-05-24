@@ -1087,7 +1087,6 @@ export default function CharacterProfile() {
 
 
       </div>
-      </div>
 
       {/* Outfit Sharing Modal */}
       <AnimatePresence>
@@ -1166,5 +1165,7 @@ export default function CharacterProfile() {
         />
       )}
     </div>
+  );
+}
   );
 }
