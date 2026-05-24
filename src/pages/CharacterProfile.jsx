@@ -3,7 +3,8 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle } from "lucide-react";
+import CollapsibleProfileSection from "@/components/character/CollapsibleProfileSection";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
@@ -382,11 +383,12 @@ export default function CharacterProfile() {
         currentUser={currentUser}
       />
 
-      <div className="max-w-lg mx-auto px-6 py-6 space-y-6">
+      <div className="max-w-lg mx-auto px-0 py-0 flex flex-col h-full">
         <ImageLightbox src={lightboxSrc} alt={character.name} onClose={() => setLightboxSrc(null)} />
 
-        {/* ══ LOCKED TOP HEADER ══ */}
-        {/* Avatar and Basic Info */}
+        {/* ══ LOCKED TOP PROFILE AREA ══ */}
+        <div className="px-6 py-6 space-y-6 border-b border-border">
+          {/* Avatar and Basic Info */}
         <div className="flex flex-col items-center gap-4">
           <button onClick={() => character.avatar_url && setLightboxSrc(character.avatar_url)} className={character.avatar_url ? "cursor-pointer" : "cursor-default"}>
             <CharacterAvatar character={character} size="xl" />
@@ -399,10 +401,77 @@ export default function CharacterProfile() {
           </div>
         </div>
 
-        {/* Financial Summary */}
-        <CharacterFinancialSummary characterId={characterId} />
+          {/* Financial Summary */}
+          <CharacterFinancialSummary characterId={characterId} />
 
-        {/* Main Identity / Profile Information — Age, Location, Gender, Ethnicity, Orientation, Home Location, Birthday & Zodiac */}
+          {/* Narrative Biography */}
+          {(character.profile_summary || character.backstory || character.background_story || character.personality_summary) && (
+            <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+              {character.profile_summary && (
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Overview</p>
+                  <p className="text-sm text-foreground leading-relaxed">{character.profile_summary}</p>
+                </div>
+              )}
+              {character.backstory && (
+                <div className={character.profile_summary ? 'pt-3 border-t border-border' : ''}>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Backstory</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{character.backstory}</p>
+                </div>
+              )}
+              {character.background_story && (
+                <div className={character.profile_summary || character.backstory ? 'pt-3 border-t border-border' : ''}>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Background</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Your Connection */}
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Your Connection</p>
+              {(() => {
+                const reciprocal = getReciprocal();
+                const settings = userSettings[0];
+                const assignedRole = settings?.user_relatives?.[character?.id];
+                return reciprocal ? (
+                  <div className="space-y-0.5 text-right">
+                    <div className="flex items-center gap-1 text-xs text-pink-400">
+                      <Heart className="w-3 h-3 fill-current" />
+                      <span className="capitalize">{getRelationshipLabel(assignedRole)} ↔ {getRelationshipLabel(reciprocal)}</span>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+            </div>
+            <div className="space-y-3">
+              {[
+                { label: "Respect", value: character.user_respect_level ?? 50 },
+                { label: "Trust", value: character.trust_level ?? 50 },
+                { label: "Friendship", value: character.friendship_level ?? 75 },
+                { label: "Romantic", value: character.romantic_level ?? 0 },
+                { label: "Social Pull", value: character.attraction_level ?? 0 },
+                { label: "Chosen Family", value: character.chosen_family_level ?? 0 },
+                { label: "Jealousy", value: Math.round(((character.relational_jealousy ?? 0) + (character.envy_jealousy ?? 0)) / 2), sublabel: `relational ${character.relational_jealousy ?? 0}% · envy ${character.envy_jealousy ?? 0}%` }
+              ].map(({ label, value, sublabel }) => (
+                <div key={label}>
+                  <div className="flex justify-between mb-1">
+                    <span className="text-xs font-medium text-foreground">{label}</span>
+                    <span className="text-xs text-muted-foreground">{value}%</span>
+                  </div>
+                  {sublabel && <p className="text-[10px] text-muted-foreground/60 mb-1">{sublabel}</p>}
+                  <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                    <div className="h-full bg-primary transition-all" style={{ width: `${value}%` }} />
+                  </div>
+                </div>
+              ))}
+              <CharacterFeelingsCard character={character} onRespectCorrected={refetch} />
+            </div>
+          </div>
+
+          {/* Main Identity / Profile Information — Age, Location, Gender, Ethnicity, Orientation, Home Location, Birthday & Zodiac */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
           {(age !== null || character.age_range) && (
             <div className="flex items-center gap-2 pb-2 border-b border-border">
@@ -501,99 +570,475 @@ export default function CharacterProfile() {
             )}
           </div>
         </div>
-
-        {/* ══ SECTION DIVIDER: HOW THEY ARE DOING / WHAT SHAPED THEM ══ */}
-        <div className="flex items-center gap-3 pt-2">
-          <div className="flex-1 h-px bg-border" />
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 whitespace-nowrap">How They Are Doing / What Shaped Them</p>
-          <div className="flex-1 h-px bg-border" />
         </div>
 
-        {/* 1. Life Needs */}
-        <CharacterNeedsPanel character={character} onRefresh={() => refetch()} />
-        <ManualNeedsEditor character={character} />
+        {/* ══ SCROLLABLE COLLAPSIBLE GROUPS ══ */}
+        <div className="flex-1 overflow-y-auto">
+          {/* ══ GROUP 1: HOW THEY ARE DOING / WHAT SHAPED THEM ══ */}
+        <div className="bg-card border-b border-border">
+          <div className="px-4 py-2 bg-secondary/30">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">How They Are Doing / What Shaped Them</p>
+          </div>
+          
+          <CollapsibleProfileSection icon={BarChart3} title="Life Needs">
+            <CharacterNeedsPanel character={character} onRefresh={() => refetch()} />
+            <ManualNeedsEditor character={character} />
+          </CollapsibleProfileSection>
 
-        {/* 2. Life Journal */}
-        <LifeJournal characterId={characterId} character={character} />
+          <CollapsibleProfileSection icon={BookOpen} title="Life Journal">
+            <LifeJournal characterId={characterId} character={character} />
+          </CollapsibleProfileSection>
 
-        {/* 3. What They've Been Through */}
-        {(() => {
-          const memories = character.memories || [];
-          const categoryMeta = {
-            challenges: { label: "Challenges", color: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/20" },
-            positive: { label: "Positive Experiences", color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
-            growth: { label: "Growth & Resilience", color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
-          };
-          const categorized = { challenges: [], positive: [], growth: [], uncategorized: [] };
-          memories.forEach(m => {
-            const cat = m.category && categorized[m.category] !== undefined ? m.category : 'uncategorized';
-            categorized[cat].push(m);
-          });
-          const hasAnyCategory = categorized.challenges.length > 0 || categorized.positive.length > 0 || categorized.growth.length > 0;
-          return (
-            <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">What They've Been Through</p>
-              {memories.length === 0 && (
-                <p className="text-xs text-muted-foreground italic">
-                  No experiences recorded yet. Experiences are added through the Edit Emotions &amp; Experiences page or as major life events occur.
-                </p>
-              )}
-              {hasAnyCategory && (
-                <div className="space-y-3">
-                  {['challenges', 'positive', 'growth'].map(cat => {
-                    const mems = categorized[cat];
-                    if (mems.length === 0) return null;
-                    const meta = categoryMeta[cat];
-                    return (
-                      <div key={cat}>
-                        <p className={`text-[10px] font-bold uppercase tracking-widest ${meta.color} mb-1.5`}>{meta.label}</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {mems.map((m, i) => {
-                            const key = `${cat}-${i}`;
-                            const isExpanded = expandedMemory === key;
-                            const hasDetails = m.description || m.emotional_impact || m.lesson_learned;
-                            return (
-                              <div key={i} className="w-full">
-                                <button
-                                  onClick={() => hasDetails && setExpandedMemory(isExpanded ? null : key)}
-                                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${meta.bg} ${meta.color} ${meta.border} ${hasDetails ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
-                                >
-                                  {m.title}{hasDetails ? ' ›' : ''}
-                                </button>
-                                {isExpanded && hasDetails && (
-                                  <div className={`mt-1.5 mb-1 ml-1 p-3 rounded-xl border text-xs space-y-1 ${meta.bg} ${meta.border}`}>
-                                    {m.description && <p className="text-foreground/80 leading-relaxed">{m.description}</p>}
-                                    {m.emotional_impact && <p className={`${meta.color} mt-1`}><span className="font-medium">Impact: </span>{m.emotional_impact}</p>}
-                                    {m.lesson_learned && <p className="text-muted-foreground mt-1"><span className="font-medium">Lesson: </span>{m.lesson_learned}</p>}
+          <CollapsibleProfileSection icon={AlertCircle} title="What They've Been Through">
+            {(() => {
+              const memories = character.memories || [];
+              const categoryMeta = {
+                challenges: { label: "Challenges", color: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/20" },
+                positive: { label: "Positive Experiences", color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+                growth: { label: "Growth & Resilience", color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
+              };
+              const categorized = { challenges: [], positive: [], growth: [], uncategorized: [] };
+              memories.forEach(m => {
+                const cat = m.category && categorized[m.category] !== undefined ? m.category : 'uncategorized';
+                categorized[cat].push(m);
+              });
+              const hasAnyCategory = categorized.challenges.length > 0 || categorized.positive.length > 0 || categorized.growth.length > 0;
+              return (
+                <div className="space-y-4">
+                  {memories.length === 0 && (
+                    <p className="text-xs text-muted-foreground italic">
+                      No experiences recorded yet. Experiences are added through the Edit Emotions &amp; Experiences page or as major life events occur.
+                    </p>
+                  )}
+                  {hasAnyCategory && (
+                    <div className="space-y-3">
+                      {['challenges', 'positive', 'growth'].map(cat => {
+                        const mems = categorized[cat];
+                        if (mems.length === 0) return null;
+                        const meta = categoryMeta[cat];
+                        return (
+                          <div key={cat}>
+                            <p className={`text-[10px] font-bold uppercase tracking-widest ${meta.color} mb-1.5`}>{meta.label}</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {mems.map((m, i) => {
+                                const key = `${cat}-${i}`;
+                                const isExpanded = expandedMemory === key;
+                                const hasDetails = m.description || m.emotional_impact || m.lesson_learned;
+                                return (
+                                  <div key={i} className="w-full">
+                                    <button
+                                      onClick={() => hasDetails && setExpandedMemory(isExpanded ? null : key)}
+                                      className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${meta.bg} ${meta.color} ${meta.border} ${hasDetails ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+                                    >
+                                      {m.title}{hasDetails ? ' ›' : ''}
+                                    </button>
+                                    {isExpanded && hasDetails && (
+                                      <div className={`mt-1.5 mb-1 ml-1 p-3 rounded-xl border text-xs space-y-1 ${meta.bg} ${meta.border}`}>
+                                        {m.description && <p className="text-foreground/80 leading-relaxed">{m.description}</p>}
+                                        {m.emotional_impact && <p className={`${meta.color} mt-1`}><span className="font-medium">Impact: </span>{m.emotional_impact}</p>}
+                                        {m.lesson_learned && <p className="text-muted-foreground mt-1"><span className="font-medium">Lesson: </span>{m.lesson_learned}</p>}
+                                      </div>
+                                    )}
                                   </div>
-                                )}
-                              </div>
-                            );
-                          })}
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {categorized.uncategorized.length > 0 && (
+                    <div className={`space-y-3 ${hasAnyCategory ? 'pt-3 border-t border-border' : ''}`}>
+                      {hasAnyCategory && <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Key Memories</p>}
+                      {categorized.uncategorized.map((memory, idx) => (
+                        <div key={idx} className="pb-3 border-b border-border last:border-b-0">
+                          <p className="text-sm font-medium text-foreground">{memory.title}</p>
+                          {memory.description && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{memory.description}</p>}
+                          {memory.emotional_impact && <p className="text-xs text-muted-foreground/70 mt-2"><span className="font-medium">Impact:</span> {memory.emotional_impact}</p>}
+                          {memory.lesson_learned && <p className="text-xs text-muted-foreground/70 mt-1"><span className="font-medium">Lesson:</span> {memory.lesson_learned}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={GraduationCap} title="Education">
+            {(character.completed_education?.length > 0) && (() => {
+              const now = new Date();
+              const completedItems = (character.completed_education || []).filter(edu => {
+                if (!edu.completion_date) return false;
+                return new Date(edu.completion_date) <= now;
+              });
+              if (completedItems.length === 0) return null;
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <GraduationCap className="w-4 h-4 text-primary" />
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider">Completed Education</p>
+                  </div>
+                  <div className="space-y-1">
+                    {completedItems.map((edu, idx) => {
+                      const modeLabel = edu.mode === 'in_person' ? 'In-Person' : edu.mode === 'remote_scheduled' ? 'Remote' : edu.mode === 'on_demand' ? 'On-Demand' : null;
+                      return (
+                        <div key={idx}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm text-muted-foreground">
+                              {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
+                            </p>
+                            {modeLabel && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border">{modeLabel}</span>
+                            )}
+                          </div>
+                          {edu.completion_date && (
+                            <p className="text-xs text-muted-foreground/60">
+                              Completed {format(new Date(edu.completion_date), "MMM yyyy")}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={AlertCircle} title="Criminal Record">
+            <div className="bg-card border border-border rounded-2xl p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Criminal Record</p>
+              <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
+            </div>
+          </CollapsibleProfileSection>
+        </div>
+
+        {/* ══ GROUP 2: HOW THEY COMMUNICATE ══ */}
+        <div className="bg-card border-b border-border">
+          <div className="px-4 py-2 bg-secondary/30">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">How They Communicate</p>
+          </div>
+
+          {character.personality_traits && character.personality_traits.length > 0 && (
+            <CollapsibleProfileSection icon={Zap} title="Vibes">
+              <div className="flex flex-wrap gap-2">
+                {character.personality_traits.map(trait => (
+                  <span key={trait} className="px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+                    {trait}
+                  </span>
+                ))}
+              </div>
+            </CollapsibleProfileSection>
+          )}
+
+          {character.communication_style && (
+            <CollapsibleProfileSection icon={BookOpen} title="How They Talk">
+              <p className="text-sm text-foreground leading-relaxed">{character.communication_style}</p>
+            </CollapsibleProfileSection>
+          )}
+
+          <CollapsibleProfileSection icon={Zap} title="Traits & Quirks">
+            <CharacterQuirksPanel character={character} />
+          </CollapsibleProfileSection>
+        </div>
+
+        {/* ══ GROUP 3: HOW THEIR LIFE FUNCTIONS ══ */}
+        <div className="bg-card border-b border-border">
+          <div className="px-4 py-2 bg-secondary/30">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">How Their Life Functions</p>
+          </div>
+
+          <CollapsibleProfileSection icon={Briefcase} title="Income Sources">
+            {(() => {
+              const resolveScheduleFromLocation = (locationId) => {
+                if (!locationId) return null;
+                const loc = workLocations.find(l => l.id === locationId);
+                if (!loc) return null;
+                const shift = loc.worker_shifts?.[characterId];
+                if (!shift?.start || !shift?.end) return null;
+                const fmt = (t) => {
+                  const [h, m] = t.split(':').map(Number);
+                  return `${h % 12 || 12}:${String(m).padStart(2, '0')}${h >= 12 ? 'pm' : 'am'}`;
+                };
+                const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+                const days = shift.days?.length > 0 ? shift.days.map(d => DAY_LABELS[d]).join('/') : '';
+                return `${fmt(shift.start)}–${fmt(shift.end)}${days ? ' · ' + days : ''}`;
+              };
+
+              const financial = character.financial || {};
+              return (
+                <div className="space-y-2">
+                  {(financial.income_sources || []).map((src, idx) => {
+                    const estMonthly = src.monthly_estimate
+                      || (src.weekly_hours ? (src.pay_amount || 0) * src.weekly_hours * 4.33 : null)
+                      || (src.pay_type === 'annual' ? (src.pay_amount || 0) / 12 : null);
+                    return (
+                      <div key={idx} className="flex items-center justify-between text-xs pb-2 border-b border-border last:border-b-0">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <Briefcase className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-muted-foreground truncate">
+                              {src.location_name}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0 ml-2">
+                          <div className="font-semibold text-green-300">
+                            ${src.pay_amount?.toFixed(2) || '0.00'} {src.pay_type === 'hourly' ? '/hr' : '/yr'}
+                          </div>
                         </div>
                       </div>
                     );
                   })}
                 </div>
-              )}
-              {categorized.uncategorized.length > 0 && (
-                <div className={`space-y-3 ${hasAnyCategory ? 'pt-3 border-t border-border' : ''}`}>
-                  {hasAnyCategory && <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Key Memories</p>}
-                  {categorized.uncategorized.map((memory, idx) => (
-                    <div key={idx} className="pb-3 border-b border-border last:border-b-0">
-                      <p className="text-sm font-medium text-foreground">{memory.title}</p>
-                      {memory.description && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{memory.description}</p>}
-                      {memory.emotional_impact && <p className="text-xs text-muted-foreground/70 mt-2"><span className="font-medium">Impact:</span> {memory.emotional_impact}</p>}
-                      {memory.lesson_learned && <p className="text-xs text-muted-foreground/70 mt-1"><span className="font-medium">Lesson:</span> {memory.lesson_learned}</p>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
+              );
+            })()}
+          </CollapsibleProfileSection>
 
-        {/* 4. Completed Education */}
+          <CollapsibleProfileSection icon={HomeIcon} title="Businesses / Properties">
+            <CharacterBusinessesPanel characterId={characterId} />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={BarChart3} title="Monthly Expenses">
+            <CharacterExpenseManager characterId={characterId} readOnly={false} />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={BarChart3} title="Monthly Statement">
+            <MonthlyStatementPanel characterId={characterId} />
+          </CollapsibleProfileSection>
+        </div>
+
+        {/* ══ GROUP 4: HOW THEY PRESENT THEMSELVES ══ */}
+        <div className="bg-card border-b border-border">
+          <div className="px-4 py-2 bg-secondary/30">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">How They Present Themselves</p>
+          </div>
+
+          <CollapsibleProfileSection icon={Shirt} title="Appearance Lock">
+            <AppearanceLockEditor character={character} />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={Camera} title="Appearance (Image Generation)">
+            <AppearanceAgeField character={character} />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={Shirt} title="Character Closet">
+            <CharacterClosetPanel character={character} />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={User} title="What They Call You">
+            <NicknameForUserField character={character} />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={BookOpen} title="Aliases / Also Known As">
+            <CharacterAliasEditor character={character} />
+          </CollapsibleProfileSection>
+        </div>
+
+        {/* ══ GROUP 5: EMOTIONAL & SOCIAL WORLD ══ */}
+        <div className="bg-card border-b border-border">
+          <div className="px-4 py-2 bg-secondary/30">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Emotional & Social World</p>
+          </div>
+
+          {(character.emotional_baggage || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
+            <CollapsibleProfileSection icon={Heart} title="Emotional Profile">
+              <div className="space-y-4">
+                {character.emotional_baggage && (
+                  <div>
+                    <p className="text-xs font-medium text-foreground mb-1">What They Carry</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{character.emotional_baggage}</p>
+                  </div>
+                )}
+                {character.upset_reaction && (
+                  <div>
+                    <p className="text-xs font-medium text-foreground mb-1">When They're Upset</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{character.upset_reaction}</p>
+                  </div>
+                )}
+                {character.emotional_triggers_high?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-rose-400 mb-1.5">High Triggers</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {character.emotional_triggers_high.map((t, i) => (
+                        <span key={i} className="px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 text-xs border border-rose-500/20">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {character.emotional_triggers_medium?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-amber-400 mb-1.5">Medium Triggers</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {character.emotional_triggers_medium.map((t, i) => (
+                        <span key={i} className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs border border-amber-500/20">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {character.emotional_triggers_deep?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-blue-400 mb-1.5">Deep Triggers</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {character.emotional_triggers_deep.map((t, i) => (
+                        <span key={i} className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CollapsibleProfileSection>
+          )}
+
+          <CollapsibleProfileSection icon={Users} title="Family">
+            <FamilyEditor character={character} readOnly={false} allCharacters={allCharacters} currentUser={currentUser} userSettings={userSettings[0]} />
+          </CollapsibleProfileSection>
+
+          {character.family_history && (
+            <CollapsibleProfileSection icon={BookOpen} title="Family History">
+              <p className="text-sm text-muted-foreground leading-relaxed">{character.family_history}</p>
+            </CollapsibleProfileSection>
+          )}
+
+          <CollapsibleProfileSection icon={Users} title="Characters They Know">
+            <div className="space-y-4">
+              {(character.fictional_relationships || [])
+                .filter(r => {
+                  if (!r.related_character_id) return false;
+                  const lc = allCharacters.find(c => c.id === r.related_character_id);
+                  if (!lc) return false;
+                  return lc.character_type === "active_created_character";
+                })
+                .map((rel, idx) => {
+                  const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
+                  return (
+                    <div key={idx} className="pb-4 border-b border-border last:border-b-0">
+                      <div className="flex items-center gap-3 mb-3">
+                        {linkedChar && <CharacterAvatar character={linkedChar} size="md" />}
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{rel.person_name}</p>
+                          <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
+                        </div>
+                      </div>
+                      {rel.description && (
+                        <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{rel.description}</p>
+                      )}
+                      <div className="space-y-2">
+                        {[
+                          { label: "Respect", value: rel.user_respect_level ?? 50 },
+                          { label: "Friendship", value: rel.friendship_level ?? 75 },
+                          { label: "Romantic", value: rel.romantic_level ?? 0 },
+                          { label: "Social Pull", value: rel.attraction_level ?? 0 },
+                          { label: "Chosen Family", value: rel.chosen_family_level ?? 0 }
+                        ].map(({ label, value }) => (
+                          <div key={label}>
+                            <div className="flex justify-between mb-1">
+                              <span className="text-xs font-medium text-foreground">{label}</span>
+                              <span className="text-xs text-muted-foreground">{value}%</span>
+                            </div>
+                            <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                              <div className="h-full bg-primary transition-all" style={{ width: `${value}%` }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={Ghost} title="People In Their World">
+            <div className="space-y-4">
+              <AddPeopleInTheirWorldPanel character={character} onSuccess={() => refetch()} />
+
+              {(() => {
+                const ownFamilyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
+                const worldRels = (character.fictional_relationships || []).filter(r => {
+                  if (ownFamilyNames.has(r.person_name?.toLowerCase())) return false;
+                  if (!r.related_character_id) return true;
+                  const linked = allCharacters.find(c => c.id === r.related_character_id);
+                  if (!linked) return true;
+                  return linked.character_type !== "active_created_character";
+                });
+                const seen = new Set();
+                const deduped = worldRels.filter(r => {
+                  const key = r.person_name?.toLowerCase();
+                  if (seen.has(key)) return false;
+                  seen.add(key);
+                  return true;
+                });
+                return deduped.length > 0 ? (
+                  <div className="space-y-5">
+                    {deduped.map((rel, idx) => (
+                      <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <button
+                            onClick={() => (rel.avatar_url || rel.photo_url) && setLightboxSrc(rel.avatar_url || rel.photo_url)}
+                            className={(rel.avatar_url || rel.photo_url) ? "cursor-pointer" : "cursor-default"}
+                          >
+                            <div className="flex items-center gap-3">
+                              {rel.avatar_url || rel.photo_url ? (
+                                <div className="relative group">
+                                  <img src={rel.avatar_url || rel.photo_url} alt={rel.person_name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                                  <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <ZoomIn className="w-4 h-4 text-white" />
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                                  <span className="text-xs font-semibold text-primary">{rel.person_name?.[0]?.toUpperCase() || "?"}</span>
+                                </div>
+                              )}
+                              <div>
+                                <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
+                                <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
+                              </div>
+                            </div>
+                          </button>
+                        </div>
+                        {rel.description && (
+                          <div>
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Who they are</p>
+                            <p className="text-xs text-foreground leading-relaxed">{rel.description}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+
+              {(() => {
+                const groupKeywords = ['class', 'group', 'people', 'team', 'meeting', 'event', 'program', 'session', 'training', 'workshop'];
+                const filtered = (character.transient_encounters || []).filter(enc => {
+                  const desc = (enc.description || '').toLowerCase();
+                  const ctx = (enc.context || '').toLowerCase();
+                  return !groupKeywords.some(kw => desc.includes(kw) || ctx.includes(kw));
+                });
+                return filtered.length > 0 ? (
+                  <div className="space-y-3 pt-4 border-t border-border">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chance Encounters</p>
+                    <div className="space-y-3">
+                      {filtered.slice(0, 3).map((enc, idx) => (
+                        <div key={idx} className="pb-2 border-b border-border/50 last:border-b-0">
+                          <p className="text-xs text-foreground">{enc.description}</p>
+                          {enc.context && (
+                            <p className="text-xs text-muted-foreground/70">at {enc.context}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+            </div>
+          </CollapsibleProfileSection>
+        </div>
+        </div>
+      </div>
         {(character.completed_education?.length > 0) && (() => {
           const now = new Date();
           const completedItems = (character.completed_education || []).filter(edu => {
@@ -639,668 +1084,9 @@ export default function CharacterProfile() {
           <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
         </div>
 
-        {/* ══ SECTION DIVIDER: HOW THEY COMMUNICATE ══ */}
-        <div className="flex items-center gap-3 pt-2">
-          <div className="flex-1 h-px bg-border" />
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 whitespace-nowrap">How They Communicate</p>
-          <div className="flex-1 h-px bg-border" />
-        </div>
 
-        {/* 1. Vibes */}
-        {character.personality_traits && character.personality_traits.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Vibes</p>
-            <div className="flex flex-wrap gap-2">
-              {character.personality_traits.map(trait => (
-                <span key={trait} className="px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
-                  {trait}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {/* 2. How They Talk */}
-        {character.communication_style && (
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">How They Talk</p>
-            <p className="text-sm text-foreground leading-relaxed">{character.communication_style}</p>
-          </div>
-        )}
-
-        {/* 3. Traits & Quirks */}
-        <CharacterQuirksPanel character={character} />
-
-        {/* ══ SECTION DIVIDER: HOW THEIR LIFE FUNCTIONS ══ */}
-        <div className="flex items-center gap-3 pt-2">
-          <div className="flex-1 h-px bg-border" />
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 whitespace-nowrap">How Their Life Functions</p>
-          <div className="flex-1 h-px bg-border" />
-        </div>
-
-        {/* 1. Income Sources (Work / School Details) */}
-        {(() => {
-          // Build job list directly from character file job entries.
-          // Schedule is resolved ONLY from the matching location's worker_shifts[characterId].
-          // No character-file schedule fallback. No default. No cross-job reuse.
-          const resolveScheduleFromLocation = (locationId) => {
-            if (!locationId) return null;
-            const loc = workLocations.find(l => l.id === locationId);
-            if (!loc) return null;
-            const shift = loc.worker_shifts?.[characterId];
-            if (!shift?.start || !shift?.end) return null;
-            const fmt = (t) => {
-              const [h, m] = t.split(':').map(Number);
-              return `${h % 12 || 12}:${String(m).padStart(2, '0')}${h >= 12 ? 'pm' : 'am'}`;
-            };
-            const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-            const days = shift.days?.length > 0 ? shift.days.map(d => DAY_LABELS[d]).join('/') : '';
-            return `${fmt(shift.start)}–${fmt(shift.end)}${days ? ' · ' + days : ''}`;
-          };
-
-          const jobEntries = [];
-
-          // Primary job
-          const hasPrimaryJob = !!(
-            character.work_details?.job_title ||
-            character.occupation ||
-            character.occupation_location_id ||
-            character.occupation_location_name
-          );
-          if (hasPrimaryJob) {
-            const locId = character.occupation_location_id || null;
-            const locName = character.occupation_location_name ||
-              (locId ? workLocations.find(l => l.id === locId)?.name : null) || null;
-            const jobTitle = character.work_details?.job_title || character.occupation || null;
-            const schedule = resolveScheduleFromLocation(locId);
-            jobEntries.push({
-              key: 'primary-job',
-              jobTitle,
-              locationName: locName,
-              locationId: locId,
-              isRabbitHole: !!(locId && !locName),
-              schedule,
-              scheduleNotFound: !schedule,
-            });
-          }
-
-          // Additional jobs
-          (character.additional_occupation_locations || []).forEach((addl, idx) => {
-            if (!addl.location_id && !addl.location_name && !addl.job_title) return;
-            const locId = addl.location_id || null;
-            const locName = addl.location_name ||
-              (locId ? workLocations.find(l => l.id === locId)?.name : null) || null;
-            const schedule = resolveScheduleFromLocation(locId);
-            jobEntries.push({
-              key: `addl-job-${idx}`,
-              jobTitle: addl.job_title || null,
-              locationName: locName,
-              locationId: locId,
-              isRabbitHole: !!(locId && !locName),
-              schedule,
-              scheduleNotFound: !schedule,
-            });
-          });
-
-          // Also catch any jobs on locations not yet on character file (location has character in worker list)
-          const coveredLocIds = new Set(jobEntries.map(j => j.locationId).filter(Boolean));
-          workLocations.forEach(loc => {
-            if (!(loc.worker_character_ids || []).includes(characterId)) return;
-            if (coveredLocIds.has(loc.id)) return;
-            const shift = loc.worker_shifts?.[characterId];
-            const fmt = (t) => {
-              const [h, m] = t.split(':').map(Number);
-              return `${h % 12 || 12}:${String(m).padStart(2, '0')}${h >= 12 ? 'pm' : 'am'}`;
-            };
-            const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-            let schedule = null;
-            if (shift?.start && shift?.end) {
-              const days = shift.days?.length > 0 ? shift.days.map(d => DAY_LABELS[d]).join('/') : '';
-              schedule = `${fmt(shift.start)}–${fmt(shift.end)}${days ? ' · ' + days : ''}`;
-            }
-            jobEntries.push({
-              key: `loc-job-${loc.id}`,
-              jobTitle: loc.worker_job_titles?.[characterId] || null,
-              locationName: loc.name || null,
-              locationId: loc.id,
-              isRabbitHole: false,
-              schedule,
-              scheduleNotFound: !schedule,
-            });
-          });
-
-          const jobs = jobEntries;
-
-          // School enrollments from character file
-          const schoolEnrollments = [];
-          if (character.current_education_activity && character.current_education_activity !== 'none') {
-            schoolEnrollments.push({
-              key: 'primary-school',
-              locationName: character.education_location_name || null,
-              program: character.education_details?.course_name || character.current_education_activity,
-              schedule: null,
-            });
-          }
-          (character.additional_education_locations || []).forEach((loc, idx) => {
-            if (!loc.location_name && !loc.program_name) return;
-            schoolEnrollments.push({
-              key: `school-${idx}`,
-              locationName: loc.location_name || null,
-              program: loc.program_name || null,
-              schedule: null,
-            });
-          });
-
-          const hasWork = jobs.length > 0;
-          const hasSchool = schoolEnrollments.length > 0;
-          const hasAny = hasWork || hasSchool;
-
-          if (!hasAny) return null;
-
-          return (
-            <div className="bg-card border border-border rounded-2xl p-4 space-y-5">
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">Work / School Details</p>
-
-              {/* JOBS */}
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5 mb-2">
-                  <Briefcase className="w-3.5 h-3.5 text-primary" />
-                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Jobs</p>
-                </div>
-                {jobs.length === 0 ? (
-                  <p className="text-sm text-muted-foreground italic pl-1">No work details assigned.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {jobs.map((job, i) => (
-                      <div key={job.key} className={`space-y-0.5 ${i > 0 ? 'pl-3 border-l-2 border-border' : ''}`}>
-                        {job.jobTitle && (
-                          <p className="text-sm text-foreground font-medium">{job.jobTitle}</p>
-                        )}
-                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                          <MapPin className="w-3 h-3 flex-shrink-0" />
-                          <span>{job.locationName || (job.isRabbitHole ? 'Rabbit Hole / Off-App Location' : 'Location not set')}</span>
-                        </div>
-                        {job.schedule ? (
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <Clock className="w-3 h-3 flex-shrink-0" />
-                            <span>{job.schedule}</span>
-                          </div>
-                        ) : job.scheduleNotFound ? (
-                          <p className="text-xs text-muted-foreground/50 italic pl-0.5">Schedule not set on location resource</p>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* SCHOOL */}
-              <div className="space-y-1 pt-3 border-t border-border">
-                <div className="flex items-center gap-1.5 mb-2">
-                  <GraduationCap className="w-3.5 h-3.5 text-primary" />
-                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider">School</p>
-                </div>
-                {schoolEnrollments.length === 0 ? (
-                  <p className="text-sm text-muted-foreground italic pl-1">No school details assigned.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {schoolEnrollments.map((enr, i) => (
-                      <div key={enr.key} className={`space-y-0.5 ${i > 0 ? 'pl-3 border-l-2 border-border' : ''}`}>
-                        {enr.program && (
-                          <p className="text-sm text-foreground font-medium">{enr.program}</p>
-                        )}
-                        {enr.locationName && (
-                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                            <MapPin className="w-3 h-3 flex-shrink-0" />
-                            <span>{enr.locationName}</span>
-                          </div>
-                        )}
-                        {enr.schedule && (
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <Clock className="w-3 h-3 flex-shrink-0" />
-                            <span>{enr.schedule}</span>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <CharacterWorkScheduleEditor character={character} />
-            </div>
-          );
-        })()}
-
-        {/* 2. Businesses / Properties */}
-        <CharacterBusinessesPanel characterId={characterId} />
-
-        {/* 3. Monthly Expenses */}
-        <CharacterExpenseManager characterId={characterId} readOnly={false} />
-
-        {/* 3.5 Narrative Biography */}
-        {(character.profile_summary || character.backstory || character.background_story || character.personality_summary) && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-            {character.profile_summary && (
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Overview</p>
-                <p className="text-sm text-foreground leading-relaxed">{character.profile_summary}</p>
-              </div>
-            )}
-            {character.backstory && (
-              <div className={character.profile_summary ? 'pt-3 border-t border-border' : ''}>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Backstory</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{character.backstory}</p>
-              </div>
-            )}
-            {character.background_story && (
-              <div className={character.profile_summary || character.backstory ? 'pt-3 border-t border-border' : ''}>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Background</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
-              </div>
-            )}
-            {character.personality_summary && (
-              <div className={character.profile_summary || character.backstory || character.background_story ? 'pt-3 border-t border-border' : ''}>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Personality</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{character.personality_summary}</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 4. Monthly Statement */}
-        <MonthlyStatementPanel characterId={characterId} />
-
-        {/* ══ SECTION DIVIDER: HOW THEY PRESENT THEMSELVES ══ */}
-        <div className="flex items-center gap-3 pt-2">
-          <div className="flex-1 h-px bg-border" />
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 whitespace-nowrap">How They Present Themselves</p>
-          <div className="flex-1 h-px bg-border" />
-        </div>
-
-        {/* 1. Appearance Lock */}
-        <AppearanceLockEditor character={character} />
-
-        {/* 2. Appearance (Image Generation) */}
-        <AppearanceAgeField character={character} />
-
-        {/* 3. Character Closet */}
-        <CharacterClosetPanel character={character} />
-
-        {/* 4. Aliases / Also Known As */}
-        <CharacterAliasEditor character={character} />
-
-        {/* ══ SECTION DIVIDER: EMOTIONAL & SOCIAL WORLD ══ */}
-        <div className="flex items-center gap-3 pt-2">
-          <div className="flex-1 h-px bg-border" />
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 whitespace-nowrap">Emotional & Social World</p>
-          <div className="flex-1 h-px bg-border" />
-        </div>
-
-        {/* 1. Your Connection */}
-        <div className="bg-card border border-border rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Your Connection</p>
-            {(() => {
-              const reciprocal = getReciprocal();
-              const settings = userSettings[0];
-              const assignedRole = settings?.user_relatives?.[character?.id];
-              return reciprocal ? (
-                <div className="space-y-0.5 text-right">
-                  <div className="flex items-center gap-1 text-xs text-pink-400">
-                    <Heart className="w-3 h-3 fill-current" />
-                    <span className="capitalize">{getRelationshipLabel(assignedRole)} ↔ {getRelationshipLabel(reciprocal)}</span>
-                  </div>
-                </div>
-              ) : null;
-            })()}
-          </div>
-          <div className="space-y-3">
-            {[
-              { label: "Respect", value: character.user_respect_level ?? 50 },
-              { label: "Trust", value: character.trust_level ?? 50 },
-              { label: "Friendship", value: character.friendship_level ?? 75 },
-              { label: "Romantic", value: character.romantic_level ?? 0 },
-              { label: "Social Pull", value: character.attraction_level ?? 0 },
-              { label: "Chosen Family", value: character.chosen_family_level ?? 0 },
-              { label: "Jealousy", value: Math.round(((character.relational_jealousy ?? 0) + (character.envy_jealousy ?? 0)) / 2), sublabel: `relational ${character.relational_jealousy ?? 0}% · envy ${character.envy_jealousy ?? 0}%` }
-            ].map(({ label, value, sublabel }) => (
-              <div key={label}>
-                <div className="flex justify-between mb-1">
-                  <span className="text-xs font-medium text-foreground">{label}</span>
-                  <span className="text-xs text-muted-foreground">{value}%</span>
-                </div>
-                {sublabel && <p className="text-[10px] text-muted-foreground/60 mb-1">{sublabel}</p>}
-                <div className="h-2 bg-secondary rounded-full overflow-hidden">
-                  <div className="h-full bg-primary transition-all" style={{ width: `${value}%` }} />
-                </div>
-              </div>
-            ))}
-            <CharacterFeelingsCard character={character} onRespectCorrected={refetch} />
-          </div>
-        </div>
-
-        {/* 2. What They Call You */}
-        <NicknameForUserField character={character} />
-
-        {/* 3. Emotional Profile */}
-        {(character.emotional_baggage || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Emotional Profile</p>
-            {character.emotional_baggage && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-1">What They Carry</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{character.emotional_baggage}</p>
-              </div>
-            )}
-            {character.upset_reaction && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-1">When They're Upset</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{character.upset_reaction}</p>
-              </div>
-            )}
-            {character.emotional_triggers_high?.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-rose-400 mb-1.5">High Triggers</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {character.emotional_triggers_high.map((t, i) => (
-                    <span key={i} className="px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 text-xs border border-rose-500/20">{t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {character.emotional_triggers_medium?.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-amber-400 mb-1.5">Medium Triggers</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {character.emotional_triggers_medium.map((t, i) => (
-                    <span key={i} className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs border border-amber-500/20">{t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {character.emotional_triggers_deep?.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-blue-400 mb-1.5">Deep Triggers</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {character.emotional_triggers_deep.map((t, i) => (
-                    <span key={i} className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">{t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 4. Family */}
-        <FamilyEditor character={character} readOnly={false} allCharacters={allCharacters} currentUser={currentUser} userSettings={userSettings[0]} />
-
-        {/* 5. Family History */}
-        {character.family_history && (
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Family History</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">{character.family_history}</p>
-          </div>
-        )}
-
-        {/* 6. Characters They Know */}
-        {(true) && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Users className="w-4 h-4 text-primary" />
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">Characters They Know</p>
-            </div>
-            {(!character.fictional_relationships?.some(r => {
-              if (!r.related_character_id) return false;
-              const lc = allCharacters.find(c => c.id === r.related_character_id);
-              if (!lc) return false;
-              return lc.character_type === "active_created_character";
-            })) && (
-              <p className="text-sm text-muted-foreground italic">No character relationships yet.</p>
-            )}
-            <div className="space-y-4">
-              {(character.fictional_relationships || [])
-                .filter(r => {
-                  if (!r.related_character_id) return false;
-                  const lc = allCharacters.find(c => c.id === r.related_character_id);
-                  if (!lc) return false;
-                  return lc.character_type === "active_created_character";
-                })
-                .map((rel, idx) => {
-                   const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
-                  return (
-                    <div key={idx} className="pb-4 border-b border-border last:border-b-0">
-                      <div className="flex items-center gap-3 mb-3">
-                        {linkedChar && <CharacterAvatar character={linkedChar} size="md" />}
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{rel.person_name}</p>
-                          <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
-                        </div>
-                      </div>
-                      {rel.description && (
-                        <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{rel.description}</p>
-                      )}
-                      {rel.current_status && (
-                        <div className="mb-2">
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">What's going on now</p>
-                          <p className="text-xs text-foreground leading-relaxed">{rel.current_status}</p>
-                        </div>
-                      )}
-                      {rel.emotional_impact && (
-                        <div className="mb-2">
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">How they feel right now</p>
-                          <p className="text-xs text-muted-foreground leading-relaxed italic">{rel.emotional_impact}</p>
-                        </div>
-                      )}
-                      {rel.last_interaction_summary && (
-                        <div className="mb-3">
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Last interaction</p>
-                          <p className="text-xs text-muted-foreground leading-relaxed">{rel.last_interaction_summary}</p>
-                        </div>
-                      )}
-                      <div className="space-y-2">
-                        {[
-                          { label: "Respect", value: rel.user_respect_level ?? 50 },
-                          { label: "Friendship", value: rel.friendship_level ?? 75 },
-                          { label: "Romantic", value: rel.romantic_level ?? 0 },
-                          { label: "Social Pull", value: rel.attraction_level ?? 0 },
-                          { label: "Chosen Family", value: rel.chosen_family_level ?? 0 }
-                        ].map(({ label, value }) => (
-                          <div key={label}>
-                            <div className="flex justify-between mb-1">
-                              <span className="text-xs font-medium text-foreground">{label}</span>
-                              <span className="text-xs text-muted-foreground">{value}%</span>
-                            </div>
-                            <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
-                              <div className="h-full bg-primary transition-all" style={{ width: `${value}%` }} />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      {/* Relationship Tension — lazy loaded, does not block profile */}
-                      {rel.related_character_id && (
-                        <RelationshipTensionCard
-                          characterId={characterId}
-                          relatedCharId={rel.related_character_id}
-                          relatedCharName={rel.person_name || linkedChar?.name || 'them'}
-                          loadDelayMs={3500 + idx * 1500}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-        )}
-
-        {/* 7. People In Their World */}
-        <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Ghost className="w-4 h-4 text-primary" />
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
-          </div>
-
-          <AddPeopleInTheirWorldPanel character={character} onSuccess={() => refetch()} />
-
-          {(() => {
-            // Routing rule (type-based only, relationship type is irrelevant):
-            // → active_created_character = Characters They Know (separate section above)
-            // → this character's own family_members array = Family (FamilyEditor below)
-            // → everything else = People in Their World (catch-all)
-            const ownFamilyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-            const worldRels = (character.fictional_relationships || []).filter(r => {
-              // Exclude this character's own family entries
-              if (ownFamilyNames.has(r.person_name?.toLowerCase())) return false;
-              // Unlinked entries always belong here
-              if (!r.related_character_id) return true;
-              // Linked: exclude active_created_character (they go to "Characters They Know")
-              const linked = allCharacters.find(c => c.id === r.related_character_id);
-              if (!linked) return true; // linked ID not found in scope → show here
-              return linked.character_type !== "active_created_character";
-            });
-            const seen = new Set();
-            const deduped = worldRels.filter(r => {
-              const key = r.person_name?.toLowerCase();
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
-            return deduped.length > 0;
-          })() ? (
-            <div className="space-y-5">
-              {(() => {
-                const ownFamilyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-                const worldRels = (character.fictional_relationships || []).filter(r => {
-                  if (ownFamilyNames.has(r.person_name?.toLowerCase())) return false;
-                  if (!r.related_character_id) return true;
-                  const linked = allCharacters.find(c => c.id === r.related_character_id);
-                  if (!linked) return true;
-                  return linked.character_type !== "active_created_character";
-                });
-                const seen = new Set();
-                return worldRels.filter(r => {
-                  const key = r.person_name?.toLowerCase();
-                  if (seen.has(key)) return false;
-                  seen.add(key);
-                  return true;
-                });
-              })()
-                .map((rel, idx) => (
-                  <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <button
-                            onClick={() => (rel.avatar_url || rel.photo_url) && setLightboxSrc(rel.avatar_url || rel.photo_url)}
-                            className={(rel.avatar_url || rel.photo_url) ? "cursor-pointer" : "cursor-default"}
-                          >
-                            <div className="flex items-center gap-3">
-                              {rel.avatar_url || rel.photo_url ? (
-                                <div className="relative group">
-                                  <img src={rel.avatar_url || rel.photo_url} alt={rel.person_name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
-                                  <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <ZoomIn className="w-4 h-4 text-white" />
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
-                                  <span className="text-xs font-semibold text-primary">{rel.person_name?.[0]?.toUpperCase() || "?"}</span>
-                                </div>
-                              )}
-                              <div>
-                                <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
-                                <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
-                              </div>
-                            </div>
-                          </button>
-                          {!rel._from_family && (
-                            <div className="flex gap-1 flex-shrink-0">
-                              <button
-                                onClick={() => setEditingNPCPhoto({ npc: rel, sourceCharacter: character })}
-                                title="Upload or generate photo"
-                                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-secondary text-muted-foreground hover:text-foreground text-xs font-medium transition-colors"
-                              >
-                                <Camera className="w-3 h-3" />
-                              </button>
-                              <button
-                                onClick={() => handleConvertNPC(rel)}
-                                title="Convert to active character"
-                                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
-                              >
-                                <Zap className="w-3 h-3" /> Activate
-                              </button>
-                            </div>
-                          )}
-                    </div>
-                    {rel.description && (
-                      <div>
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Who they are</p>
-                        <p className="text-xs text-foreground leading-relaxed">{rel.description}</p>
-                      </div>
-                    )}
-                    {rel.history_summary && (
-                      <div>
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">History</p>
-                        <p className="text-xs text-muted-foreground leading-relaxed">{rel.history_summary}</p>
-                      </div>
-                    )}
-                    {rel.current_status && (
-                      <div>
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">What's going on now</p>
-                        <p className="text-xs text-foreground leading-relaxed">{rel.current_status}</p>
-                      </div>
-                    )}
-                    {rel.emotional_impact && (
-                      <div>
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">How they feel about them</p>
-                        <p className="text-xs text-muted-foreground leading-relaxed italic">{rel.emotional_impact}</p>
-                      </div>
-                    )}
-                    {rel.last_interaction_summary && (
-                      <div>
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Last interaction</p>
-                        <p className="text-xs text-muted-foreground leading-relaxed">{rel.last_interaction_summary}</p>
-                      </div>
-                    )}
-                  </div>
-                ))}
-            </div>
-          ) : (
-            !character.transient_encounters?.length && (
-              <p className="text-sm text-muted-foreground italic">No people in their world yet.</p>
-            )
-          )}
-
-          {(() => {
-            const groupKeywords = ['class', 'group', 'people', 'team', 'meeting', 'event', 'program', 'session', 'training', 'workshop'];
-            const filtered = (character.transient_encounters || []).filter(enc => {
-              const desc = (enc.description || '').toLowerCase();
-              const ctx = (enc.context || '').toLowerCase();
-              return !groupKeywords.some(kw => desc.includes(kw) || ctx.includes(kw));
-            });
-            return filtered.length > 0;
-          })() && (
-            <div className="space-y-3">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chance Encounters</p>
-              <div className="space-y-3">
-                {(() => {
-                  const groupKeywords = ['class', 'group', 'people', 'team', 'meeting', 'event', 'program', 'session', 'training', 'workshop'];
-                  return (character.transient_encounters || []).filter(enc => {
-                    const desc = (enc.description || '').toLowerCase();
-                    const ctx = (enc.context || '').toLowerCase();
-                    return !groupKeywords.some(kw => desc.includes(kw) || ctx.includes(kw));
-                  }).slice(0, 3);
-                })().map((enc, idx) => (
-                  <div key={idx} className="pb-2 border-b border-border/50 last:border-b-0">
-                    <p className="text-xs text-foreground">{enc.description}</p>
-                    {enc.context && (
-                      <p className="text-xs text-muted-foreground/70">at {enc.context}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
+      </div>
       </div>
 
       {/* Outfit Sharing Modal */}
