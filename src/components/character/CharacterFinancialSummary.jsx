@@ -1,19 +1,48 @@
-import { DollarSign, TrendingUp, TrendingDown, Home, Briefcase, ShoppingCart, Dumbbell, Phone, Tv } from 'lucide-react';
+import { DollarSign, TrendingDown, Home, Briefcase, ShoppingCart, Dumbbell, Phone, Tv, Building2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 
 export default function CharacterFinancialSummary({ characterId }) {
   const [financial, setFinancial] = useState(null);
+  const [rentIncomeSources, setRentIncomeSources] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Stagger 400ms to avoid firing in the same tick as the primary character query
-    const timer = setTimeout(() => {
-      base44.entities.CharacterFinancial.filter({ character_id: characterId })
-        .then(results => {
-          if (results.length > 0) setFinancial(results[0]);
-        })
-        .finally(() => setLoading(false));
+    const timer = setTimeout(async () => {
+      try {
+        // Load CharacterFinancial record
+        const results = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
+        if (results.length > 0) setFinancial(results[0]);
+
+        // Load recent rent income transactions for this character
+        // These are written by processHousingCosts / processLandlordRentIncome when owner receives rent
+        const fortyFiveDaysAgo = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+        const rentTxns = await base44.entities.FinancialTransaction.filter({
+          character_id: characterId,
+          transaction_type: 'rent',
+          direction: 'income',
+        }, '-timestamp', 50).catch(() => []);
+
+        const recentRent = rentTxns.filter(t => t.timestamp && t.timestamp >= fortyFiveDaysAgo);
+
+        // Group by location to produce one row per owned property
+        const byLoc = {};
+        for (const txn of recentRent) {
+          const key = txn.location_id || txn.location_name || 'unknown';
+          const locName = txn.location_name ||
+            txn.description?.match(/Rental income — ([^|]+)/)?.[1]?.trim() || 'Rental Property';
+          if (!byLoc[key]) byLoc[key] = { location_name: locName, total: 0, count: 0 };
+          byLoc[key].total += txn.amount || 0;
+          byLoc[key].count += 1;
+        }
+        const rentSources = Object.values(byLoc).map(loc => ({
+          location_name: loc.location_name,
+          monthly_amount: Math.round((loc.total / Math.max(loc.count, 1)) * 100) / 100,
+        }));
+        setRentIncomeSources(rentSources);
+      } finally {
+        setLoading(false);
+      }
     }, 400);
     return () => clearTimeout(timer);
   }, [characterId]);
@@ -22,17 +51,19 @@ export default function CharacterFinancialSummary({ characterId }) {
   if (!financial) return null;
 
   const monthlyExpenses = (financial.recurring_expenses || []).reduce((sum, e) => sum + (e.monthly_cost || 0), 0);
-  // Estimate monthly income — use stored monthly_estimate (based on actual scheduled hours) if available
-  const monthlyIncome = (financial.income_sources || []).reduce((sum, s) => {
+  // Estimate monthly job/salary income
+  const jobMonthlyIncome = (financial.income_sources || []).reduce((sum, s) => {
     if (s.pay_type === 'hourly') {
-      // Prefer stored monthly_estimate (calculated from real shift hours), fallback to weekly_hours * rate * 4.33
       if (s.monthly_estimate) return sum + s.monthly_estimate;
       if (s.weekly_hours) return sum + (s.pay_amount || 0) * s.weekly_hours * 4.33;
-      return sum; // No schedule data — don't guess
+      return sum;
     }
     if (s.pay_type === 'annual') return sum + (s.pay_amount || 0) / 12;
     return sum;
   }, 0);
+  // Rent income from owned locations (separate from job income)
+  const rentMonthlyIncome = rentIncomeSources.reduce((sum, s) => sum + (s.monthly_amount || 0), 0);
+  const monthlyIncome = jobMonthlyIncome + rentMonthlyIncome;
   const monthlyRemaining = monthlyIncome > 0 ? monthlyIncome - monthlyExpenses : financial.current_balance - monthlyExpenses;
 
   const expenseIcons = {
@@ -102,7 +133,7 @@ export default function CharacterFinancialSummary({ characterId }) {
         </div>
       )}
 
-      {/* Income Sources */}
+      {/* Income Sources (job/salary) */}
       {financial.income_sources && financial.income_sources.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-4 space-y-2">
           <h4 className="text-sm font-semibold text-foreground mb-3">Income Sources</h4>
@@ -137,12 +168,34 @@ export default function CharacterFinancialSummary({ characterId }) {
               </div>
             );
           })}
-          {monthlyIncome > 0 && (
+          {jobMonthlyIncome > 0 && (
             <div className="border-t border-border pt-2 flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Est. Monthly Income</span>
-              <span className="font-semibold text-green-300">~${Math.round(monthlyIncome)}/mo</span>
+              <span className="text-muted-foreground">Est. Monthly Job Income</span>
+              <span className="font-semibold text-green-300">~${Math.round(jobMonthlyIncome)}/mo</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Rent / Ownership Income — separate from job income */}
+      {rentIncomeSources.length > 0 && (
+        <div className="bg-card border border-border rounded-xl p-4 space-y-2">
+          <h4 className="text-sm font-semibold text-foreground mb-3">Rental Income</h4>
+          {rentIncomeSources.map((src, idx) => (
+            <div key={idx} className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <Building2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                <span className="text-muted-foreground truncate">{src.location_name}</span>
+              </div>
+              <span className="font-semibold text-emerald-300 flex-shrink-0 ml-2">
+                ~${src.monthly_amount.toFixed(2)}/mo
+              </span>
+            </div>
+          ))}
+          <div className="border-t border-border pt-2 flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">Est. Monthly Rental Income</span>
+            <span className="font-semibold text-emerald-300">~${Math.round(rentMonthlyIncome)}/mo</span>
+          </div>
         </div>
       )}
     </div>
