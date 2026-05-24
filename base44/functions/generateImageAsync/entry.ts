@@ -1248,8 +1248,8 @@ Deno.serve(async (req) => {
       if (charRecord) {
         const allRefUrls = cdnFilter(charRecord.reference_image_urls || []);
         const refUrls = allRefUrls.filter(url => !url.includes('generated_image'));
-        // Use maximum 2 reference images — more refs = more background contamination
-        charRefs = refUrls.slice(0, 2);
+        // Use up to 4 reference images for stronger identity lock (2 was insufficient).
+        charRefs = refUrls.slice(0, 4);
 
         // ── IDENTITY AUDIT LOG — traceable on every real generation ─────────
         console.log(`[IdentityAudit] ══════════════════════════════════════════════`);
