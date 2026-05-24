@@ -171,20 +171,29 @@ export function resolvePhotoSubject({
   }
 
   // 5. CHECK if prompt mentions a known character by name
-  const mentionedChar = findKnownCharacterInText(combinedText, allCharacters, senderCharacterId);
-  if (mentionedChar) {
-    console.log(`[photoSubjectResolver] Known character mentioned in prompt: "${mentionedChar.name}"`);
-    return {
-      photo_subject_type: 'known_character',
-      main_focal_character_id: mentionedChar.id,
-      subject_description: buildCharacterDesc(mentionedChar),
-      use_sender_refs: false,
-      subject_override_desc: buildCharacterDesc(mentionedChar),
-    };
+  //    CRITICAL GUARD: If the sender's own name is already in the prompt (senderNameInPrompt),
+  //    do NOT let a name-match against other characters clear the sender's identity refs.
+  //    The sender IS the subject — their name being in the prompt confirms this.
+  //    Only resolve to a known_character if the match is NOT the sender's own name fragment.
+  if (!senderNameInPrompt) {
+    const mentionedChar = findKnownCharacterInText(combinedText, allCharacters, senderCharacterId);
+    if (mentionedChar) {
+      console.log(`[photoSubjectResolver] Known character mentioned in prompt: "${mentionedChar.name}"`);
+      return {
+        photo_subject_type: 'known_character',
+        main_focal_character_id: mentionedChar.id,
+        subject_description: buildCharacterDesc(mentionedChar),
+        use_sender_refs: false,
+        subject_override_desc: buildCharacterDesc(mentionedChar),
+      };
+    }
   }
 
   // 6. DEFAULT: sender is the focal subject (standard character photo)
-  console.log(`[photoSubjectResolver] Default — sender "${senderCharacterName}" is the photo subject`);
+  // This covers: selfies, object photos (work ID, keys, etc.), scene photos where
+  // the character's name is in the prompt, and any unclassified case.
+  // use_sender_refs=true ensures the character's identity is always in the generation pipeline.
+  console.log(`[photoSubjectResolver] Default — sender "${senderCharacterName}" is the photo subject (senderNameInPrompt=${senderNameInPrompt})`);
   return {
     photo_subject_type: 'selfie',
     main_focal_character_id: senderCharacterId,
