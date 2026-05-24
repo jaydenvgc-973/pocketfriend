@@ -402,52 +402,6 @@ export default function CharacterProfile() {
         {/* Financial Summary */}
         <CharacterFinancialSummary characterId={characterId} />
 
-        {/* Your Connection */}
-        <div className="bg-card border border-border rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Your Connection</p>
-            {(() => {
-              const reciprocal = getReciprocal();
-              const settings = userSettings[0];
-              const assignedRole = settings?.user_relatives?.[character?.id];
-              return reciprocal ? (
-                <div className="space-y-0.5 text-right">
-                  <div className="flex items-center gap-1 text-xs text-pink-400">
-                    <Heart className="w-3 h-3 fill-current" />
-                    <span className="capitalize">{getRelationshipLabel(assignedRole)} ↔ {getRelationshipLabel(reciprocal)}</span>
-                  </div>
-                </div>
-              ) : null;
-            })()}
-          </div>
-          <div className="space-y-3">
-            {[
-              { label: "Respect", value: character.user_respect_level ?? 50 },
-              { label: "Trust", value: character.trust_level ?? 50 },
-              { label: "Friendship", value: character.friendship_level ?? 75 },
-              { label: "Romantic", value: character.romantic_level ?? 0 },
-              { label: "Social Pull", value: character.attraction_level ?? 0 },
-              { label: "Chosen Family", value: character.chosen_family_level ?? 0 },
-              { label: "Jealousy", value: Math.round(((character.relational_jealousy ?? 0) + (character.envy_jealousy ?? 0)) / 2), sublabel: `relational ${character.relational_jealousy ?? 0}% · envy ${character.envy_jealousy ?? 0}%` }
-            ].map(({ label, value, sublabel }) => (
-              <div key={label}>
-                <div className="flex justify-between mb-1">
-                  <span className="text-xs font-medium text-foreground">{label}</span>
-                  <span className="text-xs text-muted-foreground">{value}%</span>
-                </div>
-                {sublabel && <p className="text-[10px] text-muted-foreground/60 mb-1">{sublabel}</p>}
-                <div className="h-2 bg-secondary rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-primary transition-all"
-                    style={{ width: `${value}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-            <CharacterFeelingsCard character={character} onRespectCorrected={refetch} />
-          </div>
-        </div>
-
         {/* Main Identity / Profile Information — Age, Location, Gender, Ethnicity, Orientation, Home Location, Birthday & Zodiac */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
           {(age !== null || character.age_range) && (
@@ -943,10 +897,7 @@ export default function CharacterProfile() {
         {/* 3. Character Closet */}
         <CharacterClosetPanel character={character} />
 
-        {/* 4. What They Call You */}
-        <NicknameForUserField character={character} />
-
-        {/* 5. Aliases / Also Known As */}
+        {/* 4. Aliases / Also Known As */}
         <CharacterAliasEditor character={character} />
 
         {/* ══ SECTION DIVIDER: EMOTIONAL & SOCIAL WORLD ══ */}
@@ -956,7 +907,53 @@ export default function CharacterProfile() {
           <div className="flex-1 h-px bg-border" />
         </div>
 
-        {/* 1. Emotional Profile */}
+        {/* 1. Your Connection */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Your Connection</p>
+            {(() => {
+              const reciprocal = getReciprocal();
+              const settings = userSettings[0];
+              const assignedRole = settings?.user_relatives?.[character?.id];
+              return reciprocal ? (
+                <div className="space-y-0.5 text-right">
+                  <div className="flex items-center gap-1 text-xs text-pink-400">
+                    <Heart className="w-3 h-3 fill-current" />
+                    <span className="capitalize">{getRelationshipLabel(assignedRole)} ↔ {getRelationshipLabel(reciprocal)}</span>
+                  </div>
+                </div>
+              ) : null;
+            })()}
+          </div>
+          <div className="space-y-3">
+            {[
+              { label: "Respect", value: character.user_respect_level ?? 50 },
+              { label: "Trust", value: character.trust_level ?? 50 },
+              { label: "Friendship", value: character.friendship_level ?? 75 },
+              { label: "Romantic", value: character.romantic_level ?? 0 },
+              { label: "Social Pull", value: character.attraction_level ?? 0 },
+              { label: "Chosen Family", value: character.chosen_family_level ?? 0 },
+              { label: "Jealousy", value: Math.round(((character.relational_jealousy ?? 0) + (character.envy_jealousy ?? 0)) / 2), sublabel: `relational ${character.relational_jealousy ?? 0}% · envy ${character.envy_jealousy ?? 0}%` }
+            ].map(({ label, value, sublabel }) => (
+              <div key={label}>
+                <div className="flex justify-between mb-1">
+                  <span className="text-xs font-medium text-foreground">{label}</span>
+                  <span className="text-xs text-muted-foreground">{value}%</span>
+                </div>
+                {sublabel && <p className="text-[10px] text-muted-foreground/60 mb-1">{sublabel}</p>}
+                <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                  <div className="h-full bg-primary transition-all" style={{ width: `${value}%` }} />
+                </div>
+              </div>
+            ))}
+            <CharacterFeelingsCard character={character} onRespectCorrected={refetch} />
+          </div>
+        </div>
+
+        {/* 2. What They Call You */}
+        <NicknameForUserField character={character} />
+
+        {/* 3. Emotional Profile */}
         {(character.emotional_baggage || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wider">Emotional Profile</p>
@@ -1005,10 +1002,10 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* 2. Family */}
+        {/* 4. Family */}
         <FamilyEditor character={character} readOnly={false} allCharacters={allCharacters} currentUser={currentUser} userSettings={userSettings[0]} />
 
-        {/* 3. Family History */}
+        {/* 5. Family History */}
         {character.family_history && (
           <div className="bg-card border border-border rounded-2xl p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Family History</p>
@@ -1016,7 +1013,7 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* 4. Characters They Know */}
+        {/* 6. Characters They Know */}
         {(true) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
             <div className="flex items-center gap-2 mb-2">
@@ -1106,7 +1103,7 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* 5. People In Their World */}
+        {/* 7. People In Their World */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <Ghost className="w-4 h-4 text-primary" />
