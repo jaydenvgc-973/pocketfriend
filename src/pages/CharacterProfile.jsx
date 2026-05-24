@@ -428,26 +428,24 @@ export default function CharacterProfile() {
              </div>
             )}
 
-            {/* Row 1: Your Connection & In Their Own Words */}
-            <div className="grid grid-cols-2 gap-4">
-              {/* Your Connection — Left */}
-              <div className="bg-card border border-border rounded-2xl p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-xs text-primary font-semibold uppercase tracking-wider">Your Connection</p>
-                  {(() => {
-                    const reciprocal = getReciprocal();
-                    const settings = userSettings[0];
-                    const assignedRole = settings?.user_relatives?.[character?.id];
-                    return reciprocal ? (
-                      <div className="space-y-0.5 text-right">
-                        <div className="flex items-center gap-1 text-xs text-pink-400">
-                          <Heart className="w-3 h-3 fill-current" />
-                          <span className="capitalize text-[10px]">{getRelationshipLabel(assignedRole)} ↔ {getRelationshipLabel(reciprocal)}</span>
-                        </div>
-                      </div>
-                    ) : null;
-                  })()}
-                </div>
+            {/* Your Connection card — left: metrics, right: In Their Own Words (feelings) */}
+            <div className="bg-card border border-border rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-xs text-primary font-semibold uppercase tracking-wider">Your Connection</p>
+                {(() => {
+                  const reciprocal = getReciprocal();
+                  const settings = userSettings[0];
+                  const assignedRole = settings?.user_relatives?.[character?.id];
+                  return reciprocal ? (
+                    <div className="flex items-center gap-1 text-xs text-pink-400">
+                      <Heart className="w-3 h-3 fill-current" />
+                      <span className="capitalize text-[10px]">{getRelationshipLabel(assignedRole)} ↔ {getRelationshipLabel(reciprocal)}</span>
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                {/* Left: relationship bars */}
                 <div className="space-y-3">
                   {[
                     { label: "Respect", value: character.user_respect_level ?? 50 },
@@ -469,19 +467,12 @@ export default function CharacterProfile() {
                       </div>
                     </div>
                   ))}
+                </div>
+                {/* Right: In Their Own Words */}
+                <div className="border-l border-border pl-4">
+                  <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-3">In Their Own Words</p>
                   <CharacterFeelingsCard character={character} onRespectCorrected={refetch} />
                 </div>
-              </div>
-
-              {/* In Their Own Words — Right (User Respect Statement) */}
-              <div className="bg-card border border-border rounded-2xl p-4">
-                <div className="flex items-center gap-2 mb-4">
-                  <Heart className="w-4 h-4 text-primary" />
-                  <p className="text-xs text-primary font-semibold uppercase tracking-wider">In Their Own Words</p>
-                </div>
-                <p className="text-sm text-foreground leading-relaxed italic">
-                  {character.loyalty_view || character.upset_reaction || "They hold an important place in my world."}
-                </p>
               </div>
             </div>
 
