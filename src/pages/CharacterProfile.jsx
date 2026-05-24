@@ -473,19 +473,17 @@ export default function CharacterProfile() {
                 </div>
               </div>
 
-              {/* In Their Own Words — Right */}
+              {/* In Their Own Words — Right (Relationship Reflection) */}
               <div className="bg-card border border-border rounded-2xl p-4">
                 <div className="flex items-center gap-2 mb-4">
                   <Heart className="w-4 h-4 text-primary" />
                   <p className="text-xs text-primary font-semibold uppercase tracking-wider">In Their Own Words</p>
                 </div>
-                {character.personality_summary ? (
-                  <p className="text-sm text-foreground leading-relaxed italic">{character.personality_summary}</p>
-                ) : character.current_situation ? (
-                  <p className="text-sm text-muted-foreground leading-relaxed italic">{character.current_situation}</p>
-                ) : (
-                  <p className="text-sm text-muted-foreground italic">No description yet</p>
-                )}
+                <p className="text-sm text-foreground leading-relaxed italic">
+                  {character.nickname_for_user 
+                    ? `I know ${character.nickname_for_user} as someone special in my life.`
+                    : "They're an important part of my world."}
+                </p>
               </div>
             </div>
 
