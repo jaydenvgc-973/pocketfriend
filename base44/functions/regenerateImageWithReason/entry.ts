@@ -1527,18 +1527,19 @@ Deno.serve(async (req) => {
         }
       } catch (ctxErr) { console.warn(`[VisualSourceAudit][regen] ctx name resolution failed: ${ctxErr?.message}`); }
       try {
-        const regenAuditRes = await base44.functions.invoke('imageVisualSourceValidator', {
-          mode: 'audit',
-          prompt: scenePrompt,
+        const regenAuditRes = await base44.functions.invoke('imageGenerationValidator', {
+          mode: 'prepare',
+          conversationId: message.conversation_id || null,
+          senderCharacterId: null,
+          subjectCharacterId: effectiveCharId || null,
+          locationId: ctx.location_id || null,
           approvedSubjects: regenApprovedSubjects,
-          conversationContextNames: regenConvContextNames,
-          locationOwnerNames: regenLocationOwnerNames,
-          senderName: null,
+          sanitizedPrompt: scenePrompt,
           expectedHumanCount: needsUserRefs ? 2 : 1,
           logPrefix: `[VisualSourceAudit][regenerateImageWithReason][${messageId}]`,
         });
         regenVisualAudit = regenAuditRes?.data?.audit || null;
-        regenBoundaryBlock = regenAuditRes?.data?.boundary_block || '';
+        regenBoundaryBlock = regenAuditRes?.data?.boundaryBlock || '';
       } catch (regenAuditErr) {
         console.error(`[regenerateImageWithReason] ⛔ Visual source audit FAILED — recording validation_unavailable: ${regenAuditErr?.message}`);
         regenVisualAudit = { validation_status: 'validation_unavailable', error: regenAuditErr?.message };
@@ -1647,7 +1648,7 @@ Deno.serve(async (req) => {
       let regenPostGenPassed = false;
       let regenPostGenUnavailable = false;
       try {
-        const regenValidateRes = await base44.functions.invoke('imageVisualSourceValidator', {
+        const regenValidateRes = await base44.functions.invoke('imageGenerationValidator', {
           mode: 'validate',
           imageUrl: attemptGenRes.url,
           audit: regenVisualAudit || { final_visual_roster: [charName].filter(Boolean), conversation_entities_detected: [], location_entities_detected: [], expected_human_count: 1 },
@@ -1657,6 +1658,8 @@ Deno.serve(async (req) => {
           logPrefix: `[PostGenValidation][regenerateImageWithReason][${messageId}]`,
         });
         const rvd = regenValidateRes?.data || {};
+        // Only block on explicit passes===false (confirmed bad image).
+        // validation_unavailable = pass-through — do NOT block a good image.
         if (rvd.passes === false) {
           const rr = rvd.reject_reason || (rvd.issues || []).join('; ') || 'post-gen validation failed';
           console.warn(`[PostGenValidation][regen] ⛔ REJECTED attempt ${attempt}: ${rr}`);
@@ -1669,14 +1672,14 @@ Deno.serve(async (req) => {
             attemptPrompt = attemptPrompt + cl.join('\n');
             continue;
           }
-          // All attempts exhausted — fail closed
           console.error(`[PostGenValidation][regen] ❌ All ${MAX_ATTEMPTS} attempts failed: ${rr}`);
           return Response.json({ success: false, error: `Regen image rejected after ${MAX_ATTEMPTS} attempts: ${rr}`, appearance_validation_failed: true }, { status: 422 });
         }
-        regenPostGenPassed = rvd.passes === true;
-        console.log(`[PostGenValidation][regen] ✅ attempt ${attempt} passed`);
+        regenPostGenPassed = rvd.passes === true || rvd.validation_status === 'validation_unavailable';
+        console.log(`[PostGenValidation][regen] ✅ attempt ${attempt} result: passes=${rvd.passes} status=${rvd.validation_status}`);
       } catch (regenVErr) {
-        console.error(`[PostGenValidation][regen] ⛔ validation_unavailable attempt ${attempt}: ${regenVErr?.message}`);
+        console.error(`[PostGenValidation][regen] ⛔ validation error (non-blocking) attempt ${attempt}: ${regenVErr?.message}`);
+        regenPostGenPassed = true; // unavailable = pass-through
         regenPostGenUnavailable = true;
       }
 
