@@ -145,16 +145,20 @@ function cdnFilterNoGenerated(urls) {
   return cdnFilter(urls).filter(url => !url.includes('generated_image'));
 }
 
-function resolveZoneFromLocation(location, promptLower) {
-  // CRITICAL: Filter out AI-generated images from zone refs — passing generated images back as
-  // environment references causes Vertex AI content filter violations (same reason we filter
-  // generated_image from charRefs). Only real uploaded zone photos are valid env refs.
+function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
   const zones = (location.zones || []).filter(z => cdnFilterNoGenerated(z.image_urls || []).length > 0);
 
   if (zones.length === 0) {
-    // No zones with images at all — use flat image_urls (last resort, no zone name)
-    const flat = cdnFilterNoGenerated(location.image_urls || []).slice(0, 4);
-    return { images: flat, zoneName: null };
+    return { images: cdnFilterNoGenerated(location.image_urls || []).slice(0, 4), zoneName: null };
+  }
+
+  // 0. Preferred zone name — highest priority (stored zone from last generation)
+  if (preferredZoneName) {
+    const preferred = zones.find(z => z.zone_name && z.zone_name.toLowerCase() === preferredZoneName.toLowerCase());
+    if (preferred) {
+      const imgs = cdnFilterNoGenerated(preferred.image_urls).slice(0, 4);
+      if (imgs.length > 0) { console.log(`[resolveZone] Preferred zone: "${preferred.zone_name}"`); return { images: imgs, zoneName: preferred.zone_name }; }
+    }
   }
 
   // 1. Exact zone name match in prompt — highest priority
@@ -1221,22 +1225,18 @@ Deno.serve(async (req) => {
       // Pure described stranger — skip all character identity resolution entirely
       console.log(`[generateImageAsync] ⛔ Third-party hard block — no characterId, skipping all sender identity injection. Image generated from prompt description only.`);
     } else if (characterId && (subjectType === 'character' || subjectType === 'joint' || subjectType === 'known_character')) {
-      // Try user-scoped first, then service role with ownership check
-      const charListUser = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
-      charRecord = charListUser?.[0] || null;
-
-      if (!charRecord) {
-        const charListSR = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
-        const candidate = charListSR?.[0] || null;
-        if (candidate) {
-          const owner = candidate.owner_email;
-          if (owner && owner !== requestingUser) {
-            console.error(`[generateImageAsync] ⛔ Cross-account character: ${characterId} owned by ${owner}, request from ${requestingUser}`);
-            await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-            return Response.json({ error: 'Character does not belong to your account.' }, { status: 403 });
-          }
-          charRecord = candidate;
+      // Use service-role directly to avoid user-scoped 429 failures silently dropping identity.
+      // Ownership is verified explicitly below — service-role does not skip the ownership check.
+      const charListSR = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+      const candidate = charListSR?.[0] || null;
+      if (candidate) {
+        const owner = candidate.owner_email;
+        if (owner && owner !== requestingUser) {
+          console.error(`[generateImageAsync] ⛔ Cross-account character: ${characterId} owned by ${owner}, request from ${requestingUser}`);
+          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+          return Response.json({ error: 'Character does not belong to your account.' }, { status: 403 });
         }
+        charRecord = candidate;
       }
 
       if (charRecord) {
@@ -1434,48 +1434,40 @@ Deno.serve(async (req) => {
       console.log(`[generateImageAsync] Location ID from character record: ${locationId || 'NOT FOUND'}`);
 
       if (locationId) {
-        // Verify location belongs to this user
+        // Use service-role directly — avoids user-scoped 429 failures that silently drop the location
         let locRecord = null;
-        const locListUser = await base44.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []);
-        locRecord = locListUser?.[0] || null;
-
-        if (!locRecord) {
-          const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []);
-          const candidate = locListSR?.[0] || null;
-          if (candidate) {
-            const locOwner = candidate.owner_email;
-            const isShared = candidate.scope === 'shared' || candidate.location_type === 'shared';
-            if (locOwner && locOwner !== requestingUser && !isShared) {
-              console.error(`[generateImageAsync] ⛔ Cross-account location: ${locationId} owned by ${locOwner}`);
-              locRecord = null;
-            } else {
-              locRecord = candidate;
-            }
+        const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []);
+        const candidate = locListSR?.[0] || null;
+        if (candidate) {
+          const locOwner = candidate.owner_email;
+          const isShared = candidate.scope === 'shared' || candidate.location_type === 'shared';
+          if (locOwner && locOwner !== requestingUser && !isShared) {
+            console.error(`[generateImageAsync] ⛔ Cross-account location: ${locationId} owned by ${locOwner}`);
+          } else {
+            locRecord = candidate;
           }
         }
 
         if (locRecord) {
           resolvedLocationName = locRecord.name;
           const promptLower = (prompt || '').toLowerCase();
-          const { images, zoneName } = resolveZoneFromLocation(locRecord, promptLower);
+          // Use stored zone name from generation context if available (same as regen path)
+          // so re-requests for same character go to same zone, not a keyword-guessed zone
+          const storedZoneName = message?.generation_context?.zone_name || null;
+          const { images, zoneName } = resolveZoneFromLocation(locRecord, promptLower, storedZoneName);
           envRefs = images;
           resolvedZoneName = zoneName;
-          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" → zone "${zoneName || 'none'}" → ${envRefs.length} env refs`);
+          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" → zone "${zoneName || 'none'}" (preferred="${storedZoneName || 'none'}") → ${envRefs.length} env refs`);
         } else {
           console.warn(`[generateImageAsync] ⚠️ Location ${locationId} not found or access denied — proceeding without environment`);
         }
       } else {
-        // No location on character — skip broad scan to prevent 429.
-        // This is optional context — absence never blocks generation.
-        console.log(`[generateImageAsync] No location ID on character record — skipping resident scan. Proceeding without environment refs.`);
+        console.log(`[generateImageAsync] No location ID on character record — no env refs.`);
       }
     }
 
     // ── 4b. VALIDATE & CONVERT ENV REFS ───────────────────────────────────────
-    // The AI model cannot read AVIF format images (common from iPhone uploads).
-    // Detect AVIF by checking first 12 bytes for "ftyp avif" signature.
-    // If AVIF detected, skip that image — log clearly so we know the real cause.
-    // For other formats (jpeg, png, webp): pass through as-is if HTTP 200.
+    // Skip AVIF images (iPhone HEIC uploads) — AI model cannot read them.
     if (envRefs.length > 0) {
       const validChecks = await Promise.all(
         envRefs.map(async url => {
