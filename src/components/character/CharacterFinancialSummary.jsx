@@ -14,8 +14,10 @@ export default function CharacterFinancialSummary({ characterId }) {
         const results = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
         if (results.length > 0) setFinancial(results[0]);
 
-        // Load recent rent income transactions for this character
-        // These are written by processHousingCosts / processLandlordRentIncome when owner receives rent
+        // Stagger rent query to respect rate limits (other components may be loading simultaneously)
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // Load recent rent income transactions — scoped to this owner via character_id
         const fortyFiveDaysAgo = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
         const rentTxns = await base44.entities.FinancialTransaction.filter({
           character_id: characterId,
@@ -43,7 +45,7 @@ export default function CharacterFinancialSummary({ characterId }) {
       } finally {
         setLoading(false);
       }
-    }, 400);
+    }, 1200);
     return () => clearTimeout(timer);
   }, [characterId]);
 
