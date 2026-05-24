@@ -404,29 +404,7 @@ export default function CharacterProfile() {
             {/* Financial Summary */}
             <CharacterFinancialSummary characterId={characterId} />
 
-            {/* Narrative Biography */}
-            {(character.profile_summary || character.backstory || character.background_story || character.personality_summary) && (
-             <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-               {character.profile_summary && (
-                 <div>
-                   <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Biography / Background</p>
-                   <p className="text-sm text-foreground leading-relaxed">{character.profile_summary}</p>
-                 </div>
-               )}
-               {character.backstory && (
-                 <div className={character.profile_summary ? 'pt-3 border-t border-border' : ''}>
-                   <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Backstory</p>
-                   <p className="text-sm text-muted-foreground leading-relaxed">{character.backstory}</p>
-                 </div>
-               )}
-               {character.background_story && (
-                 <div className={character.profile_summary || character.backstory ? 'pt-3 border-t border-border' : ''}>
-                   <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Background</p>
-                   <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
-                 </div>
-               )}
-             </div>
-            )}
+
 
             {/* Your Connection & Biography/Personality side by side */}
             <div className="grid grid-cols-2 gap-4">
