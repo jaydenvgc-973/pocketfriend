@@ -1005,6 +1005,12 @@ Deno.serve(async (req) => {
         s = s.replace(/\bin a bra( and panties)?\b/gi, 'getting dressed at home');
         s = s.replace(/\bpanties\b/gi, 'underwear');
         s = s.replace(/\bthong\b/gi, 'underwear');
+        // ── STOCK-PHOTO DRIFT GUARD ──
+        // Phrases like "showing off his athletic build" pull toward generic stock-photo males.
+        s = s.replace(/,?\s*showing off (his|her|their) (athletic|muscular|toned|lean|fit|ripped|built) build/gi, '');
+        s = s.replace(/,?\s*showing (his|her|their) (athletic|muscular|toned|lean|fit|ripped|built) (body|build|physique|chest|abs|torso)/gi, '');
+        s = s.replace(/\b(athletic|muscular|toned|ripped|jacked|built|fit)\s+build\b/gi, 'build');
+        s = s.replace(/\bshowing off (his|her|their) (body|physique|muscles|abs|chest)\b/gi, 'relaxed');
         // Do NOT replace: shirtless, no shirt, chest, torso, bedroom, lying together, intimate, vulnerable
         return s.trim();
       }
