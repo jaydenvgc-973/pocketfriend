@@ -1164,10 +1164,10 @@ Deno.serve(async (req) => {
 
       // ── EXPLICIT SCENES: full sanitization pipeline ──
       // Upper body
-      s = s.replace(/\bshirtless\b/gi, 'with no shirt on');
-      s = s.replace(/\btopless\b/gi, 'with no shirt on');
-      s = s.replace(/\bbarechested\b/gi, 'with no shirt on');
-      s = s.replace(/\bbare[- ]?chest(ed)?\b/gi, 'with no shirt on');
+      s = s.replace(/\bshirtless\b/gi, 'no shirt');
+      s = s.replace(/\btopless\b/gi, 'no top');
+      s = s.replace(/\bbarechested\b/gi, 'no shirt');
+      s = s.replace(/\bbare[- ]?chest(ed)?\b/gi, 'no shirt');
 
       // Lower body — NOTE: "underwear", "boxers", "briefs" are NOT rewritten even in explicit scenes.
       // Underwear is ordinary clothing. It must be evaluated by full scene context, not as an isolated word.
