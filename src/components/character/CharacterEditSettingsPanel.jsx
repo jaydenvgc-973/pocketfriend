@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Trash2, Check, Link, AlertTriangle, Cake } from "lucide-react";
+import { X, Plus, Trash2, Check, Link, AlertTriangle, Cake, Moon } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditableTextField, EditableSelectField, EditableEthnicityField } from "@/components/character/ProfileFieldEditor";
@@ -1084,6 +1084,15 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
                   <p className="text-[10px] text-muted-foreground mt-0.5">Drag sliders then hit Save Needs to apply.</p>
                 </div>
                 <NeedsEditor character={character} />
+              </section>
+
+              {/* Sleep Debt */}
+              <section className="space-y-4">
+                <div>
+                  <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Sleep Debt</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Hours of cumulative unresolved sleep debt. Independent from Energy.</p>
+                </div>
+                <SleepDebtEditor character={character} />
               </section>
 
               {/* Education */}
