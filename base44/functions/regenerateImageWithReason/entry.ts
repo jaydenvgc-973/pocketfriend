@@ -1533,65 +1533,7 @@ Deno.serve(async (req) => {
       `\n\n════ MANDATORY CAMERA OVERRIDE (regen validation retry 2 — ESCALATED) ════\nTwo consecutive generations used the same camera frame. Maximum variation required.\nREQUIRED: OVERHEAD / TOP-DOWN angle, camera directly above subject looking straight down. Subject slightly offset. Full environmental context visible from above. No standard eye-level framing.\nAlternative if overhead not contextually possible: EXTREME LOW ANGLE from floor level, camera tilted sharply upward. Subject fills upper portion of frame.\n════════════════════════════════════════════════`,
     ];
 
-    // ── 6b. PRE-GENERATION VISUAL SOURCE AUDIT (regen path) ──────────────────
-    let regenVisualAudit = null;
-    let regenBoundaryBlock = '';
-    {
-      const regenApprovedSubjects = [];
-      if (effectiveCharId && charRefs.length > 0) regenApprovedSubjects.push({ id: effectiveCharId, name: charName, type: 'character' });
-      if (needsUserRefs) regenApprovedSubjects.push({ id: requestingUser, name: 'user', type: 'user' });
-      // Resolve location owner names fresh
-      const regenLocationOwnerNames = [];
-      try {
-        const regenLocId = ctx.location_id || null;
-        if (regenLocId) {
-          const locRecs = await base44.asServiceRole.entities.LocationReference.filter({ id: regenLocId }, null, 1).catch(() => []);
-          const loc = locRecs?.[0];
-          if (loc) {
-            if (loc.owner_character_name) regenLocationOwnerNames.push(loc.owner_character_name);
-            if (loc.owner_npc_name) regenLocationOwnerNames.push(loc.owner_npc_name);
-            (loc.residents || []).forEach(r => { if (r.character_name) regenLocationOwnerNames.push(r.character_name); });
-          }
-        }
-      } catch (_) {}
-      // Resolve conversation context names from recent messages
-      const regenConvContextNames = [];
-      try {
-        const regenConvId = message.conversation_id;
-        if (regenConvId) {
-          const recentMsgs = await base44.asServiceRole.entities.Message.filter({ conversation_id: regenConvId }, '-created_date', 20).catch(() => []);
-          const nameSet = new Set();
-          for (const m of recentMsgs) {
-            if (m.character_name) nameSet.add(m.character_name);
-            if (m.played_as_character_name) nameSet.add(m.played_as_character_name);
-          }
-          const approvedNameSet = new Set(regenApprovedSubjects.map(s => (s.name || '').toLowerCase()));
-          for (const n of nameSet) { if (n && !approvedNameSet.has(n.toLowerCase())) regenConvContextNames.push(n); }
-          console.log(`[VisualSourceAudit][regen] conversation_context_names: [${regenConvContextNames.join(', ')}]`);
-        }
-      } catch (ctxErr) { console.warn(`[VisualSourceAudit][regen] ctx name resolution failed: ${ctxErr?.message}`); }
-      try {
-        const regenAuditRes = await base44.functions.invoke('imageGenerationValidator', {
-          mode: 'prepare',
-          conversationId: message.conversation_id || null,
-          senderCharacterId: null,
-          subjectCharacterId: effectiveCharId || null,
-          locationId: ctx.location_id || null,
-          approvedSubjects: regenApprovedSubjects,
-          sanitizedPrompt: scenePrompt,
-          expectedHumanCount: needsUserRefs ? 2 : 1,
-          logPrefix: `[VisualSourceAudit][regenerateImageWithReason][${messageId}]`,
-        });
-        regenVisualAudit = regenAuditRes?.data?.audit || null;
-        regenBoundaryBlock = regenAuditRes?.data?.boundaryBlock || '';
-      } catch (regenAuditErr) {
-        console.error(`[regenerateImageWithReason] ⛔ Visual source audit FAILED — recording validation_unavailable: ${regenAuditErr?.message}`);
-        regenVisualAudit = { validation_status: 'validation_unavailable', error: regenAuditErr?.message };
-        regenBoundaryBlock = '\n\n⚠️ VISUAL SOURCE BOUNDARY: Audit unavailable — proceed with maximum identity isolation.\n';
-      }
-      // Inject boundary block into finalPrompt
-      if (regenBoundaryBlock) finalPrompt = finalPrompt + regenBoundaryBlock;
-    }
+    // Visual source audit removed — generate → commit → display only.
 
     // ── DISPATCH LOG ─────────────────────────────────────────────────────────
     console.log(`[regenerateImageWithReason] ── PROVIDER DISPATCH ──`);
@@ -1686,45 +1628,6 @@ Deno.serve(async (req) => {
       if (!attemptGenRes?.url) {
         console.warn(`[regenerateImageWithReason] Attempt ${attempt}: no URL returned`);
         continue;
-      }
-
-      // ── POST-GENERATION VALIDATION (regen path) ───────────────────────────
-      let regenPostGenPassed = false;
-      let regenPostGenUnavailable = false;
-      try {
-        const regenValidateRes = await base44.functions.invoke('imageGenerationValidator', {
-          mode: 'validate',
-          imageUrl: attemptGenRes.url,
-          audit: regenVisualAudit || { final_visual_roster: [charName].filter(Boolean), conversation_entities_detected: [], location_entities_detected: [], expected_human_count: 1 },
-          charRecord: null,
-          expectedHumanCount: needsUserRefs ? 2 : 1,
-          attempt,
-          logPrefix: `[PostGenValidation][regenerateImageWithReason][${messageId}]`,
-        });
-        const rvd = regenValidateRes?.data || {};
-        // Only block on explicit passes===false (confirmed bad image).
-        // validation_unavailable = pass-through — do NOT block a good image.
-        if (rvd.passes === false) {
-          const rr = rvd.reject_reason || (rvd.issues || []).join('; ') || 'post-gen validation failed';
-          console.warn(`[PostGenValidation][regen] ⛔ REJECTED attempt ${attempt}: ${rr}`);
-          if (attempt < MAX_ATTEMPTS) {
-            const cl = [`\n\n════ POST-GEN CORRECTION regen (retry ${attempt}) ════`, `Issues: ${rr}`];
-            if (rvd.vision_result?.sender_appeared) cl.push('SENDER MUST NOT APPEAR.');
-            if (rvd.vision_result?.banned_person_appeared) cl.push('BANNED ENTITY APPEARED — remove all context persons.');
-            if (rvd.vision_result?.identifiable_background_faces_detected) cl.push('BACKGROUND FACES DETECTED — blur all background figures.');
-            cl.push('════════════════════════════════════════');
-            attemptPrompt = attemptPrompt + cl.join('\n');
-            continue;
-          }
-          console.error(`[PostGenValidation][regen] ❌ All ${MAX_ATTEMPTS} attempts failed: ${rr}`);
-          return Response.json({ success: false, error: `Regen image rejected after ${MAX_ATTEMPTS} attempts: ${rr}`, appearance_validation_failed: true }, { status: 422 });
-        }
-        regenPostGenPassed = rvd.passes === true || rvd.validation_status === 'validation_unavailable';
-        console.log(`[PostGenValidation][regen] ✅ attempt ${attempt} result: passes=${rvd.passes} status=${rvd.validation_status}`);
-      } catch (regenVErr) {
-        console.error(`[PostGenValidation][regen] ⛔ validation error (non-blocking) attempt ${attempt}: ${regenVErr?.message}`);
-        regenPostGenPassed = true; // unavailable = pass-through
-        regenPostGenUnavailable = true;
       }
 
       const thisCameraVars = extractCameraVarsFromPrompt(attemptPrompt);
