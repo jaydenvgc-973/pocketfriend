@@ -1,20 +1,20 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { REACTION_DEFINITIONS } from "@/lib/reactionDefinitions";
 
-const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "😡", "👍"];
+const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "😡", "👍", "🔥", "😍", "👎", "😒", "😭", "👀"];
 
-export default function MessageReactions({ message, onReact }) {
+export default function MessageReactions({ message, onReact, currentUserType = "user" }) {
   const [showPicker, setShowPicker] = useState(false);
   const pickerRef = useRef(null);
 
-  // Group reactions by emoji
-  const grouped = (message.reactions || []).reduce((acc, r) => {
-    acc[r.emoji] = (acc[r.emoji] || []);
-    acc[r.emoji].push(r.reactor_type);
-    return acc;
-  }, {});
+  // Enforce one-per-actor rule: max one reaction per actor type per message
+  const userReaction = (message.reactions || []).find(r => r.reactor_type === "user");
+  const characterReaction = (message.reactions || []).find(r => r.reactor_type === "character");
+  
+  const reactions = [userReaction, characterReaction].filter(Boolean);
 
-  const hasReactions = Object.keys(grouped).length > 0;
+  const hasReactions = reactions.length > 0;
 
   useEffect(() => {
     const handleClick = (e) => {
@@ -26,24 +26,38 @@ export default function MessageReactions({ message, onReact }) {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  const handleReactionClick = (emoji) => {
+    // If this actor already has a reaction, replace it
+    // Otherwise add it
+    onReact(message.id, emoji, currentUserType);
+    setShowPicker(false);
+  };
+
   return (
     <div className="relative">
-      {/* Existing reactions */}
+      {/* Existing reactions (max one per actor) */}
       {hasReactions && (
         <div className="flex flex-wrap gap-1 mt-1">
-          {Object.entries(grouped).map(([emoji, reactors]) => (
-            <motion.button
-              key={emoji}
-              initial={{ scale: 0.6, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="flex items-center gap-0.5 bg-secondary/80 border border-border rounded-full px-2 py-0.5 text-xs"
-              onClick={() => onReact(message.id, emoji)}
-              title={reactors.includes("character") ? "Character reacted" : "You reacted"}
-            >
-              <span>{emoji}</span>
-              {reactors.length > 1 && <span className="text-muted-foreground">{reactors.length}</span>}
-            </motion.button>
-          ))}
+          {reactions.map((reaction) => {
+            const def = REACTION_DEFINITIONS[reaction.emoji];
+            const isCharacterReaction = reaction.reactor_type === "character";
+            return (
+              <motion.button
+                key={`${reaction.reactor_type}-${reaction.emoji}`}
+                initial={{ scale: 0.6, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className={`flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs border transition-colors ${
+                  isCharacterReaction
+                    ? "bg-primary/10 border-primary/30 text-primary"
+                    : "bg-secondary/80 border-border"
+                }`}
+                onClick={() => handleReactionClick(reaction.emoji)}
+                title={`${isCharacterReaction ? "Character" : "You"} reacted: ${def?.meaning || ""}`}
+              >
+                <span>{reaction.emoji}</span>
+              </motion.button>
+            );
+          })}
         </div>
       )}
 
