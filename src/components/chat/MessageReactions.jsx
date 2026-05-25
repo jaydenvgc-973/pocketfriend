@@ -98,7 +98,7 @@ export default function MessageReactions({ message, onReact }) {
             initial={{ scale: 0.8, opacity: 0, y: 4 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.8, opacity: 0, y: 4 }}
-            className={`absolute bottom-6 z-20 grid grid-cols-6 gap-0.5 bg-card border border-border rounded-2xl px-2 py-2 shadow-xl max-w-xs ${
+            className={`absolute bottom-6 z-20 grid grid-cols-6 gap-1 bg-card border border-border rounded-2xl px-3 py-2 shadow-xl w-80 ${
               message.sender_type === "user" ? "right-0" : "left-0"
             }`}
           >
