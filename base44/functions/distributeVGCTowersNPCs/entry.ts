@@ -23,7 +23,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * ownership: owner_email ONLY. No created_by.
  */
 
-const BATCH_LIMIT = 5;
+const BATCH_LIMIT = 12;
 const ROTATION_THRESHOLD_MS = 90 * 60 * 1000; // 90 minutes
 
 const NPC_ELIGIBLE_TYPES = [

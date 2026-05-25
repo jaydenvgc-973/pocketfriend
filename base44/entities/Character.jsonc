@@ -3,9 +3,18 @@
   "type": "object",
   "rls": {
     "create": {
-      "user_condition": {
-        "role": "user"
-      }
+      "$or": [
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
     },
     "read": {
       "data.owner_email": "{{user.email}}"
@@ -1148,6 +1157,51 @@
     },
     "owner_user_id_legacy": {
       "type": "string"
+    },
+    "presence_state": {
+      "type": "string",
+      "description": "VGC travel state: 'social_visit' when NPC is out on a VGC travel assignment, 'home' when returned. Used by distributeVGCTowersNPCs rotation cooldown check."
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the current VGC location assignment became active. Used to enforce the 90-minute rotation cooldown before re-assigning."
+    },
+    "last_vgc_travel_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last time this NPC was assigned a VGC travel destination. Used for fairness ordering: NPCs who waited longest travel first next run."
+    },
+    "return_location_id": {
+      "type": "string",
+      "description": "The home location ID this NPC should return to after VGC travel ends (set to VGC Towers ID)."
+    },
+    "next_move_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Scheduled time for next VGC travel movement. Informational only \u2014 actual scheduling is driven by the 2-hour automation."
+    },
+    "vgc_travel_day_active": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when the NPC is in an active VGC travel day cycle."
+    },
+    "current_travel_block": {
+      "type": "string",
+      "description": "Current VGC travel block label: MORNING, AFTERNOON, EVENING, or WRAPUP."
+    },
+    "source_of_move": {
+      "type": "string",
+      "description": "What triggered the last location change: 'system' for VGC travel automation, 'user' for manual moves."
+    },
+    "presence_reason": {
+      "type": "string",
+      "description": "Reason label for current presence state: vgc_distribution, vgc_rotation, lockdown_rest, etc."
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the current VGC location assignment expires. NPC may be re-assigned after this time."
     }
   },
   "required": [
