@@ -123,10 +123,27 @@ export async function dispatchImageGeneration({
       }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
     } else if (res?.data?.success === false && isMountedRef.current) {
-      // Generation failed — mark message so frontend shows the retry UI instead of hanging placeholder
-      console.error(`[ChatImageDispatch] Generation returned success=false for ${targetMsgId}: ${res?.data?.error}`);
-      base44.entities.Message.update(targetMsgId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-      setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, content: '[IMAGE_FAILED]' } : m));
+      // Generation failed — classify the failure reason returned by generateImageAsync
+      // so the frontend can surface the correct "Why Regenerate" option automatically.
+      // reason values from generateImageAsync: 'content_policy' | 'provider_error' | 'no_image_url'
+      const failureReason = res?.data?.reason || 'provider_error';
+      const failureError = res?.data?.error || 'Image generation failed.';
+      const isContentPolicy = res?.data?.filtered || failureReason === 'content_policy';
+      console.error(`[ChatImageDispatch] Generation returned success=false for ${targetMsgId}: reason=${failureReason} | ${failureError}`);
+      // Mark with the classified failure so MessageBubble can route to the correct regen option
+      base44.entities.Message.update(targetMsgId, {
+        content: '[IMAGE_FAILED]',
+        generation_context: {
+          ...(res?.data?.generation_context || {}),
+          failure_reason: failureReason,
+          failure_error: failureError,
+          is_content_policy_block: isContentPolicy,
+        },
+      }).catch(() => {});
+      setMessages(prev => prev.map(m => m.id === targetMsgId
+        ? { ...m, content: '[IMAGE_FAILED]', generation_context: { ...(m.generation_context || {}), failure_reason: failureReason, is_content_policy_block: isContentPolicy } }
+        : m
+      ));
     }
   } catch (err) {
     console.error(`[ChatImageDispatch] Image generation failed for ${targetMsgId}:`, err.message);
