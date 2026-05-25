@@ -423,20 +423,24 @@ ${msgContext}
 DECISION: Should you react with an emoji to this message/image?
 
 Rules for reacting:
-- YES for: funny, romantic, shocking, sweet, supportive, insulting, scary, emotional, or surprising content.
+- YES for: funny, romantic, shocking, sweet, supportive, insulting, scary, emotional, surprising, attractive, suspicious, or dramatic content.
 - NO for: routine, neutral, informational, ordinary check-in messages with no emotional weight.
 - React based on YOUR personality and relationship with this person.
-- If YES: pick exactly ONE emoji that genuinely fits the emotional meaning. Do NOT pick at random.
-  - funny → 😂 or 😭
-  - romantic/sweet → ❤️ or 😍
-  - shocking/surprising → 😮 or 😱
-  - sad/concerning → 😢 or 💔
-  - angry/disrespectful → 😡
-  - supportive/appreciation → 👍 or ❤️
-  - cute/wholesome → 🥺 or 😊
-  - confused → 😅 or 🤔
+- If YES: pick exactly ONE emoji from this EXACT list only — do not use any other emoji:
+  ❤️ = affection, love, warmth, sweet/supportive moments
+  😂 = funny, amusing, playful teasing
+  😮 = shocking, surprising, unexpected, disbelief
+  😢 = sad, sympathetic, emotional pain, hurt
+  😡 = angry, offended, serious disapproval, disrespect
+  👍 = agreement, approval, acknowledgment, support
+  🔥 = attractive, hype, admiration of appearance/style, impressive
+  😍 = romantic admiration, captivated affection, strong attraction
+  👎 = disagreement, bad idea, disapproval, rejection
+  😒 = annoyance, side-eye, sarcasm, unimpressed, mild irritation
+  😭 = overwhelmed emotion, laughing too hard, dramatic reaction, can't handle it
+  👀 = curiosity, noticing something, gossip/drama, suspicious or flirty moment
 
-Return JSON: { "should_react": true/false, "emoji": "single emoji or null" }`,
+Return JSON: { "should_react": true/false, "emoji": "single emoji from the list above or null" }`,
         response_json_schema: {
           type: 'object',
           properties: {
@@ -456,21 +460,24 @@ Return JSON: { "should_react": true/false, "emoji": "single emoji or null" }`,
           .match(/(\p{Emoji_Presentation}|\p{Extended_Pictographic})/u)?.[0]?.substring(0, 2) || '';
         if (!cleaned) return null;
 
-        // Guard: don't add duplicate same-emoji reaction from this character
+        // Enforce one-per-actor rule: replace any existing character reaction on this message
         const existingReactions = lastUserMsg.reactions || [];
-        const alreadyReacted = existingReactions.some(r => r.reactor_type === 'character' && r.reactor_id === characterId && r.emoji === cleaned);
-        if (alreadyReacted) {
-          console.log(`[Governor] emojiReact SKIP — same emoji already applied by this character`);
+        const nonCharacterReactions = existingReactions.filter(r => !(r.reactor_type === 'character' && r.reactor_id === characterId));
+        const alreadySameEmoji = existingReactions.some(r => r.reactor_type === 'character' && r.reactor_id === characterId && r.emoji === cleaned);
+        if (alreadySameEmoji) {
+          console.log(`[Governor] emojiReact SKIP — identical reaction already applied by this character`);
           return null;
         }
 
-        console.log(`[Governor] emojiReact FIRING: ${character?.name} → "${cleaned}" on msg=${lastUserMsg.id.substring(0, 8)}`);
+        const updatedReactions = [...nonCharacterReactions, {
+          emoji: cleaned,
+          reactor_type: 'character',
+          reactor_id: characterId,
+        }];
+
+        console.log(`[Governor] emojiReact FIRING: ${character?.name} → "${cleaned}" on msg=${lastUserMsg.id.substring(0, 8)} (replaced=${existingReactions.length !== nonCharacterReactions.length})`);
         return base44.entities.Message.update(lastUserMsg.id, {
-          reactions: [...existingReactions, {
-            emoji: cleaned,
-            reactor_type: 'character',
-            reactor_id: characterId,
-          }],
+          reactions: updatedReactions,
         }).catch(err => { console.warn('[Governor] emojiReact Message.update failed:', err?.message); return null; });
       }).then(updated => {
         if (updated?.id) {
