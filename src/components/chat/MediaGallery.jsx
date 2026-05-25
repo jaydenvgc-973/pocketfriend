@@ -677,7 +677,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     //
     // RULE: If any source resolves refs, store them in sessionUserRefsRef immediately.
     // Subsequent generations in the same session always have refs available.
-    const needsUserRefs = subjectType !== 'character' || allSelectedAreUser;
+    // Need user refs when: user is a subject (user-only mode, multi with user included, or sender=user with no subjects)
+    const userIsInSubjectSelection = selectedCharacterIds.some(id => allCharacters.find(c => c.id === id)?.is_user);
+    const needsUserRefs = isUserOnlyMode || userIsInSubjectSelection || (hasNoSubjects && subjectType === 'user');
 
     let userRefImages = [];
     if (needsUserRefs) {
@@ -717,61 +719,66 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       ? refUrls
       : (character.avatar_url ? [character.avatar_url] : []);
 
-    // STRICT USER-ONLY GUARD: If subjectType is "user", the active chat character
-    // is the conversation context — NOT an image subject.
-    const isUserOnlyMode = subjectType === 'user';
+    // ── SUBJECT ROUTING LOGIC ────────────────────────────────────────────────
+    // The SENDER tab (character vs user) controls WHO SENDS the image.
+    // It does NOT control who appears in the image — that is driven by selectedCharacterIds.
+    //
+    // USER-ONLY MODE: true ONLY when:
+    //   - No characters are selected in the subject picker AND sender tab is "user"
+    //   - OR exactly one selection is the user world-self character
+    //   NEVER true when multiple subjects are selected, even if sender tab is "user".
+    const hasMultipleSubjectsSelected = selectedCharacterIds.length > 1;
+    const hasSingleNonUserSubject = selectedCharacterIds.length === 1 &&
+      !allCharacters.find(c => c.id === selectedCharacterIds[0])?.is_user;
+    const hasSingleUserSubject = selectedCharacterIds.length === 1 &&
+      !!(allCharacters.find(c => c.id === selectedCharacterIds[0])?.is_user);
+    const hasNoSubjects = selectedCharacterIds.length === 0;
 
-    // ── SINGLE EXPLICIT CHARACTER SELECTION OVERRIDE ──────────────────────────
-    // If user picked exactly one character from the picker, that character is the
-    // authoritative subject — regardless of the tab or the active chat character.
+    // isUserOnlyMode: true only when no subjects selected and sender is user,
+    // OR when ONLY the user world-self character is selected (solo user selfie).
+    const isUserOnlyMode = (hasNoSubjects && subjectType === 'user') || hasSingleUserSubject;
+
+    // Single-character override: when exactly one non-user character is selected,
+    // that character is the authoritative subject (overrides the active chat character).
     let resolvedCharacterId = isUserOnlyMode ? null : character.id;
     let resolvedCharacterName = isUserOnlyMode ? null : character.name;
     let resolvedCharRefImages = isUserOnlyMode ? [] : charRefImages;
 
-    // Resolve the single explicitly selected character (if any)
-    let resolvedSingleChar = null;
-    if (!isUserOnlyMode && selectedCharacterIds.length === 1 && !selectedPeople) {
-      resolvedSingleChar = allCharacters.find(c => c.id === selectedCharacterIds[0]) || null;
-    }
-
-    // If user selected a single character who IS the user's world-self (is_user: true),
-    // treat them as subjectType='user' so generateImageAsync uses user refs + user identity,
-    // not character location/environment resolution.
-    const singleSelectIsUser = !!(resolvedSingleChar?.is_user);
-
-    if (resolvedSingleChar && !singleSelectIsUser) {
-      // Explicit non-user character selected — override identity to that character
-      resolvedCharacterId = resolvedSingleChar.id;
-      resolvedCharacterName = resolvedSingleChar.name;
-      const explicitRefs = (resolvedSingleChar.reference_image_urls || [])
-        .filter(url => url && !url.includes('generated_image'))
-        .slice(0, 3);
-      resolvedCharRefImages = explicitRefs.length > 0
-        ? explicitRefs
-        : (resolvedSingleChar.avatar_url ? [resolvedSingleChar.avatar_url] : []);
-      console.log(`[MediaGallery] Single character override: "${resolvedSingleChar.name}" (${resolvedSingleChar.id}) — NOT active chat character "${character.name}"`);
-    } else if (resolvedSingleChar && singleSelectIsUser) {
-      // User's world-self selected — clear all character identity, treat as user-only
+    if (hasSingleNonUserSubject && !selectedPeople) {
+      const resolvedSingleChar = allCharacters.find(c => c.id === selectedCharacterIds[0]) || null;
+      if (resolvedSingleChar) {
+        resolvedCharacterId = resolvedSingleChar.id;
+        resolvedCharacterName = resolvedSingleChar.name;
+        const explicitRefs = (resolvedSingleChar.reference_image_urls || [])
+          .filter(url => url && !url.includes('generated_image'))
+          .slice(0, 3);
+        resolvedCharRefImages = explicitRefs.length > 0
+          ? explicitRefs
+          : (resolvedSingleChar.avatar_url ? [resolvedSingleChar.avatar_url] : []);
+        console.log(`[MediaGallery] Single character override: "${resolvedSingleChar.name}" (${resolvedSingleChar.id})`);
+      }
+    } else if (hasSingleUserSubject) {
       resolvedCharacterId = null;
       resolvedCharacterName = null;
       resolvedCharRefImages = [];
-      console.log(`[MediaGallery] Single selection is user world-self ("${resolvedSingleChar.name}") — routing as user-only, clearing character identity`);
+      console.log(`[MediaGallery] Single selection is user world-self — routing as user-only`);
     }
 
-    // Final effective subject type — user-only if tab=user OR single selection is the user world-self
-    const effectiveSubjectType = (isUserOnlyMode || singleSelectIsUser) ? 'user' : subjectType;
+    // effectiveSubjectType: "user" only when truly user-only, otherwise use sender tab value
+    // IMPORTANT: When multiple subjects are selected, sender tab is "user" means the image
+    // is SENT by the user — it does NOT mean the image contains only the user.
+    const effectiveSubjectType = isUserOnlyMode ? 'user' : subjectType;
 
-    // CRITICAL: If effective subject is user-only, the multi-person payload must be completely
-    // suppressed — even if selectedPeople was computed above. The multi-person path in
-    // mediaGridGenerate would include the active chat character (Ethan, etc.) as "primary"
-    // regardless of who the user intended to show. User-only = no multiPersonSelection, period.
-    const isEffectivelyUserOnly = (isUserOnlyMode || singleSelectIsUser);
-    const effectiveMultiPersonSelection = (!isEffectivelyUserOnly && selectedPeople)
+    // Multi-person payload: built when selectedPeople was validated above.
+    // ONLY suppressed when truly user-only (no subjects, or solo user world-self).
+    const effectiveMultiPersonSelection = (!isUserOnlyMode && selectedPeople)
       ? buildMultiPersonPayload(selectedPeople, promptText, selectedLocation?.id || null, selectedZone || null)
       : null;
 
-    if (isEffectivelyUserOnly) {
-      console.log(`[MediaGallery] USER-ONLY mode — character identity cleared. Active chat character "${character.name}" is NOT a subject. multiPersonSelection suppressed.`);
+    if (isUserOnlyMode) {
+      console.log(`[MediaGallery] USER-ONLY mode — no character subjects. Active chat character "${character.name}" is NOT a subject.`);
+    } else if (hasMultipleSubjectsSelected) {
+      console.log(`[MediaGallery] MULTI-SUBJECT mode — ${selectedCharacterIds.length} subjects selected. Sender tab="${subjectType}" is SENDER only, not subject filter.`);
     }
 
     // ── SELECTED IDENTITY NAME RESOLUTION ────────────────────────────────────
