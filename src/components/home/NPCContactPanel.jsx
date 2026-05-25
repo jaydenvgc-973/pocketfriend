@@ -39,11 +39,17 @@ export default function NPCContactPanel() {
       return res?.data?.npcs || [];
     },
     enabled: !!currentUser?.id,
-    staleTime: 10 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
-    retry: 5,
-    retryDelay: (attempt) => Math.min(1000 * Math.pow(2, attempt), 16000),
-    placeholderData: (prev) => prev,
+    staleTime: 15 * 60 * 1000,  // match useOwnedCharacters — prevents duplicate fetches
+    gcTime: 60 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    retry: (failureCount, error) => {
+      if (failureCount >= 2) return false;
+      const is429 = error?.message?.includes('429') || error?.status === 429;
+      return !is429; // never retry 429s — they are rate limits, not transient errors
+    },
+    retryDelay: (attempt) => Math.min(5000 * 2 ** attempt, 30000),
+    placeholderData: (prev) => prev, // CRITICAL: never show empty on 429 — hold last known good
   });
 
   // Merge and deduplicate
