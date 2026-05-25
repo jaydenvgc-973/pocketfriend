@@ -80,7 +80,7 @@ export function useChatReactionActions({
       const onCooldown = (Date.now() - lastFired) < REACTION_COOLDOWN_MS;
 
       if (
-        ["❤️", "👍", "😂", "😢"].includes(emoji) &&
+        ["❤️", "👍", "😂", "😢", "🔥", "😍", "😭"].includes(emoji) &&
         Math.random() < 0.45 &&
         conversationId &&
         !onCooldown &&
@@ -92,7 +92,15 @@ export function useChatReactionActions({
 
         setTimeout(async () => {
           try {
-            const emojiMeanings = { "❤️": "a ❤️ (love/appreciation)", "👍": "a 👍 (thumbs up/approval)", "😂": "a 😂 (laughing reaction)", "😢": "a 😢 (sad/touched reaction)" };
+            const emojiMeanings = {
+              "❤️": "a ❤️ (love/appreciation)",
+              "👍": "a 👍 (thumbs up/approval)",
+              "😂": "a 😂 (laughing reaction)",
+              "😢": "a 😢 (sad/touched reaction)",
+              "🔥": "a 🔥 (fire/attraction/hype reaction)",
+              "😍": "a 😍 (heart-eyes/romantic admiration reaction)",
+              "😭": "a 😭 (overwhelmed/crying laughing reaction)",
+            };
             const replyRes = await base44.integrations.Core.InvokeLLM({
               prompt: `You are ${character.name}. ${character.personality_summary || ""} You just sent this message: "${msg.content?.substring(0, 150) || "(image)"}". The person you're talking to reacted to YOUR message with ${emojiMeanings[emoji] || "an emoji reaction"}. Write a SHORT, natural, casual response — as yourself, reacting to RECEIVING that reaction from them. 1 sentence max, like a real text. Express how you feel about their reaction to what YOU said. Do NOT speak as the user or assume what they meant. Be yourself. No quotes, no labels.`,
             });
