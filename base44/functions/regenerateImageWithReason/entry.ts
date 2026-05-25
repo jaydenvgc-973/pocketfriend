@@ -1003,20 +1003,11 @@ Deno.serve(async (req) => {
           message: 'Your persona does not have visual reference photos yet. Add or select reference photos before regenerating for accurate likeness.',
         };
         console.warn(`[regenerateImageWithReason] ⚠️ user_ref_count=0 with userSelectedAsSubject=true — user/persona has no visual references`);
-        if (reason === 'no_avatar') {
-          // Block: likeness repair path — no refs = cannot correct likeness
-          console.warn(`[regenerateImageWithReason] BLOCKING no_avatar regen: user selected as subject but has zero visual reference photos`);
-          return Response.json({
-            ...diagnosticPayload,
-            status: 'blocked_missing_user_refs',
-            final_generation_allowed: false,
-            success: false,
-            error: diagnosticPayload.message,
-          });
-        }
-        // Non-likeness reasons: attach warning to response but allow generation to continue
-        // The warning will be surfaced by the UI after generation completes.
-        console.warn(`[regenerateImageWithReason] WARNING (non-blocking for reason="${reason}"): user selected as subject but has zero visual reference photos — continuing without user refs`);
+        // NEVER hard-block regen due to missing user refs.
+        // If the user persona has no reference photos, we simply skip them from the subject bundle
+        // and proceed with character-only generation. Hard-blocking is worse UX than a partial result.
+        // The user is told what happened via the warning in the response.
+        console.warn(`[regenerateImageWithReason] WARNING (non-blocking for reason="${reason}"): user selected as subject but has zero visual reference photos — proceeding as character-only`);
         // Store warning for later — attach to success response
         req.__userRefWarning = diagnosticPayload;
       }
