@@ -507,39 +507,54 @@ Deno.serve(async (req) => {
       const nameRefKey = buildNameReferenceKey(people);
       const subjectBundleBlocks = people.map(p => buildSubjectBundle(p, envRefs.length)).join('\n\n');
 
-      const multiPersonPrompt = `
-════════════════════════════════════════════════════════════
-IMAGE GENERATION PRIORITY STACK (GOVERNING LAW)
-════════════════════════════════════════════════════════════
-Priority 1: SCENE INTENT — user prompt meaning, emotion, action
-Priority 2: CHARACTER PRESENCE — who is there and what they are doing
-Priority 3: CAMERA POSITION — angle, distance, framing
-Priority 4: ZONE IDENTITY — room type and style
-Priority 5: REFERENCE IMAGE — guidance only for identity, not scene replication
+      // Build mandatory subjects list — every dropdown-selected person MUST appear
+      const mandatorySubjectsList = people.map(p => {
+        const isUser = p.subjectRole === 'user';
+        const nameDisplay = p.displayName || (isUser ? 'the user' : p.role);
+        return `  • "${nameDisplay}" — ${isUser ? 'user/persona' : `character ID: ${p.id}`} — MUST be physically visible in the image`;
+      }).join('\n');
 
-Lower priority NEVER overrides higher priority.
-
-INTENSITY BALANCING:
-When closeness + nighttime + private setting + minimal clothing co-occur, do NOT maximize all signals at once.
-
+      // Build mandatory location lock — if location/zone selected in dropdown, it is law
+      const locationLock = (locationName || zoneName) ? `
 ════════════════════════════════════════════════════════════
-CORE SCENE PROMPT:
+⛔ MANDATORY LOCATION LOCK — SELECTED IN UI DROPDOWN — NON-NEGOTIABLE
 ════════════════════════════════════════════════════════════
-${sanitizedPrompt}
-
+The user selected this location from the dropdown. It is LOCKED. Do NOT substitute, invent, or ignore it.
+Location: "${locationName || 'selected location'}"${zoneName ? `\nZone: "${zoneName}"` : ''}
+${envRefs.length > 0 ? `Environment reference images: Images 1–${envRefs.length}
+✅ PRESERVE: walls, floor, furniture, fixtures, objects, architecture, layout
+✓ REGENERATE: lighting (time-of-day), camera angle, framing
+⛔ Do NOT invent replacement furniture or use a different location` : '⛔ No reference images — render the named location faithfully based on its name and type.'}
 ════════════════════════════════════════════════════════════
-${nameRefKey}
+` : (envRefs.length > 0 ? `
 ════════════════════════════════════════════════════════════
-
-${envRefs.length > 0 ? `════════════════════════════════════════════════════════════
-ENVIRONMENT — IMAGES 1–${envRefs.length} (70–80% structural truth, 20–30% dynamic flexibility)
+ENVIRONMENT — IMAGES 1–${envRefs.length}
 ════════════════════════════════════════════════════════════
 ✅ PRESERVE: walls, floor, furniture, fixtures, objects, architecture, layout
 ✓ REGENERATE: lighting (time-of-day), camera angle, framing, perspective
 ⛔ Do NOT invent replacement furniture or duplicate existing objects
-⛔ Zone structure stays TRUE while camera and lighting CHANGE
+════════════════════════════════════════════════════════════
+` : '');
 
-` : ''}════════════════════════════════════════════════════════════
+      const multiPersonPrompt = `
+════════════════════════════════════════════════════════════
+⛔ MANDATORY SUBJECTS — SELECTED IN UI DROPDOWN — ABSOLUTE LAW
+════════════════════════════════════════════════════════════
+The following subjects were explicitly selected by the user. They are REQUIRED to physically appear in this image.
+Do NOT omit, replace, or substitute any of them with a generic person, stock photo subject, or crowd member.
+Do NOT let the scene prompt override who must be in the image — the dropdown selection is the authority.
+
+${mandatorySubjectsList}
+
+GENERATION IS INVALID if any of the above subjects is absent from the final image.
+════════════════════════════════════════════════════════════
+
+${locationLock}
+════════════════════════════════════════════════════════════
+${nameRefKey}
+════════════════════════════════════════════════════════════
+
+════════════════════════════════════════════════════════════
 SEALED SUBJECT BUNDLES — READ EACH BUNDLE INDEPENDENTLY
 ATTRIBUTES FROM ONE BUNDLE MUST NEVER BE APPLIED TO ANOTHER BUNDLE
 ════════════════════════════════════════════════════════════
@@ -558,11 +573,19 @@ This scene contains ${people.length} distinct subjects. Each has a sealed bundle
 ✅ Each subject must be rendered using ONLY their own sealed bundle.
 
 ════════════════════════════════════════════════════════════
+SCENE PROMPT (describes action/emotion/setting — does NOT override mandatory subjects or location)
+════════════════════════════════════════════════════════════
+${sanitizedPrompt}
+
+════════════════════════════════════════════════════════════
 UNIFIED COMPOSITION RULE
 ════════════════════════════════════════════════════════════
-The image is ONE COHESIVE SCENE. All subjects are naturally integrated.
-Do NOT: paste subjects over background | disconnect from room perspective | invent props
+The image is ONE COHESIVE SCENE. All mandatory subjects are naturally integrated into the locked location.
+Do NOT: omit any mandatory subject | paste subjects over background | invent a different location
 DO: move camera | change angle | apply time-of-day lighting | reframe from new camera position
+
+INTENSITY BALANCING:
+When closeness + nighttime + private setting + minimal clothing co-occur, do NOT maximize all signals at once.
 `;
 
       console.log(`[mediaGridGenerate] Multi-person prompt built for ${people.length} people with ${identityRefs.length} identity refs + ${envRefs.length} env refs`);
@@ -820,9 +843,21 @@ If the prompt mentions a crowd or background people, render them as generic, ind
       ? '\n\n⛔ USER-ONLY IMAGE: Do NOT include any app characters, fictional persons, or named individuals in this image unless they are explicitly described in the scene prompt. The person in this image is only the user. No character identity refs were provided.'
       : '';
 
+    // MANDATORY SUBJECT LOCK for single-subject path
+    const singleSubjectLock = effectiveCharacterName
+      ? `\n\n⛔ MANDATORY SUBJECT — SELECTED IN UI DROPDOWN: "${effectiveCharacterName}" (character ID: ${effectiveCharacterId}) MUST physically appear in this image. Do NOT omit or substitute them.`
+      : isUserOnly
+      ? `\n\n⛔ MANDATORY SUBJECT — SELECTED IN UI DROPDOWN: The user/persona MUST physically appear in this image. Do NOT omit or substitute them.`
+      : '';
+
+    // MANDATORY LOCATION LOCK for single-subject path — UI dropdown selection overrides auto-resolve
+    const singleLocationLock = (locationName || zoneName)
+      ? `\n\n⛔ MANDATORY LOCATION — SELECTED IN UI DROPDOWN: Location="${locationName || 'selected location'}"${zoneName ? ` Zone="${zoneName}"` : ''}. This location is LOCKED. Do NOT substitute or invent a different setting. Render the scene at this exact location.`
+      : '';
+
     const singleCharRes = await base44.functions.invoke('generateImageAsync', {
       messageId,
-      prompt: sanitizedPrompt + userOnlyExclusionNote,
+      prompt: sanitizedPrompt + singleSubjectLock + singleLocationLock + userOnlyExclusionNote,
       characterId: effectiveCharacterId,
       characterName: effectiveCharacterName,
       senderCharacterId: effectiveSenderCharId,
@@ -832,6 +867,10 @@ If the prompt mentions a crowd or background people, render them as generic, ind
       subjectType: resolvedSubjectType,
       characterEmotionalState: 'calm',
       userUploadedReferenceUrl: hasUserRef ? toPublicCDN(referenceImageUrl) : null,
+      // Pass the UI-selected location so generateImageAsync uses it instead of auto-resolving
+      // from the character's DB record (which may point to a different location than selected)
+      manualLocationId: locationId || null,
+      manualZoneName: zoneName || null,
     });
 
     if (!singleCharRes?.data?.success) {

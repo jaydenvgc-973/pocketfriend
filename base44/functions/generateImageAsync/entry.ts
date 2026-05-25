@@ -847,6 +847,8 @@ Deno.serve(async (req) => {
       characterEmotionalState,
       userUploadedReferenceUrl,
       ownerEmail,
+      manualLocationId,   // UI-selected location from Media Grid dropdown — overrides auto-resolve
+      manualZoneName,     // UI-selected zone from Media Grid dropdown — overrides auto-resolve
     } = await req.json();
 
     if (!messageId) {
@@ -1117,15 +1119,26 @@ Deno.serve(async (req) => {
     let resolvedLocationName = null;
     let resolvedZoneName = null;
 
-    if (charRecord) {
-      const _pl = (sanitizedPrompt || prompt || '').toLowerCase();
-      const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house))\b/.test(_pl);
-      const _work = /\b(at (my |his |her )?(work|job|office|workplace|store|restaurant|bar|studio)|on the job|during (my|his|her) (shift|work day)|busy day at work|work today|yesterday at work|busy at work|at the (office|store|restaurant|bar|studio|workplace)|his (job|office|shift)|her (job|office|shift))\b/.test(_pl);
-      const _school = /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus))\b/.test(_pl);
-      let locationId = _home ? (charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null) : _work ? (charRecord.current_work_location_id || charRecord.occupation_location_id || null) : _school ? (charRecord.current_school_location_id || charRecord.education_location_id || null) : null;
-      const _locSrc = _home ? 'prompt_home' : _work ? 'prompt_work' : _school ? 'prompt_school' : 'resolved_current';
-      if (!locationId) locationId = charRecord.resolved_current_location_id || charRecord.current_home_location_id || charRecord.home_location_id || charRecord.current_work_location_id || charRecord.occupation_location_id || null;
+    // ── LOCATION RESOLUTION PRIORITY ─────────────────────────────────────────
+    // 1. manualLocationId (from Media Grid dropdown) — HIGHEST PRIORITY, UI is the authority
+    // 2. Character DB record auto-resolve — only when no manual selection
+    const useManualLocation = !!manualLocationId;
+
+    if (useManualLocation || charRecord) {
+      let locationId = useManualLocation ? manualLocationId : null;
+      const _locSrc = useManualLocation ? 'manual_ui_dropdown' : 'auto_resolve_from_character';
+
+      if (!useManualLocation && charRecord) {
+        const _pl = (sanitizedPrompt || prompt || '').toLowerCase();
+        const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house))\b/.test(_pl);
+        const _work = /\b(at (my |his |her )?(work|job|office|workplace|store|restaurant|bar|studio)|on the job|during (my|his|her) (shift|work day)|busy day at work|work today|yesterday at work|busy at work|at the (office|store|restaurant|bar|studio|workplace)|his (job|office|shift)|her (job|office|shift))\b/.test(_pl);
+        const _school = /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus))\b/.test(_pl);
+        locationId = _home ? (charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null) : _work ? (charRecord.current_work_location_id || charRecord.occupation_location_id || null) : _school ? (charRecord.current_school_location_id || charRecord.education_location_id || null) : null;
+        if (!locationId) locationId = charRecord.resolved_current_location_id || charRecord.current_home_location_id || charRecord.home_location_id || charRecord.current_work_location_id || charRecord.occupation_location_id || null;
+      }
+
       console.log(`[generateImageAsync] Location ID: ${locationId || 'NOT FOUND'} (src: ${_locSrc})`);
+      if (useManualLocation) console.log(`[generateImageAsync] ✅ Using UI-selected location — overrides character auto-resolve`);
 
       if (locationId) {
         let locRecord = null;
@@ -1144,16 +1157,17 @@ Deno.serve(async (req) => {
         if (locRecord) {
           resolvedLocationName = locRecord.name;
           const promptLower = (prompt || '').toLowerCase();
-          const storedZoneName = message?.generation_context?.zone_name || null;
-          const { images, zoneName } = resolveZoneFromLocation(locRecord, promptLower, storedZoneName);
+          // Zone priority: UI-selected zone > stored generation_context zone > keyword auto-resolve
+          const preferredZone = manualZoneName || message?.generation_context?.zone_name || null;
+          const { images, zoneName } = resolveZoneFromLocation(locRecord, promptLower, preferredZone);
           envRefs = images;
           resolvedZoneName = zoneName;
-          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" → zone "${zoneName || 'none'}" (preferred="${storedZoneName || 'none'}") → ${envRefs.length} env refs`);
+          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" → zone "${zoneName || 'none'}" (preferred="${preferredZone || 'none'}", src="${useManualLocation ? 'manual_ui_dropdown' : 'auto'}") → ${envRefs.length} env refs`);
         } else {
           console.warn(`[generateImageAsync] ⚠️ Location ${locationId} not found or access denied — proceeding without environment`);
         }
       } else {
-        console.log(`[generateImageAsync] No location ID on character record — no env refs.`);
+        console.log(`[generateImageAsync] No location ID resolved — no env refs.`);
       }
     }
 
