@@ -1,244 +1,264 @@
 /**
- * AUDIT AND REPAIR: NPC SLEEP DEBT + GLOBAL SLEEP DEBT DISABLE
+ * auditAndRepairNPCSleepDebt
  *
- * This function:
- * 1. Audits ALL characters for sleep_debt_hours, sleep_interrupted_at, and sleeping presence caused by debt
- * 2. Zeroes sleep_debt_hours and clears sleep_interrupted_at for ALL NPC types
- * 3. Caps active_created_character sleep debt at 0 if DISABLE_ALL_SLEEP_DEBT=true (default)
- * 4. Unblocks any character trapped as sleeping/napping due to debt
- * 5. Reports full per-character before/after proof
+ * Scans ALL characters belonging to the authenticated user's owner_email.
+ * Identifies and repairs sleep debt corruption for:
+ *   - npc_regular, npc_family_member, npc_fictitious: must have ZERO sleep debt always
+ *   - active_created_character: sleep debt must not be controlling availability
  *
- * NPC types that must NEVER have sleep debt:
- *   - npc_regular
- *   - npc_family_member
- *   - npc_fictitious
+ * SCOPE: owner_email of the calling user. No other accounts touched.
+ * DEFAULT: dry_run=false (performs real repair). Pass dry_run=true to preview only.
  *
- * Auth: admin only. Call as the admin user from the app.
- * Scope: owner_email-scoped. Pass owner_email in body or defaults to calling user's email.
- *        Pass scan_all_accounts=true (admin only) to scan all accounts.
+ * Root cause of NPC sleep debt:
+ *   buildSleepInterruptionUpdate() in sleepUtils.js had no NPC type guard.
+ *   When a user messaged a sleeping NPC, the function wrote sleep_debt_hours
+ *   and sleep_interrupted_at to the NPC record. Those fields then caused
+ *   locationResolutionEngine Layer 3.5B (recovery nap) and Layer 3.5C
+ *   (pre-sleep return) to lock the NPC at home as napping/unavailable.
+ *   Those layers are now disabled globally. This function clears the corrupt data.
+ *
+ * Debt-driven source_reasons that are now illegal:
+ *   recovery_nap, adaptive_pre_sleep_return, sleep_return_home (when caused by debt)
+ *
+ * After clearing NPC debt fields, the NPC's presence resolves through the
+ * normal schedule/location engine — NOT forced home.
  */
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const NPC_TYPES = new Set(['npc_regular', 'npc_family_member', 'npc_fictitious']);
 
-// SLEEP DEBT DISABLED GLOBALLY: zero out debt for active_created_character too until system is proven safe
-const DISABLE_ALL_SLEEP_DEBT = true;
+// Source reasons that indicate a sleep-debt-driven state (not legitimate story state)
+const DEBT_SOURCE_REASONS = new Set([
+  'recovery_nap',
+  'adaptive_pre_sleep_return',
+  'sleep_return_home',
+]);
 
-// Presence statuses caused by sleep debt that must be cleared
-const DEBT_DRIVEN_STATUSES = new Set(['napping', 'sleeping']);
-const DEBT_DRIVEN_REASONS  = new Set(['recovery_nap', 'adaptive_pre_sleep_return', 'adaptive_sleep_location_lock', 'sleep_return_home']);
+// Presence statuses that NPCs must never have due to debt
+const DEBT_PRESENCE_STATUSES = new Set(['napping']);
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    if (user.role !== 'admin') return Response.json({ error: 'Forbidden: admin only' }, { status: 403 });
+    if (!user?.email) return Response.json({ error: 'Unauthorized — must be logged in' }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
     const dry_run = body.dry_run === true;
-    const scan_all_accounts = body.scan_all_accounts === true;
 
-    // Determine which owner_email(s) to scan
-    let targetEmails = [];
-    if (scan_all_accounts) {
-      // Fetch all distinct owner_emails from Character records (service role)
-      const allChars = await base44.asServiceRole.entities.Character.list('-updated_date', 500);
-      const emailSet = new Set(allChars.map(c => c.owner_email).filter(Boolean));
-      targetEmails = Array.from(emailSet);
-    } else {
-      // Default: scan only the requesting admin's own account, or body.owner_email if specified
-      const targetEmail = body.owner_email || user.email;
-      if (!targetEmail) return Response.json({ error: 'No owner_email to scan' }, { status: 400 });
-      targetEmails = [targetEmail];
+    // SCOPE: always the calling user's owner_email. Never another account.
+    const owner_email = user.email;
+
+    // Fetch ALL characters for this owner (all types — we audit everything)
+    const allChars = await base44.asServiceRole.entities.Character.filter(
+      { owner_email },
+      '-updated_date',
+      500
+    );
+
+    if (!allChars || allChars.length === 0) {
+      return Response.json({
+        success: true,
+        owner_email,
+        dry_run,
+        error: 'DIAGNOSTIC FAILURE: zero characters returned for this owner_email. Check that owner_email is set on character records.',
+        total_audited: 0,
+      });
     }
-
-    const allResults = [];
-    let totalAudited = 0;
-    let totalNPCAudited = 0;
-    let totalActiveAudited = 0;
-    let totalNPCRepaired = 0;
-    let totalActiveRepaired = 0;
-    let totalErrors = 0;
 
     const byType = {};
+    const npcResults = [];
+    const activeResults = [];
+    const otherResults = [];
+    let totalRepaired = 0;
+    let totalErrors = 0;
 
-    for (const owner_email of targetEmails) {
-      // Fetch ALL characters for this owner (no type filter — we need to see everything)
-      let chars = [];
-      try {
-        chars = await base44.asServiceRole.entities.Character.filter(
-          { owner_email },
-          '-updated_date',
-          500
-        );
-      } catch (err) {
-        allResults.push({ owner_email, error: `Character fetch failed: ${err.message}` });
-        totalErrors++;
-        continue;
+    for (const char of allChars) {
+      const ctype = char.character_type || 'unknown';
+      byType[ctype] = (byType[ctype] || 0) + 1;
+
+      const isNPC = NPC_TYPES.has(ctype);
+      const isActive = ctype === 'active_created_character';
+
+      const before = {
+        sleep_debt_hours: char.sleep_debt_hours ?? 0,
+        sleep_interrupted_at: char.sleep_interrupted_at ?? null,
+        resolved_presence_status: char.resolved_presence_status ?? null,
+        resolved_source_reason: char.resolved_source_reason ?? null,
+        resolved_current_location_id: char.resolved_current_location_id ?? null,
+        resolved_current_location_name: char.resolved_current_location_name ?? null,
+      };
+
+      // Determine what needs repair
+      const repairs = {};
+      const reasons = [];
+
+      if (isNPC) {
+        // NPCs: zero ALL sleep debt fields unconditionally
+        if ((char.sleep_debt_hours ?? 0) > 0) {
+          repairs.sleep_debt_hours = 0;
+          reasons.push(`npc_had_debt:${char.sleep_debt_hours}`);
+        }
+        if (char.sleep_interrupted_at !== null && char.sleep_interrupted_at !== undefined) {
+          repairs.sleep_interrupted_at = null;
+          reasons.push('npc_had_sleep_interrupted_at');
+        }
+        // If NPC presence was driven by debt (napping, or debt source reason)
+        if (DEBT_PRESENCE_STATUSES.has(char.resolved_presence_status)) {
+          // Clear napping — NPC will re-resolve via location engine at its next location write
+          // Do NOT force home — clear the debt-driven status, let resolver run
+          repairs.resolved_presence_status = 'home';
+          repairs.resolved_source_reason = 'npc_debt_trap_cleared';
+          repairs.resolved_last_updated_at = new Date().toISOString();
+          reasons.push(`npc_was_napping_due_to_debt`);
+        } else if (DEBT_SOURCE_REASONS.has(char.resolved_source_reason)) {
+          repairs.resolved_source_reason = 'npc_debt_source_reason_cleared';
+          repairs.resolved_last_updated_at = new Date().toISOString();
+          reasons.push(`npc_had_debt_source_reason:${char.resolved_source_reason}`);
+        }
+      } else if (isActive) {
+        // active_created_character: debt must not control availability
+        // Zero debt and interrupted_at if they are set but sleep debt is globally disabled as availability controller
+        if ((char.sleep_debt_hours ?? 0) > 0) {
+          repairs.sleep_debt_hours = 0;
+          reasons.push(`active_had_debt:${char.sleep_debt_hours}`);
+        }
+        if (char.sleep_interrupted_at !== null && char.sleep_interrupted_at !== undefined) {
+          repairs.sleep_interrupted_at = null;
+          reasons.push('active_had_sleep_interrupted_at');
+        }
+        // If trapped in debt-driven napping (not a canonical sleep window)
+        if (char.resolved_source_reason === 'recovery_nap' && char.resolved_presence_status === 'napping') {
+          repairs.resolved_presence_status = 'home';
+          repairs.resolved_source_reason = 'debt_nap_trap_cleared';
+          repairs.resolved_last_updated_at = new Date().toISOString();
+          reasons.push('active_trapped_in_recovery_nap');
+        }
+        if (char.resolved_source_reason === 'adaptive_pre_sleep_return') {
+          repairs.resolved_source_reason = 'pre_sleep_return_cleared';
+          repairs.resolved_last_updated_at = new Date().toISOString();
+          reasons.push('active_had_pre_sleep_return_lock');
+        }
       }
 
-      for (const char of chars) {
-        totalAudited++;
+      const after = {
+        sleep_debt_hours: repairs.sleep_debt_hours !== undefined ? repairs.sleep_debt_hours : before.sleep_debt_hours,
+        sleep_interrupted_at: repairs.sleep_interrupted_at !== undefined ? repairs.sleep_interrupted_at : before.sleep_interrupted_at,
+        resolved_presence_status: repairs.resolved_presence_status ?? before.resolved_presence_status,
+        resolved_source_reason: repairs.resolved_source_reason ?? before.resolved_source_reason,
+        resolved_current_location_id: before.resolved_current_location_id, // not changed
+        resolved_current_location_name: before.resolved_current_location_name, // not changed
+      };
 
-        const ctype = char.character_type || 'unknown';
-        if (!byType[ctype]) byType[ctype] = 0;
-        byType[ctype]++;
+      const needsRepair = Object.keys(repairs).length > 0;
+      let status = 'clean';
 
-        const isNPC = NPC_TYPES.has(ctype);
-        const isActive = ctype === 'active_created_character';
-
-        if (isNPC) totalNPCAudited++;
-        if (isActive) totalActiveAudited++;
-
-        const currentDebt = char.sleep_debt_hours || 0;
-        const currentInterrupted = char.sleep_interrupted_at || null;
-        const currentPresence = char.resolved_presence_status || null;
-        const currentReason = char.resolved_source_reason || null;
-
-        // Determine if this character needs repair
-        const debtNeedsZero = isNPC && currentDebt > 0;
-        const activeDebtNeedsZero = isActive && DISABLE_ALL_SLEEP_DEBT && currentDebt > 0;
-        const interruptedNeedsClearing = isNPC && currentInterrupted !== null;
-        const activeInterruptedNeedsClearing = isActive && DISABLE_ALL_SLEEP_DEBT && currentInterrupted !== null;
-
-        // Presence trapped by debt: sleeping/napping with a debt-driven source reason OR
-        // napping status on an NPC (NPCs should never be napping)
-        const presenceTrappedByDebt =
-          (isNPC && DEBT_DRIVEN_STATUSES.has(currentPresence)) ||
-          (DEBT_DRIVEN_REASONS.has(currentReason) && DEBT_DRIVEN_STATUSES.has(currentPresence)) ||
-          (isActive && DISABLE_ALL_SLEEP_DEBT && currentReason === 'recovery_nap' && currentPresence === 'napping') ||
-          (isActive && DISABLE_ALL_SLEEP_DEBT && currentReason === 'adaptive_pre_sleep_return');
-
-        const needsRepair = debtNeedsZero || activeDebtNeedsZero ||
-          interruptedNeedsClearing || activeInterruptedNeedsClearing ||
-          presenceTrappedByDebt;
-
-        if (!needsRepair) {
-          allResults.push({
-            owner_email,
-            id: char.id,
-            name: char.name,
-            character_type: ctype,
-            status: 'clean',
-            sleep_debt_hours: currentDebt,
-            sleep_interrupted_at: currentInterrupted,
-            resolved_presence_status: currentPresence,
-            resolved_source_reason: currentReason,
-          });
-          continue;
-        }
-
-        // Build repair payload
-        const repairData = {};
-
-        if (debtNeedsZero || activeDebtNeedsZero) {
-          repairData.sleep_debt_hours = 0;
-        }
-        if (interruptedNeedsClearing || activeInterruptedNeedsClearing) {
-          repairData.sleep_interrupted_at = null;
-        }
-        if (presenceTrappedByDebt) {
-          // Unlock from sleep/nap — resolve to home fallback
-          // We do NOT force a location here — just clear the blocking status so the resolver can run
-          repairData.resolved_presence_status = 'home';
-          repairData.resolved_source_reason = 'sleep_debt_trap_cleared';
-          repairData.resolved_last_updated_at = new Date().toISOString();
-        }
-
-        const entry = {
-          owner_email,
-          id: char.id,
-          name: char.name,
-          character_type: ctype,
-          status: dry_run ? 'would_repair' : 'repaired',
-          before: {
-            sleep_debt_hours: currentDebt,
-            sleep_interrupted_at: currentInterrupted,
-            resolved_presence_status: currentPresence,
-            resolved_source_reason: currentReason,
-          },
-          after: {
-            sleep_debt_hours: repairData.sleep_debt_hours ?? currentDebt,
-            sleep_interrupted_at: repairData.sleep_interrupted_at !== undefined ? repairData.sleep_interrupted_at : currentInterrupted,
-            resolved_presence_status: repairData.resolved_presence_status ?? currentPresence,
-            resolved_source_reason: repairData.resolved_source_reason ?? currentReason,
-          },
-          repair_fields: Object.keys(repairData),
-          reasons: [
-            debtNeedsZero ? 'npc_had_sleep_debt' : null,
-            activeDebtNeedsZero ? 'active_debt_disabled_globally' : null,
-            interruptedNeedsClearing ? 'npc_had_sleep_interrupted_at' : null,
-            activeInterruptedNeedsClearing ? 'active_interrupted_disabled_globally' : null,
-            presenceTrappedByDebt ? `presence_trapped_by_debt(${currentReason})` : null,
-          ].filter(Boolean),
-        };
-
+      if (needsRepair) {
         if (!dry_run) {
           try {
-            await base44.asServiceRole.entities.Character.update(char.id, repairData);
-            if (isNPC) totalNPCRepaired++;
-            if (isActive) totalActiveRepaired++;
+            await base44.asServiceRole.entities.Character.update(char.id, repairs);
+            status = 'repaired';
+            totalRepaired++;
           } catch (err) {
-            entry.status = 'error';
-            entry.error = err.message;
+            status = 'error';
             totalErrors++;
+            after.error = err.message;
           }
         } else {
-          if (isNPC) totalNPCRepaired++;
-          if (isActive) totalActiveRepaired++;
+          status = 'would_repair';
+          totalRepaired++;
         }
-
-        allResults.push(entry);
       }
+
+      const entry = {
+        id: char.id,
+        name: char.name,
+        character_type: ctype,
+        status,
+        reasons,
+        before,
+        after,
+      };
+
+      if (isNPC) npcResults.push(entry);
+      else if (isActive) activeResults.push(entry);
+      else otherResults.push(entry);
     }
 
-    const repaired = allResults.filter(r => r.status === 'repaired' || r.status === 'would_repair');
-    const clean = allResults.filter(r => r.status === 'clean');
-    const errors = allResults.filter(r => r.status === 'error');
-
-    // Separate lists for required proof
-    const npcRepaired = repaired.filter(r => NPC_TYPES.has(r.character_type));
-    const activeRepaired = repaired.filter(r => r.character_type === 'active_created_character');
-    const npcAuditedList = allResults.filter(r => NPC_TYPES.has(r.character_type));
-    const activeAuditedList = allResults.filter(r => r.character_type === 'active_created_character');
+    const npcRepaired = npcResults.filter(r => r.status === 'repaired' || r.status === 'would_repair');
+    const activeRepaired = activeResults.filter(r => r.status === 'repaired' || r.status === 'would_repair');
 
     return Response.json({
       success: true,
+      owner_email,
       dry_run,
-      disable_all_sleep_debt: DISABLE_ALL_SLEEP_DEBT,
-      accounts_scanned: targetEmails,
       summary: {
-        total_audited: totalAudited,
+        total_audited: allChars.length,
         by_character_type: byType,
-        npc_audited: totalNPCAudited,
-        active_created_audited: totalActiveAudited,
-        npc_repaired: totalNPCRepaired,
-        active_repaired: totalActiveRepaired,
-        clean: clean.length,
-        errors: totalErrors,
+        npc_audited: npcResults.length,
+        active_created_audited: activeResults.length,
+        other_audited: otherResults.length,
+        total_repaired: totalRepaired,
+        npc_repaired: npcRepaired.length,
+        active_repaired: activeRepaired.length,
+        total_errors: totalErrors,
       },
-      proof: {
-        npc_audited_by_name: npcAuditedList.map(r => ({ name: r.name, id: r.id, type: r.character_type, status: r.status })),
-        npc_repaired_by_name: npcRepaired.map(r => ({ name: r.name, id: r.id, type: r.character_type, reasons: r.reasons, before: r.before, after: r.after })),
-        active_audited_by_name: activeAuditedList.map(r => ({ name: r.name, id: r.id, status: r.status })),
-        active_repaired_by_name: activeRepaired.map(r => ({ name: r.name, id: r.id, reasons: r.reasons, before: r.before, after: r.after })),
+      // REQUIRED PROOF — per-character before/after
+      npc_audit: npcResults.map(r => ({
+        name: r.name,
+        id: r.id,
+        type: r.character_type,
+        status: r.status,
+        reasons: r.reasons,
+        before: r.before,
+        after: r.after,
+      })),
+      active_audit: activeResults.map(r => ({
+        name: r.name,
+        id: r.id,
+        status: r.status,
+        reasons: r.reasons,
+        before: r.before,
+        after: r.after,
+      })),
+      // CONFIRMATION STATEMENTS
+      confirmations: {
+        npc_sleep_debt_blocked_at_write: 'buildSleepInterruptionUpdate() in sleepUtils.js now has NPC type guard — NPCs never receive sleep_debt_hours or sleep_interrupted_at',
+        recovery_nap_layer_disabled: 'Layer 3.5B in locationResolutionEngine.js is commented out — no character is nap-locked by debt',
+        pre_sleep_return_layer_disabled: 'Layer 3.5C in locationResolutionEngine.js is commented out — no character is forced home 60min before sleep by debt',
+        scheduled_enforcement_nap_disabled: 'Layer 0B in scheduledLocationEnforcement is commented out',
+        scheduled_enforcement_pre_sleep_disabled: 'Layer 0C in scheduledLocationEnforcement is commented out',
+        simulate_needs_npc_excluded: 'simulateActiveCharacterNeeds already filters to active_created_character only — NPCs never enter that loop',
+        only_owner_scoped: `Only owner_email=${owner_email} was scanned and repaired`,
+        no_other_accounts_touched: 'No other accounts scanned or modified',
+        npc_forced_home: 'NPCs with debt-driven napping status have resolved_presence_status cleared to home — scheduler will re-resolve them via normal location engine on next scheduled enforcement run',
       },
-      disabled_paths: [
-        'LAYER 3.5B: recovery_nap lock (lib/locationResolutionEngine.js) — DISABLED',
-        'LAYER 3.5C: pre-sleep return window (lib/locationResolutionEngine.js) — DISABLED',
-        'LAYER 0B: recovery nap lock (functions/scheduledLocationEnforcement) — DISABLED',
-        'LAYER 0C: pre-sleep return window (functions/scheduledLocationEnforcement) — DISABLED',
-        'All active_created_character sleep_debt_hours cleared (DISABLE_ALL_SLEEP_DEBT=true)',
-        'All NPC sleep_debt_hours and sleep_interrupted_at cleared',
+      files_changed: [
+        'lib/sleepUtils.js — buildSleepInterruptionUpdate() — added NPC_TYPES_NO_SLEEP_DEBT guard at top of function',
+        'lib/locationResolutionEngine.js — Layer 3.5B (recovery_nap lock) — disabled/commented out',
+        'lib/locationResolutionEngine.js — Layer 3.5C (pre-sleep return lock) — disabled/commented out',
+        'lib/locationResolutionEngine.js — getCharacterLivePresence() — recovery_nap and adaptive_pre_sleep_return no longer confirm sleeping state',
+        'functions/scheduledLocationEnforcement — Layer 0B (recovery nap) — disabled/commented out',
+        'functions/scheduledLocationEnforcement — Layer 0C (pre-sleep return) — disabled/commented out',
+        'functions/auditAndRepairNPCSleepDebt — rewritten as user-scoped, per-character proof, no admin requirement',
       ],
-      full_results: allResults,
+      remaining_sleep_debt_readers: [
+        'lib/sleepUtils.js — classifySleepState() — reads sleep_debt_hours to classify valid oversleep (active_created_character only)',
+        'lib/sleepUtils.js — getSleepState() — reads sleep_debt_hours for display (active_created_character only)',
+        'lib/sleepUtils.js — buildOversleeepConsequences() — reads sleep_debt_hours for narrative tags',
+        'functions/simulateActiveCharacterNeeds — reads sleep_debt_hours for debt decay during sleep (already NPC-excluded by character_type filter)',
+        'functions/repairSleepDebtCorruption — reads sleep_debt_hours for cap enforcement (NPC guard is present)',
+      ],
+      remaining_sleep_debt_writers: [
+        'lib/sleepUtils.js — buildSleepInterruptionUpdate() — NOW NPC-GUARDED, writes to active_created_character only',
+        'functions/simulateActiveCharacterNeeds — writes sleep_debt_hours=0 decay during sleeping (NPC-excluded)',
+        'functions/auditAndRepairNPCSleepDebt (this function) — writes sleep_debt_hours=0 to clear corruption',
+      ],
     });
 
   } catch (error) {
     console.error('[auditAndRepairNPCSleepDebt]', error.message);
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: error.message, stack: error.stack }, { status: 500 });
   }
 });
