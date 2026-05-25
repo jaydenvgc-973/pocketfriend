@@ -9,7 +9,6 @@
  * - If required visual subjects exist, they MUST appear — no silent downgrade to scenery.
  * - If NO subjects are selected and prompt describes no visual person, generate the non-character image.
  * - All repair/regeneration routes through regenerateImageWithReason only.
- * - imageGenerationValidator is permanently deleted and banned — do NOT reference it.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
