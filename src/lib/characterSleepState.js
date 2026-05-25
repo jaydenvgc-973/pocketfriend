@@ -159,11 +159,9 @@ export function getCharacterSleepState(character) {
 
         if (isSlowdownHour && !hasAwakeOverride) {
           const energyLow = character.energy_value !== undefined && character.energy_value < 30;
-          // Require meaningful debt (>= 0.5h) — do not trigger autonomous sleep for tiny debt fragments
-          const sleepDebt = character.sleep_debt_hours && character.sleep_debt_hours >= 0.5;
           const tiredEnough = character.energy_value !== undefined && character.energy_value < 45;
 
-          if (energyLow || sleepDebt || tiredEnough) {
+          if (energyLow || tiredEnough) {
             // Autonomous evidence supports sleep — treat as asleep, flag that DB status is stale
             return {
               isSleeping: true,
@@ -172,7 +170,7 @@ export function getCharacterSleepState(character) {
               contextLabel: '🌙 sleeping (autonomous — stale DB)',
               visible_label: '🌙 sleeping',
               confirmed_reason: 'autonomous_sleep_stale_db',
-              evidence_source: energyLow ? 'energy_low' : sleepDebt ? 'sleep_debt' : 'tiredness_threshold',
+              evidence_source: energyLow ? 'energy_low' : 'tiredness_threshold',
               confidence: 0.8,
               stale_risk: false,
               isLikelyStale: false,
@@ -290,21 +288,15 @@ export function getCharacterSleepState(character) {
 
   const hasValidOversleep = (() => {
     if (character.decided_to_stay_up_until && new Date(character.decided_to_stay_up_until) > nowET) return false;
-    // Only valid oversleep with debt IF debt is in valid range [0, 2.0].
-    // Values > 2.0 are corrupted and must not trigger valid oversleep — character should wake instead.
-    if (character.sleep_debt_hours && character.sleep_debt_hours > 0 && character.sleep_debt_hours <= 2.0) return true;
     if (validOversleepReasons.some(r => reason.includes(r))) return true;
     if (character.health_value !== undefined && character.health_value < 30) return true;
     if (character.mental_value !== undefined && character.mental_value < 25) return true;
-    if (character.sleep_interrupted_at && (Date.now() - new Date(character.sleep_interrupted_at).getTime()) / 3600000 < 4) return true;
     return false;
   })();
 
   if (hasValidOversleep) {
-    const proofType = character.sleep_debt_hours > 0 ? 'sleep_debt' :
-      character.health_value < 30 ? 'illness' :
-      character.mental_value < 25 ? 'emotional_state' :
-      character.sleep_interrupted_at ? 'interrupted_sleep' : 'unknown';
+    const proofType = character.health_value < 30 ? 'illness' :
+      character.mental_value < 25 ? 'emotional_state' : 'unknown';
 
     return {
       isSleeping: true,
@@ -351,7 +343,6 @@ export function getCharacterSleepState(character) {
       db_reason: reason,
       scheduled_window: isScheduledSleeping(character, nowET),
       minutes_past_wake: minutesPastWake,
-      sleep_debt_hours: character.sleep_debt_hours || 0,
       energy: character.energy_value ?? 75,
       health: character.health_value ?? 100,
       mental: character.mental_value ?? 70,

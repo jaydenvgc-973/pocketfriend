@@ -31,7 +31,6 @@ import SupportAssistant from "@/components/settings/SupportAssistant.jsx";
 import AdminIssueReportViewer from "@/components/settings/AdminIssueReportViewer";
 import HomeAnchorsEditor from "@/components/settings/HomeAnchorsEditor";
 import RecoverySignalGlossary from "@/components/settings/RecoverySignalGlossary";
-import SleepDebtRemovalPanel from "@/components/settings/SleepDebtRemovalPanel";
 import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
 
 export default function Settings() {
@@ -655,11 +654,6 @@ export default function Settings() {
           {/* Narrative Diagnostic */}
           <div className="mb-3 bg-card border border-border rounded-xl p-4">
             <NarrativeDiagnosticPanel />
-          </div>
-
-          {/* Sleep Debt Removal */}
-          <div className="mb-3">
-            <SleepDebtRemovalPanel />
           </div>
 
           <div className="mb-3">

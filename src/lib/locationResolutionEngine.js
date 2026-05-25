@@ -209,17 +209,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
-  // LAYER 3.5B: RECOVERY NAP LOCK — DISABLED GLOBALLY
-  // Sleep debt is not proven safe as a location/availability controller.
-  // Characters should not be locked home napping due to sleep_debt_hours.
-  // Re-enable only after sleep debt is audited, proven accurate, and safe per-character.
-  // if (!isNPC && hasUnpaidSleepDebt(character) && isNapTime(character, currentTime) && sleepHomeId) { ... }
 
-  // LAYER 3.5C: PRE-SLEEP RETURN WINDOW — DISABLED GLOBALLY
-  // Pre-sleep return lock blocks availability 60 min before sleep using schedule math.
-  // This has caused legitimate unavailability and travel blocking for active characters.
-  // Re-enable only after availability impact is audited and confirmed safe.
-  // if (!isNPC && isInPreSleepReturnWindow(character, currentTime) && sleepHomeId) { ... }
 
   // LAYER 3.5D: Social visit — only allowed outside sleep/pre-sleep windows
   const homeIdForVisitCheck = character.current_home_location_id || character.home_location_id;
@@ -459,22 +449,7 @@ function isCharacterSleeping(character) {
   return isCharacterAsleepFromUtils(character);
 }
 
-/**
- * Check if character has unpaid sleep debt
- */
-function hasUnpaidSleepDebt(character) {
-  return character.sleep_debt_hours && character.sleep_debt_hours > 0;
-}
 
-/**
- * Check if it's nap time (1-3pm typically)
- */
-function isNapTime(character, currentTime) {
-  // CRITICAL: Convert to Eastern Time
-  const etTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const hour = etTime.getHours();
-  return hour >= 13 && hour < 16; // 1pm - 4pm
-}
 
 /**
  * Create a failed resolution response
