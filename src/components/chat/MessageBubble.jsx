@@ -87,17 +87,11 @@ export default function MessageBubble({ message, character, showName = false, on
     }
   }, [message.image_url]); // eslint-disable-line
 
-  // imgLoadError: browser failed to load the URL. Auto-attempt a browser-side cache-bust reload once.
+  // imgLoadError: browser failed to load the URL. Surface as failed state — do NOT auto-recover.
+  // User must explicitly click "Try Recovery Again" or "Regenerate" to mutate the image.
   useEffect(() => {
     if (!imgLoadError || !localImageUrl) return;
-    // First failure: try a simple browser reload (cache-bust key increment).
-    // If it fails again, onError fires → imgRetryKey is already > 0 → setImageRetryFailed(true) below.
-    if (imgRetryKey === 0) {
-      setImgLoadError(false);
-      setImgRetryKey(1);
-    } else {
-      setImageRetryFailed(true);
-    }
+    setImageRetryFailed(true);
   }, [imgLoadError]); // eslint-disable-line
 
   // Auto-load: if message has no image yet and content is "" (actively generating),
@@ -109,52 +103,21 @@ export default function MessageBubble({ message, character, showName = false, on
   const isDefinitivelyFailed = !isUser && !message.is_narrative && !message.location_share &&
     !localImageUrl && (message.content === '[IMAGE_FAILED]' || message.content === '[IMAGE_CONTEXT_UNVERIFIED]');
 
-  // Definitively failed: auto-trigger recovery immediately on mount.
+  // Definitively failed: surface as failed state immediately — do NOT auto-recover.
+  // User must explicitly click a button to mutate the image.
   useEffect(() => {
     if (!isDefinitivelyFailed) return;
-    if (imageRetrying) return;
-    clearImageRecoveryCooldown(message.id);
-    setImageRetrying(true);
-    setImageRetryStatus('recovering');
-    base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
-      .then(res => {
-        const url = res?.data?.image_url;
-        if (url && url.startsWith('http') && isMountedRef.current) {
-          setLocalImageUrl(normalizeImageUrl(url));
-          setImgLoadError(false);
-          setImgRetryKey(0);
-          onImageLoaded?.(message.id, url);
-        } else {
-          if (isMountedRef.current) setImageRetryFailed(true);
-        }
-      })
-      .catch(() => { if (isMountedRef.current) setImageRetryFailed(true); })
-      .finally(() => { if (isMountedRef.current) { setImageRetrying(false); setImageRetryStatus('idle'); } });
-  }, [isDefinitivelyFailed, message.id]); // eslint-disable-line
+    setImageRetryFailed(true);
+  }, [isDefinitivelyFailed]); // eslint-disable-line
 
-  // Waiting for generation: after timeout, auto-trigger recovery.
+  // Waiting for generation: after timeout, surface as failed — do NOT auto-recover.
+  // The subscription will push the URL when the backend finishes. If it doesn't arrive,
+  // the user must explicitly click "Load Photo" to trigger recovery.
   useEffect(() => {
     if (!isWaitingForGeneration) return;
     const t = setTimeout(() => {
-      if (!isMountedRef.current) return;
       setAutoLoadExpired(true);
-      clearImageRecoveryCooldown(message.id);
-      setImageRetrying(true);
-      setImageRetryStatus('recovering');
-      base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate: false })
-        .then(res => {
-          const url = res?.data?.image_url;
-          if (url && url.startsWith('http') && isMountedRef.current) {
-            setLocalImageUrl(normalizeImageUrl(url));
-            setImgLoadError(false);
-            setImgRetryKey(0);
-            onImageLoaded?.(message.id, url);
-          } else {
-            if (isMountedRef.current) setImageRetryFailed(true);
-          }
-        })
-        .catch(() => { if (isMountedRef.current) setImageRetryFailed(true); })
-        .finally(() => { if (isMountedRef.current) { setImageRetrying(false); setImageRetryStatus('idle'); } });
+      setImageRetryFailed(true);
     }, AUTO_LOAD_TIMEOUT_MS);
     return () => clearTimeout(t);
   }, [isWaitingForGeneration, message.id]); // eslint-disable-line
