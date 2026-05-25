@@ -22,7 +22,7 @@ const REASONS = [
     id: "no_avatar",
     icon: UserX,
     label: "Doesn't look like them",
-    description: "Same scene, stronger character likeness",
+    description: "Same scene, stronger character likeness. Zone from original image is preserved.",
     color: "text-blue-400",
     bg: "bg-blue-500/10 border-blue-500/30 hover:border-blue-500/60",
   },
@@ -33,6 +33,14 @@ const REASONS = [
     description: "Pick the correct location and zone to use as the background",
     color: "text-emerald-400",
     bg: "bg-emerald-500/10 border-emerald-500/30 hover:border-emerald-500/60",
+  },
+  {
+    id: "characters_and_location",
+    icon: Users,
+    label: "Characters & Location both wrong",
+    description: "Fix who's in the image AND change the location/zone",
+    color: "text-violet-400",
+    bg: "bg-violet-500/10 border-violet-500/30 hover:border-violet-500/60",
   },
   {
     id: "dont_like",
@@ -106,7 +114,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const [selectedZone, setSelectedZone] = useState(null);
   const [loadingLocations, setLoadingLocations] = useState(false);
 
-  // Subject picker for "Doesn't look like them"
+  // Subject picker for "Doesn't look like them" / combined flow
   const [showSubjectPicker, setShowSubjectPicker] = useState(false);
   const [allCharacters, setAllCharacters] = useState([]);
   const [loadingCharacters, setLoadingCharacters] = useState(false);
@@ -120,6 +128,10 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const [rosterDiagnostics, setRosterDiagnostics] = useState(null);
   // User settings — fetched when subject picker opens to get avatar + reference images
   const [userSettings, setUserSettings] = useState(null);
+  // Combined mode: after subject picker, continue to location picker
+  const [combinedMode, setCombinedMode] = useState(false);
+  // Pending subject selection from combined flow — held until location is confirmed
+  const [pendingSubjectSelection, setPendingSubjectSelection] = useState(null);
 
   // ── PROMPT-DERIVED IDENTITY ────────────────────────────────────────────────
   // Parse [CHARACTER] Name or [CHARACTER] FirstName from prompt as authoritative subject identity.
@@ -158,6 +170,8 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       setSelectedSubjectIds([]);
       setRosterRepairDiagnostics([]);
       setRosterDiagnostics(null);
+      setCombinedMode(false);
+      setPendingSubjectSelection(null);
     }
   }, [isOpen]);
 
@@ -363,20 +377,26 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
 
   const handleConfirmSubjectPicker = () => {
     const hasUser = selectedSubjectIds.includes('__user__');
-    // All roster entries are resolved — every id here is a real canonical Character.id
     const charIds = selectedSubjectIds.filter(id => id !== '__user__');
 
-    // Collect user reference images using same priority order as MediaGallery:
-    // 1. UserSettings.reference_image_urls  2. UserSettings.generated_avatar_urls  3. user roster avatar
+    // Collect user reference images — PRIORITY ORDER (same as MediaGallery sessionUserRefsRef):
+    // 1. UserSettings.reference_image_urls (real face photos)
+    // 2. UserSettings.generated_avatar_urls
+    // 3. user roster entry avatar_url (the avatar shown in the picker IS a valid identity ref)
+    // 4. generation_context user refs (stored from original generation)
     let userRefImages = [];
     if (hasUser) {
       const userRosterEntry = allCharacters.find(c => c.is_user);
+      const ctxUserRefs = (generationContext?.subjects || [])
+        .find(s => s.subject_type === 'user')?.reference_images || [];
       const refs = [
         ...(userSettings?.reference_image_urls || []).slice(0, 3),
         ...(userSettings?.generated_avatar_urls || []).slice(0, 2),
-        userRosterEntry?.avatar_url,
+        userRosterEntry?.avatar_url,       // avatar shown in picker = valid identity ref
+        ...ctxUserRefs.slice(0, 2),        // original generation refs as further fallback
       ].filter(Boolean);
       userRefImages = refs;
+      console.log(`[RegenerateModal] User refs resolved: ${refs.length} (settings=${(userSettings?.reference_image_urls||[]).length}, avatar=${!!userRosterEntry?.avatar_url}, ctx=${ctxUserRefs.length})`);
     }
 
     const userName = userSettings?.fictional_world_name ||
@@ -384,17 +404,52 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       allCharacters.find(c => c.is_user)?.name ||
       null;
 
-    onSelect('no_avatar', null, null, null, null, null, {
+    const subjectPayload = {
       intendedSubjectIds: charIds,
       includeUser: hasUser,
       userRefImages: hasUser ? userRefImages : null,
       userName: hasUser ? userName : null,
-    });
-    setShowSubjectPicker(false);
+    };
+
+    if (combinedMode) {
+      // Combined flow: stash subject selection, move to location picker
+      setPendingSubjectSelection(subjectPayload);
+      setShowSubjectPicker(false);
+      setShowLocationPicker(true);
+      setLoadingLocations(true);
+      const tryFetch = () => base44.functions.invoke('fetchAllLocationsForUser', {}).then(res => {
+        const locs = res?.data?.locations || res?.locations || [];
+        setLocations(locs);
+      });
+      tryFetch().catch(err => {
+        const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit');
+        if (is429) return new Promise(r => setTimeout(r, 3000)).then(tryFetch).catch(() => setLocations([]));
+        setLocations([]);
+      }).finally(() => setLoadingLocations(false));
+    } else {
+      // "Doesn't look like them" — use zone from original generation_context automatically
+      // so the scene background is preserved when only character likeness is the issue.
+      const ctxLocationId = generationContext?.location_id || generationContext?.locationId || null;
+      const ctxZoneName = generationContext?.zone_name || generationContext?.zoneName || null;
+      const ctxLocationImages = generationContext?.location_reference_images ||
+        generationContext?.locationReferenceImages || null;
+      const ctxLocationName = generationContext?.location_name || generationContext?.locationName || null;
+
+      console.log(`[RegenerateModal] no_avatar — preserving zone from ctx: location=${ctxLocationId} zone=${ctxZoneName} refs=${ctxLocationImages?.length ?? 0}`);
+
+      onSelect('no_avatar', null, ctxLocationId, ctxZoneName, ctxLocationImages, ctxLocationName, subjectPayload);
+      setShowSubjectPicker(false);
+    }
   };
 
   const handleSelect = (id) => {
    if (id === "no_avatar") {
+     setCombinedMode(false);
+     openSubjectPicker();
+     return;
+   }
+   if (id === "characters_and_location") {
+     setCombinedMode(true);
      openSubjectPicker();
      return;
    }
@@ -453,15 +508,21 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const handleLocationConfirm = () => {
     if (!selectedLocation) return;
     const zoneName = selectedZone?.zone_name || null;
-    // Pass the zone preview images directly — no re-lookup needed on the backend
     const zoneImages = selectedZone?.image_urls?.length > 0
       ? selectedZone.image_urls
       : selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.image_urls
         || selectedLocation.image_urls
         || [];
-    console.log(`[RegenerateModal] LocationConfirm: location="${selectedLocation.name}" (${selectedLocation.id}) | zone="${zoneName}" | directImages=${zoneImages.length}`);
-    // CRITICAL: Pass zoneName (the name string), not the ID, to backend
-    onSelect('wrong_location', null, selectedLocation.id, zoneName, zoneImages, selectedLocation.name);
+    console.log(`[RegenerateModal] LocationConfirm: location="${selectedLocation.name}" (${selectedLocation.id}) | zone="${zoneName}" | directImages=${zoneImages.length} | combinedMode=${combinedMode}`);
+
+    if (combinedMode && pendingSubjectSelection) {
+      // Combined flow: fire with both subject and location data
+      onSelect('no_avatar', null, selectedLocation.id, zoneName, zoneImages, selectedLocation.name, pendingSubjectSelection);
+      setCombinedMode(false);
+      setPendingSubjectSelection(null);
+    } else {
+      onSelect('wrong_location', null, selectedLocation.id, zoneName, zoneImages, selectedLocation.name);
+    }
   };
 
   const promptTitle = promptMode === "dont_like"
@@ -491,7 +552,11 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
         >
           <div className="flex items-center justify-between px-5 py-4 border-b border-border">
             <h3 className="text-sm font-semibold text-foreground">
-              {showSubjectPicker ? "Who was supposed to be in it?" : showPromptInput ? promptTitle : "Why regenerate?"}
+              {showSubjectPicker
+                ? combinedMode ? "Step 1: Who was in it?" : "Who was supposed to be in it?"
+                : showLocationPicker && combinedMode ? "Step 2: Correct the location"
+                : showPromptInput ? promptTitle
+                : "Why regenerate?"}
             </h3>
             <button onClick={handleClose} className="p-1 hover:bg-secondary rounded-lg transition-colors">
               <X className="w-4 h-4 text-muted-foreground" />
@@ -725,7 +790,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                     )}
                     <div className="flex gap-2">
                       <button
-                        onClick={() => { setShowSubjectPicker(false); setSelectedSubjectIds([]); }}
+                        onClick={() => { setShowSubjectPicker(false); setSelectedSubjectIds([]); setCombinedMode(false); setPendingSubjectSelection(null); }}
                         className="flex-1 py-2.5 rounded-2xl border border-border text-sm text-muted-foreground hover:text-foreground transition-colors"
                       >
                         Back
