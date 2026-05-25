@@ -1,11 +1,15 @@
 /**
- * mediaGridGenerate — Multi-person image generation with hard identity lock.
- * 
- * CRITICAL CONTRACT:
- * When multiple people are selected, EVERY selected person MUST be visually locked
- * to their stored reference images. No substitutes. No generic people. No placeholder humans.
- * 
- * If any selected person cannot be visually resolved, generation STOPS.
+ * mediaGridGenerate — Multi-subject image generation with hard identity lock.
+ *
+ * ARCHITECTURAL CONTRACT:
+ * - Characters/user are required visual subjects ONLY when selected in subject dropdowns
+ *   OR when the prompt explicitly describes them as visually present.
+ * - Character "mention" (possessive/context: "Sarah's lease", "James's car") is NOT a visual subject.
+ * - Non-character images (objects, documents, locations, crowds, scenery) are fully supported.
+ * - If required visual subjects exist, they MUST appear — no silent downgrade to scenery.
+ * - If NO subjects are selected and prompt describes no visual person, generate the non-character image.
+ * - All repair/regeneration routes through regenerateImageWithReason only.
+ * - imageGenerationValidator is permanently deleted and banned — do NOT reference it.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
@@ -24,6 +28,59 @@ function isAccessible(url) {
   if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
   if (url.includes('base44.app/api/apps/')) return false;
   return true;
+}
+
+/**
+ * classifyPromptSubjectPresence — determines whether a named person is a VISUAL SUBJECT
+ * or merely a contextual reference (possessive, ownership, sender, story mention).
+ *
+ * VISUAL SUBJECT indicators (person is in the image):
+ *   - action verbs: standing, sitting, holding, taking, looking, walking, posing, smiling, etc.
+ *   - body language: arms, hands, face, expression, smile, standing next to
+ *   - selfie/portrait language: selfie, photo of them, portrait, photo with
+ *   - co-subject language: "and [name]", "[name] and [name]"
+ *   - first-person presence: "in the image", "in the photo", "visible", "appears"
+ *
+ * CONTEXT-ONLY indicators (person is NOT visually in the image):
+ *   - possessive: "[name]'s [object/place/document]"
+ *   - sends/shows a photo OF something: "sends a photo of", "shows [object]"
+ *   - object/doc subject: lease, receipt, menu, contract, screenshot, car, apartment
+ *   - location subject only: "[name]'s kitchen", "[name]'s apartment"
+ *
+ * Returns: 'visual_subject' | 'context_only' | 'ambiguous'
+ */
+function classifyPromptSubjectPresence(prompt, personName) {
+  if (!prompt || !personName) return 'ambiguous';
+  const p = prompt.toLowerCase();
+  const name = personName.toLowerCase();
+  const firstName = name.split(/\s+/)[0];
+
+  // Check if the name appears at all
+  const nameInPrompt = p.includes(name) || (firstName.length >= 4 && p.includes(firstName));
+  if (!nameInPrompt) return 'context_only'; // not mentioned = not a visual subject from prompt
+
+  // CONTEXT-ONLY patterns: possessive + object/document/location subject
+  const possessivePattern = new RegExp(`\\b${firstName}['']?s?\\b.*?\\b(lease|receipt|menu|contract|screenshot|car|apartment|room|kitchen|bathroom|office|document|agreement|letter|text|message|photo of|picture of|image of|phone|wallet|bag|keys|id card|id)\\b`, 'i');
+  const sendsPhotoOf = new RegExp(`\\b${firstName}\\b.*?\\b(sends?|shows?|took|taking|shares?|shared)\\b.*?\\b(photo|picture|image|pic|shot)\\b.*?\\bof\\b`, 'i');
+  const locationPossessive = new RegExp(`\\b${firstName}['']?s?\\b.*?\\b(home|house|place|crib|spot|hangout|bar|club|room|bedroom|living room|kitchen|bathroom|backyard)\\b`, 'i');
+
+  const isContextOnly = possessivePattern.test(p) || sendsPhotoOf.test(p) || locationPossessive.test(p);
+
+  // VISUAL SUBJECT patterns: person is physically in the frame
+  const visualVerbs = new RegExp(`\\b${firstName}\\b.*?\\b(standing|sitting|sat|holding|taking|smiling|laughing|looking|walking|running|leaning|reaching|eating|drinking|posing|lying|sleeping|waking|cooking|reading|typing|hugging|kissing|facing|near|beside|next to|pointing|gesturing|kneeling|crouching)\\b`, 'i');
+  const visualWithUser = new RegExp(`\\b(and|with|\\+)\\s*${firstName}\\b|\\b${firstName}\\s*(and|with)\\b`, 'i');
+  const selfieOrPortrait = new RegExp(`\\b${firstName}\\b.*?\\b(selfie|portrait|headshot|photo of (him|her|them|${firstName})|picture of (him|her|them|${firstName})|mirror shot)\\b`, 'i');
+  const explicitlyVisible = new RegExp(`\\b${firstName}\\b.*?\\b(visible|in the (image|photo|picture|frame)|appears|shown|shown in|featured|in frame)\\b`, 'i');
+  const subjectAtLocation = new RegExp(`\\b${firstName}\\b.*?\\b(at the|in the|inside|outside|by the|on the|at a|in a)\\b`, 'i');
+
+  const isVisual = visualVerbs.test(p) || visualWithUser.test(p) || selfieOrPortrait.test(p) || explicitlyVisible.test(p);
+
+  if (isVisual && !isContextOnly) return 'visual_subject';
+  if (isContextOnly && !isVisual) return 'context_only';
+  if (isContextOnly && isVisual) return 'visual_subject'; // explicit visual action wins over possessive context
+  // subjectAtLocation is weakly visual (ambiguous) — only counts if not already context-only
+  if (subjectAtLocation.test(p) && !isContextOnly) return 'visual_subject';
+  return 'ambiguous';
 }
 
 Deno.serve(async (req) => {
@@ -54,7 +111,6 @@ Deno.serve(async (req) => {
     if (!messageId) {
       return Response.json({ error: 'messageId required' }, { status: 400 });
     }
-    // prompt is required — even image_only mode sends a minimal fallback prompt from the frontend
     if (!prompt) {
       return Response.json({ error: 'prompt required' }, { status: 400 });
     }
@@ -62,9 +118,6 @@ Deno.serve(async (req) => {
     console.log(`[mediaGridGenerate] ▶ messageId=${messageId} | multiPerson=${!!multiPersonSelection}`);
 
     // ── CLASSIFICATION-FIRST SANITIZER — synced with generateImageAsync ────
-    // SYNC NOTE: This logic must stay identical to generateImageAsync's classifySceneContext
-    // + sanitizePrompt. Multi-person mode uses this directly (not delegated). Single-character
-    // mode delegates to generateImageAsync which has its own copy.
     function classifySceneContext(p) {
       const lower = p.toLowerCase();
       const explicitSignals = [
@@ -104,7 +157,6 @@ Deno.serve(async (req) => {
         s = s.replace(/\bthong\b/gi, 'underwear');
         return s.trim();
       }
-      // Explicit scenes: full sanitization
       s = s.replace(/\bshirtless\b/gi, 'with no shirt on');
       s = s.replace(/\btopless\b/gi, 'with no shirt on');
       s = s.replace(/\bbarechested\b/gi, 'with no shirt on');
@@ -126,21 +178,13 @@ Deno.serve(async (req) => {
     let sanitizedPrompt = sanitizeImagePrompt(prompt);
 
     // ── TIME-OF-DAY AUTHORITY CHECK ─────────────────────────────────────────
-    // If the prompt explicitly states a time/lighting, that is the scene authority.
-    // Log so we can trace if nighttime prompts are producing daylight images.
     const promptHasExplicitTime = /nighttime|night time|middle of the night|midnight|late night|daytime|broad daylight|morning|afternoon|evening|golden hour|sunset|sunrise|dusk|dawn|dark room|dim light|low light/i.test(sanitizedPrompt);
     if (promptHasExplicitTime) {
       const detectedMatch = sanitizedPrompt.match(/nighttime|night time|middle of the night|midnight|late night|daytime|broad daylight|morning|afternoon|evening|golden hour|sunset|sunrise|dusk|dawn|dark room|dim light|low light/i);
-      console.log(`[mediaGridGenerate] TIME AUTHORITY: prompt explicitly declares time-of-day → "${detectedMatch?.[0]}" — this OVERRIDES all reference image lighting`);
-      console.log(`[mediaGridGenerate] Raw prompt: ${prompt.substring(0, 150)}`);
-      console.log(`[mediaGridGenerate] Sanitized prompt: ${sanitizedPrompt.substring(0, 150)}`);
-    } else {
-      console.log(`[mediaGridGenerate] TIME AUTHORITY: no explicit time in prompt — will use server time-of-day`);
+      console.log(`[mediaGridGenerate] TIME AUTHORITY: prompt explicitly declares time-of-day → "${detectedMatch?.[0]}"`);
     }
 
     // ── USER-UPLOADED REFERENCE IMAGE GUIDANCE ─────────────────────────────
-    // If the user uploaded a reference image, inject purpose-specific guidance into the prompt.
-    // The written prompt still defines intent — the uploaded image defines visual guidance only.
     const hasUserRef = referenceImageUrl && isAccessible(toPublicCDN(referenceImageUrl));
     if (hasUserRef && referenceImageMode !== 'prompt_only') {
       const purposeInstructions = {
@@ -153,80 +197,68 @@ Deno.serve(async (req) => {
       };
       const purposeText = purposeInstructions[referenceImagePurpose] || purposeInstructions.general;
       if (referenceImageMode === 'image_only') {
-        // Image is the primary source — prompt is supplemental
         sanitizedPrompt = `${purposeText} The reference image is the primary visual source. ${sanitizedPrompt}`;
       } else {
-        // prompt_plus_image — written prompt defines intent, image guides visuals
         sanitizedPrompt = `${sanitizedPrompt} [VISUAL GUIDANCE] ${purposeText} The written prompt takes priority for intent and subject; the reference image guides the visual execution.`;
       }
     }
 
     // ── MULTI-PERSON IDENTITY LOCK ─────────────────────────────────────────
     if (multiPersonSelection) {
-      console.log(`[mediaGridGenerate] MULTI-PERSON MODE: validating ${multiPersonSelection.selectedCharacters.length} selected people`);
+      const selectedCount = multiPersonSelection.selectedCharacters.length;
+      const includesUser = !!(multiPersonSelection.includeUser && multiPersonSelection.userReferenceImages);
+      console.log(`[mediaGridGenerate] MULTI-PERSON MODE: ${selectedCount} characters + user=${includesUser}`);
 
-      const validation = {
-        totalSelected: multiPersonSelection.selectedCharacters.length,
-        withRefs: 0,
-        missingRefs: [],
-      };
+      // ── SUBJECT CLASSIFICATION: filter out context-only references ────────
+      // For each selected person, determine whether they are a true visual subject
+      // based on the prompt. Context-only mentions (possessive/ownership) are not visual subjects.
+      // SAFEGUARD: selected subjects in the dropdown ARE required visual participants by contract.
+      // The classification below is only for LOGGING — selected subjects are always visual.
+      // The spec states: "If a character/user is selected in the subject dropdown, they are a required visual subject."
+      for (const person of multiPersonSelection.selectedCharacters) {
+        const name = person.displayName || person.role || 'character';
+        const presence = classifyPromptSubjectPresence(sanitizedPrompt, name);
+        console.log(`[mediaGridGenerate] Subject classification: "${name}" → ${presence} (selected in dropdown = required visual subject regardless)`);
+      }
 
+      // ── VALIDATE IDENTITY REFS FOR REQUIRED VISUAL SUBJECTS ───────────────
+      // Every selected person is a required visual participant — identity refs are required.
+      const missingRefs = [];
       for (const person of multiPersonSelection.selectedCharacters) {
         if (!person.referenceImages || person.referenceImages.length === 0) {
-          validation.missingRefs.push(`${person.role} (${person.id})`);
+          missingRefs.push(`${person.displayName || person.role} (${person.id})`);
         } else {
-          validation.withRefs++;
-          console.log(`[mediaGridGenerate] ✓ ${person.role} (${person.id}): ${person.referenceImages.length} refs`);
+          console.log(`[mediaGridGenerate] ✓ ${person.displayName || person.role}: ${person.referenceImages.length} refs`);
         }
       }
-
-      if (multiPersonSelection.includeUser && multiPersonSelection.userReferenceImages) {
-        if (multiPersonSelection.userReferenceImages.length === 0) {
-          validation.missingRefs.push('user');
-        } else {
-          validation.withRefs++;
-          console.log(`[mediaGridGenerate] ✓ user: ${multiPersonSelection.userReferenceImages.length} refs`);
-        }
+      if (includesUser && (!multiPersonSelection.userReferenceImages || multiPersonSelection.userReferenceImages.length === 0)) {
+        missingRefs.push('user/persona');
       }
 
-      console.log(`[mediaGridGenerate] Identity validation: ${validation.withRefs}/${validation.totalSelected} with refs`);
-
-      if (validation.missingRefs.length > 0) {
-        const errorMsg = `IDENTITY LOCK FAILED: Cannot generate image. Missing visual references for: ${validation.missingRefs.join(', ')}.`;
+      if (missingRefs.length > 0) {
+        const errorMsg = `IDENTITY LOCK FAILED: Missing visual references for required subjects: ${missingRefs.join(', ')}. Add reference photos before generating.`;
         console.error(`[mediaGridGenerate] ⛔ ${errorMsg}`);
         await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
         return Response.json({ success: false, error: errorMsg }, { status: 400 });
       }
 
       // ── BUILD MULTI-PERSON PROMPT ──────────────────────────────────────
-      // Assemble all reference images with strict labeling
       const allRefs = [];
       let refIndex = 1;
-      const refMap = {};
 
       for (const person of multiPersonSelection.selectedCharacters) {
         const refs = (person.referenceImages || []).map(toPublicCDN).filter(isAccessible).slice(0, 3);
-        refs.forEach(url => {
-          allRefs.push(url);
-          refMap[refIndex] = { role: person.role, id: person.id };
-          refIndex++;
-        });
+        refs.forEach(url => allRefs.push(url));
       }
-
-      if (multiPersonSelection.includeUser && multiPersonSelection.userReferenceImages) {
+      if (includesUser) {
         const refs = (multiPersonSelection.userReferenceImages || []).map(toPublicCDN).filter(isAccessible).slice(0, 3);
-        refs.forEach(url => {
-          allRefs.push(url);
-          refMap[refIndex] = { role: 'user', id: 'user' };
-          refIndex++;
-        });
+        refs.forEach(url => allRefs.push(url));
       }
 
       const identityRefs = [];
       const people = [];
       refIndex = 1;
 
-      // ── RESOLVE FULL SUBJECT BUNDLES — characters ─────────────────────────
       function normalizeOutfitFieldMG(val) {
         if (!val) return null;
         const t = val.trim();
@@ -244,17 +276,15 @@ Deno.serve(async (req) => {
         return null;
       }
 
-      // multiOutfitLines kept for backward-compat storage in generation_context
       const multiOutfitLines = [];
 
       for (const person of multiPersonSelection.selectedCharacters) {
         const refs = (person.referenceImages || []).map(toPublicCDN).filter(isAccessible).slice(0, 3);
         identityRefs.push(...refs);
 
-        // Resolve appearance lock + outfit from Character record
         let outfitText = null;
         let outfitSource = 'no_closet';
-        let appearanceLock = null;  // { gender, skinTone, hairStyle, bodyType, age }
+        let appearanceLock = null;
 
         if (person.id && person.id !== 'user') {
           try {
@@ -266,7 +296,6 @@ Deno.serve(async (req) => {
               charRec = charListSR?.[0] || null;
             }
             if (charRec) {
-              // Outfit
               const co = charRec.current_outfit;
               outfitText = (co?.outfit_id || co?.label) ? buildMGOutfitText(co) : null;
               if (!outfitText) {
@@ -274,8 +303,6 @@ Deno.serve(async (req) => {
                 if (closet.length > 0) outfitText = buildMGOutfitText(closet[0]);
               }
               outfitSource = (co?.outfit_id || co?.label) ? 'current_outfit' : (charRec.character_closet?.length > 0 ? 'closet_rotation' : 'no_closet');
-
-              // Appearance lock — build from record fields
               const al = charRec.appearance_lock || {};
               appearanceLock = {
                 gender: charRec.gender || null,
@@ -287,7 +314,6 @@ Deno.serve(async (req) => {
                 height: al.height_display || null,
                 customKeywords: (al.custom_keywords || []).join(', ') || null,
               };
-              console.log(`[mediaGridGenerate] Character bundle: "${charRec.name}" outfit="${(outfitText||'none').substring(0,80)}" appearance=${JSON.stringify(appearanceLock)}`);
               if (outfitText) multiOutfitLines.push({ subjectType: 'character', name: charRec.name, text: outfitText, source: outfitSource });
             }
           } catch (charErr) {
@@ -311,8 +337,8 @@ Deno.serve(async (req) => {
         refIndex += refs.length;
       }
 
-      // ── RESOLVE FULL SUBJECT BUNDLE — user/persona ────────────────────────
-      if (multiPersonSelection.includeUser && multiPersonSelection.userReferenceImages) {
+      // ── RESOLVE USER BUNDLE ────────────────────────────────────────────────
+      if (includesUser) {
         const refs = (multiPersonSelection.userReferenceImages || []).map(toPublicCDN).filter(isAccessible).slice(0, 3);
         identityRefs.push(...refs);
 
@@ -332,8 +358,6 @@ Deno.serve(async (req) => {
             userOutfitText = uco ? buildMGOutfitText(uco) || uco.full_description?.trim() || null : null;
             userPersonaName = sett?.fictional_world_name || 'User / My Persona';
             userOutfitSource = uco ? 'user_current_outfit' : 'no_outfit';
-
-            // Appearance lock from UserSettings
             const ual = sett?.appearance_lock || {};
             userAppearanceLock = {
               gender: sett?.user_gender || null,
@@ -343,13 +367,7 @@ Deno.serve(async (req) => {
               height: ual.height_display || null,
               customKeywords: (ual.custom_keywords || []).join(', ') || null,
             };
-
-            console.log(`[mediaGridGenerate] User bundle: name="${userPersonaName}" outfit="${(userOutfitText||'none').substring(0,80)}" appearance=${JSON.stringify(userAppearanceLock)}`);
-            if (userOutfitText) {
-              multiOutfitLines.push({ subjectType: 'user', name: userPersonaName, text: userOutfitText, source: userOutfitSource });
-            } else {
-              console.warn(`[mediaGridGenerate] ⚠️ No user_current_outfit for ${requestingUserEmail}`);
-            }
+            if (userOutfitText) multiOutfitLines.push({ subjectType: 'user', name: userPersonaName, text: userOutfitText, source: userOutfitSource });
           }
         } catch (userOutfitErr) {
           console.warn(`[mediaGridGenerate] User bundle resolution failed: ${userOutfitErr?.message}`);
@@ -374,10 +392,6 @@ Deno.serve(async (req) => {
       const envRefs = (zoneImageUrls || []).map(toPublicCDN).filter(isAccessible).slice(0, 4);
 
       // ── BUILD SEALED PER-SUBJECT BUNDLE BLOCKS ────────────────────────────
-      // Each subject gets a self-contained block with: identity key, role declaration,
-      // reference image slots, appearance lock, outfit lock, and cross-assignment prohibition.
-      // This prevents the model from mixing any attribute between subjects.
-
       function buildSubjectBundle(p, envCount) {
         const startIdx = envCount + p.refStart;
         const endIdx = envCount + p.refStart + p.refCount - 1;
@@ -405,13 +419,17 @@ Deno.serve(async (req) => {
         }
 
         lines.push(``);
-        lines.push(`REFERENCE IMAGES: Images ${startIdx}–${endIdx}`);
-        lines.push(`  These images show THIS SUBJECT'S FACE AND BODY ONLY.`);
-        lines.push(`  ✅ Use ONLY for: face structure, skin tone, hair, body type`);
-        lines.push(`  ⛔ IGNORE: background, pose, clothing, lighting in these photos`);
-        lines.push(`  ⛔ These reference images belong EXCLUSIVELY to "${nameDisplay}" — do NOT apply to any other subject`);
+        if (p.refCount > 0) {
+          lines.push(`REFERENCE IMAGES: Images ${startIdx}–${endIdx}`);
+          lines.push(`  These images show THIS SUBJECT'S FACE AND BODY ONLY.`);
+          lines.push(`  ✅ Use ONLY for: face structure, skin tone, hair, body type`);
+          lines.push(`  ⛔ IGNORE: background, pose, clothing, lighting in these photos`);
+          lines.push(`  ⛔ These reference images belong EXCLUSIVELY to "${nameDisplay}" — do NOT apply to any other subject`);
+        } else {
+          lines.push(`REFERENCE IMAGES: None — generate "${nameDisplay}" from appearance lock and text description only.`);
+          lines.push(`  ⛔ Do NOT substitute a generic or random person.`);
+        }
 
-        // Appearance lock block
         const al = p.appearanceLock || {};
         const alParts = [
           al.gender ? `Gender presentation: ${al.gender}` : null,
@@ -432,7 +450,6 @@ Deno.serve(async (req) => {
           lines.push(`  ⛔ Do NOT apply these height/body/skin/hair values to any other subject in this scene.`);
         }
 
-        // Outfit lock block
         lines.push(``);
         if (p.outfitText) {
           const isBareTorso = /no shirt \/ bare torso/i.test(p.outfitText);
@@ -462,7 +479,6 @@ Deno.serve(async (req) => {
         return lines.join('\n');
       }
 
-      // Build the NAME REFERENCE KEY — maps every name in the prompt to its sealed bundle
       function buildNameReferenceKey(peopleArr) {
         const lines = [];
         lines.push(`[NAME REFERENCE KEY — SELECTED SUBJECTS]`);
@@ -486,7 +502,6 @@ Deno.serve(async (req) => {
       const nameRefKey = buildNameReferenceKey(people);
       const subjectBundleBlocks = people.map(p => buildSubjectBundle(p, envRefs.length)).join('\n\n');
 
-      // Use generateImageAsync's unified rules for consistency across all paths
       const multiPersonPrompt = `
 ════════════════════════════════════════════════════════════
 IMAGE GENERATION PRIORITY STACK (GOVERNING LAW)
@@ -501,7 +516,6 @@ Lower priority NEVER overrides higher priority.
 
 INTENSITY BALANCING:
 When closeness + nighttime + private setting + minimal clothing co-occur, do NOT maximize all signals at once.
-Balance: reduce camera proximity slightly, soften physical contact wording, imply environment instead of labeling it.
 
 ════════════════════════════════════════════════════════════
 CORE SCENE PROMPT:
@@ -546,65 +560,21 @@ Do NOT: paste subjects over background | disconnect from room perspective | inve
 DO: move camera | change angle | apply time-of-day lighting | reframe from new camera position
 `;
 
-
       console.log(`[mediaGridGenerate] Multi-person prompt built for ${people.length} people with ${identityRefs.length} identity refs + ${envRefs.length} env refs`);
-
-      // ── PRE-GENERATION VISUAL SOURCE AUDIT (multi-person path) — FAIL-CLOSED ─
-      // audit_unavailable = generation blocked. No bypass.
-      let mgVisualAudit = null;
-      let mgBoundaryBlock = '';
-      const mgApprovedSubjects = people.map(p => ({ id: p.id, name: p.displayName || p.role, type: p.subjectRole }));
-      let mgPrepareData = null;
-      try {
-        const mgPr = await base44.functions.invoke('imageGenerationValidator', {
-          mode: 'prepare',
-          conversationId: null,
-          senderCharacterId: null,
-          subjectCharacterId: null,
-          locationId: locationId || null,
-          approvedSubjects: mgApprovedSubjects,
-          sanitizedPrompt,
-          expectedHumanCount: people.length,
-          logPrefix: `[VisualSourceAudit][mediaGridGenerate][${messageId}]`,
-        });
-        mgPrepareData = mgPr?.data || {};
-      } catch (auditErr) {
-        console.error(`[mediaGridGenerate] ⛔ PRE-GEN AUDIT INVOKE FAILED — BLOCKING: ${auditErr?.message}`);
-        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { visual_validation: { audit_status: 'audit_unavailable', validation_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false, error: auditErr?.message } } }).catch(() => {});
-        return Response.json({ success: false, error: 'Pre-generation audit unavailable — image blocked.', audit_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false }, { status: 503 });
-      }
-      if (!mgPrepareData || mgPrepareData.auditStatus === 'validation_unavailable' || !mgPrepareData.audit) {
-        const mgAe = mgPrepareData?.audit?.error || 'audit returned unavailable';
-        console.error(`[mediaGridGenerate] ⛔ PRE-GEN AUDIT UNAVAILABLE — BLOCKING: ${mgAe}`);
-        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { visual_validation: { audit_status: 'audit_unavailable', validation_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false, error: mgAe } } }).catch(() => {});
-        return Response.json({ success: false, error: 'Pre-generation audit unavailable — image blocked.', audit_status: 'audit_unavailable', image_not_verified: true, final_image_accepted: false }, { status: 503 });
-      }
-      mgVisualAudit = mgPrepareData.audit || null;
-      mgBoundaryBlock = mgPrepareData.boundaryBlock || '';
-      console.log(`[mediaGridGenerate][${messageId}] audit_status=${mgPrepareData.auditStatus} | ctx_names=[${(mgPrepareData.conversationContextNames||[]).join(', ')}] | loc_owners=[${(mgPrepareData.locationOwnerNames||[]).join(', ')}]`);
 
       const allReferences = [
         ...envRefs,
         ...identityRefs,
       ];
 
-      if (allReferences.length === 0) {
-        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-        return Response.json({ success: false, error: 'No reference images available for any selected person.' }, { status: 400 });
-      }
-
-      // Append user-uploaded reference image to the end (after identity refs, before generation)
       if (hasUserRef) {
         allReferences.push(toPublicCDN(referenceImageUrl));
       }
 
-      // Inject boundary block into prompt
-      const finalMultiPersonPrompt = mgBoundaryBlock ? multiPersonPrompt + mgBoundaryBlock : multiPersonPrompt;
-
       try {
         const genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-          prompt: finalMultiPersonPrompt,
-          existing_image_urls: allReferences,
+          prompt: multiPersonPrompt,
+          existing_image_urls: allReferences.length > 0 ? allReferences : undefined,
         });
 
         if (!genRes?.url) {
@@ -612,34 +582,7 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
           return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
         }
 
-        // ── POST-GENERATION VALIDATION (multi-person path) — STRICT FAIL-CLOSED ─
-        // passes===true ONLY → proceed. Everything else = REJECT.
-        let mgVvProof = { audit_status: mgPrepareData?.auditStatus||'success', validation_status: 'validation_unavailable', image_not_verified: true, final_image_accepted: false };
-        const mgVRes = await base44.functions.invoke('imageGenerationValidator', {
-          mode: 'validate', imageUrl: genRes.url,
-          audit: mgVisualAudit || { final_visual_roster: mgApprovedSubjects.map(s => s.name), conversation_entities_detected: [], location_entities_detected: [], expected_human_count: people.length },
-          charRecord: null, expectedHumanCount: people.length, attempt: 1,
-          logPrefix: `[PostGenValidation][mediaGridGenerate][${messageId}]`,
-        }).catch(mgVErr => {
-          console.error(`[PostGenValidation][mediaGridGenerate] ⛔ validator invoke failed: ${mgVErr?.message}`);
-          return { data: { passes: null, validation_status: 'validation_unavailable', validation_error: mgVErr?.message, image_not_verified: true } };
-        });
-        const mgVd = mgVRes?.data || {};
-        const mgVStatus = mgVd.validation_status||(mgVd.passes===true?'passed':mgVd.passes===false?'failed':'validation_unavailable');
-        const mgFailClosed = mgVd.passes !== true;
-        mgVvProof = { audit_status: mgPrepareData?.auditStatus||'success', validation_status: mgVStatus, image_not_verified: mgFailClosed, final_image_accepted: !mgFailClosed, expected_human_count: people.length, final_visual_roster: mgVisualAudit?.final_visual_roster||[], conversation_entities_detected: mgVisualAudit?.conversation_entities_detected||[], location_entities_detected: mgVisualAudit?.location_entities_detected||[], sender_detected: mgVisualAudit?.sender_detected||null, sender_ignored: mgVisualAudit?.sender_ignored||null, forbidden_context_sources_blocked: mgVisualAudit?.forbidden_context_sources_blocked||[], identifiable_background_faces_detected: mgVd.vision_result?.identifiable_background_faces_detected??null, banned_person_appeared: mgVd.vision_result?.banned_person_appeared??null, sender_appeared: mgVd.vision_result?.sender_appeared??null, reject_reason: mgVd.reject_reason||null, validation_error: mgVd.validation_error||null };
-        console.log(`[PostGenValidation][mediaGridGenerate] vStatus=${mgVStatus} passes=${mgVd.passes??'null'} fail_closed=${mgFailClosed}`);
-        if (mgFailClosed) {
-          const mgRr = mgVd.reject_reason||(mgVd.issues||[]).join('; ')||mgVStatus;
-          console.error(`[PostGenValidation][mediaGridGenerate] ⛔ BLOCKED (${mgVStatus}): ${mgRr}`);
-          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { visual_validation: { ...mgVvProof, final_image_accepted: false } } }).catch(() => {});
-          return Response.json({ success: false, error: `Multi-person image blocked: ${mgRr}`, validation_status: mgVStatus, image_not_verified: true, final_image_accepted: false }, { status: 422 });
-        }
-        let mgPostGenStatus = mgVStatus;
-
-        // Build structured subjects array — matches generateImageAsync format.
-        // This allows recoverSingleImage and regenerateImageWithReason to recover
-        // per-person identity for multi-person images using the same resolution path.
+        // Build structured subjects array — matches generateImageAsync format for regen/recovery
         const structuredSubjects = people.map(p => ({
           subject_type: p.role === 'user' ? 'user' : 'character',
           subject_id: p.id,
@@ -647,31 +590,20 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
           role: p.role,
           reference_image_count: p.refCount,
           reference_images: identityRefs.slice(p.refStart - 1, p.refStart - 1 + p.refCount),
-        }));
-
-        // ── Build subject fingerprints (identity checksums for regen/video systems) ──
-        const structuredSubjectsWithFingerprints = structuredSubjects.map(s => ({
-          ...s,
-          // Fingerprint: stable_id:ref_count — detects missing/swapped subject bundles
-          subject_fingerprint: `${s.subject_id}:${s.reference_image_count}`,
+          subject_fingerprint: `${p.id}:${p.refCount}`,
         }));
 
         const generationContext = {
           generation_context_version: 2,
           context_origin: 'media_grid',
           schema_written_at: new Date().toISOString(),
-          post_gen_validation_status: mgPostGenStatus,
-          visual_validation: mgVvProof,
 
           // New structured format — read by recoverSingleImage and regenerateImageWithReason
           image_type: 'multi',
-          subject_count: structuredSubjectsWithFingerprints.length,
-          subjects: structuredSubjectsWithFingerprints,
+          subject_count: structuredSubjects.length,
+          subjects: structuredSubjects,
           scene_prompt: prompt,
           original_raw_prompt: prompt,
-
-          // Outfit metadata — stored for audit and regeneration
-          // Each entry: { subjectType: 'character'|'user', name, text, source }
           resolved_outfit_metadata: multiOutfitLines,
           user_outfit_text: multiOutfitLines.find(o => o.subjectType === 'user')?.text || null,
           user_outfit_source: multiOutfitLines.find(o => o.subjectType === 'user')?.source || null,
@@ -696,60 +628,37 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
           generation_context: generationContext,
         });
 
-        // ── SAFEGUARD 1: Runtime persistence validation ────────────────────────
-        // Immediately re-read the saved message and verify the generation_context
-        // was NOT stripped by schema enforcement. This prevents silent corruption
-        // from masquerading as success — if subjects were stripped, this is a HARD FAIL.
-        // "Success" means: image generated AND metadata survived persistence AND
-        // regeneration contract is valid. Not just: image URL returned.
+        // ── SAFEGUARD: Runtime persistence validation ────────────────────────
         await new Promise(r => setTimeout(r, 800));
-        let persistenceValid = false;
         try {
           const savedMsg = await base44.asServiceRole.entities.Message.get(messageId);
           const savedCtx = savedMsg?.generation_context || {};
           const savedSubjects = savedCtx.subjects;
-          const savedImageType = savedCtx.image_type;
-          const savedVersion = savedCtx.generation_context_version;
-
-          persistenceValid = (
+          const persistenceValid = (
             Array.isArray(savedSubjects) &&
-            savedSubjects.length === structuredSubjectsWithFingerprints.length &&
-            savedImageType === 'multi' &&
-            savedVersion === 2
+            savedSubjects.length === structuredSubjects.length &&
+            savedCtx.image_type === 'multi' &&
+            savedCtx.generation_context_version === 2
           );
-
           if (!persistenceValid) {
             console.error(`[mediaGridGenerate] ⛔ [ImageContextCorruption] generation_context persistence FAILED after write!`, {
               messageId,
-              expectedSubjects: structuredSubjectsWithFingerprints.length,
+              expectedSubjects: structuredSubjects.length,
               actualSubjects: Array.isArray(savedSubjects) ? savedSubjects.length : 'not_array',
-              expectedImageType: 'multi',
-              actualImageType: savedImageType,
-              expectedVersion: 2,
-              actualVersion: savedVersion,
-              savedCtxKeys: Object.keys(savedCtx),
             });
-            // Mark as failed — do not return success with broken metadata
             await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_CONTEXT_CORRUPTED]' }).catch(() => {});
             return Response.json({
               success: false,
-              error: 'generation_context persistence failed — subjects stripped after DB write. Schema may have regressed. Run verifyImageContextSchema to diagnose.',
+              error: 'generation_context persistence failed — subjects stripped after DB write. Run verifyImageContextSchema to diagnose.',
               persistence_validation_failed: true,
-              expected_subjects: structuredSubjectsWithFingerprints.length,
-              actual_subjects: Array.isArray(savedSubjects) ? savedSubjects.length : 0,
             }, { status: 500 });
           }
-
-          console.log(`[mediaGridGenerate] ✅ Persistence validation PASSED: subjects=${savedSubjects.length} image_type=${savedImageType} version=${savedVersion}`);
+          console.log(`[mediaGridGenerate] ✅ Persistence validation PASSED: subjects=${savedSubjects.length}`);
         } catch (verifyErr) {
           console.warn(`[mediaGridGenerate] Persistence validation read failed (non-blocking): ${verifyErr?.message}`);
-          // Non-blocking — if the read itself fails (network, rate-limit), don't abort the success
-          // The write was attempted; we just couldn't verify. Log and continue.
-          persistenceValid = true; // assume ok if read failed
         }
 
         console.log(`[mediaGridGenerate] ✓ Multi-person SUCCESS: ${messageId}`);
-
         return Response.json({
           success: true,
           imageUrl: genRes.url,
@@ -767,58 +676,157 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
       }
     }
 
-    // ── SINGLE-CHARACTER MODE (use shared generateImageAsync) ──────────────────
-    // SUBJECT AUDIT LOG — always log what is being sent to catch leaks early
+    // ── SINGLE-SUBJECT / NON-CHARACTER MODE ────────────────────────────────
+    // This path handles:
+    //   1. Single character subject (subjectType='character')
+    //   2. User-only subject (subjectType='user')
+    //   3. NO subject selected — non-character image (location, object, document, scenery, crowd)
+    //
+    // CRITICAL: "no subject selected" is valid when the image is about a location, object,
+    // document, crowd, or other non-character visual. The prompt is the source of truth.
+
     const resolvedSubjectType = subjectType || 'character';
     const isUserOnly = resolvedSubjectType === 'user';
+    const isNoSubject = !characterId && !isUserOnly && resolvedSubjectType !== 'character';
+
     console.log(`[mediaGridGenerate] ── SUBJECT AUDIT ──`);
     console.log(`[mediaGridGenerate]   subjectType:           ${resolvedSubjectType}`);
     console.log(`[mediaGridGenerate]   characterId passed:    ${characterId || 'null'}`);
-    console.log(`[mediaGridGenerate]   characterName passed:  ${characterName || 'null'}`);
+    console.log(`[mediaGridGenerate]   isUserOnly:            ${isUserOnly}`);
+    console.log(`[mediaGridGenerate]   isNoSubject:           ${isNoSubject}`);
     console.log(`[mediaGridGenerate]   charRefImages count:   ${(characterRefImages || []).length}`);
     console.log(`[mediaGridGenerate]   userRefImages count:   ${(userRefImages || []).length}`);
-    console.log(`[mediaGridGenerate]   user_only_guard:       ${isUserOnly}`);
 
-    // BACKEND USER-ONLY GUARD: Even if frontend accidentally passes character data,
-    // we enforce the contract here. User-only images must never include any character identity.
-    if (isUserOnly && (characterId || characterName || (characterRefImages || []).length > 0)) {
-      console.warn(`[mediaGridGenerate] ⛔ USER-ONLY GUARD: character identity fields present but subjectType=user — CLEARED`);
-      console.warn(`[mediaGridGenerate]   cleared characterId: ${characterId}, characterName: ${characterName}, refs: ${(characterRefImages || []).length}`);
+    // Subject classification for logging — "character mention" vs "visual subject"
+    if (characterId && characterName) {
+      const presence = classifyPromptSubjectPresence(sanitizedPrompt, characterName);
+      console.log(`[mediaGridGenerate] Prompt subject classification for "${characterName}": ${presence}`);
+      if (presence === 'context_only') {
+        console.log(`[mediaGridGenerate] ⚠️ "${characterName}" appears context-only in prompt (possessive/sender) — but IS selected as subject, so identity lock still applies`);
+      }
     }
 
-    const effectiveCharacterId     = isUserOnly ? null : characterId;
-    const effectiveCharacterName   = isUserOnly ? null : characterName;
-    const effectiveCharacterRefs   = isUserOnly ? [] : (characterRefImages || []).map(toPublicCDN).filter(isAccessible);
-    const effectiveSenderCharId    = isUserOnly ? null : characterId;
+    // Backend USER-ONLY GUARD
+    if (isUserOnly && (characterId || characterName || (characterRefImages || []).length > 0)) {
+      console.warn(`[mediaGridGenerate] ⛔ USER-ONLY GUARD: character identity fields present but subjectType=user — CLEARED`);
+    }
 
+    const effectiveCharacterId   = isUserOnly ? null : characterId;
+    const effectiveCharacterName = isUserOnly ? null : characterName;
+    const effectiveCharacterRefs = isUserOnly ? [] : (characterRefImages || []).map(toPublicCDN).filter(isAccessible);
+    const effectiveSenderCharId  = isUserOnly ? null : characterId;
+
+    // ── NON-CHARACTER IMAGE PATH ───────────────────────────────────────────
+    // When no visual subject is selected, generate directly from prompt + environment.
+    // This supports: locations, objects, documents, crowds, scenery, atmosphere, story props.
+    if (isNoSubject && !characterId) {
+      console.log(`[mediaGridGenerate] NON-CHARACTER IMAGE PATH: no visual subjects — generating from prompt + environment`);
+
+      const envRefs = (zoneImageUrls || []).map(toPublicCDN).filter(isAccessible).slice(0, 4);
+      const allRefs = [...envRefs];
+      if (hasUserRef) allRefs.push(toPublicCDN(referenceImageUrl));
+
+      const nonCharPrompt = `
+${envRefs.length > 0 ? `════════════════════════════════════════════════════════════
+ENVIRONMENT REFERENCE — IMAGES 1–${envRefs.length}
+════════════════════════════════════════════════════════════
+These are reference photos of the location: "${locationName || 'selected location'}"${zoneName ? ` → zone: "${zoneName}"` : ''}.
+Use them to understand the physical space, layout, materials, and style.
+✅ Extract: architecture, furniture types, colors, spatial structure
+⛔ Do NOT copy camera angle or lighting from references — re-render from a natural camera position
+⛔ Do NOT place any specific named character in the scene unless described in the prompt
+
+════════════════════════════════════════════════════════════
+` : ''}════════════════════════════════════════════════════════════
+SCENE PROMPT:
+════════════════════════════════════════════════════════════
+${sanitizedPrompt}
+
+Photorealistic photograph. Ultra-detailed. Not an illustration.
+${envRefs.length > 0 ? `Render the scene faithfully using the reference environment as a spatial guide.` : ''}
+
+IMPORTANT: This image does NOT require a specific named character to appear.
+Generate exactly what the prompt describes — object, document, location, crowd, scenery, or atmosphere.
+Do NOT insert a random person or generic individual as a visual filler.
+If the prompt mentions a crowd or background people, render them as generic, indistinct background figures only.
+`;
+
+      try {
+        const genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
+          prompt: nonCharPrompt,
+          existing_image_urls: allRefs.length > 0 ? allRefs : undefined,
+        });
+
+        if (!genRes?.url) {
+          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+          return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
+        }
+
+        const generationContext = {
+          generation_context_version: 2,
+          context_origin: 'media_grid',
+          schema_written_at: new Date().toISOString(),
+          image_type: 'non_character',
+          subject_count: 0,
+          subjects: [],
+          scene_prompt: prompt,
+          original_raw_prompt: prompt,
+          prompt,
+          subjectType: resolvedSubjectType,
+          character_id: null,
+          locationName,
+          zoneName,
+          location_name: locationName,
+          zone_name: zoneName,
+          locationReferenceImages: envRefs,
+          location_reference_images: envRefs,
+          generatedAt: new Date().toISOString(),
+        };
+
+        await base44.asServiceRole.entities.Message.update(messageId, {
+          image_url: genRes.url,
+          generation_context: generationContext,
+        });
+
+        console.log(`[mediaGridGenerate] ✓ Non-character image SUCCESS: ${messageId}`);
+        return Response.json({
+          success: true,
+          imageUrl: genRes.url,
+          messageId,
+          subjectType: 'non_character',
+        });
+      } catch (genErr) {
+        const msg = genErr?.message || '';
+        if (/filter|guideline|block|violat/i.test(msg)) {
+          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+          return Response.json({ success: false, filtered: true, error: 'Image blocked by content filter. Try rephrasing.' });
+        }
+        throw genErr;
+      }
+    }
+
+    // ── SINGLE CHARACTER / USER MODE — delegate to generateImageAsync ──────
     console.log(`[mediaGridGenerate] Single-character mode: delegating to generateImageAsync`);
     console.log(`[mediaGridGenerate]   final characterId:     ${effectiveCharacterId || 'null'}`);
     console.log(`[mediaGridGenerate]   final senderCharId:    ${effectiveSenderCharId || 'null'}`);
     console.log(`[mediaGridGenerate]   final charRefs count:  ${effectiveCharacterRefs.length}`);
 
-    // User-only images must not include any character identity prompt injection
     const userOnlyExclusionNote = isUserOnly
       ? '\n\n⛔ USER-ONLY IMAGE: Do NOT include any app characters, fictional persons, or named individuals in this image unless they are explicitly described in the scene prompt. The person in this image is only the user. No character identity refs were provided.'
       : '';
 
-    // CRITICAL: Must use base44.functions.invoke (user-scoped), NOT asServiceRole.
-    // generateImageAsync calls base44.auth.me() — if called via asServiceRole, the user context
-    // is stripped and auth.me() returns null/service-role, causing 403 cross-account failures.
     const singleCharRes = await base44.functions.invoke('generateImageAsync', {
       messageId,
       prompt: sanitizedPrompt + userOnlyExclusionNote,
       characterId: effectiveCharacterId,
       characterName: effectiveCharacterName,
-      // senderCharacterId: only set when character IS the subject (not user-only mode)
       senderCharacterId: effectiveSenderCharId,
       characterReferenceImages: effectiveCharacterRefs,
       userReferenceImages: userRefImages ? (userRefImages || []).map(toPublicCDN).filter(isAccessible) : [],
       userWorldName: userName || null,
       subjectType: resolvedSubjectType,
       characterEmotionalState: 'calm',
-      // User-uploaded reference image for visual guidance
       userUploadedReferenceUrl: hasUserRef ? toPublicCDN(referenceImageUrl) : null,
-      // NO manualLocationId — generateImageAsync resolves from character record
     });
 
     if (!singleCharRes?.data?.success) {
@@ -832,7 +840,7 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
       success: true,
       imageUrl: singleCharRes.data.imageUrl,
       messageId,
-      subjectType: 'character',
+      subjectType: resolvedSubjectType,
     });
 
   } catch (error) {

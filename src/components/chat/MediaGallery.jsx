@@ -590,13 +590,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const handleGenerate = async (subjectType) => {
     if (!character || !conversationId) return;
 
-    // SUBJECT VALIDATION: At least one subject must be selected from the "Add people" dropdown.
-    // The sender toggle (character/user tab) only sets WHO SENDS — it never auto-assigns subjects.
-    if (selectedCharacterIds.length === 0) {
-      setGenerateError('Select at least one person to appear in the image using "Add people to image".');
-      return;
-    }
-
+    // SUBJECT VALIDATION: Subjects are optional — non-character images (location, object, document,
+    // crowd, scenery) are valid with zero subjects selected. If subjects are selected, they are
+    // required visual participants. If no subjects and no prompt, require at least a prompt.
     const promptText = referenceImageMode === "image_only"
       ? (prompt.trim() || "realistic candid photo, match the visual style and composition of the reference image")
       : (prompt.trim() || "candid natural moment, everyday life");
@@ -619,6 +615,17 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     // HARD IDENTITY LOCK: Validate ALL selected people have visual references
     // ═════════════════════════════════════════════════════════════════════════
     let selectedPeople = null;
+
+    // If no subjects are selected AND subjectType is not 'user', this is a non-character image.
+    // Non-character images (objects, documents, locations, crowds, scenery) are fully valid.
+    // Require at least a prompt text for non-character generation.
+    const isNonCharacterMode = selectedCharacterIds.length === 0 && subjectType !== 'user';
+    if (isNonCharacterMode) {
+      if (!promptText.trim() || promptText === 'candid natural moment, everyday life') {
+        setGenerateError('Describe what you want to generate — a location, object, document, crowd, or scene.');
+        return;
+      }
+    }
 
     // Resolve world-self character early — needed for validation hints and user ref building below
     const userChar = allCharacters.find(c => c.is_user);
@@ -821,11 +828,15 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
     try {
       // Create placeholder message
+      // Non-character images are sent by whoever the sender tab indicates (character or user)
+      const msgSenderType = (isNonCharacterMode && generationTab === 'user') ? 'user'
+        : isNonCharacterMode ? 'character'
+        : effectiveSubjectType === 'user' ? 'user' : 'character';
       const newMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
-        sender_type: effectiveSubjectType === 'user' ? 'user' : 'character',
-        character_id: resolvedCharacterId || undefined,
-        character_name: resolvedCharacterName || undefined,
+        sender_type: msgSenderType,
+        character_id: isNonCharacterMode ? character.id : (resolvedCharacterId || undefined),
+        character_name: isNonCharacterMode ? character.name : (resolvedCharacterName || undefined),
         content: "",
         emotional_state: character.emotional_state || "calm",
         timestamp: new Date().toISOString(),
@@ -844,11 +855,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const genRes = await base44.functions.invoke('mediaGridGenerate', {
         messageId: newMsg.id,
         prompt: enrichedPrompt, // enriched with Name Reference Key — backend sees who "Henry" is
-        subjectType: effectiveSubjectType,
-        // Character identity — uses explicit selection override; null for user-only
-        characterId: resolvedCharacterId,
-        characterName: resolvedCharacterName,
-        characterRefImages: resolvedCharRefImages,
+        subjectType: isNonCharacterMode ? 'non_character' : effectiveSubjectType,
+        // Character identity — null for non-character or user-only mode
+        characterId: isNonCharacterMode ? null : resolvedCharacterId,
+        characterName: isNonCharacterMode ? null : resolvedCharacterName,
+        characterRefImages: isNonCharacterMode ? [] : resolvedCharRefImages,
         // User identity
         userRefImages,
         userName: userSettings?.fictional_world_name || userChar?.world_name || userChar?.name || 'the user',
@@ -858,9 +869,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         zoneName: selectedZone || (selectedLocation ? selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.zone_name : null) || null,
         zoneImageUrls,
         // HARD IDENTITY LOCK: Multi-person selection with validated references.
-        // CRITICAL: null when user-only — prevents active chat character contamination via multi-person path.
-        // finalMultiPersonSelection has displayName/firstName enrichment for better backend labeling.
-        multiPersonSelection: finalMultiPersonSelection,
+        // Null when user-only or non-character mode — prevents character contamination.
+        multiPersonSelection: isNonCharacterMode ? null : finalMultiPersonSelection,
         // User-uploaded reference image for visual guidance
         referenceImageUrl: referenceImageUrl || null,
         referenceImageMode: referenceImageUrl ? referenceImageMode : 'prompt_only',
@@ -979,7 +989,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
                     {/* Subject selector — chooses WHO APPEARS IN the image (separate from sender) */}
                     <div className="space-y-2">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Who appears in the image <span className="text-destructive">*</span></p>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Who appears in the image <span className="text-muted-foreground/50 normal-case font-normal">(optional)</span></p>
                       <div className="flex items-center gap-2 flex-wrap">
                         {/* Character picker button */}
                         <button
@@ -1202,7 +1212,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       <textarea
                         value={prompt}
                         onChange={e => setPrompt(e.target.value)}
-                        placeholder={referenceImageUrl && referenceImageMode === "image_only" ? "Image-only mode — no prompt needed" : "Describe a scene... or click ✨ to auto-generate"}
+                        placeholder={referenceImageUrl && referenceImageMode === "image_only" ? "Image-only mode — no prompt needed" : "Describe a scene, object, document, location... or click ✨ to auto-generate"}
                         rows={2}
                         className="w-full px-3 py-2.5 pr-10 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
                       />
@@ -1282,7 +1292,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                     {generateError && <p className="text-xs text-destructive">{generateError}</p>}
                     <button
                       onClick={() => handleGenerate(generationTab === "user" ? "user" : "character")}
-                      disabled={selectedCharacterIds.length === 0 || isGenerating}
+                      disabled={isGenerating}
                       className="sticky bottom-0 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 mt-auto"
                     >
                       {isGenerating ? (
