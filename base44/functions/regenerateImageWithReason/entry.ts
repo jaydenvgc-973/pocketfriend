@@ -967,6 +967,16 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Final check: if cdnFilter stripped all refs (e.g. internal base44.app URLs),
+      // attempt to use them raw (without CDN transform) as a last resort rather than blocking.
+      if (userRefs.length === 0 && callerUserRefImages?.length > 0) {
+        const rawRefs = (callerUserRefImages || []).filter(u => u && typeof u === 'string' && u.startsWith('https://'));
+        if (rawRefs.length > 0) {
+          userRefs = rawRefs.slice(0, 3);
+          console.log(`[regenerateImageWithReason] User refs: CDN filter removed all URLs — using raw accessible URLs as fallback: ${userRefs.length}`);
+        }
+      }
+
       // ── USER REFS MISSING — VISIBLE FAILURE GATE ─────────────────────────────
       // If the user/persona was selected as a subject AND we have zero visual references after
       // exhausting all sources (UserSettings, world-self Character), we MUST NOT silently

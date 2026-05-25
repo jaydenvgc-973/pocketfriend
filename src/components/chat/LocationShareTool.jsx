@@ -64,6 +64,64 @@ export default function LocationShareTool({
         },
       });
       if (onMessageCreated && msg?.id) onMessageCreated(msg);
+
+      // ── CHARACTER RESPONSE TO RECEIVED USER LOCATION ──────────────────────
+      // The character must acknowledge the shared location — not silently receive it.
+      // Reaction depends on relationship, distance, reason, and personality.
+      try {
+        const charLocContext = charLocName ? `Your current location is: ${charLocName}.` : 'Your current location is unknown.';
+        const sameLocation = charLocId && charLocId === userLocId;
+        const distanceCtx = sameLocation
+          ? "You are at the same location as the person sharing — you are already there!"
+          : charLocName
+          ? `You are currently at ${charLocName}, which may be a different place.`
+          : '';
+        const personalityCtx = [
+          character?.personality_summary ? `Your personality: ${character.personality_summary}.` : '',
+          character?.emotional_state ? `Your emotional state: ${character.emotional_state}.` : '',
+          character?.friendship_level > 75 ? 'You are close to this person.' : character?.friendship_level > 40 ? 'Normal relationship.' : '',
+        ].filter(Boolean).join(' ');
+
+        const replyPrompt = `You are ${character?.name}. ${personalityCtx}
+
+${worldName} just sent you their location: "${userLocName}". ${charLocContext} ${distanceCtx}
+
+Write a short natural text message responding to receiving their location. React authentically:
+- Acknowledge the location specifically (use the name).
+- React based on whether you are nearby, far away, or at the same spot.
+- If relationship is close, you may ask if they want company, offer to come, or express surprise.
+- If reason is unclear, ask why they shared it.
+- Keep it 1-2 sentences. Texting style.
+- Do NOT start with your own name.
+- Return ONLY the reply text.`;
+
+        const replyRes = await base44.integrations.Core.InvokeLLM({ prompt: replyPrompt });
+        const replyText = (typeof replyRes === 'string' ? replyRes.trim() : '') || `Oh nice, you're at ${userLocName}!`;
+
+        const charReply = await base44.entities.Message.create({
+          conversation_id: conversationId,
+          sender_type: 'character',
+          character_id: characterId,
+          character_name: character?.name,
+          content: replyText,
+          emotional_state: character?.emotional_state || 'calm',
+          is_read: false,
+          timestamp: new Date(Date.now() + 1500).toISOString(),
+          memory_eligible: true,
+          relationship_eligible: true,
+          recovery_signal: false,
+        });
+        if (onMessageCreated && charReply?.id) onMessageCreated(charReply);
+        // Update conversation preview
+        await base44.entities.Conversation.update(conversationId, {
+          last_message_preview: replyText.substring(0, 100),
+          last_message_date: new Date().toISOString(),
+        }).catch(() => {});
+      } catch (replyErr) {
+        // Non-fatal — location card succeeded, reply is best-effort
+        console.warn('[LocationShareTool] Character reply failed:', replyErr?.message);
+      }
+
       setResult({ type: 'success', text: `Your location (${userLocName}) was shared with ${character?.name}.` });
     } catch (err) {
       setResult({ type: 'error', text: 'Failed to send location. Please try again.' });

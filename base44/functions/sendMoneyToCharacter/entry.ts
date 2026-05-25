@@ -98,6 +98,73 @@ Deno.serve(async (req) => {
           timestamp: now,
         },
       });
+
+      // ── CHARACTER RESPONSE TO MONEY RECEIVED ──────────────────────────────
+      // The character must react to receiving money — not silently accept it.
+      // Build a rich prompt so the response reflects reason, relationship, amount, personality.
+      try {
+        const finRecords2 = await base44.entities.CharacterFinancial.filter({ character_id: characterId }).catch(() => []);
+        const newBalance = (finRecords2[0]?.current_balance ?? amount);
+        const reasonContext = reason
+          ? `The sender included this note/reason: "${reason}".`
+          : `No reason was given for the payment.`;
+        const amountContext = amount >= 1000 ? 'a significant amount' : amount >= 200 ? 'a decent amount' : 'a small amount';
+        const personalityCtx = [
+          character.personality_summary ? `Personality: ${character.personality_summary}.` : '',
+          character.emotional_state ? `Current emotional state: ${character.emotional_state}.` : '',
+          character.friendship_level > 75 ? 'You are close to this person.' : character.friendship_level > 40 ? 'You have a normal relationship with this person.' : 'You are not especially close.',
+        ].filter(Boolean).join(' ');
+
+        const replyPrompt = `You are ${character.name}. ${personalityCtx}
+
+The person you are talking to just sent you $${amount.toLocaleString()} (${amountContext}).
+${reasonContext}
+
+Write a short, natural, in-character text message response to receiving this money. Rules:
+- React authentically based on your personality and the reason provided.
+- If no reason was given, ask what it's for or thank them while showing mild curiosity.
+- Do NOT say "as an AI" or break character.
+- If the amount is large, show appropriate reaction (surprise, appreciation, concern, etc.).
+- Keep it 1-3 sentences. Real, casual, texting style.
+- Do NOT start with your own name.
+- Return ONLY the reply text, no labels or formatting.`;
+
+        const replyRes = await base44.asServiceRole.integrations.Core.InvokeLLM({ prompt: replyPrompt });
+        const replyText = (typeof replyRes === 'string' ? replyRes.trim() : '') || `Thanks for the $${amount.toLocaleString()}!`;
+
+        await base44.entities.Message.create({
+          conversation_id: conversationId,
+          sender_type: 'character',
+          character_id: characterId,
+          character_name: character.name,
+          content: replyText,
+          emotional_state: character.emotional_state || 'calm',
+          is_read: false,
+          timestamp: new Date().toISOString(),
+          // Event context stored so memory extraction can pick it up
+          source_message_id: null,
+          memory_eligible: true,
+          relationship_eligible: true,
+          recovery_signal: false,
+        });
+
+        // Also save a memory about receiving money if reason is meaningful
+        if (reason && amount >= 100) {
+          await base44.entities.CharacterMemory.create({
+            character_id: characterId,
+            memory_type: 'event',
+            memory_text: `Received $${amount} from the user. Reason: "${reason}". This was meaningful enough to remember.`,
+            memory_summary: `Received $${amount}: ${reason}`,
+            importance_score: amount >= 500 ? 7 : 5,
+            confidence_score: 0.95,
+            permanence: 'long_term',
+            owner_email: user.email,
+          }).catch(() => {});
+        }
+      } catch (replyErr) {
+        // Non-fatal — money transaction succeeded, reply is best-effort
+        console.warn('[sendMoneyToCharacter] Character reply generation failed:', replyErr?.message);
+      }
     }
 
     return Response.json({

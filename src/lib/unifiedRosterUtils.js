@@ -323,12 +323,15 @@ export async function fetchUnifiedRoster(base44, userEmail) {
     }
   }
 
-  // ── UNIFIED ROSTER ───────────────────────────────────────────────────────
-  const seenIds = new Set();
+  // ── UNIFIED ROSTER — deduplicate by canonical_person_id ──────────────────
+  // Using canonical_person_id as the dedup key prevents the same logical "person"
+  // from appearing twice even when multiple Character DB records resolve to them.
+  const seenCanonicalIds = new Set();
   const deduped = [];
   for (const entry of canonicalEntries) {
-    if (!seenIds.has(entry.id)) {
-      seenIds.add(entry.id);
+    const key = entry.canonical_person_id || entry.id;
+    if (!seenCanonicalIds.has(key)) {
+      seenCanonicalIds.add(key);
       deduped.push(entry);
     }
   }

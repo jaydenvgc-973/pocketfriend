@@ -249,6 +249,9 @@ export default function MessageBubble({ message, character, showName = false, on
         // Subject override: passed when user selects "Doesn't look like them" and picks specific subjects
         intendedSubjectIds: subjectData?.intendedSubjectIds || null,
         includeUserSubject: subjectData?.includeUser || false,
+        // User reference images + world name pre-resolved by the subject picker
+        userRefImages: subjectData?.userRefImages || null,
+        userName: subjectData?.userName || null,
       });
       if (res?.data?.filtered) {
         // Only shown when provider actually returned a content policy block

@@ -367,35 +367,106 @@ Return ONLY valid JSON, nothing else.`,
       }
     }, 7000);
 
-    // ── TIER 5 — 10s: emoji reaction (nonessential, once per 5 messages, 50% chance) ──
+    // ── TIER 5 — 10s: emoji reaction (personality-gated, emotionally-contextual) ──
+    // Fires on emotionally meaningful messages/images. NOT random decoration.
+    // - High-emotion events: ~40% base chance
+    // - Neutral/routine messages: skip entirely
+    // - Image messages: evaluated separately via image prompt context
+    // - Same emoji spam prevented: checks last 3 character reactions on that message
+    // - Cooldown: 45s per character (not 60s — allows reactions to feel less rare)
     setTimeout(() => {
       if (isGloballyRateLimited()) return;
-      if (!responseText?.trim()) return;
+      if (isOnCooldown(characterId, 'emojiReact', 45000)) return;
+      if (isInFlight(characterId, 'emojiReact')) return;
 
-      // Only run emoji if foreground is fully done (isTyping should be false by now)
-      emojiMsgCount[characterId] = (emojiMsgCount[characterId] || 0) + 1;
-      const count = emojiMsgCount[characterId];
-
-      if (count % 5 !== 0) return; // Only fire once every 5 messages
-      if (Math.random() > 0.5) return; // 50% chance
-      if (isOnCooldown(characterId, 'emojiReact', 60000)) return;
-
-      // Emoji reaction — fully routed through safeInvoke guard
+      // Determine what to react TO: user's text message or the most recent user image
       const lastUserMsg = userMsg;
       if (!lastUserMsg?.id) return;
-      if (isInFlight(characterId, 'emojiReact')) return;
+
+      const hasUserImage = !!lastUserMsg.image_url;
+      const hasUserText = !!(text?.trim());
+      if (!hasUserImage && !hasUserText) return;
+
+      // Personality + emotional traits from character
+      const personality = character?.personality_summary?.substring(0, 150) || 'balanced';
+      const emotionalState = character?.emotional_state || 'calm';
+      const traitFlags = [
+        character?.trait_flirty && 'flirtatious',
+        character?.trait_dry_humor && 'dry humor',
+        character?.trait_empathetic && 'empathetic',
+        character?.trait_competitive && 'competitive',
+        character?.trait_loyal && 'loyal',
+        character?.trait_blunt && 'blunt',
+        character?.trait_easily_distracted && 'easily distracted',
+      ].filter(Boolean);
+      const traitContext = traitFlags.length > 0 ? `Key traits: ${traitFlags.join(', ')}.` : '';
+
+      // Build the message context for the LLM decision
+      let msgContext = '';
+      if (hasUserImage && lastUserMsg.image_description) {
+        msgContext = `The user sent an image. Visual content: "${lastUserMsg.image_description.substring(0, 200)}".`;
+      } else if (hasUserImage) {
+        const gcPrompt = lastUserMsg.generation_context?.prompt || lastUserMsg.generation_context?.scene_prompt;
+        msgContext = gcPrompt
+          ? `The user sent an image. Image description: "${gcPrompt.substring(0, 200)}".`
+          : `The user sent an image (no description available).`;
+      } else {
+        msgContext = `The user just sent this message: "${text.substring(0, 200)}".`;
+      }
 
       setInFlight(characterId, 'emojiReact', true);
       base44.integrations.Core.InvokeLLM({
-        prompt: `You are ${character?.name}. The user just sent: "${text.substring(0, 200)}". React with ONE emoji that fits your personality and emotional state (${character?.emotional_state || 'calm'}). Return only the emoji character, nothing else.`,
-      }).then(emoji => {
-        // Strip to a single emoji — covers all major emoji Unicode blocks including ❤️ (U+2764), 👍 (U+1F44D), etc.
-        const cleaned = (typeof emoji === 'string' ? emoji : '').trim()
-          .replace(/[\u200D\uFE0F]/g, '') // strip ZWJ and variation selectors
+        prompt: `You are ${character?.name}. Personality: ${personality}. ${traitContext} Current mood: ${emotionalState}.
+
+${msgContext}
+
+DECISION: Should you react with an emoji to this message/image?
+
+Rules for reacting:
+- YES for: funny, romantic, shocking, sweet, supportive, insulting, scary, emotional, or surprising content.
+- NO for: routine, neutral, informational, ordinary check-in messages with no emotional weight.
+- React based on YOUR personality and relationship with this person.
+- If YES: pick exactly ONE emoji that genuinely fits the emotional meaning. Do NOT pick at random.
+  - funny → 😂 or 😭
+  - romantic/sweet → ❤️ or 😍
+  - shocking/surprising → 😮 or 😱
+  - sad/concerning → 😢 or 💔
+  - angry/disrespectful → 😡
+  - supportive/appreciation → 👍 or ❤️
+  - cute/wholesome → 🥺 or 😊
+  - confused → 😅 or 🤔
+
+Return JSON: { "should_react": true/false, "emoji": "single emoji or null" }`,
+        response_json_schema: {
+          type: 'object',
+          properties: {
+            should_react: { type: 'boolean' },
+            emoji: { type: 'string' },
+          },
+          required: ['should_react'],
+        },
+      }).then(result => {
+        if (!result?.should_react || !result?.emoji) {
+          console.log(`[Governor] emojiReact SKIP — character decided no reaction for char=${characterId}`);
+          return null;
+        }
+        // Extract a clean single emoji
+        const cleaned = result.emoji.trim()
+          .replace(/[\u200D\uFE0F]/g, '')
           .match(/(\p{Emoji_Presentation}|\p{Extended_Pictographic})/u)?.[0]?.substring(0, 2) || '';
         if (!cleaned) return null;
+
+        // Guard: don't add duplicate same-emoji reaction from this character
+        const existingReactions = lastUserMsg.reactions || [];
+        const alreadyReacted = existingReactions.some(r => r.reactor_type === 'character' && r.reactor_id === characterId && r.emoji === cleaned);
+        if (alreadyReacted) {
+          console.log(`[Governor] emojiReact SKIP — same emoji already applied by this character`);
+          return null;
+        }
+
+        console.log(`[Governor] emojiReact FIRING: ${character?.name} → "${cleaned}" on msg=${lastUserMsg.id.substring(0, 8)}`);
         return base44.entities.Message.update(lastUserMsg.id, {
-          reactions: [...(lastUserMsg.reactions || []), {
+          reactions: [...existingReactions, {
             emoji: cleaned,
             reactor_type: 'character',
             reactor_id: characterId,
@@ -405,6 +476,7 @@ Return ONLY valid JSON, nothing else.`,
         if (updated?.id) {
           setMessages(prev => prev.map(m => m.id === updated.id ? { ...m, reactions: updated.reactions } : m));
           markCooldown(characterId, 'emojiReact');
+          console.log(`[Governor] emojiReact APPLIED — reactions now: ${JSON.stringify(updated.reactions?.slice(-2))}`);
         }
       }).catch(err => {
         const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit');
