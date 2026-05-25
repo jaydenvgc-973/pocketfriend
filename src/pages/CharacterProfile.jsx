@@ -718,23 +718,32 @@ export default function CharacterProfile() {
 
           <CollapsibleProfileSection icon={Briefcase} title="Income Sources">
             <div className="space-y-2">
-              {!characterFinancial && (
-                <p className="text-xs text-muted-foreground italic">No financial record found.</p>
+              {workLocations.length === 0 && (
+                <p className="text-xs text-muted-foreground italic">No work locations linked yet.</p>
               )}
-              {characterFinancial && (characterFinancial.income_sources || []).length === 0 && (
-                <p className="text-xs text-muted-foreground italic">No income sources recorded yet.</p>
-              )}
-              {(characterFinancial?.income_sources || []).map((src, idx) => (
-                <div key={idx} className="flex items-center justify-between text-xs pb-2 border-b border-border last:border-b-0">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <Briefcase className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
-                    <span className="text-muted-foreground truncate">{src.location_name}</span>
+              {workLocations.map((loc) => {
+                const payRate = loc.worker_pay_rates?.[characterId];
+                const payType = loc.worker_pay_type?.[characterId];
+                const jobTitle = loc.worker_job_titles?.[characterId];
+                const shift = getWorkShift(loc.id);
+                return (
+                  <div key={loc.id} className="flex items-center justify-between text-xs pb-2 border-b border-border last:border-b-0">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <Briefcase className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <span className="text-foreground font-medium truncate block">{loc.name}</span>
+                        {jobTitle && <span className="text-muted-foreground/70 truncate block">{jobTitle}</span>}
+                        {shift && <span className="text-muted-foreground/50 truncate block">{shift}</span>}
+                      </div>
+                    </div>
+                    {payRate != null && (
+                      <div className="text-right flex-shrink-0 ml-2 font-semibold text-green-300">
+                        ${Number(payRate).toFixed(2)} {payType === 'hourly' ? '/hr' : payType === 'salary' ? '/yr' : ''}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-right flex-shrink-0 ml-2 font-semibold text-green-300">
-                    ${src.pay_amount?.toFixed(2) || '0.00'} {src.pay_type === 'hourly' ? '/hr' : '/yr'}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CollapsibleProfileSection>
 
