@@ -1,10 +1,7 @@
 /**
  * generateImageAsync — Chat-triggered image generation.
  *
- * PIPELINE (strict, no guessing):
- *   1. character record → identity refs (avatar + reference_image_urls)
- *   2. character location fields → LocationReference → zone images → environment refs
- *   3. prompt → action, pose, camera, expression only
+ * PIPELINE: generate → commit → display. No post-generation mutation.
  *
  * RULES:
  *   - Identity refs control ONLY: face, skin, hair, body, markings
@@ -827,7 +824,7 @@ UNKNOWN IDENTITY ≠ CAUCASIAN / WHITE.
 This applies to every subject in every image — no exceptions.
 ════════════════════════════════════════════════════════════
 `;
-  return withFictionalDecl(`${caucasianGuard}${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}{{VISUAL_SOURCE_BOUNDARY_BLOCK}}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`);
+  return withFictionalDecl(`${caucasianGuard}${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`);
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
@@ -1281,8 +1278,6 @@ All reference images (if any) are environment/location refs only — do NOT trea
       userWorldName,
       userOutfitText: userOutfitText || null,
     });
-
-    finalPrompt = finalPrompt.replace('{{VISUAL_SOURCE_BOUNDARY_BLOCK}}', '');
 
     const previousCameraVars = message?.generation_context?.camera_variables || null;
 
