@@ -1293,8 +1293,6 @@ All reference images (if any) are environment/location refs only — do NOT trea
       userOutfitText: userOutfitText || null,
     });
 
-    const previousCameraVars = message?.generation_context?.camera_variables || null;
-
     function extractCameraVarsFromPrompt(p) {
       const lower = (p || '').toLowerCase();
       return {
@@ -1306,28 +1304,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       };
     }
 
-    function countCameraDiffs(prev, next) {
-      if (!prev || !next) return 5;
-      let diffs = 0;
-      if (prev.distance !== next.distance) diffs++;
-      if (prev.angle !== next.angle) diffs++;
-      if (prev.height !== next.height) diffs++;
-      if (prev.framing !== next.framing) diffs++;
-      if (prev.lens_style !== next.lens_style) diffs++;
-      return diffs;
-    }
 
-    const CAMERA_FORCE_PRESETS = [
-      `\n\n════ MANDATORY CAMERA OVERRIDE (validation retry 1) ════\nThe previous image reused the same camera position. You MUST physically move the camera.\nREQUIRED: wide shot from the far corner of the room, camera at LOW angle (below waist height), subject in right third of frame — asymmetric, off-center. Strong foreground element in lower-left. Background recedes into depth.\nThis camera position MUST be visibly different from any previous framing. Centered or eye-level framing = automatic fail.\n════════════════════════════════════════════════`,
-      `\n\n════ MANDATORY CAMERA OVERRIDE (validation retry 2 — ESCALATED) ════\nTwo consecutive generations used the same camera frame. Maximum variation required.\nREQUIRED: OVERHEAD / TOP-DOWN angle, camera directly above subject looking straight down. Subject centered but slightly offset to one side. Environmental context fully visible from above. No standard eye-level framing whatsoever.\nAlternatively if overhead is not contextually possible: EXTREME LOW ANGLE from floor level, camera tilted sharply upward. Subject fills upper portion of frame. Floor in foreground.\n════════════════════════════════════════════════`,
-    ];
-
-    let acceptedGenRes = null;
-    let acceptedCameraVars = null;
-    let acceptedAttemptIndex = null;
-    let attemptPrompt = finalPrompt;
-    const MAX_ATTEMPTS = 3;
-    const stagedAttempts = [];
 
     const structuredSubjects = [];
     if (charRecord || characterId) {
@@ -1387,171 +1364,96 @@ All reference images (if any) are environment/location refs only — do NOT trea
     console.log(`[generateImageAsync] ── PROVIDER DISPATCH ── env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} hour=${serverTime.getHours()}`);
     console.log(`  prompt: ${sanitizedPrompt.substring(0, 200)}${sanitizedPrompt.length > 200 ? '…' : ''}`);
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      console.log(`[generateImageAsync] Attempt ${attempt} — final provider prompt (first 400): ${attemptPrompt.substring(0, 400)}…`);
-      let attemptGenRes = null;
-      try {
-        attemptGenRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-          prompt: attemptPrompt,
-          existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
-        });
-      } catch (genErr) {
-        const msg = (genErr?.message || '').toLowerCase();
-        const statusCode = genErr?.status || genErr?.statusCode || genErr?.code || null;
+    // ── SINGLE ATTEMPT — no internal retries ─────────────────────────────────
+    // On any failure, classify the error and return it for the frontend to route
+    // through the "Why Regenerate" flow via regenerateImageWithReason.
+    let genRes = null;
+    let failureReason = null;
+    let failureError = null;
 
-        const isRealContentPolicyBlock = (
-          msg.includes('content policy') ||
-          msg.includes('safety system') ||
-          msg.includes('violates our content') ||
-          msg.includes('violates our usage') ||
-          msg.includes('against our usage policies') ||
-          msg.includes('policy violation') ||
-          msg.includes('moderation') ||
-          msg.includes('safety filter') ||
-          msg.includes('flagged by our safety') ||
-          (msg.includes('cannot generate') && msg.includes('explicit')) ||
-          msg.includes('violated vertex') ||
-          msg.includes('violated google') ||
-          msg.includes('vertex ai') ||
-          msg.includes('unable to show') ||
-          msg.includes('filtered out') ||
-          msg.includes('imagen') ||
-          msg.includes('responsible ai') ||
-          (statusCode === 400 && (msg.includes('safety') || msg.includes('policy') || msg.includes('blocked_by_safety') || msg.includes('blocked') || msg.includes('filter')))
-        );
+    try {
+      console.log(`[generateImageAsync] Dispatching — prompt (first 400): ${finalPrompt.substring(0, 400)}…`);
+      genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
+        prompt: finalPrompt,
+        existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
+      });
+    } catch (genErr) {
+      const msg = (genErr?.message || '').toLowerCase();
+      const statusCode = genErr?.status || genErr?.statusCode || genErr?.code || null;
 
-        if (isRealContentPolicyBlock) {
-          console.warn(`[generateImageAsync] Content policy block on attempt ${attempt}: ${msg.substring(0, 200)}`);
-          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-          return Response.json({ success: false, filtered: true, error: 'Content policy block — the provider rejected this specific image content. Try a different scene description.' });
-        }
+      const isRealContentPolicyBlock = (
+        msg.includes('content policy') || msg.includes('safety system') ||
+        msg.includes('violates our content') || msg.includes('violates our usage') ||
+        msg.includes('against our usage policies') || msg.includes('policy violation') ||
+        msg.includes('moderation') || msg.includes('safety filter') ||
+        msg.includes('flagged by our safety') ||
+        (msg.includes('cannot generate') && msg.includes('explicit')) ||
+        msg.includes('violated vertex') || msg.includes('violated google') ||
+        msg.includes('vertex ai') || msg.includes('unable to show') ||
+        msg.includes('filtered out') || msg.includes('imagen') ||
+        msg.includes('responsible ai') ||
+        (statusCode === 400 && (msg.includes('safety') || msg.includes('policy') ||
+          msg.includes('blocked_by_safety') || msg.includes('blocked') || msg.includes('filter')))
+      );
 
-        console.error(`[generateImageAsync] Provider error attempt ${attempt}: ${genErr?.message || genErr}`);
-        if (attempt < MAX_ATTEMPTS) {
-          console.warn(`[generateImageAsync] Retrying after provider error (attempt ${attempt}/${MAX_ATTEMPTS})`);
-          continue;
-        }
-        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-        return Response.json({ success: false, error: `Image generation failed — the provider returned an error. Please try again.` }, { status: 500 });
-      }
-
-      if (!attemptGenRes?.url) {
-        console.warn(`[generateImageAsync] Attempt ${attempt}: no URL returned`);
-        stagedAttempts.push({
-          attempt_index: attempt,
-          prompt: attemptPrompt.slice(0, 500),
-          generated_image_url: null,
-          camera: null,
-          status: 'failed_no_url',
-          created_at: new Date().toISOString(),
-        });
-        continue;
-      }
-
-      const thisCameraVars = extractCameraVarsFromPrompt(attemptPrompt);
-      const diffCount = countCameraDiffs(previousCameraVars, thisCameraVars);
-
-      console.log(`[generateImageAsync] Attempt ${attempt}: camera diffs=${diffCount} | dist=${thisCameraVars.distance} angle=${thisCameraVars.angle} height=${thisCameraVars.height} framing=${thisCameraVars.framing} lens=${thisCameraVars.lens_style}`);
-
-      const isFirstGeneration = !previousCameraVars;
-      const cameraValid = isFirstGeneration || diffCount >= 2;
-
-      if (cameraValid) {
-        stagedAttempts.push({
-          attempt_index: attempt,
-          prompt: attemptPrompt.slice(0, 500),
-          generated_image_url: attemptGenRes.url,
-          camera: thisCameraVars,
-          status: 'accepted',
-          created_at: new Date().toISOString(),
-        });
-
-        acceptedGenRes = attemptGenRes;
-        acceptedCameraVars = thisCameraVars;
-        acceptedAttemptIndex = attempt;
-
-        const reason = isFirstGeneration ? 'first generation (no prior camera)' : `${diffCount} camera variables changed`;
-        console.log(`[generateImageAsync] ✅ Camera ACCEPTED — attempt ${attempt} (${reason})`);
-
-        const generatedImageDescription = sanitizedPrompt
-          ? sanitizedPrompt.substring(0, 500)
-          : null;
-
-        await base44.asServiceRole.entities.Message.update(messageId, {
-          image_url: acceptedGenRes.url,
-          ...(generatedImageDescription ? { image_description: generatedImageDescription, image_analysis_status: 'complete' } : {}),
-          generation_context: {
-          ...baseGenerationContext,
-          camera_variables: acceptedCameraVars,
-          attempts: stagedAttempts,
-          accepted_attempt_index: acceptedAttemptIndex,
-          },
-          content: '',
-        });
-
-        break;
-
+      if (isRealContentPolicyBlock) {
+        failureReason = 'content_policy';
+        failureError = 'Content policy block — the provider rejected this image. Try a different scene description.';
+        console.warn(`[generateImageAsync] ⛔ Content policy block for ${messageId}: ${msg.substring(0, 200)}`);
       } else {
-        stagedAttempts.push({
-          attempt_index: attempt,
-          prompt: attemptPrompt.slice(0, 500),
-          generated_image_url: attemptGenRes.url,
-          camera: thisCameraVars,
-          status: 'rejected_camera_static',
-          rejection_reason: `Only ${diffCount} camera variable(s) changed (minimum 2 required)`,
-          created_at: new Date().toISOString(),
-        });
-
-        console.warn(`[generateImageAsync] ⚠️ Camera REJECTED attempt ${attempt}: only ${diffCount} variable(s) changed. Storing attempt, forcing camera shift.`);
-
-        await base44.asServiceRole.entities.Message.update(messageId, {
-          generation_context: {
-            ...baseGenerationContext,
-            camera_variables: null,
-            attempts: stagedAttempts,
-            accepted_attempt_index: null,
-          },
-        }).catch(() => {});
-
-        if (attempt < MAX_ATTEMPTS) {
-          const overrideBlock = CAMERA_FORCE_PRESETS[Math.min(attempt - 1, CAMERA_FORCE_PRESETS.length - 1)];
-          attemptPrompt = attemptPrompt + overrideBlock;
-        } else {
-          console.warn(`[generateImageAsync] ⚠️ Max attempts reached — promoting last image despite static camera`);
-          stagedAttempts[stagedAttempts.length - 1].status = 'accepted_fallback';
-          acceptedGenRes = attemptGenRes;
-          acceptedCameraVars = thisCameraVars;
-          acceptedAttemptIndex = attempt;
-          await base44.asServiceRole.entities.Message.update(messageId, {
-            image_url: acceptedGenRes.url,
-            generation_context: {
-              ...baseGenerationContext,
-              camera_variables: acceptedCameraVars,
-              attempts: stagedAttempts,
-              accepted_attempt_index: acceptedAttemptIndex,
-            },
-            content: '',
-          });
-        }
+        failureReason = 'provider_error';
+        failureError = `Image generation failed — provider error: ${genErr?.message || 'unknown'}`;
+        console.error(`[generateImageAsync] ❌ Provider error for ${messageId}: ${genErr?.message || genErr}`);
       }
     }
 
-    if (!acceptedGenRes?.url) {
-      await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-      return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
+    if (!genRes?.url) {
+      if (!failureReason) {
+        failureReason = 'no_image_url';
+        failureError = 'Image generation failed — no URL returned from provider.';
+        console.warn(`[generateImageAsync] ⚠️ No URL returned for ${messageId}`);
+      }
+      await base44.asServiceRole.entities.Message.update(messageId, {
+        content: '[IMAGE_FAILED]',
+        generation_context: {
+          ...baseGenerationContext,
+          failure_reason: failureReason,
+          failure_error: failureError,
+        },
+      }).catch(() => {});
+      return Response.json({
+        success: false,
+        reason: failureReason,
+        filtered: failureReason === 'content_policy',
+        error: failureError,
+      }, { status: 500 });
     }
 
-    console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} | accepted attempt ${acceptedAttemptIndex}/${MAX_ATTEMPTS} | camera: ${acceptedCameraVars?.distance} ${acceptedCameraVars?.angle} ${acceptedCameraVars?.framing} | total staged: ${stagedAttempts.length}`);
+    // ── SUCCESS ───────────────────────────────────────────────────────────────
+    const cameraVars = extractCameraVarsFromPrompt(finalPrompt);
+    const generatedImageDescription = sanitizedPrompt ? sanitizedPrompt.substring(0, 500) : null;
+
+    await base44.asServiceRole.entities.Message.update(messageId, {
+      image_url: genRes.url,
+      ...(generatedImageDescription ? { image_description: generatedImageDescription, image_analysis_status: 'complete' } : {}),
+      generation_context: {
+        ...baseGenerationContext,
+        camera_variables: cameraVars,
+        attempts: [{ attempt_index: 1, prompt: finalPrompt.slice(0, 500), generated_image_url: genRes.url, camera: cameraVars, status: 'accepted', created_at: new Date().toISOString() }],
+        accepted_attempt_index: 1,
+      },
+      content: '',
+    });
+
+    console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} | camera: ${cameraVars?.distance} ${cameraVars?.angle} ${cameraVars?.framing}`);
 
     return Response.json({
       success: true,
-      imageUrl: acceptedGenRes.url,
+      imageUrl: genRes.url,
       messageId,
       locationName: resolvedLocationName,
       zoneName: resolvedZoneName,
-      cameraVariables: acceptedCameraVars,
-      attemptIndex: acceptedAttemptIndex,
-      totalAttempts: stagedAttempts.length,
+      cameraVariables: cameraVars,
     });
 
   } catch (error) {
