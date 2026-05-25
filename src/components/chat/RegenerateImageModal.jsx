@@ -118,6 +118,8 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const userEmailRef = useRef(null);
   // Diagnostics for the failure panel
   const [rosterDiagnostics, setRosterDiagnostics] = useState(null);
+  // User settings — fetched when subject picker opens to get avatar + reference images
+  const [userSettings, setUserSettings] = useState(null);
 
   // ── PROMPT-DERIVED IDENTITY ────────────────────────────────────────────────
   // Parse [CHARACTER] Name or [CHARACTER] FirstName from prompt as authoritative subject identity.
@@ -265,6 +267,11 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     setLoadingCharacters(seedRecords ? false : true);
     setRosterLoadStatus(seedRecords ? 'cache' : 'loading');
 
+    // Fetch user settings for avatar + reference images (non-blocking, parallel with roster)
+    base44.entities.UserSettings.filter({ owner_email: email })
+      .then(s => setUserSettings(s?.[0] || null))
+      .catch(() => {});
+
     // Register foreground task — background systems yield while user is picking subjects
     const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'high');
 
@@ -358,7 +365,31 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     const hasUser = selectedSubjectIds.includes('__user__');
     // All roster entries are resolved — every id here is a real canonical Character.id
     const charIds = selectedSubjectIds.filter(id => id !== '__user__');
-    onSelect('no_avatar', null, null, null, null, null, { intendedSubjectIds: charIds, includeUser: hasUser });
+
+    // Collect user reference images using same priority order as MediaGallery:
+    // 1. UserSettings.reference_image_urls  2. UserSettings.generated_avatar_urls  3. user roster avatar
+    let userRefImages = [];
+    if (hasUser) {
+      const userRosterEntry = allCharacters.find(c => c.is_user);
+      const refs = [
+        ...(userSettings?.reference_image_urls || []).slice(0, 3),
+        ...(userSettings?.generated_avatar_urls || []).slice(0, 2),
+        userRosterEntry?.avatar_url,
+      ].filter(Boolean);
+      userRefImages = refs;
+    }
+
+    const userName = userSettings?.fictional_world_name ||
+      allCharacters.find(c => c.is_user)?.world_name ||
+      allCharacters.find(c => c.is_user)?.name ||
+      null;
+
+    onSelect('no_avatar', null, null, null, null, null, {
+      intendedSubjectIds: charIds,
+      includeUser: hasUser,
+      userRefImages: hasUser ? userRefImages : null,
+      userName: hasUser ? userName : null,
+    });
     setShowSubjectPicker(false);
   };
 
@@ -608,27 +639,33 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                     );
                   })()}
                   <div className="max-h-56 overflow-y-auto space-y-1">
-                     {/* User entry — always shown first, label includes world persona name if known */}
-                     {(() => {
-                       const userRosterEntry = allCharacters.find(c => c.is_user) ||
-                         { name: parseMediaGridSubjects(originalPrompt || '').userSubjects[0] || 'My persona' };
-                       const userPersonaName = userRosterEntry?.world_name || userRosterEntry?.name || 'My persona';
-                       const isUserSelected = selectedSubjectIds.includes('__user__');
-                       return (
-                         <button
-                           onClick={() => toggleSubject('__user__')}
-                           className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-sm text-left ${isUserSelected ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'}`}
-                         >
-                           {isUserSelected && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
-                           <Users className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
-                           <span className="font-medium">Me / My persona</span>
-                           {userPersonaName && userPersonaName !== 'My persona' && (
-                             <span className="text-[10px] text-muted-foreground/70 ml-1">— {userPersonaName}</span>
-                           )}
-                           <span className="text-[10px] text-muted-foreground ml-auto">(You)</span>
-                         </button>
-                       );
-                     })()}
+                    {/* User entry — always shown first, shows avatar + world name like other characters */}
+                    {(() => {
+                      const userRosterEntry = allCharacters.find(c => c.is_user);
+                      const userWorldName = userSettings?.fictional_world_name ||
+                        userRosterEntry?.world_name ||
+                        userRosterEntry?.name ||
+                        parseMediaGridSubjects(originalPrompt || '').userSubjects[0] ||
+                        'Me';
+                      const userFirstName = userWorldName.split(/\s+/)[0];
+                      const userAvatarUrl = userRosterEntry?.avatar_url || null;
+                      const isUserSelected = selectedSubjectIds.includes('__user__');
+                      return (
+                        <button
+                          onClick={() => toggleSubject('__user__')}
+                          className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-sm text-left ${isUserSelected ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'}`}
+                        >
+                          {isUserSelected && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                          {userAvatarUrl ? (
+                            <img src={userAvatarUrl} alt={userFirstName} className="w-6 h-6 rounded-full object-cover flex-shrink-0" onError={e => { e.target.style.display = 'none'; }} />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">{userFirstName[0]?.toUpperCase() || 'Y'}</div>
+                          )}
+                          <span className="font-medium">{userFirstName}</span>
+                          <span className="text-[10px] text-muted-foreground ml-auto">(You)</span>
+                        </button>
+                      );
+                    })()}
                     {/* Characters — every entry is a resolved canonical Character.id at this point */}
                     {[...allCharacters.filter(c => !c.is_user)]
                       .sort((a, b) => (a.name || '').localeCompare(b.name || ''))

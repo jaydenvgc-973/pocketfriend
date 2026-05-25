@@ -461,6 +461,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         // For no_avatar: the explicitly selected intended subjects override auto-resolved identity
         intendedSubjectIds: intendedSubjects?.intendedSubjectIds || null,
         includeUserSubject: intendedSubjects?.includeUser || false,
+        // User reference images passed from subject picker — prevents generic person substitution
+        userRefImages: intendedSubjects?.userRefImages || null,
+        userName: intendedSubjects?.userName || null,
       });
       if (res?.data?.success && res?.data?.image_url) {
         // Hydrate gallery immediately so updated image shows without reload
