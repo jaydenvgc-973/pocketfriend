@@ -678,9 +678,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     //
     // RULE: If any source resolves refs, store them in sessionUserRefsRef immediately.
     // Subsequent generations in the same session always have refs available.
-    // Need user refs when user is a subject or is the sender with no other subjects
+    // isUserOnlyMode must be computed here (before needsUserRefs) even though the routing
+    // block repeats it below — this avoids a temporal dead-zone reference error.
+    const isUserOnlyModeEarly = (hasNoSubjects && subjectType === 'user') || hasSingleUserSubject;
     const userIsInSubjectSelection = selectedCharacterIds.some(id => allCharacters.find(c => c.id === id)?.is_user);
-    const needsUserRefs = isUserOnlyMode || userIsInSubjectSelection;
+    const needsUserRefs = isUserOnlyModeEarly || userIsInSubjectSelection;
 
     let userRefImages = [];
     if (needsUserRefs) {
@@ -726,7 +728,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
     // isUserOnlyMode: true only when no subjects selected and sender is user,
     // OR when ONLY the user world-self character is selected (solo user selfie).
-    const isUserOnlyMode = (hasNoSubjects && subjectType === 'user') || hasSingleUserSubject;
+    const isUserOnlyMode = isUserOnlyModeEarly;
 
     // Single-character override: when exactly one non-user character is selected,
     // that character is the authoritative subject (overrides the active chat character).
