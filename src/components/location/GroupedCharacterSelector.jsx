@@ -11,6 +11,7 @@ export default function GroupedCharacterSelector({
   selectedIds = [],
   onSelect,
   placeholder = "Search characters...",
+  getCharacterAvailability = null, // optional: (char) => { status, allJobs, isOnShiftNow }
 }) {
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -50,6 +51,17 @@ export default function GroupedCharacterSelector({
         ? "NPC Fictitious"
         : "NPC Family Member";
 
+    // Availability info — only shown when getCharacterAvailability is provided (worker picker)
+    const avail = getCharacterAvailability ? getCharacterAvailability(char) : null;
+    const availColor =
+      avail?.status === "available" ? "text-emerald-400" :
+      avail?.status === "busy" ? "text-amber-400" :
+      avail?.status === "conflict" ? "text-destructive" : null;
+    const availLabel =
+      avail?.status === "available" ? "Available" :
+      avail?.status === "busy" ? "Currently on shift" :
+      avail?.status === "conflict" ? "⚠ Schedule conflict" : null;
+
     return (
       <button
         key={char.id}
@@ -63,7 +75,19 @@ export default function GroupedCharacterSelector({
         <CharacterAvatar character={char} size="md" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground">{char.name}</p>
-          <p className="text-xs text-muted-foreground">{charTypeName}</p>
+          {avail ? (
+            <div className="space-y-0.5">
+              {availLabel && <p className={`text-xs font-medium ${availColor}`}>{availLabel}</p>}
+              {avail.allJobs?.map((job, i) => (
+                <p key={i} className="text-[10px] text-muted-foreground truncate">
+                  📍 {job.name}{job.title ? ` · ${job.title}` : ''}{job.shift ? ` · ${job.shift}` : ''}
+                </p>
+              ))}
+              {avail.allJobs?.length === 0 && <p className="text-[10px] text-muted-foreground">No current job</p>}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">{charTypeName}</p>
+          )}
         </div>
         <div
           className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${

@@ -1092,7 +1092,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             </div>
           )}
 
-          {/* Add workers selector — card-style rows with avatars, no checkboxes */}
+          {/* Add workers selector — shows availability, existing jobs and schedule */}
           <div>
             <label className="text-xs text-muted-foreground mb-2 block">Add Workers</label>
             <GroupedCharacterSelector
@@ -1104,6 +1104,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 }
               }}
               placeholder="Search to add workers..."
+              getCharacterAvailability={(char) => getWorkerAvailabilityV2(char, allLocations, editingLocation?.id)}
             />
           </div>
         </div>

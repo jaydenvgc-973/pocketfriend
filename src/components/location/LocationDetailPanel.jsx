@@ -4,6 +4,8 @@ import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
 import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
 import WorkerEmploymentControls from "./WorkerEmploymentControls";
+import SchoolEnrollmentSection from "./SchoolEnrollmentSection";
+import ReligiousMemberSection from "./ReligiousMemberSection";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -283,6 +285,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
       {(cat === 'school' || cat === 'education') && (
         <>
           <SectionHeader icon={GraduationCap} label="School / Education" />
+          <SchoolEnrollmentSection location={location} onUpdate={onResidentsChanged} />
 
           {(() => {
             const students = characters.filter(c =>
@@ -374,6 +377,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
       {cat === 'religion' && (
         <>
           <SectionHeader icon={Church} label="Place of Worship" />
+          <ReligiousMemberSection location={location} onUpdate={onResidentsChanged} />
 
           {(location.owner_character_name || location.owner_npc_name) && (
             <DetailRow

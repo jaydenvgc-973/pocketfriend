@@ -121,48 +121,38 @@
         "real_world",
         "app_world",
         "hybrid"
-      ],
-      "description": "real_world = uses lat/lng. app_world = fictional VGC world using map_x/map_y. hybrid = has both."
+      ]
     },
     "latitude": {
-      "type": "number",
-      "description": "Real-world latitude. City/neighborhood level is acceptable \u2014 no exact street address needed."
+      "type": "number"
     },
     "longitude": {
-      "type": "number",
-      "description": "Real-world longitude."
+      "type": "number"
     },
     "map_x": {
       "type": "number",
       "minimum": 0,
-      "maximum": 100,
-      "description": "Fictional VGC world map X coordinate (0\u2013100 scale)."
+      "maximum": 100
     },
     "map_y": {
       "type": "number",
       "minimum": 0,
-      "maximum": 100,
-      "description": "Fictional VGC world map Y coordinate (0\u2013100 scale)."
+      "maximum": 100
     },
     "anchor_city": {
-      "type": "string",
-      "description": "City this location is anchored to (e.g. 'Paterson', 'Newark', 'New York'). Used for travel time estimation."
+      "type": "string"
     },
     "anchor_state": {
-      "type": "string",
-      "description": "State abbreviation (e.g. 'NJ', 'NY')."
+      "type": "string"
     },
     "fictional_region": {
-      "type": "string",
-      "description": "For app_world locations: the fictional region (e.g. 'Greater Paterson / VGC District')."
+      "type": "string"
     },
     "map_zone": {
-      "type": "string",
-      "description": "Logical map zone identifier for clustering related locations."
+      "type": "string"
     },
     "same_building_group_id": {
-      "type": "string",
-      "description": "If set, all locations with the same value are in the same building/complex. Travel between them is minimal (1\u20133 min)."
+      "type": "string"
     },
     "category": {
       "type": "string",
@@ -248,12 +238,10 @@
     },
     "correctional_attire": {
       "type": "object",
-      "description": "Legacy jail-only attire field. New system uses the uniforms field instead.",
       "additionalProperties": true
     },
     "uniforms": {
       "type": "object",
-      "description": "Global uniform definitions for this location. Keyed by uniform ID.",
       "additionalProperties": {
         "type": "object",
         "additionalProperties": true,
@@ -297,7 +285,6 @@
     },
     "worker_manual_uniforms": {
       "type": "object",
-      "description": "Map of character_id to uniform_id for manual employee-specific uniform assignments.",
       "additionalProperties": {
         "type": "string"
       }
@@ -464,6 +451,30 @@
             "default": "active"
           }
         }
+      }
+    },
+    "religious_members": {
+      "type": "array",
+      "default": [],
+      "description": "Characters assigned as congregation members. Shared truth with Character.religious_location_id.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "character_id": {
+            "type": "string"
+          },
+          "character_name": {
+            "type": "string"
+          },
+          "joined_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "character_id",
+          "character_name"
+        ]
       }
     },
     "character_id": {

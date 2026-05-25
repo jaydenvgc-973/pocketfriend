@@ -35,6 +35,7 @@ import CharacterQuirksPanel from "@/components/character/CharacterQuirksPanel";
 import CharacterClosetPanel from "@/components/character/CharacterClosetPanel";
 import AddPeopleInTheirWorldPanel from "@/components/character/AddPeopleInTheirWorldPanel";
 import RelationshipTensionCard from "@/components/character/RelationshipTensionCard";
+import CharacterEducationSection from "@/components/character/CharacterEducationSection";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -640,44 +641,7 @@ export default function CharacterProfile() {
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection icon={GraduationCap} title="Education">
-            {(character.completed_education?.length > 0) && (() => {
-              const now = new Date();
-              const completedItems = (character.completed_education || []).filter(edu => {
-                if (!edu.completion_date) return false;
-                return new Date(edu.completion_date) <= now;
-              });
-              if (completedItems.length === 0) return null;
-              return (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <GraduationCap className="w-4 h-4 text-primary" />
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider">Completed Education</p>
-                  </div>
-                  <div className="space-y-1">
-                    {completedItems.map((edu, idx) => {
-                      const modeLabel = edu.mode === 'in_person' ? 'In-Person' : edu.mode === 'remote_scheduled' ? 'Remote' : edu.mode === 'on_demand' ? 'On-Demand' : null;
-                      return (
-                        <div key={idx}>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-sm text-muted-foreground">
-                              {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
-                            </p>
-                            {modeLabel && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border">{modeLabel}</span>
-                            )}
-                          </div>
-                          {edu.completion_date && (
-                            <p className="text-xs text-muted-foreground/60">
-                              Completed {format(new Date(edu.completion_date), "MMM yyyy")}
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
+            <CharacterEducationSection character={character} />
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection icon={AlertCircle} title="Criminal Record">

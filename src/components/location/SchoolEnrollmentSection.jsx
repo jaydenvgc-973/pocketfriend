@@ -19,9 +19,17 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
 
   const { data: characters = [] } = useQuery({
     queryKey: ['characters', currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ created_by: currentUser.email, status: 'active' }, '-created_date')
-      : [],
+    queryFn: async () => {
+      if (!currentUser?.email) return [];
+      const [active, npcs] = await Promise.all([
+        base44.entities.Character.filter({ owner_email: currentUser.email, status: 'active', character_type: 'active_created_character' }),
+        base44.entities.Character.filter({ owner_email: currentUser.email, character_type: { $in: ['npc_fictitious', 'npc_family_member'] } }),
+      ]);
+      const seen = new Set();
+      return [...active, ...npcs.filter(c => c.status !== 'deleted' && c.status !== 'moved_away')].filter(c => {
+        if (seen.has(c.id)) return false; seen.add(c.id); return true;
+      });
+    },
     enabled: !!currentUser?.email,
   });
 
