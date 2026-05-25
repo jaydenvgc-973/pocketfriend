@@ -1210,37 +1210,6 @@ Deno.serve(async (req) => {
     referenceImages.forEach((url, i) => console.log(`  [${i+1}] ${url}`));
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | char=${charRecord?.name || characterName || 'none'} | outfit_injected=${/Currently wearing:/i.test(charDesc)} | message_id=${messageId}`);
 
-    let visualSourceAudit = null;
-    let visualSourceBoundaryBlock = '';
-    let prepareData = null;
-    {
-      const approvedSubjects = [
-        ...(charRecord ? [{ id: charRecord.id, name: charRecord.name, type: 'character', canonical_traits: Object.keys(charRecord.appearance_lock || {}).join(',') || null }] : []),
-        ...((subjectType === 'joint' || subjectType === 'user') ? [{ id: requestingUser, name: userWorldName || 'user', type: 'user' }] : []),
-      ];
-      const expectedHumanCount = subjectType === 'joint' ? 2 : (subjectType === 'character' || subjectType === 'user' || subjectType === 'known_character') ? 1 : 0;
-      const locationId = charRecord?.resolved_current_location_id || charRecord?.current_home_location_id || null;
-
-      try {
-        const pr = await base44.functions.invoke('imageGenerationValidator', {
-          mode: 'prepare', conversationId: message.conversation_id || null,
-          senderCharacterId: senderCharacterId || null, subjectCharacterId: characterId || null,
-          locationId, approvedSubjects, sanitizedPrompt, expectedHumanCount,
-          logPrefix: `[generateImageAsync][${messageId}]`,
-        });
-        prepareData = pr?.data || {};
-      } catch (prepErr) {
-        console.warn(`[generateImageAsync] ⚠️ PRE-GEN AUDIT FAILED (non-blocking) — using isolation fallback: ${prepErr?.message}`);
-        prepareData = { audit: { validation_status: 'validation_unavailable' }, boundaryBlock: '\n\n⚠️ VISUAL SOURCE BOUNDARY: Audit unavailable — maximum identity isolation. Only approved subjects may appear.\n', auditStatus: 'validation_unavailable', conversationContextNames: [], locationOwnerNames: [], senderName: null };
-      }
-      if (!prepareData || !prepareData.audit) {
-        prepareData = { audit: { validation_status: 'validation_unavailable' }, boundaryBlock: '\n\n⚠️ VISUAL SOURCE BOUNDARY: Audit unavailable — maximum identity isolation. Only approved subjects may appear.\n', auditStatus: 'validation_unavailable', conversationContextNames: [], locationOwnerNames: [], senderName: null };
-      }
-      visualSourceAudit = prepareData.audit || null;
-      visualSourceBoundaryBlock = prepareData.boundaryBlock || '';
-      console.log(`[generateImageAsync][${messageId}] audit_status=${prepareData.auditStatus} | ctx_names=[${(prepareData.conversationContextNames||[]).join(', ')}] | loc_owners=[${(prepareData.locationOwnerNames||[]).join(', ')}] | sender=${prepareData.senderName||'none'}`);
-    }
-
     const appearanceLockCorrections = [];
     if (charRecord?.appearance_lock && sanitizedPrompt) {
       const { prompt: correctedPrompt, corrections } = validatePromptAgainstAppearanceLock(
@@ -1313,11 +1282,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       userOutfitText: userOutfitText || null,
     });
 
-    if (visualSourceBoundaryBlock) {
-      finalPrompt = finalPrompt.replace('{{VISUAL_SOURCE_BOUNDARY_BLOCK}}', visualSourceBoundaryBlock);
-    } else {
-      finalPrompt = finalPrompt.replace('{{VISUAL_SOURCE_BOUNDARY_BLOCK}}', '');
-    }
+    finalPrompt = finalPrompt.replace('{{VISUAL_SOURCE_BOUNDARY_BLOCK}}', '');
 
     const previousCameraVars = message?.generation_context?.camera_variables || null;
 
@@ -1474,44 +1439,6 @@ All reference images (if any) are environment/location refs only — do NOT trea
         continue;
       }
 
-      {
-        const expHC = subjectType==='joint'?2:(subjectType==='character'||subjectType==='user'||subjectType==='known_character')?1:0;
-        const lock = charRecord?.appearance_lock||{};
-        const cH = [lock.hair_type,lock.hairstyle].filter(Boolean).join(', ');
-        const isBaldC = lock.bald===true||/\b(bald|shaved head|no hair)\b/i.test(lock.hair_type||'');
-        const vRes = await base44.functions.invoke('imageGenerationValidator',{mode:'validate',imageUrl:attemptGenRes.url,audit:visualSourceAudit||{final_visual_roster:[charRecord?.name||characterName].filter(Boolean),conversation_entities_detected:[],location_entities_detected:[],expected_human_count:expHC},charRecord:charRecord?{name:charRecord.name,appearance_lock:lock,ethnicities:charRecord.ethnicities||[]}:null,expectedHumanCount:expHC,attempt,logPrefix:`[PostGenValidation][generateImageAsync][${messageId}]`}).catch(vErr=>{
-          console.error(`[PostGenValidation][generateImageAsync] ⛔ validator invoke failed attempt ${attempt}: ${vErr?.message}`);
-          return{data:{passes:true,validation_status:'validation_unavailable',validation_error:vErr?.message,image_not_verified:true}};
-        });
-        const vd = vRes?.data||{};
-        const vStatus = vd.validation_status||(vd.passes===true?'passed':vd.passes===false?'failed':'validation_unavailable');
-        const failClosed = vd.passes === false;
-        console.log(`[PostGenValidation][generateImageAsync] attempt ${attempt}: vStatus=${vStatus} passes=${vd.passes??'null'} fail_closed=${failClosed}`);
-        const vvProof = {audit_status:prepareData?.auditStatus||'success',validation_status:vStatus,image_not_verified:failClosed,final_image_accepted:!failClosed,expected_human_count:expHC,final_visual_roster:visualSourceAudit?.final_visual_roster||[],conversation_entities_detected:visualSourceAudit?.conversation_entities_detected||[],conversation_entities_ignored:visualSourceAudit?.conversation_entities_ignored||[],location_entities_detected:visualSourceAudit?.location_entities_detected||[],location_entities_ignored:visualSourceAudit?.location_entities_ignored||[],sender_detected:visualSourceAudit?.sender_detected||null,sender_ignored:visualSourceAudit?.sender_ignored||null,forbidden_context_sources_blocked:visualSourceAudit?.forbidden_context_sources_blocked||[],ambient_occupants_enabled:visualSourceAudit?.ambient_occupants_enabled??false,identifiable_background_faces_detected:vd.vision_result?.identifiable_background_faces_detected??null,named_character_similarity_detected:vd.vision_result?.named_character_similarity_detected??null,human_count_correct:vd.vision_result?.human_count_correct??null,hair_mismatch:vd.vision_result?.hair_mismatch??null,facial_hair_mismatch:vd.vision_result?.facial_hair_mismatch??null,body_mismatch:vd.vision_result?.body_mismatch??null,banned_person_appeared:vd.vision_result?.banned_person_appeared??null,sender_appeared:vd.vision_result?.sender_appeared??null,reject_reason:vd.reject_reason||null,validation_error:vd.validation_error||null};
-        if (failClosed) {
-          const rr = vd.reject_reason||(vd.issues||[]).join('; ')||vStatus;
-          stagedAttempts.push({attempt_index:attempt,prompt:attemptPrompt.slice(0,500),generated_image_url:attemptGenRes.url,camera:extractCameraVarsFromPrompt(attemptPrompt),status:'rejected_post_gen_validation',rejection_reason:rr,validation_status:vStatus,created_at:new Date().toISOString()});
-          console.warn(`[PostGenValidation][generateImageAsync] ⛔ REJECTED attempt ${attempt} (${vStatus}): ${rr}`);
-          await base44.asServiceRole.entities.Message.update(messageId,{generation_context:{...baseGenerationContext,camera_variables:null,attempts:stagedAttempts,accepted_attempt_index:null,visual_validation:{...vvProof,final_image_accepted:false}}}).catch(()=>{});
-          if (attempt<MAX_ATTEMPTS) {
-            const cl=[`\n\n════ POST-GEN CORRECTION (retry ${attempt}) ════`,`Issues: ${rr}`];
-            if(vd.vision_result?.hair_mismatch)cl.push(isBaldC?'BALD — zero hair.':`HAIR canonical="${cH}". Render ONLY that.`);
-            if(vd.vision_result?.facial_hair_mismatch&&lock.facial_hair)cl.push(`FACIAL HAIR="${lock.facial_hair}". No deviation.`);
-            if(vd.vision_result?.sender_appeared)cl.push('SENDER MUST NOT APPEAR.');
-            if(vd.vision_result?.banned_person_appeared)cl.push('BANNED ENTITY APPEARED — remove all context persons.');
-            if(vd.vision_result?.identifiable_background_faces_detected)cl.push('BACKGROUND FACES — blur all background figures.');
-            if(vStatus==='validation_unavailable')cl.push('VALIDATION UNAVAILABLE — re-generate with maximum identity isolation.');
-            cl.push('════════════════════════════════════════');
-            attemptPrompt=attemptPrompt+cl.join('\n');
-            continue;
-          }
-          console.error(`[PostGenValidation][generateImageAsync] ❌ All ${MAX_ATTEMPTS} attempts failed (${vStatus}).`);
-          await base44.asServiceRole.entities.Message.update(messageId,{content:'[IMAGE_FAILED]',generation_context:{...baseGenerationContext,attempts:stagedAttempts,accepted_attempt_index:null,visual_validation:vvProof}}).catch(()=>{});
-          return Response.json({success:false,error:`Image blocked after ${MAX_ATTEMPTS} attempts: ${rr}`,appearance_validation_failed:true,validation_status:vStatus,image_not_verified:true,final_image_accepted:false});
-        }
-        attemptGenRes._vvProof = vvProof;
-      }
-
       const thisCameraVars = extractCameraVarsFromPrompt(attemptPrompt);
       const diffCount = countCameraDiffs(previousCameraVars, thisCameraVars);
 
@@ -1545,11 +1472,10 @@ All reference images (if any) are environment/location refs only — do NOT trea
           image_url: acceptedGenRes.url,
           ...(generatedImageDescription ? { image_description: generatedImageDescription, image_analysis_status: 'complete' } : {}),
           generation_context: {
-            ...baseGenerationContext,
-            camera_variables: acceptedCameraVars,
-            attempts: stagedAttempts,
-            accepted_attempt_index: acceptedAttemptIndex,
-            visual_validation: acceptedGenRes._vvProof || { audit_status: 'success', validation_status: 'passed', image_not_verified: false, final_image_accepted: true },
+          ...baseGenerationContext,
+          camera_variables: acceptedCameraVars,
+          attempts: stagedAttempts,
+          accepted_attempt_index: acceptedAttemptIndex,
           },
           content: '',
         });
