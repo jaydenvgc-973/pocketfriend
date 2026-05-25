@@ -276,11 +276,9 @@ export function getCharacterSleepState(character) {
   }
 
   // ── SLEEPING: Not in window — check for valid oversleep reason ──────────────
-  // Valid reasons include: sleep debt, user-directed sleep, recovery, etc.
+  // Valid reasons include: user-directed sleep, recovery, etc.
   const validOversleepReasons = [
-    'recovery_nap',
     'user_directed_nap',
-    'sleep_debt_recovery',
     'illness_sleep',
     'emotional_crash_recovery',
     'interrupted_sleep_recovery',

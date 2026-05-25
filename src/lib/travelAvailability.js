@@ -60,7 +60,7 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
   // CANONICAL sleep detection: cover all sleep source_reasons + status fields
   const SLEEP_SOURCES = new Set([
     'home_sleeping', 'sleep_location_correction', 'adaptive_sleep_location_lock',
-    'sleep_return_home', 'pass_out_recovery', 'adaptive_pre_sleep_return', 'recovery_nap',
+    'pass_out_recovery',
   ]);
   const isSleeping = resolved.resolved_presence_status === 'sleeping' ||
     resolved.resolved_presence_status === 'napping' ||

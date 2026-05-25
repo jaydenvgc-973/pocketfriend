@@ -629,11 +629,7 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   const NPC_TYPES_PRESENCE = new Set(['npc_fictitious', 'npc_family_member', 'npc_regular']);
   const isNPCPresence = NPC_TYPES_PRESENCE.has(character.character_type);
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') {
-    // recovery_nap and adaptive_pre_sleep_return are DISABLED globally.
-    // Characters with those source reasons must NOT render as sleeping — they fall through.
-    const DISABLED_SLEEP_REASONS = new Set(['recovery_nap', 'adaptive_pre_sleep_return']);
-    const sleepIsConfirmed = (!isNPCPresence && isCharacterSleeping(character) &&
-      !DISABLED_SLEEP_REASONS.has(character.resolved_source_reason)) ||
+    const sleepIsConfirmed = (!isNPCPresence && isCharacterSleeping(character)) ||
       character.resolved_source_reason === 'adaptive_sleep_location_lock' ||
       character.resolved_source_reason === 'sleep_location_correction' ||
       character.resolved_source_reason === 'home_sleeping' ||
@@ -644,14 +640,6 @@ export function getCharacterLivePresence(character, locationMap = {}) {
       return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
     }
     // Sleep status in DB but schedule says awake — fall through to correct state
-  }
-
-  // Sleep interrupted by chat — character is now awake at their location
-  if (character.sleep_interrupted_at) {
-    const minutesSinceInterrupt = (Date.now() - new Date(character.sleep_interrupted_at).getTime()) / 60000;
-    if (minutesSinceInterrupt < 60) {
-      return { status: 'sleep_interrupted', label: 'Awake', sublabel: `Just woke up · ${locName}`, isTransit: false, isSleeping: false };
-    }
   }
 
   // Critical needs override — hunger/health emergencies must surface
