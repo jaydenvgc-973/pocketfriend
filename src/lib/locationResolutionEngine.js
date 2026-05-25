@@ -664,8 +664,11 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // Sleep state (sleeping / napping)
   // RULE: Only show sleep icon when sleep is CONFIRMED — schedule must be active OR source_reason
   // explicitly set by sleep enforcement. Do NOT show sleep from stale DB field alone.
+  // NPCs: never confirmed-sleeping by schedule; only DB-explicit reason counts.
+  const NPC_TYPES_PRESENCE = new Set(['npc_fictitious', 'npc_family_member', 'npc_regular']);
+  const isNPCPresence = NPC_TYPES_PRESENCE.has(character.character_type);
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') {
-    const sleepIsConfirmed = isCharacterSleeping(character) ||
+    const sleepIsConfirmed = (!isNPCPresence && isCharacterSleeping(character)) ||
       character.resolved_source_reason === 'adaptive_sleep_location_lock' ||
       character.resolved_source_reason === 'sleep_location_correction' ||
       character.resolved_source_reason === 'home_sleeping' ||

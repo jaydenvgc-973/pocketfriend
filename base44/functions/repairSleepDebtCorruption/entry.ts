@@ -23,9 +23,11 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const dry_run = body.dry_run === true;
 
-    // Fetch all characters for this user
+    // Fetch ALL characters across all types for this user (service role to bypass RLS on protected chars)
     const allChars = await base44.asServiceRole.entities.Character.filter(
-      { owner_email: user.email }
+      { owner_email: user.email },
+      '-updated_date',
+      500
     );
 
     const corrupted = [];

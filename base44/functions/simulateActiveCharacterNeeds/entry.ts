@@ -361,10 +361,12 @@ Deno.serve(async (req) => {
     let characters = [];
     if (characterId) {
       const found = await writeSDK.entities.Character.filter({ id: characterId });
-      characters = found.filter(c => c.character_type === 'active' && c.status === 'active');
+      // Only simulate needs for active_created_character — NPCs do NOT use biological need simulation
+      characters = found.filter(c => c.character_type === 'active_created_character' && c.status === 'active');
     } else {
       const all = await writeSDK.entities.Character.list('-updated_date', 200);
-      characters = all.filter(c => c.character_type === 'active' && c.status === 'active');
+      // Only simulate needs for active_created_character — NPCs do NOT use biological need simulation
+      characters = all.filter(c => c.character_type === 'active_created_character' && c.status === 'active');
     }
 
     const now = new Date();

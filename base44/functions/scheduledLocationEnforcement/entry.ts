@@ -277,21 +277,28 @@ function classifySleepStateInline(character, etTime) {
   return { isStale: true, isValid: false, reason: 'stale_system_sleep', consequence_tags: consequenceTags };
 }
 
+const NPC_CHAR_TYPES_SET = new Set(['npc_fictitious', 'npc_family_member', 'npc_regular']);
+
 function computeResolved(character, locationMap, etTime) {
   const todayET = etTime.toISOString().slice(0, 10);
+
+  // NPCs are NEVER subject to sleep debt, recovery nap, or pre-sleep return logic.
+  // Only active_created_character uses biological sleep systems.
+  const isNPCChar = NPC_CHAR_TYPES_SET.has(character.character_type);
 
   // ── LAYER 0: SLEEP LOCK — valid vs stale distinction ─────────────────────
   // RULE: Valid character-driven sleep (oversleeping, recovery, illness, emotional crash,
   // shifted schedule, interrupted, user-directed nap) → preserve and lock at home.
   // Stale system sleep (DB says sleeping, canonical says false, no valid reason) → do NOT lock.
   // Instead fall through to normal resolution so the character wakes up correctly.
+  // SKIPPED entirely for NPCs — they are governed by DB presence only, not sleep windows.
   const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
   const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
 
   const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
-  const canonicallyAsleep = isSleeping(character, etTime);
+  const canonicallyAsleep = !isNPCChar && isSleeping(character, etTime);
 
-  if (canonicallyAsleep) {
+  if (!isNPCChar && canonicallyAsleep) {
     // Unambiguously within sleep window — hard lock at home
     if (sleepHomeId) {
       return {
@@ -315,8 +322,8 @@ function computeResolved(character, locationMap, etTime) {
     };
   }
 
-  // Past canonical sleep window — check DB + valid reasons
-  if (dbSleeping) {
+  // Past canonical sleep window — check DB + valid reasons (active_created_character only)
+  if (!isNPCChar && dbSleeping) {
     const sleepClassification = classifySleepStateInline(character, etTime);
     if (sleepClassification.isValid) {
       // Character-driven valid sleep (oversleeping, recovery, illness, etc.) — preserve at home
@@ -337,8 +344,8 @@ function computeResolved(character, locationMap, etTime) {
     console.log && console.log(`[scheduledEnforcement] ${character.name}: stale sleep cleared (${sleepClassification.reason}) — resolving normally`);
   }
 
-  // ── LAYER 0B: RECOVERY NAP LOCK ──────────────────────────────────────────
-  if (hasSleepDebt(character) && isNapTime(etTime) && sleepHomeId) {
+  // ── LAYER 0B: RECOVERY NAP LOCK — SKIPPED for NPCs (no sleep debt biology) ──
+  if (!isNPCChar && hasSleepDebt(character) && isNapTime(etTime) && sleepHomeId) {
     return {
       resolved_current_location_id: sleepHomeId,
       resolved_current_location_name: sleepHomeLoc?.name || 'Home',
@@ -350,8 +357,8 @@ function computeResolved(character, locationMap, etTime) {
     };
   }
 
-  // ── LAYER 0C: PRE-SLEEP RETURN WINDOW (60 min before sleep) ─────────────
-  if (isInPreSleepWindow(character, etTime) && sleepHomeId) {
+  // ── LAYER 0C: PRE-SLEEP RETURN WINDOW — SKIPPED for NPCs ────────────────
+  if (!isNPCChar && isInPreSleepWindow(character, etTime) && sleepHomeId) {
     return {
       resolved_current_location_id: sleepHomeId,
       resolved_current_location_name: sleepHomeLoc?.name || 'Home',
