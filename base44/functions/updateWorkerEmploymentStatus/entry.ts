@@ -111,19 +111,27 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Clear fired/quit status — schedule must be re-assigned by user
-      await base44.entities.Character.update(characterId, {
+      // Retrieve existing shift data from location for this character
+      const existingShift = location.worker_shifts?.[characterId];
+      const updateData = {
         employment_status: 'active',
         occupation_location_id: locationId,
         occupation_location_name: location.name,
-        // Note: work_days/work_start_time/work_end_time intentionally NOT set
-        // User must assign new schedule separately
-      });
+      };
 
-      proof.action_taken = 'rehired — added back to roster. Schedule must be re-assigned.';
+      // If location has stored shift data for this character, sync it to Character
+      if (existingShift?.start && existingShift?.end) {
+        updateData.work_start_time = existingShift.start;
+        updateData.work_end_time = existingShift.end;
+        updateData.work_days = existingShift.days || [];
+      }
+
+      await base44.entities.Character.update(characterId, updateData);
+
+      proof.action_taken = 'rehired — added back to roster' + (existingShift?.start ? ' with previous schedule restored.' : '. Schedule must be configured.');
       proof.added_to_roster = !isOnRoster;
-      proof.schedule_cleared = false;
-      proof.note = 'work_days, work_start_time, work_end_time not set — assign schedule separately';
+      proof.schedule_restored = !!existingShift?.start;
+      proof.note = existingShift?.start ? 'Schedule restored from location record' : 'No prior schedule found — assign new schedule';
 
       await base44.asServiceRole.entities.LifeEvent.create({
         character_id: characterId,
