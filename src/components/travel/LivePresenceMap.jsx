@@ -812,46 +812,18 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
   const [activeLocationId, setActiveLocationId] = useState(null);
   const [activeSessions, setActiveSessions] = useState([]);
 
-  // Poll active TravelSessions every 30s to render transit markers
-  // SCOPING: Only show sessions for the current user (owner_email)
+  // TravelSession transit rendering PERMANENTLY DISABLED.
+  // The old slow-transit travel system has been removed. Characters teleport at scheduled time.
+  // Rendering stale in_transit TravelSession records as animated markers is forbidden.
+  // activeSessions is always empty — TransitMarkers will never render.
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const user = await base44.auth.me().catch(() => null);
-        if (!user) {
-          setActiveSessions([]);
-          return;
-        }
-        const sessions = await base44.entities.TravelSession.filter(
-          { owner_email: user.email, route_status: 'in_transit' }, '-created_at', 20
-        );
-        if (!cancelled) {
-          // Enrich with avatar from allCharacters
-          const enriched = (sessions || []).map(s => {
-            const char = allCharacters.find(c => c.id === s.character_id);
-            return { ...s, _avatarUrl: char?.avatar_url || char?.image_avatar_url || null };
-          });
-          setActiveSessions(enriched);
-        }
-      } catch { /* non-fatal */ }
-    };
-    load();
-    const timer = setInterval(load, 30000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [allCharacters]);
+    setActiveSessions([]);
+  }, []);
 
   const gridCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
 
-  // Build the set of character_ids currently in_transit — used to suppress their static pins.
-  // ONE-TRUTH: a traveling character must only appear as a TransitMarker, not also at origin.
-  const travelingCharacterIds = useMemo(() => {
-    const ids = new Set(activeSessions.map(s => s.character_id).filter(Boolean));
-    if (ids.size > 0) {
-      console.log(`[LivePresenceMap] Traveling characters (static pin suppressed): ${[...ids].join(', ')}`);
-    }
-    return ids;
-  }, [activeSessions]);
+  // travelingCharacterIds is always empty — transit system removed, no pin suppression needed.
+  const travelingCharacterIds = useMemo(() => new Set(), []);
 
   const markers = useMemo(() => buildMarkers(characters, locations, gridCoords, travelingCharacterIds), [characters, locations, gridCoords, travelingCharacterIds]);
   

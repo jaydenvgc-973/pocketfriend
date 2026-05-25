@@ -1,17 +1,115 @@
 /**
  * clearStaleSleepByOwnerEmail
- * 
- * Finds and wakes characters stuck in stale sleep.
- * Uses owner_email-scoped query (proven working path).
- * 
+ *
+ * Phase 1: Clears stale sleeping/napping states from the DB.
+ * Phase 2: Immediately recomputes correct canonical location for each woken character
+ *          using work schedule, school schedule, and home fallback — never hardcodes "home".
+ *
+ * A character who should be at work will be set to at_work.
+ * A character who should be at school will be set to at_school.
+ * All others fall back to home.
+ *
  * RULES:
  * - Sleep ends at wake_up_time unless proven unconscious
  * - Nap max is 3 hours
  * - Emotional state does NOT justify indefinite sleep
- * - Sleep debt does NOT justify indefinite sleep
- * - Stale sleep = time-based only
+ * - After wake, location is RECOMPUTED — not hardcoded to home
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+function toMin(t) {
+  if (!t) return null;
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+function isOnWorkScheduleNow(char, nowET) {
+  if (!char.work_start_time || !char.work_end_time || !Array.isArray(char.work_days)) return false;
+  const dayOfWeek = nowET.getDay();
+  if (!char.work_days.includes(dayOfWeek)) return false;
+
+  // CALLOUT GUARD
+  const todayET = nowET.toISOString().slice(0, 10);
+  if (char.work_exception_status === 'called_out' && char.work_exception_date === todayET) return false;
+
+  const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+  const startMin = toMin(char.work_start_time);
+  const endMin = toMin(char.work_end_time);
+  if (startMin === null || endMin === null) return false;
+  // Overnight shift
+  if (endMin < startMin) return nowMin >= startMin || nowMin < endMin;
+  return nowMin >= startMin && nowMin < endMin;
+}
+
+function isAtSchoolNow(char, nowET) {
+  if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
+  const dayOfWeek = nowET.getDay();
+  if (![1, 2, 3, 4, 5].includes(dayOfWeek)) return false; // weekdays only
+  const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+  // Standard school hours 8 AM – 3 PM
+  return nowMin >= 8 * 60 && nowMin < 15 * 60;
+}
+
+function resolveCorrectLocation(char, nowET) {
+  // Priority 1: Work schedule
+  if (isOnWorkScheduleNow(char, nowET)) {
+    const workLocId = char.occupation_location_id || char.current_work_location_id;
+    return {
+      resolved_presence_status: 'at_work',
+      resolved_current_location_id: workLocId || char.resolved_current_location_id,
+      resolved_location_type: 'work',
+      resolved_source_reason: 'work_schedule',
+    };
+  }
+
+  // Priority 2: School schedule
+  if (isAtSchoolNow(char, nowET)) {
+    return {
+      resolved_presence_status: 'at_school',
+      resolved_current_location_id: char.education_location_id,
+      resolved_location_type: 'school',
+      resolved_source_reason: 'school_schedule',
+    };
+  }
+
+  // Priority 3: Jailed / house arrest — keep existing confinement state
+  if (char.is_jailed) {
+    return {
+      resolved_presence_status: 'incarcerated',
+      resolved_current_location_id: char.incarceration_facility_id || char.resolved_current_location_id,
+      resolved_location_type: 'incarcerated',
+      resolved_source_reason: 'incarceration',
+    };
+  }
+
+  if (char.house_arrest_active) {
+    return {
+      resolved_presence_status: 'house_arrest',
+      resolved_current_location_id: char.house_arrest_location_id || char.current_home_location_id,
+      resolved_location_type: 'house_arrest',
+      resolved_source_reason: 'house_arrest',
+    };
+  }
+
+  // Priority 4: Temporary housing
+  if (char.temporary_housing_location_id) {
+    return {
+      resolved_presence_status: 'home',
+      resolved_current_location_id: char.temporary_housing_location_id,
+      resolved_location_type: 'home',
+      resolved_source_reason: 'temporary_housing',
+    };
+  }
+
+  // Default: home
+  const homeId = char.current_home_location_id || char.home_location_id;
+  return {
+    resolved_presence_status: 'home',
+    resolved_current_location_id: homeId || char.resolved_current_location_id,
+    resolved_location_type: 'home',
+    resolved_source_reason: 'sleep_cleared_home_fallback',
+  };
+}
 
 Deno.serve(async (req) => {
   try {
@@ -19,14 +117,14 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { dry_run = false } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const dry_run = body.dry_run === true; // default: false (live mode)
     const nowUtc = new Date();
     const nowEt = new Date(nowUtc.toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const nowIso = nowEt.toISOString();
 
     console.log(`[clearStaleSleepByOwnerEmail] START owner=${user.email} dry_run=${dry_run}`);
 
-    // Fetch all characters for this owner using PROVEN working path (user-scoped, not service-role)
     const allChars = await base44.entities.Character.filter(
       { owner_email: user.email },
       null,
@@ -38,79 +136,67 @@ Deno.serve(async (req) => {
     const sleeping = allChars.filter(c => ['sleeping', 'napping'].includes(c.resolved_presence_status));
     console.log(`[clearStaleSleepByOwnerEmail] Sleeping: ${sleeping.length}`);
 
-    const results = {
-      total_characters: allChars.length,
-      sleeping_characters: sleeping.length,
-      dry_run,
-      cleared: []
-    };
+    const cleared = [];
+    const kept = [];
 
     for (const char of sleeping) {
       const wakeTime = char.wake_up_time || '07:00';
       const [wh, wm] = wakeTime.split(':').map(Number);
       const scheduledWake = new Date(nowEt);
       scheduledWake.setHours(wh, wm, 0, 0);
-
       const minutesPastWake = (nowEt - scheduledWake) / 60000;
       const isPastWakeTime = minutesPastWake > 0;
 
-      // Nap duration check
       const napDuration = char.last_nap_time ? (nowUtc - new Date(char.last_nap_time)) / 3600000 : null;
       const napExceeded = napDuration && napDuration > 3;
 
-      // Only hard blockers for justified sleep
       const isJailed = char.is_jailed;
-      const isHospitalized = char.resolved_location_type === 'hospital';
       const isHouseArrest = char.house_arrest_active;
       const isConfinement = ['incarcerated', 'house_arrest', 'confined'].includes(char.resolved_presence_status);
+      const hasHardBlocker = isJailed || isHouseArrest || isConfinement;
 
-      const hasHardBlocker = isJailed || isHospitalized || isHouseArrest || isConfinement;
-
-      // STALE SLEEP = past wake_up_time with no hard blocker
       const isStale = isPastWakeTime && !hasHardBlocker;
-      const napStale = napExceeded;
+      const napStale = napExceeded && !hasHardBlocker;
 
       if (!isStale && !napStale) {
-        results.cleared.push({
-          name: char.name,
-          status: 'valid_sleep',
-          reason: hasHardBlocker ? `blocked:${char.resolved_presence_status}` : 'within_sleep_window'
-        });
-        console.log(`[clearStaleSleepByOwnerEmail] KEEP ${char.name} — ${hasHardBlocker ? 'blocked' : 'within_sleep_window'}`);
+        kept.push({ name: char.name, status: 'valid_sleep', reason: hasHardBlocker ? `blocked:${char.resolved_presence_status}` : 'within_sleep_window' });
         continue;
       }
 
-      // CLEAR STALE SLEEP
+      // Recompute canonical location — never hardcode home blindly
+      const correctLocation = resolveCorrectLocation(char, nowEt);
+
       if (!dry_run) {
         await base44.entities.Character.update(char.id, {
-          resolved_presence_status: 'home',
-          location_status: 'home',
-          current_activity: 'awake',
+          ...correctLocation,
+          resolved_current_location_name: char.resolved_current_location_name || undefined,
           resolved_last_updated_at: nowIso,
-          sleep_interrupted_at: nowIso,
-          // Keep emotional state — don't hide consequences
+          current_activity: 'awake',
         });
-        console.log(`[clearStaleSleepByOwnerEmail] CLEARED ${char.name} stale=${isStale} napStale=${napStale}`);
+        console.log(`[clearStaleSleepByOwnerEmail] WOKE ${char.name} → ${correctLocation.resolved_presence_status} (${correctLocation.resolved_source_reason})`);
       }
 
-      results.cleared.push({
+      cleared.push({
         name: char.name,
         character_id: char.id,
-        action: 'cleared',
-        reason: isStale ? `past_wake_time(${Math.round(minutesPastWake)}m)` : `nap_exceeded_3h`,
-        was_state: char.resolved_presence_status,
-        wake_time: wakeTime
+        action: dry_run ? 'would_clear' : 'cleared',
+        was_status: char.resolved_presence_status,
+        now_status: correctLocation.resolved_presence_status,
+        now_source: correctLocation.resolved_source_reason,
+        now_location_id: correctLocation.resolved_current_location_id,
+        wake_reason: isStale ? `past_wake_time(${Math.round(minutesPastWake)}m)` : 'nap_exceeded_3h',
       });
     }
 
     return Response.json({
       success: true,
-      ...results,
-      proof: {
-        method: 'user-scoped query (service-role path broken)',
-        path: 'entities.Character.filter({owner_email})',
-        user_email: user.email
-      }
+      dry_run,
+      total_characters: allChars.length,
+      sleeping_found: sleeping.length,
+      cleared: cleared.length,
+      kept: kept.length,
+      results: cleared,
+      kept_valid: kept,
     });
 
   } catch (error) {
