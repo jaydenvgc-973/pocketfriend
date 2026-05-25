@@ -35,11 +35,15 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
   // used by Home, Text, and Chat pages. isCharacterAsleep() is a secondary schedule-window
   // check only used when DB status is NOT sleeping (stale/missing case).
   if (NPC_TYPES.includes(character.character_type)) {
+    // NPCs are ONLY blocked by an explicit DB sleeping/napping status.
+    // They must NEVER be blocked by schedule-derived sleep windows, sleep debt,
+    // or recovery nap logic — those are biological systems for active_created_character only.
+    // isCharacterAsleep() must NOT be called for NPCs because it applies sleep debt
+    // and nap window logic that corrupts NPC availability display.
     const dbStatus = character.resolved_presence_status;
     const isSleepingByDB = dbStatus === 'sleeping' || dbStatus === 'napping';
-    const isSleepingBySchedule = !isSleepingByDB && isCharacterAsleep(character);
 
-    if (isSleepingByDB || isSleepingBySchedule) {
+    if (isSleepingByDB) {
       const wakeTime = character.wake_up_time || '07:00';
       return {
         available: false,

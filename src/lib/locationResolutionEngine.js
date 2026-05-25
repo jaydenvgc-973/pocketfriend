@@ -169,12 +169,20 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // DO NOT RE-ENABLE without explicit architectural decision.
 
   // ── SLEEP ENFORCEMENT: runs before visit/autonomous layers ──────────────────
+  // NPCs (npc_fictitious, npc_family_member, npc_regular) do NOT have biological sleep needs.
+  // They must NEVER be locked to sleep/nap states by schedule windows or sleep debt.
+  // Their presence is governed by location assignments and home fallback ONLY.
+  // Only active_created_character goes through sleep enforcement.
+  const NPC_CHAR_TYPES = new Set(['npc_fictitious', 'npc_family_member', 'npc_regular']);
+  const isNPC = NPC_CHAR_TYPES.has(character.character_type);
+
   // Resolve valid sleep home
   const sleepHomeId = resolveSleepHomeId(character, locationMap);
   const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
 
   // LAYER 3.5A: SLEEP LOCK — in sleep window → hard lock to valid sleep location
-  if (isCharacterSleeping(character)) {
+  // SKIPPED for NPCs — they are never schedule-sleeping, only DB-explicit sleeping is honoured.
+  if (!isNPC && isCharacterSleeping(character)) {
     if (sleepHomeId) {
       const currentLocId = character.resolved_current_location_id;
       const currentLoc = currentLocId ? locationMap[currentLocId] : null;
@@ -201,8 +209,8 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
-  // LAYER 3.5B: RECOVERY NAP LOCK
-  if (hasUnpaidSleepDebt(character) && isNapTime(character, currentTime) && sleepHomeId) {
+  // LAYER 3.5B: RECOVERY NAP LOCK — SKIPPED for NPCs (no sleep debt biology)
+  if (!isNPC && hasUnpaidSleepDebt(character) && isNapTime(character, currentTime) && sleepHomeId) {
     return {
       resolved_current_location_id: sleepHomeId,
       resolved_current_location_name: sleepHomeLoc?.name || 'Home',
@@ -214,8 +222,8 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
-  // LAYER 3.5C: PRE-SLEEP RETURN WINDOW — 60 min before sleep, stop visits and return home
-  if (isInPreSleepReturnWindow(character, currentTime) && sleepHomeId) {
+  // LAYER 3.5C: PRE-SLEEP RETURN WINDOW — SKIPPED for NPCs (no biological sleep schedule)
+  if (!isNPC && isInPreSleepReturnWindow(character, currentTime) && sleepHomeId) {
     return {
       resolved_current_location_id: sleepHomeId,
       resolved_current_location_name: sleepHomeLoc?.name || 'Home',

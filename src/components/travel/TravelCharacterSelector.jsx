@@ -127,8 +127,14 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
     const hasHomeId = !!(char.current_home_location_id || presenceEntity?.residence_location_id);
 
     // ── SLEEPING / NAPPING override: canonical presence resolver now enforces this ─
-    const isSleepingCanonical = presenceEntity?.is_sleeping ||
-      resolvedStatus === 'sleeping' || resolvedStatus === 'napping';
+    // NPCs are NEVER shown as sleeping unless the DB explicitly says so AND they are
+    // not active_created_character — schedule/debt-driven sleep is not valid for NPCs.
+    const isNPCType = char.character_type === 'npc_fictitious' ||
+      char.character_type === 'npc_family_member' ||
+      char.character_type === 'npc_regular';
+    const isSleepingCanonical = isNPCType
+      ? (resolvedStatus === 'sleeping' || resolvedStatus === 'napping') && presenceEntity?.is_sleeping
+      : (presenceEntity?.is_sleeping || resolvedStatus === 'sleeping' || resolvedStatus === 'napping');
 
     // In the new instant-relocation system, 'traveling' is a stale/legacy status.
     // Treat it the same as any other non-home presence: show the resolved location name.
