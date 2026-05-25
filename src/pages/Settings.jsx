@@ -31,6 +31,7 @@ import SupportAssistant from "@/components/settings/SupportAssistant.jsx";
 import AdminIssueReportViewer from "@/components/settings/AdminIssueReportViewer";
 import HomeAnchorsEditor from "@/components/settings/HomeAnchorsEditor";
 import RecoverySignalGlossary from "@/components/settings/RecoverySignalGlossary";
+import SleepDebtCleanupPanel from "@/components/settings/SleepDebtCleanupPanel";
 import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
 
 export default function Settings() {
@@ -515,6 +516,13 @@ export default function Settings() {
             </div>
           </div>
         )}
+
+        <div className="pt-4 border-t border-border space-y-4">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Sleep Debt Cleanup</p>
+          <div className="bg-card border border-border rounded-xl p-4">
+            <SleepDebtCleanupPanel />
+          </div>
+        </div>
 
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">System & Data</p>
