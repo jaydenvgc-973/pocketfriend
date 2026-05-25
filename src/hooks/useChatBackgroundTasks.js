@@ -439,8 +439,14 @@ Rules for reacting:
   😒 = annoyance, side-eye, sarcasm, unimpressed, mild irritation
   😭 = overwhelmed emotion, laughing too hard, dramatic reaction, can't handle it
   👀 = curiosity, noticing something, gossip/drama, suspicious or flirty moment
+  😱 = fear, alarm, intense shock, disturbing news, threat
+  💔 = heartbreak, grief, deep emotional pain, devastating loss
+  🥺 = pleading, vulnerable appeal, touched/moved, soft vulnerability
+  😊 = gentle happiness, warmth, shy affection, soft approval
+  😅 = awkward laugh, nervousness, embarrassment, relieved chuckle
+  🤔 = thinking, processing, skepticism, uncertainty, doubt
 
-Return JSON: { "should_react": true/false, "emoji": "single emoji from the list above or null" }`,
+  Return JSON: { "should_react": true/false, "emoji": "single emoji from the list above or null" }`,
         response_json_schema: {
           type: 'object',
           properties: {

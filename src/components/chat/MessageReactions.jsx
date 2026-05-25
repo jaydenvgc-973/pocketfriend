@@ -1,7 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-// Canonical 12 emoji set with emotional meanings — matches character reaction engine exactly
-const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "😡", "👍", "🔥", "😍", "👎", "😒", "😭", "👀"];
+// Canonical 18 emoji set with emotional meanings — includes visible + hidden already-used reactions
+const REACTION_EMOJIS = [
+  "❤️", "😂", "😮", "😢", "😡", "👍",
+  "🔥", "😍", "👎", "😒", "😭", "👀",
+  "😱", "💔", "🥺", "😊", "😅", "🤔"
+];
 const REACTION_MEANINGS = {
   "❤️": "affection / warmth",
   "😂": "humor / amusement",
@@ -15,6 +19,12 @@ const REACTION_MEANINGS = {
   "😒": "annoyance / side-eye / sarcasm",
   "😭": "overwhelmed / laughing too hard",
   "👀": "curiosity / noticing / watching",
+  "😱": "fear / alarm / intense shock",
+  "💔": "heartbreak / grief / emotional hurt",
+  "🥺": "pleading / touched / vulnerable",
+  "😊": "gentle happiness / warmth / shy affection",
+  "😅": "awkward laugh / nervousness / embarrassment",
+  "🤔": "thinking / skepticism / uncertainty",
 };
 
 export default function MessageReactions({ message, onReact }) {
@@ -88,7 +98,7 @@ export default function MessageReactions({ message, onReact }) {
             initial={{ scale: 0.8, opacity: 0, y: 4 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.8, opacity: 0, y: 4 }}
-            className={`absolute bottom-6 z-20 grid grid-cols-6 gap-1 bg-card border border-border rounded-2xl px-3 py-2 shadow-xl ${
+            className={`absolute bottom-6 z-20 grid grid-cols-6 gap-0.5 bg-card border border-border rounded-2xl px-2 py-2 shadow-xl max-w-xs ${
               message.sender_type === "user" ? "right-0" : "left-0"
             }`}
           >

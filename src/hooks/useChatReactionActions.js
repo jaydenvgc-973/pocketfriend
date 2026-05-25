@@ -53,6 +53,12 @@ export function useChatReactionActions({
             "😒": "annoyance/side-eye/sarcasm",
             "😭": "overwhelmed emotion/intense reaction",
             "👀": "curiosity/noticing something interesting",
+            "😱": "fear/alarm/intense shock",
+            "💔": "heartbreak/grief/emotional hurt",
+            "🥺": "pleading/vulnerable/touched",
+            "😊": "gentle warmth/shy affection",
+            "😅": "awkward/nervous/embarrassed",
+            "🤔": "thinking/skeptical/uncertain",
           }[emoji] || "general reaction",
           reactedMessageContent: msg.content || "(image)",
           reactedMessageSenderType: msg.sender_type,
@@ -80,7 +86,7 @@ export function useChatReactionActions({
       const onCooldown = (Date.now() - lastFired) < REACTION_COOLDOWN_MS;
 
       if (
-        ["❤️", "👍", "😂", "😢", "🔥", "😍", "😭"].includes(emoji) &&
+        ["❤️", "👍", "😂", "😢", "🔥", "😍", "😭", "😱", "💔", "🥺", "😊"].includes(emoji) &&
         Math.random() < 0.45 &&
         conversationId &&
         !onCooldown &&
@@ -100,6 +106,10 @@ export function useChatReactionActions({
               "🔥": "a 🔥 (fire/attraction/hype reaction)",
               "😍": "a 😍 (heart-eyes/romantic admiration reaction)",
               "😭": "a 😭 (overwhelmed/crying laughing reaction)",
+              "😱": "a 😱 (scared/alarmed reaction)",
+              "💔": "a 💔 (heartbreak/grief reaction)",
+              "🥺": "a 🥺 (vulnerable/touched reaction)",
+              "😊": "a 😊 (gentle warmth reaction)",
             };
             const replyRes = await base44.integrations.Core.InvokeLLM({
               prompt: `You are ${character.name}. ${character.personality_summary || ""} You just sent this message: "${msg.content?.substring(0, 150) || "(image)"}". The person you're talking to reacted to YOUR message with ${emojiMeanings[emoji] || "an emoji reaction"}. Write a SHORT, natural, casual response — as yourself, reacting to RECEIVING that reaction from them. 1 sentence max, like a real text. Express how you feel about their reaction to what YOU said. Do NOT speak as the user or assume what they meant. Be yourself. No quotes, no labels.`,

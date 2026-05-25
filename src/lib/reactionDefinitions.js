@@ -315,6 +315,161 @@ export const REACTION_DEFINITIONS = {
       "oblivious": 0.3,
       "self_absorbed": 0.4
     }
+  },
+
+  "😱": {
+    meaning: "fear, alarm, intense shock, disbelief, something unexpected that's disturbing or threatening",
+    use_for: [
+      "scary news",
+      "dangerous situations",
+      "shocking betrayal",
+      "disturbing revelations",
+      "threat/alarm moments",
+      "intense surprise with fear component"
+    ],
+    not_for: [
+      "mild surprise (use 😮)",
+      "simple shock without fear",
+      "things that aren't actually alarming"
+    ],
+    trigger_strength: "strong",
+    personality_weight: {
+      "anxious": 1.3,
+      "fearful": 1.2,
+      "sensitive": 1.1,
+      "brave": 0.3,
+      "unflappable": 0.2
+    }
+  },
+
+  "💔": {
+    meaning: "heartbreak, grief, deep emotional pain, loss, devastation, romantic rejection",
+    use_for: [
+      "tragic news",
+      "relationship ending",
+      "profound loss",
+      "deep disappointment",
+      "emotional devastation",
+      "betrayal that hurts deeply",
+      "grief/mourning moments"
+    ],
+    not_for: [
+      "mild sadness (use 😢)",
+      "sympathy (use 😢)",
+      "things that don't deserve intense grief"
+    ],
+    trigger_strength: "very-strong",
+    personality_weight: {
+      "romantic": 1.3,
+      "emotional": 1.2,
+      "sensitive": 1.1,
+      "stoic": 0.3,
+      "detached": 0.2
+    }
+  },
+
+  "🥺": {
+    meaning: "pleading, vulnerable appeal, touched/moved emotionally, soft vulnerability, sad puppy eyes",
+    use_for: [
+      "emotional appeals",
+      "vulnerable moments",
+      "pleading/asking sweetly",
+      "being deeply touched",
+      "vulnerable confession",
+      "soft emotional moment",
+      "tender vulnerability"
+    ],
+    not_for: [
+      "general sadness (use 😢)",
+      "grief (use 💔)",
+      "things not vulnerable/pleading"
+    ],
+    trigger_strength: "medium",
+    personality_weight: {
+      "vulnerable": 1.3,
+      "empathetic": 1.2,
+      "soft": 1.1,
+      "tough": 0.3,
+      "guarded": 0.2
+    }
+  },
+
+  "😊": {
+    meaning: "gentle happiness, quiet warmth, shy affection, soft approval, genuine comfort",
+    use_for: [
+      "wholesome moments",
+      "gentle affection",
+      "quiet happiness",
+      "shy/soft approval",
+      "comforting response",
+      "warm acceptance",
+      "genuine gentle joy"
+    ],
+    not_for: [
+      "big laughter (use 😂)",
+      "strong approval (use 👍)",
+      "things deserving bigger reactions"
+    ],
+    trigger_strength: "low-to-medium",
+    personality_weight: {
+      "gentle": 1.3,
+      "warm": 1.2,
+      "kind": 1.1,
+      "cynical": 0.3,
+      "harsh": 0.2
+    }
+  },
+
+  "😅": {
+    meaning: "awkward laugh, nervous energy, embarrassment, relieved chuckle, uncomfortable situation",
+    use_for: [
+      "awkward moments",
+      "nervous tension",
+      "embarrassing situations",
+      "relieved but awkward",
+      "uncomfortable truth",
+      "nervous laughter",
+      "stressed amusement"
+    ],
+    not_for: [
+      "genuine humor (use 😂)",
+      "pure relief (use different reaction)",
+      "things that are actually funny"
+    ],
+    trigger_strength: "medium",
+    personality_weight: {
+      "anxious": 1.2,
+      "socially_awkward": 1.2,
+      "nervous": 1.1,
+      "confident": 0.4,
+      "cool": 0.2
+    }
+  },
+
+  "🤔": {
+    meaning: "thinking, processing, skepticism, uncertainty, contemplation, doubt",
+    use_for: [
+      "confusing statements",
+      "something doesn't add up",
+      "needing to process",
+      "skeptical moment",
+      "uncertainty/doubt",
+      "thinking through something",
+      "making sense of something"
+    ],
+    not_for: [
+      "clear agreement",
+      "things understood immediately",
+      "certainty/confidence"
+    ],
+    trigger_strength: "medium",
+    personality_weight: {
+      "analytical": 1.3,
+      "skeptical": 1.2,
+      "thoughtful": 1.1,
+      "gullible": 0.3,
+      "impulsive": 0.2
+    }
   }
 };
 
