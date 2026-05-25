@@ -9,6 +9,12 @@
  * - If required visual subjects exist, they MUST appear — no silent downgrade to scenery.
  * - If NO subjects are selected and prompt describes no visual person, generate the non-character image.
  * - All repair/regeneration routes through regenerateImageWithReason only.
+ *
+ * PERMANENT BAN — DO NOT VIOLATE:
+ * imageVisualSourceValidator is permanently deleted and banned from this codebase.
+ * Do NOT import it, recreate it, rename it, wrap it, or introduce any near-duplicate replacement.
+ * This ban covers all files in lib/, functions/, components/, and pages/.
+ * It is separate from appearanceLockValidator, which is a different system and is NOT banned.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
