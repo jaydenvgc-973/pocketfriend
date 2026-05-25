@@ -630,14 +630,15 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     // Resolve world-self character early — needed for validation hints and user ref building below
     const userChar = allCharacters.find(c => c.is_user);
 
-    // CRITICAL PRE-CHECK: Determine if the selection is exclusively the user world-self.
-    // If so, skip multi-person validation entirely — this is a user-only image.
-    // The user-self character (is_user: true) selected alone must NOT trigger multi-person
-    // path which would also load the active chat character (Ethan etc.) as "primary".
-    const allSelectedAreUser = selectedCharacterIds.length > 0 &&
-      selectedCharacterIds.every(id => allCharacters.find(c => c.id === id)?.is_user);
+    // Pre-compute subject selection shape — used throughout the routing logic below.
+    const hasMultipleSubjectsSelected = selectedCharacterIds.length > 1;
+    const hasSingleNonUserSubject = selectedCharacterIds.length === 1 &&
+      !allCharacters.find(c => c.id === selectedCharacterIds[0])?.is_user;
+    const hasSingleUserSubject = selectedCharacterIds.length === 1 &&
+      !!(allCharacters.find(c => c.id === selectedCharacterIds[0])?.is_user);
+    const hasNoSubjects = selectedCharacterIds.length === 0;
 
-    if (selectedCharacterIds.length > 0 && !allSelectedAreUser) {
+    if (selectedCharacterIds.length > 0 && !hasSingleUserSubject) {
       // Multi-person image: validate all selected people (excluding user-self characters)
       const nonUserIds = selectedCharacterIds.filter(id => !allCharacters.find(c => c.id === id)?.is_user);
       // CRITICAL FIX: includeUser must be true when the user world-self IS in the selection.
@@ -663,8 +664,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       }
       selectedPeople = validation.selectedPeople;
       console.log(`[MediaGallery] Identity lock PASSED for ${selectedCharacterIds.length} selected people`);
-    } else if (allSelectedAreUser) {
-      console.log(`[MediaGallery] User-self selected — bypassing multi-person validation, routing as user-only`);
+    } else if (hasSingleUserSubject) {
+      console.log(`[MediaGallery] User-self only selected — routing as user-only`);
     }
     // If no multi-select, use single-character mode (existing path)
 
@@ -677,9 +678,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     //
     // RULE: If any source resolves refs, store them in sessionUserRefsRef immediately.
     // Subsequent generations in the same session always have refs available.
-    // Need user refs when: user is a subject (user-only mode, multi with user included, or sender=user with no subjects)
+    // Need user refs when user is a subject or is the sender with no other subjects
     const userIsInSubjectSelection = selectedCharacterIds.some(id => allCharacters.find(c => c.id === id)?.is_user);
-    const needsUserRefs = isUserOnlyMode || userIsInSubjectSelection || (hasNoSubjects && subjectType === 'user');
+    const needsUserRefs = isUserOnlyMode || userIsInSubjectSelection;
 
     let userRefImages = [];
     if (needsUserRefs) {
@@ -722,17 +723,6 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     // ── SUBJECT ROUTING LOGIC ────────────────────────────────────────────────
     // The SENDER tab (character vs user) controls WHO SENDS the image.
     // It does NOT control who appears in the image — that is driven by selectedCharacterIds.
-    //
-    // USER-ONLY MODE: true ONLY when:
-    //   - No characters are selected in the subject picker AND sender tab is "user"
-    //   - OR exactly one selection is the user world-self character
-    //   NEVER true when multiple subjects are selected, even if sender tab is "user".
-    const hasMultipleSubjectsSelected = selectedCharacterIds.length > 1;
-    const hasSingleNonUserSubject = selectedCharacterIds.length === 1 &&
-      !allCharacters.find(c => c.id === selectedCharacterIds[0])?.is_user;
-    const hasSingleUserSubject = selectedCharacterIds.length === 1 &&
-      !!(allCharacters.find(c => c.id === selectedCharacterIds[0])?.is_user);
-    const hasNoSubjects = selectedCharacterIds.length === 0;
 
     // isUserOnlyMode: true only when no subjects selected and sender is user,
     // OR when ONLY the user world-self character is selected (solo user selfie).
