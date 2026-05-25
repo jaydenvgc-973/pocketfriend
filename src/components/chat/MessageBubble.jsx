@@ -703,7 +703,11 @@ export default function MessageBubble({ message, character, showName = false, on
   );
 }
 
-const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "😡", "👍"];
+const REACTION_EMOJIS = [
+  "❤️", "😂", "😮", "😢", "😡", "👍",
+  "🔥", "😍", "👎", "😒", "😭", "👀",
+  "😱", "💔", "🥺", "😊", "😅", "🤔"
+];
 
 const PRESENCE_LABELS = {
   at_work: "At Work",
@@ -822,14 +826,22 @@ function ReactionAddButton({ messageId, isUser, onReact }) {
 
       {open && (
         <div
-          className={`absolute top-6 z-50 flex gap-1.5 bg-card border border-border rounded-2xl px-3 py-2 shadow-xl ${
+          className={`absolute top-6 z-50 bg-card border border-border rounded-2xl shadow-xl ${
             isUser ? "left-0" : "right-0"
           }`}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(6, 1fr)',
+            gap: '8px',
+            padding: '12px',
+            width: '288px',
+          }}
         >
           {REACTION_EMOJIS.map(emoji => (
             <button
               key={emoji}
-              className="text-lg hover:scale-125 transition-transform"
+              className="flex items-center justify-center hover:scale-125 transition-transform"
+              style={{ fontSize: '24px', lineHeight: '1' }}
               onClick={() => {
                 onReact(messageId, emoji);
                 setOpen(false);
