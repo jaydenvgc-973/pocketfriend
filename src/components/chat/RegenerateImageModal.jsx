@@ -379,24 +379,29 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     const hasUser = selectedSubjectIds.includes('__user__');
     const charIds = selectedSubjectIds.filter(id => id !== '__user__');
 
-    // Collect user reference images — PRIORITY ORDER (same as MediaGallery sessionUserRefsRef):
-    // 1. UserSettings.reference_image_urls (real face photos)
-    // 2. UserSettings.generated_avatar_urls
-    // 3. user roster entry avatar_url (the avatar shown in the picker IS a valid identity ref)
+    // Collect user reference images — PRIORITY ORDER:
+    // 1. user roster entry avatar_url — this is ALREADY LOADED and displayed on screen, guaranteed accessible
+    // 2. UserSettings.reference_image_urls (real face photos, if settings loaded in time)
+    // 3. UserSettings.generated_avatar_urls
     // 4. generation_context user refs (stored from original generation)
+    // CRITICAL: roster entry avatar_url is the most reliable source because it is already
+    // rendering in the picker UI — if it shows on screen, it is accessible. Always use it first.
     let userRefImages = [];
     if (hasUser) {
       const userRosterEntry = allCharacters.find(c => c.is_user);
       const ctxUserRefs = (generationContext?.subjects || [])
         .find(s => s.subject_type === 'user')?.reference_images || [];
       const refs = [
-        ...(userSettings?.reference_image_urls || []).slice(0, 3),
-        ...(userSettings?.generated_avatar_urls || []).slice(0, 2),
-        userRosterEntry?.avatar_url,       // avatar shown in picker = valid identity ref
-        ...ctxUserRefs.slice(0, 2),        // original generation refs as further fallback
+        userRosterEntry?.avatar_url,                                    // #1: already on screen = guaranteed accessible
+        ...(userRosterEntry?.reference_image_urls || []).slice(0, 2),  // #2: roster reference images
+        ...(userSettings?.reference_image_urls || []).slice(0, 2),     // #3: settings refs (may not be loaded yet)
+        ...(userSettings?.generated_avatar_urls || []).slice(0, 1),    // #4: settings generated avatars
+        ...ctxUserRefs.slice(0, 2),                                    // #5: original generation refs
       ].filter(Boolean);
-      userRefImages = refs;
-      console.log(`[RegenerateModal] User refs resolved: ${refs.length} (settings=${(userSettings?.reference_image_urls||[]).length}, avatar=${!!userRosterEntry?.avatar_url}, ctx=${ctxUserRefs.length})`);
+      // Deduplicate while preserving order
+      const seen = new Set();
+      userRefImages = refs.filter(u => { if (seen.has(u)) return false; seen.add(u); return true; });
+      console.log(`[RegenerateModal] User refs resolved: ${userRefImages.length} | avatar=${!!userRosterEntry?.avatar_url} | settings=${(userSettings?.reference_image_urls||[]).length} | ctx=${ctxUserRefs.length}`);
     }
 
     const userName = userSettings?.fictional_world_name ||
