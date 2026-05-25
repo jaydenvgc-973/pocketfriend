@@ -926,11 +926,16 @@ Deno.serve(async (req) => {
       || (reason === 'no_avatar' && includeUserSubject);
     if (needsUserRefs) {
       // PRIORITY 0: Caller-provided refs from RegenerateImageModal subject picker.
-      // These are pre-resolved using the same fallback chain as the picker UI
-      // (UserSettings → world-self avatar) so we never get a different image than what was shown.
+      // These are the SAME images displayed in the picker UI — if the picker shows the avatar,
+      // these URLs are accessible. Apply CDN conversion but do NOT filter them out if they
+      // fail the isAccessible check — the picker already confirmed they load in the browser.
       if (callerUserRefImages?.length > 0) {
-        userRefs = cdnFilter(callerUserRefImages).slice(0, 3);
-        console.log(`[regenerateImageWithReason] Using caller-provided user refs from picker: ${userRefs.length}`);
+        // Try CDN-converted first, fall back to original URL (picker already validated it loads)
+        userRefs = callerUserRefImages
+          .filter(u => u && typeof u === 'string' && u.startsWith('https://'))
+          .map(u => toPublicCDN(u))
+          .slice(0, 3);
+        console.log(`[regenerateImageWithReason] Using caller-provided user refs from picker (no filter): ${userRefs.length} | urls: ${userRefs.map(u => u.substring(0, 60)).join(', ')}`);
       }
       // Use user refs from generation_context (the ORIGINAL saved refs)
       if (userRefs.length === 0 && ctx.user_reference_images?.length > 0) {
@@ -967,14 +972,12 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Final check: if cdnFilter stripped all refs (e.g. internal base44.app URLs),
-      // attempt to use them raw (without CDN transform) as a last resort rather than blocking.
+      // If still empty after all sources, use caller URLs raw as absolute last resort
       if (userRefs.length === 0 && callerUserRefImages?.length > 0) {
-        const rawRefs = (callerUserRefImages || []).filter(u => u && typeof u === 'string' && u.startsWith('https://'));
-        if (rawRefs.length > 0) {
-          userRefs = rawRefs.slice(0, 3);
-          console.log(`[regenerateImageWithReason] User refs: CDN filter removed all URLs — using raw accessible URLs as fallback: ${userRefs.length}`);
-        }
+        userRefs = callerUserRefImages
+          .filter(u => u && typeof u === 'string' && u.startsWith('https://'))
+          .slice(0, 3);
+        console.log(`[regenerateImageWithReason] User refs last resort — raw caller URLs: ${userRefs.length}`);
       }
 
       // ── USER REFS MISSING — VISIBLE FAILURE GATE ─────────────────────────────
