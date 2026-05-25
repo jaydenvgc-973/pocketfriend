@@ -209,31 +209,17 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
-  // LAYER 3.5B: RECOVERY NAP LOCK — SKIPPED for NPCs (no sleep debt biology)
-  if (!isNPC && hasUnpaidSleepDebt(character) && isNapTime(character, currentTime) && sleepHomeId) {
-    return {
-      resolved_current_location_id: sleepHomeId,
-      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
-      resolved_location_type: 'recovery_nap',
-      resolved_presence_status: 'napping',
-      resolved_source_reason: 'recovery_nap',
-      resolved_zone: null,
-      home_resolution_failed: !sleepHomeLoc,
-    };
-  }
+  // LAYER 3.5B: RECOVERY NAP LOCK — DISABLED GLOBALLY
+  // Sleep debt is not proven safe as a location/availability controller.
+  // Characters should not be locked home napping due to sleep_debt_hours.
+  // Re-enable only after sleep debt is audited, proven accurate, and safe per-character.
+  // if (!isNPC && hasUnpaidSleepDebt(character) && isNapTime(character, currentTime) && sleepHomeId) { ... }
 
-  // LAYER 3.5C: PRE-SLEEP RETURN WINDOW — SKIPPED for NPCs (no biological sleep schedule)
-  if (!isNPC && isInPreSleepReturnWindow(character, currentTime) && sleepHomeId) {
-    return {
-      resolved_current_location_id: sleepHomeId,
-      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
-      resolved_location_type: 'home',
-      resolved_presence_status: 'home',
-      resolved_source_reason: 'sleep_return_home',
-      resolved_zone: null,
-      home_resolution_failed: !sleepHomeLoc,
-    };
-  }
+  // LAYER 3.5C: PRE-SLEEP RETURN WINDOW — DISABLED GLOBALLY
+  // Pre-sleep return lock blocks availability 60 min before sleep using schedule math.
+  // This has caused legitimate unavailability and travel blocking for active characters.
+  // Re-enable only after availability impact is audited and confirmed safe.
+  // if (!isNPC && isInPreSleepReturnWindow(character, currentTime) && sleepHomeId) { ... }
 
   // LAYER 3.5D: Social visit — only allowed outside sleep/pre-sleep windows
   const homeIdForVisitCheck = character.current_home_location_id || character.home_location_id;
@@ -668,15 +654,15 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   const NPC_TYPES_PRESENCE = new Set(['npc_fictitious', 'npc_family_member', 'npc_regular']);
   const isNPCPresence = NPC_TYPES_PRESENCE.has(character.character_type);
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') {
-    const sleepIsConfirmed = (!isNPCPresence && isCharacterSleeping(character)) ||
+    // recovery_nap and adaptive_pre_sleep_return are DISABLED globally.
+    // Characters with those source reasons must NOT render as sleeping — they fall through.
+    const DISABLED_SLEEP_REASONS = new Set(['recovery_nap', 'adaptive_pre_sleep_return']);
+    const sleepIsConfirmed = (!isNPCPresence && isCharacterSleeping(character) &&
+      !DISABLED_SLEEP_REASONS.has(character.resolved_source_reason)) ||
       character.resolved_source_reason === 'adaptive_sleep_location_lock' ||
       character.resolved_source_reason === 'sleep_location_correction' ||
       character.resolved_source_reason === 'home_sleeping' ||
-      character.resolved_source_reason === 'sleep_return_home' ||
-      character.resolved_source_reason === 'pass_out_recovery' ||
-      character.resolved_source_reason === 'adaptive_pre_sleep_return' ||
-      character.resolved_source_reason === 'recovery_nap' ||
-      presenceStatus === 'napping'; // napping = confirmed recovery state
+      character.resolved_source_reason === 'pass_out_recovery';
 
     if (sleepIsConfirmed) {
       const label = presenceStatus === 'napping' ? 'Napping' : 'Sleeping';

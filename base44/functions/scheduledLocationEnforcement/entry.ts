@@ -344,31 +344,15 @@ function computeResolved(character, locationMap, etTime) {
     console.log && console.log(`[scheduledEnforcement] ${character.name}: stale sleep cleared (${sleepClassification.reason}) — resolving normally`);
   }
 
-  // ── LAYER 0B: RECOVERY NAP LOCK — SKIPPED for NPCs (no sleep debt biology) ──
-  if (!isNPCChar && hasSleepDebt(character) && isNapTime(etTime) && sleepHomeId) {
-    return {
-      resolved_current_location_id: sleepHomeId,
-      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
-      resolved_location_type: 'recovery_nap',
-      resolved_presence_status: 'napping',
-      resolved_source_reason: 'recovery_nap',
-      resolved_zone: null,
-      home_resolution_failed: !sleepHomeLoc,
-    };
-  }
+  // ── LAYER 0B: RECOVERY NAP LOCK — DISABLED GLOBALLY ──
+  // Sleep debt is not proven safe as a location/availability controller.
+  // Do not lock any character (NPC or active_created) to home napping via sleep_debt_hours.
+  // if (!isNPCChar && hasSleepDebt(character) && isNapTime(etTime) && sleepHomeId) { ... }
 
-  // ── LAYER 0C: PRE-SLEEP RETURN WINDOW — SKIPPED for NPCs ────────────────
-  if (!isNPCChar && isInPreSleepWindow(character, etTime) && sleepHomeId) {
-    return {
-      resolved_current_location_id: sleepHomeId,
-      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
-      resolved_location_type: 'home',
-      resolved_presence_status: 'returning_home_for_sleep',
-      resolved_source_reason: 'adaptive_pre_sleep_return',
-      resolved_zone: null,
-      home_resolution_failed: !sleepHomeLoc,
-    };
-  }
+  // ── LAYER 0C: PRE-SLEEP RETURN WINDOW — DISABLED GLOBALLY ────────────────
+  // Pre-sleep return locks blocked legitimate character availability 60 min before their sleep schedule.
+  // Do not force any character home via sleep schedule math until audited and proven safe.
+  // if (!isNPCChar && isInPreSleepWindow(character, etTime) && sleepHomeId) { ... }
 
   // ── LAYERS 1+: Normal schedule logic (only reached when NOT sleeping) ─────
   const hasValidCallout =
