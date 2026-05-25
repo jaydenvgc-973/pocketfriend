@@ -45,30 +45,47 @@ function isOnWorkScheduleNow(char, nowET, locationMap) {
     }
   }
 
-  // Check each work location for an active shift
+  // First pass: check for ACTIVE location-specific shifts
   for (const locId of allWorkLocIds) {
     const loc = locationMap[locId];
     if (!loc) continue;
     const locationShift = loc.worker_shifts?.[char.id];
-    if (locationShift) {
-      if (!locationShift.start || !locationShift.end) continue;
-      const checkDay = Array.isArray(locationShift.days) && locationShift.days.length > 0
-        ? locationShift.days.includes(dayOfWeek)
-        : true;
-      if (!checkDay) continue;
-      const startMin = toMin(locationShift.start);
-      const endMin = toMin(locationShift.end);
-      const active = endMin < startMin ? (nowMin >= startMin || nowMin < endMin) : (nowMin >= startMin && nowMin < endMin);
-      if (active) return { onShift: true, workLocId: locId };
-      // Shift defined but not active for this location — skip character-level fallback for this loc
-      continue;
-    }
-    // No location-specific shift — fall back to character-level schedule
-    const startMin = toMin(char.work_start_time);
-    const endMin = toMin(char.work_end_time);
+    if (!locationShift) continue; // No shift defined for this location
+    if (!locationShift.start || !locationShift.end) continue;
+    
+    const checkDay = Array.isArray(locationShift.days) && locationShift.days.length > 0
+      ? locationShift.days.includes(dayOfWeek)
+      : true;
+    if (!checkDay) continue; // Shift doesn't apply today
+    
+    const startMin = toMin(locationShift.start);
+    const endMin = toMin(locationShift.end);
     if (startMin === null || endMin === null) continue;
+    
     const active = endMin < startMin ? (nowMin >= startMin || nowMin < endMin) : (nowMin >= startMin && nowMin < endMin);
-    if (active) return { onShift: true, workLocId: locId };
+    if (active) return { onShift: true, workLocId: locId }; // Found active shift
+  }
+
+  // If NO explicit location shifts exist, fall back to character-level schedule
+  const anyExplicitShift = allWorkLocIds.some(locId => {
+    const loc = locationMap[locId];
+    return loc?.worker_shifts?.[char.id];
+  });
+  
+  if (anyExplicitShift) {
+    // Location shifts are defined but none are active right now
+    return { onShift: false, workLocId: null };
+  }
+
+  // No explicit shifts at ANY location — use character-level schedule
+  const startMin = toMin(char.work_start_time);
+  const endMin = toMin(char.work_end_time);
+  if (startMin === null || endMin === null) return { onShift: false, workLocId: null };
+  
+  const active = endMin < startMin ? (nowMin >= startMin || nowMin < endMin) : (nowMin >= startMin && nowMin < endMin);
+  if (active) {
+    // Character has no location-specific shifts, but character-level schedule is active
+    return { onShift: true, workLocId: allWorkLocIds[0] || null };
   }
 
   return { onShift: false, workLocId: null };
