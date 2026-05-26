@@ -91,10 +91,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
       }
 
       // If lives on campus, also update location residents and character home
-      let newResidents = location.residents || [];
+      let newResidents = [...(location.residents || [])];
       if (livesOnCampus && failures.length === 0) {
         const toAdd = characters.filter(c => selectedCharIds.has(c.id));
-        newResidents = [...(location.residents || [])];
         toAdd.forEach(char => {
           if (!newResidents.some(r => r.character_id === char.id)) {
             newResidents.push({ character_id: char.id, character_name: char.name, moved_in_date: new Date().toISOString() });
@@ -106,15 +105,28 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
         ));
       }
 
-      // Fetch updated enrolled_students from DB to pass back to parent
-      const updatedLoc = await base44.entities.LocationReference.filter({ id: location.id });
-      const updatedStudents = updatedLoc?.[0]?.enrolled_students || [];
-
-      queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
-      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-
-      // Patch character cache immediately
       if (failures.length === 0) {
+        // Build the updated students list locally — do NOT re-fetch from DB (cache returns stale data)
+        const nowIso = new Date().toISOString();
+        const newlyEnrolled = characters
+          .filter(c => selectedCharIds.has(c.id))
+          .map(char => ({
+            character_id: char.id,
+            character_name: char.name,
+            enroll_date: nowIso,
+            start_date: startDate ? new Date(startDate).toISOString() : null,
+            end_date: endDate ? new Date(endDate).toISOString() : null,
+            course_name: resolvedCourseName,
+            institution: location.name,
+            enrollment_type: enrollmentType,
+            scholarship_enabled: scholarshipEnabled,
+            tuition_amount: scholarshipEnabled ? 0 : (location.tuition_cost || 0),
+            status: 'active',
+          }));
+
+        const updatedStudents = [...(location.enrolled_students || []), ...newlyEnrolled];
+
+        // Patch character cache immediately
         const charCacheKey = ['characters', currentUser?.email];
         const cachedChars = queryClient.getQueryData(charCacheKey);
         if (Array.isArray(cachedChars)) {
@@ -132,6 +144,10 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
           });
           queryClient.setQueryData(charCacheKey, patchedChars);
         }
+
+        queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
+        queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+
         setShowAddStudent(false);
         setSelectedCharIds(new Set());
         setScholarshipEnabled(false);
@@ -163,19 +179,20 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
         reason,
       });
 
-      let newResidents = location.residents || [];
+      // Build updated lists locally — do NOT re-fetch from DB (cache returns stale data)
+      const updatedStudents = (location.enrolled_students || []).map(s =>
+        s.character_id === charId ? { ...s, status: reason === 'graduated' ? 'graduated' : 'dropped' } : s
+      );
+
+      let newResidents = [...(location.residents || [])];
       if (isOnCampus) {
-        newResidents = (location.residents || []).filter(r => r.character_id !== charId);
+        newResidents = newResidents.filter(r => r.character_id !== charId);
         await base44.entities.LocationReference.update(location.id, { residents: newResidents });
         const char = characters.find(c => c.id === charId);
         if (char?.current_home_location_id === location.id) {
           await base44.entities.Character.update(charId, { current_home_location_id: null });
         }
       }
-
-      // Fetch updated enrolled_students from DB
-      const updatedLoc = await base44.entities.LocationReference.filter({ id: location.id });
-      const updatedStudents = updatedLoc?.[0]?.enrolled_students || [];
 
       queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
       queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
@@ -422,12 +439,26 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                     </div>
                   </div>
 
-                  {(student.enroll_date || student.start_date) && (
-                    <p className="text-[10px] text-muted-foreground">
-                      Enrolled: {new Date(student.enroll_date || student.start_date).toLocaleDateString()}
-                      {student.end_date && ` · Graduates: ${new Date(student.end_date).toLocaleDateString()}`}
-                    </p>
+                  {student.course_name && student.course_name !== location.name && (
+                    <p className="text-[10px] text-primary/80 font-medium">📚 {student.course_name}</p>
                   )}
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                    {student.enroll_date && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Enrolled: {new Date(student.enroll_date).toLocaleDateString()}
+                      </p>
+                    )}
+                    {student.start_date && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Start: {new Date(student.start_date).toLocaleDateString()}
+                      </p>
+                    )}
+                    {student.end_date && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Graduates: {new Date(student.end_date).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
 
                   <div className="flex gap-2">
                     <Button
