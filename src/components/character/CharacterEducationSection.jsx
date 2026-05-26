@@ -113,15 +113,15 @@ export default function CharacterEducationSection({ character }) {
 
   const currentDate = new Date();
 
-  // Merge both education sources into unified list
-  const allEducationRaw = [
-    ...(character.education_enrollments || []),
-    ...(character.completed_education || []),
+  // Merge both education sources into unified list with source tracking
+  const educationWithSource = [
+    ...(character.education_enrollments || []).map((edu, idx) => ({ ...edu, _sourceArray: 'enrollments', _sourceIndex: idx })),
+    ...(character.completed_education || []).map((edu, idx) => ({ ...edu, _sourceArray: 'completed', _sourceIndex: idx })),
   ];
 
-  // Deduplicate by id, course_name + institution + start_date + completion_date
+  // Deduplicate by id, course_name + institution + start_date + completion_date (keep first occurrence)
   const educationMap = new Map();
-  allEducationRaw.forEach(edu => {
+  educationWithSource.forEach(edu => {
     const key = `${edu.id || ''}|${edu.course_name || edu.program_name || ''}|${edu.institution || ''}|${edu.start_date || ''}|${edu.completion_date || ''}`;
     if (!educationMap.has(key)) {
       educationMap.set(key, edu);
@@ -193,7 +193,8 @@ export default function CharacterEducationSection({ character }) {
         <div className="space-y-2">
           <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Current Education</p>
           {currentEducation.map((course, idx) => {
-            const actualIdx = (character.education_enrollments || []).indexOf(course);
+            // Get the original source array and index for location updates
+            const actualIdx = course._sourceArray === 'enrollments' ? course._sourceIndex : -1;
             const isInPerson = course.mode === 'in_person' || course.must_attend;
             return (
               <div key={idx} className="bg-secondary/40 rounded-xl border border-border p-3 space-y-2">
@@ -210,7 +211,7 @@ export default function CharacterEducationSection({ character }) {
                 </div>
 
                 {/* In-person school location dropdown */}
-                {isInPerson && (
+                {isInPerson && actualIdx >= 0 && (
                   <div className="space-y-1">
                     <div className="flex items-center gap-1">
                       <MapPin className="w-3 h-3 text-amber-400" />
@@ -233,6 +234,9 @@ export default function CharacterEducationSection({ character }) {
                     )}
                   </div>
                 )}
+                {isInPerson && actualIdx < 0 && (
+                  <p className="text-[10px] text-muted-foreground/60 italic">📍 Location assignment not available for completed education items</p>
+                )}
               </div>
             );
           })}
@@ -244,7 +248,7 @@ export default function CharacterEducationSection({ character }) {
         <div className="space-y-2">
           <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Pending Education</p>
           {pendingEducation.map((course, idx) => {
-            const actualIdx = (character.education_enrollments || []).indexOf(course);
+            const actualIdx = course._sourceArray === 'enrollments' ? course._sourceIndex : -1;
             const isInPerson = course.mode === 'in_person' || course.must_attend;
             return (
               <div key={idx} className="bg-secondary/40 rounded-xl border border-amber-500/30 p-3 space-y-2">
@@ -263,7 +267,7 @@ export default function CharacterEducationSection({ character }) {
                   )}
                 </div>
 
-                {isInPerson && (
+                {isInPerson && actualIdx >= 0 && (
                   <div className="space-y-1">
                     <div className="flex items-center gap-1">
                       <MapPin className="w-3 h-3 text-amber-400" />
@@ -285,6 +289,9 @@ export default function CharacterEducationSection({ character }) {
                       <p className="text-[10px] text-amber-400">📍 {course.in_person_location_name}</p>
                     )}
                   </div>
+                )}
+                {isInPerson && actualIdx < 0 && (
+                  <p className="text-[10px] text-muted-foreground/60 italic">📍 Location assignment not available for completed education items</p>
                 )}
               </div>
             );
