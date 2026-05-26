@@ -49,9 +49,12 @@ Deno.serve(async (req) => {
     const updated = [];
     const skipped = [];
 
+    const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
+    const force = body.force === true;
+
     for (const char of characters) {
-      // Skip if profile_summary already exists
-      if (char.profile_summary) {
+      // Skip if profile_summary already exists (unless force mode)
+      if (char.profile_summary && !force) {
         skipped.push(char.id);
         continue;
       }
