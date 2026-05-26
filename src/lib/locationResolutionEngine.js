@@ -944,12 +944,55 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
     if (!isOpen) {
       // Venue closed — character should have left. Treat as home.
       console.warn(`[LOCATION_HOURS] ${character.name} is marked at_work but ${locName} is closed at ${timeStr}. Correcting to home.`);
-      const homeName = locationMap[character.current_home_location_id]?.name || 'Home';
       if (imageMode) return `[LOCATION LOCKED: venue closed — character is heading home or at home, use residential/transit context]`;
       return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): The venue ${locName ? `"${locName}"` : 'you work at'} is now CLOSED. You are no longer on-site — you have finished your shift and are either heading home or already home. Speak in past tense about work. Do NOT describe yourself as still at the venue.`;
     }
+
+    // ── SHIFT PHASE INJECTION ─────────────────────────────────────────────
+    // Compute how far into the shift the character is so the LLM speaks accordingly.
+    let shiftPhaseNote = '';
+    if (!imageMode && character.work_start_time && character.work_end_time) {
+      const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+      const [sh, sm] = character.work_start_time.split(':').map(Number);
+      const [eh, em] = character.work_end_time.split(':').map(Number);
+      const startMin = sh * 60 + sm;
+      const endMin   = eh * 60 + em;
+      const isOvernight = endMin < startMin;
+      let elapsedMin;
+      if (isOvernight && nowMin < endMin) {
+        elapsedMin = (1440 - startMin) + nowMin;
+      } else {
+        elapsedMin = nowMin - startMin;
+      }
+      const totalShiftMin = isOvernight ? (1440 - startMin) + endMin : endMin - startMin;
+      const remainingMin  = Math.max(0, totalShiftMin - elapsedMin);
+      if (elapsedMin >= 0 && totalShiftMin > 0) {
+        const pct = elapsedMin / totalShiftMin;
+        const elapsedHrs = Math.floor(elapsedMin / 60);
+        const elapsedMinsRem = elapsedMin % 60;
+        const remHrs = Math.floor(remainingMin / 60);
+        const remMinsRem = remainingMin % 60;
+        const elapsedStr   = elapsedHrs > 0 ? `${elapsedHrs}h ${elapsedMinsRem}m` : `${elapsedMinsRem}m`;
+        const remainingStr = remHrs > 0 ? `${remHrs}h ${remMinsRem}m` : `${remMinsRem}m`;
+        if (pct >= 0.85) {
+          shiftPhaseNote = ` You have been here for ${elapsedStr} and have about ${remainingStr} left — you are NEARLY DONE with this shift. Speak like someone wrapping up, not someone just arriving.`;
+        } else if (pct >= 0.65) {
+          shiftPhaseNote = ` You are in the late portion of your shift — ${elapsedStr} in, ${remainingStr} to go.`;
+        } else if (pct >= 0.40) {
+          shiftPhaseNote = ` You are mid-shift — ${elapsedStr} in, ${remainingStr} remaining.`;
+        } else if (pct >= 0.15) {
+          shiftPhaseNote = ` You are in the early portion of your shift — ${elapsedStr} in.`;
+        }
+        // Expiry note for stale "just arrived" phrasing
+        if (elapsedMin >= 60) {
+          shiftPhaseNote += ` Any earlier message saying "walking in" or "just got here" is now ${elapsedStr} stale — do NOT repeat it as current truth.`;
+        }
+      }
+    }
+
     if (imageMode) return `[LOCATION LOCKED: character is at work at ${locName || 'their workplace'} — use that work environment as background]`;
-    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT WORK at ${locName || 'your workplace'}. All location references must match this environment.`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT WORK at ${locName || 'your workplace'}. All location references must match this environment.${shiftPhaseNote}`;
   }
 
   // ── AT SCHOOL ─────────────────────────────────────────────────────────────

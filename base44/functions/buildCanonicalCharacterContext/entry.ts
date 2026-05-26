@@ -451,6 +451,195 @@ function buildModeBlock(interactionContext) {
   return blocks[interactionContext] || '';
 }
 
+// ── WORLD STATE CONTINUITY BLOCK ─────────────────────────────────────────────
+/**
+ * buildWorldStateContinuityBlock
+ *
+ * Computes the authoritative world-state truth for this character RIGHT NOW.
+ * This is the primary defense against characters behaving as if time froze
+ * at their last conversational checkpoint with the user.
+ *
+ * The block:
+ *   1. States the current real-world time (ET)
+ *   2. Computes the character's active schedule phase (work/school/off)
+ *   3. Classifies shift phase (early/mid/late/ending/post-shift)
+ *   4. Expires transitional chat states ("on my way", "heading in", etc.)
+ *   5. Tells the LLM exactly what the character should be experiencing RIGHT NOW
+ *
+ * TRUTH ORDER ENFORCED:
+ *   current time → schedule → shift phase → location → sleep → recent chat (lowest priority)
+ */
+function buildWorldStateContinuityBlock(character) {
+  // Current ET time
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hour = nowET.getHours();
+  const minute = nowET.getMinutes();
+  const nowMinutes = hour * 60 + minute;
+  const dayOfWeek = nowET.getDay();
+  const timeStr = nowET.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  const lines = [];
+  lines.push(`════════════════════════════════════`);
+  lines.push(`WORLD STATE CONTINUITY — AUTHORITATIVE (read BEFORE recent chat)`);
+  lines.push(`Current real-world time: ${timeStr} (Eastern Time)`);
+  lines.push(`════════════════════════════════════`);
+
+  // ── WORK SCHEDULE PHASE ──────────────────────────────────────────────────────
+  const workStart = character.work_start_time; // "HH:MM"
+  const workEnd   = character.work_end_time;   // "HH:MM"
+  const workDays  = character.work_days || [];  // [0..6]
+  const workLocName = character.occupation_location_name || character.occupation || null;
+
+  // Also check location-level shift (most precise)
+  // We don't have locationMap here, so fall back to character-level fields
+  const hasWorkSchedule = workStart && workEnd && workDays.length > 0;
+
+  if (hasWorkSchedule && workDays.includes(dayOfWeek)) {
+    const [sh, sm] = workStart.split(':').map(Number);
+    const [eh, em] = workEnd.split(':').map(Number);
+    const startMin = sh * 60 + sm;
+    const endMin   = eh * 60 + em;
+
+    // Handle overnight shifts (e.g. 17:00 → 01:00)
+    const isOvernightShift = endMin < startMin;
+    const onShift = isOvernightShift
+      ? (nowMinutes >= startMin || nowMinutes < endMin)
+      : (nowMinutes >= startMin && nowMinutes < endMin);
+
+    const preShiftWindow  = !onShift && (isOvernightShift
+      ? false
+      : (nowMinutes >= startMin - 30 && nowMinutes < startMin));
+    const postShiftWindow = !onShift && (isOvernightShift
+      ? (nowMinutes >= endMin && nowMinutes < endMin + 60)
+      : (nowMinutes >= endMin && nowMinutes < endMin + 60));
+
+    if (onShift) {
+      // How deep into the shift?
+      let elapsedMin;
+      if (isOvernightShift && nowMinutes < endMin) {
+        // Crossed midnight — elapsed = (1440 - startMin) + nowMinutes
+        elapsedMin = (1440 - startMin) + nowMinutes;
+      } else {
+        elapsedMin = nowMinutes - startMin;
+      }
+
+      const totalShiftMin = isOvernightShift
+        ? (1440 - startMin) + endMin
+        : endMin - startMin;
+      const remainingMin = totalShiftMin - elapsedMin;
+
+      const elapsedHours = Math.floor(elapsedMin / 60);
+      const elapsedMins  = elapsedMin % 60;
+      const remainingHours = Math.floor(remainingMin / 60);
+      const remainingMins  = remainingMin % 60;
+
+      const elapsedStr   = elapsedHours > 0   ? `${elapsedHours}h ${elapsedMins}m` : `${elapsedMins}m`;
+      const remainingStr = remainingHours > 0 ? `${remainingHours}h ${remainingMins}m` : `${remainingMins}m`;
+
+      // Classify shift phase
+      const pct = totalShiftMin > 0 ? elapsedMin / totalShiftMin : 0;
+      let shiftPhase = '';
+      let shiftBehavior = '';
+
+      if (pct < 0.15) {
+        shiftPhase = 'EARLY SHIFT — just started, settling in';
+        shiftBehavior = `You just arrived and are getting into your rhythm. The shift has barely started.`;
+      } else if (pct < 0.40) {
+        shiftPhase = 'MID-EARLY SHIFT — in the flow';
+        shiftBehavior = `You've been at work for a while. The shift is going. You may have already dealt with coworkers, customers, tasks, etc.`;
+      } else if (pct < 0.65) {
+        shiftPhase = 'MID SHIFT — deep in it';
+        shiftBehavior = `You're in the thick of the shift. Hours in. This is just work right now. Fatigue may be setting in. Things happened earlier that you could reference.`;
+      } else if (pct < 0.85) {
+        shiftPhase = 'LATE SHIFT — past the halfway point, counting down';
+        shiftBehavior = `More than half your shift is done. You're starting to think about clocking out. Tired but pushing through. Mention something that happened earlier during the shift.`;
+      } else {
+        shiftPhase = 'END OF SHIFT — almost done';
+        shiftBehavior = `You have ${remainingStr} left. You're basically wrapping up. Mentally you've already started clocking out. Talk like someone who is almost done — not like someone just arriving or mid-shift.`;
+      }
+
+      lines.push(`\nWORK STATUS: ON SHIFT at ${workLocName || 'work'}`);
+      lines.push(`Shift: ${workStart} → ${workEnd}`);
+      lines.push(`Elapsed: ${elapsedStr} in | Remaining: ${remainingStr} left`);
+      lines.push(`SHIFT PHASE: ${shiftPhase}`);
+      lines.push(`\nBEHAVIOR MANDATE: ${shiftBehavior}`);
+      lines.push(`You have been AT WORK for ${elapsedStr}. Do NOT speak as if you just arrived or are "heading in."`);
+      lines.push(`Any message from hours ago saying "walking in" or "just got here" is STALE. That was ${elapsedHours > 0 ? elapsedHours + ' hour(s)' : elapsedMin + ' minute(s)'} ago.`);
+
+      if (remainingMin <= 20) {
+        lines.push(`\nCLOCKING OUT SOON RULE: With only ${remainingStr} left, you should sound like someone about to finish — tired, ready to go home, maybe referencing what you'll do after.`);
+      }
+
+      lines.push(`\nSAMPLE RESPONSES FOR THIS PHASE (do not copy verbatim — use as tone guide):`);
+      if (pct >= 0.85) {
+        lines.push(`"I've got like ${remainingMin} minutes left." | "This shift dragged." | "I'm almost done." | "I'll be heading home soon."`);
+      } else if (pct >= 0.65) {
+        lines.push(`"I'm past the halfway point." | "Getting there." | "Still have a couple hours but I'm good." | "It's been a lot today."`);
+      } else if (pct >= 0.40) {
+        lines.push(`"Been here for a while now." | "Things picked up earlier." | "We had a rush." | "Staying focused."`);
+      } else {
+        lines.push(`"Just getting started." | "Still settling in." | "Early still." | "The shift just started."`);
+      }
+
+    } else if (preShiftWindow) {
+      lines.push(`\nWORK STATUS: PRE-SHIFT — preparing to leave for ${workLocName || 'work'} (shift starts at ${workStart})`);
+      lines.push(`BEHAVIOR: You are getting ready or heading out. You have not arrived yet.`);
+    } else if (postShiftWindow) {
+      lines.push(`\nWORK STATUS: POST-SHIFT — shift ended at ${workEnd}, you are now off`);
+      lines.push(`BEHAVIOR: You just got done. You may be heading home, decompressing, tired from work. Reference the shift in past tense.`);
+    } else {
+      lines.push(`\nWORK STATUS: OFF SHIFT — not scheduled right now (shift is ${workStart}–${workEnd})`);
+    }
+  } else if (character.occupation_location_id) {
+    // Has a job but no schedule data — neutral
+    lines.push(`\nWORK STATUS: Has a job at ${workLocName || 'work'} but shift details not resolved for right now.`);
+  }
+
+  // ── SCHOOL PHASE ─────────────────────────────────────────────────────────────
+  if (character.student_status === 'enrolled' && character.education_location_id) {
+    const schoolName = character.education_location_name || 'school';
+    const resolvedPresence = character.resolved_presence_status;
+    if (resolvedPresence === 'at_school') {
+      lines.push(`\nSCHOOL STATUS: Currently at ${schoolName}. You are IN CLASS or on campus right now. Do not speak as if you are home or elsewhere.`);
+    }
+  }
+
+  // ── SLEEP STATE ───────────────────────────────────────────────────────────────
+  const rp = character.resolved_presence_status;
+  if (rp === 'sleeping' || rp === 'napping') {
+    lines.push(`\nSLEEP STATE: You are currently ASLEEP. Do not generate dialogue as if awake. If somehow responding, keep it brief, groggy, half-awake.`);
+  }
+
+  // ── TRANSITIONAL STATE EXPIRATION ───────────────────────────────────────────
+  lines.push(`\n════════════════════════════════════`);
+  lines.push(`TRANSITIONAL STATE EXPIRATION — CRITICAL RULE`);
+  lines.push(`════════════════════════════════════`);
+  lines.push(`The following phrases EXPIRE after their implied travel/transition time has passed:`);
+  lines.push(`  "on my way" | "heading there" | "leaving now" | "walking in" | "just got here"`);
+  lines.push(`  "heading in" | "about to start" | "going over there" | "coming home" | "just arrived"`);
+  lines.push(`If ANY of these appear in recent chat AND the implied transition should have completed based on`);
+  lines.push(`the current time and schedule above — TREAT THEM AS PAST TENSE HISTORY.`);
+  lines.push(`DO NOT carry a stale transitional statement forward as current truth.`);
+  lines.push(`The world moved on. The character moved on. The conversation must reflect that.`);
+  lines.push(`\nEXAMPLE: If the chat says "walking in now" at 5:44 PM and it is now 12:41 AM and the shift`);
+  lines.push(`ends at 1:00 AM — that message is 7 hours stale. The character has been at work for 7 hours.`);
+  lines.push(`They are NOT still walking in. They are almost done with a full shift.`);
+
+  // ── ELAPSED TIME SUMMARY ─────────────────────────────────────────────────────
+  lines.push(`\n════════════════════════════════════`);
+  lines.push(`ELAPSED TIME AWARENESS`);
+  lines.push(`════════════════════════════════════`);
+  lines.push(`When responding, you should naturally reflect what has happened since the last user message.`);
+  lines.push(`If hours passed, the character lived those hours. Work happened. Things were said. Fatigue accumulated.`);
+  lines.push(`Reference the passage of time naturally — not dramatically. Just like a real person would.`);
+  lines.push(`Examples:`);
+  lines.push(`  "It's been a long night." | "A lot happened since I last texted you." | "I've been here for hours."`);
+  lines.push(`  "We had a rush earlier." | "I'm tired, not gonna lie." | "Almost done though."`);
+  lines.push(`════════════════════════════════════`);
+
+  return `\n\n${lines.join('\n')}`;
+}
+
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
 function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null) {
   const userNameLabel = character.nickname_for_user || worldName || null;
@@ -474,6 +663,7 @@ function buildFullCanonicalPrompt(character, memories, worldName, interactionCon
   const ageCommunicationBlock = buildAgeCommunicationBlock(character);
   const modeBlock = buildModeBlock(interactionContext);
   const hardFacts = buildHardFacts(character);
+  const worldStateContinuity = buildWorldStateContinuityBlock(character);
   const coPresenceBlock = buildCoPresenceBlock(coPresence);
   const memoryBlock = buildMemoryBlock(memories);
   const familySection = buildFamilySection(character);
@@ -583,6 +773,7 @@ ${relationshipsContext}
 ${soapOperaContext}
 ${memoryBlock}
 ${lifeJournalBlock}
+${worldStateContinuity}
 ${recentMessageBlock}
 ${coPresenceBlock}${hardFacts}
 ${character.city || character.state ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(", ")}.` : ""}
