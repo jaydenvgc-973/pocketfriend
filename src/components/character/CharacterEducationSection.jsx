@@ -111,14 +111,52 @@ export default function CharacterEducationSection({ character }) {
     }
   };
 
-  const completedItems = (character.completed_education || []).filter(edu => {
-    if (!edu.completion_date) return false;
-    return new Date(edu.completion_date) <= new Date();
+  const currentDate = new Date();
+
+  // Merge both education sources into unified list
+  const allEducationRaw = [
+    ...(character.education_enrollments || []),
+    ...(character.completed_education || []),
+  ];
+
+  // Deduplicate by id, course_name + institution + start_date + completion_date
+  const educationMap = new Map();
+  allEducationRaw.forEach(edu => {
+    const key = `${edu.id || ''}|${edu.course_name || edu.program_name || ''}|${edu.institution || ''}|${edu.start_date || ''}|${edu.completion_date || ''}`;
+    if (!educationMap.has(key)) {
+      educationMap.set(key, edu);
+    }
+  });
+  const allEducation = Array.from(educationMap.values());
+
+  // Classify: Current Education
+  const currentEducation = allEducation.filter(edu => {
+    const status = edu.status || '';
+    if (['completed', 'graduated', 'dropped'].includes(status)) return false;
+    if (['current', 'enrolled', 'active', 'in_progress'].includes(status)) return true;
+    const startDate = edu.start_date ? new Date(edu.start_date) : null;
+    const completionDate = edu.completion_date ? new Date(edu.completion_date) : null;
+    return startDate && startDate <= currentDate && (!completionDate || completionDate > currentDate);
   });
 
-  const activeEnrollments = (character.education_enrollments || []).filter(e => e.status !== 'graduated' && e.status !== 'dropped');
+  // Classify: Pending Education
+  const pendingEducation = allEducation.filter(edu => {
+    const status = edu.status || '';
+    if (['completed', 'graduated', 'dropped'].includes(status)) return false;
+    if (status === 'pending') return true;
+    const startDate = edu.start_date ? new Date(edu.start_date) : null;
+    return startDate && startDate > currentDate;
+  });
 
-  const isSchoolCat = character.student_status === 'enrolled' || activeEnrollments.length > 0 || character.education_location_id;
+  // Classify: Completed Education
+  const completedItems = allEducation.filter(edu => {
+    const status = edu.status || '';
+    if (['completed', 'graduated'].includes(status)) return true;
+    const completionDate = edu.completion_date ? new Date(edu.completion_date) : null;
+    return completionDate && completionDate <= currentDate;
+  });
+
+  const isSchoolCat = character.student_status === 'enrolled' || currentEducation.length > 0 || pendingEducation.length > 0 || completedItems.length > 0 || character.education_location_id;
 
   return (
     <div className="space-y-4">
@@ -150,11 +188,11 @@ export default function CharacterEducationSection({ character }) {
         )}
       </div>
 
-      {/* Active Courses */}
-      {activeEnrollments.length > 0 && (
+      {/* Current Education */}
+      {currentEducation.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Active Courses</p>
-          {activeEnrollments.map((course, idx) => {
+          <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Current Education</p>
+          {currentEducation.map((course, idx) => {
             const actualIdx = (character.education_enrollments || []).indexOf(course);
             const isInPerson = course.mode === 'in_person' || course.must_attend;
             return (
@@ -172,6 +210,59 @@ export default function CharacterEducationSection({ character }) {
                 </div>
 
                 {/* In-person school location dropdown */}
+                {isInPerson && (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-amber-400" />
+                      <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Attends at School Location</label>
+                      {savingCourse === actualIdx && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+                    </div>
+                    <select
+                      value={course.in_person_location_id || ''}
+                      onChange={e => handleCourseLocationChange(actualIdx, e.target.value || null)}
+                      disabled={savingCourse === actualIdx}
+                      className="w-full h-8 rounded-lg bg-card border border-border px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
+                    >
+                      <option value="">— Select school location —</option>
+                      {schoolLocations.map(loc => (
+                        <option key={loc.id} value={loc.id}>{loc.name}</option>
+                      ))}
+                    </select>
+                    {course.in_person_location_name && (
+                      <p className="text-[10px] text-amber-400">📍 {course.in_person_location_name}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Pending Education */}
+      {pendingEducation.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Pending Education</p>
+          {pendingEducation.map((course, idx) => {
+            const actualIdx = (character.education_enrollments || []).indexOf(course);
+            const isInPerson = course.mode === 'in_person' || course.must_attend;
+            return (
+              <div key={idx} className="bg-secondary/40 rounded-xl border border-amber-500/30 p-3 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground">{course.course_name || course.program_name || 'Course'}</p>
+                    {course.institution && <p className="text-xs text-muted-foreground">{course.institution}</p>}
+                    {course.start_date && (
+                      <p className="text-xs text-amber-400/80 mt-1">Starts {format(new Date(course.start_date), 'MMM d, yyyy')}</p>
+                    )}
+                  </div>
+                  {course.mode && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border capitalize flex-shrink-0">
+                      {course.mode?.replace('_', ' ')}
+                    </span>
+                  )}
+                </div>
+
                 {isInPerson && (
                   <div className="space-y-1">
                     <div className="flex items-center gap-1">
@@ -233,7 +324,7 @@ export default function CharacterEducationSection({ character }) {
         </div>
       )}
 
-      {!isSchoolCat && completedItems.length === 0 && (
+      {currentEducation.length === 0 && pendingEducation.length === 0 && completedItems.length === 0 && (
         <p className="text-xs text-muted-foreground italic">No education data yet. Link a school location above or enroll in a course via the Edit Character Profile page.</p>
       )}
     </div>
