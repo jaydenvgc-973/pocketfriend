@@ -83,7 +83,7 @@ export default function ReligiousMemberSection({ location, onUpdate }) {
       setSelectedIds(new Set());
       setShowPicker(false);
       setSearch('');
-      onUpdate?.();
+      onUpdate?.(newMembers);
     } catch (err) {
       console.error('[ReligiousMemberSection] add error:', err);
     } finally {
@@ -95,14 +95,13 @@ export default function ReligiousMemberSection({ location, onUpdate }) {
     const newMembers = members.filter(m => m.character_id !== charId);
     try {
       await base44.entities.LocationReference.update(location.id, { religious_members: newMembers });
-      // Clear character side
       await base44.entities.Character.update(charId, {
         religious_location_id: null,
         religious_location_name: null,
       });
       queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser?.email] });
       queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-      onUpdate?.();
+      onUpdate?.(newMembers);
     } catch (err) {
       console.error('[ReligiousMemberSection] remove error:', err);
     }

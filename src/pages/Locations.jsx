@@ -610,6 +610,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     correctional_attire: editingLocation?.correctional_attire || {},
     uniforms: editingLocation?.uniforms || {},
     worker_manual_uniforms: editingLocation?.worker_manual_uniforms || {},
+    enrolled_students: editingLocation?.enrolled_students || [],
+    residents: editingLocation?.residents || [],
+    religious_members: editingLocation?.religious_members || [],
   });
   const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
   const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
@@ -1146,9 +1149,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       {/* ── SCHOOL ENROLLMENT ── */}
       {(form.category === 'school' || form.category === 'education') && editingLocation?.id && (
         <SchoolEnrollmentSection
-          location={{ ...form, id: editingLocation.id }}
+          location={{ ...editingLocation, enrolled_students: form.enrolled_students, residents: form.residents }}
           allCharacters={allAssignableCharacters}
-          onUpdate={() => {
+          onUpdate={(updatedStudents, updatedResidents) => {
+            if (updatedStudents !== undefined) update('enrolled_students', updatedStudents);
+            if (updatedResidents !== undefined) update('residents', updatedResidents);
             queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
             queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
           }}
@@ -1158,9 +1163,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       {/* ── RELIGIOUS MEMBERS ── */}
       {form.category === 'religion' && editingLocation?.id && (
         <ReligiousMemberSection
-          location={{ ...form, id: editingLocation.id }}
+          location={{ ...editingLocation, religious_members: form.religious_members }}
           allCharacters={allAssignableCharacters}
-          onUpdate={() => {
+          onUpdate={(updatedMembers) => {
+            if (updatedMembers !== undefined) update('religious_members', updatedMembers);
             queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
             queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
           }}

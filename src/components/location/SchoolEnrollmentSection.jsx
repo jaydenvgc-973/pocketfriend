@@ -91,10 +91,10 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
       }
 
       // If lives on campus, also update location residents and character home
+      let newResidents = location.residents || [];
       if (livesOnCampus && failures.length === 0) {
         const toAdd = characters.filter(c => selectedCharIds.has(c.id));
-        const existingResidents = location.residents || [];
-        const newResidents = [...existingResidents];
+        newResidents = [...(location.residents || [])];
         toAdd.forEach(char => {
           if (!newResidents.some(r => r.character_id === char.id)) {
             newResidents.push({ character_id: char.id, character_name: char.name, moved_in_date: new Date().toISOString() });
@@ -105,6 +105,10 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
           base44.entities.Character.update(char.id, { current_home_location_id: location.id })
         ));
       }
+
+      // Fetch updated enrolled_students from DB to pass back to parent
+      const updatedLoc = await base44.entities.LocationReference.filter({ id: location.id });
+      const updatedStudents = updatedLoc?.[0]?.enrolled_students || [];
 
       queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
       queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
@@ -137,7 +141,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
         setEndDate('');
         setEnrollmentType('full_school');
         setEnrollError('');
-        onUpdate?.();
+        onUpdate?.(updatedStudents, newResidents);
       }
     } catch (err) {
       setEnrollError(err.message || 'Enrollment failed');
@@ -153,25 +157,29 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
     const isOnCampus = (location.residents || []).some(r => r.character_id === charId);
 
     try {
-      const res = await base44.functions.invoke('unenrollCharacterFromSchool', {
+      await base44.functions.invoke('unenrollCharacterFromSchool', {
         character_id: charId,
         location_id: location.id,
         reason,
       });
 
+      let newResidents = location.residents || [];
       if (isOnCampus) {
-        const updatedResidents = (location.residents || []).filter(r => r.character_id !== charId);
-        await base44.entities.LocationReference.update(location.id, { residents: updatedResidents });
-        // Clear home if it was set to this school
+        newResidents = (location.residents || []).filter(r => r.character_id !== charId);
+        await base44.entities.LocationReference.update(location.id, { residents: newResidents });
         const char = characters.find(c => c.id === charId);
         if (char?.current_home_location_id === location.id) {
           await base44.entities.Character.update(charId, { current_home_location_id: null });
         }
       }
 
+      // Fetch updated enrolled_students from DB
+      const updatedLoc = await base44.entities.LocationReference.filter({ id: location.id });
+      const updatedStudents = updatedLoc?.[0]?.enrolled_students || [];
+
       queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
       queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-      onUpdate?.();
+      onUpdate?.(updatedStudents, newResidents);
     } catch (err) {
       console.error('Unenroll error:', err);
     }
