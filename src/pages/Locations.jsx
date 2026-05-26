@@ -22,6 +22,8 @@ import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
 import JailInmatePanel from "@/components/location/JailInmatePanel";
 import UniformsEditor from "@/components/location/UniformsEditor";
 import GroupedCharacterSelector from "@/components/location/GroupedCharacterSelector";
+import SchoolEnrollmentSection from "@/components/location/SchoolEnrollmentSection";
+import ReligiousMemberSection from "@/components/location/ReligiousMemberSection";
 import { Link } from "react-router-dom";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
@@ -458,6 +460,7 @@ function getWorkerAvailabilityV2(character, allLocations, currentLocationId = nu
 }
 
 function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null }) {
+  const queryClient = useQueryClient();
   // Active characters via RLS
   const { data: rlsActiveChars = [] } = useQuery({
     queryKey: ['locationFormActive', currentUser?.email],
@@ -1108,6 +1111,30 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             />
           </div>
         </div>
+      )}
+
+      {/* ── SCHOOL ENROLLMENT ── */}
+      {(form.category === 'school' || form.category === 'education') && editingLocation?.id && (
+        <SchoolEnrollmentSection
+          location={{ ...form, id: editingLocation.id }}
+          allCharacters={allAssignableCharacters}
+          onUpdate={() => {
+            queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+            queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+          }}
+        />
+      )}
+
+      {/* ── RELIGIOUS MEMBERS ── */}
+      {form.category === 'religion' && editingLocation?.id && (
+        <ReligiousMemberSection
+          location={{ ...form, id: editingLocation.id }}
+          allCharacters={allAssignableCharacters}
+          onUpdate={() => {
+            queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+            queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+          }}
+        />
       )}
 
       {/* ── INMATES (Jail/Prison only) ── */}
