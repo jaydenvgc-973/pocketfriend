@@ -110,49 +110,63 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="bg-secondary/40 rounded-lg p-3 space-y-3"
+            className="overflow-hidden"
           >
-            <div>
-              <label className="text-xs text-muted-foreground block mb-2">Select Character</label>
-              <select
-                value={selectedCharId || ''}
-                onChange={(e) => setSelectedCharId(e.target.value)}
-                className="w-full h-9 rounded-lg bg-card border border-border px-3 text-sm"
-              >
-                <option value="">Choose a character...</option>
+            <div className="bg-secondary/40 rounded-xl border border-border p-3 space-y-3">
+              <label className="text-xs text-muted-foreground uppercase tracking-wider block">Select Character</label>
+
+              {/* Visual character picker — avatars, not a dropdown */}
+              <div className="space-y-1 max-h-52 overflow-y-auto">
+                {availableCharacters.length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-3">No characters available</p>
+                )}
                 {availableCharacters.map(char => (
-                  <option key={char.id} value={char.id}>
-                    {char.name}
-                  </option>
+                  <button
+                    key={char.id}
+                    onClick={() => setSelectedCharId(char.id)}
+                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl border transition-colors text-left ${
+                      selectedCharId === char.id
+                        ? 'bg-primary/10 border-primary/50'
+                        : 'bg-card border-border hover:border-primary/30'
+                    }`}
+                  >
+                    <CharacterAvatar character={char} size="sm" />
+                    <span className="text-sm font-medium text-foreground flex-1 truncate">{char.name}</span>
+                    {selectedCharId === char.id && (
+                      <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                        <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                      </div>
+                    )}
+                  </button>
                 ))}
-              </select>
-            </div>
+              </div>
 
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={scholarshipEnabled}
-                onChange={(e) => setScholarshipEnabled(e.target.checked)}
-                className="rounded"
-              />
-              <span className="text-sm text-foreground">Scholarship (free tuition)</span>
-            </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={scholarshipEnabled}
+                  onChange={(e) => setScholarshipEnabled(e.target.checked)}
+                  className="rounded"
+                />
+                <span className="text-sm text-foreground">Scholarship (free tuition)</span>
+              </label>
 
-            <div className="flex gap-2">
-              <Button
-                onClick={handleEnroll}
-                disabled={!selectedCharId || loadingCharId === selectedCharId}
-                className="flex-1 h-9 rounded-lg text-sm"
-              >
-                {loadingCharId === selectedCharId ? 'Enrolling...' : 'Enroll'}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setShowAddStudent(false)}
-                className="flex-1 h-9 rounded-lg text-sm"
-              >
-                Cancel
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleEnroll}
+                  disabled={!selectedCharId || loadingCharId === selectedCharId}
+                  className="flex-1 h-9 rounded-lg text-sm"
+                >
+                  {loadingCharId === selectedCharId ? 'Enrolling...' : 'Enroll'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => { setShowAddStudent(false); setSelectedCharId(null); }}
+                  className="flex-1 h-9 rounded-lg text-sm"
+                >
+                  Cancel
+                </Button>
+              </div>
             </div>
           </motion.div>
         )}
