@@ -1,37 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// Truncate text to 3-5 sentences
-function truncateToSentences(text, minSentences = 3, maxSentences = 5) {
-  if (!text) return text;
-  
-  // Split by sentence-ending punctuation
-  const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
-  if (sentences.length === 0) return text;
-  
-  // Take up to maxSentences sentences
-  const truncated = sentences.slice(0, maxSentences).join('').trim();
-  
-  // Ensure we have at least minSentences or return what we have
-  const sentenceCount = (truncated.match(/[.!?]/g) || []).length;
-  return sentenceCount >= minSentences ? truncated : text;
-}
-
-// Remove excessive em-dashes and AI-like punctuation patterns
-function cleanPunctuation(text) {
-  if (!text) return text;
-  
-  // Replace em-dashes used as dramatic pauses with periods or commas
-  text = text.replace(/\s*—\s*/g, '. ');
-  
-  // Clean up multiple spaces
-  text = text.replace(/\s+/g, ' ');
-  
-  // Remove trailing spaces before punctuation
-  text = text.replace(/\s+([.!?])/g, '$1');
-  
-  return text.trim();
-}
-
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -59,29 +27,81 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Derive profile_summary from available fields
-      let summary = null;
+      // Build comprehensive context for LLM synthesis
+      const contextParts = [];
+
+      if (char.backstory) contextParts.push(`Backstory: ${char.backstory}`);
+      if (char.background_story) contextParts.push(`Background: ${char.background_story}`);
+      if (char.current_situation) contextParts.push(`Current Situation: ${char.current_situation}`);
+      if (char.personality_summary) contextParts.push(`Personality: ${char.personality_summary}`);
+      if (char.archetype) contextParts.push(`Archetype: ${char.archetype}`);
+      if (char.occupation) contextParts.push(`Occupation: ${char.occupation}`);
+      if (char.education) contextParts.push(`Education: ${char.education}`);
       
-      if (char.personality_summary) {
-        summary = char.personality_summary;
-      } else if (char.current_situation) {
-        summary = char.current_situation;
-      } else if (char.background_story) {
-        summary = char.background_story;
-      } else if (char.backstory) {
-        summary = char.backstory;
-      } else {
-        // Fallback: create a basic summary from name and basic info
+      // Add relationship context if available
+      const relationshipCount = (char.fictional_relationships || []).length;
+      if (relationshipCount > 0) {
+        contextParts.push(`Number of significant relationships: ${relationshipCount}`);
+      }
+
+      // Add emotional/experiential context
+      if (char.emotional_baggage) contextParts.push(`Emotional Context: ${char.emotional_baggage}`);
+      if (char.emotional_triggers_high?.length > 0) {
+        contextParts.push(`High Emotional Triggers: ${char.emotional_triggers_high.join(', ')}`);
+      }
+
+      // Add life experience summary
+      const memoriesCount = (char.memories || []).length;
+      if (memoriesCount > 0) {
+        contextParts.push(`Life Experiences Recorded: ${memoriesCount} significant memories/events`);
+      }
+
+      const contextStr = contextParts.join('\n');
+
+      // Construct sophisticated prompt for LLM
+      const prompt = `You are tasked with synthesizing a character's profile summary based on their life journey, archetype, personality, and experiences.
+
+CHARACTER DATA:
+${contextStr}
+
+CHARACTER NAME: ${char.name}
+CHARACTER AGE: ${char.age || 'Unknown'}
+
+CRITICAL INSTRUCTIONS:
+1. Synthesize a profile summary that reflects this character's AUTHENTIC GROWTH and EVOLUTION based on their experiences.
+2. Growth can be positive (development, learning, becoming wiser) or negative (trauma, hardening, becoming more guarded). Reflect BOTH types accurately.
+3. Consider the character's archetype and personality - some experiences will impact them differently based on WHO THEY ARE.
+4. The summary should show HOW their experiences have CHANGED them, not just WHO they are.
+5. Use natural, human-like punctuation. Avoid excessive em-dashes (—) used as dramatic pauses.
+6. Generate exactly 3-5 sentences. No more, no less (unless you must expand slightly for accuracy).
+7. Write in third person, present tense where appropriate.
+
+GENERATE ONLY THE PROFILE SUMMARY TEXT. DO NOT INCLUDE ANY PREAMBLE OR EXPLANATION.`;
+
+      // Call LLM to synthesize the summary
+      const llmResponse = await base44.integrations.Core.InvokeLLM({
+        prompt,
+        add_context_from_internet: false
+      });
+
+      let summary = llmResponse;
+      
+      // Ensure summary is properly formatted
+      if (typeof summary === 'string') {
+        summary = summary.trim();
+      } else if (typeof summary === 'object' && summary.text) {
+        summary = summary.text.trim();
+      }
+
+      // Verify we have a reasonable summary
+      if (!summary || summary.length < 20) {
+        // Fallback if LLM failed to generate
         const age = char.age ? ` ${char.age} years old` : '';
         const location = char.city ? ` from ${char.city}` : '';
         summary = `${char.name}${age}${location}.`;
       }
 
-      // Clean punctuation and truncate to 3-5 sentences
-      summary = cleanPunctuation(summary);
-      summary = truncateToSentences(summary, 3, 5);
-
-      // Update character with the derived summary
+      // Update character with the synthesized summary
       await base44.entities.Character.update(char.id, {
         profile_summary: summary
       });
@@ -89,15 +109,7 @@ Deno.serve(async (req) => {
       updated.push({
         id: char.id,
         name: char.name,
-        source: char.personality_summary
-          ? 'personality_summary'
-          : char.current_situation
-          ? 'current_situation'
-          : char.background_story
-          ? 'background_story'
-          : char.backstory
-          ? 'backstory'
-          : 'generated'
+        source: 'llm_synthesis'
       });
     }
 
