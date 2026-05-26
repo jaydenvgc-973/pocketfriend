@@ -61,13 +61,36 @@ export default function Home() {
 
   // Fetch locations — staleTime:0 + refetchOnMount:"always" ensures UserCard dropdown
   // never shows an empty list from a stale cache when real locations exist.
+  //
+  // ── DELETION-SAFE LKG STABILIZATION ──────────────────────────────────────────
+  // This ref tracks the last confirmed valid full location set for this owner.
+  // It lives at the query layer (shared cache) so all pages (Home, Travel, Map)
+  // see the same stable data.
+  //
+  // Rules:
+  //   EMPTY fetch        → preserve LKG. Return cached data. Never wipe.
+  //   SUSPECT fetch      → preserve LKG. Backend signaled failure.
+  //   PARTIAL fetch      → preserve LKG. Incoming < 70% of last confirmed count.
+  //   FULL valid fetch   → accept. Update LKG. Deletions propagate here only.
+  //
+  // A location is only removed when a CONFIRMED FULL result excludes it.
+  // This is deletion-safe: an explicit delete → invalidateQueries → full re-fetch
+  // → confirmed full result → deleted ID naturally absent → removed from stable set.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const lastConfirmedLocationCountRef = useRef(0);
+
   const { data: locationsData = [], isLoading: isLocationsLoading, isError: isLocationsError } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
     // Serve from localStorage immediately — prevents empty dropdown flash on mount
     initialData: () => {
       if (!currentUser?.email) return undefined;
       const lfc = lfcRead(currentUser.email, 'locations');
-      return lfc?.data?.length > 0 ? lfc.data : undefined;
+      if (lfc?.data?.length > 0) {
+        // Seed the confirmed count from cache on first load
+        lastConfirmedLocationCountRef.current = lfc.data.length;
+        return lfc.data;
+      }
+      return undefined;
     },
     initialDataUpdatedAt: () => {
       if (!currentUser?.email) return undefined;
@@ -75,36 +98,49 @@ export default function Home() {
       return lfc?.loaded_at ?? undefined;
     },
     queryFn: async () => {
-      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
+      const email = currentUser?.email;
 
-      // Backend signals a suspect (likely-empty-due-to-failure) result — use LKG cache instead of throwing.
+      // ── SUSPECT SIGNAL: backend says query failed despite having characters ──
+      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
       if (res?.data?.locations_query_suspect) {
-        const cached = lfcRead(currentUser?.email, 'locations');
+        const cached = lfcRead(email, 'locations');
         if (cached?.data?.length > 0) {
-          console.warn('[Home] fetchAllLocationsForUser signaled locations_query_suspect — returning LKG cache of', cached.data.length, 'locations.');
+          console.warn('[Home] locations_query_suspect — LKG cache preserved:', cached.data.length);
           return cached.data;
         }
-        // No cache to fall back to — throw so React Query retries
         throw new Error('Location query suspect and no LKG cache available.');
       }
 
       if (!res?.data?.success) throw new Error(res?.data?.error || 'fetchAllLocationsForUser failed');
       const locs = res?.data?.locations || [];
+      const lastConfirmed = lastConfirmedLocationCountRef.current;
 
-      // LAST-KNOWN-GOOD PROTECTION: If the fresh query returns 0 locations but we have
-      // a valid cached set, reject the empty result — it is almost certainly a query failure,
-      // not proof that the user deleted all their locations.
-      if (locs.length === 0 && currentUser?.email) {
-        const cached = lfcRead(currentUser.email, 'locations');
+      // ── EMPTY RESULT: never replace a valid cache with nothing ──
+      if (locs.length === 0) {
+        const cached = lfcRead(email, 'locations');
         if (cached?.data?.length > 0) {
-          console.warn('[Home] fetchAllLocationsForUser returned 0 locations but cache has', cached.data.length, '— keeping LKG cache, not overwriting with empty result.');
-          // Return the cached data so React Query keeps it — do NOT write empty to localStorage.
+          console.warn('[Home] Empty location fetch — LKG preserved:', cached.data.length);
+          return cached.data;
+        }
+        // Genuinely empty account (no prior cache) — accept
+        return locs;
+      }
+
+      // ── PARTIAL RESULT: incoming < 70% of last confirmed = suspect failure ──
+      // This blocks rate-limit truncations from wiping the stable set.
+      // DELETION DISTINCTION: confirmed full results (≥70%) are trusted and
+      // may legitimately contain fewer locations (explicit user deletions).
+      if (lastConfirmed > 0 && locs.length < lastConfirmed * 0.7) {
+        const cached = lfcRead(email, 'locations');
+        if (cached?.data?.length > 0) {
+          console.warn(`[Home] Partial location fetch (${locs.length} vs confirmed ${lastConfirmed}) — LKG preserved:`, cached.data.length);
           return cached.data;
         }
       }
 
-      // Persist to localStorage for instant next-load
-      if (locs.length > 0 && currentUser?.email) lfcWrite(currentUser.email, 'locations', locs);
+      // ── CONFIRMED FULL RESULT: accept, update LKG, deletions propagate ──
+      lastConfirmedLocationCountRef.current = locs.length;
+      if (email) lfcWrite(email, 'locations', locs);
       return locs;
     },
     enabled: !!currentUser?.email,
