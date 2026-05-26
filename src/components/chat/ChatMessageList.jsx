@@ -6,7 +6,7 @@ import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import DateSeparator from "@/components/chat/DateSeparator";
 import { injectDateSeparators } from "@/lib/messageDateGrouping";
 import { ChevronUp, Loader2 } from "lucide-react";
-import MovementCommitmentPrompt from "@/components/chat/MovementCommitmentPrompt";
+import MovementCommitmentPromptWithResolver from "@/components/chat/MovementCommitmentPromptWithResolver";
 
 /**
  * ChatMessageList
@@ -43,6 +43,7 @@ export default function ChatMessageList({
   const [dismissedCommitmentIds, setDismissedCommitmentIds] = useState(new Set());
 
   // Detect movement commitment in latest character message
+  // Uses conversational entity resolver to match destinations against saved locations
   const detectedCommitment = useMemo(() => {
     const latestCharMsg = [...messages]
       .reverse()
@@ -71,20 +72,23 @@ export default function ChatMessageList({
     const matched = commitmentPhrases.some(p => p.test(content));
     if (!matched) return null;
 
-    // Extract destination
+    // Extract raw destination text from message (may be vague or proper name)
     const destMatch = latestCharMsg.content.match(/(?:to|at|heading\s+to|going\s+to|meet\s+(?:you\s+)?at)\s+([A-Za-z0-9][^.!?,\n]{2,40}?)(?:\s+in\s+\d|\s+at\s+\d|[.!?,]|$)/i);
     const timeMatch = content.match(/in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)/i);
 
-    const destination = destMatch?.[1]?.trim() || null;
+    const rawDestination = destMatch?.[1]?.trim() || null;
     const rawMinutes = timeMatch?.[1] ? parseInt(timeMatch[1]) : null;
     const isHours = timeMatch?.[2]?.startsWith('h');
     const minutes = rawMinutes ? (isHours ? rawMinutes * 60 : rawMinutes) : 15;
+    const scheduledArrivalTime = new Date(Date.now() + minutes * 60000).toISOString();
 
     return {
       messageId: latestCharMsg.id,
-      destination,
+      rawDestination,    // raw text from message (may be "there", "Aurelian State University", etc.)
       etaMinutes: minutes,
-      characterName: character?.name || latestCharMsg.character_name
+      scheduledArrivalTime,
+      characterName: character?.name || latestCharMsg.character_name,
+      // destinationLocationId and destinationLocationName are resolved async by the card
     };
   }, [messages, dismissedCommitmentIds, character]);
 
@@ -162,14 +166,17 @@ export default function ChatMessageList({
         )}
       </AnimatePresence>
 
-      {/* Movement Commitment Prompt */}
+      {/* Movement Commitment Prompt — with async destination resolution */}
       <AnimatePresence>
         {detectedCommitment && (
-          <MovementCommitmentPrompt
+          <MovementCommitmentPromptWithResolver
+            rawDestination={detectedCommitment.rawDestination}
             characterName={detectedCommitment.characterName}
             characterId={characterId}
-            destination={detectedCommitment.destination || "their destination"}
+            currentCharacter={character}
             etaMinutes={detectedCommitment.etaMinutes}
+            scheduledTime={detectedCommitment.scheduledArrivalTime}
+            recentMessages={messages.slice(-15)}
             conversationId={conversationId}
             messageId={detectedCommitment.messageId}
             onConfirm={() => {
