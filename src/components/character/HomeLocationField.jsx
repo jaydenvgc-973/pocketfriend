@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { MapPin, Check, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useStableLocationReferences } from '@/hooks/useStableLocationReferences';
 
 export default function HomeLocationField({ character, currentUser }) {
   const queryClient = useQueryClient();
@@ -10,17 +11,9 @@ export default function HomeLocationField({ character, currentUser }) {
   const [showRepair, setShowRepair] = useState(false);
   const [isRepairingLink, setIsRepairingLink] = useState(false);
 
-  // Use the SAME query key as the Locations page so data is shared from cache — no extra network calls
-  const { data: userLocations = [] } = useQuery({
-    queryKey: ['locationReferences', currentUser?.email],
-    queryFn: async () => {
-      if (!currentUser?.email) return [];
-      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
-      return res?.data?.locations || [];
-    },
-    enabled: !!currentUser?.email,
-    staleTime: 60000,
-  });
+  // Shared stable hook — same LKG rules and cache key as Home/Travel/Locations.
+  // Reads from cache instantly when Home has already loaded the location list.
+  const { locationsData: userLocations } = useStableLocationReferences(currentUser?.email);
 
   // Check for residence assignment on Locations page (fallback truth)
   const [locationPageHome, setLocationPageHome] = useState(null);

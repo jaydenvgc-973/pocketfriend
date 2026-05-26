@@ -2,8 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Search, Home, Briefcase, BookOpen, Dumbbell, Wine, X, Loader2, Check } from "lucide-react";
 import { base44 } from "@/api/base44Client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
+import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 
 const CATEGORY_ICONS = {
   home: { icon: Home, color: "text-pink-400" },
@@ -44,24 +45,11 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
    );
    const isDisabled = !hasValidLocation || currentLabel === 'Away';
 
-  // Use owner_email from the character to match the SAME queryKey as Home's location query.
-  // This allows React Query to deduplicate — no second network call is made when Home
-  // already has the data cached under ["locationReferences", ownerEmail].
+  // Shared stable hook — same LKG rules and cache key as Home/Travel/Locations.
+  // Reads instantly from cache when Home has already loaded the location list.
+  // The hook's enabled guard (!!ownerEmail) prevents fetching when email is absent.
   const ownerEmail = character.owner_email || null;
-
-  const { data: locations = [], isLoading } = useQuery({
-    queryKey: ["locationReferences", ownerEmail],
-    queryFn: async () => {
-      const res = await base44.functions.invoke("fetchAllLocationsForUser", {});
-      return res?.data?.locations || [];
-    },
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    // Only fetch if cache is empty — otherwise serve from Home's already-loaded cache
-    enabled: open && !!ownerEmail,
-  });
+  const { locationsData: locations, isLoading } = useStableLocationReferences(ownerEmail);
 
   // Filter out locations that ARE the character's current resolved location
   const filtered = locations.filter(loc => {
