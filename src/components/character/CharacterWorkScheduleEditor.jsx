@@ -47,19 +47,26 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
 
   const handleSave = async () => {
     setSaving(true);
+    // Update LocationReference with shift/pay/title data
     await base44.entities.LocationReference.update(location.id, {
       worker_shifts: { ...location.worker_shifts, [characterId]: form.shift },
       worker_pay_type: { ...location.worker_pay_type, [characterId]: form.payType },
       worker_pay_rates: { ...location.worker_pay_rates, [characterId]: parseFloat(form.payRate) || 0 },
       worker_job_titles: { ...location.worker_job_titles, [characterId]: form.jobTitle },
     });
+    // Immediately sync work schedule back to the Character record
+    // so presence resolver and profile show the correct shift without refresh
+    base44.functions.invoke('syncLocationJobToCharacter', {
+      locationId: location.id,
+      characterId,
+      syncType: 'work',
+    }).catch(() => {});
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-    // Invalidate all workLocations queries for this character regardless of exact key shape,
-    // so CharacterProfile and any other consumer re-fetches fresh data from the Location resource.
     queryClient.invalidateQueries({ queryKey: ['workLocations', characterId], exact: false });
     queryClient.invalidateQueries({ queryKey: ['character', characterId], exact: false });
+    queryClient.invalidateQueries({ queryKey: ['characters'], exact: false });
     onSaved?.();
   };
 

@@ -218,6 +218,56 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
+  // LAYER 2.3: Religious location schedule — members attend during operating hours
+  // Commitment level determines attendance frequency:
+  //   devout    → attends all open windows
+  //   moderate  → attends on days with service hours (uses location operating_hours day presence)
+  //   in_name_only → never scheduled there (profile label only)
+  if (
+    character.religious_location_id &&
+    character.religion &&
+    character.religion !== 'None' &&
+    character.belief_level !== 'in_name_only' &&
+    !isCharacterAsleepFromUtils(character)
+  ) {
+    const religiousLoc = locationMap[character.religious_location_id];
+    if (religiousLoc) {
+      const etTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const currentDay = etTime.getDay();
+      const currentHour = etTime.getHours();
+      const currentMin = etTime.getMinutes();
+      const nowMin = currentHour * 60 + currentMin;
+
+      // Check if there is a service/open window for this day
+      const dayHours = (religiousLoc.operating_hours || []).filter(h => h.day_of_week === currentDay);
+      const isServiceDay = dayHours.length > 0;
+
+      if (isServiceDay) {
+        for (const hours of dayHours) {
+          if (!hours.open_time || !hours.close_time) continue;
+          const [oh, om] = hours.open_time.split(':').map(Number);
+          const [ch, cm] = hours.close_time.split(':').map(Number);
+          const openMin = oh * 60 + om;
+          const closeMin = ch * 60 + cm;
+          if (nowMin >= openMin && nowMin < closeMin) {
+            // devout always attends; moderate attends on most days
+            const shouldAttend = character.belief_level === 'devout' || character.belief_level === 'moderate';
+            if (shouldAttend) {
+              return {
+                resolved_current_location_id: character.religious_location_id,
+                resolved_current_location_name: religiousLoc.name || 'Place of Worship',
+                resolved_location_type: 'visit',
+                resolved_presence_status: 'visiting',
+                resolved_source_reason: 'religious_schedule',
+                resolved_zone: null,
+              };
+            }
+          }
+        }
+      }
+    }
+  }
+
   // LAYER 2.5: Rabbit hole — character is at an off-screen/unbuilt destination confirmed by user
   // This must come BEFORE home fallback. A rabbit hole is a valid current presence.
   if (character.resolved_presence_status === 'rabbit_hole' || character.is_rabbit_hole === true) {

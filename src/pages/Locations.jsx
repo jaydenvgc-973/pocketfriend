@@ -1548,6 +1548,59 @@ export default function Locations() {
       base44.functions.invoke('syncLocationJobToCharacter', { locationId, characterId: charId, syncType: isEducation ? 'education' : 'work' }).catch(() => {});
     }
 
+    // ── IMMEDIATE REACT QUERY CACHE PATCH ─────────────────────────────────────
+    // Patch character cache entries with updated work/occupation data so cross-location
+    // state is immediately reflected without waiting for a full refetch.
+    if (workerIds.length > 0) {
+      const cacheKey = ['characters', currentUser?.email];
+      const cachedChars = queryClient.getQueryData(cacheKey);
+      if (Array.isArray(cachedChars)) {
+        const patchedChars = cachedChars.map(c => {
+          if (!workerIds.includes(c.id)) return c;
+          const shift = saveData.worker_shifts?.[c.id] || null;
+          const jobTitle = saveData.worker_job_titles?.[c.id] || '';
+          // Only patch primary occupation if character has none yet
+          if (!c.occupation_location_id) {
+            return {
+              ...c,
+              occupation_location_id: locationId,
+              occupation_location_name: saveData.name,
+              current_work_location_id: locationId,
+              ...(shift?.start ? { work_start_time: shift.start } : {}),
+              ...(shift?.end ? { work_end_time: shift.end } : {}),
+              ...(shift?.days?.length > 0 ? { work_days: shift.days } : {}),
+              work_details: { ...(c.work_details || {}), job_title: jobTitle, location_name: saveData.name },
+            };
+          } else if (c.occupation_location_id === locationId) {
+            return {
+              ...c,
+              current_work_location_id: locationId,
+              ...(shift?.start ? { work_start_time: shift.start } : {}),
+              ...(shift?.end ? { work_end_time: shift.end } : {}),
+              ...(shift?.days?.length > 0 ? { work_days: shift.days } : {}),
+              work_details: { ...(c.work_details || {}), job_title: jobTitle },
+            };
+          } else {
+            // Add to additional_occupation_locations cache if not already there
+            const existing = c.additional_occupation_locations || [];
+            const alreadyLinked = existing.some(e => e.location_id === locationId);
+            if (!alreadyLinked) {
+              return {
+                ...c,
+                additional_occupation_locations: [
+                  ...existing,
+                  { location_id: locationId, location_name: saveData.name, job_title: jobTitle },
+                ],
+              };
+            }
+          }
+          return c;
+        });
+        queryClient.setQueryData(cacheKey, patchedChars);
+      }
+    }
+    // ──────────────────────────────────────────────────────────────────────────
+
     // ── INMATE CONFINEMENT SYNC ─────────────────────────────────────────────────
     // For jail_prison locations, write confinement state back to each inmate's Character record.
     if (formData.category === 'jail_prison') {

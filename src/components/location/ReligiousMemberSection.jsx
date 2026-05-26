@@ -68,6 +68,16 @@ export default function ReligiousMemberSection({ location, onUpdate }) {
           religious_location_name: location.name,
         })
       ));
+      // Patch character cache immediately so religious assignment shows without refresh
+      const charCacheKey = ['characters', currentUser?.email];
+      const cachedChars = queryClient.getQueryData(charCacheKey);
+      if (Array.isArray(cachedChars)) {
+        const patchedChars = cachedChars.map(c => {
+          if (!toAdd.some(a => a.id === c.id)) return c;
+          return { ...c, religious_location_id: location.id, religious_location_name: location.name };
+        });
+        queryClient.setQueryData(charCacheKey, patchedChars);
+      }
       queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
       queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
       setSelectedIds(new Set());

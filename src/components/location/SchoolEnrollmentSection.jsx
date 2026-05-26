@@ -73,6 +73,29 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
       }
       queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
       queryClient.invalidateQueries({ queryKey: ['locations'] });
+      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      // Patch character cache immediately so school enrollment shows without refresh
+      if (failures.length === 0) {
+        const charCacheKey = ['characters', currentUser?.email];
+        const cachedChars = queryClient.getQueryData(charCacheKey);
+        if (Array.isArray(cachedChars)) {
+          const enrolledIds = [...selectedCharIds];
+          const patchedChars = cachedChars.map(c => {
+            if (!enrolledIds.includes(c.id)) return c;
+            if (!c.education_location_id) {
+              return {
+                ...c,
+                education_location_id: location.id,
+                education_location_name: location.name,
+                current_school_location_id: location.id,
+                student_status: 'enrolled',
+              };
+            }
+            return c;
+          });
+          queryClient.setQueryData(charCacheKey, patchedChars);
+        }
+      }
       if (failures.length === 0) {
         setShowAddStudent(false);
         setSelectedCharIds(new Set());
