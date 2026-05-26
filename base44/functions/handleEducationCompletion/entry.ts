@@ -47,10 +47,10 @@ Deno.serve(async (req) => {
     // Remove from enrolled_students
     const updatedEnrolledStudents = (location.enrolled_students || []).filter(s => s.character_id !== character_id);
 
-    // Handle campus residency removal
+    // Handle campus residency removal only if this character had residency at this school
     let residencyRemoved = false;
     const updatedResidents = (location.residents || []).filter(r => {
-      if (r.character_id === character_id) {
+      if (r.character_id === character_id && character.current_home_location_id === location_id) {
         residencyRemoved = true;
         return false;
       }
@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
     // Update location
     await base44.entities.LocationReference.update(location_id, {
       enrolled_students: updatedEnrolledStudents,
-      residents: residencyRemoved ? updatedResidents : location.residents,
+      residents: updatedResidents,
     });
 
     return Response.json({

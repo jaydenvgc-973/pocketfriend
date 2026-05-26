@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
 
     // Handle campus residency
     let residencyUpdated = false;
-    if (lives_on_campus && location.school_type === 'college' || location.school_type === 'university') {
+    if (lives_on_campus && (location.school_type === 'college' || location.school_type === 'university')) {
       const residents = location.residents || [];
       const residentExists = residents.some(r => r.character_id === character_id);
 

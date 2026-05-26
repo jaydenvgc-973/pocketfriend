@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { AlertCircle, Check, Loader2, X, Calendar } from 'lucide-react';
+import { AlertCircle, Check, Loader2, Calendar } from 'lucide-react';
 import { format } from 'date-fns';
+import ScheduleConflictDisplay from '@/components/character/ScheduleConflictDisplay';
 
 const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
@@ -85,45 +86,16 @@ export default function CollegeEnrollmentEditor({ character, location, onEnrollm
           </div>
         </div>
 
-        {/* Conflict Alert */}
-        {!conflictsLoading && hasConflicts && (
-          <div className="mb-6 p-3 rounded-xl bg-red-500/10 border border-red-500/30 space-y-2">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-red-500" />
-              <p className="text-xs font-medium text-red-500">Schedule Conflicts Detected</p>
-            </div>
-            <div className="text-xs text-red-400 space-y-1">
-              {conflictData.conflicts.map((conflict, idx) => (
-                <div key={idx} className="flex justify-between">
-                  <span>
-                    {conflict.schedule1.label} ↔ {conflict.schedule2.label}
-                  </span>
-                  <span>{conflict.overlap.days} · {conflict.overlap.time_range}</span>
-                </div>
-              ))}
-            </div>
-            <p className="text-[10px] text-red-400/80">Customize schedule below or adjust existing commitments.</p>
-          </div>
-        )}
+        {/* Schedule Conflict Display */}
+        <ScheduleConflictDisplay 
+          character={character}
+          conflicts={!conflictsLoading ? conflictData?.conflicts : []}
+          availability={availabilityData?.availability}
+          proposedSchedule={customSchedule || { start_time: '09:00', end_time: '17:00', days: [1, 2, 3, 4, 5] }}
+          isLoading={conflictsLoading}
+        />
 
-        {/* Availability Summary */}
-        {availabilityData && (
-          <div className="mb-6 p-3 rounded-xl bg-blue-500/10 border border-blue-500/30">
-            <p className="text-xs font-medium text-blue-400 mb-2">Free Time Blocks</p>
-            <div className="grid grid-cols-7 gap-1">
-              {Object.entries(availabilityData.availability).map(([day, info]) => (
-                <div key={day} className="text-center">
-                  <p className="text-[10px] font-medium text-foreground">{DAY_LABELS[info.day_number]}</p>
-                  {info.is_completely_free ? (
-                    <span className="text-[10px] text-green-400">Free</span>
-                  ) : (
-                    <span className="text-[10px] text-amber-400">{info.blocks.filter(b => b.is_free).length} blocks</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+
 
         {/* Custom Schedule */}
         <div className="mb-6">

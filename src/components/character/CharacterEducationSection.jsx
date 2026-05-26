@@ -92,17 +92,31 @@ export default function CharacterEducationSection({ character }) {
     }
   };
 
-  const handleCourseLocationChange = async (courseIdx, locationId) => {
-    setSavingCourse(courseIdx);
+  const handleCourseLocationChange = async (sourceArray, sourceIndex, locationId) => {
+    setSavingCourse(`${sourceArray}-${sourceIndex}`);
     const loc = schoolLocations.find(l => l.id === locationId);
     try {
-      const enrollments = [...(character.education_enrollments || [])];
-      enrollments[courseIdx] = {
-        ...enrollments[courseIdx],
-        in_person_location_id: locationId || null,
-        in_person_location_name: loc?.name || null,
-      };
-      await base44.entities.Character.update(character.id, { education_enrollments: enrollments });
+      let updatedArray;
+
+      if (sourceArray === 'enrollments') {
+        updatedArray = [...(character.education_enrollments || [])];
+        updatedArray[sourceIndex] = {
+          ...updatedArray[sourceIndex],
+          in_person_location_id: locationId || null,
+          in_person_location_name: loc?.name || null,
+        };
+        await base44.entities.Character.update(character.id, { education_enrollments: updatedArray });
+      } else if (sourceArray === 'completed') {
+        // Allow edits to completed items if they're actually pending or current based on dates
+        updatedArray = [...(character.completed_education || [])];
+        updatedArray[sourceIndex] = {
+          ...updatedArray[sourceIndex],
+          in_person_location_id: locationId || null,
+          in_person_location_name: loc?.name || null,
+        };
+        await base44.entities.Character.update(character.id, { completed_education: updatedArray });
+      }
+
       queryClient.invalidateQueries({ queryKey: ['character', character.id] });
     } catch (err) {
       console.error('[CharacterEducationSection] course location error:', err);
@@ -129,32 +143,30 @@ export default function CharacterEducationSection({ character }) {
   });
   const allEducation = Array.from(educationMap.values());
 
-  // Classify: Current Education
-  const currentEducation = allEducation.filter(edu => {
+  // Classify education dynamically based on dates and status
+  const classifyEducation = (edu) => {
     const status = edu.status || '';
-    if (['completed', 'graduated', 'dropped'].includes(status)) return false;
-    if (['current', 'enrolled', 'active', 'in_progress'].includes(status)) return true;
     const startDate = edu.start_date ? new Date(edu.start_date) : null;
     const completionDate = edu.completion_date ? new Date(edu.completion_date) : null;
-    return startDate && startDate <= currentDate && (!completionDate || completionDate > currentDate);
-  });
+    
+    // Explicitly completed/graduated - not editable for core status but location can be edited if it was in-progress before completion
+    if (['completed', 'graduated'].includes(status)) return 'completed';
+    if (completionDate && completionDate <= currentDate) return 'completed';
+    
+    // Pending - future start date
+    if (status === 'pending') return 'pending';
+    if (startDate && startDate > currentDate) return 'pending';
+    
+    // Current - started and not yet ended
+    if (['current', 'enrolled', 'active', 'in_progress'].includes(status)) return 'current';
+    if (startDate && startDate <= currentDate && (!completionDate || completionDate > currentDate)) return 'current';
+    
+    return 'current'; // Default to current if uncertain
+  };
 
-  // Classify: Pending Education
-  const pendingEducation = allEducation.filter(edu => {
-    const status = edu.status || '';
-    if (['completed', 'graduated', 'dropped'].includes(status)) return false;
-    if (status === 'pending') return true;
-    const startDate = edu.start_date ? new Date(edu.start_date) : null;
-    return startDate && startDate > currentDate;
-  });
-
-  // Classify: Completed Education
-  const completedItems = allEducation.filter(edu => {
-    const status = edu.status || '';
-    if (['completed', 'graduated'].includes(status)) return true;
-    const completionDate = edu.completion_date ? new Date(edu.completion_date) : null;
-    return completionDate && completionDate <= currentDate;
-  });
+  const currentEducation = allEducation.filter(edu => classifyEducation(edu) === 'current');
+  const pendingEducation = allEducation.filter(edu => classifyEducation(edu) === 'pending');
+  const completedItems = allEducation.filter(edu => classifyEducation(edu) === 'completed');
 
   const isSchoolCat = character.student_status === 'enrolled' || currentEducation.length > 0 || pendingEducation.length > 0 || completedItems.length > 0 || character.education_location_id;
 
@@ -193,9 +205,10 @@ export default function CharacterEducationSection({ character }) {
         <div className="space-y-2">
           <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Current Education</p>
           {currentEducation.map((course, idx) => {
-            // Get the original source array and index for location updates
-            const actualIdx = course._sourceArray === 'enrollments' ? course._sourceIndex : -1;
+            const sourceArray = course._sourceArray;
+            const sourceIndex = course._sourceIndex;
             const isInPerson = course.mode === 'in_person' || course.must_attend;
+            const savingKey = `${sourceArray}-${sourceIndex}`;
             return (
               <div key={idx} className="bg-secondary/40 rounded-xl border border-border p-3 space-y-2">
                 <div className="flex items-start justify-between gap-2">
@@ -211,17 +224,17 @@ export default function CharacterEducationSection({ character }) {
                 </div>
 
                 {/* In-person school location dropdown */}
-                {isInPerson && actualIdx >= 0 && (
+                {isInPerson && (
                   <div className="space-y-1">
                     <div className="flex items-center gap-1">
                       <MapPin className="w-3 h-3 text-amber-400" />
                       <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Attends at School Location</label>
-                      {savingCourse === actualIdx && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+                      {savingCourse === savingKey && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
                     </div>
                     <select
                       value={course.in_person_location_id || ''}
-                      onChange={e => handleCourseLocationChange(actualIdx, e.target.value || null)}
-                      disabled={savingCourse === actualIdx}
+                      onChange={e => handleCourseLocationChange(sourceArray, sourceIndex, e.target.value || null)}
+                      disabled={savingCourse === savingKey}
                       className="w-full h-8 rounded-lg bg-card border border-border px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
                     >
                       <option value="">— Select school location —</option>
@@ -234,9 +247,6 @@ export default function CharacterEducationSection({ character }) {
                     )}
                   </div>
                 )}
-                {isInPerson && actualIdx < 0 && (
-                  <p className="text-[10px] text-muted-foreground/60 italic">📍 Location assignment not available for completed education items</p>
-                )}
               </div>
             );
           })}
@@ -248,8 +258,10 @@ export default function CharacterEducationSection({ character }) {
         <div className="space-y-2">
           <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Pending Education</p>
           {pendingEducation.map((course, idx) => {
-            const actualIdx = course._sourceArray === 'enrollments' ? course._sourceIndex : -1;
+            const sourceArray = course._sourceArray;
+            const sourceIndex = course._sourceIndex;
             const isInPerson = course.mode === 'in_person' || course.must_attend;
+            const savingKey = `${sourceArray}-${sourceIndex}`;
             return (
               <div key={idx} className="bg-secondary/40 rounded-xl border border-amber-500/30 p-3 space-y-2">
                 <div className="flex items-start justify-between gap-2">
@@ -267,17 +279,17 @@ export default function CharacterEducationSection({ character }) {
                   )}
                 </div>
 
-                {isInPerson && actualIdx >= 0 && (
+                {isInPerson && (
                   <div className="space-y-1">
                     <div className="flex items-center gap-1">
                       <MapPin className="w-3 h-3 text-amber-400" />
                       <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Attends at School Location</label>
-                      {savingCourse === actualIdx && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+                      {savingCourse === savingKey && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
                     </div>
                     <select
                       value={course.in_person_location_id || ''}
-                      onChange={e => handleCourseLocationChange(actualIdx, e.target.value || null)}
-                      disabled={savingCourse === actualIdx}
+                      onChange={e => handleCourseLocationChange(sourceArray, sourceIndex, e.target.value || null)}
+                      disabled={savingCourse === savingKey}
                       className="w-full h-8 rounded-lg bg-card border border-border px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
                     >
                       <option value="">— Select school location —</option>
@@ -289,9 +301,6 @@ export default function CharacterEducationSection({ character }) {
                       <p className="text-[10px] text-amber-400">📍 {course.in_person_location_name}</p>
                     )}
                   </div>
-                )}
-                {isInPerson && actualIdx < 0 && (
-                  <p className="text-[10px] text-muted-foreground/60 italic">📍 Location assignment not available for completed education items</p>
                 )}
               </div>
             );
