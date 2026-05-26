@@ -1203,7 +1203,67 @@ Deno.serve(async (req) => {
       lifeJournalBlock = `\nLIFE JOURNAL — LONGITUDINAL NARRATIVE RECORD (${lifeJournalEntries.length} significant entries):\n${lines.join('\n')}\n`;
     }
 
-    // ── Step 9: Build recent message context block ────────────────────────────
+    // ── Step 9: World-State Reconciliation (BEFORE recent message context) ───
+    // This is CRITICAL: reconciles world state as the authoritative truth source
+    // before any recent chat context is consulted.
+    let worldStateContext = '';
+    try {
+      const now = new Date();
+      const lastInteractionTime = recentMessages.length > 0
+        ? new Date(recentMessages[0].timestamp || recentMessages[0].created_date)
+        : null;
+
+      // Build world-state reconciliation summary
+      const charResolved = character.resolved_presence_status || 'unknown';
+      const charLocName = character.resolved_current_location_name || 'Unknown location';
+      
+      // Elapsed time since last interaction
+      let elapsedMinutes = 0;
+      let elapsedStr = '';
+      if (lastInteractionTime) {
+        elapsedMinutes = Math.floor((now - lastInteractionTime) / 60000);
+        if (elapsedMinutes < 60) {
+          elapsedStr = `${elapsedMinutes} minute${elapsedMinutes !== 1 ? 's' : ''}`;
+        } else {
+          const hours = Math.floor(elapsedMinutes / 60);
+          const mins = elapsedMinutes % 60;
+          elapsedStr = mins === 0
+            ? `${hours} hour${hours !== 1 ? 's' : ''}`
+            : `${hours} hour${hours !== 1 ? 's' : ''} ${mins} minute${mins !== 1 ? 's' : ''}`;
+        }
+      }
+
+      // Co-presence awareness
+      let copresenceNote = '';
+      if (coPresence?.userPresentHere) {
+        copresenceNote = `\nCO-PRESENCE: The user is physically present with you right now at ${coPresence.speakingCharacterLocationName || 'your location'}.`;
+      } else if (userCurrentLocationId && userCurrentLocationId !== character.resolved_current_location_id) {
+        copresenceNote = `\nREMOTE INTERACTION: The user is at "${userCurrentLocationName || 'somewhere else'}" — you are communicating remotely (not physically together).`;
+      }
+
+      const otherCharsNote = coPresence?.charactersPresentHere && coPresence.charactersPresentHere.length > 0
+        ? `\nOTHERS PRESENT: ${coPresence.charactersPresentHere.map(c => c.name).join(', ')} ${coPresence.charactersPresentHere.length === 1 ? 'is' : 'are'} also here.`
+        : '';
+
+      worldStateContext = `\n════════════════════════════════════
+WORLD STATE AUTHORITY (RECONCILIATION)
+════════════════════════════════════
+Current Time: ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} ET
+Your Current Location: ${charLocName}
+Your Current Presence: ${charResolved}
+${elapsedMinutes > 0 ? `Time Since Last Interaction: ${elapsedStr}` : 'No prior interaction.'}
+${copresenceNote}${otherCharsNote}
+
+BEHAVIOR DIRECTIVE:
+This world-state information is AUTHORITATIVE and takes precedence over recent chat context.
+If recent messages say you were "heading somewhere" or "just arriving," but elapsed time and current location say otherwise, use the current world state.
+Reference the passage of time naturally in your response.
+════════════════════════════════════`;
+    } catch (wsErr) {
+      console.warn(`[buildCanonicalCharacterContext] world-state reconciliation error: ${wsErr.message}`);
+    }
+
+    // ── Step 9b: Build recent message context block ──────────────────────────
     let recentMessageBlock = '';
     if (recentMessages.length > 0) {
       const lines = recentMessages.slice(0, 8).map(m => {
@@ -1214,7 +1274,8 @@ Deno.serve(async (req) => {
     }
 
     // ── Step 10: Build canonical system prompt ────────────────────────────────
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, recentMessageBlock, coPresence, userBirthdayFact);
+    // CRITICAL: worldStateContext is injected BEFORE recentMessageBlock
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + recentMessageBlock, coPresence, userBirthdayFact);
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
 
     const totalMs = Date.now() - startTime;
@@ -1225,6 +1286,7 @@ Deno.serve(async (req) => {
       ` | character=${character.name} (${characterId})` +
       ` | owner=${user.email}` +
       ` | canonical_loaded=true` +
+      ` | world_state_reconciliation_injected=true` +
       ` | hard_facts_loaded=${hardFactsLoaded}` +
       ` | life_journal_count=${lifeJournalCount}` +
       ` | memory_count=${memories.length}` +
