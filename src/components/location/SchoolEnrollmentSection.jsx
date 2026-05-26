@@ -12,6 +12,8 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
   const [selectedCharIds, setSelectedCharIds] = useState(new Set());
   const [scholarshipEnabled, setScholarshipEnabled] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
+  const [programName, setProgramName] = useState('');
+  const [enrollmentType, setEnrollmentType] = useState('full_school');
 
   const toggleChar = (id) => setSelectedCharIds(prev => {
     const next = new Set(prev);
@@ -48,15 +50,16 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
 
   const handleEnroll = async () => {
     if (selectedCharIds.size === 0) return;
+    const resolvedCourseName = programName.trim() || location.name;
     setEnrolling(true);
     try {
       await Promise.all([...selectedCharIds].map(charId =>
         base44.functions.invoke('enrollCharacterInSchool', {
           character_id: charId,
           location_id: location.id,
-          enrollment_type: 'full_school',
-          mode: 'in_person',
-          course_name: location.name,
+          enrollment_type: enrollmentType,
+          mode: enrollmentType === 'full_school' ? 'in_person' : 'on_demand',
+          course_name: resolvedCourseName,
           institution: location.name,
           scholarship_enabled: scholarshipEnabled,
         })
@@ -66,6 +69,8 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
       setShowAddStudent(false);
       setSelectedCharIds(new Set());
       setScholarshipEnabled(false);
+      setProgramName('');
+      setEnrollmentType('full_school');
     } catch (err) {
       console.error('Enrollment error:', err);
     } finally {
@@ -121,6 +126,48 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             className="overflow-hidden"
           >
             <div className="bg-secondary/40 rounded-xl border border-border p-3 space-y-3">
+
+              {/* Program Name */}
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground uppercase tracking-wider block">
+                  Program / Course Name
+                </label>
+                <input
+                  type="text"
+                  value={programName}
+                  onChange={e => setProgramName(e.target.value)}
+                  placeholder={location.name}
+                  className="w-full h-8 px-3 rounded-lg bg-card border border-border text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                />
+                <p className="text-xs text-muted-foreground">Leave blank to use school name</p>
+              </div>
+
+              {/* Enrollment Type */}
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground uppercase tracking-wider block">
+                  Enrollment Type
+                </label>
+                <div className="flex gap-2">
+                  {[
+                    { value: 'full_school', label: 'Full School' },
+                    { value: 'course', label: 'Course' },
+                    { value: 'certification', label: 'Certification' },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setEnrollmentType(opt.value)}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                        enrollmentType === opt.value
+                          ? 'bg-primary/10 border-primary/50 text-primary'
+                          : 'bg-card border-border text-muted-foreground hover:border-primary/30'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <label className="text-xs text-muted-foreground uppercase tracking-wider block">
                 Select Characters ({selectedCharIds.size} selected)
               </label>
