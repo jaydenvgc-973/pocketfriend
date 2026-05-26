@@ -710,7 +710,7 @@ export default function CharacterProfile() {
                     </div>
                     {payRate != null && (
                       <div className="text-right flex-shrink-0 ml-2 font-semibold text-green-300">
-                        ${Number(payRate).toFixed(2)} {payType === 'hourly' ? '/hr' : payType === 'salary' ? '/yr' : ''}
+                        ${Number(payRate).toFixed(2)} {payType === 'hourly' ? '/hr' : payType === 'annual' || payType === 'salary' ? '/yr' : payType === 'monthly' ? '/mo' : payType === 'weekly' ? '/wk' : payType ? `/${payType}` : ''}
                       </div>
                     )}
                   </div>
