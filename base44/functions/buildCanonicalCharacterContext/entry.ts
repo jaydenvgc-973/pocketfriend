@@ -417,15 +417,22 @@ function buildCoPresenceBlock(coPresence) {
   }
 
   if (charactersPresentHere.length > 0) {
-    block += `\nOTHER VERIFIED CHARACTERS PRESENT HERE:\n`;
-    for (const c of charactersPresentHere) {
-      block += `• ${c.name} (presence: ${c.presenceStatus || 'at_location'}) — source: ${c.source || 'resolved_current_location_id'}\n`;
-    }
-    block += `You must recognize these characters as physically present with you.\n`;
-  } else {
-    block += `\nOTHER CHARACTERS PRESENT HERE: None verified.\n`;
-    block += `Do NOT mention or imply any other character is physically nearby unless listed above.\n`;
-  }
+        block += `\nOTHER VERIFIED CHARACTERS PRESENT HERE:\n`;
+        for (const c of charactersPresentHere) {
+          if (c.awarenessLevel === 'known') {
+            block += `• ${c.name} — YOU KNOW THEM (${c.relationshipSummary || 'established relationship'}). Greet or acknowledge them with familiarity appropriate to your relationship.\n`;
+          } else if (c.awarenessLevel === 'prior_encounter') {
+            block += `• ${c.name} — YOU HAVE MET BRIEFLY BEFORE (${c.relationshipSummary || 'prior incidental encounter'}). You recognize their face but do not know them well.\n`;
+          } else {
+            block += `• ${c.name} — STRANGER TO YOU. You see them nearby but have no prior relationship. Do NOT treat them as a friend or acquaintance. Do NOT address them by name unless introduced.\n`;
+          }
+        }
+        block += `RULE: Do NOT invent familiarity. Only treat someone as known if listed as known above.\n`;
+        block += `You must recognize these characters as physically present with you.\n`;
+      } else {
+        block += `\nOTHER CHARACTERS PRESENT HERE: None verified.\n`;
+        block += `Do NOT mention or imply any other character is physically nearby unless listed above.\n`;
+      }
 
   if (overridesApplied.length > 0) {
     block += `\nPRESENCE OVERRIDES ACTIVE: ${overridesApplied.join(', ')}\n`;
@@ -878,6 +885,25 @@ Deno.serve(async (req) => {
             40
           ).catch(() => []);
 
+          // Build a lookup set of character IDs the speaking character already knows
+          // Source of truth: fictional_relationships with related_character_id set
+          const knownCharacterIds = new Set(
+            (character.fictional_relationships || [])
+              .filter(r => r.related_character_id)
+              .map(r => r.related_character_id)
+          );
+          // Also include family members who are linked characters
+          (character.family_members || []).forEach(m => {
+            if (m.character_id) knownCharacterIds.add(m.character_id);
+          });
+
+          // Build a lookup set of IDs seen in transient_encounters
+          const encounteredCharacterIds = new Set(
+            (character.transient_encounters || [])
+              .filter(e => e.related_character_id)
+              .map(e => e.related_character_id)
+          );
+
           charactersPresentHere = otherChars
             .filter(c => {
               if (c.id === characterId) return false; // skip self
@@ -890,12 +916,40 @@ Deno.serve(async (req) => {
               if (c.travel_status && c.travel_status !== 'not_traveling') return false;
               return true;
             })
-            .map(c => ({
-              id: c.id,
-              name: c.name || '(unnamed)',
-              presenceStatus: c.resolved_presence_status || 'at_location',
-              source: 'resolved_current_location_id',
-            }));
+            .map(c => {
+              // Determine relationship awareness level for this co-present character
+              const isKnown = knownCharacterIds.has(c.id);
+              const hasPriorEncounter = encounteredCharacterIds.has(c.id);
+              const knownRel = isKnown
+                ? (character.fictional_relationships || []).find(r => r.related_character_id === c.id)
+                : null;
+
+              // Classify relationship type for prompt clarity
+              let awarenessLevel = 'stranger'; // default — no prior interaction
+              let relationshipSummary = null;
+
+              if (isKnown && knownRel) {
+                awarenessLevel = 'known';
+                const relType = knownRel.relationship_type || 'acquaintance';
+                const parts = [relType];
+                if (knownRel.description) parts.push(knownRel.description.substring(0, 80));
+                if (knownRel.last_interaction_summary) parts.push(`last: ${knownRel.last_interaction_summary.substring(0, 60)}`);
+                relationshipSummary = parts.join(' | ');
+              } else if (hasPriorEncounter) {
+                awarenessLevel = 'prior_encounter';
+                const enc = (character.transient_encounters || []).find(e => e.related_character_id === c.id);
+                relationshipSummary = enc?.description ? enc.description.substring(0, 80) : 'brief prior encounter';
+              }
+
+              return {
+                id: c.id,
+                name: c.name || '(unnamed)',
+                presenceStatus: c.resolved_presence_status || 'at_location',
+                source: 'resolved_current_location_id',
+                awarenessLevel,          // 'known' | 'prior_encounter' | 'stranger'
+                relationshipSummary,     // null for strangers
+              };
+            });
         } catch (coPresenceErr) {
           contextLog.push({ step: 'co_presence_others', status: 'error', error: coPresenceErr.message });
         }

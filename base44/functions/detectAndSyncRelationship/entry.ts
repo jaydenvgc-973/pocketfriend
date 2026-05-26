@@ -29,6 +29,10 @@ Deno.serve(async (req) => {
       user_message_text,      // The user's message that triggered it
       conversation_id,
       owner_email,
+      // Optional: co-present character IDs at this location (passed from context builder)
+      // These are used to detect incidental encounters vs established relationships.
+      co_present_character_ids = [],
+      location_name = null,
     } = await req.json();
 
     if (!character_id || !response_text) {
@@ -71,15 +75,20 @@ Known app characters to check against: ${candidateNames.slice(0, 50).join(', ')}
 Chat exchange:
 ${combinedText}
 
-Task: Find any names from the known characters list that are referenced as someone "${char.name}" knows, has a relationship with, or has interacted with. Do NOT invent names not in the list.
+Task: Find any names from the known characters list that are referenced in this exchange.
 
 For each found name, detect:
 - relationship_type: "friend" | "romantic" | "family" | "coworker" | "classmate" | "acquaintance" | "enemy" | "contact" | "unknown"
 - emotional_tone: "positive" | "neutral" | "negative" | "complicated"
 - confidence: 0.0-1.0 (how sure are you they're referencing this real person)
 - interaction_summary: one sentence describing the nature of their connection as stated
+- interaction_depth: "established" | "introduced" | "incidental" | "none"
+  - "established": they clearly already know each other well
+  - "introduced": they are meeting or introducing themselves for the first time
+  - "incidental": a brief mention, passing reference, or one-off observation (saw them, bumped into them)
+  - "none": just co-location with no actual exchange
 
-Return JSON: {"relationships": [{"name": "...", "relationship_type": "...", "emotional_tone": "...", "confidence": 0.8, "interaction_summary": "..."}]}
+Return JSON: {"relationships": [{"name": "...", "relationship_type": "...", "emotional_tone": "...", "confidence": 0.8, "interaction_summary": "...", "interaction_depth": "..."}]}
 Only include entries with confidence >= 0.6. Return empty array if nothing detected.`,
         response_json_schema: {
           type: 'object',
@@ -94,6 +103,7 @@ Only include entries with confidence >= 0.6. Return empty array if nothing detec
                   emotional_tone: { type: 'string' },
                   confidence: { type: 'number' },
                   interaction_summary: { type: 'string' },
+                  interaction_depth: { type: 'string' },
                 },
               },
             },
@@ -116,7 +126,7 @@ Only include entries with confidence >= 0.6. Return empty array if nothing detec
     for (const det of detected) {
       if (!det.name || det.confidence < 0.6) continue;
 
-      // Find canonical character by name
+      // Find canonical character by name (ID preferred; name is display fallback)
       const nameLower = det.name.toLowerCase().trim();
       const matchedChar = candidates.find(c =>
         c.name?.toLowerCase() === nameLower ||
@@ -131,11 +141,79 @@ Only include entries with confidence >= 0.6. Return empty array if nothing detec
         continue;
       }
 
-      // ── ADD TO SENDER'S fictional_relationships if missing ──────────────────
+      const depth = det.interaction_depth || 'established';
+
+      // ── RULE: co-location alone ("none") writes nothing ────────────────────
+      if (depth === 'none') {
+        console.log(`[detectAndSyncRelationship] "${matchedChar.name}" — depth=none (co-location only), writing nothing`);
+        continue;
+      }
+
+      // ── RULE: incidental encounter → transient_encounters (Chance Encounters) ─
+      // Does NOT promote to fictional_relationships.
+      // Bilateral: write on both characters.
+      if (depth === 'incidental') {
+        const encounterEntry = {
+          related_character_id: matchedChar.id,
+          description: det.interaction_summary || `Brief encounter with ${matchedChar.name}`,
+          context: location_name || 'unknown location',
+          emotional_reaction: det.emotional_tone || 'neutral',
+          encountered_at: now,
+          source: 'chat_detected',
+        };
+
+        // Write to sender if not already in transient_encounters for this character
+        const senderEncounters = char.transient_encounters || [];
+        const senderAlreadyEncountered = senderEncounters.some(e => e.related_character_id === matchedChar.id);
+        if (!senderAlreadyEncountered) {
+          try {
+            await base44.entities.Character.update(character_id, {
+              transient_encounters: [...senderEncounters, encounterEntry],
+            });
+            console.log(`[detectAndSyncRelationship] 📍 transient_encounter: ${char.name} → ${matchedChar.name}`);
+          } catch (e) {
+            console.warn(`[detectAndSyncRelationship] transient_encounters write failed (sender):`, e.message);
+          }
+        }
+
+        // Write bilateral: recipient side
+        const recipientEncounters = matchedChar.transient_encounters || [];
+        const recipientAlreadyEncountered = recipientEncounters.some(e => e.related_character_id === character_id);
+        if (!recipientAlreadyEncountered) {
+          try {
+            await base44.entities.Character.update(matchedChar.id, {
+              transient_encounters: [
+                ...recipientEncounters,
+                {
+                  related_character_id: character_id,
+                  description: `Brief encounter with ${char.name}`,
+                  context: location_name || 'unknown location',
+                  emotional_reaction: 'neutral',
+                  encountered_at: now,
+                  source: 'chat_detected_bilateral',
+                },
+              ],
+            });
+          } catch (e) {
+            console.warn(`[detectAndSyncRelationship] transient_encounters write failed (recipient):`, e.message);
+          }
+        }
+
+        synced.push({
+          character_a: char.name,
+          character_b: matchedChar.name,
+          character_b_id: matchedChar.id,
+          write_type: 'transient_encounter',
+          depth,
+        });
+        console.log(`[detectAndSyncRelationship] ✅ incidental encounter: ${char.name} ↔ ${matchedChar.name}`);
+        continue; // Do not fall through to fictional_relationships
+      }
+
+      // ── RULE: introduced or established → fictional_relationships ────────────
+      // Only for depth "introduced" or "established". Bilateral. Duplicate-safe.
       const senderRels = char.fictional_relationships || [];
-      const alreadyLinked = senderRels.some(r =>
-        r.related_character_id === matchedChar.id
-      );
+      const alreadyLinked = senderRels.some(r => r.related_character_id === matchedChar.id);
 
       if (!alreadyLinked) {
         try {
@@ -143,29 +221,27 @@ Only include entries with confidence >= 0.6. Return empty array if nothing detec
             fictional_relationships: [
               ...senderRels,
               {
+                person_name: matchedChar.name,
                 related_character_id: matchedChar.id,
-                name: matchedChar.name,
-                character_name: matchedChar.name,
                 relationship_type: det.relationship_type || 'acquaintance',
                 emotional_tone: det.emotional_tone || 'neutral',
+                description: det.interaction_summary || '',
+                last_interaction_summary: det.interaction_summary || `Met via ${depth}`,
                 source: 'chat_continuity',
                 confidence: det.confidence,
-                last_interaction_summary: det.interaction_summary || `Known from conversation`,
                 detected_at: now,
               },
             ],
           });
         } catch (e) {
-          console.warn(`[detectAndSyncRelationship] Failed to update ${char.name} relationships:`, e.message);
+          console.warn(`[detectAndSyncRelationship] Failed to update ${char.name} fictional_relationships:`, e.message);
           continue;
         }
       }
 
-      // ── ADD TO RECIPIENT'S fictional_relationships if missing and mutual ─────
+      // Bilateral: write recipient side
       const recipientRels = matchedChar.fictional_relationships || [];
-      const recipientAlreadyLinked = recipientRels.some(r =>
-        r.related_character_id === character_id
-      );
+      const recipientAlreadyLinked = recipientRels.some(r => r.related_character_id === character_id);
 
       if (!recipientAlreadyLinked) {
         try {
@@ -173,24 +249,24 @@ Only include entries with confidence >= 0.6. Return empty array if nothing detec
             fictional_relationships: [
               ...recipientRels,
               {
+                person_name: char.name,
                 related_character_id: character_id,
-                name: char.name,
-                character_name: char.name,
                 relationship_type: det.relationship_type || 'acquaintance',
                 emotional_tone: det.emotional_tone || 'neutral',
-                source: 'chat_continuity',
+                description: `${char.name} — met via chat`,
+                last_interaction_summary: `${char.name} referenced this connection in conversation`,
+                source: 'chat_continuity_bilateral',
                 confidence: det.confidence,
-                last_interaction_summary: `${char.name} referenced this relationship in chat`,
                 detected_at: now,
               },
             ],
           });
         } catch (e) {
-          console.warn(`[detectAndSyncRelationship] Failed to update ${matchedChar.name} relationships:`, e.message);
+          console.warn(`[detectAndSyncRelationship] Failed to update ${matchedChar.name} fictional_relationships (bilateral):`, e.message);
         }
       }
 
-      // ── WRITE MEMORY FOR SENDER ────────────────────────────────────────────
+      // Write memory for sender (established/introduced only — not incidental)
       try {
         await base44.entities.CharacterMemory.create({
           character_id,
@@ -214,10 +290,12 @@ Only include entries with confidence >= 0.6. Return empty array if nothing detec
         relationship_type: det.relationship_type,
         emotional_tone: det.emotional_tone,
         confidence: det.confidence,
+        write_type: 'fictional_relationships',
+        depth,
         already_linked: alreadyLinked,
       });
 
-      console.log(`[detectAndSyncRelationship] ✅ ${char.name} ↔ ${matchedChar.name} | type=${det.relationship_type} | confidence=${det.confidence} | was_linked=${alreadyLinked}`);
+      console.log(`[detectAndSyncRelationship] ✅ ${char.name} ↔ ${matchedChar.name} | type=${det.relationship_type} | depth=${depth} | confidence=${det.confidence} | was_linked=${alreadyLinked}`);
     }
 
     return Response.json({

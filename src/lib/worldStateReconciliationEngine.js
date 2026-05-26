@@ -1,19 +1,27 @@
 /**
- * WORLD-STATE RECONCILIATION ENGINE
+ * WORLD-STATE RECONCILIATION ENGINE (FRONTEND)
  *
- * Single unified system that resolves authoritative world state BEFORE any character response.
- * Forces world-state to override conversational anchors.
+ * ── WHAT THIS FILE UNIQUELY PROVIDES vs buildCanonicalCharacterContext (backend): ──
  *
- * Resolves:
- * - Character's actual current location/presence
- * - User's actual current location/presence
- * - Other characters at the same location (co-presence)
- * - Elapsed time since last user interaction
- * - Shift/event/schedule phase
- * - Whether conversation is co-present or remote
- * - What has happened since last interaction
+ * UNIQUE TO THIS FILE (not replicated in buildCanonicalCharacterContext):
+ *   • resolveCharacterLocation() — calls locationResolutionEngine with a FULL locationMap
+ *     (the backend step 9 does not have a locationMap; it reads resolved_* fields directly)
+ *   • computeShiftPhase() — full shift phase computation with elapsed/remaining breakdown
+ *   • buildOffscreenSummary() — human-readable offscreen activity summary
+ *   • Stale transitional state expiry block (30min+ elapsed "heading to work" warnings)
+ *   • classifyConversationType() — "co_present" | "remote_text" | "alone_at_location"
  *
- * This is THE authoritative source before LLM sees chat history.
+ * OVERLAPS WITH buildCanonicalCharacterContext (backend):
+ *   • Co-present character list (backend does this with relationship awareness now)
+ *   • Elapsed time since last interaction (both compute it)
+ *   • User presence check
+ *
+ * DO NOT DELETE THIS FILE. The shift phase and stale-state-expiry logic has no equivalent
+ * in the backend context builder and must remain until explicitly consolidated.
+ *
+ * FUTURE CONSOLIDATION PATH (not yet done):
+ *   When consolidating, move computeShiftPhase + stale-state-expiry into
+ *   buildCanonicalCharacterContext and remove this frontend call from Chat.
  */
 
 import { resolveCharacterLocation } from '@/lib/locationResolutionEngine';
@@ -372,11 +380,14 @@ function generateWorldStateTruth(
   }
 
   if (coPresenceList.length > 0) {
-    lines.push(`\n[OTHER CHARACTERS PRESENT]`);
+    lines.push(`\n[OTHER CHARACTERS PRESENT — LOCATION ONLY]`);
     coPresenceList.forEach(char => {
+      // NOTE: This list is location-based only. Relationship awareness (known/stranger)
+      // is injected by buildCanonicalCharacterContext co-presence block.
+      // Do NOT assume familiarity from this list alone.
       lines.push(`- ${char.name} is at ${charLocation.resolved_current_location_name} with you`);
     });
-    lines.push(`Be aware of their presence and reference them naturally when relevant.`);
+    lines.push(`NOTE: Being at the same location does not mean you know these people. Check your relationship context to determine familiarity.`);
   } else if (!isUserPresent) {
     lines.push(`\n[YOU ARE ALONE]`);
     lines.push(`No other characters are currently at this location.`);

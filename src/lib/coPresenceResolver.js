@@ -39,6 +39,66 @@
  *   promptBlock: string,
  * }}
  */
+/**
+ * classifyCharacterAwareness
+ *
+ * Given a speaking character and a list of other characters physically present,
+ * returns each one annotated with awareness level:
+ *   'known'           — in fictional_relationships with related_character_id
+ *   'prior_encounter' — in transient_encounters with related_character_id
+ *   'stranger'        — no prior connection found
+ *
+ * This is pure data — no writes, no side effects.
+ * Use the result to build accurate presence labels in prompts or UI.
+ *
+ * @param {object} speakingCharacter - Full character record
+ * @param {object[]} otherCharacters - Array of other Character records to classify
+ * @returns {object[]} Same array with { id, name, awarenessLevel, relationshipSummary } added
+ */
+export function classifyCharacterAwareness(speakingCharacter, otherCharacters = []) {
+  if (!speakingCharacter || !otherCharacters.length) return [];
+
+  const knownIds = new Set(
+    (speakingCharacter.fictional_relationships || [])
+      .filter(r => r.related_character_id)
+      .map(r => r.related_character_id)
+  );
+  (speakingCharacter.family_members || []).forEach(m => {
+    if (m.character_id) knownIds.add(m.character_id);
+  });
+
+  const encounteredIds = new Set(
+    (speakingCharacter.transient_encounters || [])
+      .filter(e => e.related_character_id)
+      .map(e => e.related_character_id)
+  );
+
+  return otherCharacters.map(other => {
+    const isKnown = knownIds.has(other.id);
+    const hasPriorEncounter = !isKnown && encounteredIds.has(other.id);
+
+    let awarenessLevel = 'stranger';
+    let relationshipSummary = null;
+
+    if (isKnown) {
+      awarenessLevel = 'known';
+      const rel = (speakingCharacter.fictional_relationships || []).find(r => r.related_character_id === other.id);
+      if (rel) {
+        relationshipSummary = [
+          rel.relationship_type || 'acquaintance',
+          rel.description ? rel.description.substring(0, 80) : null,
+        ].filter(Boolean).join(' — ');
+      }
+    } else if (hasPriorEncounter) {
+      awarenessLevel = 'prior_encounter';
+      const enc = (speakingCharacter.transient_encounters || []).find(e => e.related_character_id === other.id);
+      relationshipSummary = enc?.description ? enc.description.substring(0, 80) : 'prior incidental encounter';
+    }
+
+    return { ...other, awarenessLevel, relationshipSummary };
+  });
+}
+
 export function resolveCoPresence(character, userSettings, userDisplayName = null) {
   const warnings = [];
 
@@ -109,6 +169,9 @@ export function resolveCoPresence(character, userSettings, userDisplayName = nul
     warnings,
     promptBlock,
   };
+  // NOTE: result does not include co-present OTHER characters because this resolver
+  // only has access to character + userSettings. Use buildCanonicalCharacterContext
+  // (backend) for full relationship-aware co-presence with other characters.
 
   // Diagnostic log — visible in console on every send
   console.log(
