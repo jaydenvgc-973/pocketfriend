@@ -76,8 +76,33 @@ export default function Home() {
     },
     queryFn: async () => {
       const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
+
+      // Backend signals a suspect (likely-empty-due-to-failure) result — use LKG cache instead of throwing.
+      if (res?.data?.locations_query_suspect) {
+        const cached = lfcRead(currentUser?.email, 'locations');
+        if (cached?.data?.length > 0) {
+          console.warn('[Home] fetchAllLocationsForUser signaled locations_query_suspect — returning LKG cache of', cached.data.length, 'locations.');
+          return cached.data;
+        }
+        // No cache to fall back to — throw so React Query retries
+        throw new Error('Location query suspect and no LKG cache available.');
+      }
+
       if (!res?.data?.success) throw new Error(res?.data?.error || 'fetchAllLocationsForUser failed');
       const locs = res?.data?.locations || [];
+
+      // LAST-KNOWN-GOOD PROTECTION: If the fresh query returns 0 locations but we have
+      // a valid cached set, reject the empty result — it is almost certainly a query failure,
+      // not proof that the user deleted all their locations.
+      if (locs.length === 0 && currentUser?.email) {
+        const cached = lfcRead(currentUser.email, 'locations');
+        if (cached?.data?.length > 0) {
+          console.warn('[Home] fetchAllLocationsForUser returned 0 locations but cache has', cached.data.length, '— keeping LKG cache, not overwriting with empty result.');
+          // Return the cached data so React Query keeps it — do NOT write empty to localStorage.
+          return cached.data;
+        }
+      }
+
       // Persist to localStorage for instant next-load
       if (locs.length > 0 && currentUser?.email) lfcWrite(currentUser.email, 'locations', locs);
       return locs;

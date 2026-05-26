@@ -41,6 +41,36 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     return createFailedResolution('No character provided');
   }
 
+  // ── LOCATION AVAILABILITY GUARD ────────────────────────────────────────────
+  // If the location map is empty or very small and the character has assigned location IDs,
+  // this indicates a QUERY FAILURE (not the character being home).
+  // In this case, preserve the character's DB-stored presence rather than falling home.
+  // This is the primary defense against "location disappeared → character goes home."
+  const locationMapSize = Object.keys(locationMap).length;
+  const isLocationMapSuspectEmpty = locationMapSize === 0;
+  if (isLocationMapSuspectEmpty) {
+    // locationMap is completely empty — this is a data loading failure, NOT home truth.
+    // Preserve whatever the DB says rather than computing home via fallback.
+    const dbStatus = character.resolved_presence_status;
+    const dbLocId = character.resolved_current_location_id;
+    const dbLocName = character.resolved_current_location_name;
+    const dbLocType = character.resolved_location_type;
+    const dbSourceReason = character.resolved_source_reason;
+    if (dbStatus && dbLocId) {
+      // Return DB state as-is with a flag indicating the locationMap was unavailable
+      return {
+        resolved_current_location_id: dbLocId,
+        resolved_current_location_name: dbLocName || 'Location unavailable',
+        resolved_location_type: dbLocType || 'unknown',
+        resolved_presence_status: dbStatus,
+        resolved_source_reason: dbSourceReason || 'location_map_unavailable_preserved_db_state',
+        resolved_zone: null,
+        location_map_was_empty: true,
+      };
+    }
+    // No DB state either — fall through to normal resolution (will eventually return 'location_unresolved')
+  }
+
   // HOME CONTRADICTION GUARD (runs before all layers):
   // If the DB claims resolved_presence_status = home but the resolved location is NOT
   // the character's authoritative current_home_location_id, reject the stale state
@@ -95,7 +125,29 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // For each work location, check if character is on shift right now
   for (const workLocId of allWorkLocIds) {
     const workLocation = locationMap[workLocId];
-    if (!workLocation) continue;
+
+    // LAST-KNOWN-GOOD PROTECTION: If work location is missing from map but character's DB
+    // state says at_work at this exact location, preserve DB state instead of falling home.
+    // A temporarily unavailable location record must NOT move a working character home.
+    if (!workLocation) {
+      const dbSaysAtWorkHere =
+        character.resolved_presence_status === 'at_work' &&
+        character.resolved_current_location_id === workLocId;
+      const scheduleSaysAtWork = isCharacterOnWorkSchedule(character, currentTime);
+      if (dbSaysAtWorkHere || scheduleSaysAtWork) {
+        return {
+          resolved_current_location_id: workLocId,
+          resolved_current_location_name: character.resolved_current_location_name || character.occupation_location_name || 'Work',
+          resolved_location_type: 'work',
+          resolved_presence_status: 'at_work',
+          resolved_source_reason: 'work_schedule_location_temporarily_unavailable',
+          resolved_zone: null,
+          location_temporarily_unavailable: true,
+        };
+      }
+      continue; // location not in map and not on schedule — skip
+    }
+
     if (isLocationOpen(workLocation, currentTime) === false) continue;
 
     // Check 1: Location has an explicit shift for this character → use it
@@ -145,6 +197,24 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
         resolved_source_reason: 'school_schedule',
         resolved_zone: null,
       };
+    }
+    // LAST-KNOWN-GOOD: school location missing from map but character is enrolled.
+    // Do NOT fall home — preserve DB state or show school as temporarily unavailable.
+    if (!schoolLocation) {
+      const dbSaysAtSchool =
+        character.resolved_presence_status === 'at_school' &&
+        character.resolved_current_location_id === character.education_location_id;
+      if (dbSaysAtSchool) {
+        return {
+          resolved_current_location_id: character.education_location_id,
+          resolved_current_location_name: character.resolved_current_location_name || character.education_location_name || 'School',
+          resolved_location_type: 'school',
+          resolved_presence_status: 'at_school',
+          resolved_source_reason: 'school_schedule_location_temporarily_unavailable',
+          resolved_zone: null,
+          location_temporarily_unavailable: true,
+        };
+      }
     }
   }
 
@@ -235,6 +305,19 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
         resolved_zone: null,
       };
     }
+    // LAST-KNOWN-GOOD: Visit location temporarily missing from map.
+    // Preserve the visiting state — DO NOT fall home.
+    if (!socialLocation && character.resolved_current_location_name) {
+      return {
+        resolved_current_location_id: resolvedLocIdForVisit,
+        resolved_current_location_name: character.resolved_current_location_name + ' (temporarily unavailable)',
+        resolved_location_type: 'visit',
+        resolved_presence_status: character.resolved_presence_status || 'visiting',
+        resolved_source_reason: 'visit_location_temporarily_unavailable',
+        resolved_zone: null,
+        location_temporarily_unavailable: true,
+      };
+    }
   }
 
   // PHASE 4: RESOLVE HOME BASE (TEMPORARY HOUSING PRIORITY)
@@ -249,8 +332,24 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // LAYER 7+: Use housing resolver as ONLY source of truth for all home logic
   // CRITICAL: Preserve home_resolution_failed flag to distinguish lookup failures from true homelessness
   const housing = resolveHousingLocationForCharacter(character, locationMap);
+
+  // LAST-KNOWN-GOOD PROTECTION: If home ID exists but location record not in map,
+  // this is a TEMPORARY DATA UNAVAILABILITY — not proof the character is homeless or elsewhere.
+  // Return a location_temporarily_unavailable marker rather than falling through to homeless/hotel logic.
+  if (housing.home_resolution_failed === true && housing.housing_location_id) {
+    return {
+      resolved_current_location_id: housing.housing_location_id,
+      resolved_current_location_name: character.resolved_current_location_name || 'Home (temporarily unavailable)',
+      resolved_location_type: 'home',
+      resolved_presence_status: 'home',
+      resolved_source_reason: 'home_location_temporarily_unavailable',
+      resolved_zone: null,
+      home_resolution_failed: true,
+      location_temporarily_unavailable: true,
+    };
+  }
   
-  if (housing.housing_location_id) {
+  if (housing.housing_location_id && !housing.home_resolution_failed) {
     return {
       resolved_current_location_id: housing.housing_location_id,
       resolved_current_location_name: housing.housing_location_name || 'Home',

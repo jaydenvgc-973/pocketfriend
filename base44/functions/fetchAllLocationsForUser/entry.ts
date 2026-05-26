@@ -185,6 +185,20 @@ Deno.serve(async (req) => {
     // Sort alphabetically
     charSpecificInCombined.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
+    // LAST-KNOWN-GOOD SIGNAL: If we have characters but zero locations, this is likely a query
+    // failure (rate limit, timeout, or RLS issue), not an empty account. Signal this explicitly
+    // so the frontend can apply LKG protection and NOT overwrite valid cached data with empty.
+    const hasCharactersButNoLocations = userCharacters.length > 0 && charSpecificInCombined.length === 0;
+    if (hasCharactersButNoLocations) {
+      console.warn(`[fetchAllLocationsForUser] WARNING: ${userCharacters.length} characters exist but 0 locations returned. This is likely a query failure, not an empty account. Signaling locations_query_suspect to client.`);
+      return Response.json({
+        success: false,
+        locations_query_suspect: true,
+        error: 'Location query returned 0 results despite account having characters. Likely a transient query failure.',
+        totalCount: 0,
+      });
+    }
+
     return Response.json({
       success: true,
       locations: charSpecificInCombined,
