@@ -153,20 +153,17 @@ export default function CharacterEducationSection({ character }) {
       {/* Active Courses */}
       {activeEnrollments.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-semibold text-foreground uppercase tracking-wider">In Progress Courses</p>
+          <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Active Courses</p>
           {activeEnrollments.map((course, idx) => {
             const actualIdx = (character.education_enrollments || []).indexOf(course);
             const isInPerson = course.mode === 'in_person' || course.must_attend;
             return (
               <div key={idx} className="bg-secondary/40 rounded-xl border border-border p-3 space-y-2">
                 <div className="flex items-start justify-between gap-2">
-                   <div className="flex-1 min-w-0">
-                     <p className="text-sm font-medium text-foreground">{course.course_name || course.program_name || 'Course'}</p>
-                     {course.institution && <p className="text-xs text-muted-foreground">{course.institution}</p>}
-                     {course.expected_completion_date && (
-                       <p className="text-xs text-muted-foreground/70 mt-0.5">Expected: {format(new Date(course.expected_completion_date), 'MMM yyyy')}</p>
-                     )}
-                   </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground">{course.course_name || course.program_name || 'Course'}</p>
+                    {course.institution && <p className="text-xs text-muted-foreground">{course.institution}</p>}
+                  </div>
                   {course.mode && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border capitalize flex-shrink-0">
                       {course.mode?.replace('_', ' ')}
