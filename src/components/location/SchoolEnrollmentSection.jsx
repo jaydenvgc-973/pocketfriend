@@ -53,11 +53,15 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
       await Promise.all([...selectedCharIds].map(charId =>
         base44.functions.invoke('enrollCharacterInSchool', {
           character_id: charId,
-          character_name: characters.find(c => c.id === charId)?.name || 'Unknown',
           location_id: location.id,
+          enrollment_type: 'full_school',
+          mode: 'in_person',
+          course_name: location.name,
+          institution: location.name,
           scholarship_enabled: scholarshipEnabled,
         })
       ));
+      queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
       queryClient.invalidateQueries({ queryKey: ['locations'] });
       setShowAddStudent(false);
       setSelectedCharIds(new Set());

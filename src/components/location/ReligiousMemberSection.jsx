@@ -68,7 +68,7 @@ export default function ReligiousMemberSection({ location, onUpdate }) {
           religious_location_name: location.name,
         })
       ));
-      queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
       queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
       setSelectedIds(new Set());
       setShowPicker(false);
