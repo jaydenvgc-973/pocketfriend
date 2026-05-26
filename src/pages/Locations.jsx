@@ -28,6 +28,7 @@ import { Link } from "react-router-dom";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
 import { getEditableCharactersForModule } from "@/lib/characterEditableListResolver";
+import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import { calculateCharacterAvailability, getAvailabilityLabel, formatShiftDisplay } from "@/lib/characterAvailabilityEngine";
 
 const ZONE_PRESETS = {
@@ -1343,15 +1344,9 @@ export default function Locations() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: locations = [], isLoading: locationsLoading } = useQuery({
-    queryKey: ["locationReferences", currentUser?.email],
-    queryFn: async () => {
-      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
-      return res?.data?.locations || [];
-    },
-    enabled: !!currentUser?.email,
-    staleTime: 30000, // 30 seconds — prevents stale-cache empty flash on navigation
-  });
+  // Uses the shared stable hook — same LKG rules as Home and Travel.
+  // Prevents an unprotected bare query from returning [] and wiping the shared cache.
+  const { locationsData: locations, isLoading: locationsLoading } = useStableLocationReferences(currentUser?.email);
 
   const { data: characters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email],

@@ -27,7 +27,7 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { useForegroundTask } from "@/hooks/useForegroundTask";
 import { FOREGROUND_TASKS } from "@/lib/foregroundPriority";
-import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
+import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 
 
 export default function Travel() {
@@ -70,64 +70,8 @@ export default function Travel() {
     isRefreshing: isLoadingNpc,
   } = useOwnedCharacters(currentUser);
 
-  // Travel shares the same React Query cache key as Home — so when Home's queryFn
-  // writes a valid result, Travel's useQuery reads it immediately from cache.
-  // This queryFn only runs when the cache is stale or explicitly invalidated.
-  // It applies the same deletion-safe LKG rules as Home's queryFn.
-  const lastConfirmedLocCountTravelRef = useRef(0);
-  const { data: locationsData = [] } = useQuery({
-    queryKey: ["locationReferences", currentUser?.email],
-    queryFn: async () => {
-      const email = currentUser?.email;
-      const res = await base44.functions.invoke("fetchAllLocationsForUser", {});
-
-      // Suspect signal — backend says query failed
-      if (res?.data?.locations_query_suspect) {
-        const cached = lfcRead(email, 'locations');
-        if (cached?.data?.length > 0) {
-          console.warn('[Travel] locations_query_suspect — LKG cached:', cached.data.length);
-          return cached.data;
-        }
-        throw new Error('Location query suspect and no LKG cache available.');
-      }
-
-      const locs = res?.data?.locations || [];
-      const lastConfirmed = lastConfirmedLocCountTravelRef.current;
-
-      // Empty result — preserve LKG
-      if (locs.length === 0) {
-        const cached = lfcRead(email, 'locations');
-        if (cached?.data?.length > 0) {
-          console.warn('[Travel] Empty fetch — LKG preserved:', cached.data.length);
-          return cached.data;
-        }
-        return locs;
-      }
-
-      // Partial result (<70% of last confirmed) — preserve LKG
-      if (lastConfirmed > 0 && locs.length < lastConfirmed * 0.7) {
-        const cached = lfcRead(email, 'locations');
-        if (cached?.data?.length > 0) {
-          console.warn(`[Travel] Partial fetch (${locs.length} vs ${lastConfirmed}) — LKG preserved:`, cached.data.length);
-          return cached.data;
-        }
-      }
-
-      // Confirmed full result — accept, update LKG (deletions propagate here)
-      lastConfirmedLocCountTravelRef.current = locs.length;
-      if (email) lfcWrite(email, 'locations', locs);
-      return locs;
-    },
-    enabled: !!currentUser?.email,
-    staleTime: 10 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: 2,
-    retryDelay: (attempt) => attempt * 2000,
-    placeholderData: (prev) => prev,
-  });
+  // Shared stable location hook — same LKG rules and cache key as Home
+  const { locationsData } = useStableLocationReferences(currentUser?.email);
 
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   // settingsObj is the single UserSettings record (object shape) from useUserSettings
