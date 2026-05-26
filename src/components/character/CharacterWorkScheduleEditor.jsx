@@ -54,13 +54,12 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
       worker_pay_rates: { ...location.worker_pay_rates, [characterId]: parseFloat(form.payRate) || 0 },
       worker_job_titles: { ...location.worker_job_titles, [characterId]: form.jobTitle },
     });
-    // Immediately sync work schedule back to the Character record
-    // so presence resolver and profile show the correct shift without refresh
-    base44.functions.invoke('syncLocationJobToCharacter', {
+    // Await sync so Character entity is fully updated before cache invalidation fires
+    await base44.functions.invoke('syncLocationJobToCharacter', {
       locationId: location.id,
       characterId,
       syncType: 'work',
-    }).catch(() => {});
+    }).catch(err => console.error('[WorkScheduleEditor] sync failed:', err?.message));
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);

@@ -1572,10 +1572,19 @@ export default function Locations() {
 
     const workerIds = saveData.worker_character_ids || [];
     const isEducation = saveData.category === 'school' || saveData.category === 'education';
-    for (const charId of workerIds) {
-      if (charId.startsWith('npc__')) continue;
-      base44.functions.invoke('syncLocationJobToCharacter', { locationId, characterId: charId, syncType: isEducation ? 'education' : 'work' }).catch(() => {});
-    }
+    // AWAIT all sync calls — job assignment must be fully written to Character entity
+    // before the form closes and queries invalidate. Fire-and-forget is not acceptable here.
+    await Promise.all(
+      workerIds
+        .filter(charId => !charId.startsWith('npc__'))
+        .map(charId =>
+          base44.functions.invoke('syncLocationJobToCharacter', {
+            locationId,
+            characterId: charId,
+            syncType: isEducation ? 'education' : 'work',
+          }).catch(err => console.error('[handleSave] syncLocationJobToCharacter failed for', charId, err?.message))
+        )
+    );
 
     // ── IMMEDIATE REACT QUERY CACHE PATCH ─────────────────────────────────────
     // Patch character cache entries with updated work/occupation data so cross-location
