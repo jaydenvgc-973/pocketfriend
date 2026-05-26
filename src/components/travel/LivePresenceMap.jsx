@@ -812,6 +812,43 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
   const [activeLocationId, setActiveLocationId] = useState(null);
   const [activeSessions, setActiveSessions] = useState([]);
 
+  // ── LAST-KNOWN-GOOD LOCATION GUARD ───────────────────────────────────────────
+  // This is the FINAL rendering layer. If the parent passes an empty or smaller locations
+  // array due to a failed/partial fetch, we must NOT wipe the map dots.
+  //
+  // Rule: stableLocations always holds the largest valid set seen so far.
+  // A smaller or empty incoming set is treated as a transient query failure, NOT truth.
+  // Only grow the set (via merge), never shrink it below the previous valid count.
+  // A location is only removed from stableLocations if it no longer appears AND the
+  // incoming set is at least as large as the current stable set (indicating a valid refresh).
+  const stableLocationsRef = useRef([]);
+  const stableLocations = useMemo(() => {
+    const incoming = Array.isArray(locations) ? locations : [];
+
+    // If incoming is empty and we have a valid stable set, keep the stable set.
+    if (incoming.length === 0 && stableLocationsRef.current.length > 0) {
+      console.warn(`[LivePresenceMap] LKG GUARD: incoming locations=0, keeping ${stableLocationsRef.current.length} stable locations.`);
+      return stableLocationsRef.current;
+    }
+
+    // If incoming is a smaller partial result (< 80% of stable), suspect a failed query.
+    // Keep the stable set but merge in any new locations from the incoming set.
+    const stableCount = stableLocationsRef.current.length;
+    if (stableCount > 0 && incoming.length < stableCount * 0.8) {
+      // Merge: build a map from stable, overlay any incoming records (updated fields)
+      const merged = new Map(stableLocationsRef.current.map(l => [l.id, l]));
+      incoming.forEach(l => merged.set(l.id, l));
+      const mergedArr = Array.from(merged.values());
+      console.warn(`[LivePresenceMap] LKG GUARD: incoming=${incoming.length} < 80% of stable=${stableCount}. Merged to ${mergedArr.length}.`);
+      stableLocationsRef.current = mergedArr;
+      return mergedArr;
+    }
+
+    // Valid full (or larger) result — update stable and return.
+    stableLocationsRef.current = incoming;
+    return incoming;
+  }, [locations]);
+
   // TravelSession transit rendering PERMANENTLY DISABLED.
   // The old slow-transit travel system has been removed. Characters teleport at scheduled time.
   // Rendering stale in_transit TravelSession records as animated markers is forbidden.
@@ -820,12 +857,12 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
     setActiveSessions([]);
   }, []);
 
-  const gridCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
+  const gridCoords = useMemo(() => buildLocationCoordinateMap(stableLocations), [stableLocations]);
 
   // travelingCharacterIds is always empty — transit system removed, no pin suppression needed.
   const travelingCharacterIds = useMemo(() => new Set(), []);
 
-  const markers = useMemo(() => buildMarkers(characters, locations, gridCoords, travelingCharacterIds), [characters, locations, gridCoords, travelingCharacterIds]);
+  const markers = useMemo(() => buildMarkers(characters, stableLocations, gridCoords, travelingCharacterIds), [characters, stableLocations, gridCoords, travelingCharacterIds]);
   
   // Build family avatar map: name (lowercase) → photo_url
   // Scans all characters' family_members[] arrays — the REAL avatar source for internal family
@@ -841,8 +878,8 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
   }, [markers]);
 
   const allLocations = useMemo(() =>
-    locations.filter(l => gridCoords[l.id]).map(l => ({ ...l, map_coordinates: gridCoords[l.id] })),
-    [locations, gridCoords]
+    stableLocations.filter(l => gridCoords[l.id]).map(l => ({ ...l, map_coordinates: gridCoords[l.id] })),
+    [stableLocations, gridCoords]
   );
 
   const activeLocation = allLocations.find(l => l.id === activeLocationId) || null;

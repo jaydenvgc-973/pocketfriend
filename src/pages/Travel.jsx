@@ -27,6 +27,7 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { useForegroundTask } from "@/hooks/useForegroundTask";
 import { FOREGROUND_TASKS } from "@/lib/foregroundPriority";
+import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
 
 
 export default function Travel() {
@@ -73,9 +74,40 @@ export default function Travel() {
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
       const res = await base44.functions.invoke("fetchAllLocationsForUser", {});
-      return res?.data?.locations || [];
+
+      // Backend signals a suspect query result — fall back to LKG cache
+      if (res?.data?.locations_query_suspect) {
+        const cached = lfcRead(currentUser?.email, 'locations');
+        if (cached?.data?.length > 0) {
+          console.warn('[Travel] locations_query_suspect — returning LKG cache of', cached.data.length);
+          return cached.data;
+        }
+        throw new Error('Location query suspect and no LKG cache available.');
+      }
+
+      const locs = res?.data?.locations || [];
+
+      // LKG FLOOR: If fresh fetch returns 0 but cache has valid data, keep cache
+      if (locs.length === 0 && currentUser?.email) {
+        const cached = lfcRead(currentUser.email, 'locations');
+        if (cached?.data?.length > 0) {
+          console.warn('[Travel] 0 locations returned but cache has', cached.data.length, '— keeping LKG cache.');
+          return cached.data;
+        }
+      }
+
+      if (locs.length > 0 && currentUser?.email) lfcWrite(currentUser.email, 'locations', locs);
+      return locs;
     },
     enabled: !!currentUser?.email,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 2,
+    retryDelay: (attempt) => attempt * 2000,
+    placeholderData: (prev) => prev,
   });
 
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
