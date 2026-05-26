@@ -62,8 +62,9 @@ Deno.serve(async (req) => {
       if (!locs[0]) return Response.json({ error: 'School location not found' }, { status: 404 });
       school = locs[0];
 
-      if (!['education', 'school'].includes(school.category)) {
-        return Response.json({ error: 'Location is not a school' }, { status: 400 });
+      const schoolCategories = ['education', 'school', 'community', 'generic'];
+      if (school.category && !schoolCategories.includes(school.category)) {
+        return Response.json({ error: `Location category "${school.category}" is not a school type` }, { status: 400 });
       }
 
       const alreadyEnrolled = (school.enrolled_students || []).some(

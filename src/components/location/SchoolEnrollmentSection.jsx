@@ -14,6 +14,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
   const [enrolling, setEnrolling] = useState(false);
   const [programName, setProgramName] = useState('');
   const [enrollmentType, setEnrollmentType] = useState('full_school');
+  const [enrollError, setEnrollError] = useState('');
 
   const toggleChar = (id) => setSelectedCharIds(prev => {
     const next = new Set(prev);
@@ -52,8 +53,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
     if (selectedCharIds.size === 0) return;
     const resolvedCourseName = programName.trim() || location.name;
     setEnrolling(true);
+    setEnrollError('');
     try {
-      await Promise.all([...selectedCharIds].map(charId =>
+      const results = await Promise.allSettled([...selectedCharIds].map(charId =>
         base44.functions.invoke('enrollCharacterInSchool', {
           character_id: charId,
           location_id: location.id,
@@ -64,15 +66,23 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
           scholarship_enabled: scholarshipEnabled,
         })
       ));
+      const failures = results.filter(r => r.status === 'rejected');
+      if (failures.length > 0) {
+        const msg = failures[0].reason?.response?.data?.error || failures[0].reason?.message || 'Enrollment failed';
+        setEnrollError(msg);
+      }
       queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
       queryClient.invalidateQueries({ queryKey: ['locations'] });
-      setShowAddStudent(false);
-      setSelectedCharIds(new Set());
-      setScholarshipEnabled(false);
-      setProgramName('');
-      setEnrollmentType('full_school');
+      if (failures.length === 0) {
+        setShowAddStudent(false);
+        setSelectedCharIds(new Set());
+        setScholarshipEnabled(false);
+        setProgramName('');
+        setEnrollmentType('full_school');
+        setEnrollError('');
+      }
     } catch (err) {
-      console.error('Enrollment error:', err);
+      setEnrollError(err.message || 'Enrollment failed');
     } finally {
       setEnrolling(false);
     }
@@ -209,9 +219,13 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                 <span className="text-sm text-foreground">Scholarship (free tuition) — applies to all selected</span>
               </label>
 
+              {enrollError && (
+                <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">{enrollError}</p>
+              )}
+
               <div className="flex gap-2">
-                <Button
-                  onClick={handleEnroll}
+                 <Button
+                   onClick={handleEnroll}
                   disabled={selectedCharIds.size === 0 || enrolling}
                   className="flex-1 h-9 rounded-lg text-sm"
                 >
