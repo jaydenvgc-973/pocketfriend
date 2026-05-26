@@ -709,7 +709,7 @@ export default function CharacterProfile() {
                     </div>
                     {payRate != null && (
                       <div className="text-right flex-shrink-0 ml-2 font-semibold text-green-300">
-                        ${Number(payRate).toFixed(2)} {payType === 'hourly' ? '/hr' : payType === 'salary' ? '/yr' : ''}
+                        ${Number(payRate).toFixed(2)} {payType === 'hourly' ? '/hr' : payType === 'salary' ? '/yr' : payType === 'monthly' ? '/mo' : payType === 'weekly' ? '/wk' : ''}
                       </div>
                     )}
                   </div>
@@ -764,13 +764,19 @@ export default function CharacterProfile() {
             <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Emotional & Social World</p>
           </div>
 
-          {(character.emotional_baggage || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
+          {(character.emotional_baggage || character.current_situation || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
             <CollapsibleProfileSection icon={Heart} title="Emotional Profile">
               <div className="space-y-4">
                 {character.emotional_baggage && (
                   <div>
                     <p className="text-xs font-medium text-foreground mb-1">What They Carry</p>
                     <p className="text-sm text-muted-foreground leading-relaxed">{character.emotional_baggage}</p>
+                  </div>
+                )}
+                {character.current_situation && (
+                  <div>
+                    <p className="text-xs font-medium text-foreground mb-1">Current Situation</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{character.current_situation}</p>
                   </div>
                 )}
                 {character.upset_reaction && (
