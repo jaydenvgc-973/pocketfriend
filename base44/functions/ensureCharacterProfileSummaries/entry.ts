@@ -1,5 +1,37 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// Truncate text to 3-5 sentences
+function truncateToSentences(text, minSentences = 3, maxSentences = 5) {
+  if (!text) return text;
+  
+  // Split by sentence-ending punctuation
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
+  if (sentences.length === 0) return text;
+  
+  // Take up to maxSentences sentences
+  const truncated = sentences.slice(0, maxSentences).join('').trim();
+  
+  // Ensure we have at least minSentences or return what we have
+  const sentenceCount = (truncated.match(/[.!?]/g) || []).length;
+  return sentenceCount >= minSentences ? truncated : text;
+}
+
+// Remove excessive em-dashes and AI-like punctuation patterns
+function cleanPunctuation(text) {
+  if (!text) return text;
+  
+  // Replace em-dashes used as dramatic pauses with periods or commas
+  text = text.replace(/\s*—\s*/g, '. ');
+  
+  // Clean up multiple spaces
+  text = text.replace(/\s+/g, ' ');
+  
+  // Remove trailing spaces before punctuation
+  text = text.replace(/\s+([.!?])/g, '$1');
+  
+  return text.trim();
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -41,6 +73,10 @@ Deno.serve(async (req) => {
         const location = char.city ? ` from ${char.city}` : '';
         summary = `${char.name}${age}${location}.`;
       }
+
+      // Clean punctuation and truncate to 3-5 sentences
+      summary = cleanPunctuation(summary);
+      summary = truncateToSentences(summary, 3, 5);
 
       // Update character with the derived summary
       await base44.entities.Character.update(char.id, {
