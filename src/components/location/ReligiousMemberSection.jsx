@@ -19,7 +19,14 @@ export default function ReligiousMemberSection({ location, onUpdate }) {
   const queryClient = useQueryClient();
   const [showPicker, setShowPicker] = useState(false);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
+  const toggleChar = (id) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
 
   const { data: currentUser } = useQuery({
     queryKey: ['user'],
@@ -48,24 +55,29 @@ export default function ReligiousMemberSection({ location, onUpdate }) {
   const memberIds = new Set(members.map(m => m.character_id));
   const available = characters.filter(c => !memberIds.has(c.id) && (c.name || '').toLowerCase().includes(search.toLowerCase()));
 
-  const handleAdd = async (char) => {
-    setLoading(char.id);
-    const newMembers = [...members, { character_id: char.id, character_name: char.name }];
+  const handleAddSelected = async () => {
+    if (selectedIds.size === 0) return;
+    setLoading(true);
+    const toAdd = characters.filter(c => selectedIds.has(c.id));
+    const newMembers = [...members, ...toAdd.map(c => ({ character_id: c.id, character_name: c.name }))];
     try {
-      // Update location
       await base44.entities.LocationReference.update(location.id, { religious_members: newMembers });
-      // Update character — bidirectional sync
-      await base44.entities.Character.update(char.id, {
-        religious_location_id: location.id,
-        religious_location_name: location.name,
-      });
+      await Promise.all(toAdd.map(c =>
+        base44.entities.Character.update(c.id, {
+          religious_location_id: location.id,
+          religious_location_name: location.name,
+        })
+      ));
       queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser?.email] });
       queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      setSelectedIds(new Set());
+      setShowPicker(false);
+      setSearch('');
       onUpdate?.();
     } catch (err) {
       console.error('[ReligiousMemberSection] add error:', err);
     } finally {
-      setLoading(null);
+      setLoading(false);
     }
   };
 
@@ -130,6 +142,11 @@ export default function ReligiousMemberSection({ location, onUpdate }) {
             className="overflow-hidden"
           >
             <div className="bg-secondary/30 rounded-xl border border-border p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">
+                  {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select members'}
+                </p>
+              </div>
               <input
                 type="text"
                 value={search}
@@ -137,23 +154,47 @@ export default function ReligiousMemberSection({ location, onUpdate }) {
                 placeholder="Search characters..."
                 className="w-full h-8 px-3 rounded-lg bg-card border border-border text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
               />
-              <div className="space-y-1 max-h-56 overflow-y-auto">
+              <div className="space-y-1 max-h-48 overflow-y-auto">
                 {available.length === 0 && <p className="text-xs text-muted-foreground text-center py-3">No characters available</p>}
-                {available.map(char => (
-                  <button
-                    key={char.id}
-                    onClick={() => handleAdd(char)}
-                    disabled={loading === char.id}
-                    className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left"
-                  >
-                    <CharacterAvatar character={char} size="sm" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground">{char.name}</p>
-                      {char.religion && char.religion !== 'None' && <p className="text-xs text-muted-foreground">{char.religion} · {char.belief_level?.replace('_', ' ')}</p>}
-                    </div>
-                    {loading === char.id ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : <Plus className="w-4 h-4 text-muted-foreground" />}
-                  </button>
-                ))}
+                {available.map(char => {
+                  const isSelected = selectedIds.has(char.id);
+                  return (
+                    <button
+                      key={char.id}
+                      onClick={() => toggleChar(char.id)}
+                      className={`w-full flex items-center gap-3 p-2.5 rounded-xl border transition-colors text-left ${
+                        isSelected ? 'bg-primary/10 border-primary/50' : 'bg-card border-border hover:border-primary/40'
+                      }`}
+                    >
+                      <CharacterAvatar character={char} size="sm" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground">{char.name}</p>
+                        {char.religion && char.religion !== 'None' && <p className="text-xs text-muted-foreground">{char.religion} · {char.belief_level?.replace('_', ' ')}</p>}
+                      </div>
+                      <div className={`w-4 h-4 rounded flex-shrink-0 border-2 transition-colors flex items-center justify-center ${
+                        isSelected ? 'bg-primary border-primary' : 'border-muted-foreground/40'
+                      }`}>
+                        {isSelected && <div className="w-2 h-2 rounded-sm bg-white" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  onClick={handleAddSelected}
+                  disabled={selectedIds.size === 0 || loading}
+                  className="flex-1 h-9 rounded-lg text-sm"
+                >
+                  {loading ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />Adding...</> : `Add ${selectedIds.size > 0 ? `(${selectedIds.size})` : ''}`}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => { setShowPicker(false); setSelectedIds(new Set()); setSearch(''); }}
+                  className="flex-1 h-9 rounded-lg text-sm"
+                >
+                  Cancel
+                </Button>
               </div>
             </div>
           </motion.div>

@@ -9,9 +9,15 @@ import CharacterAvatar from '@/components/chat/CharacterAvatar';
 export default function SchoolEnrollmentSection({ location, onUpdate }) {
   const queryClient = useQueryClient();
   const [showAddStudent, setShowAddStudent] = useState(false);
-  const [selectedCharId, setSelectedCharId] = useState(null);
+  const [selectedCharIds, setSelectedCharIds] = useState(new Set());
   const [scholarshipEnabled, setScholarshipEnabled] = useState(false);
-  const [loadingCharId, setLoadingCharId] = useState(null);
+  const [enrolling, setEnrolling] = useState(false);
+
+  const toggleChar = (id) => setSelectedCharIds(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
 
   const { data: currentUser } = useQuery({
     queryKey: ['user'],
@@ -41,27 +47,25 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
   const availableCharacters = characters.filter(c => !enrolledCharIds.includes(c.id));
 
   const handleEnroll = async () => {
-    if (!selectedCharId) return;
-    setLoadingCharId(selectedCharId);
-
+    if (selectedCharIds.size === 0) return;
+    setEnrolling(true);
     try {
-      const res = await base44.functions.invoke('enrollCharacterInSchool', {
-        character_id: selectedCharId,
-        character_name: characters.find(c => c.id === selectedCharId)?.name || 'Unknown',
-        location_id: location.id,
-        scholarship_enabled: scholarshipEnabled
-      });
-
-      if (res?.data?.success) {
-        queryClient.invalidateQueries({ queryKey: ['locations'] });
-        setShowAddStudent(false);
-        setSelectedCharId(null);
-        setScholarshipEnabled(false);
-      }
+      await Promise.all([...selectedCharIds].map(charId =>
+        base44.functions.invoke('enrollCharacterInSchool', {
+          character_id: charId,
+          character_name: characters.find(c => c.id === charId)?.name || 'Unknown',
+          location_id: location.id,
+          scholarship_enabled: scholarshipEnabled,
+        })
+      ));
+      queryClient.invalidateQueries({ queryKey: ['locations'] });
+      setShowAddStudent(false);
+      setSelectedCharIds(new Set());
+      setScholarshipEnabled(false);
     } catch (err) {
       console.error('Enrollment error:', err);
     } finally {
-      setLoadingCharId(null);
+      setEnrolling(false);
     }
   };
 
@@ -113,32 +117,35 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             className="overflow-hidden"
           >
             <div className="bg-secondary/40 rounded-xl border border-border p-3 space-y-3">
-              <label className="text-xs text-muted-foreground uppercase tracking-wider block">Select Character</label>
+              <label className="text-xs text-muted-foreground uppercase tracking-wider block">
+                Select Characters ({selectedCharIds.size} selected)
+              </label>
 
-              {/* Visual character picker — avatars, not a dropdown */}
+              {/* Visual multi-select character picker */}
               <div className="space-y-1 max-h-52 overflow-y-auto">
                 {availableCharacters.length === 0 && (
                   <p className="text-xs text-muted-foreground text-center py-3">No characters available</p>
                 )}
-                {availableCharacters.map(char => (
-                  <button
-                    key={char.id}
-                    onClick={() => setSelectedCharId(char.id)}
-                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl border transition-colors text-left ${
-                      selectedCharId === char.id
-                        ? 'bg-primary/10 border-primary/50'
-                        : 'bg-card border-border hover:border-primary/30'
-                    }`}
-                  >
-                    <CharacterAvatar character={char} size="sm" />
-                    <span className="text-sm font-medium text-foreground flex-1 truncate">{char.name}</span>
-                    {selectedCharId === char.id && (
-                      <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                        <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                {availableCharacters.map(char => {
+                  const isSelected = selectedCharIds.has(char.id);
+                  return (
+                    <button
+                      key={char.id}
+                      onClick={() => toggleChar(char.id)}
+                      className={`w-full flex items-center gap-3 p-2.5 rounded-xl border transition-colors text-left ${
+                        isSelected ? 'bg-primary/10 border-primary/50' : 'bg-card border-border hover:border-primary/30'
+                      }`}
+                    >
+                      <CharacterAvatar character={char} size="sm" />
+                      <span className="text-sm font-medium text-foreground flex-1 truncate">{char.name}</span>
+                      <div className={`w-4 h-4 rounded flex-shrink-0 border-2 transition-colors flex items-center justify-center ${
+                        isSelected ? 'bg-primary border-primary' : 'border-muted-foreground/40'
+                      }`}>
+                        {isSelected && <div className="w-2 h-2 rounded-sm bg-white" />}
                       </div>
-                    )}
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
 
               <label className="flex items-center gap-2 cursor-pointer">
@@ -148,20 +155,20 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                   onChange={(e) => setScholarshipEnabled(e.target.checked)}
                   className="rounded"
                 />
-                <span className="text-sm text-foreground">Scholarship (free tuition)</span>
+                <span className="text-sm text-foreground">Scholarship (free tuition) — applies to all selected</span>
               </label>
 
               <div className="flex gap-2">
                 <Button
                   onClick={handleEnroll}
-                  disabled={!selectedCharId || loadingCharId === selectedCharId}
+                  disabled={selectedCharIds.size === 0 || enrolling}
                   className="flex-1 h-9 rounded-lg text-sm"
                 >
-                  {loadingCharId === selectedCharId ? 'Enrolling...' : 'Enroll'}
+                  {enrolling ? 'Enrolling...' : `Enroll ${selectedCharIds.size > 0 ? `(${selectedCharIds.size})` : ''}`}
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => { setShowAddStudent(false); setSelectedCharId(null); }}
+                  onClick={() => { setShowAddStudent(false); setSelectedCharIds(new Set()); }}
                   className="flex-1 h-9 rounded-lg text-sm"
                 >
                   Cancel
