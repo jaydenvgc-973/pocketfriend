@@ -670,9 +670,6 @@ export function getCharacterLivePresence(character, locationMap = {}) {
 
   // ── PRIORITY 3: CONFIRMED PRESENCE ────────────────────────────────────────
   if (presenceStatus === 'at_work') {
-    // STALE STATUS PROTECTION: only trust at_work when the resolved record was written by
-    // the work schedule enforcer (source_reason = "work_schedule") AND a resolved location exists.
-    // Any other source means the status is stale or was written by a scan/repair — do NOT display it.
     const sourceReason = character.resolved_source_reason;
     const hasResolvedLocation = !!character.resolved_current_location_id;
     const isScheduleSource = sourceReason === 'work_schedule' || sourceReason === 'work_schedule_enforced';
@@ -680,7 +677,15 @@ export function getCharacterLivePresence(character, locationMap = {}) {
       const locName = loc?.name || character.resolved_current_location_name || 'Work';
       return { status: 'at_work', label: 'At work', sublabel: locName, isTransit: false, isSleeping: false };
     }
-    // Stale or repair-written at_work — fall through to location name fallback below
+    // DB says at_work but source_reason is stale/non-standard — verify via live schedule
+    // This ensures CharacterCard matches Map/Travel which use resolveCharacterLocation()
+    const liveWorkCheck = resolveCharacterLocation(character, locationMap);
+    if (liveWorkCheck.resolved_presence_status === 'at_work') {
+      const locName = locationMap[liveWorkCheck.resolved_current_location_id]?.name
+        || liveWorkCheck.resolved_current_location_name || 'Work';
+      return { status: 'at_work', label: 'At work', sublabel: locName, isTransit: false, isSleeping: false };
+    }
+    // Genuinely stale — fall through to location name fallback below
   }
   if (presenceStatus === 'at_school') {
     const schoolLoc = locationMap[character.education_location_id];
@@ -695,6 +700,23 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     const hasHome = !!(character.current_home_location_id || character.home_location_id);
     if (hasHome) {
       return { status: 'home', label: 'At home', sublabel: locName, isTransit: false, isSleeping: false };
+    }
+  }
+
+  // ── PRIORITY 3.9: LIVE SCHEDULE CHECK — catches stale DB state ────────────
+  // If DB presence status is not at_work/at_school but live schedule says otherwise,
+  // trust the live schedule (same source of truth as Map and Travel pages).
+  if (presenceStatus !== 'at_work' && presenceStatus !== 'at_school') {
+    const liveResolved = resolveCharacterLocation(character, locationMap);
+    if (liveResolved.resolved_presence_status === 'at_work') {
+      const workLocName = locationMap[liveResolved.resolved_current_location_id]?.name
+        || liveResolved.resolved_current_location_name || 'Work';
+      return { status: 'at_work', label: 'At work', sublabel: workLocName, isTransit: false, isSleeping: false };
+    }
+    if (liveResolved.resolved_presence_status === 'at_school') {
+      const schoolLocName = locationMap[liveResolved.resolved_current_location_id]?.name
+        || liveResolved.resolved_current_location_name || 'School';
+      return { status: 'at_school', label: 'At school', sublabel: schoolLocName, isTransit: false, isSleeping: false };
     }
   }
 
