@@ -160,47 +160,48 @@ export default function CharacterProfile() {
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
-    staleTime: 60000,
+    staleTime: 300000,
   });
 
   const { data: allCharacters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email || ""],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 800));
       const chars = await base44.entities.Character.filter({ owner_email: currentUser.email });
       return chars.map(({ system_prompt, ...char }) => char);
     },
     enabled: !!currentUser?.email,
-    staleTime: 30000,
+    staleTime: 120000,
   });
 
   const { data: userSettings = [] } = useQuery({
     queryKey: ["userSettings", currentUser?.email || ""],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 1200));
       return base44.entities.UserSettings.filter({ owner_email: currentUser.email });
     },
     enabled: !!currentUser?.email,
-    staleTime: 60000,
+    staleTime: 180000,
   });
 
   const { data: characterFinancial = null } = useQuery({
     queryKey: ['characterFinancial', characterId],
     queryFn: async () => {
+      await new Promise(r => setTimeout(r, 500));
       const results = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
       return results[0] || null;
     },
     enabled: !!characterId,
-    staleTime: 60000,
+    staleTime: 120000,
   });
 
   const { data: workLocations = [] } = useQuery({
     queryKey: ['workLocations', characterId, character?.occupation_location_id, (character?.additional_occupation_locations || []).map(l => l.location_id).join(',')],
     queryFn: async () => {
       if (!character) return [];
-      await new Promise(r => setTimeout(r, 1800));
+      await new Promise(r => setTimeout(r, 2500));
 
       // Collect all location IDs from the character's own employment fields
       // NOTE: worker_character_ids arrays are empty in the DB — cannot rely on them for lookup.
