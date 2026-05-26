@@ -414,9 +414,9 @@ export default function CharacterProfile() {
               </button>
               <div className="flex-1 min-w-0">
                 <h1 className="text-2xl font-semibold text-foreground">{character.name}</h1>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {character.personality_summary?.split(".")[0] || character.current_situation?.split(".")[0] || null}
-                </p>
+                {character.profile_summary && (
+                  <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{character.profile_summary}</p>
+                )}
               </div>
             </div>
 
@@ -424,28 +424,22 @@ export default function CharacterProfile() {
             <CharacterFinancialSummary characterId={characterId} />
 
             {/* Narrative Biography */}
-            {(character.profile_summary || character.backstory || character.background_story || character.personality_summary) && (
-             <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-               {character.profile_summary && (
-                 <div>
-                   <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Biography / Background</p>
-                   <p className="text-sm text-foreground leading-relaxed">{character.profile_summary}</p>
-                 </div>
-               )}
-               {character.backstory && (
-                 <div className={character.profile_summary ? 'pt-3 border-t border-border' : ''}>
-                   <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Backstory</p>
-                   <p className="text-sm text-muted-foreground leading-relaxed">{character.backstory}</p>
-                 </div>
-               )}
-               {character.background_story && (
-                 <div className={character.profile_summary || character.backstory ? 'pt-3 border-t border-border' : ''}>
-                   <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Background</p>
-                   <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
-                 </div>
-               )}
-             </div>
-            )}
+             {(character.backstory || character.background_story) && (
+              <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+                {character.backstory && (
+                  <div>
+                    <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Backstory</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{character.backstory}</p>
+                  </div>
+                )}
+                {character.background_story && (
+                  <div className={character.backstory ? 'pt-3 border-t border-border' : ''}>
+                    <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-2">Background</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
+                  </div>
+                )}
+              </div>
+             )}
 
             {/* Your Connection card — left: metrics, right: In Their Own Words (feelings) */}
             <div className="bg-card border border-border rounded-2xl p-4">
@@ -765,23 +759,29 @@ export default function CharacterProfile() {
             <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Emotional & Social World</p>
           </div>
 
-          {(character.emotional_baggage || character.current_situation || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
+          {(character.personality_summary || character.emotional_baggage || character.current_situation || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
             <CollapsibleProfileSection icon={Heart} title="Emotional Profile">
               <div className="space-y-4">
-                {character.current_situation && (
+                {character.personality_summary && (
                   <div>
+                    <p className="text-xs font-medium text-foreground mb-1">Personality Summary</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{character.personality_summary}</p>
+                  </div>
+                )}
+                {character.current_situation && (
+                  <div className={character.personality_summary ? 'pt-3 border-t border-border' : ''}>
                     <p className="text-xs font-medium text-foreground mb-1">Current Situation</p>
                     <p className="text-sm text-muted-foreground leading-relaxed">{character.current_situation}</p>
                   </div>
                 )}
                 {character.emotional_baggage && (
-                  <div>
+                  <div className={character.personality_summary || character.current_situation ? 'pt-3 border-t border-border' : ''}>
                     <p className="text-xs font-medium text-foreground mb-1">What They Carry</p>
                     <p className="text-sm text-muted-foreground leading-relaxed">{character.emotional_baggage}</p>
                   </div>
                 )}
                 {character.upset_reaction && (
-                  <div>
+                  <div className={character.personality_summary || character.current_situation || character.emotional_baggage ? 'pt-3 border-t border-border' : ''}>
                     <p className="text-xs font-medium text-foreground mb-1">When They're Upset</p>
                     <p className="text-sm text-muted-foreground leading-relaxed">{character.upset_reaction}</p>
                   </div>
