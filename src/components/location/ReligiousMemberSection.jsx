@@ -109,7 +109,7 @@ export default function ReligiousMemberSection({ location, onUpdate }) {
   };
 
   return (
-    <div className="space-y-3 border-t border-border pt-4 mt-4">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Heart className="w-4 h-4 text-violet-400" />

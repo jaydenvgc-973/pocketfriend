@@ -4,8 +4,6 @@ import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
 import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
 import WorkerEmploymentControls from "./WorkerEmploymentControls";
-import SchoolEnrollmentSection from "./SchoolEnrollmentSection";
-import ReligiousMemberSection from "./ReligiousMemberSection";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -285,31 +283,27 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
       {(cat === 'school' || cat === 'education') && (
         <>
           <SectionHeader icon={GraduationCap} label="School / Education" />
-          <SchoolEnrollmentSection location={location} onUpdate={onResidentsChanged} />
 
-          {(() => {
-            const students = characters.filter(c =>
-              c.education_location_id === location.id ||
-              c.additional_education_locations?.some(e => e.location_id === location.id)
-            );
-            return students.length > 0 ? (
-              <>
-                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Students</div>
-                {students.map(s => {
-                  const prog = s.education_location_id === location.id
-                    ? s.education_details?.course_name || s.current_education_activity
-                    : s.additional_education_locations?.find(e => e.location_id === location.id)?.program_name;
-                  return (
-                    <div key={s.id} className="flex items-center gap-2 py-0.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
-                      <span className="text-xs text-foreground">{s.name}</span>
-                      {prog && <span className="text-[10px] text-muted-foreground ml-auto">{prog}</span>}
-                    </div>
-                  );
-                })}
-              </>
-            ) : null;
-          })()}
+          {/* Read-only enrolled students */}
+          {(location.enrolled_students || []).filter(s => s.status === 'active').length > 0 ? (
+            <>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Enrolled Students</div>
+              {(location.enrolled_students || []).filter(s => s.status === 'active').map((s, idx) => {
+                const char = characters.find(c => c.id === s.character_id);
+                const campusResident = (location.residents || []).some(r => r.character_id === s.character_id);
+                return (
+                  <div key={idx} className="flex items-center gap-2 py-0.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                    <span className="text-xs text-foreground">{s.character_name}</span>
+                    {campusResident && <span className="text-[10px] text-blue-400 ml-1">🏠 On campus</span>}
+                    {s.scholarship_enabled && <span className="text-[10px] text-yellow-400 ml-auto">Scholarship</span>}
+                  </div>
+                );
+              })}
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground italic">No enrolled students. Use the ✏️ edit button to enroll students.</p>
+          )}
 
           {workerIds.length > 0 && (
             <>
@@ -327,6 +321,10 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                 );
               })}
             </>
+          )}
+
+          {location.tuition_cost > 0 && (
+            <DetailRow label="Tuition" value={`$${location.tuition_cost} / ${location.tuition_frequency || 'annual'}`} highlight />
           )}
         </>
       )}
@@ -377,7 +375,6 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
       {cat === 'religion' && (
         <>
           <SectionHeader icon={Church} label="Place of Worship" />
-          <ReligiousMemberSection location={location} onUpdate={onResidentsChanged} />
 
           {(location.owner_character_name || location.owner_npc_name) && (
             <DetailRow
@@ -386,23 +383,24 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
             />
           )}
 
-          {(() => {
-            const attendees = characters.filter(c =>
-              c.religion && c.religion !== 'None' && c.belief_level !== 'in_name_only'
-            );
-            return attendees.length > 0 ? (
-              <>
-                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mt-2 mb-1">Expected Attendees</div>
-                {attendees.map(c => (
-                  <div key={c.id} className="flex items-center gap-2 py-0.5">
+          {/* Read-only congregation members */}
+          {(location.religious_members || []).length > 0 ? (
+            <>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mt-2 mb-1">Congregation Members</div>
+              {(location.religious_members || []).map(m => {
+                const char = characters.find(c => c.id === m.character_id);
+                return (
+                  <div key={m.character_id} className="flex items-center gap-2 py-0.5">
                     <div className="w-1.5 h-1.5 rounded-full bg-violet-400 flex-shrink-0" />
-                    <span className="text-xs text-foreground">{c.name}</span>
-                    <span className="text-[10px] text-muted-foreground ml-auto capitalize">{c.religion} · {c.belief_level?.replace('_', ' ')}</span>
+                    <span className="text-xs text-foreground">{m.character_name}</span>
+                    {char?.religion && <span className="text-[10px] text-muted-foreground ml-auto">{char.religion}</span>}
                   </div>
-                ))}
-              </>
-            ) : null;
-          })()}
+                );
+              })}
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground italic">No members assigned. Use the ✏️ edit button to add congregation members.</p>
+          )}
 
           {workerIds.length > 0 && (
             <>
