@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, X, GraduationCap, DollarSign, Award, Trash2 } from 'lucide-react';
+import { Plus, GraduationCap, DollarSign, Award, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
+import CharacterAvatar from '@/components/chat/CharacterAvatar';
 
 export default function SchoolEnrollmentSection({ location, onUpdate }) {
   const queryClient = useQueryClient();
@@ -176,24 +177,28 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
           (location.enrolled_students || [])
             .filter(s => s.status === 'active')
             .map((student, idx) => (
-              <div key={idx} className="bg-card border border-border rounded-lg p-3 space-y-2">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
+              <div key={idx} className="bg-card border border-border rounded-xl p-3 space-y-2">
+                <div className="flex items-center gap-3">
+                  {(() => {
+                    const char = characters.find(c => c.id === student.character_id);
+                    return char
+                      ? <CharacterAvatar character={char} size="sm" />
+                      : <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary flex-shrink-0">{(student.character_name || '?')[0]}</div>;
+                  })()}
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground">{student.character_name}</p>
                     {student.scholarship_enabled && (
-                      <div className="flex items-center gap-1 mt-1">
+                      <div className="flex items-center gap-1">
                         <Award className="w-3 h-3 text-yellow-400" />
                         <span className="text-xs text-yellow-400">Scholarship</span>
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-right">
-                      <p className="text-xs text-muted-foreground">Monthly</p>
-                      <p className="text-sm font-semibold text-foreground">
-                        ${student.scholarship_enabled ? 0 : (student.tuition_amount || 0).toFixed(2)}
-                      </p>
-                    </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-xs text-muted-foreground">Monthly</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      ${student.scholarship_enabled ? 0 : (student.tuition_amount || 0).toFixed(2)}
+                    </p>
                   </div>
                 </div>
 
