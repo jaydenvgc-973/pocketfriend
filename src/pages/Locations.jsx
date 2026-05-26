@@ -416,36 +416,65 @@ function isShiftCurrentlyActive(shift) {
 function getWorkerAvailabilityV2(character, allLocations, currentLocationId = null) {
   if (!character) return { status: 'unavailable', allJobs: [] };
 
+  const seenLocIds = new Set();
   const allJobs = [];
 
-  // Primary occupation
-  if (character.occupation_location_id && character.occupation_location_id !== currentLocationId) {
+  // ── SOURCE 1: LocationReference.worker_character_ids (ground truth) ──────────
+  // Scan ALL locations for any that list this character as a worker.
+  // This catches assignments where Character.occupation_location_id hasn't been synced yet.
+  allLocations.forEach(loc => {
+    if (loc.id === currentLocationId) return; // skip the location being edited
+    const workerIds = loc.worker_character_ids || [];
+    if (!workerIds.includes(character.id)) return;
+    if (seenLocIds.has(loc.id)) return;
+    seenLocIds.add(loc.id);
+    const shift = loc.worker_shifts?.[character.id];
+    const jobTitle = loc.worker_job_titles?.[character.id] || null;
+    allJobs.push({
+      name: loc.name,
+      title: jobTitle,
+      shift: formatShiftDisplay(shift),
+      locationId: loc.id,
+    });
+  });
+
+  // ── SOURCE 2: Character.occupation_location_id (may be ahead of LocationReference) ──
+  if (character.occupation_location_id && character.occupation_location_id !== currentLocationId && !seenLocIds.has(character.occupation_location_id)) {
     const loc = allLocations.find(l => l.id === character.occupation_location_id);
     if (loc) {
+      seenLocIds.add(loc.id);
       const shift = loc.worker_shifts?.[character.id];
       const jobTitle = character.work_details?.job_title || loc.worker_job_titles?.[character.id] || null;
-      allJobs.push({
-        name: loc.name,
-        title: jobTitle,
-        shift: formatShiftDisplay(shift),
-      });
+      allJobs.push({ name: loc.name, title: jobTitle, shift: formatShiftDisplay(shift), locationId: loc.id });
+    } else {
+      // Location not in map yet — use Character-stored name as fallback
+      const storedName = character.occupation_location_name;
+      if (storedName) {
+        seenLocIds.add(character.occupation_location_id);
+        const storedTitle = character.work_details?.job_title || null;
+        const storedShift = (character.work_start_time && character.work_end_time)
+          ? formatShiftDisplay({ start: character.work_start_time, end: character.work_end_time, days: character.work_days })
+          : null;
+        allJobs.push({ name: storedName, title: storedTitle, shift: storedShift, locationId: character.occupation_location_id });
+      }
     }
   }
 
-  // Additional occupations
-  if (character.additional_occupation_locations && Array.isArray(character.additional_occupation_locations)) {
+  // ── SOURCE 3: Character.additional_occupation_locations ───────────────────────
+  if (Array.isArray(character.additional_occupation_locations)) {
     character.additional_occupation_locations.forEach(addlOcc => {
-      if (addlOcc.location_id && addlOcc.location_id !== currentLocationId) {
-        const loc = allLocations.find(l => l.id === addlOcc.location_id);
-        if (loc) {
-          const shift = loc.worker_shifts?.[character.id];
-          const jobTitle = addlOcc.job_title || loc.worker_job_titles?.[character.id] || null;
-          allJobs.push({
-            name: addlOcc.location_name || loc.name,
-            title: jobTitle,
-            shift: formatShiftDisplay(shift),
-          });
-        }
+      if (!addlOcc.location_id) return;
+      if (addlOcc.location_id === currentLocationId) return;
+      if (seenLocIds.has(addlOcc.location_id)) return;
+      seenLocIds.add(addlOcc.location_id);
+      const loc = allLocations.find(l => l.id === addlOcc.location_id);
+      if (loc) {
+        const shift = loc.worker_shifts?.[character.id];
+        const jobTitle = addlOcc.job_title || loc.worker_job_titles?.[character.id] || null;
+        allJobs.push({ name: addlOcc.location_name || loc.name, title: jobTitle, shift: formatShiftDisplay(shift), locationId: loc.id });
+      } else if (addlOcc.location_name) {
+        // Location not loaded — use Character-stored data
+        allJobs.push({ name: addlOcc.location_name, title: addlOcc.job_title || null, shift: null, locationId: addlOcc.location_id });
       }
     });
   }
@@ -1641,6 +1670,28 @@ export default function Locations() {
         }
       }
     }
+
+    // ── PATCH locationReferences cache immediately ────────────────────────────
+    // So the next location form opened in this session sees updated worker_character_ids
+    // and worker_shifts immediately — without waiting for a refetch.
+    const locCacheKey = ["locationReferences", currentUser?.email];
+    const cachedLocs = queryClient.getQueryData(locCacheKey);
+    if (Array.isArray(cachedLocs) && locationId) {
+      const patchedLocs = cachedLocs.map(l => {
+        if (l.id !== locationId) return l;
+        const mergedWorkerIds = Array.from(new Set([...(l.worker_character_ids || []), ...workerIds]));
+        return {
+          ...l,
+          worker_character_ids: mergedWorkerIds,
+          worker_shifts: { ...(l.worker_shifts || {}), ...guaranteedShifts },
+          worker_pay_rates: { ...(l.worker_pay_rates || {}), ...saveData.worker_pay_rates },
+          worker_pay_type: { ...(l.worker_pay_type || {}), ...saveData.worker_pay_type },
+          worker_job_titles: { ...(l.worker_job_titles || {}), ...saveData.worker_job_titles },
+        };
+      });
+      queryClient.setQueryData(locCacheKey, patchedLocs);
+    }
+    // ──────────────────────────────────────────────────────────────────────────
 
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
