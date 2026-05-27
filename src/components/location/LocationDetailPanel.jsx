@@ -303,14 +303,28 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
             <>
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Enrolled Students</div>
               {(location.enrolled_students || []).filter(s => s.status === 'active').map((s, idx) => {
-                const char = characters.find(c => c.id === s.character_id);
                 const campusResident = (location.residents || []).some(r => r.character_id === s.character_id);
+                const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+                const startLabel = fmtDate(s.start_date);
+                const endLabel = fmtDate(s.end_date);
+                const courseName = s.course_name && s.course_name !== location.name ? s.course_name : null;
                 return (
-                  <div key={idx} className="flex items-center gap-2 py-0.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
-                    <span className="text-xs text-foreground">{s.character_name}</span>
-                    {campusResident && <span className="text-[10px] text-blue-400 ml-1">🏠 On campus</span>}
-                    {s.scholarship_enabled && <span className="text-[10px] text-yellow-400 ml-auto">Scholarship</span>}
+                  <div key={idx} className="py-1 space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                      <span className="text-xs text-foreground font-medium">{s.character_name}</span>
+                      {campusResident && <span className="text-[10px] text-blue-400 ml-1">🏠</span>}
+                      {s.scholarship_enabled && <span className="text-[10px] text-yellow-400 ml-auto">Scholarship</span>}
+                    </div>
+                    {courseName && (
+                      <p className="text-[10px] text-primary/70 ml-3.5">📚 {courseName}</p>
+                    )}
+                    {(startLabel || endLabel) && (
+                      <div className="flex gap-3 ml-3.5">
+                        {startLabel && <span className="text-[10px] text-muted-foreground">Start: {startLabel}</span>}
+                        {endLabel && <span className="text-[10px] text-muted-foreground">Graduates: {endLabel}</span>}
+                      </div>
+                    )}
                   </div>
                 );
               })}

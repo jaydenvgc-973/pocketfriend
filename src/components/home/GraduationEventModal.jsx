@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
+import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import { GraduationCap } from "lucide-react";
-import { base44 } from "@/api/base44Client";
 
 const COMPLETION_LABELS = {
   diploma: '🎓 Diploma Earned',
@@ -82,23 +82,22 @@ function ConfettiBurst() {
 /**
  * GraduationEventModal
  *
- * Shown when a UserAchievement with event_type='graduation' is detected.
- * Triggered by AchievementUnlockModal's subscription, or directly from
- * the lifecycle checker via window event.
+ * Driven entirely by lifecycle data returned from checkLifecycleEvents.graduations[].
+ * Does NOT depend on UserAchievement or the ACHIEVEMENTS registry.
+ * No duplicate popup risk — this modal and AchievementUnlockModal use completely separate data paths.
+ *
+ * Props:
+ *   events: Array<{ character_id, character_name, avatar_url, program, completion_type, end_date }>
+ *   onDismiss: () => void
  */
 export default function GraduationEventModal({ events, onDismiss }) {
   const [idx, setIdx] = useState(0);
-  const [loading, setLoading] = useState(false);
 
   if (!events || events.length === 0) return null;
   const ev = events[idx];
   if (!ev) return null;
 
-  const advance = async () => {
-    // Mark the achievement as seen
-    if (ev.achievement_db_id) {
-      base44.entities.UserAchievement.update(ev.achievement_db_id, { is_seen: true }).catch(() => {});
-    }
+  const advance = () => {
     if (idx + 1 < events.length) {
       setIdx(idx + 1);
     } else {
@@ -108,9 +107,11 @@ export default function GraduationEventModal({ events, onDismiss }) {
 
   const completionLabel = COMPLETION_LABELS[ev.completion_type] || '🎓 Program Complete';
   const completionMsg = COMPLETION_MESSAGES[ev.completion_type] || 'has completed their program.';
-  const dateStr = ev.completion_date
-    ? new Date(ev.completion_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const dateStr = ev.end_date
+    ? new Date(ev.end_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  // Support both 'program' (from checkLifecycleEvents) and 'program_name' (legacy)
+  const programName = ev.program || ev.program_name || null;
 
   const modal = (
     <>
@@ -134,8 +135,11 @@ export default function GraduationEventModal({ events, onDismiss }) {
             {/* Icon */}
             <div className="relative mb-5">
               <div className="absolute inset-0 rounded-full bg-primary/20 blur-xl scale-150" />
-              <div className="relative w-20 h-20 rounded-full bg-primary/10 border-2 border-primary/40 flex items-center justify-center">
-                <GraduationCap className="w-9 h-9 text-primary" />
+              <div className="relative w-20 h-20 rounded-full bg-primary/10 border-2 border-primary/40 flex items-center justify-center overflow-hidden">
+                {ev.avatar_url
+                  ? <img src={ev.avatar_url} alt={ev.character_name} className="w-full h-full object-cover" />
+                  : <GraduationCap className="w-9 h-9 text-primary" />
+                }
               </div>
             </div>
 
@@ -148,8 +152,8 @@ export default function GraduationEventModal({ events, onDismiss }) {
             <h2 className="text-2xl font-bold text-foreground mt-3 mb-1">{ev.character_name}</h2>
 
             {/* Program */}
-            {ev.program_name && (
-              <p className="text-base text-primary/80 font-medium mb-1">{ev.program_name}</p>
+            {programName && (
+              <p className="text-base text-primary/80 font-medium mb-1">{programName}</p>
             )}
 
             {/* Celebratory copy */}
@@ -162,11 +166,14 @@ export default function GraduationEventModal({ events, onDismiss }) {
 
             <button
               onClick={advance}
-              disabled={loading}
               className="w-full py-3 rounded-2xl bg-primary text-primary-foreground font-semibold text-sm hover:bg-primary/90 transition-colors active:scale-95"
             >
               🎉 Amazing!
             </button>
+
+            {events.length > 1 && (
+              <p className="text-center text-[10px] text-muted-foreground mt-3">{idx + 1} of {events.length}</p>
+            )}
           </motion.div>
         </motion.div>
       </AnimatePresence>

@@ -1,28 +1,24 @@
 /**
  * checkLifecycleEvents
  *
- * User-scoped lifecycle checker. Runs on homepage load (session-gated).
- * Checks:
- *   1. Education / graduation / certification completion — end_date passed
- *   2. Incarceration sentence completion — jail_release_date passed
- *
- * Idempotency:
- *   - Education: checks Character.education_enrollments[].lifecycle_processed_at
- *     A completed entry is only processed once (keyed on character_id + location_id + end_date).
- *   - Incarceration: checks Character.last_release_popup_at vs jail_release_date.
- *     A release popup is shown once per jail sentence end date.
- *
- * On graduation/completion:
- *   - Moves the enrollment record to character.completed_education
- *   - Updates location.enrolled_students to 'graduated'
+ * User-scoped lifecycle checker. Runs on homepage load.
+ * 
+ * EDUCATION COMPLETION:
+ *   - Finds active enrollments whose end_date has passed
+ *   - Moves enrollment to completed_education, marks graduated
+ *   - Updates LocationReference.enrolled_students to 'graduated'
  *   - Removes campus residency if applicable
- *   - Creates a UserAchievement (reuses existing popup infrastructure)
- *   - Marks the enrollment as lifecycle_processed
+ *   - Idempotency: lifecycle_processed_at on the enrollment entry (character_id + location_id + end_date unique)
+ *   - Returns graduations[] for the frontend GraduationEventModal
+ *   - Does NOT create UserAchievement (those IDs are not in the registry — modal handles display directly)
  *
- * On incarceration release:
- *   - Does NOT auto-release — that is the user's decision (popup with extend option)
- *   - Returns overdue_releases[] for the frontend to display the release popup
- *   - Frontend dispatches the actual release or extension
+ * INCARCERATION RELEASE:
+ *   - Finds characters whose sentence end date has passed AND who are still jailed
+ *   - AUTO-RELEASES them immediately (sentence complete = character is free)
+ *   - Records a lifecycle_processed_at keyed on the sentence end date ISO string
+ *   - Returns releases[] so the frontend can show a "Released" notification popup
+ *   - Idempotency key: Character.jail_lifecycle_key = `${character_id}::${releaseDateISO}` stored on character
+ *   - Does NOT write last_release_popup_at before the popup fires (was causing suppress-before-show bug)
  *
  * Owner-email scoped only. Never uses created_by.
  */
@@ -36,7 +32,6 @@ Deno.serve(async (req) => {
 
     const now = new Date();
     const nowISO = now.toISOString();
-    const todayStr = now.toISOString().slice(0, 10);
 
     // Load all active characters for this user (owner_email scoped)
     const characters = await base44.entities.Character.filter(
@@ -46,7 +41,7 @@ Deno.serve(async (req) => {
     );
 
     const graduationsProcessed = [];
-    const overdueReleases = [];
+    const autoReleasedCharacters = [];
 
     for (const character of characters) {
       // ── 1. EDUCATION COMPLETION ────────────────────────────────────────────
@@ -59,17 +54,13 @@ Deno.serve(async (req) => {
         const enr = updatedEnrollments[i];
         if (enr.status !== 'active' && enr.status !== 'enrolled') continue;
 
-        // Determine end date — use end_date or completion_date
         const endDateStr = enr.end_date || enr.completion_date || null;
         if (!endDateStr) continue;
+        if (now < new Date(endDateStr)) continue; // not yet complete
 
-        const endDate = new Date(endDateStr);
-        if (now < endDate) continue; // not yet complete
-
-        // Idempotency: skip if already lifecycle-processed
+        // Idempotency: keyed on end_date ISO string stored inside the enrollment
         if (enr.lifecycle_processed_at) continue;
 
-        // Mark as completed in the enrollments array
         updatedEnrollments[i] = {
           ...enr,
           status: 'graduated',
@@ -78,7 +69,6 @@ Deno.serve(async (req) => {
         };
         enrollmentsChanged = true;
 
-        // Archive to completed_education
         newCompleted.push({
           ...enr,
           status: 'graduated',
@@ -94,17 +84,15 @@ Deno.serve(async (req) => {
           : enr.enrollment_type === 'course' ? 'course_completion'
           : 'training_completion';
 
-        // Update location enrolled_students to 'graduated'
+        // Update location enrolled_students to 'graduated' and clear campus residency
         if (locationId) {
           try {
             const locs = await base44.entities.LocationReference.filter({ id: locationId });
             if (locs[0]) {
               const loc = locs[0];
-              // Update enrolled_students status
               const updatedStudents = (loc.enrolled_students || []).map(s =>
                 s.character_id === character.id ? { ...s, status: 'graduated' } : s
               );
-              // Remove campus residency if character lives at this school
               let updatedResidents = loc.residents || [];
               let campusResidencyRemoved = false;
               if (character.current_home_location_id === locationId) {
@@ -115,75 +103,41 @@ Deno.serve(async (req) => {
                 enrolled_students: updatedStudents,
                 residents: updatedResidents,
               });
-              // Clear campus home if applicable
               if (campusResidencyRemoved) {
                 await base44.entities.Character.update(character.id, {
                   current_home_location_id: null,
+                  current_school_location_id: null,
                 });
               }
             }
           } catch (locErr) {
-            // Non-fatal: location update failure doesn't block popup
             console.warn(`[checkLifecycleEvents] Failed to update location ${locationId}:`, locErr.message);
           }
-        }
-
-        // Create a UserAchievement to trigger the existing AchievementUnlockModal
-        // We use a synthetic achievement_id scoped to this lifecycle event so it's unique
-        const achievementId = `graduation_${character.id}_${endDateStr.slice(0, 10)}`;
-        try {
-          // Only create if not already created (prevents duplicates on rapid re-runs)
-          const existing = await base44.entities.UserAchievement.filter({
-            owner_email: user.email,
-            achievement_id: achievementId,
-          });
-          if (existing.length === 0) {
-            await base44.entities.UserAchievement.create({
-              owner_email: user.email,
-              achievement_id: achievementId,
-              character_id: character.id,
-              character_name: character.name,
-              unlocked_at: nowISO,
-              tier: 'gold',
-              is_seen: false,
-              // Extra metadata for the graduation popup (read by LifecycleEventModal)
-              event_type: 'graduation',
-              event_details: {
-                program_name: programName,
-                completion_type: completionType,
-                location_id: locationId,
-                completion_date: endDateStr,
-              },
-            });
-          }
-        } catch (achErr) {
-          console.warn('[checkLifecycleEvents] Failed to create achievement:', achErr.message);
         }
 
         graduationsProcessed.push({
           character_id: character.id,
           character_name: character.name,
+          avatar_url: character.avatar_url || null,
           program: programName,
           completion_type: completionType,
           end_date: endDateStr,
         });
       }
 
-      // Write updated enrollments back to character
       if (enrollmentsChanged) {
-        const studentStatusUpdate = updatedEnrollments.some(e => e.status === 'active' || e.status === 'enrolled')
-          ? 'enrolled' : 'graduated';
+        const stillEnrolled = updatedEnrollments.some(e => e.status === 'active' || e.status === 'enrolled');
         await base44.entities.Character.update(character.id, {
           education_enrollments: updatedEnrollments,
           completed_education: newCompleted,
-          student_status: studentStatusUpdate,
+          student_status: stillEnrolled ? 'enrolled' : 'graduated',
+          current_school_location_id: stillEnrolled ? character.current_school_location_id : null,
         });
       }
 
-      // ── 2. INCARCERATION RELEASE CHECK ────────────────────────────────────
+      // ── 2. INCARCERATION AUTO-RELEASE ──────────────────────────────────────
       if (!character.is_jailed) continue;
 
-      // Determine release date
       let releaseDateMs = null;
       if (character.jail_release_date) {
         releaseDateMs = new Date(character.jail_release_date).getTime();
@@ -191,35 +145,67 @@ Deno.serve(async (req) => {
         releaseDateMs = new Date(character.jailed_at).getTime() + (character.jail_sentence_days * 24 * 60 * 60 * 1000);
       }
       if (releaseDateMs === null) continue;
+      if (now.getTime() < releaseDateMs) continue; // sentence not yet complete
 
-      const releaseDate = new Date(releaseDateMs);
-      if (now < releaseDate) continue; // sentence not yet complete
+      const releaseDateISO = new Date(releaseDateMs).toISOString();
 
-      // Idempotency: only show popup once per this specific release date
-      const releaseDateKey = releaseDate.toISOString().slice(0, 10);
-      if (character.last_release_popup_at) {
-        const lastPopupDate = character.last_release_popup_at.slice(0, 10);
-        if (lastPopupDate === releaseDateKey) continue; // already shown for this sentence end date
+      // Idempotency: sentence-specific key stored on the character.
+      // This key is set AFTER release is processed, so it does NOT block the popup
+      // from appearing before the release happens.
+      const sentenceKey = `${character.id}::${releaseDateISO}`;
+      if (character.jail_lifecycle_key === sentenceKey) continue; // already processed this sentence
+
+      // AUTO-RELEASE the character — sentence complete means they're free
+      const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const releasePayload = {
+        is_jailed: false,
+        incarceration_status: 'released',
+        jail_release_date: releaseDateISO,
+        resolved_presence_status: 'home',
+        resolved_location_type: 'home',
+        resolved_source_reason: 'sentence_complete_auto_release',
+        resolved_last_updated_at: nowISO,
+        jail_lifecycle_key: sentenceKey, // mark this sentence as processed
+        incarceration_facility_id: null,
+      };
+
+      if (character.current_home_location_id) {
+        releasePayload.resolved_current_location_id = character.current_home_location_id;
+        releasePayload.resolved_current_location_name = character.resolved_current_location_name || null;
       }
 
-      overdueReleases.push({
-        character_id: character.id,
-        character_name: character.name,
-        avatar_url: character.avatar_url || null,
-        facility_id: character.incarceration_facility_id || null,
-        facility_name: character.incarceration_facility_name || 'Detention Facility',
-        charges: character.pending_charges || [],
-        jailed_at: character.jailed_at || null,
-        jail_release_date: releaseDate.toISOString(),
-        sentence_days: character.jail_sentence_days || null,
-        overdue_hours: Math.round((now.getTime() - releaseDateMs) / 3600000),
-        release_date_key: releaseDateKey,
-      });
+      try {
+        await base44.entities.Character.update(character.id, releasePayload);
 
-      // Mark popup as shown so next session doesn't re-show it
-      await base44.entities.Character.update(character.id, {
-        last_release_popup_at: nowISO,
-      });
+        // Log a LifeEvent
+        await base44.asServiceRole.entities.LifeEvent.create({
+          character_id: character.id,
+          character_name: character.name,
+          event_type: 'major_life_event',
+          valence: 'mixed',
+          severity: 'major',
+          title: 'Released from incarceration',
+          description: `${character.name} completed their sentence (${character.jail_sentence_days || '?'} days) and was automatically released.`,
+          emotional_impact: 'Relief mixed with uncertainty about what comes next',
+          triggered_by: 'system_auto_release',
+          timestamp: nowISO,
+          context_tags: ['jail', 'release', 'auto_release'],
+        }).catch(() => {});
+
+        autoReleasedCharacters.push({
+          character_id: character.id,
+          character_name: character.name,
+          avatar_url: character.avatar_url || null,
+          facility_name: character.incarceration_facility_name || 'Detention Facility',
+          charges: character.pending_charges || [],
+          jailed_at: character.jailed_at || null,
+          jail_release_date: releaseDateISO,
+          sentence_days: character.jail_sentence_days || null,
+          overdue_hours: Math.round((now.getTime() - releaseDateMs) / 3600000),
+        });
+      } catch (releaseErr) {
+        console.warn(`[checkLifecycleEvents] Failed to release ${character.name}:`, releaseErr.message);
+      }
     }
 
     return Response.json({
@@ -227,10 +213,11 @@ Deno.serve(async (req) => {
       owner_email: user.email,
       checked_at: nowISO,
       graduations_processed: graduationsProcessed.length,
-      overdue_releases: overdueReleases.length,
+      auto_released: autoReleasedCharacters.length,
+      // Frontend reads graduations[] to show GraduationEventModal
       graduations: graduationsProcessed,
-      // Frontend reads this to show release popups
-      releases: overdueReleases,
+      // Frontend reads releases[] to show "Released" notification (character already free)
+      releases: autoReleasedCharacters,
     });
 
   } catch (error) {

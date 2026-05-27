@@ -135,34 +135,31 @@ export default function Home() {
       .catch(() => {});
   }, [currentUser?.email]);
 
-  // Run lifecycle checker once per session — checks education completions + jail releases
+  // Run lifecycle checker once per page-load session — checks education completions + jail auto-releases.
+  // Gate key is per-user + per-session-instance (UUID), NOT date-based.
+  // This means same-day enrollment changes, sentence extensions, or new completions will be
+  // checked on the next page load, not blocked by a stale date key.
   useEffect(() => {
     if (!currentUser?.email) return;
-    const lifecycleKey = `lifecycle_checked_${currentUser.email}_${new Date().toISOString().slice(0, 10)}`;
-    if (sessionStorage.getItem(lifecycleKey)) return;
-    sessionStorage.setItem(lifecycleKey, '1');
+    // Use a per-session instance key — cleared only when the tab is closed, not by date.
+    // This prevents the "already checked today" false gate after same-day changes.
+    const sessionInstanceKey = `lifecycle_session_${currentUser.email}`;
+    if (sessionStorage.getItem(sessionInstanceKey)) return;
+    sessionStorage.setItem(sessionInstanceKey, '1');
     base44.functions.invoke('checkLifecycleEvents', {})
       .then(res => {
         const data = res?.data;
         if (!data) return;
-        // Show incarceration release popups
+        // releases[] = characters already auto-released server-side (notification only)
         if (data.releases?.length > 0) {
           setPendingReleases(data.releases);
+          // Invalidate so released characters no longer show jail status
+          queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
         }
-        // Show graduation popups — build from graduations array (achievements are
-        // created server-side and will also trigger AchievementUnlockModal, but
-        // graduation events need program details not in the ACHIEVEMENTS registry,
-        // so we drive a separate targeted modal from the returned data)
+        // graduations[] = characters whose education end_date just passed (lifecycle processed)
         if (data.graduations?.length > 0) {
-          const gradEvents = data.graduations.map(g => ({
-            character_id: g.character_id,
-            character_name: g.character_name,
-            program_name: g.program,
-            completion_type: g.completion_type,
-            completion_date: g.end_date,
-          }));
-          setGraduationEvents(gradEvents);
-          // Invalidate characters cache so updated student_status reflects immediately
+          setGraduationEvents(data.graduations);
+          // Invalidate so updated student_status and completed_education reflect immediately
           queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
           queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser.email] });
         }
@@ -539,10 +536,6 @@ export default function Home() {
         <IncarcerationReleaseModal
           releases={pendingReleases}
           onDismiss={() => setPendingReleases([])}
-          onReleased={() => {
-            setPendingReleases(prev => prev.slice(1));
-            queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-          }}
         />
       )}
 
