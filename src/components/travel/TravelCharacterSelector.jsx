@@ -126,15 +126,19 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
     const isHome = presenceEntity?.is_home ?? (resolvedStatus === 'home' || resolvedStatus === 'sleeping' || resolvedStatus === 'napping');
     const hasHomeId = !!(char.current_home_location_id || presenceEntity?.residence_location_id);
 
-    // ── SLEEPING / NAPPING override: canonical presence resolver now enforces this ─
-    // NPCs are NEVER shown as sleeping unless the DB explicitly says so AND they are
-    // not active_created_character — schedule/debt-driven sleep is not valid for NPCs.
-    const isNPCType = char.character_type === 'npc_fictitious' ||
-      char.character_type === 'npc_family_member' ||
-      char.character_type === 'npc_regular';
-    const isSleepingCanonical = isNPCType
-      ? (resolvedStatus === 'sleeping' || resolvedStatus === 'napping') && presenceEntity?.is_sleeping
-      : (presenceEntity?.is_sleeping || resolvedStatus === 'sleeping' || resolvedStatus === 'napping');
+    // ── SLEEPING / NAPPING: canonical multi-field check, all character types ────
+    // ANY one of these fields being truthy is sufficient to treat the character as asleep.
+    // NPC types use forced sleep windows (resolved by locationResolutionEngine).
+    // active_created uses adaptive schedule + DB state.
+    // Do NOT require all fields to agree — use first-match wins.
+    const isSleepingCanonical =
+      presenceEntity?.is_sleeping === true ||
+      resolvedStatus === 'sleeping' ||
+      resolvedStatus === 'napping' ||
+      char.resolved_presence_status === 'sleeping' ||
+      char.resolved_presence_status === 'napping' ||
+      char.presence_state === 'sleeping' ||
+      char.sleep_state === 'asleep';
 
     // In the new instant-relocation system, 'traveling' is a stale/legacy status.
     // Treat it the same as any other non-home presence: show the resolved location name.
@@ -142,7 +146,7 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
 
     let currentLocationLabel = null;
     if (isSleepingCanonical) {
-      currentLocationLabel = resolvedStatus === 'napping' ? '💤 Napping' : '😴 Sleeping';
+      currentLocationLabel = 'is asleep right now and unavailable';
     } else if (resolvedLocName && !isHome && !isStaleTravel) {
       currentLocationLabel = `Currently at ${resolvedLocName}`;
     } else if (isStaleTravel && resolvedLocName) {
@@ -152,37 +156,52 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
       currentLocationLabel = 'At home';
     }
 
+    // Sleeping characters are never selectable — hard block regardless of availability check
+    const isUnavailable = isSleepingCanonical || !isAvailable;
+
     return (
       <button
         key={char.id}
-        onClick={() => onToggle(char.id)}
+        onClick={isSleepingCanonical ? undefined : () => onToggle(char.id)}
+        disabled={isSleepingCanonical}
         className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
-          isSelected ? "bg-primary/10 border-primary/40"
+          isSleepingCanonical ? "bg-card border-border opacity-60 cursor-not-allowed"
+          : isSelected ? "bg-primary/10 border-primary/40"
           : isAvailable ? "bg-card border-border hover:border-primary/30"
           : "bg-card border-border opacity-70"
         }`}
       >
-        <div className={`relative w-10 h-10 rounded-full flex-shrink-0 overflow-hidden ${!isAvailable ? "grayscale opacity-60" : ""}`}>
+        <div className={`relative w-10 h-10 rounded-full flex-shrink-0 overflow-hidden ${isUnavailable ? "grayscale opacity-60" : ""}`}>
           {char.avatar_url
             ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
             : <div className="w-full h-full bg-primary/20 flex items-center justify-center"><span className="text-sm font-bold text-primary">{char.name?.[0]}</span></div>
           }
         </div>
         <div className="flex-1 min-w-0">
-          <p className={`text-sm font-semibold ${isAvailable ? "text-foreground" : "text-muted-foreground"}`}>{char.name}</p>
+          <p className={`text-sm font-semibold ${isUnavailable ? "text-muted-foreground" : "text-foreground"}`}>{char.name}</p>
           <div className="flex items-center gap-1 mt-0.5">
-            {!isAvailable && StatusIcon && <StatusIcon className={`w-3 h-3 ${availability.reason?.color}`} />}
-            <p className={`text-xs ${isAvailable ? "text-muted-foreground" : availability.reason?.color}`}>
-              {isAvailable
-                ? (currentLocationLabel || "Available")
-                : availability.reason?.message?.replace(`${char.name} `, "").replace("can't join", "unavailable").split(".")[0]}
-            </p>
+            {isSleepingCanonical ? (
+              <p className="text-xs text-muted-foreground">{currentLocationLabel}</p>
+            ) : !isAvailable && StatusIcon ? (
+              <>
+                <StatusIcon className={`w-3 h-3 ${availability.reason?.color}`} />
+                <p className={`text-xs ${availability.reason?.color}`}>
+                  {availability.reason?.message?.replace(`${char.name} `, "").replace("can't join", "unavailable").split(".")[0]}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">{currentLocationLabel || "Available"}</p>
+            )}
           </div>
-          {!isAvailable && availability.availableAt && (
+          {!isSleepingCanonical && !isAvailable && availability.availableAt && (
             <p className="text-[10px] text-muted-foreground/70 mt-0.5">{availability.availableAt}</p>
           )}
         </div>
-        {isAvailable ? (
+        {isSleepingCanonical ? (
+          <div className="px-2 py-1 rounded-full bg-secondary border border-border flex-shrink-0">
+            <span className="text-[10px] text-muted-foreground font-medium">Asleep</span>
+          </div>
+        ) : isAvailable ? (
           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isSelected ? "bg-primary border-primary" : "border-border"}`}>
             {isSelected && <Check className="w-3.5 h-3.5 text-white" />}
           </div>
