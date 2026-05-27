@@ -258,7 +258,15 @@ export default function Travel() {
       }
     }
     
-    if (isCharacterAsleep(char)) {
+    // Check canonical sleep state — covers both DB sleeping and NPC forced sleep window
+    const charPresenceEntity = allPresenceEntities.find(e => e.id === charId);
+    const charIsSleeping = isCharacterAsleep(char) ||
+      charPresenceEntity?.is_sleeping === true ||
+      charPresenceEntity?.resolved_presence_status === 'sleeping' ||
+      charPresenceEntity?.resolved_presence_status === 'napping' ||
+      char.presence_state === 'sleeping' ||
+      char.sleep_state === 'asleep';
+    if (charIsSleeping) {
       setWakeUpModal({ character: char, pendingCharacterId: charId });
       return;
     }
