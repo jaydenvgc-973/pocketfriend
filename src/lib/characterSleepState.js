@@ -105,8 +105,10 @@ export function getCharacterSleepState(character) {
   const reason = character.resolved_source_reason || '';
 
   // ── DB TRUTH FIRST: if DB says sleeping/napping, trust it — same source Travel/Text use ──
-  // Do NOT override a sleeping DB status with energy checks. The DB is the one truth.
-  // enforceSlowdownSleep writes sleeping into DB; this must respect that write.
+  // Do NOT override a sleeping DB status with schedule or energy checks. The DB is the one truth.
+  // enforceSlowdownSleep, scheduledLocationEnforcement, and user-directed sleep all write this.
+  // This applies to ALL character types (active_created, NPC, legacy, untyped).
+  // A character whose DB says 'sleeping' IS sleeping — regardless of schedule fields.
   if (status === 'sleeping') {
     return {
       isSleeping: true,

@@ -300,9 +300,19 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   const sleepHomeId = resolveSleepHomeId(character, locationMap);
   const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
 
-  // LAYER 3.5A: SLEEP LOCK — in sleep window → hard lock to valid sleep location
+  // LAYER 3.5A: SLEEP LOCK — in sleep window OR DB says sleeping → hard lock to valid sleep location
   // SKIPPED for NPCs — they are never schedule-sleeping, only DB-explicit sleeping is honoured.
-  if (!isNPC && isCharacterSleeping(character)) {
+  //
+  // ONE TRUTH RULE: If resolved_presence_status === 'sleeping' or 'napping' in the DB,
+  // that IS the authoritative truth written by enforceSlowdownSleep, scheduledLocationEnforcement,
+  // or user-directed sleep. We must honour it even when isCharacterAsleep() returns false
+  // (which happens when no sleep schedule fields exist — a legacy-safe scenario).
+  // isCharacterAsleep() = schedule check only. DB status = enforced truth.
+  const dbSaysSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+  const scheduleSaysSleeping = isCharacterSleeping(character);
+  const characterIsSleeping = !isNPC && (scheduleSaysSleeping || dbSaysSleeping);
+
+  if (characterIsSleeping) {
     if (sleepHomeId) {
       const currentLocId = character.resolved_current_location_id;
       const currentLoc = currentLocId ? locationMap[currentLocId] : null;
@@ -778,17 +788,27 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   const NPC_TYPES_PRESENCE = new Set(['npc_fictitious', 'npc_family_member', 'npc_regular']);
   const isNPCPresence = NPC_TYPES_PRESENCE.has(character.character_type);
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') {
-    const sleepIsConfirmed = (!isNPCPresence && isCharacterSleeping(character)) ||
-      character.resolved_source_reason === 'adaptive_sleep_location_lock' ||
-      character.resolved_source_reason === 'sleep_location_correction' ||
-      character.resolved_source_reason === 'home_sleeping' ||
-      character.resolved_source_reason === 'pass_out_recovery';
+    // ONE TRUTH RULE: DB sleeping/napping status is authoritative for non-NPCs.
+    // enforceSlowdownSleep, scheduledLocationEnforcement, and user-directed sleep all write
+    // resolved_presence_status directly. We must not override that with a schedule check
+    // that returns false merely because sleep schedule fields are missing (legacy characters).
+    //
+    // For NPCs: only schedule-source reasons are honoured (they never autonomous-sleep).
+    const sleepIsConfirmed = !isNPCPresence
+      ? true  // DB says sleeping → it IS sleeping for active_created and untyped characters
+      : (
+          character.resolved_source_reason === 'adaptive_sleep_location_lock' ||
+          character.resolved_source_reason === 'sleep_location_correction' ||
+          character.resolved_source_reason === 'home_sleeping' ||
+          character.resolved_source_reason === 'pass_out_recovery' ||
+          isCharacterSleeping(character)
+        );
 
     if (sleepIsConfirmed) {
       const label = presenceStatus === 'napping' ? 'Napping' : 'Sleeping';
       return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
     }
-    // Sleep status in DB but schedule says awake — fall through to correct state
+    // NPC with no confirmed sleep source — fall through to correct state
   }
 
   // Critical needs override — hunger/health emergencies must surface
