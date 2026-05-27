@@ -81,7 +81,8 @@ Deno.serve(async (req) => {
         else if (school.tuition_frequency === 'semester') tuitionAmount = tuitionAmount / 6;
       }
 
-      // Update school enrolled_students
+      // Update school enrolled_students — include all date + program fields so location card stays in sync
+      const enrollNow = new Date().toISOString();
       const updatedStudents = [
         ...(school.enrolled_students || []),
         {
@@ -89,7 +90,11 @@ Deno.serve(async (req) => {
           character_name: character.name,
           tuition_amount: tuitionAmount,
           scholarship_enabled,
-          enroll_date: new Date().toISOString(),
+          enroll_date: enrollNow,
+          start_date: start_date || null,
+          end_date: expected_completion_date || null,
+          course_name: course_name?.trim() || school.name,
+          enrollment_type,
           status: 'active',
         }
       ];

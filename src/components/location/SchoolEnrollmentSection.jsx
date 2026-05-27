@@ -220,21 +220,68 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
   const cancelEdit = () => { setEditingStudentId(null); setEditFields({}); };
 
   const saveEdit = async (student) => {
+    const newCourseName = editFields.course_name || student.course_name;
+    const newEnrollDate = editFields.enroll_date ? new Date(editFields.enroll_date).toISOString() : student.enroll_date;
+    const newStartDate = editFields.start_date ? new Date(editFields.start_date).toISOString() : student.start_date;
+    const newEndDate = editFields.end_date ? new Date(editFields.end_date).toISOString() : student.end_date;
+    const newScholarship = editFields.scholarship_enabled;
+
+    // 1. Update LocationReference.enrolled_students
     const updatedStudents = (location.enrolled_students || []).map(s =>
       s.character_id === student.character_id
         ? {
             ...s,
-            course_name: editFields.course_name || s.course_name,
-            enroll_date: editFields.enroll_date ? new Date(editFields.enroll_date).toISOString() : s.enroll_date,
-            start_date: editFields.start_date ? new Date(editFields.start_date).toISOString() : s.start_date,
-            end_date: editFields.end_date ? new Date(editFields.end_date).toISOString() : s.end_date,
-            scholarship_enabled: editFields.scholarship_enabled,
-            tuition_amount: editFields.scholarship_enabled ? 0 : (location.tuition_cost || 0),
+            course_name: newCourseName,
+            enroll_date: newEnrollDate,
+            start_date: newStartDate,
+            end_date: newEndDate,
+            scholarship_enabled: newScholarship,
+            tuition_amount: newScholarship ? 0 : (location.tuition_cost || 0),
           }
         : s
     );
     await base44.entities.LocationReference.update(location.id, { enrolled_students: updatedStudents });
+
+    // 2. Sync dates back to Character.education_enrollments[] and Character.completed_education[]
+    // This keeps the character profile education section in sync with the location page.
+    const char = characters.find(c => c.id === student.character_id);
+    if (char) {
+      const syncFields = {
+        course_name: newCourseName,
+        enroll_date: newEnrollDate,
+        start_date: newStartDate,
+        completion_date: newEndDate,
+        scholarship_enabled: newScholarship,
+      };
+
+      // Helper: patch matching enrollment entry in an array
+      const patchArray = (arr) => {
+        if (!Array.isArray(arr) || arr.length === 0) return null;
+        // Match by location_id or by course_name
+        const idx = arr.findIndex(e =>
+          e.location_id === location.id ||
+          e.in_person_location_id === location.id ||
+          (e.course_name && e.course_name === (student.course_name || location.name))
+        );
+        if (idx === -1) return null;
+        const patched = [...arr];
+        patched[idx] = { ...patched[idx], ...syncFields };
+        return patched;
+      };
+
+      const patchedEnrollments = patchArray(char.education_enrollments);
+      const patchedCompleted = patchArray(char.completed_education);
+
+      const charUpdate = {};
+      if (patchedEnrollments) charUpdate.education_enrollments = patchedEnrollments;
+      if (patchedCompleted) charUpdate.completed_education = patchedCompleted;
+      if (Object.keys(charUpdate).length > 0) {
+        await base44.entities.Character.update(char.id, charUpdate);
+      }
+    }
+
     queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
+    queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
     onUpdate?.(updatedStudents, location.residents || []);
     cancelEdit();
   };
