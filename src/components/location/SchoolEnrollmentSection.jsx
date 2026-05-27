@@ -210,6 +210,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
     setEditingStudentId(student.character_id);
     setEditFields({
       course_name: student.course_name || '',
+      enroll_date: student.enroll_date ? new Date(student.enroll_date).toISOString().slice(0, 10) : '',
       start_date: student.start_date ? new Date(student.start_date).toISOString().slice(0, 10) : '',
       end_date: student.end_date ? new Date(student.end_date).toISOString().slice(0, 10) : '',
       scholarship_enabled: student.scholarship_enabled || false,
@@ -224,6 +225,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
         ? {
             ...s,
             course_name: editFields.course_name || s.course_name,
+            enroll_date: editFields.enroll_date ? new Date(editFields.enroll_date).toISOString() : s.enroll_date,
             start_date: editFields.start_date ? new Date(editFields.start_date).toISOString() : s.start_date,
             end_date: editFields.end_date ? new Date(editFields.end_date).toISOString() : s.end_date,
             scholarship_enabled: editFields.scholarship_enabled,
@@ -493,22 +495,31 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                       {student.course_name && student.course_name !== location.name && (
                         <p className="text-[10px] text-primary/80 font-medium">📚 {student.course_name}</p>
                       )}
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                        {student.enroll_date && (
-                          <p className="text-[10px] text-muted-foreground">
-                            Enrolled: {new Date(student.enroll_date).toLocaleDateString()}
+                      <div className="grid grid-cols-3 gap-1 mt-1">
+                        <div className="bg-secondary/40 rounded-lg px-2 py-1.5">
+                          <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Enrolled</p>
+                          <p className="text-[10px] text-foreground font-medium">
+                            {student.enroll_date
+                              ? new Date(student.enroll_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                              : <span className="text-muted-foreground/50 italic">Not set</span>}
                           </p>
-                        )}
-                        {student.start_date && (
-                          <p className="text-[10px] text-muted-foreground">
-                            Start: {new Date(student.start_date).toLocaleDateString()}
+                        </div>
+                        <div className="bg-secondary/40 rounded-lg px-2 py-1.5">
+                          <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Start</p>
+                          <p className="text-[10px] text-foreground font-medium">
+                            {student.start_date
+                              ? new Date(student.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                              : <span className="text-muted-foreground/50 italic">Not set</span>}
                           </p>
-                        )}
-                        {student.end_date && (
-                          <p className="text-[10px] text-muted-foreground">
-                            Graduates: {new Date(student.end_date).toLocaleDateString()}
+                        </div>
+                        <div className="bg-secondary/40 rounded-lg px-2 py-1.5">
+                          <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Graduates</p>
+                          <p className="text-[10px] text-foreground font-medium">
+                            {student.end_date
+                              ? new Date(student.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                              : <span className="text-muted-foreground/50 italic">Not set</span>}
                           </p>
-                        )}
+                        </div>
                       </div>
                     </>
                   )}
@@ -526,7 +537,16 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                           className="w-full h-7 px-2 rounded-lg bg-background border border-border text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
                         />
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider block">Enrollment Date</label>
+                          <input
+                            type="date"
+                            value={editFields.enroll_date}
+                            onChange={e => setEditFields(p => ({ ...p, enroll_date: e.target.value }))}
+                            className="w-full h-7 px-2 rounded-lg bg-background border border-border text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                          />
+                        </div>
                         <div className="space-y-1">
                           <label className="text-xs text-muted-foreground uppercase tracking-wider block">Start Date</label>
                           <input
