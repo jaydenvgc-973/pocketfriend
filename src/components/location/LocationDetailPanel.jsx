@@ -77,7 +77,21 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
 
   const totalHousingCost = (location.rent_or_housing_cost || 0) + totalUtilities;
 
-  const workerIds = location.worker_character_ids || [];
+  // Build worker IDs from worker_character_ids OR fall back to keys in worker_job_titles
+  // This ensures workers show even if worker_character_ids wasn't properly saved
+  const workerIdsFromArray = location.worker_character_ids || [];
+  const workerIdsFromTitles = Object.keys(location.worker_job_titles || {});
+  const workerIds = workerIdsFromArray.length > 0
+    ? workerIdsFromArray
+    : workerIdsFromTitles;
+
+  // Dynamic owner section label based on owner_role field
+  const ownerSectionLabel = (() => {
+    const role = (location.owner_role || '').toLowerCase();
+    if (role === 'landlord' || role === 'owner') return 'Owner / Landlord';
+    if (role === 'manager' || role === 'operator') return 'Owner / Manager';
+    return 'Owner';
+  })();
 
   const hoursText = (location.operating_hours || []).map(h => {
     const day = h.day_of_week != null ? ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][h.day_of_week] : 'Daily';
@@ -184,7 +198,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
         <>
           {(location.owner_character_name || location.owner_npc_name) && (
             <>
-              <SectionHeader icon={User} label="Owner / Manager" />
+              <SectionHeader icon={User} label={ownerSectionLabel} />
               <DetailRow
                 label={location.owner_role || 'owner'}
                 value={location.owner_is_npc ? location.owner_npc_name : location.owner_character_name}
