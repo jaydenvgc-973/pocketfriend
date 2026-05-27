@@ -176,6 +176,20 @@ function buildRelationshipsContext(character) {
   return section;
 }
 
+function resolveWorshipPlaceType(religion, locationType) {
+  // Returns the natural-language word for the place of worship based on religion + location type.
+  const rel = (religion || '').toLowerCase();
+  if (rel.includes('christian') || rel.includes('catholic') || rel.includes('protestant') || rel.includes('baptist') || rel.includes('methodist') || rel.includes('evangelical') || rel.includes('mormon') || rel.includes('latter-day') || rel.includes('coptic') || rel.includes('orthodox')) return 'church';
+  if (rel.includes('islam') || rel.includes('muslim') || rel.includes('sunni') || rel.includes('shia') || rel.includes('sufi')) return 'mosque';
+  if (rel.includes('jewish') || rel.includes('judaism') || rel.includes('reform') || rel.includes('orthodox jewish') || rel.includes('conservative jewish')) return 'synagogue';
+  if (rel.includes('hindu') || rel.includes('hinduism')) return 'mandir';
+  if (rel.includes('buddhis')) return 'temple';
+  if (rel.includes('sikh')) return 'gurdwara';
+  // Fallback: use location subtype/category if available
+  if (locationType === 'religion') return 'place of worship';
+  return 'place of worship';
+}
+
 function buildReligionBlock(character) {
   const religion = (character.religion || '').trim();
   if (!religion || religion === 'None' || religion.toLowerCase() === 'none') return '';
@@ -184,7 +198,115 @@ function buildReligionBlock(character) {
     moderate: 'moderately practicing',
     in_name_only: 'in name only — cultural identity, not active practice',
   }[character.belief_level] || 'practicing';
-  return `\nRELIGION: ${religion} (${levelDesc}). Faith shapes values, reactions to moral weight, community, guilt, comfort, and identity. Let this show naturally — do not lecture or recite scripture unless asked.\n`;
+
+  const placeType = resolveWorshipPlaceType(religion);
+  const locationName = character.religious_location_name || null;
+
+  let locationLine = '';
+  if (locationName) {
+    locationLine = `\nYou attend ${locationName}${placeType !== 'place of worship' ? ` (your ${placeType})` : ''}. When referring to it, say "${locationName}" — not "religious location."`;
+  }
+
+  return `\nRELIGION: ${religion} (${levelDesc}). Faith shapes values, reactions to moral weight, community, guilt, comfort, and identity. Let this show naturally — do not lecture or recite scripture unless asked.${locationLine}\n`;
+}
+
+function buildEducationBlock(character) {
+  const lines = [];
+  const now = new Date();
+
+  // ── Active enrollments ────────────────────────────────────────────────────
+  const allEnrollments = [
+    ...(character.education_enrollments || []),
+    ...(character.completed_education || []).filter(e =>
+      e.status === 'active' || e.status === 'enrolled' ||
+      (e.completion_date && new Date(e.completion_date) > now)
+    ),
+  ];
+
+  // Deduplicate by course_name+institution
+  const seen = new Set();
+  const activeEnrollments = allEnrollments.filter(e => {
+    const key = `${e.course_name || e.program_name || ''}|${e.institution || e.location_name || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (activeEnrollments.length > 0) {
+    lines.push('CURRENT EDUCATION:');
+    for (const e of activeEnrollments) {
+      const name = e.course_name || e.program_name || 'Unknown program';
+      const inst = e.institution || e.location_name || character.education_location_name || null;
+      const startDate = e.start_date ? new Date(e.start_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null;
+      const endDate = e.completion_date || e.end_date;
+      const gradDate = endDate ? new Date(endDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null;
+      const mode = e.mode ? ` (${e.mode.replace(/_/g, ' ')})` : '';
+      let line = `- Enrolled in "${name}"${inst ? ` at ${inst}` : ''}${mode}.`;
+      if (startDate) line += ` Started ${startDate}.`;
+      if (gradDate) line += ` Expected to graduate/complete ${gradDate}.`;
+      lines.push(line);
+    }
+  } else if (character.education_location_name) {
+    lines.push(`CURRENT EDUCATION: Enrolled at ${character.education_location_name}.`);
+  }
+
+  // ── Completed education ───────────────────────────────────────────────────
+  const completedItems = (character.completed_education || []).filter(e => {
+    const isCompleted = ['completed', 'graduated', 'dropped'].includes(e.status);
+    const isPast = e.completion_date && new Date(e.completion_date) <= now;
+    return isCompleted || isPast;
+  }).slice(0, 4); // cap at 4 for prompt length
+
+  if (completedItems.length > 0) {
+    lines.push('COMPLETED EDUCATION:');
+    for (const e of completedItems) {
+      const name = e.course_name || e.program_name || 'Unknown program';
+      const inst = e.institution || e.location_name || null;
+      const type = e.enrollment_type || null;
+      const completionDate = e.completion_date ? new Date(e.completion_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : null;
+      // Derive completion label from type
+      const credential = type === 'certification' ? 'certificate' : type === 'course' ? 'course completion' : type === 'full_school' ? 'degree/diploma' : 'completion';
+      let line = `- Completed "${name}"${inst ? ` at ${inst}` : ''} — earned ${credential}.`;
+      if (completionDate) line += ` Completed ${completionDate}.`;
+      lines.push(line);
+    }
+  }
+
+  if (lines.length === 0) return '';
+
+  return `\n════════════════════════════════════\nEDUCATION — PROFILE FACTS (you know this without being told)\n════════════════════════════════════\n${lines.join('\n')}\nCRITICAL: You already know these facts. Reference them naturally when relevant. Never say you're unsure about your school, program, or graduation date.\n════════════════════════════════════\n`;
+}
+
+function buildTodayLocationBlock(character) {
+  // Reads Character.recent_location_history[] for today's entries.
+  // This field is written by the travel/location resolver on every confirmed arrival.
+  const history = character.recent_location_history || [];
+  if (history.length === 0) return '';
+
+  const today = new Date();
+  const todayStr = today.toDateString();
+
+  const todayEntries = history.filter(h => {
+    if (!h.arrived_at) return false;
+    return new Date(h.arrived_at).toDateString() === todayStr;
+  }).sort((a, b) => new Date(a.arrived_at) - new Date(b.arrived_at));
+
+  if (todayEntries.length === 0) return '';
+
+  const fmt = (iso) => {
+    if (!iso) return null;
+    return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  };
+
+  const lines = todayEntries.map(h => {
+    const arrTime = fmt(h.arrived_at);
+    const leftTime = h.left_at ? fmt(h.left_at) : null;
+    const reason = h.reason ? ` (${h.reason.replace(/_/g, ' ')})` : '';
+    const stillThere = !h.left_at ? ' — still there' : '';
+    return `- ${h.location_name || 'unknown location'}${arrTime ? ` at ${arrTime}` : ''}${leftTime ? ` until ${leftTime}` : stillThere}${reason}`;
+  });
+
+  return `\n════════════════════════════════════\nWHERE YOU'VE BEEN TODAY (from app location data — authoritative)\n════════════════════════════════════\n${lines.join('\n')}\nIMPORTANT: You actually went to these places today. Reference them naturally when relevant.\n════════════════════════════════════\n`; 
 }
 
 function buildHardFacts(character) {
@@ -242,9 +364,9 @@ function buildHardFacts(character) {
   if (character.occupation) lines.push(`OCCUPATION: ${character.occupation}.`);
   if (character.occupation_location_name) lines.push(`WORKPLACE: ${character.occupation_location_name}.`);
 
-  // School
+  // School — live presence only (full education block is in buildEducationBlock injected separately)
   if (character.current_education_activity && character.current_education_activity !== 'none') {
-    lines.push(`EDUCATION: Currently active: ${character.current_education_activity}${character.education_location_name ? ` at ${character.education_location_name}` : ''}.`);
+    lines.push(`EDUCATION STATUS: Currently active: ${character.current_education_activity}${character.education_location_name ? ` at ${character.education_location_name}` : ''}.`);
   }
 
   // Travel
@@ -467,7 +589,7 @@ function buildWorldStateContinuityBlock(character) {
 }
 
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
-function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null) {
+function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '') {
   const userNameLabel = character.nickname_for_user || worldName || null;
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
@@ -594,7 +716,7 @@ ${deepTriggers ? `THINGS THAT CUT DEEP (go quiet first, then cold):\n  - ${deepT
 
 ${!isDefaultChar ? `CRITICAL — ABUELA SOPHIA IS NOT YOUR GRANDMOTHER:\nAbuela Sophia belongs to someone else's story entirely. Never reference her as your family member or anyone who raised you.` : ''}
 
-${religionBlock}
+${educationBlock}${todayLocationBlock}${religionBlock}
 ${internalFamilyTruth}
 ${relationshipsContext}
 ${soapOperaContext}
@@ -1148,7 +1270,10 @@ Reference the passage of time naturally in your response.
 
     // ── Step 10: Build canonical system prompt ────────────────────────────────
     // CRITICAL: worldStateContext is injected BEFORE recentMessageBlock
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + recentMessageBlock, coPresence, userBirthdayFact);
+    // Education + today location blocks come from profile data directly — no memory needed.
+    const educationBlock = buildEducationBlock(character);
+    const todayLocationBlock = buildTodayLocationBlock(character);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock);
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
 
     const totalMs = Date.now() - startTime;

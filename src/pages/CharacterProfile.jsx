@@ -36,6 +36,7 @@ import CharacterClosetPanel from "@/components/character/CharacterClosetPanel";
 import AddPeopleInTheirWorldPanel from "@/components/character/AddPeopleInTheirWorldPanel";
 import RelationshipTensionCard from "@/components/character/RelationshipTensionCard";
 import CharacterEducationSection from "@/components/character/CharacterEducationSection";
+import CharacterReligionSection from "@/components/character/CharacterReligionSection";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -644,6 +645,10 @@ export default function CharacterProfile() {
               <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Criminal Record</p>
               <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
             </div>
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={Heart} title="Religion & Faith">
+            <CharacterReligionSection character={character} />
           </CollapsibleProfileSection>
         </div>
 

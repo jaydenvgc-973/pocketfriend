@@ -86,6 +86,31 @@ Deno.serve(async (req) => {
     const resolvedType = locationType || 'visit';
 
     // STEP 5: Write using the verified matched character's real ID
+    // Also append a lightweight daily location history entry so characters can reference
+    // where they've been today in chat context. Kept to last 20 entries, pruned to 7 days.
+    const existingHistory = matched.recent_location_history || [];
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    // Close out the previous location entry if still open
+    const closedHistory = existingHistory.map(h => {
+      if (!h.left_at && h.location_id !== matchedLoc.id) {
+        return { ...h, left_at: now };
+      }
+      return h;
+    }).filter(h => h.arrived_at > sevenDaysAgo);
+
+    // Only add a new entry if arriving at a different location
+    const isNewLocation = matched.resolved_current_location_id !== matchedLoc.id;
+    const updatedHistory = isNewLocation
+      ? [...closedHistory, {
+          location_id: matchedLoc.id,
+          location_name: matchedLoc.name,
+          location_type: resolvedType,
+          arrived_at: now,
+          left_at: null,
+          reason: sourceReason || 'manual_update',
+        }].slice(-20) // keep latest 20 entries
+      : closedHistory;
+
     await base44.entities.Character.update(matched.id, {
       resolved_current_location_id: matchedLoc.id,
       resolved_current_location_name: matchedLoc.name,
@@ -93,6 +118,7 @@ Deno.serve(async (req) => {
       resolved_presence_status: resolvedStatus,
       resolved_source_reason: sourceReason || 'manual_update',
       resolved_last_updated_at: now,
+      recent_location_history: updatedHistory,
       // Clear all stale travel fields
       travel_status: 'not_traveling',
       travel_destination_location_id: null,
