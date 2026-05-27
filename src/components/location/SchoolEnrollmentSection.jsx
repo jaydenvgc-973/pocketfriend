@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, GraduationCap, DollarSign, Award, Trash2, Home } from 'lucide-react';
+import { Plus, GraduationCap, DollarSign, Award, Trash2, Home, Pencil, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
@@ -200,6 +200,41 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
     } catch (err) {
       console.error('Unenroll error:', err);
     }
+  };
+
+  // Per-student edit state
+  const [editingStudentId, setEditingStudentId] = useState(null);
+  const [editFields, setEditFields] = useState({});
+
+  const startEdit = (student) => {
+    setEditingStudentId(student.character_id);
+    setEditFields({
+      course_name: student.course_name || '',
+      start_date: student.start_date ? new Date(student.start_date).toISOString().slice(0, 10) : '',
+      end_date: student.end_date ? new Date(student.end_date).toISOString().slice(0, 10) : '',
+      scholarship_enabled: student.scholarship_enabled || false,
+    });
+  };
+
+  const cancelEdit = () => { setEditingStudentId(null); setEditFields({}); };
+
+  const saveEdit = async (student) => {
+    const updatedStudents = (location.enrolled_students || []).map(s =>
+      s.character_id === student.character_id
+        ? {
+            ...s,
+            course_name: editFields.course_name || s.course_name,
+            start_date: editFields.start_date ? new Date(editFields.start_date).toISOString() : s.start_date,
+            end_date: editFields.end_date ? new Date(editFields.end_date).toISOString() : s.end_date,
+            scholarship_enabled: editFields.scholarship_enabled,
+            tuition_amount: editFields.scholarship_enabled ? 0 : (location.tuition_cost || 0),
+          }
+        : s
+    );
+    await base44.entities.LocationReference.update(location.id, { enrolled_students: updatedStudents });
+    queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
+    onUpdate?.(updatedStudents, location.residents || []);
+    cancelEdit();
   };
 
   const tuitionDisplay = location.tuition_cost || 0;
@@ -408,8 +443,10 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             .map((student, idx) => {
               const char = characters.find(c => c.id === student.character_id);
               const isOnCampus = (location.residents || []).some(r => r.character_id === student.character_id);
+              const isEditing = editingStudentId === student.character_id;
               return (
                 <div key={idx} className="bg-card border border-border rounded-xl p-3 space-y-2">
+                  {/* Header row — always visible */}
                   <div className="flex items-center gap-3">
                     {char
                       ? <CharacterAvatar character={char} size="sm" />
@@ -431,53 +468,125 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                         )}
                       </div>
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="text-xs text-muted-foreground">Monthly</p>
-                      <p className="text-sm font-semibold text-foreground">
-                        ${student.scholarship_enabled ? 0 : (student.tuition_amount || 0).toFixed(2)}
-                      </p>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <div className="text-right mr-1">
+                        <p className="text-xs text-muted-foreground">Monthly</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          ${student.scholarship_enabled ? 0 : (student.tuition_amount || 0).toFixed(2)}
+                        </p>
+                      </div>
+                      {!isEditing && (
+                        <button
+                          onClick={() => startEdit(student)}
+                          className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                          title="Edit enrollment"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  {student.course_name && student.course_name !== location.name && (
-                    <p className="text-[10px] text-primary/80 font-medium">📚 {student.course_name}</p>
+                  {/* Read-only dates (shown when not editing) */}
+                  {!isEditing && (
+                    <>
+                      {student.course_name && student.course_name !== location.name && (
+                        <p className="text-[10px] text-primary/80 font-medium">📚 {student.course_name}</p>
+                      )}
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                        {student.enroll_date && (
+                          <p className="text-[10px] text-muted-foreground">
+                            Enrolled: {new Date(student.enroll_date).toLocaleDateString()}
+                          </p>
+                        )}
+                        {student.start_date && (
+                          <p className="text-[10px] text-muted-foreground">
+                            Start: {new Date(student.start_date).toLocaleDateString()}
+                          </p>
+                        )}
+                        {student.end_date && (
+                          <p className="text-[10px] text-muted-foreground">
+                            Graduates: {new Date(student.end_date).toLocaleDateString()}
+                          </p>
+                        )}
+                      </div>
+                    </>
                   )}
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                    {student.enroll_date && (
-                      <p className="text-[10px] text-muted-foreground">
-                        Enrolled: {new Date(student.enroll_date).toLocaleDateString()}
-                      </p>
-                    )}
-                    {student.start_date && (
-                      <p className="text-[10px] text-muted-foreground">
-                        Start: {new Date(student.start_date).toLocaleDateString()}
-                      </p>
-                    )}
-                    {student.end_date && (
-                      <p className="text-[10px] text-muted-foreground">
-                        Graduates: {new Date(student.end_date).toLocaleDateString()}
-                      </p>
-                    )}
-                  </div>
 
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleUnenroll(student.character_id, 'graduated')}
-                      className="flex-1 h-7 text-xs rounded-lg"
-                    >
-                      Graduate
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleUnenroll(student.character_id, 'dropped')}
-                      className="h-7 px-2 rounded-lg text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
+                  {/* Inline edit form */}
+                  {isEditing && (
+                    <div className="space-y-2 pt-1 border-t border-border">
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground uppercase tracking-wider block">Program / Course</label>
+                        <input
+                          type="text"
+                          value={editFields.course_name}
+                          onChange={e => setEditFields(p => ({ ...p, course_name: e.target.value }))}
+                          placeholder={location.name}
+                          className="w-full h-7 px-2 rounded-lg bg-background border border-border text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider block">Start Date</label>
+                          <input
+                            type="date"
+                            value={editFields.start_date}
+                            onChange={e => setEditFields(p => ({ ...p, start_date: e.target.value }))}
+                            className="w-full h-7 px-2 rounded-lg bg-background border border-border text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider block">Graduation</label>
+                          <input
+                            type="date"
+                            value={editFields.end_date}
+                            onChange={e => setEditFields(p => ({ ...p, end_date: e.target.value }))}
+                            className="w-full h-7 px-2 rounded-lg bg-background border border-border text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                          />
+                        </div>
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={editFields.scholarship_enabled}
+                          onChange={e => setEditFields(p => ({ ...p, scholarship_enabled: e.target.checked }))}
+                          className="rounded"
+                        />
+                        <span className="text-xs text-foreground">Scholarship (free tuition)</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => saveEdit(student)} className="flex-1 h-7 text-xs rounded-lg gap-1">
+                          <Check className="w-3 h-3" /> Save
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={cancelEdit} className="h-7 px-2 rounded-lg">
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action buttons (hidden while editing) */}
+                  {!isEditing && (
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleUnenroll(student.character_id, 'graduated')}
+                        className="flex-1 h-7 text-xs rounded-lg"
+                      >
+                        Graduate
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleUnenroll(student.character_id, 'dropped')}
+                        className="h-7 px-2 rounded-lg text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               );
             })
