@@ -14,6 +14,8 @@ import CharacterInteractionSimulator from "@/components/home/CharacterInteractio
 import BottomNav from "@/components/BottomNav";
 import DailyAchievementReminder from "@/components/home/DailyAchievementReminder";
 import TroubleshootingPanelHome from "@/components/home/TroubleshootingPanelHome";
+import IncarcerationReleaseModal from "@/components/home/IncarcerationReleaseModal";
+import GraduationEventModal from "@/components/home/GraduationEventModal";
 
 import InviteOutModal from "@/components/home/InviteOutModal";
 import NPCContactPanel from "@/components/home/NPCContactPanel";
@@ -32,6 +34,8 @@ export default function Home() {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [invitations, setInvitations] = useState(null);
+  const [pendingReleases, setPendingReleases] = useState([]);
+  const [graduationEvents, setGraduationEvents] = useState([]);
 
   const { settings: userSettings, isLoading: isSettingsLoading, isError: isSettingsError } = useUserSettings();
   // Keep settings as array-compatible for legacy references (onClose invite modal)
@@ -130,6 +134,41 @@ export default function Home() {
       })
       .catch(() => {});
   }, [currentUser?.email]);
+
+  // Run lifecycle checker once per session — checks education completions + jail releases
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    const lifecycleKey = `lifecycle_checked_${currentUser.email}_${new Date().toISOString().slice(0, 10)}`;
+    if (sessionStorage.getItem(lifecycleKey)) return;
+    sessionStorage.setItem(lifecycleKey, '1');
+    base44.functions.invoke('checkLifecycleEvents', {})
+      .then(res => {
+        const data = res?.data;
+        if (!data) return;
+        // Show incarceration release popups
+        if (data.releases?.length > 0) {
+          setPendingReleases(data.releases);
+        }
+        // Show graduation popups — build from graduations array (achievements are
+        // created server-side and will also trigger AchievementUnlockModal, but
+        // graduation events need program details not in the ACHIEVEMENTS registry,
+        // so we drive a separate targeted modal from the returned data)
+        if (data.graduations?.length > 0) {
+          const gradEvents = data.graduations.map(g => ({
+            character_id: g.character_id,
+            character_name: g.character_name,
+            program_name: g.program,
+            completion_type: g.completion_type,
+            completion_date: g.end_date,
+          }));
+          setGraduationEvents(gradEvents);
+          // Invalidate characters cache so updated student_status reflects immediately
+          queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
+          queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser.email] });
+        }
+      })
+      .catch(() => {});
+  }, [currentUser?.email]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Real-time: patch individual character records in the cache without re-fetching the whole list.
   // CRITICAL: Never call invalidateQueries for character updates — it triggers a full 300-record
@@ -488,6 +527,25 @@ export default function Home() {
       )}
 
       <DailyAchievementReminder />
+
+      {/* Lifecycle event popups — session-gated, idempotent */}
+      {graduationEvents.length > 0 && (
+        <GraduationEventModal
+          events={graduationEvents}
+          onDismiss={() => setGraduationEvents([])}
+        />
+      )}
+      {pendingReleases.length > 0 && graduationEvents.length === 0 && (
+        <IncarcerationReleaseModal
+          releases={pendingReleases}
+          onDismiss={() => setPendingReleases([])}
+          onReleased={() => {
+            setPendingReleases(prev => prev.slice(1));
+            queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+          }}
+        />
+      )}
+
       <TroubleshootingPanelHome
         isOpen={showTroubleshooting}
         onClose={() => setShowTroubleshooting(false)}
