@@ -190,24 +190,53 @@ function resolveWorshipPlaceType(religion, locationType) {
   return 'place of worship';
 }
 
-function buildReligionBlock(character) {
+function buildReligionBlock(character, worshipLocation = null) {
   const religion = (character.religion || '').trim();
-  if (!religion || religion === 'None' || religion.toLowerCase() === 'none') return '';
-  const levelDesc = {
-    devout: 'deeply devout',
-    moderate: 'moderately practicing',
-    in_name_only: 'in name only — cultural identity, not active practice',
-  }[character.belief_level] || 'practicing';
+  const hasReligion = religion && religion !== 'None' && religion.toLowerCase() !== 'none';
 
-  const placeType = resolveWorshipPlaceType(religion);
-  const locationName = character.religious_location_name || null;
+  // Resolve worship location name — prefer live-queried location over stored field
+  const locationName = worshipLocation?.name || character.religious_location_name || null;
 
-  let locationLine = '';
-  if (locationName) {
-    locationLine = `\nYou attend ${locationName}${placeType !== 'place of worship' ? ` (your ${placeType})` : ''}. When referring to it, say "${locationName}" — not "religious location."`;
+  // If neither religion nor worship location exists, nothing to inject
+  if (!hasReligion && !locationName) return '';
+
+  // Derive place type from religion first, then from location name/denomination
+  let placeType = hasReligion ? resolveWorshipPlaceType(religion) : null;
+  if (!placeType && locationName) {
+    // Infer from location name
+    const nameLower = (locationName + ' ' + (worshipLocation?.religion_denomination || '')).toLowerCase();
+    if (nameLower.includes('church') || nameLower.includes('chapel') || nameLower.includes('cathedral') || nameLower.includes('baptist') || nameLower.includes('christian') || nameLower.includes('catholic') || nameLower.includes('methodist') || nameLower.includes('evangelical') || nameLower.includes('parish') || nameLower.includes('ministry')) placeType = 'church';
+    else if (nameLower.includes('mosque') || nameLower.includes('masjid') || nameLower.includes('islamic')) placeType = 'mosque';
+    else if (nameLower.includes('synagogue') || nameLower.includes('jewish') || nameLower.includes('temple') && nameLower.includes('jewish')) placeType = 'synagogue';
+    else if (nameLower.includes('mandir') || nameLower.includes('hindu')) placeType = 'mandir';
+    else if (nameLower.includes('temple') || nameLower.includes('buddhist') || nameLower.includes('monastery') || nameLower.includes('stupa')) placeType = 'temple';
+    else if (nameLower.includes('gurdwara') || nameLower.includes('sikh')) placeType = 'gurdwara';
+    else placeType = 'place of worship';
+  }
+  if (!placeType) placeType = 'place of worship';
+
+  let block = '';
+
+  if (hasReligion) {
+    const levelDesc = {
+      devout: 'deeply devout',
+      moderate: 'moderately practicing',
+      in_name_only: 'in name only — cultural identity, not active practice',
+    }[character.belief_level] || 'practicing';
+    block += `\nRELIGION: ${religion} (${levelDesc}). Faith shapes values, reactions to moral weight, community, guilt, comfort, and identity. Let this show naturally — do not lecture or recite scripture unless asked.`;
   }
 
-  return `\nRELIGION: ${religion} (${levelDesc}). Faith shapes values, reactions to moral weight, community, guilt, comfort, and identity. Let this show naturally — do not lecture or recite scripture unless asked.${locationLine}\n`;
+  if (locationName) {
+    const placeLabel = placeType !== 'place of worship' ? ` (your ${placeType})` : '';
+    if (hasReligion) {
+      block += `\nYou attend ${locationName}${placeLabel}. When referring to it, say "${locationName}" — not "religious location."`;
+    } else {
+      // Character attends without a set religion — exploring, family, community, volunteer, etc.
+      block += `\nWORSHIP LOCATION: You are connected to ${locationName}${placeLabel}. You attend or are involved there even if you don't formally identify with a religion. Reference it naturally when relevant — do not claim a religion you don't have.`;
+    }
+  }
+
+  return block ? `\n${block.trim()}\n` : '';
 }
 
 function buildEducationBlock(character) {
@@ -589,7 +618,7 @@ function buildWorldStateContinuityBlock(character) {
 }
 
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
-function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '') {
+function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '', worshipLocation = null) {
   const userNameLabel = character.nickname_for_user || worldName || null;
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
@@ -618,7 +647,7 @@ function buildFullCanonicalPrompt(character, memories, worldName, interactionCon
   const familySection = buildFamilySection(character);
   const internalFamilyTruth = buildInternalFamilyTruth(character);
   const relationshipsContext = buildRelationshipsContext(character);
-  const religionBlock = buildReligionBlock(character);
+  const religionBlock = buildReligionBlock(character, worshipLocation);
   const soapOperaContext = buildSoapOperaLifeContext(character);
 
   // DL identity
@@ -1268,12 +1297,45 @@ Reference the passage of time naturally in your response.
       recentMessageBlock = `\nRECENT CONVERSATION HISTORY (cross-page, most recent first):\n${lines.join('\n')}\n`;
     }
 
-    // ── Step 10: Build canonical system prompt ────────────────────────────────
+    // ── Step 10: Resolve worship location from LocationReference (authoritative) ─
+    // Source of truth: LocationReference.religious_members[] and worker_character_ids[]
+    // This is checked LIVE every context build — not cached on the Character record.
+    // Ensures profile changes and location page changes are always in sync.
+    let worshipLocation = null;
+    try {
+      const worshipLocs = await base44.asServiceRole.entities.LocationReference.filter({ category: 'religion' }).catch(() => []);
+      for (const loc of worshipLocs) {
+        const inMembers = (loc.religious_members || []).some(m => m.character_id === characterId);
+        const inWorkers = (loc.worker_character_ids || []).includes(characterId);
+        const inJobTitles = !!(loc.worker_job_titles && loc.worker_job_titles[characterId]);
+        const isDirectLink = loc.id === character.religious_location_id;
+        if (inMembers || inWorkers || inJobTitles || isDirectLink) {
+          worshipLocation = loc;
+          break;
+        }
+      }
+      contextLog.push({
+        step: 'worship_location',
+        found: !!worshipLocation,
+        name: worshipLocation?.name || null,
+        source: worshipLocation
+          ? ((worshipLocation.religious_members || []).some(m => m.character_id === characterId) ? 'religious_members'
+            : (worshipLocation.worker_character_ids || []).includes(characterId) ? 'worker_character_ids'
+            : worshipLocation.worker_job_titles?.[characterId] ? 'worker_job_titles'
+            : 'direct_link')
+          : null,
+      });
+    } catch (wlErr) {
+      contextLog.push({ step: 'worship_location', status: 'error', error: wlErr.message });
+    }
+
+    // ── Step 11: Build canonical system prompt ────────────────────────────────
     // CRITICAL: worldStateContext is injected BEFORE recentMessageBlock
     // Education + today location blocks come from profile data directly — no memory needed.
+    // Religion block now receives the live-queried worshipLocation — no memory required.
     const educationBlock = buildEducationBlock(character);
     const todayLocationBlock = buildTodayLocationBlock(character);
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation);
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
 
     const totalMs = Date.now() - startTime;

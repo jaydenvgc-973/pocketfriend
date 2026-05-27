@@ -45,7 +45,9 @@ Deno.serve(async (req) => {
     for (const loc of worshipLocs) {
       const memberIds = (loc.religious_members || []).map(m => m.character_id);
       const workerIds = loc.worker_character_ids || [];
-      const allLinkedIds = [...new Set([...memberIds, ...workerIds])];
+      // Also include staff/clergy listed in worker_job_titles (stored as { charId: jobTitle })
+      const jobTitleIds = Object.keys(loc.worker_job_titles || {}).filter(id => !id.startsWith('npc__'));
+      const allLinkedIds = [...new Set([...memberIds, ...workerIds, ...jobTitleIds])];
 
       for (const charId of allLinkedIds) {
         if (!charIds.has(charId)) continue; // not this user's character
