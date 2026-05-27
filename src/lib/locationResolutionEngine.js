@@ -15,7 +15,7 @@
 
 import { isLocationOpen } from '@/lib/locationHoursUtils';
 import { resolveHousingLocationForCharacter } from '@/lib/resolveHousingLocationForCharacter';
-import { isCharacterAsleep as isCharacterAsleepFromUtils } from '@/lib/sleepUtils';
+import { isCharacterAsleep as isCharacterAsleepFromUtils, isNPCCharacterType } from '@/lib/sleepUtils';
 import { detectUnsupportedFormat } from '@/lib/imageFormatValidator';
 
 /**
@@ -289,12 +289,17 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // DO NOT RE-ENABLE without explicit architectural decision.
 
   // ── SLEEP ENFORCEMENT: runs before visit/autonomous layers ──────────────────
-  // NPCs (npc_fictitious, npc_family_member, npc_regular) do NOT have biological sleep needs.
-  // They must NEVER be locked to sleep/nap states by schedule windows or sleep debt.
-  // Their presence is governed by location assignments and home fallback ONLY.
-  // Only active_created_character goes through sleep enforcement.
-  const NPC_CHAR_TYPES = new Set(['npc_fictitious', 'npc_family_member', 'npc_regular']);
-  const isNPC = NPC_CHAR_TYPES.has(character.character_type);
+  // ALL character types — including NPC types — are subject to sleep enforcement.
+  //
+  // NPC FORCED SLEEP RULE: NPC-type characters (npc_regular, npc_family_member,
+  // npc_fictitious, npc) have a forced sleep window. If no explicit sleep_start_time/
+  // wake_up_time is set, they default to 00:00–08:00 ET. This is enforced BEFORE
+  // social visit, autonomous travel, and home fallback layers.
+  //
+  // NPC sleep resolves to their own home/sleep/residence location — NOT blindly to
+  // VGC Towers. If the NPC lives at VGC Towers, it will resolve there because
+  // current_home_location_id points there. If not, it resolves to their actual home.
+  const isNPC = isNPCCharacterType(character);
 
   // Resolve valid sleep home
   const sleepHomeId = resolveSleepHomeId(character, locationMap);
@@ -310,19 +315,22 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // isCharacterAsleep() = schedule check only. DB status = enforced truth.
   const dbSaysSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
   const scheduleSaysSleeping = isCharacterSleeping(character);
-  const characterIsSleeping = !isNPC && (scheduleSaysSleeping || dbSaysSleeping);
+  // ALL character types participate in sleep enforcement.
+  // For NPCs: scheduleSaysSleeping uses their explicit schedule or the forced 00:00–08:00 default.
+  // For active_created: scheduleSaysSleeping uses adaptive schedule; dbSaysSleeping is also trusted.
+  const characterIsSleeping = scheduleSaysSleeping || dbSaysSleeping;
 
   if (characterIsSleeping) {
+    const sleepSourceReason = isNPC ? 'npc_forced_sleep_window' : (
+      dbSaysSleeping ? 'home_sleeping' : 'sleep_location_correction'
+    );
     if (sleepHomeId) {
-      const currentLocId = character.resolved_current_location_id;
-      const currentLoc = currentLocId ? locationMap[currentLocId] : null;
-      const atValidSleepLoc = currentLocId === sleepHomeId || isValidSleepCategory(currentLoc);
       return {
         resolved_current_location_id: sleepHomeId,
         resolved_current_location_name: sleepHomeLoc?.name || 'Home',
         resolved_location_type: 'home',
         resolved_presence_status: 'sleeping',
-        resolved_source_reason: atValidSleepLoc ? 'home_sleeping' : 'sleep_location_correction',
+        resolved_source_reason: sleepSourceReason,
         resolved_zone: null,
         home_resolution_failed: !sleepHomeLoc,
       };
@@ -333,7 +341,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
       resolved_current_location_name: 'Unresolved',
       resolved_location_type: 'sleep_unresolved',
       resolved_presence_status: 'sleeping',
-      resolved_source_reason: 'no_valid_sleep_location',
+      resolved_source_reason: isNPC ? 'npc_forced_sleep_window_no_home' : 'no_valid_sleep_location',
       resolved_zone: null,
       home_resolution_failed: true,
     };
@@ -785,8 +793,7 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // RULE: Only show sleep icon when sleep is CONFIRMED — schedule must be active OR source_reason
   // explicitly set by sleep enforcement. Do NOT show sleep from stale DB field alone.
   // NPCs: never confirmed-sleeping by schedule; only DB-explicit reason counts.
-  const NPC_TYPES_PRESENCE = new Set(['npc_fictitious', 'npc_family_member', 'npc_regular']);
-  const isNPCPresence = NPC_TYPES_PRESENCE.has(character.character_type);
+  const isNPCPresence = isNPCCharacterType(character);
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') {
     // ONE TRUTH RULE: DB sleeping/napping status is authoritative for non-NPCs.
     // enforceSlowdownSleep, scheduledLocationEnforcement, and user-directed sleep all write
@@ -797,11 +804,13 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     const sleepIsConfirmed = !isNPCPresence
       ? true  // DB says sleeping → it IS sleeping for active_created and untyped characters
       : (
+          // NPCs: accept forced sleep window from resolver OR any of the valid DB source reasons
+          isCharacterSleeping(character) ||
+          character.resolved_source_reason === 'npc_forced_sleep_window' ||
           character.resolved_source_reason === 'adaptive_sleep_location_lock' ||
           character.resolved_source_reason === 'sleep_location_correction' ||
           character.resolved_source_reason === 'home_sleeping' ||
-          character.resolved_source_reason === 'pass_out_recovery' ||
-          isCharacterSleeping(character)
+          character.resolved_source_reason === 'pass_out_recovery'
         );
 
     if (sleepIsConfirmed) {

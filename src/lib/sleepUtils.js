@@ -166,23 +166,48 @@ export function buildSleepInterruptionUpdate(character) {
   };
 }
 
+// NPC character types that use forced sleep windows
+const NPC_SLEEP_TYPES = new Set(['npc_regular', 'npc_family_member', 'npc_fictitious', 'npc']);
+
+/**
+ * Returns true if this character record is an NPC type that uses forced sleep windows.
+ * Exported so locationResolutionEngine and other callers can use it consistently.
+ */
+export function isNPCCharacterType(character) {
+  return NPC_SLEEP_TYPES.has(character?.character_type);
+}
+
 /**
  * Computes the sleep window for a character.
  * Schedule-based only. No debt.
+ *
+ * NPC FORCED SLEEP RULE:
+ * NPC-type characters (npc_regular, npc_family_member, npc_fictitious, npc) that have
+ * no explicit sleep schedule and no work/school schedule are given a forced default
+ * sleep window of 00:00–08:00 ET. This reflects the world rule that NPCs are not
+ * autonomous agents — they have fixed rest periods. Do NOT derive work/school windows
+ * for NPCs; use only explicit sleep_start_time/wake_up_time or the forced default.
  */
 function computeAdaptiveSleepWindow(character) {
   const SLEEP_DURATION_MIN = 7 * 60;
   const PRE_SHIFT_BUFFER = 60;
   const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
 
-  // PRIORITY 1: Stored schedule
+  // PRIORITY 1: Stored explicit schedule — works for ALL character types
   if (character.sleep_start_time && character.wake_up_time) {
     const s = toMin(character.sleep_start_time);
     const w = toMin(character.wake_up_time);
     if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w };
   }
 
-  // PRIORITY 2: Derive from work/school
+  // PRIORITY 2 (NPC types only): forced default window 00:00–08:00 ET
+  // NPCs with no explicit schedule are never awake in the middle of the night.
+  // This is the "forced sleep window" rule — no schedule fields required.
+  if (isNPCCharacterType(character)) {
+    return { sleepStartMin: 0, wakeMin: 8 * 60 }; // 00:00–08:00
+  }
+
+  // PRIORITY 3 (active_created_character): Derive from work/school schedule
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const dayOfWeek = nowET.getDay();
 

@@ -20,20 +20,27 @@ function toMinutes(timeStr) {
   return h * 60 + (m || 0);
 }
 
+const NPC_SLEEP_TYPES = new Set(['npc_regular', 'npc_family_member', 'npc_fictitious', 'npc']);
+
 function computeAdaptiveSleepWindow(character, etTime) {
   const SLEEP_DURATION_MIN = 7 * 60;
   const PRE_SHIFT_BUFFER = 60;
   const toMin = toMinutes;
   const dayOfWeek = etTime.getDay();
 
-  // PRIORITY 1: Stored schedule is canonical
+  // PRIORITY 1: Stored schedule is canonical — works for ALL character types
   if (character.sleep_start_time && character.wake_up_time) {
     const s = toMin(character.sleep_start_time);
     const w = toMin(character.wake_up_time);
     if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, source: 'stored_schedule' };
   }
 
-  // PRIORITY 2: Derive from work/school only
+  // PRIORITY 2 (NPC types): forced default window 00:00–08:00 ET
+  if (NPC_SLEEP_TYPES.has(character.character_type)) {
+    return { sleepStartMin: 0, wakeMin: 8 * 60, source: 'npc_forced_default' };
+  }
+
+  // PRIORITY 3 (active_created_character): Derive from work/school only
   let nextShiftStartMin = null;
   let nextShiftEndMin = null;
 
@@ -70,7 +77,6 @@ function computeAdaptiveSleepWindow(character, etTime) {
     }
   }
 
-  // PRIORITY 3: Cannot determine
   return null;
 }
 
