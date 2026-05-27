@@ -135,7 +135,12 @@ Deno.serve(async (req) => {
         });
       }
 
-      // ── 2. INCARCERATION AUTO-RELEASE ──────────────────────────────────────
+      // ── 2. INCARCERATION RELEASE DETECTION ────────────────────────────────
+      // Detect characters whose sentence end date has passed but are still jailed.
+      // Do NOT auto-release here — return them in releases[] so the frontend popup
+      // can give the user the decision: Release Now or Extend Stay.
+      // fixOverdueConfinement runs as a scheduled fallback for characters who never
+      // get the popup (background tabs, long absence).
       if (!character.is_jailed) continue;
 
       let releaseDateMs = null;
@@ -149,63 +154,23 @@ Deno.serve(async (req) => {
 
       const releaseDateISO = new Date(releaseDateMs).toISOString();
 
-      // Idempotency: sentence-specific key stored on the character.
-      // This key is set AFTER release is processed, so it does NOT block the popup
-      // from appearing before the release happens.
+      // Idempotency: skip if user already decided on this exact sentence end date
+      // (either released or extended — both paths write jail_lifecycle_key)
       const sentenceKey = `${character.id}::${releaseDateISO}`;
-      if (character.jail_lifecycle_key === sentenceKey) continue; // already processed this sentence
+      if (character.jail_lifecycle_key === sentenceKey) continue;
 
-      // AUTO-RELEASE the character — sentence complete means they're free
-      const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const releasePayload = {
-        is_jailed: false,
-        incarceration_status: 'released',
+      // Return to frontend for user decision — no mutation here
+      autoReleasedCharacters.push({
+        character_id: character.id,
+        character_name: character.name,
+        avatar_url: character.avatar_url || null,
+        facility_name: character.incarceration_facility_name || 'Detention Facility',
+        charges: character.pending_charges || [],
+        jailed_at: character.jailed_at || null,
         jail_release_date: releaseDateISO,
-        resolved_presence_status: 'home',
-        resolved_location_type: 'home',
-        resolved_source_reason: 'sentence_complete_auto_release',
-        resolved_last_updated_at: nowISO,
-        jail_lifecycle_key: sentenceKey, // mark this sentence as processed
-        incarceration_facility_id: null,
-      };
-
-      if (character.current_home_location_id) {
-        releasePayload.resolved_current_location_id = character.current_home_location_id;
-        releasePayload.resolved_current_location_name = character.resolved_current_location_name || null;
-      }
-
-      try {
-        await base44.entities.Character.update(character.id, releasePayload);
-
-        // Log a LifeEvent
-        await base44.asServiceRole.entities.LifeEvent.create({
-          character_id: character.id,
-          character_name: character.name,
-          event_type: 'major_life_event',
-          valence: 'mixed',
-          severity: 'major',
-          title: 'Released from incarceration',
-          description: `${character.name} completed their sentence (${character.jail_sentence_days || '?'} days) and was automatically released.`,
-          emotional_impact: 'Relief mixed with uncertainty about what comes next',
-          triggered_by: 'system_auto_release',
-          timestamp: nowISO,
-          context_tags: ['jail', 'release', 'auto_release'],
-        }).catch(() => {});
-
-        autoReleasedCharacters.push({
-          character_id: character.id,
-          character_name: character.name,
-          avatar_url: character.avatar_url || null,
-          facility_name: character.incarceration_facility_name || 'Detention Facility',
-          charges: character.pending_charges || [],
-          jailed_at: character.jailed_at || null,
-          jail_release_date: releaseDateISO,
-          sentence_days: character.jail_sentence_days || null,
-          overdue_hours: Math.round((now.getTime() - releaseDateMs) / 3600000),
-        });
-      } catch (releaseErr) {
-        console.warn(`[checkLifecycleEvents] Failed to release ${character.name}:`, releaseErr.message);
-      }
+        sentence_days: character.jail_sentence_days || null,
+        overdue_hours: Math.round((now.getTime() - releaseDateMs) / 3600000),
+      });
     }
 
     return Response.json({
@@ -216,7 +181,7 @@ Deno.serve(async (req) => {
       auto_released: autoReleasedCharacters.length,
       // Frontend reads graduations[] to show GraduationEventModal
       graduations: graduationsProcessed,
-      // Frontend reads releases[] to show "Released" notification (character already free)
+      // Frontend reads releases[] to show decision popup (Release Now or Extend Stay)
       releases: autoReleasedCharacters,
     });
 
