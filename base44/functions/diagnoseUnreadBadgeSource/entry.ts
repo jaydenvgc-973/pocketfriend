@@ -39,13 +39,11 @@ Deno.serve(async (req) => {
     const diagnosticByCharacter = [];
 
     for (const char of activeCreated) {
-      // Message entity does NOT have owner_email. Ownership scoping is enforced by only
-      // counting messages whose conversation_id exists in convoMap (already filtered to
-      // owner_email via Step 2). Messages in conversations not owned by this user are
-      // automatically excluded when convoMap lookup fails (no convo = orphaned, not counted).
-      // Message entity does NOT store owner_email. Ownership scoping is enforced
-      // downstream: only messages whose conversation_id exists in convoMap (which was
-      // already filtered by owner_email on Conversation) are counted.
+      // Ownership gate: Message does NOT store owner_email — filtering by it returns zero results.
+      // Ownership is enforced by the convoMap built in Step 2: only Conversations that passed
+      // the owner_email filter are in that map. Messages whose conversation_id is not in
+      // convoMap are classified as orphaned and skipped — never counted in any badge.
+      // This is the same gate used by CharacterCard in the UI.
       const unreadMessages = await base44.entities.Message.filter({
         character_id: char.id,
         sender_type: 'character',

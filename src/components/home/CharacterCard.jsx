@@ -149,11 +149,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         // Phone/text: type=phone AND not a world_phone channel
         const phoneIds = new Set(conversations.filter(c => c.type === "phone" && c.channel !== "world_phone").map(c => c.id));
 
-        // One single query — scoped by both character_id AND owner_email to prevent
-        // cross-account message bleed (owner_email is the ownership source of truth).
-        const unreadFilter = { character_id: character.id, sender_type: "character", is_read: false };
-        if (character.owner_email) unreadFilter.owner_email = character.owner_email;
-        const allUnread = await base44.entities.Message.filter(unreadFilter);
+        // Ownership is enforced by the conversation map above — only conversation IDs
+        // that belong to this character's owner_email scope (from the owner-scoped
+        // Conversation query) are present in worldPhoneIds / directIds / phoneIds.
+        // Messages whose conversation_id is not in any of those sets are silently skipped.
+        // Message does NOT store owner_email — filtering by it returns zero results.
+        const allUnread = await base44.entities.Message.filter({
+          character_id: character.id,
+          sender_type: "character",
+          is_read: false,
+        });
         let chatTotal = 0;
         let phoneTotal = 0;
         let worldPhoneTotal = 0;
