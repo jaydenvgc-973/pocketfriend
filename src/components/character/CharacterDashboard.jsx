@@ -304,11 +304,8 @@ export default function CharacterDashboard({ character }) {
     const cutoff3d  = subDays(now, 3).toISOString();
 
     // ── FETCH ALL DATA IN PARALLEL ─────────────────────────────────────────
-    // Key fix: fetch ALL messages in conversations where the character is a participant
-    // — not just messages where sender_type=character. This captures character-to-character
-    // interactions where [VIEWED_CHARACTER] is on either side.
     Promise.allSettled([
-      // All messages for this character (both as sender and as subject of conversation)
+      // Messages where viewed character is sender (character_id = charId)
       base44.entities.Message.filter({ character_id: charId }, "-created_date", 200),
       base44.entities.FinancialTransaction.filter({ character_id: charId }, "-timestamp", 20),
       base44.entities.AutomaticNarrative.filter({ character_id: charId }, "-timestamp", 80).catch(() => []),
@@ -320,16 +317,22 @@ export default function CharacterDashboard({ character }) {
       ownerEmail
         ? base44.entities.LocationReference.filter({ owner_email: ownerEmail }, null, 200).catch(() => [])
         : Promise.resolve([]),
-      // LifeEvent — THE actual Life Journal. Contains event_type, valence, severity, title,
-      // description, emotional_impact, timestamp. This is the primary emotional graph source.
       base44.entities.LifeEvent.filter({ character_id: charId }, "-timestamp", 100).catch(() => []),
-    ]).then(([msgsR, txR, narrR, convosR, locsR, lifeEventsR]) => {
+      // Messages where viewed character is RECEIVER (sender_character_id != charId but receiver = charId)
+      // This is what autonomous beat reply messages look like from the other side
+      base44.entities.Message.filter({ receiver_character_id: charId }, "-created_date", 100).catch(() => []),
+    ]).then(([msgsR, txR, narrR, convosR, locsR, lifeEventsR, rcvMsgsR]) => {
       const msgs       = msgsR.status       === "fulfilled" ? (msgsR.value       || []) : [];
       const txns       = txR.status         === "fulfilled" ? (txR.value         || []) : [];
       const narrs      = narrR.status       === "fulfilled" ? (narrR.value       || []) : [];
       const convos     = convosR.status     === "fulfilled" ? (convosR.value     || []) : [];
       const locsArr    = locsR.status       === "fulfilled" ? (locsR.value       || []) : [];
       const lifeEvents = lifeEventsR.status === "fulfilled" ? (lifeEventsR.value || []) : [];
+      // Messages sent TO the viewed character — these carry the other participant's character_id + character_name
+      const rcvMsgs    = rcvMsgsR.status    === "fulfilled" ? (rcvMsgsR.value    || []) : [];
+      // Combine for full picture — deduplicated by id
+      const allMsgIds = new Set(msgs.map(m => m.id));
+      const allMsgs   = [...msgs, ...rcvMsgs.filter(m => !allMsgIds.has(m.id))];
 
       // ── Build location map ────────────────────────────────────────────────
       const locationMap = {};
@@ -361,20 +364,21 @@ export default function CharacterDashboard({ character }) {
         if (m.character_id && m.name) relNameById[m.character_id] = m.name;
       });
 
-      // Source 3: message fields — character_name + character_id pairs from ALL messages.
-      // This is where autonomous beat participant names live: the message record itself
-      // carries character_name for the sender (character_id field), so we can map
-      // any participant ID → name directly from message data.
-      msgs.forEach(m => {
+      // Source 3: ALL messages (both sent-by and received-by the viewed character).
+      // rcvMsgs gives us the OTHER character's character_id + character_name directly —
+      // because when they sent the message, their info is in those fields.
+      // This is the authoritative source for autonomous beat participant names.
+      allMsgs.forEach(m => {
         if (m.character_id && m.character_name && m.character_id !== charId) {
           if (!relNameById[m.character_id]) relNameById[m.character_id] = m.character_name;
         }
-        // receiver_character_id is the other participant in bilateral world phone messages
-        // but we don't have the receiver's name directly — skip (sender_character_id covers it)
+        // Also index by sender_character_id in case character_id differs
+        if (m.sender_character_id && m.character_name && m.sender_character_id !== charId) {
+          if (!relNameById[m.sender_character_id]) relNameById[m.sender_character_id] = m.character_name;
+        }
       });
 
-      // Debug: log the name map size to confirm resolution coverage
-      console.log(`[CharacterDashboard] Name map: ${Object.keys(relNameById).length} IDs resolved for charId=${charId}`);
+      console.log(`[CharacterDashboard] Name map: ${Object.keys(relNameById).length} IDs resolved for charId=${charId} | rcvMsgs=${rcvMsgs.length}`);
 
       const isInternalTitle = (t) =>
         !t ||
@@ -400,8 +404,8 @@ export default function CharacterDashboard({ character }) {
         convoMeta[c.id] = { name, isGroup: false, isWorldPhone: isWP };
       });
 
-      // Enrich from message sender fields (name on the message itself)
-      msgs.forEach(m => {
+      // Enrich convoMeta from ALL messages (both sides of the conversation)
+      allMsgs.forEach(m => {
         if (convoMeta[m.conversation_id]?.name) return;
         const n = (m.character_name && m.character_id !== charId) ? m.character_name
           : (m.played_as_character_name && m.played_as_character_id !== charId) ? m.played_as_character_name
@@ -412,10 +416,9 @@ export default function CharacterDashboard({ character }) {
         }
       });
 
-      // Enrich beat type from message trigger_source field — used for human-readable labels
-      msgs.forEach(m => {
+      // Enrich beat type from trigger_source on all messages
+      allMsgs.forEach(m => {
         if (!m.trigger_source || m.trigger_source !== 'autonomous_social_beat') return;
-        // beat type may be in memory_summary or a custom field — use trigger_source as signal
         if (convoMeta[m.conversation_id]) {
           convoMeta[m.conversation_id].isAutonomousBeat = true;
         }
@@ -424,11 +427,8 @@ export default function CharacterDashboard({ character }) {
       // ── Valid conversation IDs (scoped to this character's conversations) ──
       const validConvoIds = new Set(convos.map(c => c.id));
 
-      // ── ALL messages across ALL participants in these conversations ────────
-      // The character_id filter above gives us messages where character is sender/subject.
-      // For character-to-character convos we also need to look at messages from the other side.
-      // Filter messages to only those in conversations we loaded (ownership-scoped).
-      const scopedMsgs = msgs.filter(m => validConvoIds.has(m.conversation_id));
+      // scopedMsgs: all messages (both sides) in conversations we loaded
+      const scopedMsgs = allMsgs.filter(m => validConvoIds.has(m.conversation_id));
 
       // ── Time windows ──────────────────────────────────────────────────────
       const msgs24h  = scopedMsgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff24h)));
