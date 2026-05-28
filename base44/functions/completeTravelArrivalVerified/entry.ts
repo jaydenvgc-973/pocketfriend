@@ -245,6 +245,14 @@ Deno.serve(async (req) => {
           destination_location_name: destLoc.name,
           destination_category:      destLoc.category || null,
           home_location_id:          char.current_home_location_id || session.character_home_location_id || null,
+          // Context fields — used to determine if home arrival is food-related
+          arrival_reason:            session.travel_reason || null,
+          travel_reason:             session.travel_reason || null,
+          source_of_move:            session.travel_source || null,
+          presence_reason:           finalPresenceStatus || null,
+          resolved_source_reason:    `verified_arrival:${session.id}`,
+          current_activity:          char.current_activity || null,
+          need_type:                 null, // not available at arrival level — populated by need-driven callers
         }).catch(e => console.log(`[completeTravelArrivalVerified] food spending hook non-fatal: ${e.message}`));
 
         results.push({

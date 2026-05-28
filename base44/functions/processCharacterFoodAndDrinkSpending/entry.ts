@@ -2,135 +2,254 @@
  * processCharacterFoodAndDrinkSpending
  *
  * CONSEQUENCE-ONLY function. Called fire-and-forget after a verified travel arrival.
- * This function NEVER affects travel routing, movement, needs simulation, or character visibility.
+ * NEVER affects travel routing, movement, needs simulation, or character visibility.
  *
- * What it does:
- *   1. Guards: active_created_character only, must have CharacterFinancial record
- *   2. If arriving at home and home_food_value > 0 → consume inventory, no charge, return
- *   3. Classifies destination into a spending category based on location category + name
- *   4. Determines a realistic cost within per-visit cap
- *   5. Checks duplicate protection: same character + location + type within 15 minutes → skip
- *   6. Checks daily cap from FinancialTransaction records → skip if exceeded
- *   7. Checks balance → skip if insufficient
- *   8. Creates FinancialTransaction, updates CharacterFinancial.current_balance
- *   9. If grocery purchase → create or update HouseholdResource
+ * Pipeline:
+ *   1. Guards: active_created_character, owner_email+character_id scoped, CharacterFinancial must exist
+ *   2. Home arrival + food-related reason → consume HouseholdResource.home_food_value, no charge
+ *   3. Classify destination into spend category (bar_lounge | club_nightlife | restaurant | fast_food | grocery)
+ *   4. Base cost randomized within category range
+ *   5. Trait/quirk/emotional modifiers applied
+ *   6. Clamp to per-visit cap and daily spend cap (10% balance, hard $150)
+ *   7. Duplicate check: same owner+character+location+type within 15 minutes → skip
+ *   8. Daily charge-count limit from FinancialTransaction → skip if exceeded
+ *   9. Balance check → skip if insufficient
+ *   10. Create FinancialTransaction (owner_email scoped), update CharacterFinancial
+ *   11. Grocery → create/update HouseholdResource
  *
- * Rules:
- *   - NEVER modifies Character schema
- *   - NEVER modifies LocationReference schema
- *   - NEVER blocks or alters travel (called only after route_status="arrived" is already stamped)
- *   - All failures are non-fatal — logged but never thrown back to caller
- *   - Uses asServiceRole throughout (no user session in arrival pipeline)
+ * Daily cap note: uses current_balance at time of call (shrinks slightly through the day
+ * as earlier charges reduce balance). This is intentional — spending power reduces as
+ * the character spends. Hard cap of $150 prevents compounding.
  */
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// ── SPENDING CATEGORY CLASSIFICATION ─────────────────────────────────────────
+// ── LOCATION CLASSIFICATION ───────────────────────────────────────────────────
 
-const FOOD_DRINK_KEYWORDS = [
-  'restaurant', 'cafe', 'café', 'diner', 'bar', 'lounge', 'club', 'nightclub',
-  'fast food', 'food truck', 'bakery', 'deli', 'bistro', 'tavern', 'pub',
-  'grill', 'kitchen', 'eatery', 'steakhouse', 'sushi', 'pizza', 'burger',
-  'taco', 'bbq', 'buffet', 'brunch', 'breakfast spot', 'food hall',
-  'juice bar', 'smoothie', 'coffee', 'boba', 'tea house', 'snack',
+const CLUB_NIGHTLIFE_KEYWORDS = [
+  'nightclub', 'club', 'nightlife', 'speakeasy', 'hookah', 'bottle service',
+  'dance club', 'after hours', 'rave', 'ultra', 'drais', 'liv ',
 ];
 
-const NIGHTLIFE_KEYWORDS = [
-  'club', 'nightclub', 'lounge', 'bar', 'tavern', 'pub', 'cocktail',
-  'nightlife', 'speakeasy', 'rooftop bar', 'wine bar', 'hookah',
+const BAR_LOUNGE_KEYWORDS = [
+  'bar', 'lounge', 'tavern', 'pub', 'cocktail', 'rooftop bar', 'wine bar',
+  'sports bar', 'dive bar', 'irish pub', 'brewery', 'taproom', 'beer garden',
 ];
 
 const FAST_FOOD_KEYWORDS = [
-  'fast food', 'food truck', 'bakery', 'deli', 'cafe', 'café',
-  'coffee', 'boba', 'juice bar', 'smoothie', 'snack', 'diner',
+  'fast food', 'food truck', 'bakery', 'deli', 'cafe', 'café', 'coffee',
+  'boba', 'juice bar', 'smoothie', 'snack bar', 'diner', 'donut',
+  'sandwich', 'sub shop', 'wing stop', 'chick-fil', 'mcdonald', 'wendy',
+  'burger king', 'taco bell', 'chipotle', 'subway', 'panera', 'wingstop',
+  'five guys', 'in-n-out', 'shake shack', 'starbucks', 'dunkin',
+];
+
+const FOOD_DRINK_KEYWORDS = [
+  ...FAST_FOOD_KEYWORDS,
+  'restaurant', 'bistro', 'grill', 'kitchen', 'eatery', 'steakhouse',
+  'sushi', 'pizza', 'burger', 'taco', 'bbq', 'buffet', 'brunch',
+  'breakfast spot', 'food hall', 'tea house', 'dining',
 ];
 
 const GROCERY_KEYWORDS = [
   'grocery', 'supermarket', 'market', 'whole foods', 'trader joe',
-  'aldi', 'kroger', 'costco', 'walmart', 'target', 'convenience store',
+  'aldi', 'kroger', 'costco', 'walmart', 'target grocery', 'convenience store',
   'bodega', 'food mart', 'mini mart', 'food market', 'fresh market',
+  'safeway', 'publix', 'heb', 'meijer', 'stop & shop', 'shoprite',
 ];
 
 /**
- * Returns spending category or null (null = not a chargeable food/drink location).
+ * Returns one of: 'bar_lounge' | 'club_nightlife' | 'restaurant' | 'fast_food' | 'grocery' | null
+ * null = not a chargeable food/drink location.
  *
- * gym is NOT eligible unless name/context includes food/drink keyword.
- * broad 'social' category alone is NOT eligible — must match name keywords.
+ * Separation of bar_lounge vs club_nightlife is required for correct cap application.
+ * gym is NOT eligible unless name contains a food/drink keyword.
+ * broad 'social' category alone is NOT eligible.
  */
 function classifyLocation(category, name) {
   const cat = (category || '').toLowerCase();
   const nm  = (name    || '').toLowerCase();
 
-  // Grocery — check name first since category may be generic
-  if (cat === 'grocery' || GROCERY_KEYWORDS.some(k => nm.includes(k))) {
-    return 'grocery';
-  }
+  // Grocery first — specific enough to check before anything else
+  if (cat === 'grocery' || GROCERY_KEYWORDS.some(k => nm.includes(k))) return 'grocery';
 
-  // food_drink category is always eligible — further classify by name
+  // food_drink category — classify into sub-type by name
   if (cat === 'food_drink') {
-    if (NIGHTLIFE_KEYWORDS.some(k => nm.includes(k))) return 'bar_nightlife';
-    if (FAST_FOOD_KEYWORDS.some(k => nm.includes(k))) return 'fast_food';
+    if (CLUB_NIGHTLIFE_KEYWORDS.some(k => nm.includes(k))) return 'club_nightlife';
+    if (BAR_LOUNGE_KEYWORDS.some(k => nm.includes(k)))     return 'bar_lounge';
+    if (FAST_FOOD_KEYWORDS.some(k => nm.includes(k)))      return 'fast_food';
     return 'restaurant';
   }
 
-  // social category: only if name has explicit food/drink/nightlife keyword
+  // social: only eligible if name has a specific food/drink/nightlife indicator
   if (cat === 'social') {
-    if (NIGHTLIFE_KEYWORDS.some(k => nm.includes(k))) return 'bar_nightlife';
-    if (FOOD_DRINK_KEYWORDS.some(k => nm.includes(k))) return 'restaurant';
-    return null; // broad social without food indicator — NOT eligible
+    if (CLUB_NIGHTLIFE_KEYWORDS.some(k => nm.includes(k))) return 'club_nightlife';
+    if (BAR_LOUNGE_KEYWORDS.some(k => nm.includes(k)))     return 'bar_lounge';
+    if (FOOD_DRINK_KEYWORDS.some(k => nm.includes(k)))     return 'restaurant';
+    return null; // generic social with no food indicator — NOT eligible
   }
 
-  // gym: only if name has food/drink keyword (smoothie bar, gym café, etc.)
+  // gym: only if name has explicit food/drink word (smoothie bar, gym café, etc.)
   if (cat === 'gym') {
     if (FOOD_DRINK_KEYWORDS.some(k => nm.includes(k))) return 'fast_food';
-    return null; // plain gym arrival — NOT eligible
+    return null;
   }
 
   // Name-based fallback for any other category
-  if (GROCERY_KEYWORDS.some(k => nm.includes(k))) return 'grocery';
-  if (NIGHTLIFE_KEYWORDS.some(k => nm.includes(k))) return 'bar_nightlife';
-  if (FOOD_DRINK_KEYWORDS.some(k => nm.includes(k))) return 'restaurant';
+  if (GROCERY_KEYWORDS.some(k => nm.includes(k)))          return 'grocery';
+  if (CLUB_NIGHTLIFE_KEYWORDS.some(k => nm.includes(k)))   return 'club_nightlife';
+  if (BAR_LOUNGE_KEYWORDS.some(k => nm.includes(k)))       return 'bar_lounge';
+  if (FOOD_DRINK_KEYWORDS.some(k => nm.includes(k)))       return 'restaurant';
 
-  return null; // not a food/drink location
+  return null;
 }
 
-// ── PER-VISIT CAPS ────────────────────────────────────────────────────────────
+// ── PER-VISIT HARD CAPS ───────────────────────────────────────────────────────
 const PER_VISIT_CAP = {
-  fast_food:    30,
-  restaurant:   60,
-  bar_nightlife: 100, // covers bar ($75) through club/nightlife ($100) — randomized within
-  grocery:      140,
+  fast_food:      30,
+  restaurant:     60,
+  bar_lounge:     75,
+  club_nightlife: 100,
+  grocery:        140,
 };
 
-// ── DAILY CHARGE LIMITS (max paid charges per day) ───────────────────────────
+// ── DAILY CHARGE COUNT LIMITS ─────────────────────────────────────────────────
 const DAILY_CHARGE_LIMIT = {
-  fast_food:    2,
-  restaurant:   1,
-  bar_nightlife: 1,
-  grocery:      1,
+  fast_food:      2,
+  restaurant:     1,
+  bar_lounge:     1,
+  club_nightlife: 1,
+  grocery:        1,
 };
 
-// ── TRANSACTION TYPE MAPPING ──────────────────────────────────────────────────
+// ── TRANSACTION TYPE (maps to FinancialTransaction.transaction_type enum) ─────
 const TX_TYPE = {
-  fast_food:    'bar_restaurant',
-  restaurant:   'bar_restaurant',
-  bar_nightlife: 'bar_restaurant',
-  grocery:      'groceries',
+  fast_food:      'bar_restaurant',
+  restaurant:     'bar_restaurant',
+  bar_lounge:     'bar_restaurant',
+  club_nightlife: 'bar_restaurant',
+  grocery:        'groceries',
 };
 
-// ── COST RANGES ───────────────────────────────────────────────────────────────
+// ── BASE COST RANGES (before trait modifiers) ─────────────────────────────────
 const COST_RANGE = {
-  fast_food:    { min: 8,  max: 28 },
-  restaurant:   { min: 18, max: 58 },
-  bar_nightlife: { min: 20, max: 95 },
-  grocery:      { min: 40, max: 135 },
+  fast_food:      { min: 8,  max: 18  },
+  restaurant:     { min: 18, max: 55  },
+  bar_lounge:     { min: 20, max: 70  },
+  club_nightlife: { min: 30, max: 95  },
+  grocery:        { min: 40, max: 130 },
 };
 
-function randomCost(category) {
+function baseCost(category) {
   const { min, max } = COST_RANGE[category] || { min: 5, max: 20 };
-  const cap = PER_VISIT_CAP[category] || max;
-  const raw = min + Math.random() * (max - min);
-  return Math.round(Math.min(raw, cap) * 100) / 100;
+  return min + Math.random() * (max - min);
+}
+
+// ── TRAIT / QUIRK / EMOTIONAL MODIFIER ───────────────────────────────────────
+/**
+ * Returns a multiplier (e.g. 1.0 = no change, 1.3 = 30% more, 0.7 = 30% less).
+ * Reads character.personality_traits[], character.quirks[], character.trait_* booleans,
+ * and character.emotional_state.
+ *
+ * Modifiers stack multiplicatively (capped at 2.0x, floored at 0.4x).
+ */
+function computeTraitModifier(char, spendCategory) {
+  let multiplier = 1.0;
+  const logs = [];
+
+  const traits     = (char.personality_traits || []).map(t => (t || '').toLowerCase());
+  const quirks     = (char.quirks             || []).map(q => ((q.description || q.name || q) || '').toLowerCase());
+  const emotional  = (char.emotional_state    || '').toLowerCase();
+  const allText    = [...traits, ...quirks].join(' ');
+
+  // ── HIGHER SPENDING traits ────────────────────────────────────────────────
+  if (char.trait_bougie) {
+    multiplier *= 1.35;
+    logs.push('trait_bougie +35%');
+  }
+  if (allText.includes('impulsive') || allText.includes('retail therapy') || allText.includes('splurge')) {
+    multiplier *= 1.25;
+    logs.push('impulsive/retail_therapy +25%');
+  }
+  if (allText.includes('drinker') || allText.includes('alcoholic') || allText.includes('heavy drinker')) {
+    if (spendCategory === 'bar_lounge' || spendCategory === 'club_nightlife') {
+      multiplier *= 1.30;
+      logs.push('drinker at bar/club +30%');
+    }
+  }
+  if (char.trait_night_owl && (spendCategory === 'bar_lounge' || spendCategory === 'club_nightlife')) {
+    multiplier *= 1.15;
+    logs.push('trait_night_owl at nightlife +15%');
+  }
+  if (allText.includes('stress eater') || allText.includes('emotional eater')) {
+    if (emotional.includes('stress') || emotional.includes('anxi') || emotional.includes('depress') || emotional.includes('sad')) {
+      multiplier *= 1.20;
+      logs.push('stress_eater + stressed emotional_state +20%');
+    }
+  }
+  if (allText.includes('foodie') || allText.includes('food lover') || allText.includes('food enthusiast')) {
+    if (spendCategory === 'restaurant' || spendCategory === 'fast_food') {
+      multiplier *= 1.15;
+      logs.push('foodie at food location +15%');
+    }
+  }
+
+  // ── RESTRAINED SPENDING traits ────────────────────────────────────────────
+  if (allText.includes('frugal') || allText.includes('financially anxious') || allText.includes('budget')) {
+    multiplier *= 0.65;
+    logs.push('frugal/financially_anxious -35%');
+  }
+  if (allText.includes('disciplined') || allText.includes('financially disciplined')) {
+    multiplier *= 0.75;
+    logs.push('disciplined -25%');
+  }
+  if (allText.includes('homebody') && spendCategory !== 'grocery') {
+    multiplier *= 0.80;
+    logs.push('homebody (non-grocery) -20%');
+  }
+  if (char.financial_need_value !== undefined && char.financial_need_value < 20) {
+    multiplier *= 0.55;
+    logs.push(`financial_need critical (${char.financial_need_value}) -45%`);
+  } else if (char.financial_need_value !== undefined && char.financial_need_value < 40) {
+    multiplier *= 0.75;
+    logs.push(`financial_need low (${char.financial_need_value}) -25%`);
+  }
+
+  // ── EMOTIONAL STATE modifiers ─────────────────────────────────────────────
+  if (emotional.includes('grief') || emotional.includes('heartbroken') || emotional.includes('devastated')) {
+    multiplier *= 1.20;
+    logs.push('grief/heartbroken emotional_state +20%');
+  }
+  if (emotional.includes('celebrat') || emotional.includes('ecstat') || emotional.includes('euphoric')) {
+    multiplier *= 1.25;
+    logs.push('celebratory emotional_state +25%');
+  }
+
+  // Clamp final multiplier: min 0.4x, max 2.0x
+  multiplier = Math.max(0.4, Math.min(2.0, multiplier));
+
+  return { multiplier, modifierLogs: logs };
+}
+
+// ── FOOD-RELATED ARRIVAL REASON CHECK ────────────────────────────────────────
+const HOME_FOOD_REASON_KEYWORDS = [
+  'hunger', 'hungry', 'eat', 'eating', 'food', 'meal', 'snack', 'lunch',
+  'dinner', 'breakfast', 'fridge', 'cook', 'cooking', 'groceries', 'need',
+  'fulfillment', 'starving',
+];
+
+function isHomeFoodRelatedArrival(body) {
+  const fields = [
+    body.arrival_reason || '',
+    body.presence_reason || '',
+    body.current_activity || '',
+    body.resolved_source_reason || '',
+    body.travel_reason || '',
+    body.need_type || '',
+    body.source_of_move || '',
+  ].map(v => (v || '').toLowerCase()).join(' ');
+
+  return HOME_FOOD_REASON_KEYWORDS.some(k => fields.includes(k));
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
@@ -139,7 +258,6 @@ Deno.serve(async (req) => {
   const log = [];
   try {
     const base44 = createClientFromRequest(req);
-    // No user session — runs in arrival pipeline via asServiceRole
 
     const body = await req.json().catch(() => ({}));
     const {
@@ -149,6 +267,14 @@ Deno.serve(async (req) => {
       destination_location_name,
       destination_category,
       home_location_id,
+      // context fields for food-reason detection
+      arrival_reason,
+      presence_reason,
+      source_of_move,
+      current_activity,
+      resolved_source_reason,
+      travel_reason,
+      need_type,
     } = body;
 
     if (!character_id || !owner_email || !destination_location_id) {
@@ -158,23 +284,23 @@ Deno.serve(async (req) => {
     const now    = new Date();
     const nowISO = now.toISOString();
 
-    // ── GUARD 1: active_created_character only ────────────────────────────────
+    // ── GUARD 1: active_created_character — owner_email + id scoped ───────────
     const charArr = await base44.asServiceRole.entities.Character.filter(
-      { id: character_id }, null, 1
+      { owner_email, id: character_id }, null, 1
     ).catch(() => []);
     const char = charArr[0];
 
     if (!char) {
-      return Response.json({ skipped: true, reason: 'character_not_found', character_id, log });
+      return Response.json({ skipped: true, reason: 'character_not_found', character_id, owner_email, log });
     }
     if (char.character_type !== 'active_created_character') {
       return Response.json({ skipped: true, reason: 'not_active_created_character', character_type: char.character_type, log });
     }
     log.push(`char=${char.name} type=${char.character_type}`);
 
-    // ── GUARD 2: CharacterFinancial must exist ────────────────────────────────
+    // ── GUARD 2: CharacterFinancial — owner_email + character_id scoped ───────
     const finArr = await base44.asServiceRole.entities.CharacterFinancial.filter(
-      { character_id }, null, 1
+      { owner_email, character_id }, null, 1
     ).catch(() => []);
     const financial = finArr[0];
 
@@ -182,112 +308,114 @@ Deno.serve(async (req) => {
       log.push('no_financial_record — skipped');
       return Response.json({ skipped: true, reason: 'no_financial_record', log });
     }
-    log.push(`balance=${financial.current_balance}`);
+    const balance = financial.current_balance || 0;
+    log.push(`balance=$${balance}`);
 
     // ── HOME FOOD CONSUMPTION ─────────────────────────────────────────────────
-    // If arriving at home and household has food inventory → consume, no charge
+    // Only consume if: arriving home AND the arrival reason is food-related.
+    // A character returning from work does NOT auto-consume food every arrival.
     const isArrivingHome = home_location_id && destination_location_id === home_location_id;
 
     if (isArrivingHome) {
+      const isFoodRelated = isHomeFoodRelatedArrival(body);
+      if (!isFoodRelated) {
+        log.push('at_home_non_food_arrival — no_consumption_no_charge');
+        return Response.json({ skipped: true, reason: 'home_arrival_not_food_related', log });
+      }
+
       const hrArr = await base44.asServiceRole.entities.HouseholdResource.filter(
         { owner_email, home_location_id, resource_type: 'food' }, null, 1
       ).catch(() => []);
       const hr = hrArr[0];
 
       if (hr && (hr.home_food_value || 0) > 0) {
-        const consumed = Math.min(hr.home_food_value, 15); // consume up to $15 equivalent per meal
-        const newFoodValue = Math.max(0, (hr.home_food_value || 0) - consumed);
+        const consumed    = Math.min(hr.home_food_value, 15);
+        const newFoodVal  = Math.max(0, Math.round(((hr.home_food_value || 0) - consumed) * 100) / 100);
         await base44.asServiceRole.entities.HouseholdResource.update(hr.id, {
-          home_food_value: Math.round(newFoodValue * 100) / 100,
+          home_food_value:  newFoodVal,
           last_consumed_at: nowISO,
         }).catch(e => log.push(`hr_consume_err: ${e.message}`));
-
-        log.push(`home_food_consumed=$${consumed} remaining=$${newFoodValue}`);
-        return Response.json({
-          success: true,
-          outcome: 'home_food_consumed',
-          consumed,
-          remaining_food_value: newFoodValue,
-          character_name: char.name,
-          log,
-        });
+        log.push(`home_food_consumed=$${consumed} remaining=$${newFoodVal}`);
+        return Response.json({ success: true, outcome: 'home_food_consumed', consumed, remaining_food_value: newFoodVal, log });
       }
 
-      // At home but no inventory — no charge for eating at home without food stocked
-      log.push('at_home_no_inventory — no_charge');
-      return Response.json({ skipped: true, reason: 'at_home_no_food_inventory', log });
+      log.push('at_home_food_related_but_no_inventory — no_charge');
+      return Response.json({ skipped: true, reason: 'home_no_food_inventory', log });
     }
 
-    // ── CLASSIFY LOCATION ─────────────────────────────────────────────────────
+    // ── CLASSIFY DESTINATION ──────────────────────────────────────────────────
     const spendCategory = classifyLocation(destination_category, destination_location_name);
-
     if (!spendCategory) {
-      log.push(`location_not_chargeable category=${destination_category} name=${destination_location_name}`);
+      log.push(`not_chargeable cat=${destination_category} name=${destination_location_name}`);
       return Response.json({ skipped: true, reason: 'not_chargeable_location', log });
     }
     log.push(`spend_category=${spendCategory}`);
 
-    // ── DUPLICATE PROTECTION: 15-minute window ────────────────────────────────
+    // ── DUPLICATE PROTECTION: 15-minute window (owner_email scoped) ──────────
     const windowStart = new Date(now.getTime() - 15 * 60 * 1000).toISOString();
     const recentTxArr = await base44.asServiceRole.entities.FinancialTransaction.filter(
-      { character_id, location_id: destination_location_id, transaction_type: TX_TYPE[spendCategory] },
-      '-timestamp',
-      10
+      { owner_email, character_id, location_id: destination_location_id, transaction_type: TX_TYPE[spendCategory] },
+      '-timestamp', 10
     ).catch(() => []);
 
     const isDuplicate = recentTxArr.some(t => t.timestamp && t.timestamp > windowStart);
     if (isDuplicate) {
-      log.push(`duplicate_blocked — same location+type within 15min`);
+      log.push('duplicate_blocked — same owner+char+location+type within 15min');
       return Response.json({ skipped: true, reason: 'duplicate_within_15min', log });
     }
 
-    // ── DAILY CAP CHECK: count today's charges for this category ─────────────
+    // ── DAILY CHARGE-COUNT CHECK (owner_email scoped) ─────────────────────────
     const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);
     const todayStartISO = todayStart.toISOString();
 
-    const todayAllTxArr = await base44.asServiceRole.entities.FinancialTransaction.filter(
-      { character_id, direction: 'expense', transaction_type: TX_TYPE[spendCategory] },
-      '-timestamp',
-      50
+    const todayCategoryTxArr = await base44.asServiceRole.entities.FinancialTransaction.filter(
+      { owner_email, character_id, direction: 'expense', transaction_type: TX_TYPE[spendCategory] },
+      '-timestamp', 50
     ).catch(() => []);
 
-    const todayTxs = todayAllTxArr.filter(t => t.timestamp && t.timestamp >= todayStartISO);
-    const todayChargeCount = todayTxs.length;
-    const todaySpend       = todayTxs.reduce((s, t) => s + (t.amount || 0), 0);
+    const todayCategoryTxs     = todayCategoryTxArr.filter(t => t.timestamp && t.timestamp >= todayStartISO);
+    const todayChargeCount     = todayCategoryTxs.length;
+    const dailyChargeLimit     = DAILY_CHARGE_LIMIT[spendCategory];
 
-    const dailyChargeLimit = DAILY_CHARGE_LIMIT[spendCategory];
     if (todayChargeCount >= dailyChargeLimit) {
-      log.push(`daily_charge_limit_blocked — ${todayChargeCount}/${dailyChargeLimit} charges today for ${spendCategory}`);
+      log.push(`daily_charge_limit_blocked — ${todayChargeCount}/${dailyChargeLimit} for ${spendCategory}`);
       return Response.json({ skipped: true, reason: 'daily_charge_limit_reached', todayChargeCount, dailyChargeLimit, log });
     }
 
-    // ── DAILY SPEND CAP: 10% of balance, hard max $150 ───────────────────────
-    const allTodayExpenseArr = await base44.asServiceRole.entities.FinancialTransaction.filter(
-      { character_id, direction: 'expense' },
-      '-timestamp',
-      100
+    // ── DAILY SPEND CAP: 10% of current balance, hard max $150 (owner_email scoped) ──
+    const allTodayExpArr = await base44.asServiceRole.entities.FinancialTransaction.filter(
+      { owner_email, character_id, direction: 'expense' },
+      '-timestamp', 100
     ).catch(() => []);
 
-    const foodDrinkTxTypes = new Set(['bar_restaurant', 'groceries']);
-    const totalFoodDrinkToday = allTodayExpenseArr
-      .filter(t => t.timestamp && t.timestamp >= todayStartISO && foodDrinkTxTypes.has(t.transaction_type))
+    const foodDrinkTypes = new Set(['bar_restaurant', 'groceries']);
+    const totalFoodDrinkToday = allTodayExpArr
+      .filter(t => t.timestamp && t.timestamp >= todayStartISO && foodDrinkTypes.has(t.transaction_type))
       .reduce((s, t) => s + (t.amount || 0), 0);
 
-    const balance       = financial.current_balance || 0;
+    // Note: dailySpendCap uses current balance (post any earlier charges today).
+    // This is intentional — spending power shrinks through the day.
+    // Hard cap of $150 prevents compounding on large balances.
     const dailySpendCap = Math.min(balance * 0.10, 150);
 
     if (totalFoodDrinkToday >= dailySpendCap) {
-      log.push(`daily_spend_cap_blocked — spent=$${totalFoodDrinkToday} cap=$${dailySpendCap.toFixed(2)}`);
+      log.push(`daily_spend_cap_blocked — spent=$${totalFoodDrinkToday.toFixed(2)} cap=$${dailySpendCap.toFixed(2)}`);
       return Response.json({ skipped: true, reason: 'daily_spend_cap_reached', totalFoodDrinkToday, dailySpendCap, log });
     }
 
-    // ── DETERMINE AMOUNT ──────────────────────────────────────────────────────
-    let amount = randomCost(spendCategory);
+    // ── COMPUTE AMOUNT: base cost + trait modifiers + caps ────────────────────
+    const raw = baseCost(spendCategory);
+    const { multiplier, modifierLogs } = computeTraitModifier(char, spendCategory);
+    const modified = raw * multiplier;
+    log.push(...modifierLogs.map(m => `modifier: ${m}`));
+    log.push(`base=$${raw.toFixed(2)} multiplier=${multiplier.toFixed(2)} modified=$${modified.toFixed(2)}`);
 
+    // Apply per-visit cap
+    const visitCapped = Math.min(modified, PER_VISIT_CAP[spendCategory]);
     // Clamp so daily spend cap is not exceeded
     const remaining = dailySpendCap - totalFoodDrinkToday;
-    amount = Math.min(amount, remaining);
+    let amount = Math.min(visitCapped, remaining);
     amount = Math.round(amount * 100) / 100;
 
     if (amount <= 0) {
@@ -301,17 +429,19 @@ Deno.serve(async (req) => {
       return Response.json({ skipped: true, reason: 'insufficient_balance', balance, amount, log });
     }
 
-    // ── CREATE FinancialTransaction ───────────────────────────────────────────
+    // ── CREATE FinancialTransaction (owner_email scoped) ──────────────────────
     const newBalance = Math.round((balance - amount) * 100) / 100;
 
     const txDescription = {
-      fast_food:    `Food/drink purchase at ${destination_location_name}`,
-      restaurant:   `Meal at ${destination_location_name}`,
-      bar_nightlife: `Bar/nightlife at ${destination_location_name}`,
-      grocery:      `Grocery purchase at ${destination_location_name}`,
+      fast_food:      `Food/drink at ${destination_location_name}`,
+      restaurant:     `Meal at ${destination_location_name}`,
+      bar_lounge:     `Bar/drinks at ${destination_location_name}`,
+      club_nightlife: `Nightlife at ${destination_location_name}`,
+      grocery:        `Grocery purchase at ${destination_location_name}`,
     }[spendCategory] || `Spending at ${destination_location_name}`;
 
     const tx = await base44.asServiceRole.entities.FinancialTransaction.create({
+      owner_email,
       character_id,
       character_name:   char.name,
       sender_id:        character_id,
@@ -338,9 +468,9 @@ Deno.serve(async (req) => {
       last_updated:    nowISO,
     });
 
-    log.push(`balance updated $${balance} → $${newBalance}`);
+    log.push(`balance $${balance} → $${newBalance}`);
 
-    // ── UPDATE HouseholdResource for grocery purchases ────────────────────────
+    // ── GROCERY: create or update HouseholdResource ───────────────────────────
     if (spendCategory === 'grocery' && home_location_id) {
       const hrArr2 = await base44.asServiceRole.entities.HouseholdResource.filter(
         { owner_email, home_location_id, resource_type: 'food' }, null, 1
@@ -349,12 +479,12 @@ Deno.serve(async (req) => {
 
       const addedFoodValue = Math.round(amount * 2 * 100) / 100; // $1 spent ≈ $2 food value
       const groceryMeta = {
-        last_grocery_purchase_at:              nowISO,
-        last_grocery_purchase_character_id:    character_id,
-        last_grocery_purchase_character_name:  char.name,
-        last_grocery_purchase_transaction_id:  tx.id,
-        grocery_source_location_id:            destination_location_id,
-        grocery_source_location_name:          destination_location_name,
+        last_grocery_purchase_at:             nowISO,
+        last_grocery_purchase_character_id:   character_id,
+        last_grocery_purchase_character_name: char.name,
+        last_grocery_purchase_transaction_id: tx.id,
+        grocery_source_location_id:           destination_location_id,
+        grocery_source_location_name:         destination_location_name,
       };
 
       if (hr) {
@@ -377,8 +507,10 @@ Deno.serve(async (req) => {
     }
 
     console.log(
-      `[processCharacterFoodAndDrinkSpending] ✓ char=${char.name}` +
+      `[processCharacterFoodAndDrinkSpending] ✓` +
+      ` char=${char.name} owner=${owner_email}` +
       ` category=${spendCategory} amount=$${amount}` +
+      ` multiplier=${multiplier.toFixed(2)}` +
       ` location=${destination_location_name}` +
       ` balance=$${balance}→$${newBalance}`
     );
@@ -388,6 +520,8 @@ Deno.serve(async (req) => {
       character_name: char.name,
       spend_category: spendCategory,
       amount,
+      multiplier,
+      modifier_logs:  modifierLogs,
       new_balance:    newBalance,
       transaction_id: tx.id,
       log,
