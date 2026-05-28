@@ -159,9 +159,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         // sync_status="merged" means the thread was consolidated; its messages were moved to the canonical thread.
         const activeConvos = conversations.filter(c => c.sync_status !== 'merged');
 
-        // channel="world_phone" is the authoritative classifier — always takes priority over type.
-        const worldPhoneIds = new Set(activeConvos.filter(c => c.channel === "world_phone").map(c => c.id));
-        const worldContactIds = new Set(activeConvos.filter(c => c.type === "npc" && c.channel !== "world_phone").map(c => c.id));
+        // GREEN BADGE — World Contact panel only shows npc-type conversations (fictitious/NPC contacts).
+        // Bilateral world_phone threads (character-to-character) are NOT displayed in the World Contact panel.
+        // Counting world_phone threads in the green badge causes inflated counts with no visible source.
+        // Therefore: green badge = only npc-type contact conversations (what the panel actually shows).
+        const worldContactIds = new Set(activeConvos.filter(c => c.type === "npc").map(c => c.id));
+
+        // RED BADGE — direct and phone conversations (user-facing chat threads).
         const directIds = new Set(activeConvos.filter(c => c.type === "direct" && c.channel !== "world_phone").map(c => c.id));
         const phoneIds = new Set(activeConvos.filter(c => c.type === "phone" && c.channel !== "world_phone").map(c => c.id));
 
@@ -191,14 +195,15 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
           for (const msg of msgs) {
             // Apply canonical validity filter — excludes date rows, system rows, recovery signals
             if (!isCountable(msg)) continue;
-            if (worldPhoneIds.has(convoId) || worldContactIds.has(convoId)) {
+            if (worldContactIds.has(convoId)) {
+              // Green badge: only npc-type contacts visible in the World Contact panel
               worldPhoneTotal++;
             } else if (directIds.has(convoId)) {
               chatTotal++;
             } else if (phoneIds.has(convoId)) {
               phoneTotal++;
             }
-            // orphaned (no matching category) = skipped — never counted
+            // bilateral world_phone threads, group, or orphaned = skipped intentionally
           }
         });
 
