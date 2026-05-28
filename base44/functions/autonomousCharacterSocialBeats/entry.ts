@@ -155,6 +155,11 @@ Deno.serve(async (req) => {
     } catch { /* scheduled run — no user session */ }
     console.log(`[autonomousSocialBeats] Run start | caller=${callerEmail || 'scheduled_no_session'} | time=${nowIso}`);
 
+    // ── PROOF MODE: pin community_event pairs first for live path validation ──
+    // Only active when proofEventPath=true in payload. No effect on normal runs.
+    const body = await req.json().catch(() => ({}));
+    const proofEventPath = body?.proofEventPath === true;
+
     // ── STEP 1: LOAD ALL ACTIVE CHARACTERS ────────────────────────────────────
     // QUERY STRATEGY:
     // Service role + { character_type, status } filter = the proven pattern from enforceCharacterWorkSchedule.
@@ -364,8 +369,19 @@ Deno.serve(async (req) => {
       userDiag.candidate_pairs = candidatePairs.length;
       console.log(`[autonomousSocialBeats] [${userEmail}] Candidate pairs: ${candidatePairs.length} (event=${candidatePairs.filter(p=>p.source==='community_event').length} coworker=${candidatePairs.filter(p=>p.source==='coworker').length} housemate=${candidatePairs.filter(p=>p.source==='housemate').length} family=${candidatePairs.filter(p=>p.source==='family').length} relationship=${candidatePairs.filter(p=>p.source==='relationship').length})`);
 
-      // Shuffle so we don't always pick the same pair
-      candidatePairs.sort(() => Math.random() - 0.5);
+      // Shuffle so we don't always pick the same pair.
+      // proofEventPath=true: pin community_event pairs to front so they are guaranteed to fire.
+      // This flag is only used for live path proof runs — production runs always shuffle.
+      if (proofEventPath) {
+        candidatePairs.sort((a, b) => {
+          if (a.source === 'community_event' && b.source !== 'community_event') return -1;
+          if (b.source === 'community_event' && a.source !== 'community_event') return 1;
+          return Math.random() - 0.5;
+        });
+        console.log(`[autonomousSocialBeats] proofEventPath=true: community_event pairs pinned to front`);
+      } else {
+        candidatePairs.sort(() => Math.random() - 0.5);
+      }
 
       for (const pair of candidatePairs) {
         if (beatsThisUser >= MAX_BEATS_PER_USER) break;
