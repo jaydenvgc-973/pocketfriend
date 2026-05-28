@@ -1,0 +1,75 @@
+{
+  "name": "HouseholdResource",
+  "type": "object",
+  "rls": {
+    "create": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "read": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  },
+  "properties": {
+    "owner_email": {
+      "type": "string",
+      "description": "Email of the user who owns this household resource. Primary ownership field. Required for all queries."
+    },
+    "home_location_id": {
+      "type": "string",
+      "description": "ID of the home LocationReference this resource belongs to."
+    },
+    "resource_type": {
+      "type": "string",
+      "enum": [
+        "food"
+      ],
+      "description": "Type of household resource. Currently only 'food' is supported."
+    },
+    "home_food_value": {
+      "type": "number",
+      "default": 0,
+      "description": "Numeric dollar-equivalent value of food currently available at this household. Consumed before any external purchase is charged. Never goes negative."
+    },
+    "last_grocery_purchase_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of the last grocery purchase made for this household."
+    },
+    "last_grocery_purchase_character_id": {
+      "type": "string",
+      "description": "ID of the character who last purchased groceries for this household."
+    },
+    "last_grocery_purchase_character_name": {
+      "type": "string",
+      "description": "Display name of the character who last purchased groceries for this household."
+    },
+    "last_grocery_purchase_transaction_id": {
+      "type": "string",
+      "description": "ID of the FinancialTransaction record for the last grocery purchase. Used for deduplication and audit."
+    },
+    "grocery_source_location_id": {
+      "type": "string",
+      "description": "ID of the LocationReference where the last groceries were purchased."
+    },
+    "grocery_source_location_name": {
+      "type": "string",
+      "description": "Display name of the location where the last groceries were purchased."
+    },
+    "last_consumed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when home food inventory was last consumed from this household."
+    }
+  },
+  "required": [
+    "owner_email",
+    "home_location_id",
+    "resource_type"
+  ]
+}
