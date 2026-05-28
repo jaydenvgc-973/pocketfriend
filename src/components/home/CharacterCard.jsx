@@ -74,6 +74,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [unreadChat, setUnreadChat] = useState(0);
   const [unreadPhone, setUnreadPhone] = useState(0);
+  const [unreadWorldPhone, setUnreadWorldPhone] = useState(0);
   const isMovedAway = character.status === "moved_away";
   const isDefault = character.is_default;
   const queryClient = useQueryClient();
@@ -132,11 +133,22 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       if (conversations.length === 0) {
         setUnreadChat(0);
         setUnreadPhone(0);
+        setUnreadWorldPhone(0);
         return;
       }
       try {
-        const directIds = new Set(conversations.filter(c => c.type === "direct").map(c => c.id));
-        const phoneIds = new Set(conversations.filter(c => c.type === "phone").map(c => c.id));
+        // ROOT CAUSE FIX: world_phone conversations must be excluded from the red Chat badge.
+        // world_phone conversations can have type="direct" (active_created pairs) or type="npc" (legacy).
+        // Previously, directIds used only c.type==="direct" with no channel filter, which caused
+        // world_phone conversations stamped as type="direct" to be counted as red Chat badges.
+        // Fix: channel="world_phone" is the authoritative classifier — always takes priority over type.
+        const worldPhoneIds = new Set(conversations.filter(c => c.channel === "world_phone").map(c => c.id));
+        const worldContactIds = new Set(conversations.filter(c => c.type === "npc" && c.channel !== "world_phone").map(c => c.id));
+        // Direct chat: type=direct AND not a world_phone channel
+        const directIds = new Set(conversations.filter(c => c.type === "direct" && c.channel !== "world_phone").map(c => c.id));
+        // Phone/text: type=phone AND not a world_phone channel
+        const phoneIds = new Set(conversations.filter(c => c.type === "phone" && c.channel !== "world_phone").map(c => c.id));
+
         // One single query for all unread character messages for this character
         const allUnread = await base44.entities.Message.filter({
           character_id: character.id,
@@ -145,15 +157,27 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         });
         let chatTotal = 0;
         let phoneTotal = 0;
+        let worldPhoneTotal = 0;
         for (const msg of allUnread) {
-          if (directIds.has(msg.conversation_id)) chatTotal++;
-          else if (phoneIds.has(msg.conversation_id)) phoneTotal++;
+          if (worldPhoneIds.has(msg.conversation_id) || worldContactIds.has(msg.conversation_id)) {
+            // World Phone / World Contact messages — green badge
+            worldPhoneTotal++;
+          } else if (directIds.has(msg.conversation_id)) {
+            // Genuine direct chat — red badge
+            chatTotal++;
+          } else if (phoneIds.has(msg.conversation_id)) {
+            // Text/phone messages — red badge on Text button
+            phoneTotal++;
+          }
+          // orphaned (no matching convo) or unknown are silently skipped — not counted in any badge
         }
         setUnreadChat(chatTotal);
         setUnreadPhone(phoneTotal);
+        setUnreadWorldPhone(worldPhoneTotal);
       } catch {
         setUnreadChat(0);
         setUnreadPhone(0);
+        setUnreadWorldPhone(0);
       }
     }, 800); // debounce 800ms so rapid invalidations don't pile up
   }, [conversations, character.id]);
@@ -416,6 +440,20 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                     exit={{ scale: 0.8, opacity: 0 }}
                     className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-background flex items-center justify-center">
                     {unreadChat > 9 ? "9+" : unreadChat}
+                  </motion.span>
+                )}
+              </AnimatePresence>
+              {/* Green badge: World Phone / World Contact unread messages */}
+              <AnimatePresence>
+                {unreadWorldPhone > 0 && (
+                  <motion.span
+                    key="world-phone-badge"
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.8, opacity: 0 }}
+                    title="Unread World Phone / World Contact messages"
+                    className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] px-1 bg-green-500 text-white text-[10px] font-bold rounded-full border-2 border-background flex items-center justify-center">
+                    {unreadWorldPhone > 9 ? "9+" : unreadWorldPhone}
                   </motion.span>
                 )}
               </AnimatePresence>

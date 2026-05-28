@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { useWorldContactsUnread } from "@/hooks/useWorldContactsUnread";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { resolveCharacterContacts } from "@/lib/characterContactsResolver";
 import { callLLMWithRetry } from "@/lib/llmUtils";
@@ -46,6 +47,15 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [contacts, setContacts] = useState([]);
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
+  const [ownerEmail, setOwnerEmail] = useState(null);
+
+  // Unread counts per contact — green badge source of truth
+  const { unreadByContact } = useWorldContactsUnread(character?.id, contacts, ownerEmail);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    base44.auth.me().then(me => { if (me?.email) setOwnerEmail(me.email); }).catch(() => {});
+  }, [isOpen]);
   // Per-mount caches for the selected contact session.
   const contactCharRecordRef = useRef(null);   // full Character DB record
   const canonicalPromptCacheRef = useRef(null); // canonical system prompt
@@ -269,9 +279,16 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         })));
 
         // Mark incoming as read (non-blocking)
-        history.filter(m => m.sender_character_id !== character.id && !m.is_read).forEach(m => {
+        const unreadIncoming = history.filter(m => m.sender_character_id !== character.id && !m.is_read);
+        unreadIncoming.forEach(m => {
           base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
         });
+        // Dispatch thread:read so the homepage card's green World Phone badge clears immediately
+        if (unreadIncoming.length > 0) {
+          window.dispatchEvent(new CustomEvent('thread:read', {
+            detail: { characterId: character.id, channel: 'world_phone' }
+          }));
+        }
 
         subscribeToConversation(found.id);
       } else {
@@ -1019,7 +1036,9 @@ Respond ONLY with valid JSON in this exact format:
                   </p>
                 </div>
               ) : (
-                contacts.map((contact, i) => (
+                contacts.map((contact, i) => {
+                  const contactUnread = unreadByContact[contact.person_name] || 0;
+                  return (
                   <motion.button
                     key={contact.related_character_id || `name:${contact.person_name}`}
                     initial={{ opacity: 0, x: -10 }}
@@ -1028,15 +1047,22 @@ Respond ONLY with valid JSON in this exact format:
                     onClick={() => selectContact(contact)}
                     className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/60 transition-colors text-left"
                   >
-                    {/* Avatar: real photo if linked, else letter initial */}
-                    <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0 overflow-hidden flex-shrink-0">
-                      {contact.avatar_url
-                        ? <img src={contact.avatar_url} alt={contact.person_name} className="w-full h-full object-cover" />
-                        : <span className="text-sm font-semibold text-primary">{contact.person_name?.[0]?.toUpperCase() || "?"}</span>
-                      }
+                    {/* Avatar with green unread dot overlay */}
+                    <div className="relative w-10 h-10 flex-shrink-0">
+                      <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center overflow-hidden">
+                        {contact.avatar_url
+                          ? <img src={contact.avatar_url} alt={contact.person_name} className="w-full h-full object-cover" />
+                          : <span className="text-sm font-semibold text-primary">{contact.person_name?.[0]?.toUpperCase() || "?"}</span>
+                        }
+                      </div>
+                      {contactUnread > 0 && (
+                        <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-0.5 bg-green-500 text-white text-[9px] font-bold rounded-full border border-background flex items-center justify-center">
+                          {contactUnread > 9 ? "9+" : contactUnread}
+                        </span>
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground">{contact.person_name}</p>
+                      <p className={`text-sm font-medium ${contactUnread > 0 ? 'text-foreground font-semibold' : 'text-foreground'}`}>{contact.person_name}</p>
                       <p className="text-xs text-muted-foreground truncate">
                         {contact.relationship_type || "known contact"}
                         {contact.current_status ? ` · ${contact.current_status}` : ""}
@@ -1055,7 +1081,8 @@ Respond ONLY with valid JSON in this exact format:
                       )}
                     </div>
                   </motion.button>
-                ))
+                  );
+                })
               )}
             </div>
           ) : (
