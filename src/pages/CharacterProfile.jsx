@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity } from "lucide-react";
 import CollapsibleProfileSection from "@/components/character/CollapsibleProfileSection";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -37,6 +37,7 @@ import AddPeopleInTheirWorldPanel from "@/components/character/AddPeopleInTheirW
 import RelationshipTensionCard from "@/components/character/RelationshipTensionCard";
 import CharacterEducationSection from "@/components/character/CharacterEducationSection";
 import CharacterReligionSection from "@/components/character/CharacterReligionSection";
+import CharacterDashboard from "@/components/character/CharacterDashboard";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -550,6 +551,10 @@ export default function CharacterProfile() {
             <p className="text-[10px] font-bold uppercase tracking-widest text-primary">How They Are Doing / What Shaped Them</p>
           </div>
           
+          <CollapsibleProfileSection icon={Activity} title="Dashboard">
+            <CharacterDashboard character={character} />
+          </CollapsibleProfileSection>
+
           <CollapsibleProfileSection icon={BarChart3} title="Life Needs">
             <CharacterNeedsPanel character={character} onRefresh={() => refetch()} />
             <ManualNeedsEditor character={character} />
