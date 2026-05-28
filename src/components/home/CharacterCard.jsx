@@ -155,18 +155,22 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         return;
       }
       try {
+        // Exclude merged/dead conversations — they should never contribute to badge counts.
+        // sync_status="merged" means the thread was consolidated; its messages were moved to the canonical thread.
+        const activeConvos = conversations.filter(c => c.sync_status !== 'merged');
+
         // channel="world_phone" is the authoritative classifier — always takes priority over type.
-        const worldPhoneIds = new Set(conversations.filter(c => c.channel === "world_phone").map(c => c.id));
-        const worldContactIds = new Set(conversations.filter(c => c.type === "npc" && c.channel !== "world_phone").map(c => c.id));
-        const directIds = new Set(conversations.filter(c => c.type === "direct" && c.channel !== "world_phone").map(c => c.id));
-        const phoneIds = new Set(conversations.filter(c => c.type === "phone" && c.channel !== "world_phone").map(c => c.id));
+        const worldPhoneIds = new Set(activeConvos.filter(c => c.channel === "world_phone").map(c => c.id));
+        const worldContactIds = new Set(activeConvos.filter(c => c.type === "npc" && c.channel !== "world_phone").map(c => c.id));
+        const directIds = new Set(activeConvos.filter(c => c.type === "direct" && c.channel !== "world_phone").map(c => c.id));
+        const phoneIds = new Set(activeConvos.filter(c => c.type === "phone" && c.channel !== "world_phone").map(c => c.id));
 
         // ROOT CAUSE FIX: query unread messages per conversation, not by character_id.
         // Querying by character_id alone only returns messages WHERE THIS CHAR IS THE SENDER.
         // Autonomous beats have character_id = OTHER character, receiver_character_id = this char.
         // Querying per conversation_id captures ALL unread messages in that thread regardless of direction.
         // Ownership is already guaranteed: conversations were fetched with owner_email + character_ids filter.
-        const allConvoIds = conversations.map(c => c.id);
+        const allConvoIds = activeConvos.map(c => c.id);
         // Batch per-conversation fetches — each scoped to conversation_id, sender_type, is_read
         const perConvoResults = await Promise.all(
           allConvoIds.map(convoId =>
@@ -242,13 +246,27 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     return () => window.removeEventListener('thread:read', handleThreadRead);
   }, [character.id, character.owner_email, countUnread]);
 
-  // Real-time: recount when a relevant message changes for this character.
-  // Only subscribe after queryReady — prevents firing before conversations are loaded.
+  // Real-time: recount when a relevant message lands in any conversation this character is in.
+  // CRITICAL: autonomous beats have character_id = SENDER (other char), NOT the viewed character.
+  // We must also trigger on receiver_character_id and on conversation_id membership.
+  // Build a Set of known convoIds so we can check if the incoming message belongs to this character.
+  const conversationIdSetRef = useRef(new Set());
+  useEffect(() => {
+    conversationIdSetRef.current = new Set(conversations.map(c => c.id));
+  }, [conversations]);
+
   useEffect(() => {
     if (!queryReady) return;
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      const isForThisChar = event.data?.character_id === character.id;
-      if (isForThisChar && (event.type === "create" || event.type === "update")) {
+      if (event.type !== "create" && event.type !== "update") return;
+      const msg = event.data || {};
+      // Match if: sender is this char, receiver is this char, or message belongs to a known convo
+      const isForThisChar =
+        msg.character_id === character.id ||
+        msg.receiver_character_id === character.id ||
+        msg.sender_character_id === character.id ||
+        conversationIdSetRef.current.has(msg.conversation_id);
+      if (isForThisChar) {
         countUnread();
       }
     });
