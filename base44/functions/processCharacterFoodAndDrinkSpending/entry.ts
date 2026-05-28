@@ -145,68 +145,187 @@ function baseCost(category) {
   return min + Math.random() * (max - min);
 }
 
+// ── QUIRK TEXT EXTRACTOR ──────────────────────────────────────────────────────
+// quirks[] items may be strings OR objects with various shapes.
+// Safely extract text from all known shapes.
+function extractQuirkText(q) {
+  if (!q) return '';
+  if (typeof q === 'string') return q.toLowerCase();
+  // object: try every known label field
+  const text = [q.name, q.label, q.title, q.description, q.value, q.type]
+    .filter(Boolean)
+    .join(' ');
+  return text.toLowerCase();
+}
+
 // ── TRAIT / QUIRK / EMOTIONAL MODIFIER ───────────────────────────────────────
 /**
- * Returns a multiplier (e.g. 1.0 = no change, 1.3 = 30% more, 0.7 = 30% less).
- * Reads character.personality_traits[], character.quirks[], character.trait_* booleans,
- * and character.emotional_state.
+ * Returns a multiplier (e.g. 1.0 = no change, 1.35 = 35% more, 0.65 = 35% less).
  *
- * Modifiers stack multiplicatively (capped at 2.0x, floored at 0.4x).
+ * Sources read (in order of priority):
+ *   1. Boolean trait_* fields that actually exist on the Character schema
+ *   2. personality_traits[] string array
+ *   3. quirks[] — supports string or object with name/label/title/description/value/type
+ *   4. emotional_state string
+ *   5. financial_need_value number
+ *
+ * Fields that do NOT exist on Character schema and are NOT used:
+ *   trait_frugal, trait_stress_eater, trait_impulsive_spender, trait_drinker,
+ *   trait_financially_anxious, trait_disciplined, trait_workaholic (unless present)
+ *
+ * Modifiers stack multiplicatively. Final range: 0.4x – 2.0x.
  */
 function computeTraitModifier(char, spendCategory) {
   let multiplier = 1.0;
   const logs = [];
 
-  const traits     = (char.personality_traits || []).map(t => (t || '').toLowerCase());
-  const quirks     = (char.quirks             || []).map(q => ((q.description || q.name || q) || '').toLowerCase());
-  const emotional  = (char.emotional_state    || '').toLowerCase();
-  const allText    = [...traits, ...quirks].join(' ');
+  // Build unified lower-case text blob from personality_traits[] and quirks[]
+  const traits   = (char.personality_traits || []).map(t => (t || '').toLowerCase());
+  const quirkTxt = (char.quirks || []).map(extractQuirkText);
+  const allText  = [...traits, ...quirkTxt].join(' ');
+  const emotional = (char.emotional_state || '').toLowerCase();
+  const isNightlifeSpend = spendCategory === 'bar_lounge' || spendCategory === 'club_nightlife';
+  const isFoodSpend      = spendCategory === 'restaurant' || spendCategory === 'fast_food';
 
-  // ── HIGHER SPENDING traits ────────────────────────────────────────────────
+  // ── HIGHER SPENDING — boolean fields (confirmed schema fields) ────────────
   if (char.trait_bougie) {
     multiplier *= 1.35;
     logs.push('trait_bougie +35%');
   }
-  if (allText.includes('impulsive') || allText.includes('retail therapy') || allText.includes('splurge')) {
+  if (char.trait_risk_taker) {
+    multiplier *= 1.15;
+    logs.push('trait_risk_taker +15%');
+  }
+  if (char.trait_uninhibited) {
+    multiplier *= 1.20;
+    logs.push('trait_uninhibited +20%');
+  }
+  if (char.trait_insatiable) {
+    multiplier *= 1.20;
+    logs.push('trait_insatiable +20%');
+  }
+  if (char.trait_volatile && (isNightlifeSpend || isFoodSpend)) {
+    multiplier *= 1.15;
+    logs.push('trait_volatile at food/nightlife +15%');
+  }
+  if (char.trait_wishy_washy) {
+    // Wishy-washy: more likely to spend impulsively
+    multiplier *= 1.10;
+    logs.push('trait_wishy_washy +10%');
+  }
+  if (char.trait_hot_and_cold) {
+    multiplier *= 1.10;
+    logs.push('trait_hot_and_cold +10%');
+  }
+  if (char.trait_ruffian && isNightlifeSpend) {
+    multiplier *= 1.20;
+    logs.push('trait_ruffian at nightlife +20%');
+  }
+  if (char.trait_philanderer && isNightlifeSpend) {
     multiplier *= 1.25;
-    logs.push('impulsive/retail_therapy +25%');
+    logs.push('trait_philanderer at nightlife +25%');
   }
-  if (allText.includes('drinker') || allText.includes('alcoholic') || allText.includes('heavy drinker')) {
-    if (spendCategory === 'bar_lounge' || spendCategory === 'club_nightlife') {
-      multiplier *= 1.30;
-      logs.push('drinker at bar/club +30%');
-    }
+  if (char.trait_goon && isNightlifeSpend) {
+    multiplier *= 1.15;
+    logs.push('trait_goon at nightlife +15%');
   }
-  if (char.trait_night_owl && (spendCategory === 'bar_lounge' || spendCategory === 'club_nightlife')) {
+
+  // Night owl — boolean field confirmed in schema
+  if (char.trait_night_owl && isNightlifeSpend) {
     multiplier *= 1.15;
     logs.push('trait_night_owl at nightlife +15%');
   }
-  if (allText.includes('stress eater') || allText.includes('emotional eater')) {
-    if (emotional.includes('stress') || emotional.includes('anxi') || emotional.includes('depress') || emotional.includes('sad')) {
+
+  // ── HIGHER SPENDING — from text (personality_traits / quirks) ────────────
+  if (allText.includes('impulsive') || allText.includes('impulsive spender')) {
+    multiplier *= 1.25;
+    logs.push('text:impulsive_spender +25%');
+  }
+  if (allText.includes('retail therapy') || allText.includes('shopaholic')) {
+    multiplier *= 1.20;
+    logs.push('text:retail_therapy/shopaholic +20%');
+  }
+  if (allText.includes('luxury') || allText.includes('bougie') || allText.includes('high-end')) {
+    multiplier *= 1.20;
+    logs.push('text:luxury_oriented +20%');
+  }
+  if (allText.includes('splurge') || allText.includes('thrill seeker') || allText.includes('always outside')) {
+    multiplier *= 1.15;
+    logs.push('text:splurge/thrill_seeker +15%');
+  }
+  if (allText.includes('drinker') || allText.includes('heavy drinker') || allText.includes('social smoker')) {
+    if (isNightlifeSpend) {
+      multiplier *= 1.30;
+      logs.push('text:drinker at bar/club +30%');
+    }
+  }
+  if (allText.includes('stress eater') || allText.includes('emotional eater') || allText.includes('comfort eating')) {
+    if (emotional.includes('stress') || emotional.includes('anxi') || emotional.includes('depress') || emotional.includes('sad') || emotional.includes('overwhelm')) {
       multiplier *= 1.20;
-      logs.push('stress_eater + stressed emotional_state +20%');
+      logs.push('text:stress_eater + stressed_state +20%');
     }
   }
   if (allText.includes('foodie') || allText.includes('food lover') || allText.includes('food enthusiast')) {
-    if (spendCategory === 'restaurant' || spendCategory === 'fast_food') {
+    if (isFoodSpend) {
       multiplier *= 1.15;
-      logs.push('foodie at food location +15%');
+      logs.push('text:foodie at food +15%');
     }
   }
+  if (allText.includes('night owl') && isNightlifeSpend) {
+    multiplier *= 1.10;
+    logs.push('text:night_owl at nightlife +10%');
+  }
+  if (allText.includes('people pleaser') || allText.includes('jealous')) {
+    multiplier *= 1.10;
+    logs.push('text:people_pleaser/jealous +10%');
+  }
 
-  // ── RESTRAINED SPENDING traits ────────────────────────────────────────────
-  if (allText.includes('frugal') || allText.includes('financially anxious') || allText.includes('budget')) {
+  // ── RESTRAINED SPENDING — boolean fields (confirmed schema fields) ─────────
+  if (char.trait_conscientious) {
+    multiplier *= 0.75;
+    logs.push('trait_conscientious -25%');
+  }
+  if (char.trait_goody_two_shoes) {
+    multiplier *= 0.80;
+    logs.push('trait_goody_two_shoes -20%');
+  }
+  if (char.trait_law_abiding) {
+    multiplier *= 0.85;
+    logs.push('trait_law_abiding -15%');
+  }
+  if (char.trait_loyal && !isNightlifeSpend) {
+    // Loyal + non-nightlife → steady, un-flashy spending
+    multiplier *= 0.90;
+    logs.push('trait_loyal (non-nightlife) -10%');
+  }
+  if (char.trait_parental) {
+    multiplier *= 0.80;
+    logs.push('trait_parental -20%');
+  }
+
+  // ── RESTRAINED SPENDING — from text ──────────────────────────────────────
+  if (allText.includes('frugal') || allText.includes('financially anxious') || allText.includes('budget conscious')) {
     multiplier *= 0.65;
-    logs.push('frugal/financially_anxious -35%');
+    logs.push('text:frugal/financially_anxious -35%');
   }
   if (allText.includes('disciplined') || allText.includes('financially disciplined')) {
     multiplier *= 0.75;
-    logs.push('disciplined -25%');
+    logs.push('text:disciplined -25%');
   }
   if (allText.includes('homebody') && spendCategory !== 'grocery') {
     multiplier *= 0.80;
-    logs.push('homebody (non-grocery) -20%');
+    logs.push('text:homebody (non-grocery) -20%');
   }
+  if (allText.includes('health obsessed') || allText.includes('health conscious')) {
+    multiplier *= 0.80;
+    logs.push('text:health_obsessed -20%');
+  }
+  if (allText.includes('workaholic')) {
+    multiplier *= 0.85;
+    logs.push('text:workaholic -15%');
+  }
+
+  // ── FINANCIAL NEED VALUE — depresses spending when low ───────────────────
   if (char.financial_need_value !== undefined && char.financial_need_value < 20) {
     multiplier *= 0.55;
     logs.push(`financial_need critical (${char.financial_need_value}) -45%`);
@@ -216,13 +335,21 @@ function computeTraitModifier(char, spendCategory) {
   }
 
   // ── EMOTIONAL STATE modifiers ─────────────────────────────────────────────
-  if (emotional.includes('grief') || emotional.includes('heartbroken') || emotional.includes('devastated')) {
+  if (emotional.includes('grief') || emotional.includes('heartbroken') || emotional.includes('devastated') || emotional.includes('loss')) {
     multiplier *= 1.20;
-    logs.push('grief/heartbroken emotional_state +20%');
+    logs.push('emotional:grief/heartbroken +20%');
   }
-  if (emotional.includes('celebrat') || emotional.includes('ecstat') || emotional.includes('euphoric')) {
+  if (emotional.includes('celebrat') || emotional.includes('ecstat') || emotional.includes('euphoric') || emotional.includes('excit')) {
     multiplier *= 1.25;
-    logs.push('celebratory emotional_state +25%');
+    logs.push('emotional:celebratory +25%');
+  }
+  if (emotional.includes('angry') || emotional.includes('furious') || emotional.includes('rage')) {
+    multiplier *= 1.15;
+    logs.push('emotional:angry +15%');
+  }
+  if (emotional.includes('bored') || allText.includes('overthinks') || allText.includes('romanticize')) {
+    multiplier *= 1.10;
+    logs.push('emotional:bored/overthinks +10%');
   }
 
   // Clamp final multiplier: min 0.4x, max 2.0x
@@ -231,25 +358,79 @@ function computeTraitModifier(char, spendCategory) {
   return { multiplier, modifierLogs: logs };
 }
 
-// ── FOOD-RELATED ARRIVAL REASON CHECK ────────────────────────────────────────
-const HOME_FOOD_REASON_KEYWORDS = [
+// ── CONTEXT FIELD BUILDER ─────────────────────────────────────────────────────
+// Combines all arrival context fields into one lower-case string for keyword matching.
+function buildContextText(body) {
+  return [
+    body.arrival_reason       || '',
+    body.travel_reason        || '',
+    body.presence_reason      || '',
+    body.source_of_move       || '',
+    body.current_activity     || '',
+    body.resolved_source_reason || '',
+    body.need_type            || '',
+    body.destination_location_name || '',
+  ].map(v => (v || '').toLowerCase()).join(' ');
+}
+
+// ── HOME FOOD ARRIVAL GUARD ───────────────────────────────────────────────────
+// Home food is only consumed when context signals actual eating/food need.
+// Arriving home from work does NOT auto-consume inventory.
+const HOME_FOOD_KEYWORDS = [
   'hunger', 'hungry', 'eat', 'eating', 'food', 'meal', 'snack', 'lunch',
   'dinner', 'breakfast', 'fridge', 'cook', 'cooking', 'groceries', 'need',
-  'fulfillment', 'starving',
+  'fulfillment', 'starving', 'comfort food',
 ];
 
 function isHomeFoodRelatedArrival(body) {
-  const fields = [
-    body.arrival_reason || '',
-    body.presence_reason || '',
-    body.current_activity || '',
-    body.resolved_source_reason || '',
-    body.travel_reason || '',
-    body.need_type || '',
-    body.source_of_move || '',
-  ].map(v => (v || '').toLowerCase()).join(' ');
+  const ctx = buildContextText(body);
+  return HOME_FOOD_KEYWORDS.some(k => ctx.includes(k));
+}
 
-  return HOME_FOOD_REASON_KEYWORDS.some(k => fields.includes(k));
+// ── OUTSIDE PURCHASE CONTEXT GUARD ───────────────────────────────────────────
+/**
+ * A character can arrive at a café, bar, restaurant, or grocery store for
+ * non-food reasons (meeting someone, working there, passing through, social visit).
+ *
+ * Before charging, BOTH conditions must be true:
+ *   1. eligible location type (already checked via classifyLocation)
+ *   2. context indicates food/drink/nightlife/grocery intent
+ *
+ * If context is absent or not food-related → skip charge, return false.
+ * Does NOT stop travel, movement, location history, or route status.
+ */
+
+const FOOD_CONTEXT_KEYWORDS = [
+  'hunger', 'hungry', 'food', 'meal', 'snack', 'drink', 'drinks', 'thirst',
+  'coffee', 'breakfast', 'lunch', 'dinner', 'eating', 'eat', 'bite',
+  'comfort food', 'food run', 'social eating', 'emotional eating', 'stress eating',
+  'need fulfillment', 'starving',
+];
+
+const NIGHTLIFE_CONTEXT_KEYWORDS = [
+  'bar', 'nightlife', 'drinks', 'lounge', 'club', 'social drinking', 'partying',
+  'party', 'night out', 'going out', 'after hours', 'nightclub',
+];
+
+const GROCERY_CONTEXT_KEYWORDS = [
+  'grocery', 'groceries', 'food', 'household', 'pantry', 'errand',
+  'food run', 'restock', 'shopping', 'supplies',
+];
+
+function isChargeableFoodDrinkContext(body, spendCategory) {
+  const ctx = buildContextText(body);
+
+  if (spendCategory === 'grocery') {
+    return GROCERY_CONTEXT_KEYWORDS.some(k => ctx.includes(k));
+  }
+  if (spendCategory === 'bar_lounge' || spendCategory === 'club_nightlife') {
+    return (
+      NIGHTLIFE_CONTEXT_KEYWORDS.some(k => ctx.includes(k)) ||
+      FOOD_CONTEXT_KEYWORDS.some(k => ctx.includes(k))
+    );
+  }
+  // restaurant / fast_food
+  return FOOD_CONTEXT_KEYWORDS.some(k => ctx.includes(k));
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
@@ -350,6 +531,17 @@ Deno.serve(async (req) => {
       return Response.json({ skipped: true, reason: 'not_chargeable_location', log });
     }
     log.push(`spend_category=${spendCategory}`);
+
+    // ── OUTSIDE PURCHASE CONTEXT GUARD ───────────────────────────────────────
+    // Location is eligible, but context must also be food/drink/nightlife/grocery related.
+    // A character meeting someone at a café, working at a bar, or passing through a
+    // restaurant for non-food reasons does NOT get charged.
+    // This guard does NOT affect movement, travel, route_status, or location history.
+    if (!isChargeableFoodDrinkContext(body, spendCategory)) {
+      log.push(`context_not_food_related — location eligible but arrival context is not food/drink/nightlife. No charge.`);
+      return Response.json({ skipped: true, reason: 'location_eligible_but_context_not_food_related', spend_category: spendCategory, log });
+    }
+    log.push('context_confirmed_food_drink_related');
 
     // ── DUPLICATE PROTECTION: 15-minute window (owner_email scoped) ──────────
     const windowStart = new Date(now.getTime() - 15 * 60 * 1000).toISOString();
