@@ -68,59 +68,17 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   // ── SEND GUARD: prevents concurrent sends (rapid tap / double submit) ────────
   const isSendingRef = useRef(false);
 
-  // ── LOAD CONTACTS via shared resolver + bilateral conversations ──────────────
+  // ── LOAD CONTACTS via shared resolver (single source of truth) ───────────────
+  // The resolver handles all sources + deduplication internally.
+  // Do NOT merge contacts here — that created duplicate rows.
   useEffect(() => {
     if (!isOpen || !character?.id) return;
     setIsLoadingContacts(true);
     
     base44.auth.me()
       .then(async me => {
-        // Get contacts from resolver
         const contactList = await resolveCharacterContacts(character, me?.email, me);
-        
-        // Load conversations where this character is ANY participant
-        // character_ids array contains the character's ID (covers both sender and receiver)
-        const convos = await base44.entities.Conversation.filter(
-          { character_ids: [character.id] },
-          '-updated_date',
-          150
-        ).catch(() => []);
-
-        // Merge conversation-linked contacts that aren't already in the list
-        const conversationContacts = [];
-        for (const convo of convos) {
-          const otherCharIds = (convo.character_ids || []).filter(id => id !== character.id);
-          for (const otherId of otherCharIds) {
-            // Check if this contact is already in the list
-            const alreadyExists = contactList.some(c => c.related_character_id === otherId);
-            if (!alreadyExists) {
-              // Fetch the character to get their name
-              try {
-                const otherChar = await base44.asServiceRole.entities.Character.filter({ id: otherId }).then(chars => chars[0]);
-                if (otherChar) {
-                  conversationContacts.push({
-                    person_name: otherChar.name,
-                    relationship_type: 'contact',
-                    related_character_id: otherId,
-                    avatar_url: otherChar.avatar_url || null,
-                    _source: 'conversation',
-                    _linkage: 'linked',
-                  });
-                }
-              } catch {}
-            }
-          }
-        }
-
-        // Merge and deduplicate
-        const mergedContacts = [...contactList];
-        for (const contact of conversationContacts) {
-          if (!mergedContacts.some(c => c.related_character_id === contact.related_character_id)) {
-            mergedContacts.push(contact);
-          }
-        }
-
-        setContacts(mergedContacts);
+        setContacts(contactList);
         setIsLoadingContacts(false);
       })
       .catch(() => {

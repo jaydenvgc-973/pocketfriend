@@ -177,9 +177,10 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
 
   // ── SOURCE 4: conversation-linked characters ─────────────────────────────────
   // Only add if not already in list. Hydrate avatar if already present.
+  // Use owner_email-scoped query so we only see this user's conversations.
   const existingConvos = await base44.entities.Conversation.filter(
-    { character_ids: [character.id], owner_email: ownerEmail },
-    '-updated_date', 30
+    { owner_email: ownerEmail, character_ids: [character.id] },
+    '-updated_date', 50
   ).catch(() => []);
 
   const convoLinkedIds = new Set(

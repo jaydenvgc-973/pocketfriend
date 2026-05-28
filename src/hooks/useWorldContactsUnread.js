@@ -62,7 +62,7 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
   }, []);
 
   const loadUnreadCounts = useCallback(async (force = false) => {
-    if (!characterId || contacts.length === 0) {
+    if (!characterId || !ownerEmail || contacts.length === 0) {
       setUnreadByContact({});
       setGlobalUnreadCount(0);
       return;
@@ -87,9 +87,10 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
     if (cooldownKey) markCooldown(cooldownKey);
 
     try {
-      // Step 1: Load conversations where this character is a participant (ownership-scoped)
+      // Step 1: Load conversations where this character is a participant (ownership-scoped).
+      // Must include owner_email so we only see this user's conversations — matching CharacterCard's query.
       const allConvos = await base44.entities.Conversation.filter(
-        { character_ids: [characterId] },
+        { owner_email: ownerEmail, character_ids: [characterId] },
         '-updated_date',
         150
       );
@@ -196,7 +197,7 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
   }, [characterId, contacts.length, ownerEmail, cacheKey, cooldownKey, applyData]); // eslint-disable-line
 
   useEffect(() => {
-    if (!characterId || contacts.length === 0) {
+    if (!characterId || !ownerEmail || contacts.length === 0) {
       setUnreadByContact({});
       setGlobalUnreadCount(0);
       return;

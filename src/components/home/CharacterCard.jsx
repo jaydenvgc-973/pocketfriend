@@ -102,18 +102,21 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const balance = financialRecords[0]?.current_balance;
 
   const { data: conversations = [] } = useQuery({
-    // Use character_ids only (no owner_email filter) so world_phone conversations between
-    // two active_created characters are captured regardless of which owner_email was stamped.
-    // This matches the scope used by useWorldContactsUnread and WorldContactsPopup.
-    queryKey: ['conversations', character.id],
-    queryFn: () => {
-      if (!character.id) return [];
-      return base44.entities.Conversation.filter({ character_ids: [character.id] }, '-updated_date', 150);
+    // Query conversations scoped by owner_email + character_ids.
+    // This is the safe ownership-scoped query. The resolver and WorldContactsPopup
+    // use the same owner_email scope when loading contacts and conversations.
+    queryKey: ['conversations', character.id, character.owner_email],
+    queryFn: async () => {
+      if (!character.id || !character.owner_email) return [];
+      return base44.entities.Conversation.filter(
+        { owner_email: character.owner_email, character_ids: [character.id] },
+        '-updated_date', 150
+      );
     },
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
-    enabled: !!character.id && queryReady,
+    enabled: !!character.id && !!character.owner_email && queryReady,
   });
 
 
@@ -257,12 +260,12 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   // Re-count when user returns to the tab/window
   useEffect(() => {
     const handleFocus = () => {
-      queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', character.id, character.owner_email] });
       countUnread();
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [conversations, character.id, queryClient]);
+  }, [conversations, character.id, character.owner_email, queryClient]);
 
   // Re-count when a thread is opened (badge clear path).
   // 'thread:read' carries detail.channel so we know which badge to refresh.
