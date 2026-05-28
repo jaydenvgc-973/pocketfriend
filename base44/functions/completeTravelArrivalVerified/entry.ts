@@ -237,6 +237,16 @@ Deno.serve(async (req) => {
 
         console.log(`[completeTravelArrivalVerified] ✅ VERIFIED ARRIVAL | char=${char.name} | dest=${destLoc.name} | session=${session.id} | readback=PASS | travel_cleared=${travelCleared}`);
 
+        // ── CONSEQUENCE: food/drink spending — fire-and-forget, NEVER blocks arrival ──
+        base44.asServiceRole.functions.invoke('processCharacterFoodAndDrinkSpending', {
+          character_id:              char.id,
+          owner_email:               ownerEmail,
+          destination_location_id:   destLoc.id,
+          destination_location_name: destLoc.name,
+          destination_category:      destLoc.category || null,
+          home_location_id:          char.current_home_location_id || session.character_home_location_id || null,
+        }).catch(e => console.log(`[completeTravelArrivalVerified] food spending hook non-fatal: ${e.message}`));
+
         results.push({
           session_id:        session.id,
           character_name:    char.name,
