@@ -205,39 +205,50 @@ export default function CharacterProfile() {
       if (!character) return [];
       await new Promise(r => setTimeout(r, 2500));
 
-      // Collect all location IDs from the character's own employment fields
-      // NOTE: worker_character_ids arrays are empty in the DB — cannot rely on them for lookup.
-      // Must resolve from character-side occupation fields first, then also try worker_character_ids as a secondary check.
+      const seen = new Set();
+      const combined = [];
+
+      const addLoc = (loc) => {
+        if (!loc || seen.has(loc.id)) return;
+        seen.add(loc.id);
+        combined.push(loc);
+      };
+
+      // SOURCE 1: Character-side occupation fields (fastest, most common)
       const locationIds = new Set();
       if (character.occupation_location_id) locationIds.add(character.occupation_location_id);
       (character.additional_occupation_locations || []).forEach(l => {
         if (l.location_id) locationIds.add(l.location_id);
       });
 
-      // Fetch all known job locations by ID (character-side truth)
-      // Fetch sequentially to avoid parallel request flood / rate limit
-      const charFileLocs = [];
       for (const id of locationIds) {
         const result = await base44.entities.LocationReference.filter({ id }).then(r => r[0]).catch(() => null);
-        if (result) charFileLocs.push(result);
+        if (result) addLoc(result);
       }
 
-      // Also try worker_character_ids filter as a secondary source
+      // SOURCE 2: Location-side worker_character_ids array
       const byWorkerList = await base44.entities.LocationReference.filter({ worker_character_ids: [characterId] }).catch(() => []);
-      byWorkerList.forEach(l => locationIds.add(l.id));
+      byWorkerList.forEach(loc => addLoc(loc));
 
-      const combined = [
-        ...charFileLocs.filter(Boolean),
-        ...byWorkerList,
-      ];
+      // SOURCE 3: Location-side worker_job_titles / worker_shifts key presence
+      // This is the canonical source for the arrow dropdown — we must read it too.
+      // Many characters are assigned via the location editor without occupation_location_id
+      // being synced back to the Character entity. Scanning by owner_email is the safe path.
+      if (character.owner_email) {
+        const ownerLocs = await base44.entities.LocationReference.filter({ owner_email: character.owner_email }).catch(() => []);
+        ownerLocs.forEach(loc => {
+          if (seen.has(loc.id)) return;
+          // Check if characterId appears as a key in worker_job_titles or worker_shifts
+          const inJobTitles = loc.worker_job_titles && Object.prototype.hasOwnProperty.call(loc.worker_job_titles, characterId);
+          const inShifts = loc.worker_shifts && Object.prototype.hasOwnProperty.call(loc.worker_shifts, characterId);
+          const inPayRates = loc.worker_pay_rates && Object.prototype.hasOwnProperty.call(loc.worker_pay_rates, characterId);
+          if (inJobTitles || inShifts || inPayRates) {
+            addLoc(loc);
+          }
+        });
+      }
 
-      // Deduplicate by id
-      const seen = new Set();
-      return combined.filter(l => {
-        if (seen.has(l.id)) return false;
-        seen.add(l.id);
-        return true;
-      });
+      return combined;
     },
     enabled: !!characterId && !!character,
     staleTime: 120000,
@@ -695,7 +706,19 @@ export default function CharacterProfile() {
           <CollapsibleProfileSection icon={Briefcase} title="Income Sources">
             <div className="space-y-2">
               {workLocations.length === 0 && (
-                <p className="text-xs text-muted-foreground italic">No work locations linked yet.</p>
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground italic">No work locations linked yet.</p>
+                  <button
+                    onClick={async () => {
+                      await base44.functions.invoke('syncEmploymentAssignments', {}).catch(() => {});
+                      queryClient.invalidateQueries({ queryKey: ['workLocations', characterId] });
+                      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+                    }}
+                    className="text-xs text-primary/70 hover:text-primary underline underline-offset-2 transition-colors"
+                  >
+                    Sync employment data
+                  </button>
+                </div>
               )}
               {workLocations.map((loc) => {
                 const payRate = loc.worker_pay_rates?.[characterId];

@@ -192,31 +192,72 @@ export default function CharacterWorkScheduleEditor({ character }) {
   const { data: workLocations = [] } = useQuery({
     queryKey: ['workLocations', character.id, character.occupation_location_id, (character.additional_occupation_locations || []).map(l => l.location_id).join(',')],
     queryFn: async () => {
-      // worker_character_ids arrays are empty in DB — resolve from character employment fields first.
-      // Then try worker_character_ids as a secondary check for any stragglers.
+      // CANONICAL RESOLUTION — must match LocationDetailPanel's worker display exactly.
+      // LocationDetailPanel uses: worker_character_ids OR fallback to Object.keys(worker_job_titles)
+      // This resolver uses BOTH character-side fields AND location-side arrays so the two panels
+      // always show the same workplaces.
       const locationIds = new Set();
+
+      // Source 1: Character.occupation_location_id (primary job, character-side)
       if (character.occupation_location_id) locationIds.add(character.occupation_location_id);
+
+      // Source 2: Character.additional_occupation_locations (secondary jobs, character-side)
       (character.additional_occupation_locations || []).forEach(l => {
         if (l.location_id) locationIds.add(l.location_id);
       });
 
-      // Fetch sequentially to avoid parallel request flood / rate limit
+      // Fetch character-side locations
       const charFileLocs = [];
       for (const id of locationIds) {
         const result = await base44.entities.LocationReference.filter({ id }).then(r => r[0]).catch(() => null);
         if (result) charFileLocs.push(result);
       }
 
+      // Source 3: LocationReference.worker_character_ids contains this character (location-side roster)
+      // This is what the arrow dropdown (LocationDetailPanel) reads — must be included here too
       const byWorkerList = await base44.entities.LocationReference.filter({ worker_character_ids: [character.id] }).catch(() => []);
-      byWorkerList.forEach(l => locationIds.add(l.id));
+      byWorkerList.forEach(l => { if (!locationIds.has(l.id)) locationIds.add(l.id); });
 
+      // Source 4: Owner-email scan for locations where characterId appears as a key in
+      // worker_job_titles / worker_shifts / worker_pay_rates — the EXACT same fallback
+      // used by LocationDetailPanel's arrow dropdown. This resolves the data split where
+      // a character has employment metadata on the location but no worker_character_ids entry
+      // AND no occupation_location_id on the Character entity.
+      const seen = new Set([...charFileLocs.filter(Boolean).map(l => l.id), ...byWorkerList.map(l => l.id)]);
+      if (character.owner_email) {
+        const ownerLocs = await base44.entities.LocationReference.filter({ owner_email: character.owner_email }).catch(() => []);
+        for (const loc of ownerLocs) {
+          if (seen.has(loc.id)) continue;
+          const inJobTitles = loc.worker_job_titles && Object.prototype.hasOwnProperty.call(loc.worker_job_titles, character.id);
+          const inShifts = loc.worker_shifts && Object.prototype.hasOwnProperty.call(loc.worker_shifts, character.id);
+          const inPayRates = loc.worker_pay_rates && Object.prototype.hasOwnProperty.call(loc.worker_pay_rates, character.id);
+          if (inJobTitles || inShifts || inPayRates) {
+            seen.add(loc.id);
+            byWorkerList.push(loc); // treat as worker-list loc for dedup below
+          }
+        }
+      }
+
+      const seenDedup = new Set();
       const combined = [...charFileLocs.filter(Boolean), ...byWorkerList];
-      const seen = new Set();
-      return combined.filter(l => {
-        if (seen.has(l.id)) return false;
-        seen.add(l.id);
+      const deduped = combined.filter(l => {
+        if (!l || seenDedup.has(l.id)) return false;
+        seenDedup.add(l.id);
         return true;
       });
+
+      // Non-destructive backfill: if character has employment on a location but no occupation_location_id,
+      // trigger sync so profile and dashboard resolve correctly going forward. Fire-and-forget.
+      if (!character.occupation_location_id && byWorkerList.length > 0) {
+        const primaryLoc = byWorkerList[0];
+        base44.functions.invoke('syncLocationJobToCharacter', {
+          locationId: primaryLoc.id,
+          characterId: character.id,
+          syncType: 'work',
+        }).catch(e => console.warn('[WorkScheduleEditor] auto-backfill sync failed:', e?.message));
+      }
+
+      return deduped;
     },
     enabled: !!character.id,
     staleTime: 120000,

@@ -539,27 +539,33 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     .filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i) // deduplicate
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
-  // Compute initialWorkerIds: merge location's explicit worker_character_ids with characters whose employment fields point to this location
+  // Compute initialWorkerIds: merge ALL sources — same resolution order as the arrow dropdown.
+  // The arrow dropdown (LocationDetailPanel) uses: worker_character_ids || keys(worker_job_titles)
+  // The edit form must resolve the same set to stay consistent.
   const computeInitialWorkerIds = () => {
     const ids = new Set();
     
-    // Add existing explicit worker assignments
+    // SOURCE 1: Explicit worker_character_ids array on the location
     if (editingLocation?.worker_character_ids) {
       editingLocation.worker_character_ids.forEach(id => ids.add(id));
     }
-    
-    // Add characters whose occupation_location_id or additional_occupation_locations point to this location
+
+    // SOURCE 2: Keys in worker_job_titles / worker_shifts / worker_pay_rates on the location
+    // This is the canonical fallback the arrow dropdown already uses — must stay in sync.
+    Object.keys(editingLocation?.worker_job_titles || {}).forEach(id => ids.add(id));
+    Object.keys(editingLocation?.worker_shifts || {}).forEach(id => ids.add(id));
+    Object.keys(editingLocation?.worker_pay_rates || {}).forEach(id => ids.add(id));
+
+    // SOURCE 3: Characters whose occupation_location_id or additional_occupation_locations point here
     allCharacters.forEach(char => {
       if (!char || !char.id || char.status === 'deleted' || char.status === 'moved_away') return;
       if (char.owner_email !== currentUser?.email) return;
       
-      // Check primary occupation location
       if (char.occupation_location_id === editingLocation?.id) {
         ids.add(char.id);
       }
       
-      // Check additional occupation locations
-      if (char.additional_occupation_locations && Array.isArray(char.additional_occupation_locations)) {
+      if (Array.isArray(char.additional_occupation_locations)) {
         char.additional_occupation_locations.forEach(locEntry => {
           if (locEntry?.location_id === editingLocation?.id) {
             ids.add(char.id);
