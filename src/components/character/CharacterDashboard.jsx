@@ -73,6 +73,57 @@ const inferEmotionFromText = (text) => {
   return null;
 };
 
+// ── LifeEvent event_type → emotional direction ────────────────────────────────
+// The Life Journal (LifeEvent entity) has structured event_type and valence fields.
+// These MUST be the primary emotional source — they are richer than free text.
+// event_type is the semantic classifier: conflict_event ≠ supportive_event.
+const LIFE_EVENT_EMOTION = {
+  // Positive / stabilizing
+  supportive_event:         { emotion: "content",      score: 68 },
+  bonding_event:            { emotion: "affectionate",  score: 82 },
+  healthy_choice_event:     { emotion: "motivated",     score: 76 },
+  growth_event:             { emotion: "hopeful",       score: 78 },
+  achievement_qualifying_action: { emotion: "happy",   score: 88 },
+  celebration_event:        { emotion: "joyful",        score: 92 },
+  routine_positive_event:   { emotion: "calm",          score: 65 },
+  reconciliation_event:     { emotion: "relieved",      score: 62 },
+  recovery_event:           { emotion: "relieved",      score: 60 },
+  life_milestone_event:     { emotion: "hopeful",       score: 78 },
+  // Mixed / transitional
+  emotional_exchange:       { emotion: "reflective",    score: 50 },
+  relationship_shift:       { emotion: "anxious",       score: 32 },
+  location_change_event:    { emotion: "anxious",       score: 38 },
+  npc_incident_event:       { emotion: "stressed",      score: 28 },
+  // Negative / destabilizing
+  conflict_event:           { emotion: "tense",         score: 18 },
+  fight_event:              { emotion: "angry",         score: 12 },
+  betrayal_event:           { emotion: "devastated",    score: 8  },
+  emotional_outburst_event: { emotion: "overwhelmed",   score: 14 },
+  grief_event:              { emotion: "sad",           score: 22 },
+  medical_event:            { emotion: "anxious",       score: 30 },
+  accident_event:           { emotion: "overwhelmed",   score: 14 },
+  legal_or_social_consequence_event: { emotion: "stressed", score: 20 },
+  setback_event:            { emotion: "disappointed",  score: 22 },
+  risky_decision_event:     { emotion: "anxious",       score: 30 },
+  impulsive_decision_event: { emotion: "conflicted",    score: 38 },
+  substance_use_event:      { emotion: "stressed",      score: 26 },
+  sleep_deprivation_event:  { emotion: "exhausted",     score: 14 },
+  routine_negative_event:   { emotion: "frustrated",    score: 26 },
+};
+
+// Apply valence modifier: if event says "positive" but type maps negative, blend toward positive
+const lifeEventScore = (eventType, valence, severity) => {
+  const base = LIFE_EVENT_EMOTION[eventType] || { emotion: "reflective", score: 50 };
+  let score = base.score;
+  // Severity amplifies distance from neutral (50)
+  const amplify = { minor: 0.7, moderate: 1.0, significant: 1.2, major: 1.4 }[severity] ?? 1.0;
+  score = 50 + (score - 50) * amplify;
+  // Valence override: if strongly positive valence on a neutral/negative type, lift score
+  if (valence === "positive" && score < 55) score = Math.max(score, 60);
+  if (valence === "negative" && score > 45) score = Math.min(score, 35);
+  return { emotion: base.emotion, score: Math.round(Math.max(0, Math.min(100, score))) };
+};
+
 const EMOTION_HEX = {
   calm: "#34d399", happy: "#fbbf24", joyful: "#fbbf24", excited: "#fbbf24",
   hopeful: "#a78bfa", affectionate: "#f472b6", reflective: "#38bdf8",
@@ -142,8 +193,7 @@ export default function CharacterDashboard({ character }) {
     const ownerEmail = character.owner_email;
     const now = new Date();
     const cutoff24h = subHours(now, 24).toISOString();
-    const cutoff3d  = subDays(now, 3).toISOString(); // graph window: today + 2 prior days
-    const cutoff7d  = subDays(now, 7).toISOString();
+    const cutoff3d  = subDays(now, 3).toISOString();
 
     // ── FETCH ALL DATA IN PARALLEL ─────────────────────────────────────────
     // Key fix: fetch ALL messages in conversations where the character is a participant
@@ -158,16 +208,20 @@ export default function CharacterDashboard({ character }) {
       ownerEmail
         ? base44.entities.Conversation.filter({ owner_email: ownerEmail, character_ids: [charId] }, "-updated_date", 120).catch(() => [])
         : Promise.resolve([]),
-      // Location data — direct entity query (avoids function response-shape ambiguity)
+      // Location data
       ownerEmail
         ? base44.entities.LocationReference.filter({ owner_email: ownerEmail }, null, 200).catch(() => [])
         : Promise.resolve([]),
-    ]).then(([msgsR, txR, narrR, convosR, locsR]) => {
-      const msgs   = msgsR.status   === "fulfilled" ? (msgsR.value   || []) : [];
-      const txns   = txR.status     === "fulfilled" ? (txR.value     || []) : [];
-      const narrs  = narrR.status   === "fulfilled" ? (narrR.value   || []) : [];
-      const convos = convosR.status === "fulfilled" ? (convosR.value || []) : [];
-      const locsArr= locsR.status   === "fulfilled" ? (locsR.value   || []) : [];
+      // LifeEvent — THE actual Life Journal. Contains event_type, valence, severity, title,
+      // description, emotional_impact, timestamp. This is the primary emotional graph source.
+      base44.entities.LifeEvent.filter({ character_id: charId }, "-timestamp", 100).catch(() => []),
+    ]).then(([msgsR, txR, narrR, convosR, locsR, lifeEventsR]) => {
+      const msgs       = msgsR.status       === "fulfilled" ? (msgsR.value       || []) : [];
+      const txns       = txR.status         === "fulfilled" ? (txR.value         || []) : [];
+      const narrs      = narrR.status       === "fulfilled" ? (narrR.value       || []) : [];
+      const convos     = convosR.status     === "fulfilled" ? (convosR.value     || []) : [];
+      const locsArr    = locsR.status       === "fulfilled" ? (locsR.value       || []) : [];
+      const lifeEvents = lifeEventsR.status === "fulfilled" ? (lifeEventsR.value || []) : [];
 
       // ── Build location map ────────────────────────────────────────────────
       const locationMap = {};
@@ -280,27 +334,47 @@ export default function CharacterDashboard({ character }) {
         } catch {}
       };
 
-      // ── 1. LIFE JOURNAL ENTRIES (character.memories) ───────────────────────
-      // These are the richest emotional source but were NOT being used before.
-      // Each entry has a title, description, emotional_impact text, and timestamps.
-      // We MUST infer emotional direction semantically — "moderate" is not a direction.
+      // ── 1. LIFE JOURNAL — LifeEvent entity (the ACTUAL structured Life Journal) ─
+      // event_type is the authoritative emotional classifier.
+      // "supportive_event" and "conflict_event" produce DIFFERENT scores by design.
+      // valence + severity further modulate the score.
+      // We use created_date (when the record was written) OR timestamp field.
+      lifeEvents.forEach(le => {
+        const ts = le.timestamp || le.created_date;
+        if (!ts) return;
+        // Primary: use structured event_type for semantic score
+        if (le.event_type && LIFE_EVENT_EMOTION[le.event_type]) {
+          const { emotion, score } = lifeEventScore(le.event_type, le.valence, le.severity);
+          addEvent(ts, emotion, score, `life:${le.event_type}`);
+          return;
+        }
+        // Secondary: semantic inference from title + description + emotional_impact text
+        const text = [le.title, le.description, le.emotional_impact].filter(Boolean).join(" ");
+        const inferred = inferEmotionFromText(text);
+        if (inferred) {
+          addEvent(ts, inferred.emotion, inferred.score, "life:inferred");
+        } else if (le.valence === "positive") {
+          addEvent(ts, "content", 65, "life:positive");
+        } else if (le.valence === "negative") {
+          addEvent(ts, "stressed", 28, "life:negative");
+        } else {
+          addEvent(ts, "reflective", 50, "life:neutral");
+        }
+      });
+
+      // ── 1b. character.memories[] — legacy inline array on Character record ──
+      // These are older-format memories that may have emotion_state or free text.
+      // Kept for backward compatibility but LifeEvent is now primary.
       (character.memories || []).forEach(m => {
         const timestamp = m.created_date || m.updated_date || m.date;
         if (!timestamp) return;
-        const text = [m.title, m.description, m.emotional_impact, m.summary].filter(Boolean).join(" ");
-        // First: try explicit emotion_state field on the memory
         if (m.emotion_state && EMOTION_SCORE[m.emotion_state?.toLowerCase()] != null) {
           addEvent(timestamp, m.emotion_state, null, "memory");
           return;
         }
-        // Second: semantic inference from title + description + emotional_impact
+        const text = [m.title, m.description, m.emotional_impact].filter(Boolean).join(" ");
         const inferred = inferEmotionFromText(text);
-        if (inferred) {
-          addEvent(timestamp, inferred.emotion, inferred.score, "memory");
-        } else if (text.length > 0) {
-          // Fallback: use neutral-slightly-reflective if we have text but no match
-          addEvent(timestamp, "reflective", 50, "memory");
-        }
+        if (inferred) addEvent(timestamp, inferred.emotion, inferred.score, "memory");
       });
 
       // ── 2. NARRATIVES (LLM-written — most reliable emotional_state field) ──
@@ -405,6 +479,31 @@ export default function CharacterDashboard({ character }) {
       if (character.alarm_woke_at && isAfter(parseISO(character.alarm_woke_at), parseISO(cutoff24h)))
         timelineEntries.push({ time: character.alarm_woke_at, icon: "sun", text: "Woke up", emotion: "calm" });
 
+      // Life Journal entries in past 24h — these directly correspond to graph points
+      const lifeEventIconMap = {
+        supportive_event: "heart", bonding_event: "heart", celebration_event: "heart",
+        conflict_event: "activity", fight_event: "activity", betrayal_event: "activity",
+        grief_event: "book", recovery_event: "book", growth_event: "book",
+        work_start: "briefcase", sleep_deprivation_event: "moon",
+        location_change_event: "mappin",
+      };
+      lifeEvents.filter(le => {
+        const ts = le.timestamp || le.created_date;
+        return ts && isAfter(parseISO(ts), parseISO(cutoff24h));
+      }).forEach(le => {
+        const ts = le.timestamp || le.created_date;
+        const { emotion } = le.event_type && LIFE_EVENT_EMOTION[le.event_type]
+          ? lifeEventScore(le.event_type, le.valence, le.severity)
+          : { emotion: "reflective" };
+        timelineEntries.push({
+          time: ts,
+          icon: lifeEventIconMap[le.event_type] || "activity",
+          text: le.title || le.description?.substring(0, 80) || "Life event",
+          emotion,
+          sub: le.severity ? `${le.severity} · ${le.valence || ""}` : null,
+        });
+      });
+
       // Narratives (LLM-written, already human text)
       const narIconMap = { sleep:"moon", wake:"sun", work_start:"briefcase", work_end:"home", travel_arrival:"mappin", travel_departure:"mappin", social_event:"heart", catch_up_summary:"book", location_change:"mappin", passive_time:"activity" };
       narrs24h.forEach(n => {
@@ -456,15 +555,22 @@ export default function CharacterDashboard({ character }) {
       if (liveStatus === "at_school") insights.push("Academic schedule is currently active.");
       if (liveStatus === "at_work") insights.push("Work schedule is currently active.");
 
-      // ── Memory highlights — filter out generic/placeholder entries ────────
-      const memoryHighlights = (character.memories || [])
-        .filter(m => {
-          const t = (m.title || "").trim().toLowerCase();
-          return t.length > 5 && !["memory","key memory","a memory","untitled"].includes(t);
-        })
-        .filter(m => !!(m.emotional_impact || m.description))
+      // ── Life Journal highlights — from LifeEvent entity (not character.memories) ─
+      // Show the most emotionally significant recent LifeEvents as the highlight panel.
+      const memoryHighlights = lifeEvents
+        .filter(le => le.title && le.title.trim().length > 3)
         .slice(0, 4)
-        .map(m => ({ title: m.title, note: m.emotional_impact || m.description || null, active: !!m.emotional_impact }));
+        .map(le => {
+          const { emotion } = le.event_type && LIFE_EVENT_EMOTION[le.event_type]
+            ? lifeEventScore(le.event_type, le.valence, le.severity)
+            : { emotion: "reflective" };
+          return {
+            title: le.title,
+            note: le.emotional_impact || le.description?.substring(0, 120) || null,
+            active: le.valence === "negative" || le.severity === "significant" || le.severity === "major",
+            emotion,
+          };
+        });
 
       setData({ liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 12), socialStats: { msgsSent, positiveInteractions, conflictEvents }, insights: insights.slice(0, 4), memoryHighlights });
       setLoaded(true);
@@ -691,7 +797,7 @@ export default function CharacterDashboard({ character }) {
                     <p className="text-xs font-medium text-foreground leading-snug">{mem.title}</p>
                     {mem.note && <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug line-clamp-2">{mem.note}</p>}
                   </div>
-                  {mem.active && <span className="text-[8px] text-amber-400 font-medium whitespace-nowrap flex-shrink-0 mt-1">Still affecting mood</span>}
+                  {mem.active && <span className="text-[8px] font-medium whitespace-nowrap flex-shrink-0 mt-1" style={{ color: eColor(mem.emotion || "stressed") }}>Still active</span>}
                 </div>
               ))}
             </div>
