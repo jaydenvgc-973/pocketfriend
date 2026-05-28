@@ -60,7 +60,7 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
     // LFC cache — only serve if fresh AND not forced
     if (!force && ownerEmail && cacheKey) {
       const cached = lfcRead(ownerEmail, cacheKey);
-      if (cached && !lfcIsStale(cached, 'messages')) {
+      if (cached && !lfcIsStale(cached, 'unread')) {
         const d = cached.data;
         if (d) { applyData(d.byContact, d.total); return; }
       }
@@ -170,13 +170,20 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       return;
     }
 
-    // Seed from LFC immediately (zero-latency first paint)
+    // Seed from LFC immediately (zero-latency first paint) — ONLY if the cache is fresh.
+    // A stale cache MUST NOT be applied as the initial state. It would be restored after
+    // thread:read clears the badge, causing the green dot oscillation.
+    // Use 'unread' threshold (2 min) — same as messages, consistent with write side.
     if (ownerEmail && cacheKey) {
       const cached = lfcRead(ownerEmail, cacheKey);
-      if (cached?.data) applyData(cached.data.byContact, cached.data.total);
+      if (cached?.data && !lfcIsStale(cached, 'unread')) {
+        applyData(cached.data.byContact, cached.data.total);
+      }
     }
 
-    loadUnreadCounts();
+    // Always force a live fetch on mount — never let cooldown suppress the initial DB read.
+    // The cooldown is for re-subscription bounces, not for first-paint accuracy.
+    loadUnreadCounts(true);
 
     // Subscription: debounced 5s, force=true bypasses cache + cooldown
     const unsubscribe = base44.entities.Message.subscribe((event) => {
