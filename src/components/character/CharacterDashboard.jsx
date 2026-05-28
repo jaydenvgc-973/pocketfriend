@@ -5,7 +5,7 @@ import {
   Moon, Sun, Briefcase, Home, MessageCircle, Phone,
   DollarSign, Heart, MapPin, Zap, BookOpen, Brain, Activity
 } from "lucide-react";
-import { format, subHours, isAfter, parseISO, subDays, parseISO as pi } from "date-fns";
+import { format, subHours, isAfter, parseISO, subDays } from "date-fns";
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 
 // ── Emotion scoring ───────────────────────────────────────────────────────────
@@ -87,6 +87,7 @@ export default function CharacterDashboard({ character }) {
     const ownerEmail = character.owner_email;
     const now = new Date();
     const cutoff24h = subHours(now, 24).toISOString();
+    const cutoff3d  = subDays(now, 3).toISOString(); // graph window: today + 2 prior days
     const cutoff7d  = subDays(now, 7).toISOString();
 
     // ── FETCH ALL DATA IN PARALLEL ─────────────────────────────────────────
@@ -186,8 +187,9 @@ export default function CharacterDashboard({ character }) {
       const msgs24h  = scopedMsgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff24h)));
       const txns24h  = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff24h)));
       const narrs24h = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff24h)));
-      const msgs7d   = scopedMsgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff7d)));
-      const narrs7d  = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff7d)));
+      const msgs3d   = scopedMsgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff3d)));
+      const narrs3d  = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff3d)));
+      const txns3d   = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
 
       // Social stats (all msgs in these convos, not just sender_type=character)
       const allSent24h     = msgs24h.filter(m => m.sender_type === "character");
@@ -195,92 +197,81 @@ export default function CharacterDashboard({ character }) {
       const positiveInteractions = allSent24h.filter(m => isPositive(m.emotional_state)).length;
       const conflictEvents = allSent24h.filter(m => isTense(m.emotional_state)).length;
 
-      // ── INTRADAY EMOTIONAL GRAPH ───────────────────────────────────────────
-      // KEY FIX: Instead of one point per day (which hides intraday movement),
-      // we build HOURLY buckets. Each real event adds a point at its actual hour.
-      // X-axis label = "MM/dd HH" buckets condensed to display labels.
-      // This shows intraday rises, dips, conflicts, and recovery.
+      // ── INTRADAY EMOTIONAL GRAPH — 3-day window, one point per event ──────
+      // RULE: Each emotional event is its own point at its real timestamp.
+      // NO averaging. NO bucketing. NO daily aggregation.
+      // A calm→angry→calm day must show 3 distinct points, not one flat line.
+      // Window: today + yesterday + day before yesterday only.
 
-      // Collect timestamped emotional events
-      const rawEvents = []; // { isoTime, emotion, source }
-
-      // From narratives (most reliable — LLM-written)
-      narrs7d.forEach(n => {
-        if (n.emotional_state) rawEvents.push({ isoTime: n.timestamp, emotion: n.emotional_state, source: "narrative" });
-      });
-
-      // From all messages in these conversations (both character and user side carry emotional context)
-      msgs7d.filter(m => m.emotional_state).forEach(m => {
-        rawEvents.push({ isoTime: m.created_date, emotion: m.emotional_state, source: "message" });
-      });
-
-      // From financial events
-      txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff7d)) && t.direction === "expense")
-        .forEach(t => rawEvents.push({ isoTime: t.timestamp, emotion: "stressed", source: "financial" }));
-
-      // Current state → now
       const curEmotion = character.emotional_state || "calm";
-      rawEvents.push({ isoTime: now.toISOString(), emotion: curEmotion, source: "current" });
 
-      // Needs signals → now
-      if ((character.mental_value ?? 100) < 50)         rawEvents.push({ isoTime: now.toISOString(), emotion: "stressed",  source: "needs" });
-      if ((character.social_value ?? 100) < 35)         rawEvents.push({ isoTime: now.toISOString(), emotion: "lonely",    source: "needs" });
-      if ((character.energy_value ?? 100) < 25)         rawEvents.push({ isoTime: now.toISOString(), emotion: "exhausted", source: "needs" });
-      if ((character.financial_need_value ?? 0) > 70)   rawEvents.push({ isoTime: now.toISOString(), emotion: "stressed",  source: "needs" });
+      // Collect individual timestamped emotional events — each becomes its own graph point
+      const rawEvents = []; // { tsMs: number, isoTime: string, emotion: string, label: string }
 
-      // Sleep events
-      if (character.last_sleep_start) rawEvents.push({ isoTime: character.last_sleep_start, emotion: "exhausted", source: "sleep" });
-      if (character.alarm_woke_at)    rawEvents.push({ isoTime: character.alarm_woke_at,    emotion: "calm",      source: "wake" });
-
-      // Build intraday points — bucket into 4-hour blocks per day for display clarity
-      // Each block = a plotted point. Multiple events in same block are averaged.
-      const blockMap = {}; // "MM/dd·HH_block" → { label, scores: [] }
-
-      rawEvents.forEach(({ isoTime, emotion }) => {
-        if (!isoTime) return;
+      const addEvent = (isoTime, emotion) => {
+        if (!isoTime || !emotion) return;
         try {
           const d = parseISO(isoTime);
-          const dayLabel = format(d, "MM/dd");
-          const hour = d.getHours();
-          // Group into 6-hour blocks: 0-5=Night, 6-11=Morn, 12-17=Aftn, 18-23=Eve
-          const blockNames = ["Night","Morn","Aftn","Eve"];
-          const blockIdx = Math.floor(hour / 6);
-          const key = `${dayLabel}·${blockIdx}`;
-          if (!blockMap[key]) blockMap[key] = { label: `${dayLabel} ${blockNames[blockIdx]}`, day: dayLabel, blockIdx, scores: [] };
-          blockMap[key].scores.push(eScore(emotion));
+          const tsMs = d.getTime();
+          // Only include events within the 3-day window
+          if (tsMs < parseISO(cutoff3d).getTime()) return;
+          const label = format(d, "EEE h:mma"); // e.g. "Mon 3:45pm"
+          rawEvents.push({ tsMs, isoTime, emotion, label });
         } catch {}
+      };
+
+      // Narratives (highest quality — LLM-written emotional state)
+      narrs3d.forEach(n => { if (n.emotional_state) addEvent(n.timestamp, n.emotional_state); });
+
+      // Messages — every message with an emotional_state is its own point
+      // This is the core: if a character had 8 emotional messages today, plot all 8
+      msgs3d.filter(m => m.emotional_state && m.created_date).forEach(m => {
+        addEvent(m.created_date, m.emotional_state);
       });
 
-      // Sort and build chart data
-      const trendData = Object.values(blockMap)
-        .sort((a, b) => {
-          if (a.day !== b.day) {
-            try { return new Date("2026/" + a.day) - new Date("2026/" + b.day); } catch { return 0; }
-          }
-          return a.blockIdx - b.blockIdx;
-        })
-        .map(block => {
-          const avg = Math.round(block.scores.reduce((s, v) => s + v, 0) / block.scores.length);
-          return { label: block.label, mood: avg };
-        })
-        .slice(-28); // max 7 days × 4 blocks
+      // Financial stress events
+      txns3d.filter(t => t.direction === "expense").forEach(t => addEvent(t.timestamp, "stressed"));
 
-      // If we have very sparse data (only current state), seed from memory to show character history
-      if (trendData.length < 3) {
-        const seedEntries = [];
-        (character.memories || [])
-          .filter(m => m.emotional_impact || m.emotion_state)
-          .slice(0, 6)
-          .forEach((m, i) => {
-            const daysAgo = i + 2;
-            const d = subDays(now, daysAgo);
-            const dayLabel = format(d, "MM/dd");
-            const e = m.emotion_state || (m.emotional_impact?.toLowerCase().includes("pain") ? "sad" : "reflective");
-            seedEntries.push({ label: `${dayLabel} Morn`, mood: eScore(e) });
-          });
-        // Insert seeded points before existing ones
-        trendData.unshift(...seedEntries);
+      // Sleep / wake lifecycle events
+      if (character.last_sleep_start) addEvent(character.last_sleep_start, "exhausted");
+      if (character.alarm_woke_at)    addEvent(character.alarm_woke_at, "calm");
+
+      // Needs-derived signals — stamped at NOW, reflect current pressure
+      if ((character.mental_value ?? 100) < 50)       addEvent(now.toISOString(), "stressed");
+      if ((character.social_value ?? 100) < 35)       addEvent(now.toISOString(), "lonely");
+      if ((character.energy_value ?? 100) < 25)       addEvent(now.toISOString(), "exhausted");
+      if ((character.financial_need_value ?? 0) > 70) addEvent(now.toISOString(), "stressed");
+
+      // Always anchor with current emotional state at now
+      addEvent(now.toISOString(), curEmotion);
+
+      // Sort all events chronologically by real timestamp
+      rawEvents.sort((a, b) => a.tsMs - b.tsMs);
+
+      // Deduplicate: if two events land at the exact same millisecond (both stamped "now"),
+      // keep the more emotionally significant one (lower score = more severe = more notable)
+      const deduped = [];
+      for (let i = 0; i < rawEvents.length; i++) {
+        const cur = rawEvents[i];
+        const prev = deduped[deduped.length - 1];
+        // If same timestamp within 1 minute, keep the more extreme emotion
+        if (prev && Math.abs(cur.tsMs - prev.tsMs) < 60000) {
+          if (eScore(cur.emotion) < eScore(prev.emotion)) {
+            deduped[deduped.length - 1] = cur; // replace with more extreme
+          }
+          // else skip — keep existing
+        } else {
+          deduped.push(cur);
+        }
       }
+
+      // Build final chart data — each entry is a real timestamped emotional point
+      const trendData = deduped.map(e => ({
+        label: e.label,
+        mood: eScore(e.emotion),
+        emotion: e.emotion,
+        tsMs: e.tsMs,
+      }));
 
       // ── TIMELINE ENTRIES ──────────────────────────────────────────────────
       const timelineEntries = [];
@@ -369,30 +360,32 @@ export default function CharacterDashboard({ character }) {
   return (
     <div className="space-y-4">
 
-      {/* ── 1. EMOTIONAL TREND GRAPH — intraday points ───────────────────── */}
+      {/* ── 1. EMOTIONAL TREND GRAPH — per-event intraday points, 3-day window */}
       {trendData.length >= 2 && (
         <div className="rounded-xl overflow-hidden bg-card border border-border">
           <div className="px-4 pt-4 pb-1 flex items-center justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Emotional Trend · This Week</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Emotional Movement · Last 3 Days</p>
             <span className="flex items-center gap-1 text-[9px]" style={{ color: moodColor }}>
               <span className="w-2 h-2 rounded-full inline-block" style={{ background: moodColor }} />
-              Mood
+              {emotionState}
             </span>
           </div>
-          <div style={{ height: 130 }} className="px-1 pb-2">
+          <div style={{ height: 140 }} className="px-1 pb-2">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trendData} margin={{ top: 10, right: 10, left: -28, bottom: 4 }}>
+              <LineChart data={trendData} margin={{ top: 12, right: 10, left: -28, bottom: 4 }}>
                 <XAxis
                   dataKey="label"
                   tick={{ fontSize: 8, fill: "hsl(var(--muted-foreground))" }}
                   axisLine={false} tickLine={false}
                   interval="preserveStartEnd"
-                  tickFormatter={(v) => v.split(" ")[0]} // show only date portion
                 />
                 <YAxis domain={[0, 100]} hide />
                 <Tooltip
                   contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 10, padding: "6px 10px" }}
-                  formatter={(v) => [`${v}%`, "Mood"]}
+                  formatter={(v, name, props) => {
+                    const emotion = props?.payload?.emotion;
+                    return [emotion ? `${emotion} (${v})` : `${v}`, "Mood"];
+                  }}
                   labelFormatter={(l) => l}
                 />
                 <Line
@@ -401,8 +394,12 @@ export default function CharacterDashboard({ character }) {
                   name="Mood"
                   stroke={moodColor}
                   strokeWidth={2}
-                  dot={{ r: 3, fill: moodColor, strokeWidth: 0 }}
-                  activeDot={{ r: 4.5, strokeWidth: 0 }}
+                  dot={(props) => {
+                    const { cx, cy, payload } = props;
+                    const c = eColor(payload?.emotion);
+                    return <circle key={`dot-${cx}-${cy}`} cx={cx} cy={cy} r={3.5} fill={c} stroke="none" />;
+                  }}
+                  activeDot={{ r: 5, strokeWidth: 0 }}
                   connectNulls
                 />
               </LineChart>
