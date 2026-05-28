@@ -23,11 +23,12 @@ function toMinutes(timeStr) {
 const NPC_SLEEP_TYPES = new Set(['npc_regular', 'npc_family_member', 'npc_fictitious', 'npc']);
 
 function computeAdaptiveSleepWindow(character, etTime) {
-  const SLEEP_DURATION_MIN = 7 * 60;
-  const PRE_SHIFT_BUFFER = 60;
+  const SLEEP_DURATION_MIN = 7 * 60;   // 7 hours
+  const PRE_SHIFT_BUFFER   = 60;        // 1 hour prep before shift
+  const DECOMPRESSION_MIN  = 60;        // 1 hour wind-down after overnight shift
   const toMin = toMinutes;
 
-  // PRIORITY 1: Stored schedule is canonical — works for ALL character types
+  // PRIORITY 1: Stored schedule is canonical — always wins for ALL character types
   if (character.sleep_start_time && character.wake_up_time) {
     const s = toMin(character.sleep_start_time);
     const w = toMin(character.wake_up_time);
@@ -39,39 +40,57 @@ function computeAdaptiveSleepWindow(character, etTime) {
     return { sleepStartMin: 0, wakeMin: 8 * 60, source: 'npc_forced_default' };
   }
 
-  // PRIORITY 3 (active_created_character): Derive from work schedule
-  // Uses shift times directly — not limited to today/tomorrow — because the window is
-  // character-specific (based on shift hours), not calendar-day-specific.
-  // A character working 22:00–02:00 sleeps 03:00–21:00 regardless of which day it is.
+  // PRIORITY 3 (active_created_character): Derive from work schedule with day awareness.
+  // Three separate times are tracked:
+  //   sleepWakeTime     = sleepStart + SLEEP_DURATION  (when character naturally wakes)
+  //   nextShiftPrepTime = shiftStart - PRE_SHIFT_BUFFER (when they prep for work)
+  //   nextShiftStart    = actual shift start
+  // sleepWakeTime is NEVER set to nextShiftPrepTime. That would cause all-day sleeping.
   if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.length > 0) {
     const startMin = toMin(character.work_start_time);
     const endMin   = toMin(character.work_end_time);
     if (startMin !== null && endMin !== null) {
+      const today     = etTime.getDay();
+      const yesterday = (today + 6) % 7;
+      const tomorrow  = (today + 1) % 7;
       const isOvernightShift = endMin < startMin;
+
       if (isOvernightShift) {
-        return {
-          sleepStartMin: (endMin + 60) % 1440,
-          wakeMin: (startMin - PRE_SHIFT_BUFFER + 1440) % 1440,
-          source: 'overnight_work',
-        };
+        // Overnight shift (e.g. 22:00–02:00):
+        //   sleepStart = shiftEnd + decompression  → 03:00
+        //   sleepWake  = sleepStart + 7h            → 10:00  ← NOT shiftStart - 1h
+        // Day-aware: apply when yesterday or today is a work day.
+        const workedLastNight = character.work_days.includes(yesterday);
+        const worksTonight    = character.work_days.includes(today);
+        if (workedLastNight || worksTonight) {
+          const sleepStartMin = (endMin + DECOMPRESSION_MIN) % 1440;
+          const wakeMin       = (sleepStartMin + SLEEP_DURATION_MIN) % 1440;
+          return { sleepStartMin, wakeMin, source: 'overnight_work' };
+        }
       } else {
-        const wakeTime = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
-        return {
-          sleepStartMin: (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440,
-          wakeMin: wakeTime,
-          source: 'work_schedule',
-        };
+        // Day shift (e.g. 09:00–17:00):
+        //   sleepWake  = shiftStart - prep buffer  → 08:00
+        //   sleepStart = sleepWake - 7h             → 01:00
+        // Day-aware: apply on work days and the day before.
+        const worksToday    = character.work_days.includes(today);
+        const worksTomorrow = character.work_days.includes(tomorrow);
+        if (worksToday || worksTomorrow) {
+          const wakeMin       = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+          const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
+          return { sleepStartMin, wakeMin, source: 'work_schedule' };
+        }
       }
     }
   }
 
   // PRIORITY 4 (school only, no work)
+  // School ~08:00 → wake 07:00 → sleep 00:00
   if (character.student_status === 'enrolled' && character.education_location_id) {
     return { sleepStartMin: 0, wakeMin: 7 * 60, source: 'school_schedule' };
   }
 
-  // PRIORITY 5: No schedule — safe default 23:00–07:00. NOT midnight.
-  // Only used for characters with zero schedule information.
+  // PRIORITY 5: No schedule — safe default 23:00–07:00.
+  // Only for characters with no explicit sleep schedule, no work, no school.
   return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, source: 'default_no_schedule' };
 }
 
@@ -206,7 +225,34 @@ export function getCharacterSleepState(character) {
           }
         }
 
-        // Awake — no schedule window match
+        // LOWEST PRIORITY: energy support signal — only when there is genuinely no schedule.
+        // Energy does NOT override any schedule-derived window. It only applies when
+        // computeAdaptiveSleepWindow returned 'default_no_schedule' (no work, no school,
+        // no explicit fields). This prevents characters with no schedule from appearing
+        // fully awake at 3 AM when their energy is critically low.
+        if (!hasAwakeOverride) {
+          const window = computeAdaptiveSleepWindow(character, nowET);
+          if (window?.source === 'default_no_schedule') {
+            const energyCritical = character.energy_value !== undefined && character.energy_value < 20;
+            if (energyCritical) {
+              return {
+                isSleeping: true,
+                isNapping: false,
+                displayLabel: 'sleeping',
+                contextLabel: 'Asleep',
+                visible_label: 'Asleep',
+                confirmed_reason: 'energy_critical_no_schedule',
+                evidence_source: 'energy_value',
+                confidence: 0.6,
+                stale_risk: false,
+                isLikelyStale: false,
+                blockingCondition: null,
+              };
+            }
+          }
+        }
+
+        // Awake — no schedule window, no energy evidence
         return {
           isSleeping: false,
           isNapping: false,

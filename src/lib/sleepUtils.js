@@ -185,24 +185,36 @@ export function isNPCCharacterType(character) {
  * isCharacterAsleep, locationResolutionEngine, getCharacterLivePresence, and
  * getCharacterSleepState (via characterSleepState.js which mirrors this logic).
  *
+ * Three distinct times are modeled separately:
+ *   sleepWakeTime      — when the character naturally wakes up after sleeping
+ *   nextShiftPrepTime  — when they start getting ready for the next shift (shiftStart - buffer)
+ *   nextShiftStartTime — when their shift actually begins
+ *
+ * sleepWakeTime is ALWAYS computed as: sleepStart + SLEEP_DURATION
+ * nextShiftPrepTime is NEVER used as the wake time from sleep.
+ *
  * Priority:
  *   1. Explicit sleep_start_time + wake_up_time on the character record
  *   2. NPC types → forced 00:00–08:00 ET
- *   3. active_created_character → derive from next upcoming work shift (any work day)
- *      Overnight shifts: sleep window starts 1h after shift ends
- *      Day shifts: sleep window is 7h before (shiftStart - 1h buffer)
- *   4. School-only character → wake at 07:00, sleep at 00:00
- *   5. No schedule at all → safe default 23:00–07:00 (conservative, not midnight)
- *
- * CRITICAL: Do NOT assume midnight for characters with late or overnight work.
- * If a character's work ends at 02:00 AM, their sleep starts at ~03:00 AM.
+ *   3. active_created_character with work schedule:
+ *      - Overnight shift (endMin < startMin, e.g. 22:00–02:00):
+ *          sleepStart = shiftEnd + 60min (decompression)  → e.g. 03:00
+ *          sleepWake  = sleepStart + SLEEP_DURATION        → e.g. 10:00
+ *          Only applied if today or yesterday is a work day (day-aware).
+ *      - Day shift (e.g. 09:00–17:00):
+ *          sleepWake  = shiftStart - 60min (prep buffer)  → e.g. 08:00
+ *          sleepStart = sleepWake - SLEEP_DURATION         → e.g. 01:00
+ *          Applied on work days and the day before a work day.
+ *   4. School-only character → wake 07:00, sleep 00:00
+ *   5. No schedule at all → safe default 23:00–07:00
  */
 function computeAdaptiveSleepWindow(character) {
-  const SLEEP_DURATION_MIN = 7 * 60;
-  const PRE_SHIFT_BUFFER = 60;
+  const SLEEP_DURATION_MIN = 7 * 60;   // 7 hours
+  const PRE_SHIFT_BUFFER   = 60;        // 1 hour prep before shift
+  const DECOMPRESSION_MIN  = 60;        // 1 hour wind-down after overnight shift
   const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
 
-  // PRIORITY 1: Stored explicit schedule — works for ALL character types
+  // PRIORITY 1: Stored explicit schedule — always wins for ALL character types
   if (character.sleep_start_time && character.wake_up_time) {
     const s = toMin(character.sleep_start_time);
     const w = toMin(character.wake_up_time);
@@ -211,44 +223,59 @@ function computeAdaptiveSleepWindow(character) {
 
   // PRIORITY 2 (NPC types only): forced default window 00:00–08:00 ET
   if (isNPCCharacterType(character)) {
-    return { sleepStartMin: 0, wakeMin: 8 * 60 }; // 00:00–08:00
+    return { sleepStartMin: 0, wakeMin: 8 * 60 };
   }
 
-  // PRIORITY 3 (active_created_character): Derive from work schedule
-  // Find the next upcoming shift across ANY work day — not just today/tomorrow.
-  // This ensures characters with late/overnight shifts never get an incorrect window.
+  // PRIORITY 3 (active_created_character): Derive from work schedule with day awareness
   if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.length > 0) {
     const startMin = toMin(character.work_start_time);
     const endMin   = toMin(character.work_end_time);
     if (startMin !== null && endMin !== null) {
+      const nowET     = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const today     = nowET.getDay();
+      const yesterday = (today + 6) % 7;
+      const tomorrow  = (today + 1) % 7;
+
       const isOvernightShift = endMin < startMin;
+
       if (isOvernightShift) {
-        // Overnight: sleep starts 1h after shift ends, wake 1h before shift starts
-        return {
-          sleepStartMin: (endMin + 60) % 1440,
-          wakeMin: (startMin - PRE_SHIFT_BUFFER + 1440) % 1440,
-        };
+        // Overnight shift (e.g. 22:00–02:00):
+        // Sleep starts ~1h after shift ends (decompression). Wake = sleepStart + 7h.
+        // e.g. shift ends 02:00 → sleep 03:00 → wake 10:00
+        // Only apply if the character worked last night (yesterday is a work day)
+        // or is working tonight (today is a work day, so the window applies post-shift).
+        const workedLastNight = character.work_days.includes(yesterday);
+        const worksTonight    = character.work_days.includes(today);
+        if (workedLastNight || worksTonight) {
+          const sleepStartMin = (endMin + DECOMPRESSION_MIN) % 1440;
+          const wakeMin       = (sleepStartMin + SLEEP_DURATION_MIN) % 1440;
+          return { sleepStartMin, wakeMin };
+        }
+        // Off day — no overnight-derived window; fall through to default
       } else {
-        // Day shift: wake 1h before start, sleep 7h before wake
-        const wakeTime = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
-        return {
-          sleepStartMin: (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440,
-          wakeMin: wakeTime,
-        };
+        // Day shift (e.g. 09:00–17:00):
+        // Wake = shiftStart - prep buffer. Sleep = wake - 7h.
+        // Apply on work days and the day before a work day.
+        const worksToday    = character.work_days.includes(today);
+        const worksTomorrow = character.work_days.includes(tomorrow);
+        if (worksToday || worksTomorrow) {
+          const wakeMin       = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+          const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
+          return { sleepStartMin, wakeMin };
+        }
+        // Off day — no derived window; fall through to default
       }
     }
   }
 
   // PRIORITY 4 (active_created_character with school, no work)
+  // School typically starts 08:00 → wake 07:00 → sleep 00:00
   if (character.student_status === 'enrolled' && character.education_location_id) {
-    // School starts ~8 AM, wake at 7 AM, sleep at midnight
     return { sleepStartMin: 0, wakeMin: 7 * 60 };
   }
 
-  // PRIORITY 5: No schedule at all — safe character-specific default
-  // 23:00–07:00 ET. NOT midnight. This is a conservative default for characters
-  // with no schedule information. It is NOT a universal midnight rule.
-  // Characters with schedules (work/school/explicit) always use those instead.
+  // PRIORITY 5: No schedule — safe default 23:00–07:00.
+  // Only for characters with no explicit sleep schedule, no work, no school.
   return { sleepStartMin: 23 * 60, wakeMin: 7 * 60 };
 }
 
