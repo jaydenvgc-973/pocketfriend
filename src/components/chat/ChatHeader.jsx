@@ -94,12 +94,8 @@ export default function ChatHeader({
         {character ? (() => {
           const ss = getCharacterSleepState(character);
           if (ss.isSleeping) {
-            // Show visible label + confidence indicator
-            const confidenceLabel = ss.confidence >= 0.8 ? '✓ confirmed' : ss.confidence > 0 ? '? unverified' : '⚠️ needs diagnosis';
             return (
-              <p className="text-xs text-muted-foreground">
-                {ss.visible_label} {confidenceLabel}
-              </p>
+              <p className="text-xs text-muted-foreground">🌙 Asleep</p>
             );
           }
           return <p className="text-xs text-muted-foreground">{isPhone ? 'Texting' : 'Talking'}</p>;
