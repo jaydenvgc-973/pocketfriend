@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
+import { lfcDelete } from "@/lib/localFirstCache";
 // Note: Sparkles is reused for prayer icon
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
@@ -126,6 +127,23 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
   // Single batched query: fetch ALL unread character messages for this character at once
   // instead of N queries per conversation (which caused 429 rate limit storms)
+  // Canonical message validity filter — same rule applied everywhere in the app.
+  // A message is countable as unread only when ALL of these are true:
+  //  - sender_type === 'character'
+  //  - is_read === false
+  //  - not a recovery/fallback signal
+  //  - not a date divider / system / timestamp row
+  //  - has non-empty content
+  const isCountable = (msg) => {
+    if (!msg || msg.sender_type !== 'character') return false;
+    if (msg.is_read !== false) return false;
+    if (msg.recovery_signal === true) return false;
+    const t = (msg.type || '').toLowerCase();
+    if (t === 'date' || t === 'divider' || t === 'system' || t === 'timestamp' || t === 'separator') return false;
+    if (!msg.content || msg.content.trim() === '') return false;
+    return true;
+  };
+
   const debounceRef = useRef(null);
   const countUnread = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -137,23 +155,14 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         return;
       }
       try {
-        // ROOT CAUSE FIX: world_phone conversations must be excluded from the red Chat badge.
-        // world_phone conversations can have type="direct" (active_created pairs) or type="npc" (legacy).
-        // Previously, directIds used only c.type==="direct" with no channel filter, which caused
-        // world_phone conversations stamped as type="direct" to be counted as red Chat badges.
-        // Fix: channel="world_phone" is the authoritative classifier — always takes priority over type.
+        // channel="world_phone" is the authoritative classifier — always takes priority over type.
         const worldPhoneIds = new Set(conversations.filter(c => c.channel === "world_phone").map(c => c.id));
         const worldContactIds = new Set(conversations.filter(c => c.type === "npc" && c.channel !== "world_phone").map(c => c.id));
-        // Direct chat: type=direct AND not a world_phone channel
         const directIds = new Set(conversations.filter(c => c.type === "direct" && c.channel !== "world_phone").map(c => c.id));
-        // Phone/text: type=phone AND not a world_phone channel
         const phoneIds = new Set(conversations.filter(c => c.type === "phone" && c.channel !== "world_phone").map(c => c.id));
 
-        // Ownership is enforced by the conversation map above — only conversation IDs
-        // that belong to this character's owner_email scope (from the owner-scoped
-        // Conversation query) are present in worldPhoneIds / directIds / phoneIds.
-        // Messages whose conversation_id is not in any of those sets are silently skipped.
-        // Message does NOT store owner_email — filtering by it returns zero results.
+        // Fetch unread messages scoped to this character — ownership enforced via conversation sets above.
+        // Message does NOT store owner_email; ownership is via the conversation query.
         const allUnread = await base44.entities.Message.filter({
           character_id: character.id,
           sender_type: "character",
@@ -163,17 +172,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         let phoneTotal = 0;
         let worldPhoneTotal = 0;
         for (const msg of allUnread) {
+          // Apply canonical validity filter — excludes date rows, system rows, recovery signals
+          if (!isCountable(msg)) continue;
           if (worldPhoneIds.has(msg.conversation_id) || worldContactIds.has(msg.conversation_id)) {
-            // World Phone / World Contact messages — green badge
             worldPhoneTotal++;
           } else if (directIds.has(msg.conversation_id)) {
-            // Genuine direct chat — red badge
             chatTotal++;
           } else if (phoneIds.has(msg.conversation_id)) {
-            // Text/phone messages — red badge on Text button
             phoneTotal++;
           }
-          // orphaned (no matching convo) or unknown are silently skipped — not counted in any badge
+          // orphaned (no matching convo) = skipped — never counted
         }
         setUnreadChat(chatTotal);
         setUnreadPhone(phoneTotal);
@@ -183,7 +191,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         setUnreadPhone(0);
         setUnreadWorldPhone(0);
       }
-    }, 800); // debounce 800ms so rapid invalidations don't pile up
+    }, 400); // reduced from 800ms for faster badge clearing
   }, [conversations, character.id]);
 
   useEffect(() => {
@@ -201,21 +209,23 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   }, [conversations, character.id, character.owner_email, queryClient]);
 
   // Re-count when a thread is opened (badge clear path).
-  // 'thread:read' carries detail.channel so we know which badge to refresh:
-  //   - channel='world_phone': only green world-phone badge needs recounting
-  //   - channel omitted / other: recount all badges (direct chat opened)
-  // In both cases we call countUnread() which re-classifies all messages correctly —
-  // the classification logic (channel=world_phone → green, type=direct → red) ensures
-  // opening a world_phone thread never reduces the red direct-chat badge count.
+  // 'thread:read' carries detail.channel so we know which badge to refresh.
+  // On thread:read: bust LFC world-contacts cache immediately so it doesn't
+  // re-serve stale unread counts on next mount/navigation.
   useEffect(() => {
     const handleThreadRead = (e) => {
-      if (e.detail?.characterId === character.id) {
-        countUnread();
+      if (e.detail?.characterId !== character.id) return;
+      // Bust stale world contacts cache so next render reads fresh data
+      if (character.owner_email) {
+        lfcDelete(character.owner_email, `world_contacts_unread:${character.id}`);
       }
+      // Force immediate recount — no debounce delay on explicit read event
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      countUnread();
     };
     window.addEventListener('thread:read', handleThreadRead);
     return () => window.removeEventListener('thread:read', handleThreadRead);
-  }, [character.id, countUnread]);
+  }, [character.id, character.owner_email, countUnread]);
 
   // Real-time: recount when a relevant message changes for this character.
   // Only subscribe after queryReady — prevents firing before conversations are loaded.

@@ -279,18 +279,21 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         })));
 
         // Mark incoming as read (non-blocking) — only world_phone/npc messages, never direct chat
-        const unreadIncoming = history.filter(m => m.sender_character_id !== character.id && !m.is_read);
+        const unreadIncoming = history.filter(m =>
+          m.sender_character_id !== character.id &&
+          !m.is_read &&
+          m.sender_type === 'character' &&
+          m.recovery_signal !== true &&
+          m.content && m.content.trim() !== ''
+        );
         unreadIncoming.forEach(m => {
           base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
         });
-        // Dispatch thread:read so the homepage card's green World Phone badge clears immediately.
-        // detail.channel='world_phone' ensures the CharacterCard handler knows this is a green-badge
-        // clear only — it must NOT clear direct chat (red) badge counts.
-        if (unreadIncoming.length > 0) {
-          window.dispatchEvent(new CustomEvent('thread:read', {
-            detail: { characterId: character.id, channel: 'world_phone' }
-          }));
-        }
+        // ALWAYS dispatch thread:read when opening a world_phone thread — even if DB showed 0 unread.
+        // This ensures stale LFC cache is busted and badge clears even when cache was out of sync.
+        window.dispatchEvent(new CustomEvent('thread:read', {
+          detail: { characterId: character.id, channel: 'world_phone', conversationId: found.id }
+        }));
 
         subscribeToConversation(found.id);
       } else {

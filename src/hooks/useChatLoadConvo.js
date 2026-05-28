@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { activateChatSafeMode, escalateChatRetry, resetChatRetry } from "@/lib/simulationGate";
-import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
+import { lfcRead, lfcWrite, lfcDelete } from "@/lib/localFirstCache.js";
 import {
   prewarmCharacterRuntime,
   setCachedConversationId,
@@ -322,15 +322,25 @@ export function useChatLoadConvo({
             // the user was away — they'll be visible immediately on next navigation.
             writeCachedMessages(currentUser.email, characterId, chatType, sorted);
 
-            const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
+            // Mark real unread messages as read (canonical filter: character sender, not system/date rows)
+            const unread = loadedMsgs.filter(m =>
+              m.sender_type === 'character' &&
+              !m.is_read &&
+              m.recovery_signal !== true &&
+              m.content && m.content.trim() !== '' &&
+              !['date','divider','system','timestamp','separator'].includes((m.type||'').toLowerCase())
+            );
+            // ALWAYS dispatch thread:read when direct chat loads — even if 0 unread in DB.
+            // This ensures stale LFC world-contacts cache is busted on every chat open.
+            if (currentUser?.email) {
+              lfcDelete(currentUser.email, `world_contacts_unread:${characterId}`);
+            }
+            queryClient.invalidateQueries({ queryKey: ['conversations', characterId, currentUser.email] });
+            window.dispatchEvent(new CustomEvent('thread:read', { detail: { characterId, channel: chatType } }));
             if (unread.length > 0) {
               unread.forEach(m => {
                 base44.entities.Message.update(m.id, { is_read: true }).catch(err => console.warn('[LoadConvo] inline is_read update failed for msg', m.id, err?.message));
               });
-              // Use EXACT same key as CharacterCard: [characterId, owner_email]
-              queryClient.invalidateQueries({ queryKey: ['conversations', characterId, currentUser.email] });
-              // Force CharacterCard's countUnread to re-run — length won't change so event is needed
-              window.dispatchEvent(new CustomEvent('thread:read', { detail: { characterId } }));
             }
           } else {
             if (setHasOlderMessages) setHasOlderMessages(false);
