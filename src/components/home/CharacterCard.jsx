@@ -301,11 +301,17 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 const hasValidHome = !!(character.current_home_location_id || character.home_location_id || character.temporary_housing_location_id);
                 const shouldShowHome = presence.status === 'home' && hasValidHome;
 
-                // SLEEP DISPLAY OVERRIDE: use canonical multi-field resolver.
-                // Priority 1: sleeping overrides At home / Idle / Available / current location.
+                // SLEEP DISPLAY OVERRIDE — ONE TRUTH RULE
+                // resolved_presence_status is the canonical field written by enforceSlowdownSleep,
+                // scheduledLocationEnforcement, and user-directed sleep — the same source Travel uses.
+                // Check it directly FIRST, before any location label resolution.
+                // This ensures homepage and Travel page always agree for active_created_character.
+                const canonicalPresence = character.resolved_presence_status || '';
+                const canonicalIsSleeping = canonicalPresence === 'sleeping' || canonicalPresence === 'napping';
+
                 const sleepState = getCharacterSleepState(character);
-                const derivedAsleep = sleepState.isSleeping;
-                const isNapping = sleepState.isNapping;
+                const derivedAsleep = canonicalIsSleeping || sleepState.isSleeping;
+                const isNapping = canonicalPresence === 'napping' || sleepState.isNapping;
 
                 // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {
