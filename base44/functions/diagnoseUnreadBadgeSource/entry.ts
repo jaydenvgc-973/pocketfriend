@@ -43,6 +43,9 @@ Deno.serve(async (req) => {
       // counting messages whose conversation_id exists in convoMap (already filtered to
       // owner_email via Step 2). Messages in conversations not owned by this user are
       // automatically excluded when convoMap lookup fails (no convo = orphaned, not counted).
+      // Message entity does NOT store owner_email. Ownership scoping is enforced
+      // downstream: only messages whose conversation_id exists in convoMap (which was
+      // already filtered by owner_email on Conversation) are counted.
       const unreadMessages = await base44.entities.Message.filter({
         character_id: char.id,
         sender_type: 'character',

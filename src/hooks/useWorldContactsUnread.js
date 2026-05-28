@@ -121,7 +121,10 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
         return;
       }
 
-      // ONE batch query — scoped to owner_email to avoid cross-account pollution
+      // Message entity does NOT store owner_email — adding it to the filter returns 0 results.
+      // Ownership scoping is enforced by convoToContactKey: only messages whose conversation_id
+      // exists in that map (built from Conversation records filtered by character_ids) are counted.
+      // Messages in unrelated conversations fail the convoToContactKey lookup and are skipped.
       const allUnread = await base44.entities.Message.filter(
         { sender_type: 'character', is_read: false },
         null,
