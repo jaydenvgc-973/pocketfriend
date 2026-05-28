@@ -270,7 +270,10 @@ function computeAdaptiveSleepWindow(character) {
           const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
           return { sleepStartMin, wakeMin, source: 'work_schedule' };
         }
-        // Non-work day with no adjacent work day tomorrow — fall through
+        // Non-work day with no adjacent work day tomorrow — fall through to school or explicit schedule.
+        // IMPORTANT: This is NOT "no_structured_timing". The character has structure (work schedule exists),
+        // but work is inactive today. The character remains autonomous unless another real obligation,
+        // explicit sleep setting, active commitment, school schedule, or needs/wants logic determines behavior.
       }
     }
   }
