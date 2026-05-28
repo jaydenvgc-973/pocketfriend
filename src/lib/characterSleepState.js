@@ -26,7 +26,6 @@ function computeAdaptiveSleepWindow(character, etTime) {
   const SLEEP_DURATION_MIN = 7 * 60;
   const PRE_SHIFT_BUFFER = 60;
   const toMin = toMinutes;
-  const dayOfWeek = etTime.getDay();
 
   // PRIORITY 1: Stored schedule is canonical — works for ALL character types
   if (character.sleep_start_time && character.wake_up_time) {
@@ -40,44 +39,40 @@ function computeAdaptiveSleepWindow(character, etTime) {
     return { sleepStartMin: 0, wakeMin: 8 * 60, source: 'npc_forced_default' };
   }
 
-  // PRIORITY 3 (active_created_character): Derive from work/school only
-  let nextShiftStartMin = null;
-  let nextShiftEndMin = null;
-
-  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
-    const isWorkDayToday = character.work_days.includes(dayOfWeek);
-    const isWorkDayTomorrow = character.work_days.includes((dayOfWeek + 1) % 7);
-    if (isWorkDayToday || isWorkDayTomorrow) {
-      nextShiftStartMin = toMin(character.work_start_time);
-      nextShiftEndMin = toMin(character.work_end_time);
+  // PRIORITY 3 (active_created_character): Derive from work schedule
+  // Uses shift times directly — not limited to today/tomorrow — because the window is
+  // character-specific (based on shift hours), not calendar-day-specific.
+  // A character working 22:00–02:00 sleeps 03:00–21:00 regardless of which day it is.
+  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.length > 0) {
+    const startMin = toMin(character.work_start_time);
+    const endMin   = toMin(character.work_end_time);
+    if (startMin !== null && endMin !== null) {
+      const isOvernightShift = endMin < startMin;
+      if (isOvernightShift) {
+        return {
+          sleepStartMin: (endMin + 60) % 1440,
+          wakeMin: (startMin - PRE_SHIFT_BUFFER + 1440) % 1440,
+          source: 'overnight_work',
+        };
+      } else {
+        const wakeTime = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+        return {
+          sleepStartMin: (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440,
+          wakeMin: wakeTime,
+          source: 'work_schedule',
+        };
+      }
     }
   }
 
-  if (!nextShiftStartMin && character.student_status === 'enrolled') {
-    nextShiftStartMin = 8 * 60;
-    nextShiftEndMin = 15 * 60;
+  // PRIORITY 4 (school only, no work)
+  if (character.student_status === 'enrolled' && character.education_location_id) {
+    return { sleepStartMin: 0, wakeMin: 7 * 60, source: 'school_schedule' };
   }
 
-  const isOvernightShift = nextShiftStartMin !== null && nextShiftEndMin !== null && nextShiftEndMin < nextShiftStartMin;
-
-  if (nextShiftStartMin !== null) {
-    if (isOvernightShift) {
-      return {
-        sleepStartMin: (nextShiftEndMin + 60) % 1440,
-        wakeMin: (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440,
-        source: 'overnight_work',
-      };
-    } else {
-      const wakeTime = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
-      return {
-        sleepStartMin: (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440,
-        wakeMin: wakeTime,
-        source: 'work_schedule',
-      };
-    }
-  }
-
-  return null;
+  // PRIORITY 5: No schedule — safe default 23:00–07:00. NOT midnight.
+  // Only used for characters with zero schedule information.
+  return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, source: 'default_no_schedule' };
 }
 
 function isScheduledSleeping(character, etTime) {
@@ -150,10 +145,28 @@ export function getCharacterSleepState(character) {
   // ── NOT SLEEPING: Route by character type ──────────────────────────────────
   if (status !== 'sleeping' && status !== 'napping') {
     const isActiveCreated = character.character_type === 'active_created_character';
+
+    // Live work-schedule check: if character is currently on shift per their schedule,
+    // never mark them asleep — even if DB says 'home'. This is the same guard that
+    // locationResolutionEngine applies at Layer 1 before sleep enforcement.
+    const isLiveOnWorkShift = (() => {
+      if (!character.work_start_time || !character.work_end_time || !Array.isArray(character.work_days) || character.work_days.length === 0) return false;
+      const dayOfWeek = nowET.getDay();
+      if (!character.work_days.includes(dayOfWeek)) return false;
+      const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+      const [sh, sm] = character.work_start_time.split(':').map(Number);
+      const [eh, em] = character.work_end_time.split(':').map(Number);
+      const startMin = sh * 60 + sm;
+      const endMin   = eh * 60 + em;
+      if (endMin < startMin) return nowMin >= startMin || nowMin < endMin; // overnight
+      return nowMin >= startMin && nowMin < endMin;
+    })();
+
     const isConfinedOrWorking = character.is_jailed ||
       status === 'at_work' ||
       status === 'at_school' ||
-      status === 'house_arrest';
+      status === 'house_arrest' ||
+      isLiveOnWorkShift;
 
     if (!isConfinedOrWorking) {
       if (isActiveCreated) {
@@ -193,34 +206,7 @@ export function getCharacterSleepState(character) {
           }
         }
 
-        // FALLBACK: autonomous evidence during late-night slowdown (0–6 AM ET)
-        const nowHour = nowET.getHours();
-        const isSlowdownHour = nowHour >= 0 && nowHour < 6;
-
-        if (isSlowdownHour && !hasAwakeOverride) {
-          const energyLow = character.energy_value !== undefined && character.energy_value < 30;
-          const tiredEnough = character.energy_value !== undefined && character.energy_value < 45;
-
-          if (energyLow || tiredEnough) {
-            return {
-              isSleeping: true,
-              isNapping: false,
-              displayLabel: 'sleeping',
-              contextLabel: 'Asleep',
-              visible_label: 'Asleep',
-              confirmed_reason: 'autonomous_sleep_stale_db',
-              evidence_source: energyLow ? 'energy_low' : 'tiredness_threshold',
-              confidence: 0.8,
-              stale_risk: false,
-              isLikelyStale: false,
-              blockingCondition: null,
-              stale_db_detected: true,
-              active_created_sleep_model: true,
-            };
-          }
-        }
-
-        // Awake — no schedule window, no autonomous evidence
+        // Awake — no schedule window match
         return {
           isSleeping: false,
           isNapping: false,
