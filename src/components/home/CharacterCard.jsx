@@ -149,12 +149,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         // Phone/text: type=phone AND not a world_phone channel
         const phoneIds = new Set(conversations.filter(c => c.type === "phone" && c.channel !== "world_phone").map(c => c.id));
 
-        // One single query for all unread character messages for this character
-        const allUnread = await base44.entities.Message.filter({
-          character_id: character.id,
-          sender_type: "character",
-          is_read: false,
-        });
+        // One single query — scoped by both character_id AND owner_email to prevent
+        // cross-account message bleed (owner_email is the ownership source of truth).
+        const unreadFilter = { character_id: character.id, sender_type: "character", is_read: false };
+        if (character.owner_email) unreadFilter.owner_email = character.owner_email;
+        const allUnread = await base44.entities.Message.filter(unreadFilter);
         let chatTotal = 0;
         let phoneTotal = 0;
         let worldPhoneTotal = 0;
@@ -196,9 +195,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     return () => window.removeEventListener('focus', handleFocus);
   }, [conversations, character.id, character.owner_email, queryClient]);
 
-  // Re-count when a thread is opened (badge clear path):
-  // markThreadRead dispatches 'thread:read' with the characterId so we force a recount
-  // immediately — conversations.length won't change so countUnread won't auto-run otherwise.
+  // Re-count when a thread is opened (badge clear path).
+  // 'thread:read' carries detail.channel so we know which badge to refresh:
+  //   - channel='world_phone': only green world-phone badge needs recounting
+  //   - channel omitted / other: recount all badges (direct chat opened)
+  // In both cases we call countUnread() which re-classifies all messages correctly —
+  // the classification logic (channel=world_phone → green, type=direct → red) ensures
+  // opening a world_phone thread never reduces the red direct-chat badge count.
   useEffect(() => {
     const handleThreadRead = (e) => {
       if (e.detail?.characterId === character.id) {

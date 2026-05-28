@@ -278,12 +278,14 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           message_type: m.message_type || null,
         })));
 
-        // Mark incoming as read (non-blocking)
+        // Mark incoming as read (non-blocking) — only world_phone/npc messages, never direct chat
         const unreadIncoming = history.filter(m => m.sender_character_id !== character.id && !m.is_read);
         unreadIncoming.forEach(m => {
           base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
         });
-        // Dispatch thread:read so the homepage card's green World Phone badge clears immediately
+        // Dispatch thread:read so the homepage card's green World Phone badge clears immediately.
+        // detail.channel='world_phone' ensures the CharacterCard handler knows this is a green-badge
+        // clear only — it must NOT clear direct chat (red) badge counts.
         if (unreadIncoming.length > 0) {
           window.dispatchEvent(new CustomEvent('thread:read', {
             detail: { characterId: character.id, channel: 'world_phone' }
@@ -1037,7 +1039,9 @@ Respond ONLY with valid JSON in this exact format:
                 </div>
               ) : (
                 contacts.map((contact, i) => {
-                  const contactUnread = unreadByContact[contact.person_name] || 0;
+                  // Prefer stable related_character_id key; fallback to normalized person_name
+                  const contactKey = contact.related_character_id || contact.person_name?.toLowerCase().trim();
+                  const contactUnread = unreadByContact[contactKey] || 0;
                   return (
                   <motion.button
                     key={contact.related_character_id || `name:${contact.person_name}`}

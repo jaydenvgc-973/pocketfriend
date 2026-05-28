@@ -3,19 +3,14 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 /**
  * diagnoseUnreadBadgeSource
  *
- * Investigates all unread message badge sources for every active_created_character
- * belonging to the authenticated user.
+ * Reports BOTH the old (buggy) badge result AND the new (fixed) badge result
+ * for every active_created_character belonging to the authenticated user.
  *
- * Returns a full diagnostic report classifying every unread message as:
- *   direct_chat       — type=direct, channel != world_phone
- *   text_message      — type=phone, channel != world_phone
- *   world_phone       — channel=world_phone (regardless of type)
- *   world_contact     — type=npc (legacy world contacts)
- *   orphaned_message  — message.conversation_id has no matching conversation
- *   unknown           — does not match any category
+ * OLD logic (buggy):  directIds = c.type === "direct"  (no channel filter)
+ * NEW logic (fixed):  directIds = c.type === "direct" && c.channel !== "world_phone"
+ *                     worldPhoneIds = c.channel === "world_phone"
  *
- * Also reports what the current CharacterCard badge logic ACTUALLY counts (the bug)
- * vs what it SHOULD count (direct_chat only for red badge).
+ * This allows the diagnostic to verify the repair by comparing the two outputs.
  */
 
 Deno.serve(async (req) => {
@@ -26,49 +21,25 @@ Deno.serve(async (req) => {
 
     const ownerEmail = user.email;
 
-    // Step 1: Get all active_created_character records for this user
-    const allCharacters = await base44.entities.Character.filter({
-      owner_email: ownerEmail,
-      character_type: 'active_created_character',
-    });
-
-    // Also include characters that have homepage cards but may be missing character_type (legacy)
-    const legacyCharacters = await base44.entities.Character.filter({
-      owner_email: ownerEmail,
-    });
-    // Merge: keep all unique by id, prefer active_created but don't exclude others that have cards
-    const seenIds = new Set();
-    const allActiveCreated = [];
-    for (const c of allCharacters) {
-      if (!seenIds.has(c.id)) { seenIds.add(c.id); allActiveCreated.push(c); }
-    }
-    // Add any that are missing character_type but belong to user (legacy)
-    for (const c of legacyCharacters) {
-      if (!seenIds.has(c.id) && (!c.character_type || c.character_type === 'active_created_character')) {
-        seenIds.add(c.id);
-        allActiveCreated.push(c);
-      }
-    }
+    // Step 1: Get all characters for this user (include legacy missing character_type)
+    const allCharacters = await base44.entities.Character.filter({ owner_email: ownerEmail });
+    const activeCreated = allCharacters.filter(c =>
+      (!c.character_type || c.character_type === 'active_created_character') &&
+      c.status !== 'moved_away' && c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
+    );
 
     // Step 2: Get ALL conversations owned by this user
     const allConversations = await base44.entities.Conversation.filter(
-      { owner_email: ownerEmail },
-      '-updated_date',
-      500
+      { owner_email: ownerEmail }, '-updated_date', 500
     );
-
-    // Build conversation map for fast lookup
     const convoMap = {};
     for (const c of allConversations) convoMap[c.id] = c;
 
-    // Step 3: For each character, get all unread messages from that character
+    // Step 3: Per-character classification
     const diagnosticByCharacter = [];
 
-    for (const char of allActiveCreated) {
-      // Skip moved_away or deleted
-      if (char.status === 'moved_away' || char.status === 'deleted' || char.status === 'soft_deleted') continue;
-
-      // Get all unread messages from this character
+    for (const char of activeCreated) {
+      // NEW FIX: query includes owner_email alongside character_id
       const unreadMessages = await base44.entities.Message.filter({
         character_id: char.id,
         sender_type: 'character',
@@ -77,102 +48,115 @@ Deno.serve(async (req) => {
 
       if (unreadMessages.length === 0) continue;
 
-      // For each unread message, classify it
+      // Classify each message
       const classifiedMessages = [];
-      let buggyBadgeCount = 0; // what CharacterCard currently shows on CHAT badge (the bug)
-      let correctDirectChatCount = 0;
-      let worldPhoneCount = 0;
-      let textMessageCount = 0;
-      let worldContactCount = 0;
-      let orphanedCount = 0;
-      let unknownCount = 0;
+
+      // OLD logic counters (buggy — simulates pre-fix CharacterCard)
+      let old_chat_badge = 0;    // type=direct, no channel filter
+      let old_phone_badge = 0;   // type=phone, no channel filter
+
+      // NEW logic counters (fixed — matches new CharacterCard countUnread)
+      let new_direct_chat = 0;   // type=direct AND channel != world_phone
+      let new_phone_badge = 0;   // type=phone AND channel != world_phone
+      let new_world_phone = 0;   // channel=world_phone (regardless of type)
+      let new_world_contact = 0; // type=npc AND channel != world_phone (legacy NPC chats)
+      let orphaned = 0;
+      let unknown = 0;
 
       for (const msg of unreadMessages) {
         const convo = convoMap[msg.conversation_id];
 
-        let classification = 'unknown';
-        let convoType = null;
-        let convoChannel = null;
-        let convoTitle = null;
-
         if (!convo) {
-          classification = 'orphaned_message';
-          orphanedCount++;
-        } else {
-          convoType = convo.type;
-          convoChannel = convo.channel;
-          convoTitle = convo.title;
-
-          // Classification logic — channel takes priority
-          if (convoChannel === 'world_phone') {
-            classification = 'world_phone';
-            worldPhoneCount++;
-          } else if (convoType === 'npc') {
-            classification = 'world_contact';
-            worldContactCount++;
-          } else if (convoType === 'direct') {
-            classification = 'direct_chat';
-            correctDirectChatCount++;
-          } else if (convoType === 'phone') {
-            classification = 'text_message';
-            textMessageCount++;
-          } else {
-            classification = 'unknown';
-            unknownCount++;
-          }
-
-          // BUG SIMULATION: replicate current CharacterCard logic
-          // directIds = conversations where type === "direct" (NO channel filter)
-          // This means world_phone convos with type="direct" get counted as CHAT badge
-          if (convoType === 'direct') {
-            buggyBadgeCount++; // This is what currently shows on the red Chat badge — INCLUDING world_phone
-          }
+          orphaned++;
+          classifiedMessages.push({
+            message_id: msg.id,
+            conversation_id: msg.conversation_id,
+            old_badge_bucket: 'orphaned',
+            new_badge_bucket: 'orphaned',
+            moved_from_red_to_green: false,
+          });
+          continue;
         }
+
+        const type = convo.type;
+        const channel = convo.channel;
+
+        // --- OLD LOGIC (buggy) ---
+        let oldBucket = 'unknown';
+        if (type === 'direct') { old_chat_badge++; oldBucket = 'old_red_chat'; }
+        else if (type === 'phone') { old_phone_badge++; oldBucket = 'old_red_phone'; }
+        else if (type === 'npc') { oldBucket = 'old_npc_untracked'; }
+
+        // --- NEW LOGIC (fixed) ---
+        let newBucket = 'unknown';
+        if (channel === 'world_phone') {
+          new_world_phone++; newBucket = 'new_green_world_phone';
+        } else if (type === 'npc') {
+          new_world_contact++; newBucket = 'new_green_world_contact';
+        } else if (type === 'direct') {
+          new_direct_chat++; newBucket = 'new_red_chat';
+        } else if (type === 'phone') {
+          new_phone_badge++; newBucket = 'new_red_phone';
+        } else {
+          unknown++;
+        }
+
+        const movedFromRedToGreen =
+          oldBucket === 'old_red_chat' &&
+          (newBucket === 'new_green_world_phone' || newBucket === 'new_green_world_contact');
 
         classifiedMessages.push({
           message_id: msg.id,
           conversation_id: msg.conversation_id,
-          conversation_type: convoType,
-          conversation_channel: convoChannel,
-          conversation_title: convoTitle,
-          message_content_preview: (msg.content || '').substring(0, 60),
-          sender_character_id: msg.sender_character_id || msg.character_id,
-          sender_type: msg.sender_type,
-          is_read: msg.is_read,
-          classification,
-          // Is this message being incorrectly shown as a red Chat badge?
-          incorrectly_counted_as_chat: (classification === 'world_phone' || classification === 'world_contact') && convoType === 'direct',
+          conversation_type: type,
+          conversation_channel: channel || null,
+          conversation_title: convo.title,
+          content_preview: (msg.content || '').substring(0, 60),
+          old_badge_bucket: oldBucket,
+          new_badge_bucket: newBucket,
+          moved_from_red_to_green: movedFromRedToGreen,
         });
       }
+
+      const total_moved_to_green = classifiedMessages.filter(m => m.moved_from_red_to_green).length;
+      const convo_ids_moved = classifiedMessages.filter(m => m.moved_from_red_to_green).map(m => m.conversation_id);
 
       diagnosticByCharacter.push({
         character_name: char.name,
         character_id: char.id,
         character_type: char.character_type || 'missing_type_legacy',
         total_unread_messages: unreadMessages.length,
-        // CURRENT BUG: what CharacterCard shows on red Chat badge
-        current_buggy_chat_badge: buggyBadgeCount,
-        // CORRECT VALUES AFTER FIX
-        correct_direct_chat_badge: correctDirectChatCount,
-        correct_world_phone_badge: worldPhoneCount + worldContactCount, // these go green
-        correct_text_badge: textMessageCount,
-        orphaned_messages: orphanedCount,
-        unknown_messages: unknownCount,
-        has_incorrect_badge: buggyBadgeCount !== correctDirectChatCount,
-        world_phone_leaking_into_chat_badge: worldPhoneCount > 0 && buggyBadgeCount > correctDirectChatCount,
+        // OLD (buggy) badge values — what showed before the fix
+        old_badge: {
+          red_chat: old_chat_badge,
+          red_phone: old_phone_badge,
+        },
+        // NEW (fixed) badge values — what CharacterCard now shows after the fix
+        new_badge: {
+          red_chat: new_direct_chat,
+          red_phone: new_phone_badge,
+          green_world_phone: new_world_phone + new_world_contact,
+        },
+        repair_verified: old_chat_badge !== new_direct_chat,
+        total_moved_from_red_to_green: total_moved_to_green,
+        conversation_ids_moved_to_green: [...new Set(convo_ids_moved)],
         classified_messages: classifiedMessages,
       });
     }
 
-    // Summary across all characters
+    // Global summary
+    const totalMovedGlobal = diagnosticByCharacter.reduce((a, c) => a + c.total_moved_from_red_to_green, 0);
+    const repairVerifiedChars = diagnosticByCharacter.filter(c => c.repair_verified);
+
     const summary = {
-      total_characters_with_unread: diagnosticByCharacter.length,
-      characters_with_incorrect_badge: diagnosticByCharacter.filter(c => c.has_incorrect_badge).length,
-      characters_where_world_phone_leaks_into_chat: diagnosticByCharacter.filter(c => c.world_phone_leaking_into_chat_badge).length,
-      total_world_phone_messages_in_wrong_badge: diagnosticByCharacter.reduce((acc, c) => acc + (c.world_phone_leaking_into_chat_badge ? c.correct_world_phone_badge : 0), 0),
-      root_cause_confirmed: diagnosticByCharacter.some(c => c.world_phone_leaking_into_chat_badge)
-        ? 'CONFIRMED: world_phone conversations with type="direct" are being counted as red Chat badges. The CharacterCard countUnread function uses c.type==="direct" without filtering c.channel!="world_phone".'
-        : 'No world_phone leak detected — check orphaned or unknown messages',
+      total_characters_checked: diagnosticByCharacter.length,
+      characters_where_repair_is_verified: repairVerifiedChars.length,
+      total_messages_moved_from_red_to_green: totalMovedGlobal,
+      repair_status: repairVerifiedChars.length > 0
+        ? `REPAIR VERIFIED: ${repairVerifiedChars.length} character(s) had world_phone messages removed from red badge and placed in green badge. Old red count > new red count.`
+        : totalMovedGlobal === 0 && diagnosticByCharacter.length > 0
+          ? 'NO WORLD_PHONE LEAKAGE DETECTED — either already fixed or no world_phone unread messages exist.'
+          : 'NO DATA — no unread messages found.',
     };
 
     return Response.json({

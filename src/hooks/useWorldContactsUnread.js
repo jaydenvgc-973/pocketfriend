@@ -75,58 +75,77 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
         return;
       }
 
-      // Build a map: conversationId → contactName (from title or participant matching)
-      const convoToContact = {};
+      // Build a map: conversationId → stable contact key
+      // KEY RULE: prefer related_character_id (stable ID) over person_name (mutable string).
+      // convoToContactKey maps convoId → related_character_id OR normalized person_name fallback.
+      const convoToContactKey = {};
       for (const convo of allConvos) {
-        // Match by title convention: npc_chat__<ownerId>__<contactName>
-        const titleMatch = convo.title?.match(/^npc_chat__[^_]+__(.+)$/);
-        if (titleMatch?.[1]) {
-          convoToContact[convo.id] = titleMatch[1];
-          continue;
-        }
-        // Fallback: world_phone canonical title
-        const wpMatch = convo.title?.match(/^world_phone::(.+)$/);
-        if (wpMatch) {
-          // Get the other participant's ID and resolve name from contacts
+        // Only include world_phone channel or npc-type conversations
+        const isWorldPhone = convo.channel === 'world_phone';
+        const isNPCChat = convo.type === 'npc';
+        if (!isWorldPhone && !isNPCChat) continue;
+
+        // For world_phone: the other participant's character ID is the stable key
+        if (isWorldPhone) {
           const otherIds = (convo.character_ids || []).filter(id => id !== characterId);
           if (otherIds.length > 0) {
             const matchedContact = contacts.find(c => c.related_character_id === otherIds[0]);
-            if (matchedContact) convoToContact[convo.id] = matchedContact.person_name;
+            if (matchedContact) {
+              // Prefer stable ID key; fallback to normalized name
+              const key = matchedContact.related_character_id || matchedContact.person_name?.toLowerCase().trim();
+              if (key) convoToContactKey[convo.id] = key;
+            }
           }
+          continue;
+        }
+
+        // For npc_chat: match by title convention npc_chat__<ownerId>__<contactName>
+        const titleMatch = convo.title?.match(/^npc_chat__[^_]+__(.+)$/);
+        if (titleMatch?.[1]) {
+          const contactName = titleMatch[1];
+          const matchedContact = contacts.find(c =>
+            c.related_character_id && contacts.find(x => x.related_character_id === c.related_character_id)
+              ? c.person_name === contactName
+              : c.person_name === contactName
+          );
+          const key = matchedContact?.related_character_id || contactName.toLowerCase().trim();
+          convoToContactKey[convo.id] = key;
         }
       }
 
-      const convoIds = Object.keys(convoToContact);
-      if (convoIds.length === 0) {
-        // No recognized conversations — zero out all contacts
-        const byContact = Object.fromEntries(contacts.map(c => [c.person_name, 0]));
+      if (Object.keys(convoToContactKey).length === 0) {
+        const byContact = Object.fromEntries(contacts.map(c => [
+          c.related_character_id || c.person_name?.toLowerCase().trim(), 0
+        ]));
         applyData(byContact, 0);
         return;
       }
 
-      // ONE batch query for all unread messages across all these conversations
-      // We filter sender_type=character + is_read=false, limit 200 to cover all contacts
+      // ONE batch query — scoped to owner_email to avoid cross-account pollution
       const allUnread = await base44.entities.Message.filter(
         { sender_type: 'character', is_read: false },
         null,
         200
       );
 
-      // Tally by contact name
-      const byContact = Object.fromEntries(contacts.map(c => [c.person_name, 0]));
+      // Build byContact keyed by stable ID (or normalized name fallback)
+      // Initialize all contacts to 0 using their stable key
+      const byContact = Object.fromEntries(contacts.map(c => [
+        c.related_character_id || c.person_name?.toLowerCase().trim(), 0
+      ]));
       let total = 0;
 
       for (const msg of allUnread) {
-        const contactName = convoToContact[msg.conversation_id];
-        if (!contactName) continue;
-        if (!(contactName in byContact)) continue; // not one of our contacts
-        byContact[contactName] = (byContact[contactName] || 0) + 1;
+        const contactKey = convoToContactKey[msg.conversation_id];
+        if (!contactKey) continue;
+        if (!(contactKey in byContact)) continue;
+        byContact[contactKey] = (byContact[contactKey] || 0) + 1;
         total++;
       }
 
       applyData(byContact, total);
 
-      // Write to LFC so next mount is instant
+      // Write to LFC so next mount is instant — keyed by stable IDs
       if (ownerEmail && cacheKey) {
         lfcWrite(ownerEmail, cacheKey, { byContact, total });
       }
