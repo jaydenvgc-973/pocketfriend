@@ -191,6 +191,21 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
           for (const msg of msgs) {
             // Apply canonical validity filter — excludes date rows, system rows, recovery signals
             if (!isCountable(msg)) continue;
+
+            // DIRECTION GUARD: exclude messages sent BY the viewed character.
+            // sender_character_id is the authoritative sender field (set on all new messages).
+            // character_id is the legacy fallback — still used on older messages.
+            // If either field matches the viewed character's id, this is an outgoing message
+            // and must NEVER count toward unread badges (outgoing = the user already "read" it by sending).
+            const isSentByViewed =
+              (msg.sender_character_id && msg.sender_character_id === character.id) ||
+              (!msg.sender_character_id && msg.character_id === character.id);
+            if (isSentByViewed) continue;
+
+            // RECEIVER GUARD: if receiver_character_id is explicitly set, it must match the viewed character.
+            // This prevents messages intended for OTHER characters in the same thread from being counted.
+            if (msg.receiver_character_id && msg.receiver_character_id !== character.id) continue;
+
             if (worldPhoneIds.has(convoId) || worldContactIds.has(convoId)) {
               worldPhoneTotal++;
             } else if (directIds.has(convoId)) {
