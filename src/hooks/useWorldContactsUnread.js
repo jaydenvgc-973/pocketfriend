@@ -33,6 +33,9 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
   const [globalUnreadCount, setGlobalUnreadCount] = useState(0);
   const debounceTimerRef = useRef(null);
   const isFetchingRef = useRef(false);
+  // Settle timer: set during thread:read to suppress subscription events while
+  // mark-read writes are still in flight. Prevents badge oscillation.
+  const settleTimerRef = useRef(null);
 
   const cacheKey = characterId ? `world_contacts_unread:${characterId}` : null;
   const cooldownKey = characterId ? `wc_unread_fetch:${characterId}` : null;
@@ -185,28 +188,39 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
     // The cooldown is for re-subscription bounces, not for first-paint accuracy.
     loadUnreadCounts(true);
 
-    // Subscription: debounced 5s, force=true bypasses cache + cooldown
+    // Subscription: debounced 5s, force=true bypasses cache + cooldown.
+    // Suppressed during settle window (thread:read in flight) to prevent mark-read
+    // write events from re-triggering a count while the DB batch is still committing.
     const unsubscribe = base44.entities.Message.subscribe((event) => {
       if (event.type !== 'create' && event.type !== 'update') return;
+      if (settleTimerRef.current) return; // suppress during settle window
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = setTimeout(() => {
         loadUnreadCounts(true);
       }, SUB_DEBOUNCE_MS);
     });
 
-    // thread:read: bust LFC cache immediately, reset fetch lock, then force-reload.
-    // DB writes are committed before this event fires (dispatched in Promise.all().then()).
+    // thread:read: bust LFC cache, suppress subscription events for 2.5s settle window,
+    // then do ONE definitive live fetch. The settle window prevents badge oscillation from
+    // the is_read:true subscription events that fire while mark-read writes are in flight.
     const handleThreadRead = (e) => {
       const detail = e.detail || {};
       if (detail.characterId !== characterId) return;
       // 1. Clear LFC cache so next render doesn't re-serve stale count
       if (ownerEmail && cacheKey) lfcDelete(ownerEmail, cacheKey);
-      // 2. Cancel pending debounce
+      // 2. Cancel pending debounce and any existing settle timer
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      // 3. Reset fetch lock — force will also reset it, but do it here for certainty
+      if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+      // 3. Set optimistic zero immediately — user already opened the thread
+      applyData(Object.fromEntries(contacts.map(c => [
+        c.related_character_id || c.person_name?.toLowerCase().trim(), 0
+      ])), 0);
+      // 4. After writes settle, do ONE live fetch to confirm DB state
       isFetchingRef.current = false;
-      // 4. Force fresh server fetch
-      loadUnreadCounts(true);
+      settleTimerRef.current = setTimeout(() => {
+        settleTimerRef.current = null;
+        loadUnreadCounts(true);
+      }, 2500);
     };
     window.addEventListener('thread:read', handleThreadRead);
 
@@ -214,6 +228,7 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       unsubscribe();
       window.removeEventListener('thread:read', handleThreadRead);
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
     };
   }, [characterId, contacts.length, ownerEmail]); // eslint-disable-line
 

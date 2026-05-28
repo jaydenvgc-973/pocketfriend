@@ -188,9 +188,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   }, [conversations, character.id, character.owner_email, queryClient]);
 
   // Re-count when a thread is opened (badge clear path).
-  // 'thread:read' carries detail.channel so we know which badge to refresh.
-  // On thread:read: bust LFC world-contacts cache immediately so it doesn't
-  // re-serve stale unread counts on next mount/navigation.
+  // On thread:read: bust LFC world-contacts cache, then do ONE fresh live count after a
+  // settled delay. The delay absorbs all the is_read:true subscription events that fire
+  // during the mark-read batch — without it, each write event resets the 400ms debounce
+  // in countUnread and the badge oscillates while writes are still in flight.
+  const threadReadSettleRef = useRef(null);
   useEffect(() => {
     const handleThreadRead = (e) => {
       if (e.detail?.characterId !== character.id) return;
@@ -198,13 +200,22 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       if (character.owner_email) {
         lfcDelete(character.owner_email, `world_contacts_unread:${character.id}`);
       }
-      // thread:read is dispatched AFTER all Message.update(is_read:true) writes resolve in
-      // WorldContactsPopup, so no delay is needed here — the DB is already committed.
+      // Cancel any in-flight debounce AND any pending settle timer
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      countUnread();
+      if (threadReadSettleRef.current) clearTimeout(threadReadSettleRef.current);
+      // Wait 2.5s for all is_read:true writes + subscription events to settle,
+      // then do ONE definitive live count. This prevents the subscription loop
+      // from oscillating the badge while mark-read writes are still in flight.
+      threadReadSettleRef.current = setTimeout(() => {
+        threadReadSettleRef.current = null;
+        countUnread();
+      }, 2500);
     };
     window.addEventListener('thread:read', handleThreadRead);
-    return () => window.removeEventListener('thread:read', handleThreadRead);
+    return () => {
+      window.removeEventListener('thread:read', handleThreadRead);
+      if (threadReadSettleRef.current) clearTimeout(threadReadSettleRef.current);
+    };
   }, [character.id, character.owner_email, countUnread]);
 
   // Real-time: recount when a relevant message lands in any conversation this character is in.
@@ -220,6 +231,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     if (!queryReady) return;
     const unsubscribe = base44.entities.Message.subscribe((event) => {
       if (event.type !== "create" && event.type !== "update") return;
+      // During thread:read settle window, suppress subscription-driven recounts.
+      // The is_read:true writes themselves fire update events — without this guard,
+      // each write resets countUnread's 400ms debounce, causing badge oscillation
+      // while mark-read is still in flight.
+      if (threadReadSettleRef.current) return;
       const msg = event.data || {};
       // Match if: sender is this char, receiver is this char, or message belongs to a known convo
       const isForThisChar =
