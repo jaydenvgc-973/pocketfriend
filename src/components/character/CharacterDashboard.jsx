@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
-import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { LineChart, Line, ReferenceLine, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   Moon, Sun, Briefcase, Home, MessageCircle, Phone,
   DollarSign, Heart, MapPin, Zap, BookOpen, Brain, Activity
@@ -8,15 +8,70 @@ import {
 import { format, subHours, isAfter, parseISO, subDays } from "date-fns";
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 
-// ── Emotion scoring ───────────────────────────────────────────────────────────
+// ── Emotion scoring — direction + intensity, not just impact tier ─────────────
+// Scale: 0=most distressed, 50=neutral, 100=most elevated positive
 const EMOTION_SCORE = {
-  happy: 88, joyful: 90, excited: 85, hopeful: 78, affectionate: 82,
-  calm: 70, content: 72, reflective: 55, bored: 45,
-  anxious: 38, stressed: 35, frustrated: 30, "closed-off": 30,
-  lonely: 30, sad: 28, irritated: 28, defensive: 25, tense: 26,
-  angry: 14, "emotionally drained": 22, exhausted: 18, overwhelmed: 20,
+  joyful: 92, happy: 88, excited: 85, elated: 90, euphoric: 93,
+  affectionate: 82, hopeful: 78, motivated: 76, grateful: 80,
+  calm: 65, content: 68, peaceful: 66, relieved: 62,
+  reflective: 50, nostalgic: 48, pensive: 46, bored: 42,
+  lonely: 34, vulnerable: 36, conflicted: 38,
+  anxious: 32, worried: 30, stressed: 28, frustrated: 26,
+  "closed-off": 28, sad: 24, disappointed: 22, guilty: 20,
+  irritated: 22, defensive: 20, tense: 18,
+  angry: 12, overwhelmed: 14, "emotionally drained": 16, exhausted: 14,
+  devastated: 8, despairing: 6,
 };
-const eScore = (s) => EMOTION_SCORE[(s || "").toLowerCase()] ?? 52;
+const eScore = (s) => EMOTION_SCORE[(s || "").toLowerCase()] ?? 50;
+
+// ── Semantic emotion inference ─────────────────────────────────────────────────
+// Derives emotional direction and score from text content when no explicit
+// emotional_state field exists, or when the field is too generic to be useful.
+// This is the core fix: "moderate impact" ≠ emotional direction.
+const SEMANTIC_EMOTION_MAP = [
+  // Conflict / tension
+  { patterns: [/conflict/i, /argument/i, /confrontat/i, /fight/i, /disagree/i, /tension/i, /clash/i, /dishonesty/i, /honesty.*issue/i, /issue.*honesty/i], emotion: "tense", score: 18 },
+  // Anger
+  { patterns: [/anger/i, /angry/i, /furious/i, /rage/i, /lash(ed)? out/i], emotion: "angry", score: 12 },
+  // Stress / pressure / burden
+  { patterns: [/stress/i, /burden/i, /overwhelm/i, /pressure/i, /unfinished/i, /overdue/i, /behind/i, /too much/i], emotion: "stressed", score: 26 },
+  // Exhaustion / fatigue
+  { patterns: [/exhaust/i, /tired/i, /fatigue/i, /drained/i, /worn out/i, /physical.*strain/i, /recovery.*tired/i, /tired.*recovery/i], emotion: "exhausted", score: 14 },
+  // Sadness / grief
+  { patterns: [/grief/i, /griev/i, /loss/i, /mourn/i, /heartbreak/i, /devastat/i, /despair/i, /empty.*feel/i], emotion: "sad", score: 22 },
+  // Anxiety / worry
+  { patterns: [/anxious/i, /anxiety/i, /worry/i, /nervous/i, /dread/i, /unsettl/i, /uncertain/i, /fear/i], emotion: "anxious", score: 30 },
+  // Loneliness / isolation
+  { patterns: [/lone(ly|liness)/i, /isol/i, /disconn/i, /out of place/i, /left out/i, /excluded/i], emotion: "lonely", score: 32 },
+  // Vulnerability
+  { patterns: [/vulnerab/i, /open(ed)? up/i, /exposed/i, /raw.*feel/i, /feel.*raw/i], emotion: "vulnerable", score: 36 },
+  // Conflict with self / internal
+  { patterns: [/guilt/i, /regret/i, /shame/i, /disappoint/i, /let.*down/i, /failed/i], emotion: "guilty", score: 20 },
+  // Recovery / healing
+  { patterns: [/recover/i, /healing/i, /getting better/i, /bouncing back/i, /restor/i], emotion: "relieved", score: 62 },
+  // Support / connection
+  { patterns: [/support/i, /comfort/i, /reassur/i, /help(ed|ing)/i, /there for/i, /caring/i, /listen(ed|ing)/i], emotion: "content", score: 68 },
+  // Love / affection
+  { patterns: [/love/i, /affection/i, /mutual.*express/i, /express.*love/i, /closeness/i, /intimacy/i, /bond/i], emotion: "affectionate", score: 82 },
+  // Joy / happiness
+  { patterns: [/joy/i, /happy/i, /celebrat/i, /excit/i, /thrilled/i, /delight/i, /laugh/i, /fun/i], emotion: "happy", score: 88 },
+  // Hope / motivation / purpose
+  { patterns: [/hope/i, /motivat/i, /purpose/i, /goal/i, /inspir/i, /forward/i, /ambition/i, /recogni(ze|tion)/i], emotion: "motivated", score: 76 },
+  // Calm / peace
+  { patterns: [/calm/i, /peace/i, /quiet/i, /relax/i, /settled/i, /stable/i], emotion: "calm", score: 65 },
+  // Reflection
+  { patterns: [/reflect/i, /ponder/i, /think.*deeply/i, /contemplat/i, /meditat/i], emotion: "reflective", score: 50 },
+];
+
+// Infer emotional score from text when no explicit emotion is given
+const inferEmotionFromText = (text) => {
+  if (!text) return null;
+  const t = text.toLowerCase();
+  for (const { patterns, emotion, score } of SEMANTIC_EMOTION_MAP) {
+    if (patterns.some(p => p.test(t))) return { emotion, score };
+  }
+  return null;
+};
 
 const EMOTION_HEX = {
   calm: "#34d399", happy: "#fbbf24", joyful: "#fbbf24", excited: "#fbbf24",
@@ -197,80 +252,148 @@ export default function CharacterDashboard({ character }) {
       const positiveInteractions = allSent24h.filter(m => isPositive(m.emotional_state)).length;
       const conflictEvents = allSent24h.filter(m => isTense(m.emotional_state)).length;
 
-      // ── INTRADAY EMOTIONAL GRAPH — 3-day window, one point per event ──────
-      // RULE: Each emotional event is its own point at its real timestamp.
-      // NO averaging. NO bucketing. NO daily aggregation.
-      // A calm→angry→calm day must show 3 distinct points, not one flat line.
-      // Window: today + yesterday + day before yesterday only.
+      // ── INTRADAY EMOTIONAL GRAPH — 3-day window, per-event semantic scoring ─
+      // ARCHITECTURE:
+      // 1. Each event gets its own graph point at its real timestamp.
+      // 2. Emotional score is derived SEMANTICALLY — not just from the field value.
+      //    "emotional_state: calm" on every event → flat line. That was the bug.
+      //    Now: we read the event title, description, type, and content to infer direction.
+      // 3. Life Journal (character.memories) entries are fully included.
+      // 4. A conflict and a supportive moment will produce DIFFERENT y values.
 
       const curEmotion = character.emotional_state || "calm";
+      const cutoff3dMs = parseISO(cutoff3d).getTime();
 
-      // Collect individual timestamped emotional events — each becomes its own graph point
-      const rawEvents = []; // { tsMs: number, isoTime: string, emotion: string, label: string }
+      // rawEvents: { tsMs, emotion, score, label, source }
+      const rawEvents = [];
 
-      const addEvent = (isoTime, emotion) => {
-        if (!isoTime || !emotion) return;
+      const addEvent = (isoTime, emotion, scoreOverride, source) => {
+        if (!isoTime) return;
         try {
           const d = parseISO(isoTime);
           const tsMs = d.getTime();
-          // Only include events within the 3-day window
-          if (tsMs < parseISO(cutoff3d).getTime()) return;
-          const label = format(d, "EEE h:mma"); // e.g. "Mon 3:45pm"
-          rawEvents.push({ tsMs, isoTime, emotion, label });
+          if (tsMs < cutoff3dMs || tsMs > now.getTime() + 60000) return;
+          const em = (emotion || "calm").toLowerCase();
+          const score = scoreOverride != null ? scoreOverride : eScore(em);
+          const label = format(d, "EEE h:mma");
+          rawEvents.push({ tsMs, emotion: em, score, label, source: source || "event" });
         } catch {}
       };
 
-      // Narratives (highest quality — LLM-written emotional state)
-      narrs3d.forEach(n => { if (n.emotional_state) addEvent(n.timestamp, n.emotional_state); });
-
-      // Messages — every message with an emotional_state is its own point
-      // This is the core: if a character had 8 emotional messages today, plot all 8
-      msgs3d.filter(m => m.emotional_state && m.created_date).forEach(m => {
-        addEvent(m.created_date, m.emotional_state);
+      // ── 1. LIFE JOURNAL ENTRIES (character.memories) ───────────────────────
+      // These are the richest emotional source but were NOT being used before.
+      // Each entry has a title, description, emotional_impact text, and timestamps.
+      // We MUST infer emotional direction semantically — "moderate" is not a direction.
+      (character.memories || []).forEach(m => {
+        const timestamp = m.created_date || m.updated_date || m.date;
+        if (!timestamp) return;
+        const text = [m.title, m.description, m.emotional_impact, m.summary].filter(Boolean).join(" ");
+        // First: try explicit emotion_state field on the memory
+        if (m.emotion_state && EMOTION_SCORE[m.emotion_state?.toLowerCase()] != null) {
+          addEvent(timestamp, m.emotion_state, null, "memory");
+          return;
+        }
+        // Second: semantic inference from title + description + emotional_impact
+        const inferred = inferEmotionFromText(text);
+        if (inferred) {
+          addEvent(timestamp, inferred.emotion, inferred.score, "memory");
+        } else if (text.length > 0) {
+          // Fallback: use neutral-slightly-reflective if we have text but no match
+          addEvent(timestamp, "reflective", 50, "memory");
+        }
       });
 
-      // Financial stress events
-      txns3d.filter(t => t.direction === "expense").forEach(t => addEvent(t.timestamp, "stressed"));
+      // ── 2. NARRATIVES (LLM-written — most reliable emotional_state field) ──
+      narrs3d.forEach(n => {
+        if (!n.timestamp) return;
+        // Use narrative's emotional_state if present and meaningful
+        if (n.emotional_state && n.emotional_state !== "calm") {
+          addEvent(n.timestamp, n.emotional_state, null, "narrative");
+          return;
+        }
+        // Infer from narrative type if emotional_state is generic
+        const typeScores = {
+          sleep: ["exhausted", 14], wake: ["calm", 65], work_start: ["stressed", 30],
+          work_end: ["relieved", 62], social_event: ["content", 68],
+          needs_warning: ["stressed", 26], catch_up_summary: ["reflective", 50],
+        };
+        const ts = typeScores[n.event_type];
+        if (ts) { addEvent(n.timestamp, ts[0], ts[1], "narrative"); return; }
+        // Semantic fallback from narrative text
+        const inf = inferEmotionFromText(n.narrative_text || n.memory_summary);
+        if (inf) addEvent(n.timestamp, inf.emotion, inf.score, "narrative");
+        else if (n.emotional_state) addEvent(n.timestamp, n.emotional_state, null, "narrative");
+      });
 
-      // Sleep / wake lifecycle events
-      if (character.last_sleep_start) addEvent(character.last_sleep_start, "exhausted");
-      if (character.alarm_woke_at)    addEvent(character.alarm_woke_at, "calm");
+      // ── 3. MESSAGES — semantic scoring per message ─────────────────────────
+      // If emotional_state is present, use its actual directional score.
+      // If missing, infer from message content.
+      msgs3d.forEach(m => {
+        if (!m.created_date) return;
+        if (m.emotional_state && m.emotional_state !== "calm") {
+          addEvent(m.created_date, m.emotional_state, null, "message");
+        } else if (m.content) {
+          const inf = inferEmotionFromText(m.content);
+          if (inf) addEvent(m.created_date, inf.emotion, inf.score, "message");
+          else if (m.emotional_state) addEvent(m.created_date, m.emotional_state, null, "message");
+        }
+      });
 
-      // Needs-derived signals — stamped at NOW, reflect current pressure
-      if ((character.mental_value ?? 100) < 50)       addEvent(now.toISOString(), "stressed");
-      if ((character.social_value ?? 100) < 35)       addEvent(now.toISOString(), "lonely");
-      if ((character.energy_value ?? 100) < 25)       addEvent(now.toISOString(), "exhausted");
-      if ((character.financial_need_value ?? 0) > 70) addEvent(now.toISOString(), "stressed");
+      // ── 4. FINANCIAL STRESS — scored by amount and direction ───────────────
+      txns3d.forEach(t => {
+        if (!t.timestamp) return;
+        if (t.direction === "expense") {
+          // Large expenses create more stress than small ones
+          const amt = Math.abs(t.amount || 0);
+          const stressScore = amt > 500 ? 18 : amt > 100 ? 24 : 28;
+          addEvent(t.timestamp, "stressed", stressScore, "financial");
+        } else if (t.direction === "income") {
+          addEvent(t.timestamp, "relieved", 62, "financial");
+        }
+      });
 
-      // Always anchor with current emotional state at now
-      addEvent(now.toISOString(), curEmotion);
+      // ── 5. SLEEP / WAKE LIFECYCLE ──────────────────────────────────────────
+      if (character.last_sleep_start) addEvent(character.last_sleep_start, "exhausted", 14, "sleep");
+      if (character.alarm_woke_at)    addEvent(character.alarm_woke_at, "calm", 60, "wake");
 
-      // Sort all events chronologically by real timestamp
+      // ── 6. NEEDS-DERIVED SIGNALS — stamped at now with real directional scores ─
+      // Each need maps to a distinct emotional direction, not all the same score.
+      const nowIso = now.toISOString();
+      if ((character.mental_value ?? 100) < 35)        addEvent(nowIso, "overwhelmed", 14, "needs");
+      else if ((character.mental_value ?? 100) < 55)   addEvent(nowIso, "stressed", 26, "needs");
+      if ((character.social_value ?? 100) < 30)        addEvent(nowIso, "lonely", 32, "needs");
+      if ((character.energy_value ?? 100) < 20)        addEvent(nowIso, "exhausted", 14, "needs");
+      else if ((character.energy_value ?? 100) < 40)   addEvent(nowIso, "tired", 22, "needs");
+      if ((character.financial_need_value ?? 0) > 75)  addEvent(nowIso, "stressed", 22, "needs");
+      if ((character.hunger_value ?? 100) < 25)        addEvent(nowIso, "frustrated", 26, "needs");
+
+      // ── 7. CURRENT STATE ANCHOR ────────────────────────────────────────────
+      addEvent(nowIso, curEmotion, null, "current");
+
+      // Sort chronologically
       rawEvents.sort((a, b) => a.tsMs - b.tsMs);
 
-      // Deduplicate: if two events land at the exact same millisecond (both stamped "now"),
-      // keep the more emotionally significant one (lower score = more severe = more notable)
+      // Deduplicate events within 3 minutes of each other — keep most extreme score
       const deduped = [];
-      for (let i = 0; i < rawEvents.length; i++) {
-        const cur = rawEvents[i];
+      for (const ev of rawEvents) {
         const prev = deduped[deduped.length - 1];
-        // If same timestamp within 1 minute, keep the more extreme emotion
-        if (prev && Math.abs(cur.tsMs - prev.tsMs) < 60000) {
-          if (eScore(cur.emotion) < eScore(prev.emotion)) {
-            deduped[deduped.length - 1] = cur; // replace with more extreme
+        if (prev && Math.abs(ev.tsMs - prev.tsMs) < 3 * 60 * 1000) {
+          // Keep the one furthest from neutral (50)
+          if (Math.abs(ev.score - 50) > Math.abs(prev.score - 50)) {
+            deduped[deduped.length - 1] = ev;
           }
-          // else skip — keep existing
         } else {
-          deduped.push(cur);
+          deduped.push(ev);
         }
       }
 
-      // Build final chart data — each entry is a real timestamped emotional point
+      // Build final chart data
       const trendData = deduped.map(e => ({
         label: e.label,
-        mood: eScore(e.emotion),
+        mood: Math.round(e.score),
         emotion: e.emotion,
         tsMs: e.tsMs,
+        source: e.source,
       }));
 
       // ── TIMELINE ENTRIES ──────────────────────────────────────────────────
@@ -361,7 +484,7 @@ export default function CharacterDashboard({ character }) {
     <div className="space-y-4">
 
       {/* ── 1. EMOTIONAL TREND GRAPH — per-event intraday points, 3-day window */}
-      {trendData.length >= 2 && (
+      {trendData.length >= 1 && (
         <div className="rounded-xl overflow-hidden bg-card border border-border">
           <div className="px-4 pt-4 pb-1 flex items-center justify-between">
             <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Emotional Movement · Last 3 Days</p>
@@ -370,40 +493,94 @@ export default function CharacterDashboard({ character }) {
               {emotionState}
             </span>
           </div>
-          <div style={{ height: 140 }} className="px-1 pb-2">
+          {/* Legend row */}
+          <div className="px-4 pb-1 flex items-center gap-3 flex-wrap">
+            {[
+              { label: "Elevated", color: "#fbbf24" },
+              { label: "Neutral",  color: "#94a3b8" },
+              { label: "Tension",  color: "#f87171" },
+              { label: "Low",      color: "#60a5fa" },
+            ].map(({ label, color }) => (
+              <span key={label} className="flex items-center gap-1 text-[8px] text-muted-foreground">
+                <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: color }} />
+                {label}
+              </span>
+            ))}
+          </div>
+          <div style={{ height: 160 }} className="px-2 pb-3">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trendData} margin={{ top: 12, right: 10, left: -28, bottom: 4 }}>
+              <LineChart data={trendData} margin={{ top: 8, right: 12, left: 2, bottom: 4 }}>
+                {/* Horizontal reference bands */}
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="hsl(var(--border))"
+                  strokeOpacity={0.4}
+                  horizontal={true}
+                  vertical={false}
+                />
+                {/* Emotional zone reference lines */}
+                <ReferenceLine y={75} stroke="#fbbf24" strokeOpacity={0.25} strokeDasharray="4 4" />
+                <ReferenceLine y={50} stroke="hsl(var(--muted-foreground))" strokeOpacity={0.3} strokeDasharray="2 4" label={{ value: "neutral", position: "insideTopLeft", fontSize: 7, fill: "hsl(var(--muted-foreground))", dy: -2 }} />
+                <ReferenceLine y={25} stroke="#f87171" strokeOpacity={0.25} strokeDasharray="4 4" />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 8, fill: "hsl(var(--muted-foreground))" }}
-                  axisLine={false} tickLine={false}
+                  tick={{ fontSize: 7, fill: "hsl(var(--muted-foreground))" }}
+                  axisLine={false}
+                  tickLine={{ stroke: "hsl(var(--border))", strokeOpacity: 0.5 }}
                   interval="preserveStartEnd"
                 />
-                <YAxis domain={[0, 100]} hide />
+                <YAxis
+                  domain={[0, 100]}
+                  tick={{ fontSize: 7, fill: "hsl(var(--muted-foreground))" }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickCount={5}
+                  tickFormatter={(v) => v === 0 ? "" : v === 100 ? "" : v === 50 ? "mid" : v > 50 ? "+" : "−"}
+                  width={22}
+                />
                 <Tooltip
                   contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 10, padding: "6px 10px" }}
                   formatter={(v, name, props) => {
-                    const emotion = props?.payload?.emotion;
-                    return [emotion ? `${emotion} (${v})` : `${v}`, "Mood"];
+                    const { emotion, source } = props?.payload || {};
+                    const dir = v > 65 ? "elevated" : v > 45 ? "neutral" : v > 25 ? "low" : "distressed";
+                    return [`${emotion || "—"} · ${dir}`, source || "event"];
                   }}
                   labelFormatter={(l) => l}
                 />
                 <Line
                   type="monotone"
                   dataKey="mood"
-                  name="Mood"
+                  name="Emotional state"
                   stroke={moodColor}
                   strokeWidth={2}
                   dot={(props) => {
                     const { cx, cy, payload } = props;
+                    if (cx == null || cy == null) return null;
                     const c = eColor(payload?.emotion);
-                    return <circle key={`dot-${cx}-${cy}`} cx={cx} cy={cy} r={3.5} fill={c} stroke="none" />;
+                    const score = payload?.mood ?? 50;
+                    // Dot size reflects emotional intensity (distance from neutral)
+                    const intensity = Math.abs(score - 50) / 50;
+                    const r = 3 + intensity * 3;
+                    return (
+                      <circle
+                        key={`dot-${cx}-${cy}-${payload?.tsMs}`}
+                        cx={cx} cy={cy} r={r}
+                        fill={c}
+                        stroke="hsl(var(--card))"
+                        strokeWidth={1}
+                      />
+                    );
                   }}
-                  activeDot={{ r: 5, strokeWidth: 0 }}
+                  activeDot={{ r: 6, strokeWidth: 1, stroke: "hsl(var(--card))" }}
                   connectNulls
                 />
               </LineChart>
             </ResponsiveContainer>
+          </div>
+          {/* Score range guide */}
+          <div className="px-4 pb-3 flex justify-between text-[7px] text-muted-foreground/60">
+            <span>↑ hopeful · joyful · affectionate</span>
+            <span>stressed · angry · exhausted ↓</span>
           </div>
         </div>
       )}
