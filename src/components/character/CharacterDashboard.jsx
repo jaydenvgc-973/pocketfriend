@@ -4,114 +4,112 @@ import {
   LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceDot
 } from "recharts";
 import {
-  Moon, Sun, Briefcase, Home, MessageCircle, DollarSign,
-  Heart, MapPin, BookOpen, Brain, Activity, Phone, Zap,
-  Coffee, Music, ShoppingBag, AlertCircle
+  Moon, Sun, Briefcase, Home, MessageCircle, Phone,
+  DollarSign, Heart, MapPin, Zap, BookOpen, Brain,
+  Activity, Coffee, AlertTriangle, Users, Clock
 } from "lucide-react";
 import { format, subHours, isAfter, parseISO, subDays } from "date-fns";
 
-// ─── Emotion system ──────────────────────────────────────────────────────────
-const EMOTION_COLORS = {
+// ── Emotion → numeric mood score ────────────────────────────────────────────
+const EMOTION_SCORE = {
+  happy: 88, joyful: 90, excited: 85, hopeful: 78, affectionate: 80,
+  calm: 70, content: 72, reflective: 58,
+  lonely: 32, sad: 28, anxious: 38, stressed: 35,
+  "emotionally drained": 22, exhausted: 18, "closed-off": 30,
+  irritated: 30, defensive: 25, angry: 15,
+};
+const emotionScore = (s) => EMOTION_SCORE[(s || "").toLowerCase()] ?? 55;
+
+// ── Emotion → hex colour ─────────────────────────────────────────────────────
+const EMOTION_HEX = {
   calm: "#34d399", happy: "#fbbf24", joyful: "#fbbf24", excited: "#fbbf24",
   hopeful: "#a78bfa", affectionate: "#f472b6", reflective: "#38bdf8",
-  sad: "#60a5fa", lonely: "#60a5fa", anxious: "#a78bfa", stressed: "#f87171",
-  angry: "#f87171", irritated: "#f87171", defensive: "#f87171",
+  content: "#34d399", sad: "#60a5fa", lonely: "#60a5fa",
+  anxious: "#a78bfa", stressed: "#f87171", angry: "#f87171",
+  irritated: "#f87171", defensive: "#f87171",
   "emotionally drained": "#94a3b8", exhausted: "#94a3b8", "closed-off": "#94a3b8",
-  tense: "#f87171", overwhelmed: "#f87171", content: "#34d399",
 };
+const eColor = (s) => EMOTION_HEX[(s || "").toLowerCase()] || "#94a3b8";
 
-const EMOTION_SCORES = {
-  happy: 88, joyful: 85, excited: 88, hopeful: 75, calm: 70, content: 72,
-  affectionate: 80, reflective: 58, lonely: 35, sad: 30, anxious: 38,
-  stressed: 32, "emotionally drained": 25, exhausted: 20, angry: 15,
-  irritated: 28, defensive: 25, tense: 22, overwhelmed: 18, "closed-off": 30,
-};
-
-function ec(state) {
-  return EMOTION_COLORS[(state || "calm").toLowerCase()] || "#94a3b8";
-}
-function es(state) {
-  return EMOTION_SCORES[(state || "calm").toLowerCase()] ?? 55;
-}
-
-// ─── Timeline accent ─────────────────────────────────────────────────────────
-function accent(emotion) {
+// ── Timeline entry border/bg glow ────────────────────────────────────────────
+const entryAccent = (emotion) => {
   const e = (emotion || "").toLowerCase();
-  if (["anxious", "stressed", "hopeful", "reflective", "tense"].includes(e))
-    return "border-l-violet-500/50 bg-violet-500/5";
-  if (["angry", "irritated", "defensive", "overwhelmed"].includes(e))
-    return "border-l-red-500/50 bg-red-500/5";
-  if (["happy", "joyful", "excited", "content", "calm", "affectionate"].includes(e))
-    return "border-l-amber-400/50 bg-amber-400/5";
-  if (["sad", "lonely", "exhausted", "emotionally drained", "closed-off"].includes(e))
-    return "border-l-blue-500/50 bg-blue-500/5";
-  return "border-l-border/50 bg-transparent";
-}
+  if (["anxious", "stressed", "hopeful", "reflective"].includes(e)) return "border-l-violet-500/50 bg-violet-500/5";
+  if (["angry", "irritated", "defensive"].includes(e)) return "border-l-red-500/50 bg-red-500/5";
+  if (["happy", "joyful", "excited", "calm", "content"].includes(e)) return "border-l-amber-400/40 bg-amber-400/5";
+  if (["sad", "lonely", "exhausted", "emotionally drained"].includes(e)) return "border-l-blue-500/50 bg-blue-500/5";
+  return "border-l-border/40 bg-transparent";
+};
 
-function fmtTime(iso) {
+// ── Format time ──────────────────────────────────────────────────────────────
+const fmtTime = (iso) => {
   if (!iso) return "";
   try { return format(parseISO(iso), "h:mm aa"); } catch { return ""; }
-}
+};
 
-// ─── Humanise timeline text ───────────────────────────────────────────────────
-function humaniseMessageEntry(msg, participant, convoType, channel) {
-  const e = (msg.emotional_state || "").toLowerCase();
-  const isWorldPhone = channel === "world_phone";
-  const isGroup = convoType === "group";
-  const who = participant && participant !== "Unknown contact" && participant !== "Another character"
-    ? `with ${participant}` : "";
-
-  if (["irritated", "defensive", "angry", "tense"].includes(e)) {
-    return who ? `Tense exchange ${who}` : "Conflict caused emotional tension";
-  }
-  if (e === "reflective") {
-    return who ? `Reflective conversation ${who}` : "Reached out in a reflective moment";
-  }
-  if (["sad", "lonely"].includes(e)) {
-    return who ? `Reached out while feeling low ${who}` : "Sent a message while feeling withdrawn";
-  }
-  if (["happy", "joyful", "excited", "content"].includes(e)) {
-    return who ? `Positive exchange ${who}` : "Uplifting social interaction";
-  }
-  if (e === "calm") {
-    return who ? `Calm conversation ${who}` : "Quiet social check-in";
-  }
-  if (e === "anxious") {
-    return who ? `Anxious message ${who}` : "Reached out while feeling unsettled";
-  }
-  if (isWorldPhone) return who ? `World Phone conversation ${who}` : "World Phone message";
-  if (isGroup) return "Participated in a group conversation";
-  return who ? `Exchanged messages ${who}` : "Quiet social interaction";
-}
-
-// ─── Stat chip ───────────────────────────────────────────────────────────────
+// ── Stat chip ────────────────────────────────────────────────────────────────
 function StatChip({ icon: Icon, label, value }) {
   return (
-    <div className="flex flex-col items-center gap-1 flex-1 py-2">
-      <Icon className="w-4 h-4 text-muted-foreground" />
-      <span className="text-lg font-bold text-foreground leading-none">{value}</span>
+    <div className="flex flex-col items-center gap-1 flex-1 py-3">
+      <Icon className="w-5 h-5 text-muted-foreground" />
+      <span className="text-lg font-bold text-foreground">{value}</span>
       <span className="text-[9px] text-muted-foreground text-center leading-tight">{label}</span>
     </div>
   );
 }
 
-// ─── Custom tooltip for trend graph ──────────────────────────────────────────
-function TrendTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-card border border-border rounded-lg px-3 py-2 text-[10px] shadow-lg">
-      <p className="text-muted-foreground mb-1">{label}</p>
-      {payload.map((p, i) => (
-        <div key={i} className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full" style={{ background: p.color }} />
-          <span className="text-foreground">{p.name}: {p.value}%</span>
-        </div>
-      ))}
-    </div>
-  );
-}
+// ── Timeline icon map ─────────────────────────────────────────────────────────
+const TIMELINE_ICONS = {
+  moon: Moon, sun: Sun, briefcase: Briefcase, home: Home,
+  mappin: MapPin, heart: Heart, book: BookOpen, dollar: DollarSign,
+  message: MessageCircle, phone: Phone, users: Users, activity: Activity,
+  coffee: Coffee, alert: AlertTriangle,
+};
+const TIcon = ({ type, className = "w-3.5 h-3.5" }) => {
+  const I = TIMELINE_ICONS[type] || Activity;
+  return <I className={className} />;
+};
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// ── Determine if a memory title/note is meaningful ───────────────────────────
+const isMeaningfulMemory = (m) => {
+  const title = (m.title || "").trim().toLowerCase();
+  const note = (m.note || m.description || m.emotional_impact || "").trim();
+  if (!title || title === "memory" || title === "key memory") return false;
+  if (title.length < 5) return false;
+  return true;
+};
+
+// ── Human-readable timeline text from message data ───────────────────────────
+const buildMessageText = (msg, convoNameMap, convos, charId) => {
+  const emotion = (msg.emotional_state || "").toLowerCase();
+  const convo = convos.find(c => c.id === msg.conversation_id);
+  const channel = convo?.channel || "";
+  const isWorldPhone = channel === "world_phone";
+  const isGroup = convo?.type === "group";
+  const participant = convoNameMap[msg.conversation_id];
+
+  // Pick human phrasing based on emotion + context
+  if (isGroup) return "Participated in a group conversation";
+  if (isWorldPhone && participant) return `World Phone exchange with ${participant}`;
+
+  if (!participant) {
+    if (emotion === "reflective") return "Sent a reflective message";
+    if (["angry", "irritated", "defensive"].includes(emotion)) return "Had a tense exchange";
+    if (["sad", "lonely"].includes(emotion)) return "Reached out while feeling low";
+    if (["happy", "joyful", "excited"].includes(emotion)) return "Had an uplifting conversation";
+    if (emotion === "anxious") return "Messaged someone while feeling anxious";
+    return "Sent a message";
+  }
+
+  if (["angry", "irritated", "defensive"].includes(emotion)) return `Conflict caused tension with ${participant}`;
+  if (emotion === "reflective") return `Had a reflective conversation with ${participant}`;
+  if (["sad", "lonely"].includes(emotion)) return `Reached out to ${participant} while feeling low`;
+  if (["happy", "joyful", "excited"].includes(emotion)) return `Uplifting exchange with ${participant}`;
+  if (["calm", "content"].includes(emotion)) return `Had a calm conversation with ${participant}`;
+  if (emotion === "anxious") return `Messaged ${participant} while feeling anxious`;
+  return `Exchanged messages with ${participant}`;
+};
+
 export default function CharacterDashboard({ character }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -128,7 +126,7 @@ export default function CharacterDashboard({ character }) {
 
     Promise.allSettled([
       base44.entities.Message.filter({ character_id: charId }, "-created_date", 100),
-      base44.entities.FinancialTransaction.filter({ character_id: charId }, "-timestamp", 30),
+      base44.entities.FinancialTransaction.filter({ character_id: charId }, "-timestamp", 20),
       base44.entities.AutomaticNarrative
         ? base44.entities.AutomaticNarrative.filter({ character_id: charId }, "-timestamp", 60).catch(() => [])
         : Promise.resolve([]),
@@ -141,48 +139,42 @@ export default function CharacterDashboard({ character }) {
       const narrs = narrR.status === "fulfilled" ? (narrR.value || []) : [];
       const convos = convosR.status === "fulfilled" ? (convosR.value || []) : [];
 
-      // ── Conversation lookup map ──────────────────────────────────────────
-      const convoMap = {};
-      convos.forEach(c => { convoMap[c.id] = c; });
-
-      // ── Relationship name lookup from character data ──────────────────────
-      const relById = {};
+      // ── Build conversation → participant name map ─────────────────────────
+      const relNameMap = {};
       (character.fictional_relationships || []).forEach(r => {
-        if (r.related_character_id && r.person_name) relById[r.related_character_id] = r.person_name;
-      });
-      (character.family_members || []).forEach(m => {
-        if (m.character_id && m.name) relById[m.character_id] = m.name;
+        if (r.related_character_id) relNameMap[r.related_character_id] = r.person_name;
       });
 
-      // ── Resolve participant name for a message ────────────────────────────
-      const resolveParticipant = (msg) => {
-        // Direct name on message (the other character's name field)
-        if (msg.character_name && msg.character_id !== charId) return msg.character_name;
-        // World phone fields
-        if (msg.sender_character_id && msg.sender_character_id !== charId && relById[msg.sender_character_id])
-          return relById[msg.sender_character_id];
-        if (msg.receiver_character_id && msg.receiver_character_id !== charId && relById[msg.receiver_character_id])
-          return relById[msg.receiver_character_id];
-        // From conversation title (non-system titles only)
-        const convo = convoMap[msg.conversation_id];
-        if (convo) {
-          const t = convo.title || "";
-          const isSystem = !t || t.startsWith("npc_chat__") || t.startsWith("bilateral_") || /^[a-f0-9-]{36}/.test(t);
-          if (!isSystem) return t;
-          if (convo.type === "group") return null; // group — no single name
-          // Try other character IDs in convo
-          const others = (convo.character_ids || []).filter(id => id !== charId);
-          for (const id of others) { if (relById[id]) return relById[id]; }
+      const isSystemTitle = (t) =>
+        !t || t.startsWith("npc_chat__") || t.startsWith("bilateral_") ||
+        t.startsWith("world_phone_") || /^[a-f0-9-]{36}/.test(t);
+
+      const convoNameMap = {};
+      convos.forEach(c => {
+        if (c.type === "group") { convoNameMap[c.id] = "a group"; return; }
+        if (!isSystemTitle(c.title)) { convoNameMap[c.id] = c.title; return; }
+        // Try other character IDs in this convo
+        const otherIds = (c.character_ids || []).filter(id => id !== charId);
+        for (const id of otherIds) {
+          if (relNameMap[id]) { convoNameMap[c.id] = relNameMap[id]; break; }
         }
-        return null;
-      };
+      });
 
-      // ── Filter to time windows ───────────────────────────────────────────
+      // Enrich from message fields
+      msgs.forEach(m => {
+        if (convoNameMap[m.conversation_id]) return;
+        if (m.character_name && m.character_id !== charId) {
+          convoNameMap[m.conversation_id] = m.character_name;
+        } else if (m.played_as_character_name && m.played_as_character_id !== charId) {
+          convoNameMap[m.conversation_id] = m.played_as_character_name;
+        }
+      });
+
+      // ── Filter to 24h / 7d ───────────────────────────────────────────────
       const msgs24h = msgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff24h)));
       const txns24h = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff24h)));
-      const narrs24h = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff24h)));
       const narrs7d = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff7d)));
-      const msgs7d = msgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff7d)));
+      const narrs24h = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff24h)));
 
       // ── Social stats ─────────────────────────────────────────────────────
       const charMsgs24h = msgs24h.filter(m => m.sender_type === "character");
@@ -191,167 +183,179 @@ export default function CharacterDashboard({ character }) {
         ["calm", "happy", "joyful", "excited", "content", "affectionate"].includes((m.emotional_state || "").toLowerCase())
       ).length;
       const conflictEvents = charMsgs24h.filter(m =>
-        ["irritated", "defensive", "angry", "tense"].includes((m.emotional_state || "").toLowerCase())
+        ["irritated", "defensive", "angry"].includes((m.emotional_state || "").toLowerCase())
       ).length;
 
-      // ── Build 24h timeline ───────────────────────────────────────────────
-      const raw = [];
+      // ── Build emotional trend data (7 days, multi-signal) ─────────────────
+      // We track: mood (happy/calm), tension (angry/stressed), sadness, anxiety
+      const dayBuckets = {}; // day → { events: [{emotion, score, type}] }
 
-      // Sleep / wake
+      const addToBucket = (isoTime, emotion, type) => {
+        if (!isoTime) return;
+        try {
+          const day = format(parseISO(isoTime), "MM/dd");
+          if (!dayBuckets[day]) dayBuckets[day] = [];
+          dayBuckets[day].push({ emotion, score: emotionScore(emotion), type });
+        } catch {}
+      };
+
+      // From narratives
+      narrs7d.forEach(n => addToBucket(n.timestamp, n.emotional_state || character.emotional_state, "narrative"));
+      // From messages
+      msgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff7d)))
+        .filter(m => m.sender_type === "character" && m.emotional_state)
+        .forEach(m => addToBucket(m.created_date, m.emotional_state, "message"));
+      // From transactions (financial stress)
+      txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff7d)) && t.direction === "expense")
+        .forEach(t => addToBucket(t.timestamp, "stressed", "financial"));
+
+      // Today — anchor from current character state
+      const today = format(new Date(), "MM/dd");
+      if (!dayBuckets[today]) dayBuckets[today] = [];
+      dayBuckets[today].push({ emotion: character.emotional_state || "calm", score: emotionScore(character.emotional_state), type: "current" });
+
+      // Sleep disruption signal
+      if (character.sleep_debt_hours > 2) {
+        dayBuckets[today].push({ emotion: "exhausted", score: 20, type: "sleep" });
+      }
+      // Financial stress signal
+      if (character.financial_need_value > 70) {
+        dayBuckets[today].push({ emotion: "stressed", score: 30, type: "financial" });
+      }
+
+      // Build trend points per day: average mood, also compute calm/tension split
+      const trendData = Object.entries(dayBuckets)
+        .map(([day, events]) => {
+          const all = events.map(e => e.score);
+          const positiveEvts = events.filter(e => emotionScore(e.emotion) >= 65);
+          const tensionEvts = events.filter(e => ["angry","irritated","defensive","stressed"].includes((e.emotion||"").toLowerCase()));
+          const sadEvts = events.filter(e => ["sad","lonely","exhausted","emotionally drained"].includes((e.emotion||"").toLowerCase()));
+          const anxEvts = events.filter(e => ["anxious","hopeful","reflective"].includes((e.emotion||"").toLowerCase()));
+
+          const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+
+          return {
+            day,
+            mood: avg(all),
+            calm: positiveEvts.length ? avg(positiveEvts.map(e => e.score)) : null,
+            tension: tensionEvts.length ? avg(tensionEvts.map(e => e.score)) + 20 : null,
+            sad: sadEvts.length ? avg(sadEvts.map(e => e.score)) + 15 : null,
+            anxious: anxEvts.length ? avg(anxEvts.map(e => e.score)) + 10 : null,
+            eventCount: events.length,
+          };
+        })
+        .sort((a, b) => {
+          try { return new Date("2026/" + a.day) - new Date("2026/" + b.day); } catch { return 0; }
+        })
+        .slice(-7);
+
+      // ── Event markers for graph (spikes/notable moments) ──────────────────
+      const graphMarkers = [];
+      narrs24h.forEach(n => {
+        try {
+          const day = format(parseISO(n.timestamp), "MM/dd");
+          const idx = trendData.findIndex(d => d.day === day);
+          if (idx >= 0 && n.emotional_state) {
+            graphMarkers.push({ x: day, y: emotionScore(n.emotional_state), emotion: n.emotional_state, label: n.event_type?.replace(/_/g, " ") });
+          }
+        } catch {}
+      });
+
+      // ── Build timeline entries ────────────────────────────────────────────
+      const timelineEntries = [];
+
+      // Sleep events
       if (character.last_sleep_start && isAfter(parseISO(character.last_sleep_start), parseISO(cutoff24h))) {
-        raw.push({ time: character.last_sleep_start, icon: "moon", text: "Went to sleep", emotion: "exhausted", sub: null });
+        timelineEntries.push({ time: character.last_sleep_start, icon: "moon", text: "Went to sleep", emotion: "exhausted", sub: null });
       }
       if (character.alarm_woke_at && isAfter(parseISO(character.alarm_woke_at), parseISO(cutoff24h))) {
-        raw.push({ time: character.alarm_woke_at, icon: "sun", text: "Woke up", emotion: "calm", sub: null });
+        timelineEntries.push({ time: character.alarm_woke_at, icon: "sun", text: "Woke up", emotion: "calm", sub: null });
       }
 
-      // Narratives (use narrative_text directly — it's already human-written)
+      // Narrative events — use the narrative text directly (it's already human-readable)
       narrs24h.forEach(n => {
-        const iconMap = { sleep: "moon", wake: "sun", work_start: "briefcase", work_end: "home",
-          travel_arrival: "mappin", travel_departure: "mappin", social_event: "heart", catch_up_summary: "book" };
-        const text = n.narrative_text?.substring(0, 100);
-        if (!text) return;
-        raw.push({
-          time: n.timestamp, icon: iconMap[n.event_type] || "activity",
-          text, emotion: n.emotional_state || character.emotional_state || "calm", sub: null,
+        const iconMap = {
+          sleep: "moon", wake: "sun", work_start: "briefcase", work_end: "home",
+          travel_arrival: "mappin", travel_departure: "mappin",
+          social_event: "heart", catch_up_summary: "book", location_change: "mappin",
+          needs_warning: "alert", passive_time: "activity",
+        };
+        // Use the narrative text — it's written by the LLM, so it's already human-readable
+        const rawText = n.narrative_text?.substring(0, 100);
+        timelineEntries.push({
+          time: n.timestamp,
+          icon: iconMap[n.event_type] || "activity",
+          text: rawText || n.event_type?.replace(/_/g, " "),
+          emotion: n.emotional_state || character.emotional_state || "calm",
+          sub: null,
         });
       });
 
       // Financial events
       txns24h.forEach(t => {
-        const desc = t.description;
-        if (!desc) return;
-        raw.push({
-          time: t.timestamp, icon: "dollar",
-          text: desc,
+        timelineEntries.push({
+          time: t.timestamp,
+          icon: "dollar",
+          text: t.description || (t.direction === "income" ? "Received money" : "Spent money"),
           emotion: t.direction === "expense" ? "stressed" : "calm",
           sub: t.location_name || null,
         });
       });
 
-      // Message interactions — one entry per conversation, most significant message
+      // Message events — deduplicated per conversation, human phrasing, no raw field exposure
       const convoMsgMap = {};
-      msgs24h.filter(m => m.sender_type === "character" && m.emotional_state).forEach(m => {
+      charMsgs24h.filter(m => m.emotional_state).forEach(m => {
         const existing = convoMsgMap[m.conversation_id];
-        const priority = { angry: 4, irritated: 4, defensive: 4, tense: 4, anxious: 3, sad: 3, lonely: 3, reflective: 2, happy: 1, calm: 1 };
-        const p = (s) => priority[(s || "").toLowerCase()] || 0;
-        if (!existing || p(m.emotional_state) > p(existing.emotional_state)) convoMsgMap[m.conversation_id] = m;
+        if (!existing) { convoMsgMap[m.conversation_id] = m; return; }
+        const priority = { angry: 4, irritated: 4, defensive: 4, sad: 3, anxious: 3, reflective: 2, happy: 1, calm: 1 };
+        const p = s => priority[(s || "").toLowerCase()] || 0;
+        if (p(m.emotional_state) > p(existing.emotional_state)) convoMsgMap[m.conversation_id] = m;
       });
+
       Object.values(convoMsgMap).slice(0, 7).forEach(m => {
-        const convo = convoMap[m.conversation_id];
-        const participant = resolveParticipant(m);
-        const text = humaniseMessageEntry(m, participant, convo?.type, convo?.channel);
-        raw.push({ time: m.created_date, icon: "message", text, emotion: m.emotional_state, sub: null });
+        timelineEntries.push({
+          time: m.created_date,
+          icon: "message",
+          text: buildMessageText(m, convoNameMap, convos, charId),
+          emotion: m.emotional_state,
+          sub: null,
+        });
       });
 
-      // Sort chronologically
-      raw.sort((a, b) => { try { return new Date(a.time) - new Date(b.time); } catch { return 0; } });
-      const timelineEntries = raw.slice(0, 12);
+      // Sort all by time
+      timelineEntries.sort((a, b) => {
+        try { return new Date(a.time) - new Date(b.time); } catch { return 0; }
+      });
 
-      // ── Emotional trend graph (7 days, multi-line) ────────────────────────
-      // Build per-day emotional signals from messages + narratives
-      const dayEmotions = {}; // { "MM/dd": { happy: [], calm: [], anxious: [], sad: [], angry: [] } }
-      const emotionGroups = {
-        happy: ["happy", "joyful", "excited", "content", "affectionate"],
-        calm: ["calm", "hopeful", "reflective"],
-        anxious: ["anxious", "stressed", "overwhelmed"],
-        sad: ["sad", "lonely", "emotionally drained", "exhausted", "closed-off"],
-        angry: ["angry", "irritated", "defensive", "tense"],
-      };
-      const groupColors = {
-        happy: "#fbbf24", calm: "#34d399", anxious: "#a78bfa", sad: "#60a5fa", angry: "#f87171"
-      };
-
-      const addEmotionToDay = (isoDate, emotionState) => {
-        if (!isoDate || !emotionState) return;
-        try {
-          const day = format(parseISO(isoDate), "MM/dd");
-          if (!dayEmotions[day]) dayEmotions[day] = { happy: [], calm: [], anxious: [], sad: [], angry: [] };
-          const e = emotionState.toLowerCase();
-          for (const [group, members] of Object.entries(emotionGroups)) {
-            if (members.includes(e)) { dayEmotions[day][group].push(es(e)); break; }
-          }
-        } catch {}
-      };
-
-      narrs7d.forEach(n => addEmotionToDay(n.timestamp, n.emotional_state || character.emotional_state));
-      msgs7d.filter(m => m.emotional_state).forEach(m => addEmotionToDay(m.created_date, m.emotional_state));
-
-      // Ensure today always has at least a current state data point
-      const today = format(new Date(), "MM/dd");
-      if (!dayEmotions[today]) dayEmotions[today] = { happy: [], calm: [], anxious: [], sad: [], angry: [] };
-      const currentE = (character.emotional_state || "calm").toLowerCase();
-      for (const [group, members] of Object.entries(emotionGroups)) {
-        if (members.includes(currentE)) { dayEmotions[today][group].push(es(currentE)); break; }
-      }
-
-      // Convert to chart data
-      const trendData = Object.entries(dayEmotions)
-        .map(([day, groups]) => {
-          const point = { day };
-          for (const [group, values] of Object.entries(groups)) {
-            point[group] = values.length > 0
-              ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
-              : undefined;
-          }
-          return point;
-        })
-        .sort((a, b) => { try { return new Date("2026/" + a.day) - new Date("2026/" + b.day); } catch { return 0; } })
-        .slice(-7);
-
-      // Only show groups that have any data
-      const activeGroups = Object.keys(emotionGroups).filter(g =>
-        trendData.some(d => d[g] !== undefined)
-      );
-
-      // ── Pattern insights from real signals ───────────────────────────────
+      // ── Pattern insights ──────────────────────────────────────────────────
       const insights = [];
-      if (conflictEvents > 0 && (character.work_start_time || character.occupation)) {
-        insights.push("Tension tends to surface on or around work days.");
-      }
-      if ((character.social_value ?? 100) < 40) {
-        insights.push("Social needs are running low — isolation may be building.");
-      }
-      if ((character.sleep_debt_hours ?? 0) > 2 || (character.energy_value ?? 100) < 30) {
-        insights.push("Sleep is becoming disrupted — energy and mood are affected.");
-      }
-      if ((character.mental_value ?? 100) < 40) {
-        insights.push("Mental health is under strain. Rest and connection may help.");
-      }
-      if ((character.financial_need_value ?? 0) > 65) {
-        insights.push("Financial pressure is elevated and likely affecting emotional state.");
-      }
-      if (positiveInteractions > 0 && positiveInteractions > conflictEvents) {
-        insights.push("Positive interactions are currently outweighing conflict.");
-      }
-      if (conflictEvents > positiveInteractions && conflictEvents > 0) {
-        insights.push("More conflict than positive connection recently — emotional cost may be accumulating.");
-      }
-      if ((character.hunger_value ?? 100) < 30) {
-        insights.push("Physical needs like hunger are unmet, adding emotional strain.");
-      }
-      if (character.is_jailed) {
-        insights.push("Current confinement is likely affecting emotional state and social access.");
-      }
+      if (conflictEvents > 0 && character.work_start_time) insights.push("Emotional tension tends to appear around work-related stress.");
+      if ((character.social_value ?? 100) < 40) insights.push("Social needs are low — isolation may be building up.");
+      if ((character.sleep_debt_hours ?? 0) > 2) insights.push("Sleep pattern is becoming unstable. Rest and recovery needed.");
+      if ((character.mental_value ?? 100) < 40) insights.push("Mental health is under strain. Connection and rest may help.");
+      if ((character.financial_need_value ?? 0) > 70) insights.push("Financial stress is elevated and may be shaping mood.");
+      if (positiveInteractions > conflictEvents * 2 && positiveInteractions > 0) insights.push("Positive social interactions are outweighing conflict right now.");
+      if (character.emotional_state === "calm" && (character.energy_value ?? 0) > 60) insights.push("Currently in a stable emotional state.");
+      if ((character.energy_value ?? 100) < 25) insights.push("Energy is critically low — exhaustion is likely affecting behavior.");
+      if (msgsSent === 0) insights.push("No communication activity in the past 24 hours. Social withdrawal possible.");
 
-      // ── Memory highlights — skip generic/empty entries ────────────────────
-      const inlineMemories = (character.memories || [])
-        .filter(m => {
-          const title = (m.title || "").toLowerCase().trim();
-          if (!title || title === "memory" || title === "a memory" || title === "untitled") return false;
-          return !!(m.emotional_impact || m.description);
-        })
-        .slice(0, 3)
-        .map(m => ({ title: m.title, note: m.emotional_impact || m.description || null, active: !!m.emotional_impact }));
+      // ── Memory highlights — skip generic/placeholder entries ──────────────
+      const rawMemories = [
+        ...(character.memories || []).map(m => ({
+          title: m.title || "",
+          note: m.emotional_impact || m.description || "",
+          active: !!m.emotional_impact,
+          date: null,
+        })),
+      ].filter(isMeaningfulMemory).slice(0, 4);
 
       setData({
         trendData,
-        activeGroups,
-        groupColors,
-        timelineEntries,
+        graphMarkers,
+        timelineEntries: timelineEntries.slice(0, 12),
         socialStats: { msgsSent, positiveInteractions, conflictEvents },
         insights: insights.slice(0, 4),
-        memoryHighlights: inlineMemories,
+        memoryHighlights: rawMemories,
       });
       setLoaded(true);
       setLoading(false);
@@ -367,114 +371,122 @@ export default function CharacterDashboard({ character }) {
   }
   if (!data) return null;
 
-  const { trendData, activeGroups, groupColors, timelineEntries, socialStats, insights, memoryHighlights } = data;
+  const { trendData, graphMarkers, timelineEntries, socialStats, insights, memoryHighlights } = data;
   const emotionState = character.emotional_state || "calm";
   const now = format(new Date(), "h:mm aa");
-  const hasTrend = trendData.length >= 2 && activeGroups.length > 0;
 
-  const TimelineIcon = ({ type }) => {
-    const cls = "w-3.5 h-3.5";
-    const map = {
-      moon: <Moon className={cls} />, sun: <Sun className={cls} />,
-      briefcase: <Briefcase className={cls} />, home: <Home className={cls} />,
-      mappin: <MapPin className={cls} />, heart: <Heart className={cls} />,
-      book: <BookOpen className={cls} />, dollar: <DollarSign className={cls} />,
-      message: <MessageCircle className={cls} />, activity: <Activity className={cls} />,
-      phone: <Phone className={cls} />,
-    };
-    return map[type] || <Activity className={cls} />;
-  };
+  // Lines to draw — only draw a line if there's at least one non-null value
+  const hasCalm = trendData.some(d => d.calm != null);
+  const hasTension = trendData.some(d => d.tension != null);
+  const hasSad = trendData.some(d => d.sad != null);
+  const hasAnxious = trendData.some(d => d.anxious != null);
+  const hasMood = trendData.some(d => d.mood != null);
 
-  // Stress is inverse of mental_value
-  const stressVal = character.mental_value !== undefined ? 100 - character.mental_value : undefined;
-  const needsLabel = (val, thresholds) => {
-    if (val === undefined) return "—";
-    if (val >= thresholds[0]) return "Good";
-    if (val >= thresholds[1]) return "Medium";
-    return "Low";
-  };
-  const stressLabel = (val) => {
-    if (val === undefined) return "—";
-    if (val < 30) return "Low";
-    if (val < 60) return "Moderate";
-    return "Elevated";
-  };
+  // Always show graph if we have at least 2 data points
+  const showGraph = trendData.length >= 2;
 
   return (
     <div className="space-y-4">
 
-      {/* ── 1. Emotional Trend Graph ────────────────────────────────────────── */}
-      <div className="rounded-xl bg-card/60 border border-border overflow-hidden">
-        <div className="px-4 pt-3 pb-1 flex items-center justify-between">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Emotional Trend · This Week</p>
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            {activeGroups.map(g => (
-              <div key={g} className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full" style={{ background: groupColors[g] }} />
-                <span className="text-[9px] text-muted-foreground capitalize">{g}</span>
-              </div>
-            ))}
+      {/* ── 1. EMOTIONAL TREND GRAPH ──────────────────────────────────────── */}
+      {showGraph && (
+        <div className="rounded-xl overflow-hidden" style={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }}>
+          <div className="px-4 pt-4 pb-1 flex items-center justify-between">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Emotional Trend · This Week</p>
+            <div className="flex items-center gap-3">
+              {hasCalm && <span className="flex items-center gap-1 text-[9px] text-amber-400"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />Mood</span>}
+              {hasTension && <span className="flex items-center gap-1 text-[9px] text-red-400"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" />Tension</span>}
+              {hasSad && <span className="flex items-center gap-1 text-[9px] text-blue-400"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block" />Sadness</span>}
+              {hasAnxious && <span className="flex items-center gap-1 text-[9px] text-violet-400"><span className="w-2 h-2 rounded-full bg-violet-400 inline-block" />Anxious</span>}
+            </div>
           </div>
-        </div>
-        {hasTrend ? (
-          <div style={{ height: 120 }} className="px-1 pb-2">
+          <div style={{ height: 140 }} className="px-1 pb-2">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trendData} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
-                <XAxis dataKey="day" tick={{ fontSize: 8, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} />
+              <LineChart data={trendData} margin={{ top: 8, right: 8, left: -20, bottom: 4 }}>
+                <XAxis
+                  dataKey="day"
+                  tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
                 <YAxis domain={[0, 100]} hide />
-                <Tooltip content={<TrendTooltip />} />
-                {activeGroups.map(g => (
-                  <Line
-                    key={g}
-                    type="monotone"
-                    dataKey={g}
-                    name={g.charAt(0).toUpperCase() + g.slice(1)}
-                    stroke={groupColors[g]}
-                    strokeWidth={1.5}
-                    dot={{ r: 2.5, fill: groupColors[g], strokeWidth: 0 }}
-                    activeDot={{ r: 4, strokeWidth: 0 }}
-                    connectNulls={false}
-                  />
+                <Tooltip
+                  contentStyle={{
+                    background: "hsl(var(--card))", border: "1px solid hsl(var(--border))",
+                    borderRadius: 8, fontSize: 10, padding: "6px 10px",
+                  }}
+                  formatter={(v, name) => v != null ? [`${v}%`, name] : [null, name]}
+                  labelFormatter={(l) => `${l}`}
+                />
+                {/* Main mood line — always show if we have mood */}
+                {hasMood && (
+                  <Line type="monotone" dataKey="mood" name="Overall"
+                    stroke={eColor(emotionState)} strokeWidth={2}
+                    dot={{ r: 3, fill: eColor(emotionState), strokeWidth: 0 }}
+                    activeDot={{ r: 4 }} connectNulls />
+                )}
+                {hasCalm && (
+                  <Line type="monotone" dataKey="calm" name="Mood"
+                    stroke="#fbbf24" strokeWidth={1.5} strokeDasharray="0"
+                    dot={{ r: 2.5, fill: "#fbbf24", strokeWidth: 0 }}
+                    activeDot={{ r: 3.5 }} connectNulls />
+                )}
+                {hasTension && (
+                  <Line type="monotone" dataKey="tension" name="Tension"
+                    stroke="#f87171" strokeWidth={1.5}
+                    dot={{ r: 2.5, fill: "#f87171", strokeWidth: 0 }}
+                    activeDot={{ r: 3.5 }} connectNulls />
+                )}
+                {hasSad && (
+                  <Line type="monotone" dataKey="sad" name="Sadness"
+                    stroke="#60a5fa" strokeWidth={1.5}
+                    dot={{ r: 2.5, fill: "#60a5fa", strokeWidth: 0 }}
+                    activeDot={{ r: 3.5 }} connectNulls />
+                )}
+                {hasAnxious && (
+                  <Line type="monotone" dataKey="anxious" name="Anxious"
+                    stroke="#a78bfa" strokeWidth={1.5}
+                    dot={{ r: 2.5, fill: "#a78bfa", strokeWidth: 0 }}
+                    activeDot={{ r: 3.5 }} connectNulls />
+                )}
+                {/* Event markers */}
+                {graphMarkers.slice(0, 5).map((m, i) => (
+                  <ReferenceDot key={i} x={m.x} y={m.y}
+                    r={4} fill={eColor(m.emotion)} stroke="hsl(var(--background))" strokeWidth={1.5} />
                 ))}
               </LineChart>
             </ResponsiveContainer>
           </div>
-        ) : (
-          <div className="px-4 pb-4 pt-1">
-            <p className="text-xs text-muted-foreground italic">
-              Emotional trend builds as activity is recorded. Check back after more interactions.
-            </p>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* ── 2. Past 24 Hours + Current State (side-by-side on larger, stacked on mobile) ── */}
-      <div className="grid grid-cols-1 gap-4">
+      {/* ── 2. TWO-COLUMN: TIMELINE + CURRENT STATE ──────────────────────── */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-5">
 
-        {/* Timeline */}
-        <div className="rounded-xl bg-card/60 border border-border">
-          <div className="px-4 pt-3 pb-2 border-b border-border/50">
+        {/* Past 24 Hours — wider column */}
+        <div className="sm:col-span-3 rounded-xl overflow-hidden" style={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }}>
+          <div className="px-4 py-3 border-b border-border">
             <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Past 24 Hours</p>
           </div>
           {timelineEntries.length === 0 ? (
             <p className="px-4 py-4 text-xs text-muted-foreground italic">No recorded activity in the past 24 hours.</p>
           ) : (
-            <div className="divide-y divide-border/30">
+            <div className="divide-y divide-border/40">
               {timelineEntries.map((entry, i) => (
-                <div key={i} className={`flex items-start gap-3 px-3 py-2.5 border-l-2 ${accent(entry.emotion)}`}>
-                  <div className="flex-shrink-0 mt-0.5 text-muted-foreground">
-                    <TimelineIcon type={entry.icon} />
+                <div key={i} className={`flex items-start gap-2.5 px-4 py-2.5 border-l-2 ${entryAccent(entry.emotion)}`}>
+                  <div className="mt-0.5 flex-shrink-0 text-muted-foreground">
+                    <TIcon type={entry.icon} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-foreground leading-snug">{entry.text}</p>
                     {entry.sub && <p className="text-[10px] text-muted-foreground mt-0.5">{entry.sub}</p>}
                   </div>
-                  <div className="flex-shrink-0 flex flex-col items-end gap-0.5 ml-2">
-                    {entry.time && <span className="text-[9px] text-muted-foreground whitespace-nowrap">{fmtTime(entry.time)}</span>}
+                  <div className="flex-shrink-0 text-right">
+                    {entry.time && <p className="text-[9px] text-muted-foreground">{fmtTime(entry.time)}</p>}
                     {entry.emotion && (
-                      <span className="text-[9px] font-semibold capitalize whitespace-nowrap" style={{ color: ec(entry.emotion) }}>
+                      <p className="text-[9px] font-medium capitalize" style={{ color: eColor(entry.emotion) }}>
                         {entry.emotion}
-                      </span>
+                      </p>
                     )}
                   </div>
                 </div>
@@ -483,58 +495,64 @@ export default function CharacterDashboard({ character }) {
           )}
         </div>
 
-        {/* Current State */}
-        <div className="rounded-xl bg-card/60 border border-border">
-          <div className="px-4 pt-3 pb-2 border-b border-border/50">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Current State</p>
-          </div>
-          <div className="px-4 py-3 grid grid-cols-2 gap-x-6 gap-y-2.5">
-            {[
-              { label: "Emotion", value: emotionState, colored: true },
-              { label: "Energy", value: character.energy_value !== undefined ? `${character.energy_value}%` : "—" },
-              { label: "Stress", value: stressLabel(stressVal) },
-              { label: "Social Need", value: needsLabel(character.social_value, [60, 35]) },
-              { label: "Hunger", value: character.hunger_value !== undefined ? `${character.hunger_value}%` : "—" },
-              { label: "Location", value: character.resolved_current_location_name || "—" },
-              { label: "Time", value: now },
-            ].map(({ label, value, colored }) => (
-              <div key={label} className="flex items-center justify-between gap-2">
-                <span className="text-[10px] text-muted-foreground">{label}</span>
-                <span
-                  className="text-[10px] font-semibold capitalize text-right"
-                  style={colored ? { color: ec(value) } : { color: "hsl(var(--foreground))" }}
-                >
-                  {value}
-                </span>
-              </div>
-            ))}
+        {/* Right column: Current State + Social Activity */}
+        <div className="sm:col-span-2 flex flex-col gap-4">
+
+          {/* Current State */}
+          <div className="rounded-xl overflow-hidden" style={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }}>
+            <div className="px-4 py-3 border-b border-border">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Current State</p>
+            </div>
+            <div className="px-4 py-3 space-y-2">
+              {[
+                { label: "Emotion", value: emotionState, colored: true },
+                { label: "Energy", value: character.energy_value !== undefined ? `${character.energy_value}%` : "—" },
+                { label: "Stress", value: character.mental_value !== undefined ? `${Math.round(100 - character.mental_value)}%` : "—" },
+                { label: "Social Need", value: character.social_value !== undefined ? `${character.social_value}%` : "—" },
+                { label: "Hunger", value: character.hunger_value !== undefined ? `${character.hunger_value}%` : "—" },
+                { label: "Location", value: character.resolved_current_location_name || "—" },
+                { label: "Time", value: now },
+              ].map(({ label, value, colored }) => (
+                <div key={label} className="flex items-center justify-between gap-1">
+                  <span className="text-[10px] text-muted-foreground flex-shrink-0">{label}</span>
+                  <span className="text-[10px] font-medium capitalize text-right truncate max-w-[55%]"
+                    style={colored ? { color: eColor(value) } : {}}>
+                    {value}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Social stats inside current state card — matches reference layout */}
-          <div className="border-t border-border/50 px-4 pt-2 pb-3">
-            <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Social Activity · Past 24h</p>
-            <div className="flex gap-0">
-              <StatChip icon={MessageCircle} label="Messages Sent" value={socialStats.msgsSent} />
-              <StatChip icon={Heart} label="Positive Interactions" value={socialStats.positiveInteractions} />
-              <StatChip icon={Zap} label="Conflict Events" value={socialStats.conflictEvents} />
+          {/* Social Activity */}
+          <div className="rounded-xl overflow-hidden" style={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }}>
+            <div className="px-4 py-3 border-b border-border">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Social Activity · 24h</p>
+            </div>
+            <div className="flex divide-x divide-border/40">
+              <StatChip icon={MessageCircle} label="Messages" value={socialStats.msgsSent} />
+              <StatChip icon={Heart} label="Positive" value={socialStats.positiveInteractions} />
+              <StatChip icon={Zap} label="Conflict" value={socialStats.conflictEvents} />
             </div>
           </div>
         </div>
       </div>
 
-      {/* ── 3. Pattern Insights + Memory Highlights ─────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4">
+      {/* ── 3. PATTERN INSIGHTS + MEMORY HIGHLIGHTS ──────────────────────── */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 
         {/* Pattern Insights */}
         {insights.length > 0 && (
-          <div className="rounded-xl bg-card/60 border border-border">
-            <div className="px-4 pt-3 pb-2 border-b border-border/50">
+          <div className="rounded-xl overflow-hidden" style={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }}>
+            <div className="px-4 py-3 border-b border-border">
               <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Pattern Insights</p>
             </div>
             <div className="px-4 py-3 space-y-2">
               {insights.map((insight, i) => (
-                <div key={i} className="flex items-start gap-2.5 px-2.5 py-2 rounded-lg bg-primary/5 border border-primary/10">
-                  <Brain className="w-3 h-3 text-primary flex-shrink-0 mt-0.5" />
+                <div key={i} className="flex items-start gap-2">
+                  <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Brain className="w-3 h-3 text-primary" />
+                  </div>
                   <p className="text-xs text-foreground/80 leading-snug">{insight}</p>
                 </div>
               ))}
@@ -542,33 +560,31 @@ export default function CharacterDashboard({ character }) {
           </div>
         )}
 
-        {/* Recent Memory Highlights */}
+        {/* Recent Memory Highlights — only meaningful entries */}
         {memoryHighlights.length > 0 && (
-          <div className="rounded-xl bg-card/60 border border-border">
-            <div className="px-4 pt-3 pb-2 border-b border-border/50">
+          <div className="rounded-xl overflow-hidden" style={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }}>
+            <div className="px-4 py-3 border-b border-border">
               <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Recent Memory Highlights</p>
             </div>
-            <div className="px-4 py-3 space-y-2">
+            <div className="divide-y divide-border/40">
               {memoryHighlights.map((mem, i) => (
-                <div key={i} className="flex items-start gap-2.5 px-2.5 py-2 rounded-lg bg-secondary/40 border border-border/60">
-                  <BookOpen className="w-3 h-3 text-primary flex-shrink-0 mt-0.5" />
+                <div key={i} className="flex items-start gap-2.5 px-4 py-3">
+                  <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <BookOpen className="w-3 h-3 text-primary" />
+                  </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-foreground leading-snug">{mem.title}</p>
-                    {mem.note && <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">{mem.note}</p>}
+                    {mem.note && <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug line-clamp-2">{mem.note}</p>}
                   </div>
                   {mem.active && (
-                    <span className="text-[8px] text-amber-400 font-semibold whitespace-nowrap flex-shrink-0 mt-0.5">Still affecting mood</span>
+                    <span className="text-[8px] text-amber-400 font-medium whitespace-nowrap flex-shrink-0 mt-1">
+                      Still affecting mood
+                    </span>
                   )}
                 </div>
               ))}
             </div>
           </div>
-        )}
-
-        {memoryHighlights.length === 0 && insights.length === 0 && (
-          <p className="text-xs text-muted-foreground italic px-1">
-            More behavioral patterns will appear as activity is recorded.
-          </p>
         )}
       </div>
 
