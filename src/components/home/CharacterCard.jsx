@@ -3,6 +3,11 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
 import { lfcDelete } from "@/lib/localFirstCache";
+import {
+  classifyConversationChannel,
+  fetchUnreadMessagesForConversations,
+  resolveUnreadBadgeCounts,
+} from "@/lib/canonicalUnreadResolver";
 // Note: Sparkles is reused for prayer icon
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
@@ -121,42 +126,6 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
 
 
-  // Single batched query: fetch ALL unread character messages for this character at once
-  // instead of N queries per conversation (which caused 429 rate limit storms)
-  // Canonical message validity filter — same rule applied everywhere in the app.
-  // A message is countable as unread only when ALL of these are true:
-  //  - sender_type === 'character'
-  //  - is_read === false
-  //  - not a recovery/fallback signal
-  //  - not a date divider / system / timestamp row
-  //  - has non-empty content
-  // isCountable: a message counts toward the UNREAD badge ONLY if:
-  //  1. sender_type === 'character' (not a user-typed message)
-  //  2. is_read === false
-  //  3. not a recovery/fallback signal
-  //  4. not a date divider / system / timestamp row
-  //  5. has non-empty content
-  //  6. NOT sent by the viewed character themselves (outgoing messages must never count)
-  //     - sender_character_id is authoritative (set by WorldContactsPopup/Chat)
-  //     - character_id is the legacy fallback
-  //     - receiver_character_id check: if explicitly set to someone else, this char is NOT the receiver
-  const isCountable = (msg) => {
-    if (!msg || msg.sender_type !== 'character') return false;
-    if (msg.is_read !== false) return false;
-    if (msg.recovery_signal === true) return false;
-    const t = (msg.type || '').toLowerCase();
-    if (t === 'date' || t === 'divider' || t === 'system' || t === 'timestamp' || t === 'separator') return false;
-    if (!msg.content || msg.content.trim() === '') return false;
-    // CRITICAL: exclude outgoing messages — messages sent BY the viewed character must never count
-    // sender_character_id is the authoritative field (set by WorldContactsPopup, Chat, Text)
-    // character_id is the legacy fallback used by older messages
-    const senderId = msg.sender_character_id || msg.character_id;
-    if (senderId === character.id) return false;
-    // If receiver_character_id is explicitly set and is NOT this character, this is not an incoming message
-    if (msg.receiver_character_id && msg.receiver_character_id !== character.id) return false;
-    return true;
-  };
-
   const debounceRef = useRef(null);
   const countUnread = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -168,83 +137,34 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         return;
       }
       try {
-        // Exclude merged/dead conversations — they should never contribute to badge counts.
-        // sync_status="merged" means the thread was consolidated; its messages were moved to the canonical thread.
-        const activeConvos = conversations.filter(c => c.sync_status !== 'merged');
-
-        // channel="world_phone" is the authoritative classifier — always takes priority over type.
-        const worldPhoneIds = new Set(activeConvos.filter(c => c.channel === "world_phone").map(c => c.id));
-        const worldContactIds = new Set(activeConvos.filter(c => c.type === "npc" && c.channel !== "world_phone").map(c => c.id));
-        const directIds = new Set(activeConvos.filter(c => c.type === "direct" && c.channel !== "world_phone").map(c => c.id));
-        const phoneIds = new Set(activeConvos.filter(c => c.type === "phone" && c.channel !== "world_phone").map(c => c.id));
-
-        // ROOT CAUSE FIX: query unread messages per conversation, not by character_id.
-        // Querying by character_id alone only returns messages WHERE THIS CHAR IS THE SENDER.
-        // Autonomous beats have character_id = OTHER character, receiver_character_id = this char.
-        // Querying per conversation_id captures ALL unread messages in that thread regardless of direction.
-        // Ownership is already guaranteed: conversations were fetched with owner_email + character_ids filter.
+        // Use canonical resolver — same classification as useWorldContactsUnread and WorldContactsPopup.
+        // classifyConversationChannel handles: merged exclusion, world_phone, npc, direct, phone.
+        const activeConvos = conversations.filter(c => classifyConversationChannel(c) !== null);
         const allConvoIds = activeConvos.map(c => c.id);
-        // Batch per-conversation fetches — each scoped to conversation_id, sender_type, is_read
-        const perConvoResults = await Promise.all(
-          allConvoIds.map(convoId =>
-            base44.entities.Message.filter(
-              { conversation_id: convoId, sender_type: 'character', is_read: false },
-              null,
-              50
-            ).catch(() => [])
-          )
+
+        // Fetch unread messages per-conversation using canonical fetcher.
+        const perConvoMessages = await fetchUnreadMessagesForConversations(allConvoIds, base44);
+
+        // Aggregate using canonical resolver — single source of truth for all badge counts.
+        const { red_chat, red_text, green, diagnostics } = resolveUnreadBadgeCounts(
+          activeConvos,
+          perConvoMessages,
+          character.id
         );
 
-        let chatTotal = 0;
-        let phoneTotal = 0;
-        let worldPhoneTotal = 0;
-
-        perConvoResults.forEach((msgs, idx) => {
-          const convoId = allConvoIds[idx];
-          const convo = activeConvos.find(c => c.id === convoId);
-          for (const msg of msgs) {
-            const msgShort = msg.id?.substring(0, 8) || '?';
-
-            // VALIDITY CHECK
-            if (!isCountable(msg)) {
-              console.log(`[BADGE_AUDIT] char=${character.name} | msg=${msgShort} | convo=${convoId?.substring(0,8)} | channel=${convo?.channel||'?'} | type=${convo?.type||'?'} | sender_cid=${msg.sender_character_id?.substring(0,8)||'none'} | character_id=${msg.character_id?.substring(0,8)||'none'} | receiver_cid=${msg.receiver_character_id?.substring(0,8)||'none'} | is_read=${msg.is_read} | EXCLUDED: not_countable`);
-              continue;
-            }
-
-            // DIRECTION GUARD: exclude messages sent BY the viewed character.
-            const isSentByViewed =
-              (msg.sender_character_id && msg.sender_character_id === character.id) ||
-              (!msg.sender_character_id && msg.character_id === character.id);
-            if (isSentByViewed) {
-              console.log(`[BADGE_AUDIT] char=${character.name} | msg=${msgShort} | convo=${convoId?.substring(0,8)} | channel=${convo?.channel||'?'} | type=${convo?.type||'?'} | sender_cid=${msg.sender_character_id?.substring(0,8)||'none'} | character_id=${msg.character_id?.substring(0,8)||'none'} | receiver_cid=${msg.receiver_character_id?.substring(0,8)||'none'} | is_read=${msg.is_read} | EXCLUDED: outgoing_from_viewed_char`);
-              continue;
-            }
-
-            // RECEIVER GUARD: if receiver_character_id is explicitly set, it must match the viewed character.
-            if (msg.receiver_character_id && msg.receiver_character_id !== character.id) {
-              console.log(`[BADGE_AUDIT] char=${character.name} | msg=${msgShort} | convo=${convoId?.substring(0,8)} | channel=${convo?.channel||'?'} | type=${convo?.type||'?'} | sender_cid=${msg.sender_character_id?.substring(0,8)||'none'} | character_id=${msg.character_id?.substring(0,8)||'none'} | receiver_cid=${msg.receiver_character_id?.substring(0,8)||'none'} | is_read=${msg.is_read} | EXCLUDED: receiver_is_other_char`);
-              continue;
-            }
-
-            let badgeType = 'orphaned_not_counted';
-            if (worldPhoneIds.has(convoId) || worldContactIds.has(convoId)) {
-              worldPhoneTotal++;
-              badgeType = 'GREEN';
-            } else if (directIds.has(convoId)) {
-              chatTotal++;
-              badgeType = 'RED_chat';
-            } else if (phoneIds.has(convoId)) {
-              phoneTotal++;
-              badgeType = 'RED_text';
-            }
-            console.log(`[BADGE_AUDIT] char=${character.name} | msg=${msgShort} | convo=${convoId?.substring(0,8)} | channel=${convo?.channel||'?'} | type=${convo?.type||'?'} | sender_cid=${msg.sender_character_id?.substring(0,8)||'none'} | character_id=${msg.character_id?.substring(0,8)||'none'} | receiver_cid=${msg.receiver_character_id?.substring(0,8)||'none'} | is_read=${msg.is_read} | INCLUDED: badge=${badgeType}`);
+        // Emit diagnostics so badge state changes are always traceable in console.
+        diagnostics.forEach(d => {
+          if (d.excluded) {
+            console.log(`[BADGE_AUDIT] char=${character.name} | msg=${d.message_id||'?'} | convo=${d.conversation_id||'?'} | channel=${d.channel||'?'} | type=${d.conversation_type||'?'} | sender_type=${d.sender_type||'?'} | sender_cid=${d.sender_character_id||'none'} | receiver_cid=${d.receiver_character_id||'none'} | is_read=${d.is_read} | EXCLUDED: ${d.exclusion_reason||'unknown'}`);
+          } else {
+            console.log(`[BADGE_AUDIT] char=${character.name} | msg=${d.message_id||'?'} | convo=${d.conversation_id||'?'} | channel=${d.channel||'?'} | type=${d.conversation_type||'?'} | is_read=${d.is_read} | INCLUDED: badge=${d.badge_channel}`);
           }
         });
-        console.log(`[BADGE_SUMMARY] char=${character.name} | green=${worldPhoneTotal} | red_chat=${chatTotal} | red_text=${phoneTotal}`);
+        console.log(`[BADGE_SUMMARY] char=${character.name} | green=${green} | red_chat=${red_chat} | red_text=${red_text}`);
 
-        setUnreadChat(chatTotal);
-        setUnreadPhone(phoneTotal);
-        setUnreadWorldPhone(worldPhoneTotal);
+        setUnreadChat(red_chat);
+        setUnreadPhone(red_text);
+        setUnreadWorldPhone(green);
       } catch {
         setUnreadChat(0);
         setUnreadPhone(0);

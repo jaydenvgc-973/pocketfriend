@@ -1,17 +1,16 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * markThreadRead — Backend function for instant unread badge clearing.
+ * markThreadRead — Backend: marks all real, countable unread character messages
+ * in a thread as read. Applies the same validity rules as the frontend canonical
+ * unread resolver so badge counts and mark-read logic stay in sync.
  *
- * AUTHORITATIVE: Immediately marks ALL delivered (visible) character messages in a thread as read.
- * Called the moment a user opens a Chat or Text page. Backend makes the actual database changes,
- * then returns updated unread count so frontend can clear badge synchronously.
- *
- * Rules enforced:
- * - Only marks messages that are fully delivered (exist in DB with conversation_id)
- * - Never touches pending messages (they live in PendingMessage entity, not Message)
- * - Marks ALL unread character messages in this specific thread as read
- * - Returns exact count marked so frontend knows unread is now 0 for that thread
+ * Validity rules (mirrors isCountableUnread in canonicalUnreadResolver.js):
+ *   - sender_type === 'character'
+ *   - is_read === false
+ *   - recovery_signal !== true
+ *   - msg.type not in: date, divider, system, timestamp, separator
+ *   - content is non-empty
  */
 Deno.serve(async (req) => {
   try {
@@ -28,10 +27,9 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'conversationId required' }, { status: 400 });
     }
 
-    console.log(`[markThreadRead] STARTING for conversationId=${conversationId} | user=${user.email}`);
+    console.log(`[markThreadRead] START conversationId=${conversationId} characterId=${characterId||'none'} user=${user.email}`);
 
-    // Fetch all unread character messages in this thread BEFORE marking
-    // These are DELIVERED messages only — PendingMessage entity is separate and never included here
+    // Fetch all unread character messages in this thread
     const unreadMessages = await base44.entities.Message.filter({
       conversation_id: conversationId,
       sender_type: 'character',
@@ -39,27 +37,38 @@ Deno.serve(async (req) => {
     });
 
     const beforeCount = unreadMessages.length;
-    console.log(`[markThreadRead] Found ${beforeCount} unread messages to mark as read`);
+    console.log(`[markThreadRead] Found ${beforeCount} unread candidate messages`);
 
     if (beforeCount === 0) {
-      console.log(`[markThreadRead] No unread messages found in this thread — already clean`);
-      return Response.json({
-        success: true,
-        marked_read: 0,
-        conversation_id: conversationId,
-        unread_count: 0,
-      });
+      return Response.json({ success: true, marked_read: 0, conversation_id: conversationId, unread_count: 0 });
     }
 
-    // Mark ALL unread messages as read in parallel
-    const markPromises = unreadMessages.map(async (msg) => {
-      console.log(`[markThreadRead] Marking message ${msg.id.substring(0, 8)}... as read`);
+    // Apply canonical validity filter — same rules as isCountableUnread on frontend.
+    // Only mark messages that are real, non-system, non-recovery unread character messages.
+    const EXCLUDED_TYPES = new Set(['date', 'divider', 'system', 'timestamp', 'separator']);
+    const toMark = unreadMessages.filter(msg => {
+      if (msg.recovery_signal === true) return false;
+      if (EXCLUDED_TYPES.has((msg.type || '').toLowerCase())) return false;
+      if (!msg.content || msg.content.trim() === '') return false;
+      return true;
+    });
+
+    const skipped = beforeCount - toMark.length;
+    if (skipped > 0) {
+      console.log(`[markThreadRead] Skipping ${skipped} non-countable messages (recovery signals, date dividers, empty content)`);
+    }
+
+    if (toMark.length === 0) {
+      return Response.json({ success: true, marked_read: 0, skipped, conversation_id: conversationId, unread_count: 0 });
+    }
+
+    // Mark in parallel
+    const markPromises = toMark.map(async (msg) => {
       try {
         await base44.entities.Message.update(msg.id, { is_read: true });
-        console.log(`[markThreadRead] ✓ Message ${msg.id.substring(0, 8)}... marked as read`);
         return true;
       } catch (err) {
-        console.error(`[markThreadRead] ✗ Failed to mark ${msg.id.substring(0, 8)}... as read:`, err.message);
+        console.error(`[markThreadRead] Failed to mark ${msg.id.substring(0, 8)}: ${err.message}`);
         return false;
       }
     });
@@ -67,31 +76,30 @@ Deno.serve(async (req) => {
     const results = await Promise.all(markPromises);
     const successCount = results.filter(Boolean).length;
 
-    // Verify by fetching again — ensure database actually changed
+    // Verify
     const verifyUnread = await base44.entities.Message.filter({
       conversation_id: conversationId,
       sender_type: 'character',
       is_read: false,
     });
-
     const finalUnreadCount = verifyUnread.length;
 
-    console.log(`[markThreadRead] COMPLETE: marked_read=${successCount} | beforeCount=${beforeCount} | finalUnreadCount=${finalUnreadCount} | conversationId=${conversationId} | characterId=${characterId} | user=${user.email}`);
+    console.log(`[markThreadRead] COMPLETE: marked=${successCount} skipped=${skipped} before=${beforeCount} finalUnread=${finalUnreadCount} convo=${conversationId} user=${user.email}`);
 
     if (finalUnreadCount > 0) {
-      console.warn(`[markThreadRead] WARNING: Database shows ${finalUnreadCount} unread messages remain after marking — state mismatch detected`);
+      console.warn(`[markThreadRead] WARNING: ${finalUnreadCount} unread remain after marking`);
     }
 
     return Response.json({
       success: true,
       marked_read: successCount,
+      skipped,
       final_unread_count: finalUnreadCount,
       conversation_id: conversationId,
       before_count: beforeCount,
-      messages_processed: unreadMessages.length,
     });
   } catch (error) {
-    console.error('[markThreadRead] FATAL ERROR:', error.message);
+    console.error('[markThreadRead] FATAL:', error.message);
     return Response.json({ error: error.message, fatal: true }, { status: 500 });
   }
 });

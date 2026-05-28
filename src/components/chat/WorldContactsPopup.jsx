@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useWorldContactsUnread } from "@/hooks/useWorldContactsUnread";
+import { isCountableUnread } from "@/lib/canonicalUnreadResolver";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { resolveCharacterContacts } from "@/lib/characterContactsResolver";
 import { callLLMWithRetry } from "@/lib/llmUtils";
@@ -236,30 +237,9 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           message_type: m.message_type || null,
         })));
 
-        // Mark incoming as read — use IDENTICAL direction logic as CharacterCard.isCountable
-        // and useWorldContactsUnread so the badge count and the read-marking are in sync.
-        // DIRECTION RULE:
-        //   sender_character_id is authoritative (new messages stamp this field).
-        //   character_id is the legacy fallback (older messages only have this).
-        //   A message is outgoing (sent BY the viewed character) when:
-        //     - sender_character_id === character.id, OR
-        //     - sender_character_id is null AND character_id === character.id
-        //   A message is incoming if it is NOT outgoing by the above rule.
-        const unreadIncoming = history.filter(m => {
-          if (m.is_read) return false;
-          if (m.sender_type !== 'character') return false;
-          if (m.recovery_signal === true) return false;
-          if (!m.content || m.content.trim() === '') return false;
-          // Exclude date/system dividers
-          const t = (m.type || '').toLowerCase();
-          if (t === 'date' || t === 'divider' || t === 'system' || t === 'timestamp' || t === 'separator') return false;
-          // DIRECTION: message is outgoing if sender is the viewed character (either field)
-          const senderId = m.sender_character_id || m.character_id;
-          if (senderId === character.id) return false;
-          // RECEIVER GUARD: if explicitly set, must target this character
-          if (m.receiver_character_id && m.receiver_character_id !== character.id) return false;
-          return true;
-        });
+        // Mark incoming as read — uses canonical isCountableUnread (same as CharacterCard and
+        // useWorldContactsUnread) so badge count and read-marking are always in sync.
+        const unreadIncoming = history.filter(m => isCountableUnread(m, character.id));
         console.log(
           `[WorldContacts] selectContact marking read | convo=${found.id.substring(0,8)} | unread_incoming=${unreadIncoming.length}` +
           (unreadIncoming.length > 0 ? ` | msg_ids=[${unreadIncoming.map(m => m.id.substring(0,8)).join(',')}]` : '')
