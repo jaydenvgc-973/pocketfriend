@@ -112,11 +112,109 @@ export default function CharacterDashboard({ character }) {
       base44.entities.AutomaticNarrative
         ? base44.entities.AutomaticNarrative.filter({ character_id: charId }, "-timestamp", 50).catch(() => [])
         : Promise.resolve([]),
-    ]).then(([msgsR, txR, memsR, narrR]) => {
+      // Conversations this character is in — needed to resolve participant names
+      ownerEmail
+        ? base44.entities.Conversation.filter({ owner_email: ownerEmail, character_ids: [charId] }, "-updated_date", 60).catch(() => [])
+        : Promise.resolve([]),
+    ]).then(([msgsR, txR, memsR, narrR, convosR]) => {
       const msgs = msgsR.status === "fulfilled" ? (msgsR.value || []) : [];
       const txns = txR.status === "fulfilled" ? (txR.value || []) : [];
       const mems = memsR.status === "fulfilled" ? (memsR.value || []) : [];
       const narrs = narrR.status === "fulfilled" ? (narrR.value || []) : [];
+      const convos = convosR.status === "fulfilled" ? (convosR.value || []) : [];
+
+      // ── Build conversation lookup: convoId → resolved display name ────────
+      // Resolution priority:
+      //   1. conversation.title (if it's a real human-readable title, not a system key)
+      //   2. character_name on messages in that convo (the other participant)
+      //   3. played_as_character_name / sender_character_id from world phone messages
+      //   4. Safe fallback: "Another character", "Group conversation", "Unknown contact"
+      const convoNameMap = {};
+      const isSystemTitle = (t) => !t || t.startsWith("npc_chat__") || t.startsWith("bilateral_") || t.startsWith("world_phone_") || /^[a-f0-9-]{36}/.test(t);
+
+      convos.forEach(c => {
+        if (!isSystemTitle(c.title)) {
+          convoNameMap[c.id] = c.title;
+        } else if (c.type === "group") {
+          convoNameMap[c.id] = "Group conversation";
+        } else {
+          convoNameMap[c.id] = null; // resolve from messages below
+        }
+      });
+
+      // For convos without a clean title, try to extract the other participant's name
+      // from messages: look for character_name on messages NOT sent by charId
+      msgs.forEach(m => {
+        if (convoNameMap[m.conversation_id] !== null && convoNameMap[m.conversation_id] !== undefined) return;
+        // Use character_name stored on the message (the character who sent it)
+        // For world phone: receiver_character_id messages carry character_name of the sender
+        const otherName = m.sender_type === "character" && m.character_id !== charId
+          ? m.character_name || null
+          : null;
+        // Also check played_as_character_name for user-sent world phone messages
+        const playedAsName = m.played_as_character_name && m.played_as_character_id !== charId
+          ? m.played_as_character_name
+          : null;
+        const resolved = otherName || playedAsName;
+        if (resolved) convoNameMap[m.conversation_id] = resolved;
+      });
+
+      // For still-unresolved convos, check fictional_relationships as final lookup
+      const relNameMap = {};
+      (character.fictional_relationships || []).forEach(r => {
+        if (r.related_character_id) relNameMap[r.related_character_id] = r.person_name;
+      });
+      convos.forEach(c => {
+        if (convoNameMap[c.id]) return;
+        // Try matching other character IDs in this convo against fictional_relationships
+        const otherIds = (c.character_ids || []).filter(id => id !== charId);
+        for (const id of otherIds) {
+          if (relNameMap[id]) { convoNameMap[c.id] = relNameMap[id]; break; }
+        }
+        // Final fallback
+        if (!convoNameMap[c.id]) {
+          convoNameMap[c.id] = c.type === "group" ? "Group conversation" : "Another character";
+        }
+      });
+
+      // Helper: resolve a participant label for a message
+      const resolveParticipant = (msg) => {
+        // If message carries the other character's name directly
+        if (msg.character_name && msg.character_id !== charId) return msg.character_name;
+        // world phone: sender_character_id / receiver_character_id
+        if (msg.sender_character_id && msg.sender_character_id !== charId) {
+          const rel = relNameMap[msg.sender_character_id];
+          if (rel) return rel;
+        }
+        if (msg.receiver_character_id && msg.receiver_character_id !== charId) {
+          const rel = relNameMap[msg.receiver_character_id];
+          if (rel) return rel;
+        }
+        // Fall back to conversation-level name
+        return convoNameMap[msg.conversation_id] || "Unknown contact";
+      };
+
+      // Helper: build a narrative-style message label
+      const messageSummary = (msg) => {
+        const participant = resolveParticipant(msg);
+        const emotion = (msg.emotional_state || "").toLowerCase();
+        const channel = convos.find(c => c.id === msg.conversation_id)?.channel || "";
+        const isWorldPhone = channel === "world_phone";
+
+        if (["irritated", "defensive", "angry"].includes(emotion)) {
+          return `Had a tense exchange with ${participant}`;
+        }
+        if (emotion === "reflective") {
+          return `Sent a reflective message to ${participant}`;
+        }
+        if (["happy", "joyful", "excited"].includes(emotion)) {
+          return `Positive exchange with ${participant}`;
+        }
+        if (isWorldPhone) {
+          return `World Phone message with ${participant}`;
+        }
+        return `Messaged ${participant}`;
+      };
 
       // ── Filter to past 24h ───────────────────────────────────────────────
       const recent24hMsgs = msgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff)));
@@ -124,7 +222,6 @@ export default function CharacterDashboard({ character }) {
 
       // ── Social stats ─────────────────────────────────────────────────────
       const msgsSent = recent24hMsgs.filter(m => m.sender_type === "character").length;
-      const userMsgs = recent24hMsgs.filter(m => m.sender_type === "user").length;
       const positiveInteractions = recent24hMsgs.filter(m =>
         m.sender_type === "character" && ["calm", "happy", "joyful", "excited"].includes((m.emotional_state || "").toLowerCase())
       ).length;
@@ -184,17 +281,27 @@ export default function CharacterDashboard({ character }) {
         });
       });
 
-      // Message interactions (sample representative ones — not every message)
-      const charMsgs = recent24hMsgs
+      // Message interactions — deduplicated per conversation, with real participant names
+      // Group by conversation_id and pick the most emotionally significant message per convo
+      const convoMsgMap = {};
+      recent24hMsgs
         .filter(m => m.sender_type === "character" && m.emotional_state)
-        .slice(0, 5);
-      charMsgs.forEach(m => {
+        .forEach(m => {
+          const existing = convoMsgMap[m.conversation_id];
+          if (!existing) { convoMsgMap[m.conversation_id] = m; return; }
+          // Prefer conflict/tension messages as they're more narratively significant
+          const priority = { angry: 3, irritated: 3, defensive: 3, reflective: 2, sad: 2, anxious: 2, happy: 1, calm: 1 };
+          const ep = (s) => priority[(s || "").toLowerCase()] || 0;
+          if (ep(m.emotional_state) > ep(existing.emotional_state)) convoMsgMap[m.conversation_id] = m;
+        });
+
+      Object.values(convoMsgMap).slice(0, 6).forEach(m => {
         timelineEntries.push({
           time: m.created_date,
           icon: "message",
-          text: `Exchanged messages`,
+          text: messageSummary(m),
           emotion: m.emotional_state,
-          sub: m.conversation_id ? null : null,
+          sub: null,
         });
       });
 
