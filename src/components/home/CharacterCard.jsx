@@ -282,9 +282,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       if (character.owner_email) {
         lfcDelete(character.owner_email, `world_contacts_unread:${character.id}`);
       }
-      // Force immediate recount — no debounce delay on explicit read event
+      // Wait 800ms before recounting — gives the parallel Message.update(is_read:true) writes
+      // time to commit to DB before we re-query. Without this delay, the recount races the
+      // DB writes and still sees unread messages, leaving the badge stuck.
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      countUnread();
+      debounceRef.current = setTimeout(() => {
+        countUnread();
+      }, 800);
     };
     window.addEventListener('thread:read', handleThreadRead);
     return () => window.removeEventListener('thread:read', handleThreadRead);

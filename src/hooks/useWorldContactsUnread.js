@@ -171,6 +171,12 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
         for (const msg of msgs) {
           // Apply canonical message validity filter
           if (!isCountableUnreadMessage(msg)) continue;
+          // DIRECTION GUARD: exclude outgoing messages sent BY the viewed character.
+          // sender_character_id is authoritative; character_id is the legacy fallback.
+          const senderId = msg.sender_character_id || msg.character_id;
+          if (senderId === characterId) continue;
+          // RECEIVER GUARD: if explicitly set, receiver must be the viewed character.
+          if (msg.receiver_character_id && msg.receiver_character_id !== characterId) continue;
           byContact[contactKey] = (byContact[contactKey] || 0) + 1;
           total++;
         }
@@ -213,8 +219,9 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       }, SUB_DEBOUNCE_MS);
     });
 
-    // thread:read event: bust LFC cache immediately, then force-reload
+    // thread:read event: bust LFC cache immediately, then force-reload.
     // This is the critical path: opening a world_phone thread must clear the badge instantly.
+    // We wait 800ms before the forced re-fetch to allow DB writes (is_read=true) to commit.
     const handleThreadRead = (e) => {
       const detail = e.detail || {};
       if (detail.characterId !== characterId) return;
@@ -222,9 +229,12 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       if (ownerEmail && cacheKey) lfcDelete(ownerEmail, cacheKey);
       // Cancel any pending debounce
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      // Force a fresh server fetch (bypasses cooldown)
-      isFetchingRef.current = false; // reset fetch lock so force can run
-      loadUnreadCounts(true);
+      // Short delay so the parallel Message.update(is_read:true) writes have time to commit
+      // before we re-query. Without this, the re-fetch can race the DB writes and still see unread.
+      debounceTimerRef.current = setTimeout(() => {
+        isFetchingRef.current = false; // reset fetch lock so force can run
+        loadUnreadCounts(true);
+      }, 800);
     };
     window.addEventListener('thread:read', handleThreadRead);
 
