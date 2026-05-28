@@ -205,34 +205,46 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
         perConvoResults.forEach((msgs, idx) => {
           const convoId = allConvoIds[idx];
+          const convo = activeConvos.find(c => c.id === convoId);
           for (const msg of msgs) {
-            // Apply canonical validity filter — excludes date rows, system rows, recovery signals
-            if (!isCountable(msg)) continue;
+            const msgShort = msg.id?.substring(0, 8) || '?';
+
+            // VALIDITY CHECK
+            if (!isCountable(msg)) {
+              console.log(`[BADGE_AUDIT] char=${character.name} | msg=${msgShort} | convo=${convoId?.substring(0,8)} | channel=${convo?.channel||'?'} | type=${convo?.type||'?'} | sender_cid=${msg.sender_character_id?.substring(0,8)||'none'} | character_id=${msg.character_id?.substring(0,8)||'none'} | receiver_cid=${msg.receiver_character_id?.substring(0,8)||'none'} | is_read=${msg.is_read} | EXCLUDED: not_countable`);
+              continue;
+            }
 
             // DIRECTION GUARD: exclude messages sent BY the viewed character.
-            // sender_character_id is the authoritative sender field (set on all new messages).
-            // character_id is the legacy fallback — still used on older messages.
-            // If either field matches the viewed character's id, this is an outgoing message
-            // and must NEVER count toward unread badges (outgoing = the user already "read" it by sending).
             const isSentByViewed =
               (msg.sender_character_id && msg.sender_character_id === character.id) ||
               (!msg.sender_character_id && msg.character_id === character.id);
-            if (isSentByViewed) continue;
+            if (isSentByViewed) {
+              console.log(`[BADGE_AUDIT] char=${character.name} | msg=${msgShort} | convo=${convoId?.substring(0,8)} | channel=${convo?.channel||'?'} | type=${convo?.type||'?'} | sender_cid=${msg.sender_character_id?.substring(0,8)||'none'} | character_id=${msg.character_id?.substring(0,8)||'none'} | receiver_cid=${msg.receiver_character_id?.substring(0,8)||'none'} | is_read=${msg.is_read} | EXCLUDED: outgoing_from_viewed_char`);
+              continue;
+            }
 
             // RECEIVER GUARD: if receiver_character_id is explicitly set, it must match the viewed character.
-            // This prevents messages intended for OTHER characters in the same thread from being counted.
-            if (msg.receiver_character_id && msg.receiver_character_id !== character.id) continue;
+            if (msg.receiver_character_id && msg.receiver_character_id !== character.id) {
+              console.log(`[BADGE_AUDIT] char=${character.name} | msg=${msgShort} | convo=${convoId?.substring(0,8)} | channel=${convo?.channel||'?'} | type=${convo?.type||'?'} | sender_cid=${msg.sender_character_id?.substring(0,8)||'none'} | character_id=${msg.character_id?.substring(0,8)||'none'} | receiver_cid=${msg.receiver_character_id?.substring(0,8)||'none'} | is_read=${msg.is_read} | EXCLUDED: receiver_is_other_char`);
+              continue;
+            }
 
+            let badgeType = 'orphaned_not_counted';
             if (worldPhoneIds.has(convoId) || worldContactIds.has(convoId)) {
               worldPhoneTotal++;
+              badgeType = 'GREEN';
             } else if (directIds.has(convoId)) {
               chatTotal++;
+              badgeType = 'RED_chat';
             } else if (phoneIds.has(convoId)) {
               phoneTotal++;
+              badgeType = 'RED_text';
             }
-            // orphaned (no matching category) = skipped — never counted
+            console.log(`[BADGE_AUDIT] char=${character.name} | msg=${msgShort} | convo=${convoId?.substring(0,8)} | channel=${convo?.channel||'?'} | type=${convo?.type||'?'} | sender_cid=${msg.sender_character_id?.substring(0,8)||'none'} | character_id=${msg.character_id?.substring(0,8)||'none'} | receiver_cid=${msg.receiver_character_id?.substring(0,8)||'none'} | is_read=${msg.is_read} | INCLUDED: badge=${badgeType}`);
           }
         });
+        console.log(`[BADGE_SUMMARY] char=${character.name} | green=${worldPhoneTotal} | red_chat=${chatTotal} | red_text=${phoneTotal}`);
 
         setUnreadChat(chatTotal);
         setUnreadPhone(phoneTotal);
