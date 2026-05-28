@@ -41,9 +41,10 @@ function computeAdaptiveSleepWindow(character, etTime) {
   }
 
   // PRIORITY 3: Derive from work schedule.
-  // A character with assigned work_days has a known routine — even on off days.
-  // Off days are NOT "no schedule". They are scheduled off days with known timing.
-  // wake = sleepStart + SLEEP_DURATION. Never shiftStart - prepBuffer (that is nextShiftPrepTime, a separate concept).
+  // Work-derived sleep timing applies ONLY on selected work days (and the overnight adjacency case).
+  // Non-selected days are not "no schedule" — but they are also not work days.
+  // Do NOT apply work sleep timing on a non-work day just because work_days is populated.
+  // Exception: overnight shift that started on a selected work day and crossed midnight.
   if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.length > 0) {
     const startMin = toMin(character.work_start_time);
     const endMin   = toMin(character.work_end_time);
@@ -54,30 +55,43 @@ function computeAdaptiveSleepWindow(character, etTime) {
       const isOvernightShift = endMin < startMin;
 
       if (isOvernightShift) {
-        // 22:00–02:00 → sleep 03:00 → wake 10:00 (sleepStart + 7h, not shiftStart - 1h)
+        // 22:00–02:00 → sleep 03:00 → wake 10:00 (sleepStart + 7h)
+        // Only applies when yesterday or today is an actual selected overnight work day.
+        // Saturday on a Mon–Fri overnight schedule: neither yesterday (Fri start) nor today (Sat)
+        // connects via overnight logic unless Fri is a work day — which it is, so Sat morning qualifies.
+        // But Sat afternoon/evening does NOT qualify — fall through.
         const workedLastNight = character.work_days.includes(yesterday);
         const worksTonight    = character.work_days.includes(today);
-        const sleepStartMin   = (endMin + DECOMPRESSION_MIN) % 1440;
-        const wakeMin         = (sleepStartMin + SLEEP_DURATION_MIN) % 1440;
-        const source = (workedLastNight || worksTonight) ? 'overnight_work' : 'off_day_work_routine';
-        return { sleepStartMin, wakeMin, source };
+        if (workedLastNight || worksTonight) {
+          const sleepStartMin = (endMin + DECOMPRESSION_MIN) % 1440;
+          const wakeMin       = (sleepStartMin + SLEEP_DURATION_MIN) % 1440;
+          return { sleepStartMin, wakeMin, source: 'overnight_work' };
+        }
+        // No overnight connection to a selected work day — fall through
       } else {
-        // 09:00–17:00 → wake 08:00 (shiftStart - prepBuffer) → sleep 01:00 (wake - 7h)
+        // 09:00–17:00 → wake 08:00 → sleep 01:00
+        // Applies only when today or tomorrow is a selected work day.
+        // Sat/Sun for Mon–Fri worker: only Sunday qualifies (tomorrow = Monday is a work day).
+        // Saturday does not qualify (tomorrow = Sunday, not a work day).
         const worksToday    = character.work_days.includes(today);
         const worksTomorrow = character.work_days.includes(tomorrow);
-        const wakeMin       = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
-        const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
-        const source = (worksToday || worksTomorrow) ? 'work_schedule' : 'off_day_work_routine';
-        return { sleepStartMin, wakeMin, source };
+        if (worksToday || worksTomorrow) {
+          const wakeMin       = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+          const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
+          return { sleepStartMin, wakeMin, source: 'work_schedule' };
+        }
+        // Non-work day, no work tomorrow — fall through
       }
     }
   }
 
   // PRIORITY 4: School-enrolled character (no work schedule).
-  // Resolution: enrollment override → school hours default (08:00) → computed sleep.
-  // Note: sleep start of 00:00 is arithmetic (07:00 - 7h = 00:00), not a midnight assumption.
+  // Resolution order:
+  //   1. Enrollment override times (character-specific start/end)
+  //   2. School location operating hours (callers with location data should pre-resolve this)
+  //   3. Documented fallback: school 08:00 → wake 07:00 → sleep 00:00 (arithmetic, not assumption)
   if (character.student_status === 'enrolled' && character.education_location_id) {
-    // 4a: enrollment schedule override
+    // 4a: Enrollment schedule override
     const enrollments = character.education_enrollments;
     if (Array.isArray(enrollments) && enrollments.length > 0) {
       const active = enrollments.find(e => e.status === 'active' && e.start_time);
@@ -90,11 +104,13 @@ function computeAdaptiveSleepWindow(character, etTime) {
         }
       }
     }
-    // 4b: school hours default — school starts 08:00 → wake 07:00 → sleep 00:00 (math)
+    // 4b: Documented fallback — 08:00 school start assumed when location hours unavailable here.
+    //     Callers with location map access should resolve school hours and inject via enrollment.
     return { sleepStartMin: 0, wakeMin: 7 * 60, source: 'school_hours' };
   }
 
-  // PRIORITY 5: No structured timing — no work, no school, no explicit sleep schedule.
+  // PRIORITY 5: No structured timing at all.
+  // Only reaches here when: no explicit sleep schedule, no work, no school enrollment.
   return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, source: 'no_structured_timing' };
 }
 
