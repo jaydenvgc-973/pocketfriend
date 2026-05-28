@@ -134,6 +134,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   //  - not a recovery/fallback signal
   //  - not a date divider / system / timestamp row
   //  - has non-empty content
+  // isCountable: a message counts toward the UNREAD badge ONLY if:
+  //  1. sender_type === 'character' (not a user-typed message)
+  //  2. is_read === false
+  //  3. not a recovery/fallback signal
+  //  4. not a date divider / system / timestamp row
+  //  5. has non-empty content
+  //  6. NOT sent by the viewed character themselves (outgoing messages must never count)
+  //     - sender_character_id is authoritative (set by WorldContactsPopup/Chat)
+  //     - character_id is the legacy fallback
+  //     - receiver_character_id check: if explicitly set to someone else, this char is NOT the receiver
   const isCountable = (msg) => {
     if (!msg || msg.sender_type !== 'character') return false;
     if (msg.is_read !== false) return false;
@@ -141,6 +151,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     const t = (msg.type || '').toLowerCase();
     if (t === 'date' || t === 'divider' || t === 'system' || t === 'timestamp' || t === 'separator') return false;
     if (!msg.content || msg.content.trim() === '') return false;
+    // CRITICAL: exclude outgoing messages — messages sent BY the viewed character must never count
+    // sender_character_id is the authoritative field (set by WorldContactsPopup, Chat, Text)
+    // character_id is the legacy fallback used by older messages
+    const senderId = msg.sender_character_id || msg.character_id;
+    if (senderId === character.id) return false;
+    // If receiver_character_id is explicitly set and is NOT this character, this is not an incoming message
+    if (msg.receiver_character_id && msg.receiver_character_id !== character.id) return false;
     return true;
   };
 
