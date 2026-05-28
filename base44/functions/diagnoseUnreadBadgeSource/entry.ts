@@ -39,7 +39,10 @@ Deno.serve(async (req) => {
     const diagnosticByCharacter = [];
 
     for (const char of activeCreated) {
-      // NEW FIX: query includes owner_email alongside character_id
+      // Message entity does NOT have owner_email. Ownership scoping is enforced by only
+      // counting messages whose conversation_id exists in convoMap (already filtered to
+      // owner_email via Step 2). Messages in conversations not owned by this user are
+      // automatically excluded when convoMap lookup fails (no convo = orphaned, not counted).
       const unreadMessages = await base44.entities.Message.filter({
         character_id: char.id,
         sender_type: 'character',
@@ -159,10 +162,30 @@ Deno.serve(async (req) => {
           : 'NO DATA — no unread messages found.',
     };
 
+    // Parse request body for optional filter
+    let body = {};
+    try { body = await req.json(); } catch (_) {}
+    const onlyRepaired = body.only_repaired === true;
+    const onlyWithGreen = body.only_with_green === true;
+    const compact = body.compact === true; // omit classified_messages for smaller output
+
+    let outputCharacters = diagnosticByCharacter;
+    if (onlyRepaired || onlyWithGreen) {
+      outputCharacters = diagnosticByCharacter.filter(c =>
+        (onlyRepaired && c.repair_verified) ||
+        (onlyWithGreen && c.new_badge.green_world_phone > 0)
+      );
+    }
+
+    // In compact mode or when filtering, omit classified_messages to keep response small
+    const finalCharacters = (compact || onlyRepaired || onlyWithGreen)
+      ? outputCharacters.map(({ classified_messages, ...rest }) => rest)
+      : outputCharacters;
+
     return Response.json({
       owner_email: ownerEmail,
       summary,
-      by_character: diagnosticByCharacter,
+      by_character: finalCharacters,
     });
 
   } catch (error) {
