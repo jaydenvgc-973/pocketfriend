@@ -345,14 +345,36 @@ export default function CharacterDashboard({ character }) {
       const liveStatus = livePresence.status;
 
       // ── Participant name resolution ────────────────────────────────────────
-      // Build id → name from the character's own relationship/family data
+      // Build id → name map from ALL available sources in priority order.
+      // This is the critical fix: autonomous beats involve characters NOT in
+      // fictional_relationships or family_members, so we must also harvest
+      // names directly from message fields (character_name, character_id pairs).
       const relNameById = {};
+
+      // Source 1: fictional_relationships on the viewed character
       (character.fictional_relationships || []).forEach(r => {
-        if (r.related_character_id) relNameById[r.related_character_id] = r.person_name;
+        if (r.related_character_id && r.person_name) relNameById[r.related_character_id] = r.person_name;
       });
+
+      // Source 2: family_members on the viewed character
       (character.family_members || []).forEach(m => {
-        if (m.character_id) relNameById[m.character_id] = m.name;
+        if (m.character_id && m.name) relNameById[m.character_id] = m.name;
       });
+
+      // Source 3: message fields — character_name + character_id pairs from ALL messages.
+      // This is where autonomous beat participant names live: the message record itself
+      // carries character_name for the sender (character_id field), so we can map
+      // any participant ID → name directly from message data.
+      msgs.forEach(m => {
+        if (m.character_id && m.character_name && m.character_id !== charId) {
+          if (!relNameById[m.character_id]) relNameById[m.character_id] = m.character_name;
+        }
+        // receiver_character_id is the other participant in bilateral world phone messages
+        // but we don't have the receiver's name directly — skip (sender_character_id covers it)
+      });
+
+      // Debug: log the name map size to confirm resolution coverage
+      console.log(`[CharacterDashboard] Name map: ${Object.keys(relNameById).length} IDs resolved for charId=${charId}`);
 
       const isInternalTitle = (t) =>
         !t ||
@@ -648,18 +670,57 @@ export default function CharacterDashboard({ character }) {
 
       Object.values(convoMsgPick).slice(0, 8).forEach(m => {
         const meta = convoMeta[m.conversation_id] || { name: null, isGroup: false, isWorldPhone: false };
-        // Resolve beat type from message content for autonomous beats
-        let beatType = null;
-        if (m.trigger_source === 'autonomous_social_beat' || meta.isAutonomousBeat) {
-          // Try to infer beat type from memory_summary patterns in nearby life events
-          // or fall back to a generic social label
-          beatType = 'social_checkin'; // safe default for autonomous beats without explicit type
+
+        // Last-chance name resolution: if meta.name is still null, try the message fields directly.
+        // Autonomous beat messages have character_name on the receiver message (sender_character_id = other char).
+        let resolvedName = meta.name;
+        if (!resolvedName) {
+          // The message we picked may be FROM the other character (their reply)
+          if (m.character_name && m.character_id !== charId) {
+            resolvedName = m.character_name;
+          }
+          // Or it may be FROM the viewed character — check receiver_character_id
+          if (!resolvedName && m.receiver_character_id && m.receiver_character_id !== charId) {
+            resolvedName = relNameById[m.receiver_character_id] || null;
+          }
+          // Or sender_character_id is the other participant
+          if (!resolvedName && m.sender_character_id && m.sender_character_id !== charId) {
+            resolvedName = relNameById[m.sender_character_id] || null;
+          }
+          // participant_character_ids on the message itself
+          if (!resolvedName) {
+            const msgParticipants = m.participant_character_ids || [];
+            for (const pid of msgParticipants) {
+              if (pid !== charId && relNameById[pid]) { resolvedName = relNameById[pid]; break; }
+            }
+          }
         }
+
+        // Developer diagnostic: log every failed resolution with full context
+        if (!resolvedName) {
+          console.warn(
+            `[CharacterDashboard] PARTICIPANT_UNRESOLVED | viewed_character_id=${charId}` +
+            ` | conversation_id=${m.conversation_id}` +
+            ` | shared_key=${m.shared_conversation_key || 'none'}` +
+            ` | participant_character_ids=${JSON.stringify(m.participant_character_ids || [])}` +
+            ` | sender_character_id=${m.sender_character_id || 'none'}` +
+            ` | receiver_character_id=${m.receiver_character_id || 'none'}` +
+            ` | message.character_id=${m.character_id || 'none'}` +
+            ` | message.character_name=${m.character_name || 'none'}` +
+            ` | name_map_keys=${Object.keys(relNameById).slice(0, 10).join(',')}`
+          );
+        }
+
+        const beatType = (m.trigger_source === 'autonomous_social_beat' || meta.isAutonomousBeat)
+          ? 'social_checkin'
+          : null;
+
         timelineEntries.push({
           time: m.created_date,
           icon: meta.isWorldPhone || meta.isAutonomousBeat ? "phone" : "message",
-          text: buildMsgText(m.emotional_state, meta.name, meta.isGroup, meta.isWorldPhone, beatType),
+          text: buildMsgText(m.emotional_state, resolvedName, meta.isGroup, meta.isWorldPhone, beatType),
           emotion: m.emotional_state,
+          _unresolved: !resolvedName, // internal flag — never shown in UI
         });
       });
 
