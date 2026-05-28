@@ -218,30 +218,54 @@ const getOccupationSocialContext = (character) => {
   return contextByType[occType] || null;
 };
 
+// ── Internal / non-name values that must never appear as participant names ─────
+const INTERNAL_CHANNEL_TYPES = new Set(['direct', 'phone', 'world_phone', 'scene', 'group', 'npc']);
+const isInternalValue = (v) =>
+  !v ||
+  INTERNAL_CHANNEL_TYPES.has(v.toLowerCase()) ||
+  v.startsWith('world_phone::') ||
+  v.startsWith('npc_chat__') ||
+  v.startsWith('bilateral_') ||
+  /^[a-f0-9]{20,}/.test(v) || // raw MongoDB-style ID
+  /^[a-f0-9-]{36}$/.test(v);  // UUID
+
 // ── Resolve participant name from a world_phone canonical key or IDs ──────────
 // canonical key format: "world_phone::sortedIdA::sortedIdB"
-// Returns the OTHER character's name (not the viewed character)
-const resolveOtherParticipantName = (convo, viewedCharId, relNameById) => {
-  // Try participant_character_ids first (most reliable)
+// RULE: NEVER return the viewed character's own name. Always remove viewedCharId from candidates first.
+const resolveOtherParticipantName = (convo, viewedCharId, viewedCharName, relNameById) => {
+  // Helper: accept a name only if it is not the viewed character and not an internal value
+  const accept = (name) => {
+    if (!name) return null;
+    if (isInternalValue(name)) return null;
+    if (viewedCharName && name.trim().toLowerCase() === viewedCharName.trim().toLowerCase()) return null;
+    return name;
+  };
+
+  // Source 1: participant_character_ids — most reliable, explicit list
   const participants = convo.participant_character_ids || convo.character_ids || [];
-  const others = participants.filter(id => id !== viewedCharId);
-  for (const id of others) {
-    if (relNameById[id]) return relNameById[id];
+  const otherIds = participants.filter(id => id && id !== viewedCharId);
+  for (const id of otherIds) {
+    const n = accept(relNameById[id]);
+    if (n) return n;
   }
 
-  // Try parsing shared_conversation_key: "world_phone::idA::idB"
+  // Source 2: shared_conversation_key: "world_phone::idA::idB"
   const key = convo.shared_conversation_key || '';
   if (key.startsWith('world_phone::')) {
     const parts = key.replace('world_phone::', '').split('::');
     for (const part of parts) {
-      if (part && part !== viewedCharId && relNameById[part]) return relNameById[part];
+      if (part && part !== viewedCharId) {
+        const n = accept(relNameById[part]);
+        if (n) return n;
+      }
     }
   }
 
-  // Try conversation title if it contains a readable name (not a UUID or system key)
+  // Source 3: conversation title — only if it is a clean human name (not a channel type, not an ID, not viewed char's own name)
   const title = convo.title || '';
-  if (title && !title.startsWith('world_phone::') && !title.startsWith('npc_chat__') && !title.startsWith('bilateral_') && !/^[a-f0-9-]{36}/.test(title)) {
-    return title;
+  if (title && !isInternalValue(title)) {
+    const n = accept(title);
+    if (n) return n;
   }
 
   return null;
@@ -367,14 +391,25 @@ export default function CharacterDashboard({ character }) {
       // Source 3: ALL messages (both sent-by and received-by the viewed character).
       // rcvMsgs gives us the OTHER character's character_id + character_name directly —
       // because when they sent the message, their info is in those fields.
-      // This is the authoritative source for autonomous beat participant names.
+      // CRITICAL: only index IDs that are NOT the viewed character — never self-index.
+      const viewedCharName = character.name || character.display_name || character.primary_name || '';
       allMsgs.forEach(m => {
-        if (m.character_id && m.character_name && m.character_id !== charId) {
+        // character_id + character_name on the message = the sender character
+        if (m.character_id && m.character_name && m.character_id !== charId && !isInternalValue(m.character_name)) {
           if (!relNameById[m.character_id]) relNameById[m.character_id] = m.character_name;
         }
-        // Also index by sender_character_id in case character_id differs
-        if (m.sender_character_id && m.character_name && m.sender_character_id !== charId) {
-          if (!relNameById[m.sender_character_id]) relNameById[m.sender_character_id] = m.character_name;
+        // sender_character_id may differ from character_id on bilateral/world_phone messages
+        if (m.sender_character_id && m.sender_character_id !== charId) {
+          // Name comes from character_name field (set to sender's name when they sent)
+          if (m.character_name && !isInternalValue(m.character_name) && !relNameById[m.sender_character_id]) {
+            relNameById[m.sender_character_id] = m.character_name;
+          }
+        }
+        // receiver_character_id: if the message has a receiver who is NOT the viewed char,
+        // we can sometimes find their name from played_as_character_name or other fields
+        if (m.receiver_character_id && m.receiver_character_id !== charId) {
+          // For world_phone messages sent BY the viewed character, receiver name may be on played_as_character_name
+          // or can be derived later via relNameById lookup; don't set from ambiguous fields here.
         }
       });
 
@@ -395,21 +430,28 @@ export default function CharacterDashboard({ character }) {
         const isWP    = c.channel === "world_phone";
         if (isGroup) { convoMeta[c.id] = { name: null, isGroup: true, isWorldPhone: false }; return; }
 
-        // Resolve participant name — never expose raw IDs or world_phone:: keys
+        // Resolve participant name — never expose raw IDs, channel types, or viewed character's own name
         let name = isInternalTitle(c.title) ? null : c.title;
+        // Reject title if it is the viewed character's own name
+        if (name && viewedCharName && name.trim().toLowerCase() === viewedCharName.trim().toLowerCase()) name = null;
         if (!name) {
-          name = resolveOtherParticipantName(c, charId, relNameById);
+          name = resolveOtherParticipantName(c, charId, viewedCharName, relNameById);
         }
 
         convoMeta[c.id] = { name, isGroup: false, isWorldPhone: isWP };
       });
 
       // Enrich convoMeta from ALL messages (both sides of the conversation)
+      // CRITICAL: never set the viewed character's own name as the conversation participant name
+      const acceptName = (n) => {
+        if (!n || isInternalValue(n)) return null;
+        if (viewedCharName && n.trim().toLowerCase() === viewedCharName.trim().toLowerCase()) return null;
+        return n;
+      };
       allMsgs.forEach(m => {
         if (convoMeta[m.conversation_id]?.name) return;
-        const n = (m.character_name && m.character_id !== charId) ? m.character_name
-          : (m.played_as_character_name && m.played_as_character_id !== charId) ? m.played_as_character_name
-          : null;
+        const n = acceptName(m.character_id !== charId ? m.character_name : null)
+          || acceptName(m.played_as_character_id !== charId ? m.played_as_character_name : null);
         if (n) {
           if (convoMeta[m.conversation_id]) convoMeta[m.conversation_id].name = n;
           else convoMeta[m.conversation_id] = { name: n, isGroup: false, isWorldPhone: false };
@@ -671,43 +713,67 @@ export default function CharacterDashboard({ character }) {
       Object.values(convoMsgPick).slice(0, 8).forEach(m => {
         const meta = convoMeta[m.conversation_id] || { name: null, isGroup: false, isWorldPhone: false };
 
-        // Last-chance name resolution: if meta.name is still null, try the message fields directly.
-        // Autonomous beat messages have character_name on the receiver message (sender_character_id = other char).
-        let resolvedName = meta.name;
+        // Last-chance name resolution — strict: never accept viewed character's own name or internal values
+        let resolvedName = acceptName(meta.name);
+
         if (!resolvedName) {
-          // The message we picked may be FROM the other character (their reply)
-          if (m.character_name && m.character_id !== charId) {
-            resolvedName = m.character_name;
+          // Priority 1: message.character_id is the other character (sender case)
+          resolvedName = acceptName(m.character_id !== charId ? m.character_name : null);
+        }
+        if (!resolvedName) {
+          // Priority 2: receiver_character_id is the other participant
+          if (m.receiver_character_id && m.receiver_character_id !== charId) {
+            resolvedName = acceptName(relNameById[m.receiver_character_id] || null);
           }
-          // Or it may be FROM the viewed character — check receiver_character_id
-          if (!resolvedName && m.receiver_character_id && m.receiver_character_id !== charId) {
-            resolvedName = relNameById[m.receiver_character_id] || null;
+        }
+        if (!resolvedName) {
+          // Priority 3: sender_character_id is the other participant
+          if (m.sender_character_id && m.sender_character_id !== charId) {
+            resolvedName = acceptName(relNameById[m.sender_character_id] || null);
           }
-          // Or sender_character_id is the other participant
-          if (!resolvedName && m.sender_character_id && m.sender_character_id !== charId) {
-            resolvedName = relNameById[m.sender_character_id] || null;
+        }
+        if (!resolvedName) {
+          // Priority 4: participant_character_ids on the message itself
+          const msgParticipants = m.participant_character_ids || [];
+          for (const pid of msgParticipants) {
+            if (pid !== charId && relNameById[pid]) {
+              const n = acceptName(relNameById[pid]);
+              if (n) { resolvedName = n; break; }
+            }
           }
-          // participant_character_ids on the message itself
-          if (!resolvedName) {
-            const msgParticipants = m.participant_character_ids || [];
-            for (const pid of msgParticipants) {
-              if (pid !== charId && relNameById[pid]) { resolvedName = relNameById[pid]; break; }
+        }
+        if (!resolvedName) {
+          // Priority 5: parse shared_conversation_key on the message
+          const msgKey = m.shared_conversation_key || '';
+          if (msgKey.startsWith('world_phone::')) {
+            const parts = msgKey.replace('world_phone::', '').split('::');
+            for (const part of parts) {
+              if (part && part !== charId && relNameById[part]) {
+                const n = acceptName(relNameById[part]);
+                if (n) { resolvedName = n; break; }
+              }
             }
           }
         }
 
-        // Developer diagnostic: log every failed resolution with full context
+        // Full diagnostic log for every entry — always log so failures are visible
+        console.log(
+          `[CharacterDashboard] RESOLVE | viewed_character_id=${charId} viewed_name="${viewedCharName}"` +
+          ` | msg_id=${m.id || 'none'} | conv_id=${m.conversation_id}` +
+          ` | conv_type=${convos.find(c=>c.id===m.conversation_id)?.type || 'none'} | channel=${m.channel || 'none'}` +
+          ` | msg.character_id=${m.character_id || 'none'} | msg.character_name="${m.character_name || ''}"` +
+          ` | sender_character_id=${m.sender_character_id || 'none'}` +
+          ` | receiver_character_id=${m.receiver_character_id || 'none'}` +
+          ` | participant_character_ids=${JSON.stringify(m.participant_character_ids || [])}` +
+          ` | shared_key=${m.shared_conversation_key || 'none'}` +
+          ` | meta.name="${meta.name || ''}"` +
+          ` | resolved_other_name="${resolvedName || 'UNRESOLVED'}"` +
+          ` | name_map_size=${Object.keys(relNameById).length}`
+        );
         if (!resolvedName) {
           console.warn(
-            `[CharacterDashboard] PARTICIPANT_UNRESOLVED | viewed_character_id=${charId}` +
-            ` | conversation_id=${m.conversation_id}` +
-            ` | shared_key=${m.shared_conversation_key || 'none'}` +
-            ` | participant_character_ids=${JSON.stringify(m.participant_character_ids || [])}` +
-            ` | sender_character_id=${m.sender_character_id || 'none'}` +
-            ` | receiver_character_id=${m.receiver_character_id || 'none'}` +
-            ` | message.character_id=${m.character_id || 'none'}` +
-            ` | message.character_name=${m.character_name || 'none'}` +
-            ` | name_map_keys=${Object.keys(relNameById).slice(0, 10).join(',')}`
+            `[CharacterDashboard] PARTICIPANT_UNRESOLVED — falling back to null | conv_id=${m.conversation_id}` +
+            ` | name_map_keys=[${Object.keys(relNameById).slice(0, 15).join(', ')}]`
           );
         }
 

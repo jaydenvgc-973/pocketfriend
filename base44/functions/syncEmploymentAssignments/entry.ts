@@ -48,6 +48,7 @@ Deno.serve(async (req) => {
 
     const locationRepairs = [];
     const characterRepairs = [];
+    const skippedLegacyPlaceholders = [];
     const errors = [];
 
     for (const loc of workLocations) {
@@ -83,6 +84,12 @@ Deno.serve(async (req) => {
       // CHARACTER-SIDE REPAIR: for each employed character who has no occupation_location_id,
       // sync this location back to the character entity.
       for (const charId of employedIds) {
+        // Classify legacy placeholder IDs (npc__Name format) — these are not real character records
+        if (charId.startsWith('npc__')) {
+          skippedLegacyPlaceholders.push({ charId, locationId: loc.id, locationName: loc.name, reason: 'legacy_placeholder_id' });
+          continue;
+        }
+
         const char = charMap[charId];
         if (!char) continue; // character not found or not owned by this user — skip safely
 
@@ -132,10 +139,12 @@ Deno.serve(async (req) => {
       locations_scanned: workLocations.length,
       location_repairs: locationRepairs.length,
       character_repairs: characterRepairs.length,
+      skipped_legacy_placeholders: skippedLegacyPlaceholders.length,
       errors: errors.length,
       details: {
         locationRepairs,
         characterRepairs,
+        skippedLegacyPlaceholders,
         errors,
       },
     });
