@@ -278,22 +278,45 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           message_type: m.message_type || null,
         })));
 
-        // Mark incoming as read (non-blocking) — only world_phone/npc messages, never direct chat
-        const unreadIncoming = history.filter(m =>
-          m.sender_character_id !== character.id &&
-          !m.is_read &&
-          m.sender_type === 'character' &&
-          m.recovery_signal !== true &&
-          m.content && m.content.trim() !== ''
-        );
-        unreadIncoming.forEach(m => {
-          base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
+        // Mark incoming as read — use IDENTICAL direction logic as CharacterCard.isCountable
+        // and useWorldContactsUnread so the badge count and the read-marking are in sync.
+        // DIRECTION RULE:
+        //   sender_character_id is authoritative (new messages stamp this field).
+        //   character_id is the legacy fallback (older messages only have this).
+        //   A message is outgoing (sent BY the viewed character) when:
+        //     - sender_character_id === character.id, OR
+        //     - sender_character_id is null AND character_id === character.id
+        //   A message is incoming if it is NOT outgoing by the above rule.
+        const unreadIncoming = history.filter(m => {
+          if (m.is_read) return false;
+          if (m.sender_type !== 'character') return false;
+          if (m.recovery_signal === true) return false;
+          if (!m.content || m.content.trim() === '') return false;
+          // Exclude date/system dividers
+          const t = (m.type || '').toLowerCase();
+          if (t === 'date' || t === 'divider' || t === 'system' || t === 'timestamp' || t === 'separator') return false;
+          // DIRECTION: message is outgoing if sender is the viewed character (either field)
+          const senderId = m.sender_character_id || m.character_id;
+          if (senderId === character.id) return false;
+          // RECEIVER GUARD: if explicitly set, must target this character
+          if (m.receiver_character_id && m.receiver_character_id !== character.id) return false;
+          return true;
         });
-        // ALWAYS dispatch thread:read when opening a world_phone thread — even if DB showed 0 unread.
-        // This ensures stale LFC cache is busted and badge clears even when cache was out of sync.
-        window.dispatchEvent(new CustomEvent('thread:read', {
-          detail: { characterId: character.id, channel: 'world_phone', conversationId: found.id }
-        }));
+        console.log(
+          `[WorldContacts] selectContact marking read | convo=${found.id.substring(0,8)} | unread_incoming=${unreadIncoming.length}` +
+          (unreadIncoming.length > 0 ? ` | msg_ids=[${unreadIncoming.map(m => m.id.substring(0,8)).join(',')}]` : '')
+        );
+        const markReadPromises = unreadIncoming.map(m =>
+          base44.entities.Message.update(m.id, { is_read: true }).catch(() => {})
+        );
+        // Wait for ALL mark-read writes to complete BEFORE dispatching thread:read.
+        // This eliminates the race condition where the badge recount fires before
+        // the DB writes have committed, causing the badge to remain stuck.
+        Promise.all(markReadPromises).then(() => {
+          window.dispatchEvent(new CustomEvent('thread:read', {
+            detail: { characterId: character.id, channel: 'world_phone', conversationId: found.id }
+          }));
+        });
 
         subscribeToConversation(found.id);
       } else {

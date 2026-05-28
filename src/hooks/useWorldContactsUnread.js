@@ -220,8 +220,8 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
     });
 
     // thread:read event: bust LFC cache immediately, then force-reload.
-    // This is the critical path: opening a world_phone thread must clear the badge instantly.
-    // We wait 800ms before the forced re-fetch to allow DB writes (is_read=true) to commit.
+    // thread:read is dispatched AFTER all Message.update(is_read:true) writes resolve in
+    // WorldContactsPopup — so the DB is already committed when we get this event.
     const handleThreadRead = (e) => {
       const detail = e.detail || {};
       if (detail.characterId !== characterId) return;
@@ -229,12 +229,9 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       if (ownerEmail && cacheKey) lfcDelete(ownerEmail, cacheKey);
       // Cancel any pending debounce
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      // Short delay so the parallel Message.update(is_read:true) writes have time to commit
-      // before we re-query. Without this, the re-fetch can race the DB writes and still see unread.
-      debounceTimerRef.current = setTimeout(() => {
-        isFetchingRef.current = false; // reset fetch lock so force can run
-        loadUnreadCounts(true);
-      }, 800);
+      // Force a fresh server fetch — DB writes are already committed
+      isFetchingRef.current = false; // reset fetch lock so force can run
+      loadUnreadCounts(true);
     };
     window.addEventListener('thread:read', handleThreadRead);
 

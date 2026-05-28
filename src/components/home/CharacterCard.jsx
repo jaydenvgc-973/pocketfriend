@@ -102,25 +102,18 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const balance = financialRecords[0]?.current_balance;
 
   const { data: conversations = [] } = useQuery({
-    // owner_email is the ownership source of truth. Both fields are required in the filter.
-    // Backfill (backfillConversationOwnerEmail) has been run — existing records are stamped.
-    // Orphaned conversations from deleted characters are unresolvable and excluded by design.
-    queryKey: ['conversations', character.id, character.owner_email],
+    // Use character_ids only (no owner_email filter) so world_phone conversations between
+    // two active_created characters are captured regardless of which owner_email was stamped.
+    // This matches the scope used by useWorldContactsUnread and WorldContactsPopup.
+    queryKey: ['conversations', character.id],
     queryFn: () => {
-      if (!character.owner_email) {
-        // Fail visibly — do not silently fall back to an under-scoped query.
-        console.error(`[CharacterCard] Cannot query conversations for character id=${character.id} name="${character.name}": owner_email is missing. This character record is invalid for ownership-scoped queries.`);
-        return [];
-      }
-      return base44.entities.Conversation.filter({
-        owner_email: character.owner_email,
-        character_ids: [character.id],
-      });
+      if (!character.id) return [];
+      return base44.entities.Conversation.filter({ character_ids: [character.id] }, '-updated_date', 150);
     },
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
-    enabled: !!character.id && !!character.owner_email && queryReady,
+    enabled: !!character.id && queryReady,
   });
 
 
@@ -264,12 +257,12 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   // Re-count when user returns to the tab/window
   useEffect(() => {
     const handleFocus = () => {
-      queryClient.invalidateQueries({ queryKey: ['conversations', character.id, character.owner_email] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
       countUnread();
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [conversations, character.id, character.owner_email, queryClient]);
+  }, [conversations, character.id, queryClient]);
 
   // Re-count when a thread is opened (badge clear path).
   // 'thread:read' carries detail.channel so we know which badge to refresh.
@@ -282,13 +275,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       if (character.owner_email) {
         lfcDelete(character.owner_email, `world_contacts_unread:${character.id}`);
       }
-      // Wait 800ms before recounting — gives the parallel Message.update(is_read:true) writes
-      // time to commit to DB before we re-query. Without this delay, the recount races the
-      // DB writes and still sees unread messages, leaving the badge stuck.
+      // thread:read is dispatched AFTER all Message.update(is_read:true) writes resolve in
+      // WorldContactsPopup, so no delay is needed here — the DB is already committed.
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        countUnread();
-      }, 800);
+      countUnread();
     };
     window.addEventListener('thread:read', handleThreadRead);
     return () => window.removeEventListener('thread:read', handleThreadRead);
