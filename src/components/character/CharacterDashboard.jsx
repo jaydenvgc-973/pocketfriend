@@ -152,18 +152,126 @@ const fmtTime = (iso) => {
   try { return format(parseISO(iso), "h:mm aa"); } catch { return ""; }
 };
 
+// ── People-facing occupation detection ───────────────────────────────────────
+// Determines if a character's job involves significant social/customer interaction.
+// Returns an object with: { isSocial, isHighVolume, isEmotionallyDemanding, isCollaborative }
+const SOCIAL_OCCUPATION_PATTERNS = [
+  // High-volume public-facing: bartender, server, receptionist, cashier, retail
+  { pattern: /bartend|server|waitress|waiter|restaurant|barista|cafe|coffee|retail|cashier|checkout|front\s*desk|receptionist|host(ess)?|concierge/i, type: 'high_volume_public' },
+  // Emotionally demanding: social worker, case manager, counselor, therapist, nurse, healthcare
+  { pattern: /social\s*work|case\s*manag|counsel|therapist|nurse|nursing|healthcare|care\s*worker|outreach|crisis|hotline|mental\s*health/i, type: 'emotionally_demanding' },
+  // Teaching / education
+  { pattern: /teach|tutor|instructor|professor|educator|coach|trainer|school|faculty|aide/i, type: 'teaching' },
+  // Fitness / wellness
+  { pattern: /personal\s*train|fitness|gym\s*staff|yoga|pilates|wellness|spin\s*class/i, type: 'fitness' },
+  // Salon / beauty
+  { pattern: /salon|barber|stylist|esthetician|nail\s*tech|beauty/i, type: 'salon' },
+  // Event / entertainment / club
+  { pattern: /event|entertai|club\s*staff|bar\s*staff|venue|promoter|dj|bouncer|usher/i, type: 'event_entertainment' },
+  // Community / organizing
+  { pattern: /community\s*organiz|organiz|coordinator|advocate|outreach|liaison|program\s*direct/i, type: 'community' },
+  // Customer service
+  { pattern: /customer\s*service|call\s*cent|support\s*rep|help\s*desk|client\s*service/i, type: 'customer_service' },
+  // Medical / emergency
+  { pattern: /doctor|physician|paramedic|emt|emergency|urgent\s*care|clinic|hospital\s*staff|medical\s*assist/i, type: 'medical' },
+];
+
+const detectOccupationSocialType = (occupation) => {
+  if (!occupation) return null;
+  for (const { pattern, type } of SOCIAL_OCCUPATION_PATTERNS) {
+    if (pattern.test(occupation)) return type;
+  }
+  return null;
+};
+
+// Returns social impact description based on occupation type + personality
+const getOccupationSocialContext = (character) => {
+  const occType = detectOccupationSocialType(character.occupation || '');
+  if (!occType) return null;
+
+  const isIntrovert = ['introvert', 'mostly_introvert'].includes(character.social_energy || '');
+  const isExtrovert = ['extrovert', 'mostly_extrovert'].includes(character.social_energy || '');
+  const isStressed = (character.mental_value ?? 70) < 45;
+  const isBurntOut = (character.energy_value ?? 70) < 30;
+  const occName = character.occupation || 'job';
+
+  const contextByType = {
+    high_volume_public: isIntrovert
+      ? `Working as a ${occName} involves constant customer interaction — socially stimulating but potentially draining for someone with an introverted nature.`
+      : `Working as a ${occName} brings regular social contact through customer interactions throughout the shift.`,
+    emotionally_demanding: isStressed
+      ? `Working in ${occName} is emotionally taxing — client-facing work is ongoing even when personal stress is high.`
+      : `Working in ${occName} involves meaningful client/patient interaction, which counts as significant social engagement.`,
+    teaching: isBurntOut
+      ? `Teaching and managing students all day is socially active even when exhaustion is setting in.`
+      : `Time spent teaching and working with students and staff reflects consistent social engagement throughout the day.`,
+    fitness: `Personal training and fitness instruction involves direct one-on-one client contact throughout the shift.`,
+    salon: `Salon work involves close personal conversation with clients for extended periods — a socially active environment.`,
+    event_entertainment: isStressed
+      ? `Working events and venues means high social exposure even under pressure.`
+      : `Event and venue work brings constant social stimulation — a high-contact environment by nature.`,
+    community: `Community organizing and coordination involves ongoing relationship-based interaction with residents, partners, and stakeholders.`,
+    customer_service: `Customer service work involves consistent verbal and social interaction throughout the shift, whether in person or remotely.`,
+    medical: `Medical and clinical work involves continuous patient and team interaction — a socially and emotionally active environment.`,
+  };
+
+  return contextByType[occType] || null;
+};
+
+// ── Resolve participant name from a world_phone canonical key or IDs ──────────
+// canonical key format: "world_phone::sortedIdA::sortedIdB"
+// Returns the OTHER character's name (not the viewed character)
+const resolveOtherParticipantName = (convo, viewedCharId, relNameById) => {
+  // Try participant_character_ids first (most reliable)
+  const participants = convo.participant_character_ids || convo.character_ids || [];
+  const others = participants.filter(id => id !== viewedCharId);
+  for (const id of others) {
+    if (relNameById[id]) return relNameById[id];
+  }
+
+  // Try parsing shared_conversation_key: "world_phone::idA::idB"
+  const key = convo.shared_conversation_key || '';
+  if (key.startsWith('world_phone::')) {
+    const parts = key.replace('world_phone::', '').split('::');
+    for (const part of parts) {
+      if (part && part !== viewedCharId && relNameById[part]) return relNameById[part];
+    }
+  }
+
+  // Try conversation title if it contains a readable name (not a UUID or system key)
+  const title = convo.title || '';
+  if (title && !title.startsWith('world_phone::') && !title.startsWith('npc_chat__') && !title.startsWith('bilateral_') && !/^[a-f0-9-]{36}/.test(title)) {
+    return title;
+  }
+
+  return null;
+};
+
 // ── Build human-readable timeline text ───────────────────────────────────────
-const buildMsgText = (e, who, isGroup, isWorldPhone) => {
+const buildMsgText = (e, who, isGroup, isWorldPhone, beatType) => {
   const em = (e || "").toLowerCase();
-  if (isGroup) return "Participated in a group conversation";
-  if (isWorldPhone && who) return `World Phone conversation with ${who}`;
-  if (isTense(em))        return who ? `Tense exchange with ${who}` : "Conflict caused emotional tension";
-  if (em === "reflective")return who ? `Reflective conversation with ${who}` : "Sent a reflective message";
-  if (isSad(em))          return who ? `Reached out to ${who} while feeling low` : "Sent a message while feeling low";
+
+  if (isGroup) return "Group conversation";
+
+  // Autonomous beat types — use natural social language
+  if (beatType === 'community_event_followup') return who ? `Followed up with ${who} after a community event` : "Followed up after a community event";
+  if (beatType === 'housemate_checkin')        return who ? `Checked in with ${who}` : "Quick check-in with a housemate";
+  if (beatType === 'coworker_checkin')         return who ? `Touched base with ${who}` : "Touched base with a coworker";
+  if (beatType === 'family_checkin')           return who ? `Reached out to ${who}` : "Family check-in";
+  if (beatType === 'supportive_checkin')       return who ? `Reached out to ${who}` : "Supportive message sent";
+  if (beatType === 'resolve_tension')          return who ? `Reached out to ${who} to clear the air` : "Reached out to clear tension";
+  if (beatType === 'casual_catchup')           return who ? `Caught up with ${who}` : "Casual catch-up";
+  if (beatType === 'social_checkin')           return who ? `Checked in with ${who}` : "Reached out to reconnect";
+  if (beatType === 'brief_acknowledgment')     return who ? `Sent a quick message to ${who}` : "Brief message sent";
+
+  // Emotion-based fallback (direct messages)
+  if (isTense(em))         return who ? `Tense exchange with ${who}` : "Conflict caused emotional tension";
+  if (em === "reflective") return who ? `Reflective conversation with ${who}` : "Sent a reflective message";
+  if (isSad(em))           return who ? `Reached out to ${who} while feeling low` : "Sent a message while feeling low";
   if (isPositive(em) && em !== "calm") return who ? `Uplifting exchange with ${who}` : "Positive social interaction";
-  if (em === "calm")      return who ? `Calm conversation with ${who}` : "Quiet check-in";
-  if (em === "anxious")   return who ? `Anxious message to ${who}` : "Reached out while feeling unsettled";
-  return who ? `Exchanged messages with ${who}` : "Social interaction";
+  if (em === "calm")       return who ? `Conversation with ${who}` : "Quiet check-in";
+  if (em === "anxious")    return who ? `Reached out to ${who}` : "Reached out while feeling unsettled";
+  return who ? `Conversation with ${who}` : "Social interaction";
 };
 
 // ── Stat chip ─────────────────────────────────────────────────────────────────
@@ -246,24 +354,31 @@ export default function CharacterDashboard({ character }) {
         if (m.character_id) relNameById[m.character_id] = m.name;
       });
 
-      const isSystemTitle = (t) =>
-        !t || t.startsWith("npc_chat__") || t.startsWith("bilateral_") ||
-        t.startsWith("world_phone_") || /^[a-f0-9-]{36}/.test(t);
+      const isInternalTitle = (t) =>
+        !t ||
+        t.startsWith("npc_chat__") ||
+        t.startsWith("bilateral_") ||
+        t.startsWith("world_phone_") ||
+        t.startsWith("world_phone::") ||
+        /^[a-f0-9-]{36}/.test(t);
 
-      // convoId → { name, isGroup, isWorldPhone }
+      // convoId → { name, isGroup, isWorldPhone, beatType }
       const convoMeta = {};
       convos.forEach(c => {
         const isGroup = c.type === "group";
         const isWP    = c.channel === "world_phone";
         if (isGroup) { convoMeta[c.id] = { name: null, isGroup: true, isWorldPhone: false }; return; }
-        let name = isSystemTitle(c.title) ? null : c.title;
+
+        // Resolve participant name — never expose raw IDs or world_phone:: keys
+        let name = isInternalTitle(c.title) ? null : c.title;
         if (!name) {
-          const others = (c.character_ids || []).filter(id => id !== charId);
-          for (const id of others) { if (relNameById[id]) { name = relNameById[id]; break; } }
+          name = resolveOtherParticipantName(c, charId, relNameById);
         }
+
         convoMeta[c.id] = { name, isGroup: false, isWorldPhone: isWP };
       });
-      // Enrich from message sender fields
+
+      // Enrich from message sender fields (name on the message itself)
       msgs.forEach(m => {
         if (convoMeta[m.conversation_id]?.name) return;
         const n = (m.character_name && m.character_id !== charId) ? m.character_name
@@ -274,12 +389,13 @@ export default function CharacterDashboard({ character }) {
           else convoMeta[m.conversation_id] = { name: n, isGroup: false, isWorldPhone: false };
         }
       });
-      // For bilateral world phone — look up the other character's ID in participant_character_ids
-      convos.filter(c => c.channel === "world_phone").forEach(c => {
-        if (convoMeta[c.id]?.name) return;
-        const others = (c.participant_character_ids || c.character_ids || []).filter(id => id !== charId);
-        for (const id of others) {
-          if (relNameById[id]) { convoMeta[c.id].name = relNameById[id]; break; }
+
+      // Enrich beat type from message trigger_source field — used for human-readable labels
+      msgs.forEach(m => {
+        if (!m.trigger_source || m.trigger_source !== 'autonomous_social_beat') return;
+        // beat type may be in memory_summary or a custom field — use trigger_source as signal
+        if (convoMeta[m.conversation_id]) {
+          convoMeta[m.conversation_id].isAutonomousBeat = true;
         }
       });
 
@@ -532,28 +648,76 @@ export default function CharacterDashboard({ character }) {
 
       Object.values(convoMsgPick).slice(0, 8).forEach(m => {
         const meta = convoMeta[m.conversation_id] || { name: null, isGroup: false, isWorldPhone: false };
+        // Resolve beat type from message content for autonomous beats
+        let beatType = null;
+        if (m.trigger_source === 'autonomous_social_beat' || meta.isAutonomousBeat) {
+          // Try to infer beat type from memory_summary patterns in nearby life events
+          // or fall back to a generic social label
+          beatType = 'social_checkin'; // safe default for autonomous beats without explicit type
+        }
         timelineEntries.push({
           time: m.created_date,
-          icon: meta.isWorldPhone ? "phone" : "message",
-          text: buildMsgText(m.emotional_state, meta.name, meta.isGroup, meta.isWorldPhone),
+          icon: meta.isWorldPhone || meta.isAutonomousBeat ? "phone" : "message",
+          text: buildMsgText(m.emotional_state, meta.name, meta.isGroup, meta.isWorldPhone, beatType),
           emotion: m.emotional_state,
         });
       });
 
       timelineEntries.sort((a, b) => { try { return new Date(a.time) - new Date(b.time); } catch { return 0; } });
 
+      // ── Occupation social context ──────────────────────────────────────────
+      const occSocialContext = getOccupationSocialContext(character);
+      const hasPeopleJob = !!occSocialContext;
+
       // ── Pattern insights ──────────────────────────────────────────────────
       const insights = [];
       if (conflictEvents > 0 && character.work_start_time) insights.push("Tension tends to surface on or around work days.");
-      if ((character.social_value ?? 100) < 40) insights.push("Social needs are low — isolation may be building.");
+
+      // Social need insight — context-aware: don't say "isolation" for someone with a people-facing job
+      const socialVal = character.social_value ?? 100;
+      if (socialVal < 40) {
+        if (hasPeopleJob && (liveStatus === 'at_work' || character.work_start_time)) {
+          // Work provides social exposure — distinguish from true isolation
+          insights.push("Social fulfillment is lower than work exposure alone would suggest — meaningful personal connection may still be missing.");
+        } else {
+          insights.push("Social needs are low — isolation may be building.");
+        }
+      }
+
       if ((character.sleep_debt_hours ?? 0) > 2 || (character.energy_value ?? 100) < 30) insights.push("Rest is disrupted — exhaustion is affecting emotional stability.");
       if ((character.mental_value ?? 100) < 40) insights.push("Mental health is under strain.");
       if ((character.financial_need_value ?? 0) > 70) insights.push("Financial pressure is elevated and shaping mood.");
       if (positiveInteractions > conflictEvents * 2 && positiveInteractions > 1) insights.push("Positive interactions are currently outweighing conflict.");
       if (conflictEvents > positiveInteractions && conflictEvents > 0) insights.push("More conflict than connection recently.");
-      if (msgsSent === 0) insights.push("No communication recorded in the past 24 hours.");
+
+      // "No communication" — only show if character does NOT have a people-facing occupation
+      // A bartender who worked a full shift is NOT socially inactive even if no messages were sent
+      if (msgsSent === 0) {
+        if (hasPeopleJob) {
+          insights.push(`No direct messages recorded, but ${character.occupation || 'the job'} involves ongoing social interaction during work hours.`);
+        } else {
+          insights.push("No direct communication recorded in the past 24 hours.");
+        }
+      }
+
+      // Occupation social context — add as a dedicated insight when relevant
+      if (occSocialContext && (liveStatus === 'at_work' || msgsSent === 0)) {
+        insights.push(occSocialContext);
+      }
+
       if (liveStatus === "at_school") insights.push("Academic schedule is currently active.");
       if (liveStatus === "at_work") insights.push("Work schedule is currently active.");
+
+      // Employment / income source — resolve dynamically from character data
+      const workLocationName = character.occupation_location_name ||
+        (character.occupation_location_id && locationMap[character.occupation_location_id]?.name) ||
+        null;
+      const hasEmploymentData = !!(character.occupation && (workLocationName || character.current_work_location_id));
+      if (hasEmploymentData && workLocationName) {
+        insights.push(`Employed at ${workLocationName}${character.occupation ? ` as ${character.occupation}` : ''}.`);
+      } else if (character.occupation && !workLocationName) {
+        insights.push(`Occupation: ${character.occupation}. Work location not yet linked.`);
+      }
 
       // ── Life Journal highlights — from LifeEvent entity (not character.memories) ─
       // Show the most emotionally significant recent LifeEvents as the highlight panel.
@@ -572,7 +736,12 @@ export default function CharacterDashboard({ character }) {
           };
         });
 
-      setData({ liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 12), socialStats: { msgsSent, positiveInteractions, conflictEvents }, insights: insights.slice(0, 4), memoryHighlights });
+      // ── Work / income summary for Current State panel ─────────────────────
+      const workDisplay = workLocationName
+        ? `${workLocationName}${character.occupation ? ` · ${character.occupation}` : ''}`
+        : character.occupation || null;
+
+      setData({ liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 12), socialStats: { msgsSent, positiveInteractions, conflictEvents }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext });
       setLoaded(true);
       setLoading(false);
     }).catch(() => setLoading(false));
@@ -581,7 +750,7 @@ export default function CharacterDashboard({ character }) {
   if (loading) return <div className="flex items-center justify-center py-10"><div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" /></div>;
   if (!data) return null;
 
-  const { liveLocationDisplay, trendData, timelineEntries, socialStats, insights, memoryHighlights } = data;
+  const { liveLocationDisplay, trendData, timelineEntries, socialStats, insights, memoryHighlights, workDisplay } = data;
   const emotionState = character.emotional_state || "calm";
   const now = format(new Date(), "h:mm aa");
   const moodColor = eColor(emotionState);
@@ -736,6 +905,7 @@ export default function CharacterDashboard({ character }) {
                 { label: "Hunger",      value: character.hunger_value    !== undefined ? `${character.hunger_value}%`    : "—" },
                 // Canonical live location — same source as CharacterCard (requires locationMap from LocationReference entity)
                 { label: "Location",    value: liveLocationDisplay },
+                ...(workDisplay ? [{ label: "Work", value: workDisplay }] : []),
                 { label: "Time",        value: now },
               ].map(({ label, value, colored }) => (
                 <div key={label} className="flex items-center justify-between gap-1">
