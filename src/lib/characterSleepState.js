@@ -23,29 +23,27 @@ function toMinutes(timeStr) {
 const NPC_SLEEP_TYPES = new Set(['npc_regular', 'npc_family_member', 'npc_fictitious', 'npc']);
 
 function computeAdaptiveSleepWindow(character, etTime) {
-  const SLEEP_DURATION_MIN = 7 * 60;   // 7 hours
-  const PRE_SHIFT_BUFFER   = 60;        // 1 hour prep before shift
-  const DECOMPRESSION_MIN  = 60;        // 1 hour wind-down after overnight shift
+  const SLEEP_DURATION_MIN = 7 * 60;  // 7 hours
+  const PRE_SHIFT_BUFFER   = 60;       // 1h prep before shift (used for wake time of day workers)
+  const DECOMPRESSION_MIN  = 60;       // 1h wind-down after overnight shift
   const toMin = toMinutes;
 
-  // PRIORITY 1: Stored schedule is canonical — always wins for ALL character types
+  // PRIORITY 1: Stored schedule — always wins for ALL character types
   if (character.sleep_start_time && character.wake_up_time) {
     const s = toMin(character.sleep_start_time);
     const w = toMin(character.wake_up_time);
     if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, source: 'stored_schedule' };
   }
 
-  // PRIORITY 2 (NPC types): forced default window 00:00–08:00 ET
+  // PRIORITY 2 (NPC types): forced default 00:00–08:00 ET
   if (NPC_SLEEP_TYPES.has(character.character_type)) {
     return { sleepStartMin: 0, wakeMin: 8 * 60, source: 'npc_forced_default' };
   }
 
-  // PRIORITY 3 (active_created_character): Derive from work schedule with day awareness.
-  // Three separate times are tracked:
-  //   sleepWakeTime     = sleepStart + SLEEP_DURATION  (when character naturally wakes)
-  //   nextShiftPrepTime = shiftStart - PRE_SHIFT_BUFFER (when they prep for work)
-  //   nextShiftStart    = actual shift start
-  // sleepWakeTime is NEVER set to nextShiftPrepTime. That would cause all-day sleeping.
+  // PRIORITY 3: Derive from work schedule.
+  // A character with assigned work_days has a known routine — even on off days.
+  // Off days are NOT "no schedule". They are scheduled off days with known timing.
+  // wake = sleepStart + SLEEP_DURATION. Never shiftStart - prepBuffer (that is nextShiftPrepTime, a separate concept).
   if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.length > 0) {
     const startMin = toMin(character.work_start_time);
     const endMin   = toMin(character.work_end_time);
@@ -56,42 +54,48 @@ function computeAdaptiveSleepWindow(character, etTime) {
       const isOvernightShift = endMin < startMin;
 
       if (isOvernightShift) {
-        // Overnight shift (e.g. 22:00–02:00):
-        //   sleepStart = shiftEnd + decompression  → 03:00
-        //   sleepWake  = sleepStart + 7h            → 10:00  ← NOT shiftStart - 1h
-        // Day-aware: apply when yesterday or today is a work day.
+        // 22:00–02:00 → sleep 03:00 → wake 10:00 (sleepStart + 7h, not shiftStart - 1h)
         const workedLastNight = character.work_days.includes(yesterday);
         const worksTonight    = character.work_days.includes(today);
-        if (workedLastNight || worksTonight) {
-          const sleepStartMin = (endMin + DECOMPRESSION_MIN) % 1440;
-          const wakeMin       = (sleepStartMin + SLEEP_DURATION_MIN) % 1440;
-          return { sleepStartMin, wakeMin, source: 'overnight_work' };
-        }
+        const sleepStartMin   = (endMin + DECOMPRESSION_MIN) % 1440;
+        const wakeMin         = (sleepStartMin + SLEEP_DURATION_MIN) % 1440;
+        const source = (workedLastNight || worksTonight) ? 'overnight_work' : 'off_day_work_routine';
+        return { sleepStartMin, wakeMin, source };
       } else {
-        // Day shift (e.g. 09:00–17:00):
-        //   sleepWake  = shiftStart - prep buffer  → 08:00
-        //   sleepStart = sleepWake - 7h             → 01:00
-        // Day-aware: apply on work days and the day before.
+        // 09:00–17:00 → wake 08:00 (shiftStart - prepBuffer) → sleep 01:00 (wake - 7h)
         const worksToday    = character.work_days.includes(today);
         const worksTomorrow = character.work_days.includes(tomorrow);
-        if (worksToday || worksTomorrow) {
-          const wakeMin       = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
-          const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
-          return { sleepStartMin, wakeMin, source: 'work_schedule' };
-        }
+        const wakeMin       = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+        const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
+        const source = (worksToday || worksTomorrow) ? 'work_schedule' : 'off_day_work_routine';
+        return { sleepStartMin, wakeMin, source };
       }
     }
   }
 
-  // PRIORITY 4 (school only, no work)
-  // School ~08:00 → wake 07:00 → sleep 00:00
+  // PRIORITY 4: School-enrolled character (no work schedule).
+  // Resolution: enrollment override → school hours default (08:00) → computed sleep.
+  // Note: sleep start of 00:00 is arithmetic (07:00 - 7h = 00:00), not a midnight assumption.
   if (character.student_status === 'enrolled' && character.education_location_id) {
-    return { sleepStartMin: 0, wakeMin: 7 * 60, source: 'school_schedule' };
+    // 4a: enrollment schedule override
+    const enrollments = character.education_enrollments;
+    if (Array.isArray(enrollments) && enrollments.length > 0) {
+      const active = enrollments.find(e => e.status === 'active' && e.start_time);
+      if (active) {
+        const schoolStartMin = toMin(active.start_time);
+        if (schoolStartMin !== null) {
+          const wakeMin       = (schoolStartMin - 60 + 1440) % 1440;
+          const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
+          return { sleepStartMin, wakeMin, source: 'school_enrollment' };
+        }
+      }
+    }
+    // 4b: school hours default — school starts 08:00 → wake 07:00 → sleep 00:00 (math)
+    return { sleepStartMin: 0, wakeMin: 7 * 60, source: 'school_hours' };
   }
 
-  // PRIORITY 5: No schedule — safe default 23:00–07:00.
-  // Only for characters with no explicit sleep schedule, no work, no school.
-  return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, source: 'default_no_schedule' };
+  // PRIORITY 5: No structured timing — no work, no school, no explicit sleep schedule.
+  return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, source: 'no_structured_timing' };
 }
 
 function isScheduledSleeping(character, etTime) {
@@ -165,27 +169,51 @@ export function getCharacterSleepState(character) {
   if (status !== 'sleeping' && status !== 'napping') {
     const isActiveCreated = character.character_type === 'active_created_character';
 
-    // Live work-schedule check: if character is currently on shift per their schedule,
-    // never mark them asleep — even if DB says 'home'. This is the same guard that
-    // locationResolutionEngine applies at Layer 1 before sleep enforcement.
+    // OBLIGATION GUARD: resolve active obligations before any sleep classification.
+    // Fallback sleep logic must never run while the character has an active obligation.
+    const nowMin    = nowET.getHours() * 60 + nowET.getMinutes();
+    const dayOfWeek = nowET.getDay();
+    const toMinLocal = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+
+    // Work shift
     const isLiveOnWorkShift = (() => {
       if (!character.work_start_time || !character.work_end_time || !Array.isArray(character.work_days) || character.work_days.length === 0) return false;
-      const dayOfWeek = nowET.getDay();
       if (!character.work_days.includes(dayOfWeek)) return false;
-      const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
-      const [sh, sm] = character.work_start_time.split(':').map(Number);
-      const [eh, em] = character.work_end_time.split(':').map(Number);
-      const startMin = sh * 60 + sm;
-      const endMin   = eh * 60 + em;
-      if (endMin < startMin) return nowMin >= startMin || nowMin < endMin; // overnight
-      return nowMin >= startMin && nowMin < endMin;
+      const s = toMinLocal(character.work_start_time);
+      const e = toMinLocal(character.work_end_time);
+      if (s === null || e === null) return false;
+      return e < s ? (nowMin >= s || nowMin < e) : (nowMin >= s && nowMin < e);
     })();
 
+    // School attendance window
+    const isInSchoolWindow = (() => {
+      if (character.student_status !== 'enrolled' || !character.education_location_id) return false;
+      if (![1, 2, 3, 4, 5].includes(dayOfWeek)) return false;
+      let schoolStart = 8 * 60;
+      let schoolEnd   = 15 * 60;
+      const enrollments = character.education_enrollments;
+      if (Array.isArray(enrollments) && enrollments.length > 0) {
+        const active = enrollments.find(e => e.status === 'active' && e.start_time);
+        if (active) {
+          const s = toMinLocal(active.start_time);
+          const e = active.end_time ? toMinLocal(active.end_time) : null;
+          if (s !== null) { schoolStart = s; if (e !== null) schoolEnd = e; }
+        }
+      }
+      return nowMin >= schoolStart && nowMin < schoolEnd;
+    })();
+
+    // Active travel or commitment
+    const isActivelyTraveling = !!(character.travel_status && character.travel_status !== 'not_traveling');
+
     const isConfinedOrWorking = character.is_jailed ||
+      character.house_arrest_active ||
       status === 'at_work' ||
       status === 'at_school' ||
       status === 'house_arrest' ||
-      isLiveOnWorkShift;
+      isLiveOnWorkShift ||
+      isInSchoolWindow ||
+      isActivelyTraveling;
 
     if (!isConfinedOrWorking) {
       if (isActiveCreated) {
@@ -232,7 +260,7 @@ export function getCharacterSleepState(character) {
         // fully awake at 3 AM when their energy is critically low.
         if (!hasAwakeOverride) {
           const window = computeAdaptiveSleepWindow(character, nowET);
-          if (window?.source === 'default_no_schedule') {
+          if (window?.source === 'no_structured_timing') {
             const energyCritical = character.energy_value !== undefined && character.energy_value < 20;
             if (energyCritical) {
               return {
