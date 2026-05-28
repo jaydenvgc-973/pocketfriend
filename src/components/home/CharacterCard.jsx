@@ -161,28 +161,43 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         const directIds = new Set(conversations.filter(c => c.type === "direct" && c.channel !== "world_phone").map(c => c.id));
         const phoneIds = new Set(conversations.filter(c => c.type === "phone" && c.channel !== "world_phone").map(c => c.id));
 
-        // Fetch unread messages scoped to this character — ownership enforced via conversation sets above.
-        // Message does NOT store owner_email; ownership is via the conversation query.
-        const allUnread = await base44.entities.Message.filter({
-          character_id: character.id,
-          sender_type: "character",
-          is_read: false,
-        });
+        // ROOT CAUSE FIX: query unread messages per conversation, not by character_id.
+        // Querying by character_id alone only returns messages WHERE THIS CHAR IS THE SENDER.
+        // Autonomous beats have character_id = OTHER character, receiver_character_id = this char.
+        // Querying per conversation_id captures ALL unread messages in that thread regardless of direction.
+        // Ownership is already guaranteed: conversations were fetched with owner_email + character_ids filter.
+        const allConvoIds = conversations.map(c => c.id);
+        // Batch per-conversation fetches — each scoped to conversation_id, sender_type, is_read
+        const perConvoResults = await Promise.all(
+          allConvoIds.map(convoId =>
+            base44.entities.Message.filter(
+              { conversation_id: convoId, sender_type: 'character', is_read: false },
+              null,
+              50
+            ).catch(() => [])
+          )
+        );
+
         let chatTotal = 0;
         let phoneTotal = 0;
         let worldPhoneTotal = 0;
-        for (const msg of allUnread) {
-          // Apply canonical validity filter — excludes date rows, system rows, recovery signals
-          if (!isCountable(msg)) continue;
-          if (worldPhoneIds.has(msg.conversation_id) || worldContactIds.has(msg.conversation_id)) {
-            worldPhoneTotal++;
-          } else if (directIds.has(msg.conversation_id)) {
-            chatTotal++;
-          } else if (phoneIds.has(msg.conversation_id)) {
-            phoneTotal++;
+
+        perConvoResults.forEach((msgs, idx) => {
+          const convoId = allConvoIds[idx];
+          for (const msg of msgs) {
+            // Apply canonical validity filter — excludes date rows, system rows, recovery signals
+            if (!isCountable(msg)) continue;
+            if (worldPhoneIds.has(convoId) || worldContactIds.has(convoId)) {
+              worldPhoneTotal++;
+            } else if (directIds.has(convoId)) {
+              chatTotal++;
+            } else if (phoneIds.has(convoId)) {
+              phoneTotal++;
+            }
+            // orphaned (no matching category) = skipped — never counted
           }
-          // orphaned (no matching convo) = skipped — never counted
-        }
+        });
+
         setUnreadChat(chatTotal);
         setUnreadPhone(phoneTotal);
         setUnreadWorldPhone(worldPhoneTotal);
@@ -191,7 +206,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         setUnreadPhone(0);
         setUnreadWorldPhone(0);
       }
-    }, 400); // reduced from 800ms for faster badge clearing
+    }, 400);
   }, [conversations, character.id]);
 
   useEffect(() => {
