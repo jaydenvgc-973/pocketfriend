@@ -157,26 +157,57 @@ export function getCharacterSleepState(character) {
 
     if (!isConfinedOrWorking) {
       if (isActiveCreated) {
-        // ACTIVE CREATED CHARACTERS: autonomous sleep only — never forced by schedule window alone.
-        // Check for autonomous sleep evidence during the app's late-night/early-morning slowdown (midnight–6 AM ET).
-        // Evidence = tiredness/energy threshold, sleep debt, explicit awake override expired.
-        const nowHour = nowET.getHours();
-        const isSlowdownHour = nowHour >= 0 && nowHour < 6;
+        // ACTIVE CREATED CHARACTERS: check schedule window first (same as Travel page),
+        // then fall back to autonomous evidence for late-night slowdown hours.
         const hasAwakeOverride = character.decided_to_stay_up_until &&
           new Date(character.decided_to_stay_up_until) > nowET;
+
+        // PRIORITY: If character has an explicit sleep schedule, use it — this is the same
+        // source Travel page uses. A character whose sleep_start_time/wake_up_time puts them
+        // in the sleep window IS asleep, regardless of what the DB resolved_presence_status says.
+        if (!hasAwakeOverride) {
+          const scheduleAsleep = isScheduledSleeping(character, nowET);
+          if (scheduleAsleep) {
+            const window = computeAdaptiveSleepWindow(character, nowET);
+            const wakeMin = window?.wakeMin ?? null;
+            const wakeHour = wakeMin !== null ? Math.floor(wakeMin / 60) : null;
+            const wakeMinPart = wakeMin !== null ? wakeMin % 60 : null;
+            const wakeLabel = wakeHour !== null
+              ? `${wakeHour % 12 || 12}:${String(wakeMinPart).padStart(2, '0')} ${wakeHour >= 12 ? 'PM' : 'AM'}`
+              : null;
+            return {
+              isSleeping: true,
+              isNapping: false,
+              displayLabel: 'sleeping',
+              contextLabel: 'Asleep',
+              visible_label: 'Asleep',
+              wake_label: wakeLabel,
+              confirmed_reason: 'scheduled_sleep_window_active_created',
+              evidence_source: `schedule_window_source:${window?.source || 'unknown'}`,
+              confidence: 0.9,
+              stale_risk: false,
+              isLikelyStale: false,
+              blockingCondition: null,
+              stale_db_detected: true,
+            };
+          }
+        }
+
+        // FALLBACK: autonomous evidence during late-night slowdown (0–6 AM ET)
+        const nowHour = nowET.getHours();
+        const isSlowdownHour = nowHour >= 0 && nowHour < 6;
 
         if (isSlowdownHour && !hasAwakeOverride) {
           const energyLow = character.energy_value !== undefined && character.energy_value < 30;
           const tiredEnough = character.energy_value !== undefined && character.energy_value < 45;
 
           if (energyLow || tiredEnough) {
-            // Autonomous evidence supports sleep — treat as asleep, flag that DB status is stale
             return {
               isSleeping: true,
               isNapping: false,
               displayLabel: 'sleeping',
-              contextLabel: '🌙 sleeping (autonomous — stale DB)',
-              visible_label: '🌙 sleeping',
+              contextLabel: 'Asleep',
+              visible_label: 'Asleep',
               confirmed_reason: 'autonomous_sleep_stale_db',
               evidence_source: energyLow ? 'energy_low' : 'tiredness_threshold',
               confidence: 0.8,
@@ -187,25 +218,9 @@ export function getCharacterSleepState(character) {
               active_created_sleep_model: true,
             };
           }
-
-          // No autonomous evidence — awake with no exception during slowdown. Flag for diagnostics.
-          return {
-            isSleeping: false,
-            isNapping: false,
-            displayLabel: 'awake',
-            contextLabel: null,
-            visible_label: null,
-            confirmed_reason: null,
-            evidence_source: null,
-            confidence: 1,
-            stale_risk: false,
-            isLikelyStale: false,
-            blockingCondition: null,
-            diagnostic_flag: 'active_created_character_awake_during_expected_sleep_window',
-          };
         }
 
-        // Outside slowdown hours or has awake override — normal awake
+        // Awake — no schedule window, no autonomous evidence
         return {
           isSleeping: false,
           isNapping: false,
