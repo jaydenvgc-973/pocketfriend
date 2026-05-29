@@ -61,8 +61,10 @@ export default function CharacterFinancialSummary({ characterId }) {
     };
   }, [characterId]);
 
+  // LAST-KNOWN-GOOD: never return null on load failure — show skeleton until data arrives,
+  // then show data forever. Section never disappears once it has loaded.
   if (loading) return <div className="h-32 bg-secondary/30 rounded-xl animate-pulse" />;
-  if (!financial) return null;
+  if (!financial) return <div className="h-20 bg-secondary/20 rounded-xl flex items-center justify-center text-xs text-muted-foreground">Financial data unavailable</div>;
 
   const monthlyExpenses = (financial.recurring_expenses || []).reduce((sum, e) => sum + (e.monthly_cost || 0), 0);
   // Estimate monthly job/salary income

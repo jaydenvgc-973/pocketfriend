@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
-import { Loader2, Heart } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 export default function CharacterFeelingsCard({ character, onRespectCorrected }) {
   const [feelings, setFeelings] = useState(null);
@@ -9,38 +9,37 @@ export default function CharacterFeelingsCard({ character, onRespectCorrected })
   useEffect(() => {
     if (!character?.id) return;
     setLoading(true);
-    setFeelings(null);
-    // Delay 2.5s to avoid 429 — this is a non-critical enrichment call that fires after all primary queries
+    // Do NOT reset feelings to null on character change — preserve last-known-good while loading.
+    // This prevents the section from disappearing during refresh/navigation.
     const timer = setTimeout(() => {
       base44.functions.invoke("generateCharacterFeelings", { characterId: character.id })
         .then(res => {
-          setFeelings(res?.data?.feelings || null);
+          const newFeelings = res?.data?.feelings || null;
+          // Only update if we got a real value — never overwrite with null on partial failure
+          if (newFeelings) setFeelings(newFeelings);
           if (res?.data?.respect_used !== undefined && res.data.respect_used !== (character.user_respect_level ?? 50)) {
             onRespectCorrected?.();
           }
         })
-        .catch(() => setFeelings(null))
+        .catch(() => {
+          // On error: keep last-known-good feelings, don't set null
+        })
         .finally(() => setLoading(false));
     }, 2500);
     return () => clearTimeout(timer);
   }, [character?.id]);
 
+  // SECTION PERSISTENCE: Always renders content — never collapses.
+  // Loading spinner appears inline while last-known-good feelings remain visible.
+  // On error: keeps prior feelings text. Never returns null.
   return (
-    <div className="pt-3 border-t border-border space-y-2">
-      <div className="flex items-center gap-2">
-        <Heart className="w-3.5 h-3.5 text-primary" />
-        <p className="text-xs text-muted-foreground uppercase tracking-wider">In Their Own Words</p>
-      </div>
-      {loading ? (
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          <span className="text-xs">Thinking...</span>
-        </div>
-      ) : feelings ? (
+    <div className="space-y-1.5">
+      {loading && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+      {feelings ? (
         <p className="text-sm text-foreground leading-relaxed italic">{feelings}</p>
-      ) : (
+      ) : !loading ? (
         <p className="text-sm text-muted-foreground italic">Nothing to share right now.</p>
-      )}
+      ) : null}
     </div>
   );
 }
