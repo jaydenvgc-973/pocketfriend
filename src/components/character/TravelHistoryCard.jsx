@@ -3,36 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Clock, AlertCircle } from 'lucide-react';
+import { MapPin, Clock, AlertCircle, ChevronDown } from 'lucide-react';
 
 const LOCATION_ICONS = {
-  home: '🏠',
-  work: '💼',
-  school: '🎓',
-  gym: '💪',
-  food_drink: '🍽️',
-  religion: '🙏',
-  social: '👥',
-  shopping: '🛍️',
-  medical: '⚕️',
-  other: '📍',
-};
-
-const EVENT_LABELS = {
-  arrival: 'Arrived',
-  departure: 'Left',
-  return_home: 'Returned home',
-  work_start: 'Work started',
-  work_end: 'Left work',
-  school_start: 'School started',
-  school_end: 'Left school',
-  religious_service: 'Religious service',
-  food_need: 'Ate',
-  social_visit: 'Visited',
-  gym_visit: 'Gym visit',
-  transit: 'In transit',
-  stay: 'Stayed',
-  other: 'Visited',
+  home: '🏠', work: '💼', school: '🎓', gym: '💪', food_drink: '🍽️',
+  religion: '🙏', social: '👥', shopping: '🛍️', medical: '⚕️', other: '📍',
 };
 
 const TRAVEL_SOURCE_LABELS = {
@@ -43,53 +18,173 @@ const TRAVEL_SOURCE_LABELS = {
   need_fulfillment: 'Need',
   manual: 'Manual',
   system: 'System',
-  other: 'Other',
+  work_schedule: 'Work Schedule',
+  school_schedule: 'School Schedule',
 };
 
-export default function TravelHistoryCard({ characterId, ownerEmail }) {
+export default function TravelHistoryCard({ characterId, ownerEmail, character }) {
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+
   const formatTime = (iso) => {
     if (!iso) return null;
-    return new Date(iso).toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
+    return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
-  const formatDate = (iso) => {
-    if (!iso) return null;
-    return new Date(iso).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-    });
-  };
-
-  // Fetch LocationHistory for last 24 hours
-  const { data: history = [], isLoading } = useQuery({
-    queryKey: ['locationHistory', characterId, ownerEmail],
+  // Audit all movement sources
+  const { data: auditData = null, isLoading } = useQuery({
+    queryKey: ['travelHistoryAudit', characterId, ownerEmail],
     queryFn: async () => {
-      if (!characterId || !ownerEmail) return [];
+      if (!characterId || !ownerEmail) return null;
       
       const now = new Date();
       const cutoff24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+      const movements = [];
+      let audit = {
+        locationHistory: 0,
+        travelSession: 0,
+        automaticNarrative: 0,
+        recentLocationHistory: 0,
+        allSources: [],
+      };
 
       try {
-        const records = await base44.entities.LocationHistory.filter(
-          {
-            character_id: characterId,
-            owner_email: ownerEmail,
-          },
-          '-arrival_time',
-          30
-        );
+        // Source 1: LocationHistory
+        const locationHistory = await base44.entities.LocationHistory.filter(
+          { character_id: characterId, owner_email: ownerEmail },
+          '-arrival_time', 50
+        ).catch(() => []);
+        const validLocHist = locationHistory.filter(r => new Date(r.arrival_time) >= new Date(cutoff24h));
+        audit.locationHistory = validLocHist.length;
         
-        return records.filter(r => new Date(r.arrival_time) >= new Date(cutoff24h));
-      } catch {
-        return [];
+        validLocHist.forEach(h => {
+          movements.push({
+            timestamp: new Date(h.arrival_time),
+            type: 'proven',
+            source: 'LocationHistory',
+            origin: h.location_name,
+            destination: null,
+            eventType: h.event_type,
+            travelSource: h.travel_source,
+            travelReason: h.travel_reason,
+            isCurrent: h.is_current,
+            data: h,
+          });
+        });
+
+        // Source 2: TravelSession — all statuses (arrived, arrival_due, in_transit, preparing)
+        const travelSessionsRaw = await base44.entities.TravelSession.filter(
+          { character_id: characterId, owner_email: ownerEmail },
+          '-created_at', 80
+        ).catch(() => []);
+        const validSessions = travelSessionsRaw.filter(s => {
+          const refTime = s.actual_arrival_time || s.estimated_arrival_time || s.created_at;
+          return refTime && new Date(refTime) >= new Date(cutoff24h);
+        });
+        audit.travelSession = validSessions.length;
+        
+        validSessions.forEach(s => {
+          const refTime = s.actual_arrival_time || s.estimated_arrival_time || s.created_at;
+          // Determine event classification
+          let evidenceType = 'proven';
+          let sourceLabel = 'TravelSession';
+          if (s.route_status === 'arrived') {
+            sourceLabel = 'TravelSession (arrived)';
+          } else if (s.route_status === 'arrival_due') {
+            evidenceType = 'inferred';
+            sourceLabel = 'TravelSession (arrival stuck — write failed)';
+          } else if (s.route_status === 'in_transit') {
+            evidenceType = 'inferred';
+            sourceLabel = 'TravelSession (in transit)';
+          } else {
+            evidenceType = 'inferred';
+            sourceLabel = `TravelSession (${s.route_status})`;
+          }
+          movements.push({
+            timestamp: new Date(refTime),
+            type: evidenceType,
+            source: sourceLabel,
+            origin: s.origin_location_name,
+            destination: s.destination_location_name,
+            travelSource: s.travel_source,
+            travelReason: s.travel_reason,
+            routeStatus: s.route_status,
+            arrivalPending: s.arrival_pending_character_write,
+            data: s,
+          });
+        });
+
+        // Source 3: AutomaticNarrative travel events
+        const narratives = await base44.entities.AutomaticNarrative.filter(
+          { character_id: characterId, owner_email: ownerEmail },
+          '-timestamp', 50
+        ).catch(() => []);
+        const travelNarratives = narratives.filter(n => {
+          const isTravelEvent = ['travel_arrival', 'travel_departure', 'location_change'].includes(n.event_type);
+          return isTravelEvent && new Date(n.timestamp) >= new Date(cutoff24h);
+        });
+        audit.automaticNarrative = travelNarratives.length;
+        
+        travelNarratives.forEach(n => {
+          movements.push({
+            timestamp: new Date(n.timestamp),
+            type: 'proven',
+            source: 'AutomaticNarrative',
+            origin: n.location_name,
+            destination: null,
+            eventType: n.event_type,
+            narrativeText: n.narrative_text,
+            data: n,
+          });
+        });
+
+        // Source 4: Character recent_location_history array (inferred from state changes)
+        if (character?.recent_location_history && Array.isArray(character.recent_location_history)) {
+          audit.recentLocationHistory = character.recent_location_history.length;
+        }
+
+        // Source 5: Detect inferred movement from resolved_current_location state changes
+        // This is complex — we'd need historical snapshots. For now, check if character moved since a point
+        if (character?.resolved_current_location_id && character?.last_location_update_time) {
+          const lastUpdateTime = new Date(character.last_location_update_time);
+          if (lastUpdateTime >= new Date(cutoff24h)) {
+            // Character's location has changed in the last 24h
+            // But we don't have the "from" location without historical data
+            movements.push({
+              timestamp: lastUpdateTime,
+              type: 'inferred',
+              source: 'Inferred Movement (Location State Change)',
+              origin: '(unknown origin)',
+              destination: character.resolved_current_location_name,
+              eventType: 'location_change',
+              data: null,
+            });
+          }
+        }
+
+        // Sort by timestamp descending
+        movements.sort((a, b) => b.timestamp - a.timestamp);
+
+        return {
+          movements,
+          audit,
+          currentLocation: character?.resolved_current_location_name || 'Unknown',
+          currentPresenceStatus: character?.resolved_presence_status || 'Unknown',
+          lastLocationUpdate: character?.last_location_update_time,
+          lastArrived: character?.last_arrived_time,
+        };
+      } catch (error) {
+        console.error('[TravelHistoryAudit] Error:', error?.message);
+        return {
+          movements: [],
+          audit,
+          error: error?.message,
+          currentLocation: character?.resolved_current_location_name || 'Unknown',
+          currentPresenceStatus: character?.resolved_presence_status || 'Unknown',
+        };
       }
     },
-    enabled: !!characterId && !!ownerEmail,
-    staleTime: 5 * 60 * 1000, // 5 min
+    enabled: !!characterId && !!ownerEmail && !!character,
+    staleTime: 5 * 60 * 1000,
   });
 
   if (isLoading) {
@@ -101,13 +196,13 @@ export default function TravelHistoryCard({ characterId, ownerEmail }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
+          <div className="text-xs text-muted-foreground animate-pulse">Auditing movement sources...</div>
         </CardContent>
       </Card>
     );
   }
 
-  if (history.length === 0) {
+  if (!auditData) {
     return (
       <Card className="col-span-full">
         <CardHeader>
@@ -118,12 +213,17 @@ export default function TravelHistoryCard({ characterId, ownerEmail }) {
         <CardContent>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <AlertCircle className="w-3 h-3" />
-            No location changes recorded in the last 24 hours.
+            Travel history unavailable.
           </div>
         </CardContent>
       </Card>
     );
   }
+
+  const { movements, audit, currentLocation, currentPresenceStatus, lastLocationUpdate, error } = auditData;
+  const hasMovement = movements.length > 0;
+  const provenMovements = movements.filter(m => m.type === 'proven');
+  const inferredMovements = movements.filter(m => m.type === 'inferred');
 
   return (
     <Card className="col-span-full">
@@ -132,36 +232,117 @@ export default function TravelHistoryCard({ characterId, ownerEmail }) {
           <MapPin className="w-4 h-4" /> Travel History · Last 24 Hours
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
-          {history.map((h, i) => {
-            const arrTime = formatTime(h.arrival_time);
-            const depTime = h.departure_time ? formatTime(h.departure_time) : null;
-            const timeStr = depTime ? `${arrTime}–${depTime}` : `${arrTime}`;
-            const icon = LOCATION_ICONS[h.location_category] || LOCATION_ICONS.other;
-            const eventLabel = EVENT_LABELS[h.event_type] || h.event_type;
-            const sourceLabel = TRAVEL_SOURCE_LABELS[h.travel_source] || h.travel_source;
+      <CardContent className="space-y-4">
+        {/* Current Location Summary */}
+        <div className="bg-muted/40 rounded-lg p-3 space-y-1">
+          <div className="text-[10px] font-semibold text-muted-foreground uppercase">Current Status</div>
+          <div className="text-sm font-medium">{currentLocation}</div>
+          <div className="text-xs text-muted-foreground">
+            Status: <span className="text-foreground capitalize">{currentPresenceStatus}</span>
+            {lastLocationUpdate && (
+              <span className="ml-2">
+                · Updated {formatTime(lastLocationUpdate)}
+              </span>
+            )}
+          </div>
+        </div>
 
-            return (
-              <div key={h.id} className="flex gap-2 text-xs">
-                <span className="text-lg shrink-0">{icon}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium truncate">{h.location_name}</div>
-                  <div className="flex items-center gap-2 text-muted-foreground flex-wrap">
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" /> {timeStr}
-                    </span>
-                    {h.is_current && <Badge variant="outline" className="text-[10px]">Currently here</Badge>}
-                    {sourceLabel && <Badge variant="secondary" className="text-[10px]">{sourceLabel}</Badge>}
-                  </div>
-                  {h.travel_reason && (
-                    <div className="text-muted-foreground text-[11px] mt-0.5">{h.travel_reason}</div>
+        {/* Movement Timeline */}
+        {!hasMovement ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground border border-dashed rounded-lg p-3">
+            <AlertCircle className="w-3 h-3 flex-shrink-0" />
+            <span>Travel history unavailable.</span>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {/* Proven Movements */}
+            {provenMovements.map((m, i) => (
+              <div key={`proven-${i}`} className="border-l-2 border-primary/50 pl-3 py-1">
+                <div className="text-xs font-medium flex items-center gap-2">
+                  <Clock className="w-3 h-3" />
+                  {formatTime(m.timestamp)}
+                </div>
+                <div className="text-xs mt-1 text-foreground">
+                  {m.origin} → {m.destination || m.origin}
+                </div>
+                <div className="flex items-center gap-1 mt-1 flex-wrap">
+                  {m.travelSource && (
+                    <Badge variant="secondary" className="text-[10px]">
+                      {TRAVEL_SOURCE_LABELS[m.travelSource] || m.travelSource}
+                    </Badge>
                   )}
+                  <Badge variant="outline" className="text-[10px] bg-green-500/10 border-green-500/30 text-green-700">
+                    {m.source}
+                  </Badge>
+                </div>
+                {m.travelReason && (
+                  <div className="text-[11px] text-muted-foreground mt-1">{m.travelReason}</div>
+                )}
+              </div>
+            ))}
+
+            {/* Inferred Movements */}
+            {inferredMovements.map((m, i) => (
+              <div key={`inferred-${i}`} className="border-l-2 border-amber-400/50 pl-3 py-1 bg-amber-400/5 rounded">
+                <div className="text-xs font-medium flex items-center gap-2 text-amber-700">
+                  <Clock className="w-3 h-3" />
+                  {formatTime(m.timestamp)}
+                </div>
+                <div className="text-xs mt-1 text-foreground">
+                  {m.origin} → {m.destination || m.origin}
+                </div>
+                <div className="flex items-center gap-1 mt-1 flex-wrap">
+                  <Badge variant="outline" className="text-[10px] bg-amber-500/10 border-amber-500/30 text-amber-700">
+                    Inferred Movement
+                  </Badge>
                 </div>
               </div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        )}
+
+        {/* Diagnostics Toggle */}
+        <button
+          onClick={() => setShowDiagnostics(!showDiagnostics)}
+          className="w-full flex items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground transition-colors p-2 hover:bg-muted/50 rounded"
+        >
+          <span>Travel History Audit</span>
+          <ChevronDown className={`w-3 h-3 transition-transform ${showDiagnostics ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* Diagnostics Section */}
+        {showDiagnostics && (
+          <div className="bg-muted/30 rounded-lg p-3 space-y-2 text-[10px]">
+            <div>
+              <span className="font-semibold text-muted-foreground">Movement records found:</span>
+              <div className="mt-1 space-y-1 text-muted-foreground">
+                <div>LocationHistory: {audit.locationHistory}</div>
+                <div>TravelSession: {audit.travelSession}</div>
+                <div>AutomaticNarrative: {audit.automaticNarrative}</div>
+                <div>Recent Location History: {audit.recentLocationHistory}</div>
+              </div>
+            </div>
+            {movements.length > 0 && (
+              <div>
+                <span className="font-semibold text-muted-foreground">Last transition:</span>
+                <div className="mt-1 text-muted-foreground">
+                  {movements[0].origin} → {movements[0].destination || movements[0].origin}
+                </div>
+                <div className="text-muted-foreground">
+                  Source: {movements[0].source}
+                </div>
+                <div className="text-muted-foreground">
+                  Time: {formatTime(movements[0].timestamp)}
+                </div>
+              </div>
+            )}
+            {error && (
+              <div className="text-red-600 font-medium">
+                Query Error: {error}
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
