@@ -88,34 +88,9 @@ function buildScheduleSegments(character, cutoff24h, now) {
   }
 
   // ── School schedule ────────────────────────────────────────────────────────
-  const schoolLocName = character.education_location_name || null;
-  const isStudent = character.student_status === 'enrolled';
-  if (isStudent && schoolLocName) {
-    // Use standard school hours 8am–3pm as fallback when no explicit schedule exists
-    for (let daysAgo = 0; daysAgo <= 1; daysAgo++) {
-      const dayDate = new Date(now);
-      dayDate.setDate(dayDate.getDate() - daysAgo);
-      const dayOfWeek = dayDate.getDay();
-      // Mon–Fri
-      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-        const schoolArrival = new Date(dayDate);
-        schoolArrival.setHours(8, 0, 0, 0);
-        if (schoolArrival.getTime() >= cutoffMs && schoolArrival.getTime() <= nowMs) {
-          segments.push({
-            timestamp: schoolArrival,
-            type: 'reconstructed',
-            source: 'School Schedule',
-            evidenceLabel: 'RECONSTRUCTED',
-            location: schoolLocName,
-            origin: homeName,
-            destination: schoolLocName,
-            description: `School day at ${schoolLocName}`,
-            locationId: character.education_location_id || 'school_schedule',
-          });
-        }
-      }
-    }
-  }
+  // REMOVED: No invented 8 AM–3 PM school hours. School reconstruction requires
+  // real enrollment override times or real location operating hours.
+  // Without explicit data, show diagnostic instead of fake timeline.
 
   // ── Current location anchor ───────────────────────────────────────────────
   // Always include the character's current verified location as a RECONSTRUCTED anchor
@@ -257,8 +232,9 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
         });
       });
 
-      // ── Source 5–8: Schedule + Current State RECONSTRUCTED segments ────────
-      // Only add reconstructed segments if there is very little direct evidence
+      // ── Sources 5–6: Work Schedule + Current Location State (RECONSTRUCTED) ──
+      // Only real schedules with explicit work_start_time/work_end_time/work_days.
+      // School reconstruction removed — no invented school hours.
       const directCount = audit.locationHistory + audit.travelSession + audit.recentLocationHistory + audit.automaticNarrative;
       const schedSegments = buildScheduleSegments(character, cutoff24h, now);
       audit.scheduleSegments = schedSegments.length;
@@ -412,9 +388,10 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
                   <div className="font-semibold text-[10px] mb-1">Sources checked:</div>
                   <div>LocationHistory: {auditData.audit.locationHistory}</div>
                   <div>TravelSession: {auditData.audit.travelSession}</div>
-                  <div>Recent Location History: {auditData.audit.recentLocationHistory}</div>
+                  <div>Character.recent_location_history: {auditData.audit.recentLocationHistory}</div>
                   <div>AutomaticNarrative: {auditData.audit.automaticNarrative}</div>
-                  <div>Schedule-derived: {auditData.audit.scheduleSegments}</div>
+                  <div>Work Schedule (reconstructed): {auditData.audit.scheduleSegments > 0 ? '✓' : 'none'}</div>
+                  <div>Current Location State (reconstructed): {auditData.audit.scheduleSegments > 0 ? '✓' : 'none'}</div>
                   <div className="font-semibold mt-1 pt-1 border-t border-muted/60">
                     Total raw: {auditData.audit.totalFound} → After dedup: {auditData.audit.totalAfterDedup}
                   </div>

@@ -320,6 +320,7 @@ function computeAdaptiveSleepWindow(character, locationMap) {
   }
 
   // PRIORITY 4: School-enrolled character (no work schedule).
+  // Resolution: enrollment override times only. No fake school hours.
   if (character.student_status === 'enrolled' && character.education_location_id) {
     const enrollments = character.education_enrollments;
     if (Array.isArray(enrollments) && enrollments.length > 0) {
@@ -333,7 +334,8 @@ function computeAdaptiveSleepWindow(character, locationMap) {
         }
       }
     }
-    return { sleepStartMin: 0, wakeMin: 7 * 60, source: 'school_hours' };
+    // No enrollment override available — cannot determine school sleep timing
+    return { sleepStartMin: null, wakeMin: null, source: 'school_schedule_unresolved' };
   }
 
   // PRIORITY 5: No structured timing at all.
@@ -389,22 +391,22 @@ export function isCharacterAsleep(character, locationMap) {
   }
 
   // Guard 2b: school attendance window — enrolled students are not asleep during school hours
+  // Resolution: only enrollment override times. No fake school hours.
   if (character.student_status === 'enrolled' && character.education_location_id) {
     const weekday = [1, 2, 3, 4, 5].includes(dayOfWeek);
     if (weekday) {
-      let schoolStart = 8 * 60;
-      let schoolEnd   = 15 * 60;
       const enrollments = character.education_enrollments;
       if (Array.isArray(enrollments) && enrollments.length > 0) {
         const active = enrollments.find(e => e.status === 'active' && e.start_time);
         if (active) {
           const s = toMin(active.start_time);
           const e = active.end_time ? toMin(active.end_time) : null;
-          if (s !== null) { schoolStart = s; if (e !== null) schoolEnd = e; }
+          if (s !== null && e !== null) {
+            const inSchool = currentMinutes >= s && currentMinutes < e;
+            if (inSchool) return false;
+          }
         }
       }
-      const inSchool = currentMinutes >= schoolStart && currentMinutes < schoolEnd;
-      if (inSchool) return false;
     }
   }
 
@@ -416,7 +418,7 @@ export function isCharacterAsleep(character, locationMap) {
 
   // Guard 3: sleep window — pass locationMap so VGC residents get the correct window
   const window = computeAdaptiveSleepWindow(character, locationMap);
-  if (!window) return false;
+  if (!window || window.sleepStartMin == null || window.wakeMin == null) return false;
 
   const { sleepStartMin, wakeMin } = window;
   if (sleepStartMin > wakeMin) {

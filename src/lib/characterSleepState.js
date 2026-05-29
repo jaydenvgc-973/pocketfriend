@@ -133,12 +133,8 @@ function computeAdaptiveSleepWindow(character, etTime, locationMap) {
   }
 
   // PRIORITY 4: School-enrolled character (no work schedule).
-  // Resolution order:
-  //   1. Enrollment override times (character-specific start/end)
-  //   2. School location operating hours (callers with location data should pre-resolve this)
-  //   3. Documented fallback: school 08:00 → wake 07:00 → sleep 00:00 (arithmetic, not assumption)
+  // Resolution: enrollment override times only. No fake school hours.
   if (character.student_status === 'enrolled' && character.education_location_id) {
-    // 4a: Enrollment schedule override
     const enrollments = character.education_enrollments;
     if (Array.isArray(enrollments) && enrollments.length > 0) {
       const active = enrollments.find(e => e.status === 'active' && e.start_time);
@@ -151,9 +147,8 @@ function computeAdaptiveSleepWindow(character, etTime, locationMap) {
         }
       }
     }
-    // 4b: Documented fallback — 08:00 school start assumed when location hours unavailable here.
-    //     Callers with location map access should resolve school hours and inject via enrollment.
-    return { sleepStartMin: 0, wakeMin: 7 * 60, source: 'school_hours' };
+    // No enrollment override — cannot determine school sleep timing
+    return { sleepStartMin: null, wakeMin: null, source: 'school_schedule_unresolved' };
   }
 
   // PRIORITY 5: No structured timing at all.
@@ -163,7 +158,7 @@ function computeAdaptiveSleepWindow(character, etTime, locationMap) {
 
 function isScheduledSleeping(character, etTime, locationMap) {
   const window = computeAdaptiveSleepWindow(character, etTime, locationMap);
-  if (!window) return false;
+  if (!window || window.sleepStartMin == null || window.wakeMin == null) return false;
   const now = etTime.getHours() * 60 + etTime.getMinutes();
   const { sleepStartMin, wakeMin } = window;
   if (sleepStartMin > wakeMin) return now >= sleepStartMin || now < wakeMin;
@@ -264,18 +259,18 @@ export function getCharacterSleepState(character, locationMap) {
     const isInSchoolWindow = (() => {
       if (character.student_status !== 'enrolled' || !character.education_location_id) return false;
       if (![1, 2, 3, 4, 5].includes(dayOfWeek)) return false;
-      let schoolStart = 8 * 60;
-      let schoolEnd   = 15 * 60;
       const enrollments = character.education_enrollments;
       if (Array.isArray(enrollments) && enrollments.length > 0) {
         const active = enrollments.find(e => e.status === 'active' && e.start_time);
         if (active) {
           const s = toMinLocal(active.start_time);
           const e = active.end_time ? toMinLocal(active.end_time) : null;
-          if (s !== null) { schoolStart = s; if (e !== null) schoolEnd = e; }
+          if (s !== null && e !== null) {
+            return nowMin >= s && nowMin < e;
+          }
         }
       }
-      return nowMin >= schoolStart && nowMin < schoolEnd;
+      return false;
     })();
 
     // Active travel or commitment

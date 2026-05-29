@@ -84,10 +84,7 @@ function computeAdaptiveSleepWindow(character, etTime) {
     }
   }
 
-  if (!nextShiftStartMin && character.student_status === 'enrolled' && character.education_location_id) {
-    nextShiftStartMin = 8 * 60;
-    nextShiftEndMin   = 15 * 60;
-  }
+  // School: only use enrollment override times — no invented fallback hours
 
   const isOvernightShift = nextShiftStartMin !== null && nextShiftEndMin !== null &&
     nextShiftEndMin < nextShiftStartMin;
