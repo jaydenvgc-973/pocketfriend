@@ -71,6 +71,9 @@ export function lfcWrite(ownerEmail, namespace, data) {
   if (!ownerEmail || !namespace) return false;
   if (data === null || data === undefined) return false;
   if (Array.isArray(data) && data.length === 0) return false;
+  // NOTE: Objects with total=0 (e.g. unread count objects) are VALID writes.
+  // They must be written to overwrite stale positive counts.
+  // Only arrays with length=0 are blocked above.
   try {
     localStorage.setItem(key(ownerEmail, namespace), JSON.stringify({
       data,

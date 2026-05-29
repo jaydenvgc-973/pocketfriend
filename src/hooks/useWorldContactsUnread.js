@@ -92,6 +92,7 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
 
       if (allConvos.length === 0) {
         applyData(byContact, 0);
+        // Always write zero result to bust any stale cache that had positive counts
         if (ownerEmail && cacheKey) lfcWrite(ownerEmail, cacheKey, { byContact, total: 0 });
         return;
       }
@@ -147,6 +148,7 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
 
       if (Object.keys(convoToContactKey).length === 0) {
         applyData(byContact, 0);
+        // Always write zero result to bust any stale cache
         if (ownerEmail && cacheKey) lfcWrite(ownerEmail, cacheKey, { byContact, total: 0 });
         return;
       }
@@ -188,13 +190,15 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       return;
     }
 
-    // Seed from LFC immediately (zero-latency first paint) — ONLY if the cache is fresh.
-    // A stale cache MUST NOT be applied as the initial state. It would be restored after
-    // thread:read clears the badge, causing the green dot oscillation.
-    // Use 'unread' threshold (2 min) — same as messages, consistent with write side.
+    // Seed from LFC immediately (zero-latency first paint) — ONLY if the cache is VERY fresh.
+    // We use a 30-second seed window (not the full 2-min stale threshold) because:
+    // - The 2-min window could re-serve stale positive counts after cleanup/mark-read.
+    // - Only paint from cache if it was written less than 30s ago (navigation-safe,
+    //   prevents post-cleanup badge restoration on mount).
+    const SEED_MAX_AGE_MS = 30 * 1000;
     if (ownerEmail && cacheKey) {
       const cached = lfcRead(ownerEmail, cacheKey);
-      if (cached?.data && !lfcIsStale(cached, 'unread')) {
+      if (cached?.data && cached.loaded_at && (Date.now() - cached.loaded_at < SEED_MAX_AGE_MS)) {
         applyData(cached.data.byContact, cached.data.total);
       }
     }

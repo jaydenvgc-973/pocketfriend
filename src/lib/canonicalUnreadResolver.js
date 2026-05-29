@@ -225,7 +225,21 @@ export async function fetchUnreadMessagesForConversations(conversationIds, base4
 
   const map = new Map();
   conversationIds.forEach((convoId, idx) => {
-    map.set(convoId, results[idx] || []);
+    // Pre-filter before storing in map: exclude recovery signals, empty content, date dividers.
+    // isCountableUnread handles direction (outgoing) filtering per-character at call site.
+    const msgs = (results[idx] || []).filter(msg => {
+      if (msg.recovery_signal === true) return false;
+      const t = (msg.type || '').toLowerCase();
+      if (['date','divider','system','timestamp','separator'].includes(t)) return false;
+      const content = (msg.content || '').trim();
+      if (!content) return false;
+      // Date divider content patterns
+      if (/^[-–—]{2,}/.test(content) && /[-–—]{2,}$/.test(content)) return false;
+      if (/^[-–—\s]*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|yesterday)/i.test(content) &&
+          /\d{4}/.test(content)) return false;
+      return true;
+    });
+    map.set(convoId, msgs);
   });
   return map;
 }

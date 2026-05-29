@@ -87,7 +87,56 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     base44.auth.me().then(me => { if (me?.email) setOwnerEmail(me.email); }).catch(() => {});
   }, [isOpen]);
 
-  // (orphan sweep removed — contacts are now added via conversation-linked source in resolveCharacterContacts)
+  // ── PANEL OPEN RECONCILIATION ────────────────────────────────────────────────
+  // When the panel opens, sweep ALL green-channel conversations for this character
+  // and mark any stale outgoing/orphaned unread messages as read. This prevents
+  // old outgoing messages saved with is_read:false from creating false green dots.
+  // This runs ONCE per panel open, non-blocking (fire-and-forget UI perspective).
+  useEffect(() => {
+    if (!isOpen || !character?.id || !ownerEmail) return;
+    const sweep = async () => {
+      try {
+        const allConvos = await base44.entities.Conversation.filter(
+          { owner_email: ownerEmail, character_ids: [character.id] },
+          null, 150
+        ).catch(() => []);
+        const greenConvoIds = allConvos
+          .filter(c => c.sync_status !== 'merged' &&
+            (c.channel === 'world_phone' || c.type === 'npc' || c.type === 'bilateral'))
+          .map(c => c.id);
+        if (greenConvoIds.length === 0) return;
+
+        const unreadBatches = await Promise.all(
+          greenConvoIds.map(cId =>
+            base44.entities.Message.filter({ conversation_id: cId, sender_type: 'character', is_read: false }, null, 50).catch(() => [])
+          )
+        );
+        const staleToMark = unreadBatches.flat().filter(msg => {
+          const senderId = msg.sender_character_id || msg.character_id;
+          // Mark outgoing messages (sender is the viewed character)
+          if (senderId === character.id) return true;
+          // Mark recovery signals
+          if (msg.recovery_signal === true) return true;
+          // Mark date/divider content
+          const content = (msg.content || '').trim();
+          if (!content) return true;
+          if (/^[-–—]{2,}/.test(content) && /[-–—]{2,}$/.test(content)) return true;
+          if (/^[-–—\s]*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|yesterday)/i.test(content) && /\d{4}/.test(content)) return true;
+          return false;
+        });
+        if (staleToMark.length > 0) {
+          console.log(`[WorldContactsPopup] Reconciliation: marking ${staleToMark.length} stale unread messages as read for char=${character.id}`);
+          await Promise.all(staleToMark.map(m => base44.entities.Message.update(m.id, { is_read: true }).catch(() => {})));
+          // Invalidate LFC cache and dispatch thread:read so badges update
+          window.dispatchEvent(new CustomEvent('thread:read', {
+            detail: { characterId: character.id, channel: 'world_phone', conversationId: null }
+          }));
+        }
+      } catch { /* non-fatal */ }
+    };
+    sweep();
+  }, [isOpen, character?.id, ownerEmail]);
+
   // Per-mount caches for the selected contact session.
   const contactCharRecordRef = useRef(null);   // full Character DB record
   const canonicalPromptCacheRef = useRef(null); // canonical system prompt
