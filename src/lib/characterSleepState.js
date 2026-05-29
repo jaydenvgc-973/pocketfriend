@@ -133,21 +133,44 @@ function computeAdaptiveSleepWindow(character, etTime, locationMap) {
   }
 
   // PRIORITY 4: School-enrolled character (no work schedule).
-  // Resolution: enrollment override times only. No fake school hours.
+  // Uses canonical school schedule resolver (enrollment override → location hours → unresolved)
   if (character.student_status === 'enrolled' && character.education_location_id) {
-    const enrollments = character.education_enrollments;
-    if (Array.isArray(enrollments) && enrollments.length > 0) {
-      const active = enrollments.find(e => e.status === 'active' && e.start_time);
-      if (active) {
-        const schoolStartMin = toMin(active.start_time);
-        if (schoolStartMin !== null) {
-          const wakeMin       = (schoolStartMin - 60 + 1440) % 1440;
-          const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
-          return { sleepStartMin, wakeMin, source: 'school_enrollment' };
+    // Inline the school schedule resolver here to avoid module imports in characterSleepState
+    const dayOfWeek = etTime.getDay();
+    const schoolSched = (() => {
+      // Check enrollment override first
+      if (Array.isArray(character.education_enrollments) && character.education_enrollments.length > 0) {
+        const active = character.education_enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+        if (active) {
+          const s = toMinutes(active.start_time);
+          const e = toMinutes(active.end_time);
+          if (s !== null && e !== null) return { startMin: s, endMin: e, source: 'enrollment_override' };
         }
       }
+      // Check school location operating hours
+      if (locationMap && locationMap[character.education_location_id]) {
+        const schoolLoc = locationMap[character.education_location_id];
+        if (schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours) && schoolLoc.operating_hours.length > 0) {
+          const todayEntries = schoolLoc.operating_hours.filter(h => h.day_of_week != null && h.day_of_week === dayOfWeek);
+          const dayAgnosticEntries = schoolLoc.operating_hours.filter(h => h.day_of_week == null);
+          const entry = todayEntries[0] || dayAgnosticEntries[0];
+          if (entry) {
+            const s = toMinutes(entry.open_time);
+            const e = toMinutes(entry.close_time);
+            if (s !== null && e !== null) return { startMin: s, endMin: e, source: 'school_location_hours' };
+          }
+        }
+      }
+      // No valid hours
+      return { startMin: null, endMin: null, source: 'school_schedule_unresolved' };
+    })();
+
+    if (schoolSched.startMin !== null && schoolSched.endMin !== null) {
+      const wakeMin       = (schoolSched.startMin - 60 + 1440) % 1440;
+      const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
+      return { sleepStartMin, wakeMin, source: `school_${schoolSched.source}` };
     }
-    // No enrollment override — cannot determine school sleep timing
+    // No valid school schedule
     return { sleepStartMin: null, wakeMin: null, source: 'school_schedule_unresolved' };
   }
 

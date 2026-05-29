@@ -84,7 +84,40 @@ function computeAdaptiveSleepWindow(character, etTime) {
     }
   }
 
-  // School: only use enrollment override times — no invented fallback hours
+  // School: use canonical resolver (enrollment override → location hours → unresolved)
+  if (character.student_status === 'enrolled' && character.education_location_id) {
+    const dayOfWeek = etTime.getDay();
+    // Inline resolver (avoid imports in Deno)
+    const schoolSched = (() => {
+      if (Array.isArray(character.education_enrollments) && character.education_enrollments.length > 0) {
+        const active = character.education_enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+        if (active) {
+          const s = toMin(active.start_time);
+          const e = toMin(active.end_time);
+          if (s !== null && e !== null) return { startMin: s, endMin: e };
+        }
+      }
+      if (locationMap && locationMap[character.education_location_id]) {
+        const schoolLoc = locationMap[character.education_location_id];
+        if (schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours) && schoolLoc.operating_hours.length > 0) {
+          const todayEntries = schoolLoc.operating_hours.filter(h => h.day_of_week != null && h.day_of_week === dayOfWeek);
+          const dayAgnosticEntries = schoolLoc.operating_hours.filter(h => h.day_of_week == null);
+          const entry = todayEntries[0] || dayAgnosticEntries[0];
+          if (entry) {
+            const s = toMin(entry.open_time);
+            const e = toMin(entry.close_time);
+            if (s !== null && e !== null) return { startMin: s, endMin: e };
+          }
+        }
+      }
+      return { startMin: null, endMin: null };
+    })();
+    
+    if (schoolSched.startMin !== null && schoolSched.endMin !== null) {
+      nextShiftStartMin = schoolSched.startMin;
+      nextShiftEndMin   = schoolSched.endMin;
+    }
+  }
 
   const isOvernightShift = nextShiftStartMin !== null && nextShiftEndMin !== null &&
     nextShiftEndMin < nextShiftStartMin;

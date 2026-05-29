@@ -232,11 +232,18 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
         });
       });
 
-      // ── Sources 5–6: Work Schedule + Current Location State (RECONSTRUCTED) ──
-      // Only real schedules with explicit work_start_time/work_end_time/work_days.
-      // School reconstruction removed — no invented school hours.
+      // ── Sources 5–6: Work Schedule + School Schedule + Current Location State (RECONSTRUCTED) ──
+      // Only real schedules with explicit times (enrollment override or location operating hours).
+      // No invented hours. Fetch location map so school hours can be resolved from LocationReference.
+      const locationRefs = await base44.entities.LocationReference.filter(
+        { owner_email: ownerEmail },
+        null, 200
+      ).catch(() => []);
+      const locationMap = {};
+      locationRefs.forEach(l => { if (l?.id) locationMap[l.id] = l; });
+
       const directCount = audit.locationHistory + audit.travelSession + audit.recentLocationHistory + audit.automaticNarrative;
-      const schedSegments = buildScheduleSegments(character, cutoff24h, now);
+      const schedSegments = buildScheduleSegments(character, cutoff24h, now, locationMap);
       audit.scheduleSegments = schedSegments.length;
       schedSegments.forEach(seg => allMovements.push(seg));
 
