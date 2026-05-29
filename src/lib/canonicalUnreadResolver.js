@@ -96,6 +96,11 @@ export function classifyConversationChannel(convo) {
   // NPC-type conversations (World Contacts without explicit world_phone channel)
   if (convo.type === 'npc') return 'green';
 
+  // bilateral type — created by syncBilateralCharacterConversation for world_phone threads
+  // that predate or were created without an explicit channel stamp.
+  // Always green: bilateral conversations are world_phone in nature.
+  if (convo.type === 'bilateral') return 'green';
+
   if (convo.type === 'direct') return 'red_chat';
   if (convo.type === 'phone') return 'red_text';
 
