@@ -17,7 +17,7 @@ import { Loader2 } from 'lucide-react';
  *
  * SECONDARY: rent income transactions fetched independently after primary data is visible.
  */
-export default function CharacterFinancialSummary({ characterId, character, financial, onFinancialCreated }) {
+export default function CharacterFinancialSummary({ characterId, financial }) {
   const [rentIncomeSources, setRentIncomeSources] = useState([]);
   const [initializing, setInitializing] = useState(false);
   const [resolvedFinancial, setResolvedFinancial] = useState(null);
@@ -30,49 +30,37 @@ export default function CharacterFinancialSummary({ characterId, character, fina
     }
   }, [financial]);
 
-  // If no record exists: create it canonically, then re-fetch the real record.
+  // If no record exists in the prop: attempt a direct fetch by character_id.
+  // This covers the case where the profile loads before CharacterCard has populated
+  // the ['characterFinancial', characterId] React Query cache.
+  // Do NOT call initializeCharacterFinancials from the UI — that creates duplicate records.
   useEffect(() => {
     if (!characterId || financial || resolvedFinancial || initializing) return;
-    if (!character?.name) return; // need character name for the canonical record
 
     let cancelled = false;
     setInitializing(true);
 
-    const init = async () => {
+    const fetch = async () => {
       try {
-        // Step 1: Create the canonical CharacterFinancial record via the financial system.
-        // This sets the real starting balance ($6,000) and proper ownership.
-        await base44.functions.invoke('initializeCharacterFinancials', {
-          characterId,
-          characterName: character.name,
-          isNpc: character.character_type !== 'active_created_character',
-          homeLocationId: character.current_home_location_id || null,
-          homeLocationName: character.resolved_current_location_name || null,
-        });
-
+        await new Promise(r => setTimeout(r, 800)); // brief delay — let React Query cache warm first
         if (cancelled) return;
-
-        // Step 2: Re-fetch the now-created record using owner_email (canonical ownership field).
-        // Never use created_by. Use character_id as the scoping key.
-        await new Promise(r => setTimeout(r, 600)); // allow write to propagate
         const records = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
         if (cancelled) return;
-
         if (records[0]) {
           setResolvedFinancial(records[0]);
-          onFinancialCreated?.(records[0]);
         }
+        // If still null after fetch: character genuinely has no financial record yet.
+        // Display nothing — do not initialize, do not invent data.
       } catch (_) {
-        // Initialization failed — show visible failure state, not fake data.
-        // resolvedFinancial stays null, which renders the "needs setup" message below.
+        // Fetch failed — leave resolvedFinancial null, show "not available" state below.
       } finally {
         if (!cancelled) setInitializing(false);
       }
     };
 
-    init();
+    fetch();
     return () => { cancelled = true; };
-  }, [characterId, financial, resolvedFinancial, initializing, character]);
+  }, [characterId, financial, resolvedFinancial, initializing]);
 
   // Secondary: rent income — only after real financial data is present.
   useEffect(() => {
@@ -122,14 +110,13 @@ export default function CharacterFinancialSummary({ characterId, character, fina
     );
   }
 
-  // ── NO RECORD AND NOT INITIALIZING: fail visibly, never show fake $0 ─────────
-  // This branch means: character exists but no financial record was found and
-  // initialization either hasn't started yet or failed after the character name
-  // was unavailable. Show a visible diagnostic state, not invented values.
+  // ── NO RECORD AND NOT INITIALIZING: no financial data for this character yet ──
+  // Do not show fake $0. Do not show a permanent loading state.
+  // Show a clear diagnostic — the record either doesn't exist or fetch failed.
   if (!resolvedFinancial) {
     return (
       <div className="bg-muted/30 border border-border rounded-xl p-3 text-xs text-muted-foreground">
-        Financial profile loading…
+        No financial record found for this character.
       </div>
     );
   }

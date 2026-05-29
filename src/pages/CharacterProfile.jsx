@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -139,33 +139,23 @@ export default function CharacterProfile() {
     };
   }, [characterId]);
 
-  const { data: character, isLoading: isCharLoading, refetch } = useQuery({
-    queryKey: ["character", characterId, currentUser?.email || ""],
+  const { data: character, isLoading, refetch } = useQuery({
+    // Stable key — never includes currentUser.email so the key doesn't change when user resolves.
+    queryKey: ["character", characterId],
     queryFn: async () => {
-      // STEP 1: Check all characters cache entries first (instant, no network).
-      // Homepage loads characters under ["characters", owner_email].
-      // If the user navigated from the homepage, this cache is already populated.
-      const allCacheEntries = queryClient.getQueriesData({ queryKey: ["characters"] });
-      for (const [, data] of allCacheEntries) {
-        if (Array.isArray(data) && data.length > 0) {
-          const fromCache = data.find(c => c.id === characterId);
-          if (fromCache) {
-            const { system_prompt, ...char } = fromCache;
-            return char;
-          }
-        }
-      }
-
-      // STEP 2: Direct RLS filter by id — works when cache is cold (direct URL load).
+      // PRIMARY: direct RLS filter by id — the canonical path.
+      // The Base44 platform enforces owner_email scope server-side via RLS.
+      // This is sufficient for any character whose owner_email is properly indexed.
       const chars = await base44.entities.Character.filter({ id: characterId });
       if (chars[0]) {
         const { system_prompt, ...char } = chars[0];
         return char;
       }
 
-      // STEP 3: If currentUser is known, fetch by owner_email + id together.
-      // This is the canonical ownership-scoped query for legacy characters
-      // whose id-only RLS filter may not resolve correctly.
+      // SECONDARY: if currentUser is already resolved, try owner_email + id.
+      // Covers legacy characters where the id-only RLS path may not resolve yet.
+      // currentUser is captured at query time — if it's null here, the query
+      // will be re-triggered by the invalidation below when currentUser arrives.
       if (currentUser?.email) {
         const byOwner = await base44.entities.Character.filter({
           owner_email: currentUser.email,
@@ -179,15 +169,25 @@ export default function CharacterProfile() {
 
       return null;
     },
-    // Do not conclude "not found" until we know who the user is.
-    // Without currentUser, cache may be empty and RLS filters unresolved.
-    enabled: !!characterId && !isUserLoading,
+    enabled: !!characterId,
     staleTime: 0,
   });
 
-  const isLoading = isCharLoading || isUserLoading;
+  // When currentUser resolves and character is still null, invalidate to retry.
+  // This triggers a re-fetch that now has currentUser.email available for the
+  // owner_email fallback path — covers legacy characters on cold/direct URL load.
+  const prevUserEmailRef = useRef(null);
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    if (prevUserEmailRef.current === currentUser.email) return;
+    prevUserEmailRef.current = currentUser.email;
+    // Only re-fetch if we don't have the character yet
+    if (!character) {
+      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+    }
+  }, [currentUser?.email, character, characterId, queryClient]);
 
-  const { data: currentUser = null, isLoading: isUserLoading } = useQuery({
+  const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
     staleTime: 300000,
@@ -216,10 +216,7 @@ export default function CharacterProfile() {
     staleTime: 180000,
   });
 
-  // Use the SAME queryKey, staleTime, gcTime, and refetchOnMount as CharacterCard
-  // so this query shares the React Query cache with the homepage card.
-  // This means if the homepage already loaded the financial record, the profile
-  // reads it from cache immediately — no second fetch, no $0 placeholder.
+  // SAME queryKey and settings as CharacterCard — shares the React Query cache.
   const { data: characterFinancial = null } = useQuery({
     queryKey: ['characterFinancial', characterId],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: characterId })

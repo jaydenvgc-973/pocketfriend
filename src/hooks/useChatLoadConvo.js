@@ -284,7 +284,21 @@ export function useChatLoadConvo({
             const hasOlder = loadedMsgs.length >= MSG_WINDOW;
             if (setHasOlderMessages) setHasOlderMessages(hasOlder);
 
-            setMessages(sorted);
+            // CONTINUITY GUARD: never replace a larger visible set with a smaller server result.
+            // If the user has already seen N messages (from lfc cache), and the server returns
+            // fewer (e.g. archive ran, rate limit truncated), keep the existing visible set
+            // and only append genuinely new messages from the server result.
+            // This prevents conversation collapse when archive or partial fetches return less.
+            setMessages(prev => {
+              if (prev.length > sorted.length) {
+                // Server returned fewer — merge: keep everything already visible, add any new ones
+                const existingIds = new Set(prev.map(m => m.id));
+                const newFromServer = sorted.filter(m => !existingIds.has(m.id));
+                return newFromServer.length > 0 ? [...prev, ...newFromServer] : prev;
+              }
+              // Server returned same or more — use server result (normal case)
+              return sorted;
+            });
             setConversationId(convoId);
             hasShownMessagesRef.current = true;
             // Clear any lingering soft error once messages load successfully
@@ -322,9 +336,13 @@ export function useChatLoadConvo({
             });
 
             // Persist to localStorage for instant display on next open.
-            // This also captures any recovered image_url values that arrived while
-            // the user was away — they'll be visible immediately on next navigation.
-            writeCachedMessages(currentUser.email, characterId, chatType, sorted);
+            // CONTINUITY GUARD: only overwrite LFC if the server result is at least as large
+            // as what is currently cached. If archive ran and the server returns fewer messages,
+            // do NOT collapse the LFC cache — it preserves the last-known-good visible set.
+            const existingLFC = readCachedMessages(currentUser.email, characterId, chatType);
+            if (!existingLFC || sorted.length >= existingLFC.length) {
+              writeCachedMessages(currentUser.email, characterId, chatType, sorted);
+            }
 
             // Mark real unread messages as read (canonical filter: character sender, not system/date rows)
             const unread = loadedMsgs.filter(m =>
