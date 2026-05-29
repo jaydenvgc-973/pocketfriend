@@ -360,13 +360,30 @@ Deno.serve(async (req) => {
 
     let characters = [];
     if (characterId) {
+      // Single character — asServiceRole filter by id is fine (no data-field-path RLS on id)
       const found = await writeSDK.entities.Character.filter({ id: characterId });
-      // Only simulate needs for active_created_character — NPCs do NOT use biological need simulation
       characters = found.filter(c => c.character_type === 'active_created_character' && c.status === 'active');
     } else {
-      const all = await writeSDK.entities.Character.list('-updated_date', 200);
-      // Only simulate needs for active_created_character — NPCs do NOT use biological need simulation
-      characters = all.filter(c => c.character_type === 'active_created_character' && c.status === 'active');
+      // Character RLS uses data.owner_email == user.email — NOT bypassed by asServiceRole.
+      // asServiceRole.list/filter returns 0 characters. Must use user-scoped client.
+      // If user token is available (user-triggered), use it. Otherwise paginate with base44.entities.
+      const batchSize = 50;
+      let page = 0;
+      const all = [];
+      while (true) {
+        const batch = await base44.entities.Character.filter(
+          { status: 'active', character_type: 'active_created_character' },
+          '-updated_date',
+          batchSize,
+          page * batchSize
+        ).catch(() => []);
+        if (!batch || batch.length === 0) break;
+        all.push(...batch);
+        if (batch.length < batchSize) break;
+        page++;
+        await new Promise(r => setTimeout(r, 200));
+      }
+      characters = all;
     }
 
     const now = new Date();
