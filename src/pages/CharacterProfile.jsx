@@ -148,22 +148,21 @@ export default function CharacterProfile() {
         const { system_prompt, ...char } = chars[0];
         return char;
       }
-      // FALLBACK: character may exist in the allCharacters cache (loaded by Home/Chat)
-      // but not pass a fresh RLS filter if ownership fields are still backfilling.
-      // Check the React Query cache directly before showing "not found".
-      // This prevents the Home→Profile "Character not found" regression where the
-      // character IS valid but its owner_email hasn't propagated to RLS yet.
-      // Search all cache entries matching ["characters", *] since it's keyed by email.
+
+      // FALLBACK: search ALL cache entries keyed by ["characters", *].
+      // The homepage caches characters under ["characters", owner_email].
+      // We scan every matching cache entry so any email variant resolves.
+      // This covers the case where owner_email hasn't propagated to RLS yet
+      // (legacy character, backfill in progress, or ownership just written).
       const allCacheEntries = queryClient.getQueriesData({ queryKey: ["characters"] });
-      const cachedAll = allCacheEntries.find(([, data]) => Array.isArray(data))?.[1] ||
-        queryClient.getQueryData(["characters"]) ||
-        queryClient.getQueryData(["characters", ""]);
-      if (Array.isArray(cachedAll)) {
-        const fromCache = cachedAll.find(c => c.id === characterId);
-        if (fromCache) {
-          console.warn(`[CharacterProfile] RLS filter returned empty for ${characterId} — using allCharacters cache entry as fallback`);
-          const { system_prompt, ...char } = fromCache;
-          return char;
+      for (const [, data] of allCacheEntries) {
+        if (Array.isArray(data)) {
+          const fromCache = data.find(c => c.id === characterId);
+          if (fromCache) {
+            console.warn(`[CharacterProfile] RLS filter empty for ${characterId} — resolved from characters cache`);
+            const { system_prompt, ...char } = fromCache;
+            return char;
+          }
         }
       }
       return null;
@@ -201,15 +200,19 @@ export default function CharacterProfile() {
     staleTime: 180000,
   });
 
+  // Use the SAME queryKey, staleTime, gcTime, and refetchOnMount as CharacterCard
+  // so this query shares the React Query cache with the homepage card.
+  // This means if the homepage already loaded the financial record, the profile
+  // reads it from cache immediately — no second fetch, no $0 placeholder.
   const { data: characterFinancial = null } = useQuery({
     queryKey: ['characterFinancial', characterId],
-    queryFn: async () => {
-      await new Promise(r => setTimeout(r, 500));
-      const results = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
-      return results[0] || null;
-    },
+    queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: characterId })
+      .then(r => r[0] || null),
     enabled: !!characterId,
-    staleTime: 120000,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
   });
 
   const { data: workLocations = [] } = useQuery({
@@ -451,9 +454,7 @@ export default function CharacterProfile() {
                 characterFinancial may be null for legacy/new characters — component handles safely. */}
             <CharacterFinancialSummary
               characterId={characterId}
-              character={character}
               financial={characterFinancial}
-              onFinancialCreated={(rec) => queryClient.setQueryData(['characterFinancial', characterId], rec)}
             />
 
             {/* Narrative Biography */}
