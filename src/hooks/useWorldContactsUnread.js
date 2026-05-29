@@ -97,10 +97,7 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       }
 
       // Step 2: Build convoId → stable contact key for GREEN-channel convos only.
-      // PANEL-VISIBILITY RULE: only count messages for conversations whose other participant
-      // is in the visible contact list. Orphaned conversations (sender not in contacts)
-      // are excluded — they cannot be shown in the panel, so counting them creates
-      // a badge the user can never clear by opening contacts.
+      // Uses classifyConversationChannel for consistent classification.
       const convoToContactKey = {};
 
       for (const convo of allConvos) {
@@ -108,33 +105,43 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
         const channel = classifyConversationChannel(convo);
         if (channel !== 'green') continue;
 
-        if (convo.channel === 'world_phone' || convo.type === 'bilateral') {
-          // World phone / bilateral: match by other participant character ID
+        if (convo.channel === 'world_phone') {
+          // World phone: match by other character ID
           const otherIds = (convo.character_ids || []).filter(id => id !== characterId);
           const participantOthers = (convo.participant_character_ids || []).filter(id => id !== characterId);
           const otherId = participantOthers[0] || otherIds[0];
           if (otherId) {
-            // PANEL-VISIBILITY GATE: only include if sender is in the contact list
             const matchedContact = contacts.find(c => c.related_character_id === otherId);
             if (matchedContact) {
               const key = matchedContact.related_character_id || matchedContact.person_name?.toLowerCase().trim();
               if (key) convoToContactKey[convo.id] = key;
             }
-            // else: orphaned convo — sender not in panel, skip (orphan sweep handles mark-read)
           }
           continue;
         }
 
-        // npc type: match by title pattern — only if contact name is in the panel list
+        // bilateral type: match by other participant
+        if (convo.type === 'bilateral') {
+          const otherIds = [...(convo.participant_character_ids || []), ...(convo.character_ids || [])]
+            .filter(id => id !== characterId);
+          const otherId = otherIds[0];
+          if (otherId) {
+            const matchedContact = contacts.find(c => c.related_character_id === otherId);
+            if (matchedContact) {
+              const key = matchedContact.related_character_id || matchedContact.person_name?.toLowerCase().trim();
+              if (key) convoToContactKey[convo.id] = key;
+            }
+          }
+          continue;
+        }
+
+        // npc type: match by title pattern
         const titleMatch = convo.title?.match(/^npc_chat__[^_]+__(.+)$/);
         if (titleMatch?.[1]) {
           const contactName = titleMatch[1];
           const matchedContact = contacts.find(c => c.person_name === contactName);
-          if (matchedContact) {
-            const key = matchedContact.related_character_id || contactName.toLowerCase().trim();
-            convoToContactKey[convo.id] = key;
-          }
-          // else: name not in panel — skip (orphan sweep handles mark-read)
+          const key = matchedContact?.related_character_id || contactName.toLowerCase().trim();
+          convoToContactKey[convo.id] = key;
         }
       }
 

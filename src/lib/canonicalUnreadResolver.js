@@ -43,8 +43,8 @@
 export function isCountableUnread(msg, viewedCharacterId = null) {
   if (!msg) return false;
 
-  // 1. Must be character sender
-  if (msg.sender_type !== 'character') return false;
+  // 1. Must be character sender (system/null sender_type = date divider or system row)
+  if (!msg.sender_type || msg.sender_type !== 'character') return false;
 
   // 2. Must be unread
   if (msg.is_read !== false) return false;
@@ -52,12 +52,19 @@ export function isCountableUnread(msg, viewedCharacterId = null) {
   // 3. Exclude recovery/fallback signals
   if (msg.recovery_signal === true) return false;
 
-  // 4. Exclude system/date/divider/timestamp rows
+  // 4. Exclude system/date/divider/timestamp rows by type field
   const t = (msg.type || '').toLowerCase();
   if (t === 'date' || t === 'divider' || t === 'system' || t === 'timestamp' || t === 'separator') return false;
 
   // 5. Must have real content
-  if (!msg.content || msg.content.trim() === '') return false;
+  const content = (msg.content || '').trim();
+  if (!content) return false;
+
+  // 5b. Exclude date-divider records saved as messages (content pattern check)
+  // Catches: "—— Thursday, May 22, 2026 ——", "Thursday, May 22, 2026", etc.
+  if (/^[-–—]{2,}/.test(content) && /[-–—]{2,}$/.test(content)) return false; // dash-wrapped
+  if (/^[-–—\s]*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|yesterday)/i.test(content) &&
+      /\d{4}/.test(content)) return false; // weekday + year pattern
 
   // 6. Direction guard: exclude outgoing messages sent BY the viewed character.
   //    sender_character_id is authoritative; character_id is the legacy fallback.

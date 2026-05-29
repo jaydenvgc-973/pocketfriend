@@ -176,18 +176,35 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
   }
 
   // ── SOURCE 4: conversation-linked characters ─────────────────────────────────
-  // Only add if not already in list. Hydrate avatar if already present.
-  // Use owner_email-scoped query so we only see this user's conversations.
+  // Includes ALL green-channel conversations (world_phone, bilateral, npc channel).
+  // Critical: conversation partners may be shared/system NPCs not in allOwnerChars.
+  // We do a targeted Character fetch by ID for any participant not found locally.
   const existingConvos = await base44.entities.Conversation.filter(
     { owner_email: ownerEmail, character_ids: [character.id] },
-    '-updated_date', 50
+    '-updated_date', 150
   ).catch(() => []);
 
-  const convoLinkedIds = new Set(
-    existingConvos.flatMap(c => c.character_ids || []).filter(id => id !== character.id)
+  // Collect all unique participant IDs from all conversations (green-channel priority)
+  const allConvoLinkedIds = new Set(
+    existingConvos.flatMap(c => [
+      ...(c.character_ids || []),
+      ...(c.participant_character_ids || []),
+    ]).filter(id => id !== character.id)
   );
 
-  for (const id of convoLinkedIds) {
+  // Fetch any participant characters NOT found in the owner-scoped allOwnerChars
+  // (e.g. shared NPCs, system NPCs owned by a different account)
+  const missingIds = [...allConvoLinkedIds].filter(id => !charById.has(id));
+  if (missingIds.length > 0) {
+    const missingResults = await Promise.all(
+      missingIds.map(id => base44.entities.Character.filter({ id }).catch(() => []))
+    );
+    missingResults.forEach(records => {
+      if (records[0]) charById.set(records[0].id, records[0]);
+    });
+  }
+
+  for (const id of allConvoLinkedIds) {
     const lc = charById.get(id);
     if (!lc) continue;
     const av = bestAvatar(lc);
@@ -219,10 +236,24 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
           console.log(`[ContactsResolver] EXCLUDED (user-self) conversation-linked entry: "${lc.name}"`);
           continue;
         }
+        // Only include characters from GREEN-channel conversations (world_phone, bilateral, npc)
+        // to avoid polluting the World Contacts panel with regular chat partners
+        const hasGreenConvo = existingConvos.some(c => {
+          const isGreen = c.channel === 'world_phone' || c.type === 'npc' || c.type === 'bilateral';
+          if (!isGreen) return false;
+          return (c.character_ids || []).includes(lc.id) ||
+                 (c.participant_character_ids || []).includes(lc.id);
+        });
+        if (!hasGreenConvo) continue;
+
+        const relLabel = lc.character_type === 'npc_fictitious' ? 'Known Contact'
+          : lc.character_type === 'npc_family_member' ? 'Family'
+          : lc.character_type === 'npc_regular' ? 'Contact'
+          : 'Character';
         seen.set(lc.id, {
           person_name: lc.name,
-          relationship_type: lc.character_type === 'npc_fictitious' ? 'Known Contact' : 'Character',
-          relationship_family: normalizeRelationshipType(lc.character_type === 'npc_fictitious' ? 'Known Contact' : 'Character'),
+          relationship_type: relLabel,
+          relationship_family: normalizeRelationshipType(relLabel),
           description: lc.profile_summary || lc.backstory || '',
           history_summary: '',
           last_interaction_summary: '',
@@ -232,7 +263,7 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
           friendship_level: 30,
           related_character_id: lc.id,
           avatar_url: av || null,
-          _source: 'conversation',
+          _source: 'conversation_linked',
           _linkage: 'linked_from_conversation',
           _matched_character_id: lc.id,
           _avatar_source: av ? 'conversation_linked_record' : null,
