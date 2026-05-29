@@ -12,8 +12,8 @@ export default function OnboardingGuard({ children }) {
     queryFn: () => base44.auth.me(),
   });
 
-  // Settings: seed from localStorage immediately so rate-limited fetches never cause
-  // a false "no settings" state. Shares the same queryKey as useUserSettings.
+  // Settings query — shares queryKey with useUserSettings so warm cache is reused.
+  // Seeded from localStorage so a rate-limited fetch never produces a false "no settings" state.
   const { data: settings, isLoading: isLoadingSettings } = useQuery({
     queryKey: ["userSettings", currentUser?.email],
     initialData: () => {
@@ -34,25 +34,16 @@ export default function OnboardingGuard({ children }) {
     enabled: !!currentUser?.email,
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
-    // On rate limit: keep prior cached value, never treat error as empty
     retry: 1,
     retryDelay: 3000,
   });
 
-  // Characters: seed from localStorage immediately. Shares the same queryKey as
-  // useOwnedCharacters so warm cache is reused — no duplicate fetch.
-  const { data: characters, isLoading: isLoadingChars, isError: isCharsError } = useQuery({
-    queryKey: ["characters", currentUser?.email],
-    initialData: () => {
-      if (!currentUser?.email) return undefined;
-      const lfc = lfcRead(currentUser.email, 'characters');
-      return lfc?.data?.length > 0 ? lfc.data : undefined;
-    },
-    initialDataUpdatedAt: () => {
-      if (!currentUser?.email) return undefined;
-      const lfc = lfcRead(currentUser.email, 'characters');
-      return lfc?.loaded_at ?? undefined;
-    },
+  // Guard-only existence check.
+  // KEY: ["onboardingGuardCharacterCheck", email] — intentionally separate from
+  // ["characters", email] which belongs exclusively to useOwnedCharacters.
+  // A limit-1 result here must NEVER write into the full character list cache.
+  const { data: guardChars, isLoading: isLoadingChars, isError: isCharsError } = useQuery({
+    queryKey: ["onboardingGuardCharacterCheck", currentUser?.email],
     queryFn: () => base44.entities.Character.filter(
       { owner_email: currentUser.email, status: "active" },
       "-created_date", 1
@@ -66,43 +57,42 @@ export default function OnboardingGuard({ children }) {
 
   const isLoading = isLoadingSettings || isLoadingUser || isLoadingChars;
 
-  // RATE-LIMIT SAFE ONBOARDING DECISION:
-  // Only redirect to /onboarding when we can POSITIVELY prove the account is new.
-  // A failed query, rate-limited response, or undefined result is NOT proof of empty account.
-  // Rules:
-  //   1. If still loading — wait, do not decide yet.
-  //   2. If characters query errored — do not redirect, cannot prove empty.
-  //   3. If characters exist (any length > 0) — user has an account, pass through.
-  //   4. If settings confirm onboarding complete — pass through.
-  //   5. Only redirect if settings.has_completed_onboarding is explicitly false/missing
-  //      AND characters returned successfully with 0 results (no error).
+  // Read localStorage evidence synchronously — counts as established-user proof.
+  const lfcChars    = currentUser?.email ? lfcRead(currentUser.email, 'characters') : null;
+  const lfcSettings = currentUser?.email ? lfcRead(currentUser.email, 'settings')   : null;
+  const hasLfcCharacters  = lfcChars?.data?.length > 0;
+  const hasLfcOnboarding  = !!lfcSettings?.data?.has_completed_onboarding;
+
+  // Decision: only redirect to /onboarding for CONFIRMED new accounts.
+  //   CONFIRMED NEW:         queries succeeded, 0 results, no onboarding flag → redirect
+  //   CONFIRMED ESTABLISHED: ≥1 character, onboarding flag, OR localStorage evidence → pass through
+  //   UNKNOWN:               loading, errored, or rate-limited → do NOT redirect
+  const confirmedNew =
+    !isLoading &&
+    !isCharsError &&
+    !hasLfcCharacters &&
+    !hasLfcOnboarding &&
+    !settings?.has_completed_onboarding &&
+    !(Array.isArray(guardChars) && guardChars.length > 0);
+
   useEffect(() => {
-    if (isLoading) return;
-    if (isCharsError) return; // rate limit or network — cannot prove empty, do not redirect
-    const hasCompletedOnboarding = settings?.has_completed_onboarding;
-    const hasCharacters = Array.isArray(characters) && characters.length > 0;
-    // Only redirect when we have a confirmed empty account (successful fetch, 0 results, no onboarding flag)
-    if (!hasCompletedOnboarding && !hasCharacters && !isCharsError) {
+    if (confirmedNew) {
       navigate("/onboarding", { replace: true });
     }
-  }, [settings, characters, isLoading, isCharsError, navigate]);
+  }, [confirmedNew, navigate]);
 
-  // While loading: render children immediately if localStorage has characters.
-  // This avoids a blank screen during the auth/settings loading window.
-  const hasLfcCharacters = !!currentUser?.email &&
-    (lfcRead(currentUser.email, 'characters')?.data?.length > 0);
-  const hasLfcSettings = !!currentUser?.email &&
-    !!lfcRead(currentUser.email, 'settings')?.data?.has_completed_onboarding;
+  // Established via localStorage — render immediately, no server wait.
+  if (hasLfcCharacters || hasLfcOnboarding) return children;
 
-  // Render null (blank) only during the initial loading window AND no local data available.
-  if (isLoading && !hasLfcCharacters && !hasLfcSettings) return null;
+  // Still loading, no local evidence — wait silently.
+  if (isLoading) return null;
 
-  // After load: only block if we've confirmed truly empty account (no error, no chars, no onboarding flag)
-  if (!isLoading && !isCharsError) {
-    const hasCompletedOnboarding = settings?.has_completed_onboarding;
-    const hasCharacters = Array.isArray(characters) && characters.length > 0;
-    if (!hasCompletedOnboarding && !hasCharacters) return null;
-  }
+  // Query errored/rate-limited — unknown state, treat as established to avoid false trap.
+  if (isCharsError) return children;
 
+  // Confirmed new — block children while useEffect fires the redirect.
+  if (confirmedNew) return null;
+
+  // Confirmed established — pass through.
   return children;
 }
