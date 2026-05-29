@@ -1336,16 +1336,19 @@ Reference the passage of time naturally in your response.
       const travelCtxRes = await base44.functions.invoke('getCharacterTravelContext', {
         characterId,
         ownerEmail: character.owner_email || user.email,
-      }).catch(() => null);
-      if (travelCtxRes?.data?.context_block) {
-        travelContextBlock = `\n${travelCtxRes.data.context_block}\n`;
-        contextLog.push({ step: 'travel_context', loaded: true, history_count: travelCtxRes.data.history_count });
-        console.log(`[buildCanonicalCharacterContext] travel_context | char=${character.name} | history_count=${travelCtxRes.data.history_count} | has_history=${travelCtxRes.data.has_history}`);
+      });
+      const travelData = travelCtxRes?.data || travelCtxRes;
+      if (travelData?.context_block) {
+        travelContextBlock = `\n${travelData.context_block}\n`;
+        contextLog.push({ step: 'travel_context', loaded: true, source: travelData.source_used, history_count: travelData.history_count });
+        console.log(`[buildCanonicalCharacterContext] travel_context | char=${character.name} | source=${travelData.source_used} | history_count=${travelData.history_count} | has_history=${travelData.has_history}`);
       } else {
-        contextLog.push({ step: 'travel_context', loaded: false, reason: 'no_data' });
+        contextLog.push({ step: 'travel_context', loaded: false, reason: 'no_context_block', raw: JSON.stringify(travelData)?.substring(0, 100) });
+        console.warn(`[buildCanonicalCharacterContext] travel_context EMPTY | char=${character.name} | raw=${JSON.stringify(travelData)?.substring(0, 100)}`);
       }
     } catch (tcErr) {
       contextLog.push({ step: 'travel_context', status: 'error', error: tcErr.message });
+      console.warn(`[buildCanonicalCharacterContext] travel_context ERROR (non-blocking) | char=${character.name} | err=${tcErr.message}`);
     }
 
     // ── Step 11: Build canonical system prompt ────────────────────────────────
