@@ -97,28 +97,15 @@ Deno.serve(async (req) => {
 
     console.log(`[runAutomaticNarrativesForAllCharacters] ▶ Starting scheduled narrative run`);
 
-    // ── FETCH ALL CHARACTERS ──────────────────────────────────────────────────
-    // Character RLS uses data.owner_email == user.email (data-field-path rule).
-    // This is NOT bypassed by asServiceRole — service role returns 0 records.
-    // Solution: use user-scoped filter (requires this function to be called by an authenticated admin).
-    // For scheduled context where no user token exists, paginate via user-scoped client.
-    const allChars = [];
-    let charPage = 0;
-    const PAGE = 50;
-    while (true) {
-      const batch = await base44.entities.Character.filter(
-        { status: 'active', character_type: 'active_created_character' },
-        '-updated_date',
-        PAGE,
-        charPage * PAGE
-      ).catch(() => []);
-      if (!batch || batch.length === 0) break;
-      allChars.push(...batch);
-      if (batch.length < PAGE) break;
-      charPage++;
-      await new Promise(r => setTimeout(r, 200));
-    }
-    const characters = allChars.filter(c => c.owner_email);
+    // ── FETCH ALL CHARACTERS (service role — no user token in scheduled context) ──
+    // CRITICAL: asServiceRole.filter({ character_type }) has a platform-level visibility gap
+    // that returns 0 active_created_character records. Must list all then filter in-memory.
+    const allChars = await base44.asServiceRole.entities.Character.list('-updated_date', 300);
+    const characters = allChars.filter(c =>
+      c.status === 'active' &&
+      c.character_type === 'active_created_character' &&
+      c.owner_email // REQUIRED — skip any record missing owner_email
+    );
 
     console.log(`[runAutomaticNarrativesForAllCharacters] Found ${characters.length} active_created_character records (from ${allChars.length} total)`);
 

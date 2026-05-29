@@ -172,25 +172,12 @@ Deno.serve(async (req) => {
       return Response.json({ updated: false, reason: 'No schedule change needed' });
     }
 
-    // --- GLOBAL SCHEDULER MODE ---
-    // Character RLS uses data.owner_email == user.email (data-field-path rule).
-    // asServiceRole does NOT bypass this — it returns 0. Must use user-scoped filter.
-    const allCharacters = [];
-    let charPage = 0;
-    const CPAGE = 50;
-    while (true) {
-      const batch = await base44.entities.Character.filter(
-        { status: 'active', character_type: 'active_created_character' },
-        '-updated_date',
-        CPAGE,
-        charPage * CPAGE
-      ).catch(() => []);
-      if (!batch || batch.length === 0) break;
-      allCharacters.push(...batch);
-      if (batch.length < CPAGE) break;
-      charPage++;
-      await new Promise(r => setTimeout(r, 200));
-    }
+    // --- GLOBAL SCHEDULER MODE (no session) ---
+    // OWNERSHIP ENFORCEMENT: Group by owner_email, process each in isolation
+    const allCharacters = await base44.asServiceRole.entities.Character.filter({
+      character_type: 'active_created_character',
+      status: 'active'
+    });
 
     console.log(`[enforceCharacterWorkSchedule] Found ${allCharacters.length} total active_created_character records`);
 
