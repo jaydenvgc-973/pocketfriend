@@ -100,9 +100,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     queryKey: ['characterFinancial', character.id],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id })
       .then(r => r[0] || null),
-    staleTime: 2 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 0,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
     refetchOnMount: true,
     enabled: !!character.id && queryReady,
   });
