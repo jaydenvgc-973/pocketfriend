@@ -10,27 +10,32 @@
  *   - Family list display
  *   - World Phone contact picker
  *
- * Contact sources (in order, deduped by stable characterId then name):
- *   1. character.fictional_relationships
- *   2. character.family_members
+ * Contact sources (priority order, deduped by stable characterId then name):
+ *   1. character.family_members  — ALWAYS included, no conversation required
+ *   2. character.fictional_relationships
  *   3. character.people_in_world / known_people (if present)
- *   4. existing conversation-linked Character IDs
+ *   4. existing green-channel conversation-linked Character IDs
  *
- * Rules:
- *   - Only people attached to THIS character are included.
- *   - npc_family_member Character records are NEVER used to create contacts.
- *   - They are only used for avatar hydration on contacts already listed.
- *   - If related_character_id exists, hydrate avatar from that Character record.
- *   - If no ID, do an exact name match within owner_email scope — for hydration only.
- *   - Unresolved/name-only contacts remain visible with initials.
- *   - Result is sorted alphabetically by person_name.
+ * Deduplication priority (highest wins):
+ *   1. Linked active Character record / known character ID
+ *   2. family_member entry (preserves pair-specific family relationship label)
+ *   3. fictional_relationship entry
+ *   4. people_in_world entry
+ *   5. conversation-linked contact
+ *   6. name-only fallback
+ *
+ * FAMILY LABEL RULE:
+ *   Family relationship labels (mother, son, daughter, etc.) come ONLY from the
+ *   viewed character's own family_members array or fictional_relationships.
+ *   "npc_family_member" character_type does NOT create or imply a family relationship
+ *   to any other character. It is a category of that character, not a relationship
+ *   descriptor for every person they speak to.
  *
  * Avatar priority per contact:
- *   1. linked Character record avatar_url
- *   2. linked Character record image_avatar_url
- *   3. inline family_members entry avatar_url / image_url / image_avatar_url
- *   4. name-match Character record avatar_url / image_avatar_url
- *   5. initials (no avatar_url on returned object)
+ *   1. linked Character record avatar_url / image_avatar_url
+ *   2. inline family_members entry avatar_url / image_url / image_avatar_url
+ *   3. name-match Character record avatar_url / image_avatar_url
+ *   4. initials (no avatar_url on returned object)
  */
 
 import { base44 } from '@/api/base44Client';
@@ -47,15 +52,12 @@ function bestAvatar(rec) {
  * @param {string} ownerEmail - The authenticated user's email (for scoped Character fetch)
  * @param {object} [currentUser] - Optional: the authenticated user object (id, email, full_name).
  *   When provided, any entry that resolves to the user themselves is excluded from World Contacts.
- *   The user already communicates via Chat/Text; World Contacts are for OTHER people.
  * @returns {Promise<Array>} Sorted array of contact objects
  */
 export async function resolveCharacterContacts(character, ownerEmail, currentUser = null) {
   if (!character?.id) return [];
 
   // ── USER-SELF EXCLUSION HELPER ───────────────────────────────────────────────
-  // Returns true if a raw entry (from any source) resolves to the current user.
-  // Checks all available identity signals; does NOT require all fields to be present.
   function isUserSelf(entry) {
     if (!currentUser) return false;
     if (entry.is_user === true) return true;
@@ -65,9 +67,88 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     return false;
   }
 
-  const seen = new Map(); // key: related_character_id or `name:${person_name}`
+  // ── SEEN MAP ─────────────────────────────────────────────────────────────────
+  // Key: related_character_id (stable ID) OR `name:${normalized_name}` (fallback)
+  // Value is never replaced by a lower-priority source — only upgraded (ID linkage / avatar)
+  const seen = new Map();
 
-  // ── SOURCE 1: fictional_relationships ───────────────────────────────────────
+  // Helper to generate the stable key for a person
+  function makeKey(charId, name) {
+    return charId || (name ? `name:${name.trim().toLowerCase()}` : null);
+  }
+
+  // Helper to find an existing entry by character ID or by normalized name
+  function findExistingEntry(charId, name) {
+    if (charId && seen.has(charId)) return seen.get(charId);
+    if (name) {
+      const nameKey = `name:${name.trim().toLowerCase()}`;
+      if (seen.has(nameKey)) return seen.get(nameKey);
+      // Also scan for an entry whose person_name matches (in case it was keyed by ID already)
+      for (const entry of seen.values()) {
+        if (entry.person_name?.trim().toLowerCase() === name.trim().toLowerCase()) return entry;
+      }
+    }
+    return null;
+  }
+
+  // ── SOURCE 1: family_members ─────────────────────────────────────────────────
+  // ALWAYS included — a family member appears in World Contacts even if they have
+  // never had a World Phone conversation. The family_members array on the viewed
+  // character's profile is the authoritative source for pair-specific family labels.
+  const familyInlineAvatars = new Map(); // name.toLowerCase() → inline avatar url (for hydration)
+
+  for (const fm of (character.family_members || [])) {
+    const name = fm.name || fm.person_name;
+    if (!name) continue;
+
+    // Capture inline avatar for hydration regardless of contact creation
+    const inlineAvatar = fm.avatar_url || fm.image_url || fm.image_avatar_url || null;
+    if (inlineAvatar) familyInlineAvatars.set(name.trim().toLowerCase(), inlineAvatar);
+
+    if (isUserSelf(fm)) {
+      console.log(`[ContactsResolver] EXCLUDED (user-self) family_members entry: "${name}"`);
+      continue;
+    }
+
+    const charId = fm.character_id || fm.related_character_id || null;
+    const key = makeKey(charId, name);
+    if (!key) continue;
+
+    // Family relationship label — PAIR-SPECIFIC from this character's own data
+    const relLabel = fm.relationship_type || fm.role || 'Family';
+
+    if (!seen.has(key)) {
+      seen.set(key, {
+        person_name: name,
+        relationship_type: relLabel,
+        relationship_family: normalizeRelationshipType(relLabel),
+        description: fm.description || '',
+        history_summary: '',
+        last_interaction_summary: '',
+        emotional_impact: '',
+        current_status: fm.current_status || '',
+        romantic_level: 0,
+        friendship_level: fm.friendship_level || 50,
+        related_character_id: charId,
+        avatar_url: inlineAvatar || null,
+        _source: 'family_members',
+        _linkage: charId ? 'linked' : 'name_only',
+        _matched_character_id: null,
+        _avatar_source: inlineAvatar ? 'family_members_inline' : null,
+      });
+    }
+    // If already exists from a prior pass (shouldn't happen for SOURCE 1 which runs first),
+    // upgrade the avatar if missing
+    else {
+      const existing = seen.get(key);
+      if (!existing.avatar_url && inlineAvatar) {
+        existing.avatar_url = inlineAvatar;
+        existing._avatar_source = 'family_members_inline';
+      }
+    }
+  }
+
+  // ── SOURCE 2: fictional_relationships ───────────────────────────────────────
   for (const rel of (character.fictional_relationships || [])) {
     const name = rel.person_name;
     if (!name) continue;
@@ -75,8 +156,28 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
       console.log(`[ContactsResolver] EXCLUDED (user-self) fictional_relationships entry: "${name}"`);
       continue;
     }
-    const key = rel.related_character_id || `name:${name}`;
-    if (seen.has(key)) continue;
+
+    const charId = rel.related_character_id || null;
+    const key = makeKey(charId, name);
+    if (!key) continue;
+
+    const existing = findExistingEntry(charId, name);
+    if (existing) {
+      // Already listed from family_members — upgrade ID linkage if we now have one
+      if (charId && !existing.related_character_id) {
+        // Promote the key from name-based to ID-based
+        const oldKey = `name:${name.trim().toLowerCase()}`;
+        if (seen.has(oldKey)) {
+          seen.delete(oldKey);
+          existing.related_character_id = charId;
+          existing._linkage = 'linked';
+          seen.set(charId, existing);
+        }
+      }
+      // Do NOT overwrite the family relationship label with the fictional_relationships label
+      continue;
+    }
+
     seen.set(key, {
       person_name: name,
       relationship_type: rel.relationship_type || null,
@@ -88,28 +189,13 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
       current_status: rel.current_status || '',
       romantic_level: rel.romantic_level || 0,
       friendship_level: rel.friendship_level || 0,
-      related_character_id: rel.related_character_id || null,
+      related_character_id: charId,
       avatar_url: null,
       _source: 'fictional_relationships',
-      _linkage: rel.related_character_id ? 'linked' : 'name_only',
+      _linkage: charId ? 'linked' : 'name_only',
       _matched_character_id: null,
       _avatar_source: null,
     });
-  }
-
-  // ── SOURCE 2: family_members [REMOVED] ───────────────────────────────────────
-  // Internal family_members list is NOT a World Contacts source.
-  // Family members appear only if they are:
-  // 1. Already established in fictional_relationships
-  // 2. Linked as real Character records from conversation history
-  // 
-  // Capture inline avatars for hydration only — do NOT create contacts from family_members alone.
-  const familyInlineAvatars = new Map(); // name.toLowerCase() → inline avatar url
-  for (const fm of (character.family_members || [])) {
-    const name = fm.name || fm.person_name;
-    if (!name) continue;
-    const inlineAvatar = fm.avatar_url || fm.image_url || fm.image_avatar_url || null;
-    if (inlineAvatar) familyInlineAvatars.set(name.trim().toLowerCase(), inlineAvatar);
   }
 
   // ── SOURCE 3: people_in_world / known_people ─────────────────────────────────
@@ -121,8 +207,20 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
       console.log(`[ContactsResolver] EXCLUDED (user-self) people_in_world entry: "${name}"`);
       continue;
     }
-    const key = p.related_character_id || p.character_id || `name:${name}`;
-    if (seen.has(key)) continue;
+
+    const charId = p.related_character_id || p.character_id || null;
+    const existing = findExistingEntry(charId, name);
+    if (existing) {
+      // Upgrade ID linkage only
+      if (charId && !existing.related_character_id) {
+        existing.related_character_id = charId;
+        existing._linkage = 'linked';
+      }
+      continue;
+    }
+
+    const key = makeKey(charId, name);
+    if (!key) continue;
     seen.set(key, {
       person_name: name,
       relationship_type: p.relationship_type || 'Known',
@@ -134,10 +232,10 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
       current_status: p.current_status || '',
       romantic_level: 0,
       friendship_level: p.friendship_level || 30,
-      related_character_id: p.related_character_id || p.character_id || null,
+      related_character_id: charId,
       avatar_url: null,
       _source: 'people_in_world',
-      _linkage: (p.related_character_id || p.character_id) ? 'linked' : 'name_only',
+      _linkage: charId ? 'linked' : 'name_only',
       _matched_character_id: null,
       _avatar_source: null,
     });
@@ -145,12 +243,10 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
 
   // Early return without DB queries if no ownerEmail
   if (!ownerEmail) {
-    return _sortAndApplyFamilyAvatars(seen, familyInlineAvatars);
+    return _finalizeAndSort(seen, familyInlineAvatars);
   }
 
   // ── SINGLE FETCH: all owner Characters in one call ───────────────────────────
-  // Used for: avatar hydration, conversation-linked additions, name-match hydration.
-  // Never used to create new contacts.
   const allOwnerChars = await base44.entities.Character.filter(
     { owner_email: ownerEmail, status: 'active' },
     null, 200
@@ -159,7 +255,7 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
   const charById = new Map(allOwnerChars.map(c => [c.id, c]));
   const charByName = new Map(allOwnerChars.map(c => [c.name?.trim().toLowerCase(), c]));
 
-  // ── AVATAR HYDRATION: by related_character_id ────────────────────────────────
+  // ── AVATAR HYDRATION: by related_character_id (for all sources so far) ───────
   for (const entry of seen.values()) {
     if (entry.related_character_id && !entry.avatar_url) {
       const rec = charById.get(entry.related_character_id);
@@ -176,15 +272,17 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
   }
 
   // ── SOURCE 4: conversation-linked characters ─────────────────────────────────
-  // Includes ALL green-channel conversations (world_phone, bilateral, npc channel).
-  // Critical: conversation partners may be shared/system NPCs not in allOwnerChars.
-  // We do a targeted Character fetch by ID for any participant not found locally.
+  // Adds characters from green-channel conversations not already in the contact list.
+  // Also fetches shared/system NPCs not in the owner-scoped character list.
+  // CRITICAL: relationship label here is NOT based on npc_family_member character type.
+  //   It uses actual pair-specific relationship data only. npc_family_member type simply
+  //   means that character IS a family member type — it does NOT mean they are family to
+  //   the viewed character unless the viewed character's own relationship data says so.
   const existingConvos = await base44.entities.Conversation.filter(
     { owner_email: ownerEmail, character_ids: [character.id] },
     '-updated_date', 150
   ).catch(() => []);
 
-  // Collect all unique participant IDs from all conversations (green-channel priority)
   const allConvoLinkedIds = new Set(
     existingConvos.flatMap(c => [
       ...(c.character_ids || []),
@@ -193,7 +291,6 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
   );
 
   // Fetch any participant characters NOT found in the owner-scoped allOwnerChars
-  // (e.g. shared NPCs, system NPCs owned by a different account)
   const missingIds = [...allConvoLinkedIds].filter(id => !charById.has(id));
   if (missingIds.length > 0) {
     const missingResults = await Promise.all(
@@ -209,72 +306,74 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     if (!lc) continue;
     const av = bestAvatar(lc);
 
-    if (seen.has(lc.id)) {
-      // Hydrate only
-      const entry = seen.get(lc.id);
-      if (!entry.avatar_url && av) {
-        entry.avatar_url = av;
-        entry._matched_character_id = lc.id;
-        entry._avatar_source = 'conversation_linked_record';
+    const existing = findExistingEntry(lc.id, lc.name);
+    if (existing) {
+      // Already in list — hydrate avatar only, never overwrite relationship label
+      if (!existing.avatar_url && av) {
+        existing.avatar_url = av;
+        existing._matched_character_id = lc.id;
+        existing._avatar_source = 'conversation_linked_record';
       }
-    } else {
-      // Try to link to an existing name-only entry
-      const nameEntry = [...seen.values()].find(c =>
-        c.person_name?.trim().toLowerCase() === lc.name?.trim().toLowerCase() &&
-        !c.related_character_id
-      );
-      if (nameEntry) {
-        nameEntry.related_character_id = lc.id;
-        if (!nameEntry.avatar_url && av) nameEntry.avatar_url = av;
-        nameEntry._matched_character_id = lc.id;
-        nameEntry._avatar_source = nameEntry._avatar_source || 'conversation_name_match';
-        nameEntry._linkage = 'linked_from_conversation';
-      } else {
-        // New contact from conversation — only for characters this character has spoken with
-        // Exclude if this conversation partner resolves to the current user
-        if (isUserSelf({ owner_user_id: lc.owner_user_id, email: lc.owner_email, is_user: lc.is_user })) {
-          console.log(`[ContactsResolver] EXCLUDED (user-self) conversation-linked entry: "${lc.name}"`);
-          continue;
+      // Upgrade ID linkage if the existing entry was name-only
+      if (!existing.related_character_id) {
+        existing.related_character_id = lc.id;
+        existing._linkage = 'linked_from_conversation';
+        // Re-key the map entry from name-based to ID-based
+        const oldKey = `name:${lc.name?.trim().toLowerCase()}`;
+        if (seen.has(oldKey)) {
+          seen.delete(oldKey);
+          seen.set(lc.id, existing);
         }
-        // Only include characters from GREEN-channel conversations (world_phone, bilateral, npc)
-        // to avoid polluting the World Contacts panel with regular chat partners
-        const hasGreenConvo = existingConvos.some(c => {
-          const isGreen = c.channel === 'world_phone' || c.type === 'npc' || c.type === 'bilateral';
-          if (!isGreen) return false;
-          return (c.character_ids || []).includes(lc.id) ||
-                 (c.participant_character_ids || []).includes(lc.id);
-        });
-        if (!hasGreenConvo) continue;
-
-        const relLabel = lc.character_type === 'npc_fictitious' ? 'Known Contact'
-          : lc.character_type === 'npc_family_member' ? 'Family'
-          : lc.character_type === 'npc_regular' ? 'Contact'
-          : 'Character';
-        seen.set(lc.id, {
-          person_name: lc.name,
-          relationship_type: relLabel,
-          relationship_family: normalizeRelationshipType(relLabel),
-          description: lc.profile_summary || lc.backstory || '',
-          history_summary: '',
-          last_interaction_summary: '',
-          emotional_impact: '',
-          current_status: lc.current_activity || '',
-          romantic_level: 0,
-          friendship_level: 30,
-          related_character_id: lc.id,
-          avatar_url: av || null,
-          _source: 'conversation_linked',
-          _linkage: 'linked_from_conversation',
-          _matched_character_id: lc.id,
-          _avatar_source: av ? 'conversation_linked_record' : null,
-        });
       }
+      continue;
     }
+
+    // New contact from conversation — only green-channel
+    if (isUserSelf({ owner_user_id: lc.owner_user_id, email: lc.owner_email, is_user: lc.is_user })) {
+      console.log(`[ContactsResolver] EXCLUDED (user-self) conversation-linked entry: "${lc.name}"`);
+      continue;
+    }
+
+    const hasGreenConvo = existingConvos.some(c => {
+      const isGreen = c.channel === 'world_phone' || c.type === 'npc' || c.type === 'bilateral';
+      if (!isGreen) return false;
+      return (c.character_ids || []).includes(lc.id) ||
+             (c.participant_character_ids || []).includes(lc.id);
+    });
+    if (!hasGreenConvo) continue;
+
+    // RELATIONSHIP LABEL: determined from pair-specific data ONLY.
+    // npc_family_member character type = that character's own category, NOT their
+    // relationship to the viewed character. Use 'Contact' as neutral default.
+    // The only exception: if this character appears in the viewed character's
+    // family_members list (handled in SOURCE 1 above) — but that already added them
+    // with the correct label, so we would have found them in findExistingEntry above.
+    const relLabel = lc.character_type === 'npc_fictitious' ? 'Known Contact'
+      : lc.character_type === 'npc_regular' ? 'Contact'
+      : lc.character_type === 'npc_family_member' ? 'Contact'  // NOT 'Family' — pair-specific only
+      : 'Contact';
+
+    seen.set(lc.id, {
+      person_name: lc.name,
+      relationship_type: relLabel,
+      relationship_family: normalizeRelationshipType(relLabel),
+      description: lc.profile_summary || lc.backstory || '',
+      history_summary: '',
+      last_interaction_summary: '',
+      emotional_impact: '',
+      current_status: lc.current_activity || '',
+      romantic_level: 0,
+      friendship_level: 30,
+      related_character_id: lc.id,
+      avatar_url: av || null,
+      _source: 'conversation_linked',
+      _linkage: 'linked_from_conversation',
+      _matched_character_id: lc.id,
+      _avatar_source: av ? 'conversation_linked_record' : null,
+    });
   }
 
   // ── AVATAR HYDRATION: exact name match for still-unhydrated entries ──────────
-  // Only for avatar/link hydration — never creates new contacts.
-  // Does NOT match npc_family_member records that are not in this character's family_members list.
   for (const entry of seen.values()) {
     if (!entry.avatar_url && !entry.related_character_id) {
       const match = charByName.get(entry.person_name?.trim().toLowerCase());
@@ -292,7 +391,6 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
   }
 
   // ── FAMILY INLINE AVATAR FALLBACK ────────────────────────────────────────────
-  // Apply inline family avatar to still-unhydrated entries (last resort before initials)
   for (const entry of seen.values()) {
     if (!entry.avatar_url) {
       const inlineAv = familyInlineAvatars.get(entry.person_name?.trim().toLowerCase());
@@ -310,16 +408,16 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
   // Diagnostic log
   result.forEach(c => {
     console.log(
-      `[ContactsResolver] name="${c.person_name}" | source=${c._source} | ` +
+      `[ContactsResolver] name="${c.person_name}" | rel="${c.relationship_type}" | source=${c._source} | ` +
       `id=${c.related_character_id || 'none'} | avatar=${c.avatar_url ? 'YES' : 'NO'} | ` +
-      `avatar_src=${c._avatar_source || 'initials'} | linkage=${c._linkage}`
+      `linkage=${c._linkage}`
     );
   });
 
   return result;
 }
 
-function _sortAndApplyFamilyAvatars(seen, familyInlineAvatars) {
+function _finalizeAndSort(seen, familyInlineAvatars) {
   for (const entry of seen.values()) {
     if (!entry.avatar_url) {
       const inlineAv = familyInlineAvatars.get(entry.person_name?.trim().toLowerCase());

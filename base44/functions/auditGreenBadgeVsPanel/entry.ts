@@ -52,13 +52,47 @@ Deno.serve(async (req) => {
     // ── 3. Build contact list mirroring updated resolveCharacterContacts ───
     const contactMap = new Map(); // key: character_id OR `name:${name}` → contact
 
-    // Source 1: fictional_relationships
+    function makeContactKey(charId, name) {
+      return charId || (name ? `name:${name.trim().toLowerCase()}` : null);
+    }
+    function findContactEntry(charId, name) {
+      if (charId && contactMap.has(charId)) return contactMap.get(charId);
+      if (name) {
+        const nk = `name:${name.trim().toLowerCase()}`;
+        if (contactMap.has(nk)) return contactMap.get(nk);
+        for (const e of contactMap.values()) {
+          if (e.person_name?.trim().toLowerCase() === name.trim().toLowerCase()) return e;
+        }
+      }
+      return null;
+    }
+
+    // Source 1: family_members (ALWAYS — no conversation required)
+    for (const fm of (char.family_members || [])) {
+      const name = fm.name || fm.person_name;
+      if (!name) continue;
+      const charId = fm.character_id || fm.related_character_id || null;
+      const key = makeContactKey(charId, name);
+      if (!key) continue;
+      if (!contactMap.has(key)) contactMap.set(key, {
+        person_name: name,
+        related_character_id: charId,
+        relationship_type: fm.relationship_type || fm.role || 'Family',
+        source: 'family_members',
+      });
+    }
+
+    // Source 2: fictional_relationships
     for (const r of (char.fictional_relationships || [])) {
       if (!r.person_name) continue;
-      const key = r.related_character_id || `name:${r.person_name}`;
-      if (!contactMap.has(key)) contactMap.set(key, {
+      const charId = r.related_character_id || null;
+      if (findContactEntry(charId, r.person_name)) continue;
+      const key = makeContactKey(charId, r.person_name);
+      if (!key) continue;
+      contactMap.set(key, {
         person_name: r.person_name,
-        related_character_id: r.related_character_id || null,
+        related_character_id: charId,
+        relationship_type: r.relationship_type || null,
         source: 'fictional_relationships',
       });
     }
@@ -67,10 +101,14 @@ Deno.serve(async (req) => {
     for (const p of (char.people_in_world || char.known_people || [])) {
       const name = p.name || p.person_name;
       if (!name) continue;
-      const key = p.related_character_id || p.character_id || `name:${name}`;
-      if (!contactMap.has(key)) contactMap.set(key, {
+      const charId = p.related_character_id || p.character_id || null;
+      if (findContactEntry(charId, name)) continue;
+      const key = makeContactKey(charId, name);
+      if (!key) continue;
+      contactMap.set(key, {
         person_name: name,
-        related_character_id: p.related_character_id || p.character_id || null,
+        related_character_id: charId,
+        relationship_type: p.relationship_type || 'Known',
         source: 'people_in_world',
       });
     }
