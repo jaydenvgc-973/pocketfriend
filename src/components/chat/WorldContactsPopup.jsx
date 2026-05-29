@@ -57,6 +57,104 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     if (!isOpen) return;
     base44.auth.me().then(me => { if (me?.email) setOwnerEmail(me.email); }).catch(() => {});
   }, [isOpen]);
+
+  // ── ORPHAN SWEEP: when popup opens, mark read any green-channel unread messages
+  // whose sender is NOT in the visible contact list. These messages count toward
+  // the homepage green badge but cannot be shown to the user (no visible contact row).
+  // Marking them read removes the phantom badge immediately on popup open.
+  // This only runs AFTER contacts are loaded (contacts.length > 0) and isOpen.
+  const orphanSweepDoneRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen || !character?.id || !ownerEmail || contacts.length === 0) return;
+    if (orphanSweepDoneRef.current) return;
+    orphanSweepDoneRef.current = true;
+
+    const sweep = async () => {
+      try {
+        // Build set of known contact IDs from the loaded contact list
+        const knownContactIds = new Set(
+          contacts.map(c => c.related_character_id).filter(Boolean)
+        );
+
+        // Fetch all green-channel conversations for this character
+        const allConvos = await base44.entities.Conversation.filter(
+          { owner_email: ownerEmail, character_ids: [character.id] },
+          '-updated_date', 200
+        ).catch(() => []);
+
+        const greenConvos = allConvos.filter(c => {
+          if (c.sync_status === 'merged') return false;
+          return c.channel === 'world_phone' || c.type === 'npc' || c.type === 'bilateral';
+        });
+
+        // For each green convo, check if the other participant is in the contact list
+        const orphanConvoIds = [];
+        for (const convo of greenConvos) {
+          const otherIds = (convo.participant_character_ids || convo.character_ids || [])
+            .filter(id => id !== character.id);
+          const otherId = otherIds[0];
+          if (otherId && !knownContactIds.has(otherId)) {
+            orphanConvoIds.push(convo.id);
+          }
+          // Also catch NPC-type convos whose title name doesn't match any contact
+          if (convo.type === 'npc' && !otherId) {
+            const titleMatch = convo.title?.match(/^npc_chat__[^_]+__(.+)$/);
+            if (titleMatch?.[1]) {
+              const contactName = titleMatch[1];
+              const inList = contacts.some(c => c.person_name === contactName);
+              if (!inList) orphanConvoIds.push(convo.id);
+            }
+          }
+        }
+
+        if (orphanConvoIds.length === 0) return;
+
+        // Fetch unread messages from orphan conversations and mark them read
+        const unreadResults = await Promise.all(
+          orphanConvoIds.map(id =>
+            base44.entities.Message.filter(
+              { conversation_id: id, sender_type: 'character', is_read: false },
+              null, 100
+            ).catch(() => [])
+          )
+        );
+
+        const toMarkRead = [];
+        unreadResults.forEach(msgs => {
+          msgs.forEach(msg => {
+            if (msg.recovery_signal === true) return;
+            if (!msg.content?.trim()) return;
+            const senderId = msg.sender_character_id || msg.character_id;
+            if (senderId === character.id) return; // outgoing
+            if (msg.receiver_character_id && msg.receiver_character_id !== character.id) return;
+            toMarkRead.push(msg.id);
+          });
+        });
+
+        if (toMarkRead.length === 0) return;
+
+        console.log(`[WorldContacts] OrphanSweep: marking ${toMarkRead.length} orphan unread messages read | ids=[${toMarkRead.map(id => id.substring(0,8)).join(',')}]`);
+
+        await Promise.all(toMarkRead.map(id =>
+          base44.entities.Message.update(id, { is_read: true }).catch(() => {})
+        ));
+
+        // Dispatch thread:read so badge recomputes
+        window.dispatchEvent(new CustomEvent('thread:read', {
+          detail: { characterId: character.id, channel: 'world_phone', source: 'orphan_sweep' }
+        }));
+      } catch (err) {
+        console.warn('[WorldContacts] OrphanSweep failed (non-fatal):', err?.message);
+      }
+    };
+
+    sweep();
+  }, [isOpen, character?.id, ownerEmail, contacts.length]); // eslint-disable-line
+
+  // Reset orphan sweep flag when popup closes so next open re-sweeps
+  useEffect(() => {
+    if (!isOpen) orphanSweepDoneRef.current = false;
+  }, [isOpen]);
   // Per-mount caches for the selected contact session.
   const contactCharRecordRef = useRef(null);   // full Character DB record
   const canonicalPromptCacheRef = useRef(null); // canonical system prompt
