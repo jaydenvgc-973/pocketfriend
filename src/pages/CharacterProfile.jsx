@@ -207,24 +207,12 @@ export default function CharacterProfile() {
     staleTime: 180000,
   });
 
-  // Canonical financial fetch — same queryKey as CharacterCard so they share the cache.
-  // Tries character_id first, falls back to owner_email scope if record not found.
+  // Canonical financial fetch — same queryKey and queryFn as CharacterCard so they share the cache.
+  // Filter by character_id only — owner_email is not reliably set on existing records.
   const { data: characterFinancial = null, isLoading: isFinancialLoading } = useQuery({
     queryKey: ['characterFinancial', characterId],
-    queryFn: async () => {
-      // Primary: filter by character_id
-      const primary = await base44.entities.CharacterFinancial.filter({ character_id: characterId }).catch(() => []);
-      if (primary[0]) return primary[0];
-      // Fallback: owner_email scope if currentUser is resolved
-      if (currentUser?.email) {
-        const byOwner = await base44.entities.CharacterFinancial.filter({
-          owner_email: currentUser.email,
-          character_id: characterId,
-        }).catch(() => []);
-        if (byOwner[0]) return byOwner[0];
-      }
-      return null;
-    },
+    queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: characterId })
+      .then(r => r[0] || null),
     enabled: !!characterId,
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
