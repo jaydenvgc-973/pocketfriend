@@ -139,39 +139,55 @@ export default function CharacterProfile() {
     };
   }, [characterId]);
 
-  const { data: character, isLoading, refetch } = useQuery({
-    queryKey: ["character", characterId],
+  const { data: character, isLoading: isCharLoading, refetch } = useQuery({
+    queryKey: ["character", characterId, currentUser?.email || ""],
     queryFn: async () => {
-      // PRIMARY: user-scoped RLS query (works for own characters)
+      // STEP 1: Check all characters cache entries first (instant, no network).
+      // Homepage loads characters under ["characters", owner_email].
+      // If the user navigated from the homepage, this cache is already populated.
+      const allCacheEntries = queryClient.getQueriesData({ queryKey: ["characters"] });
+      for (const [, data] of allCacheEntries) {
+        if (Array.isArray(data) && data.length > 0) {
+          const fromCache = data.find(c => c.id === characterId);
+          if (fromCache) {
+            const { system_prompt, ...char } = fromCache;
+            return char;
+          }
+        }
+      }
+
+      // STEP 2: Direct RLS filter by id — works when cache is cold (direct URL load).
       const chars = await base44.entities.Character.filter({ id: characterId });
       if (chars[0]) {
         const { system_prompt, ...char } = chars[0];
         return char;
       }
 
-      // FALLBACK: search ALL cache entries keyed by ["characters", *].
-      // The homepage caches characters under ["characters", owner_email].
-      // We scan every matching cache entry so any email variant resolves.
-      // This covers the case where owner_email hasn't propagated to RLS yet
-      // (legacy character, backfill in progress, or ownership just written).
-      const allCacheEntries = queryClient.getQueriesData({ queryKey: ["characters"] });
-      for (const [, data] of allCacheEntries) {
-        if (Array.isArray(data)) {
-          const fromCache = data.find(c => c.id === characterId);
-          if (fromCache) {
-            console.warn(`[CharacterProfile] RLS filter empty for ${characterId} — resolved from characters cache`);
-            const { system_prompt, ...char } = fromCache;
-            return char;
-          }
+      // STEP 3: If currentUser is known, fetch by owner_email + id together.
+      // This is the canonical ownership-scoped query for legacy characters
+      // whose id-only RLS filter may not resolve correctly.
+      if (currentUser?.email) {
+        const byOwner = await base44.entities.Character.filter({
+          owner_email: currentUser.email,
+          id: characterId,
+        }).catch(() => []);
+        if (byOwner[0]) {
+          const { system_prompt, ...char } = byOwner[0];
+          return char;
         }
       }
+
       return null;
     },
-    enabled: !!characterId,
+    // Do not conclude "not found" until we know who the user is.
+    // Without currentUser, cache may be empty and RLS filters unresolved.
+    enabled: !!characterId && !isUserLoading,
     staleTime: 0,
   });
 
-  const { data: currentUser = null } = useQuery({
+  const isLoading = isCharLoading || isUserLoading;
+
+  const { data: currentUser = null, isLoading: isUserLoading } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
     staleTime: 300000,
