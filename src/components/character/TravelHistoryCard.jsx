@@ -1,411 +1,438 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { MapPin, Clock, AlertCircle, ChevronDown } from 'lucide-react';
 
-const LOCATION_ICONS = {
-  home: '🏠', work: '💼', school: '🎓', gym: '💪', food_drink: '🍽️',
-  religion: '🙏', social: '👥', shopping: '🛍️', medical: '⚕️', other: '📍',
+const TRAVEL_SOURCE_LABELS = {
+  schedule: 'Schedule', autonomous: 'Autonomous', promise: 'Promise',
+  commitment: 'Commitment', need_fulfillment: 'Need', manual: 'Manual',
+  system: 'System', work_schedule: 'Work Schedule', school_schedule: 'School Schedule',
+  autonomous_need: 'Autonomous Need', autonomous_want: 'Autonomous Want',
+  routine: 'Routine', event: 'Event',
 };
 
-const TRAVEL_SOURCE_LABELS = {
-  schedule: 'Schedule',
-  autonomous: 'Autonomous',
-  promise: 'Promise',
-  commitment: 'Commitment',
-  need_fulfillment: 'Need',
-  manual: 'Manual',
-  system: 'System',
-  work_schedule: 'Work Schedule',
-  school_schedule: 'School Schedule',
+const fmtTime = (d) => {
+  if (!d) return '—';
+  try {
+    const dt = d instanceof Date ? d : new Date(d);
+    return dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  } catch { return '—'; }
 };
+
+// ── Build schedule-derived RECONSTRUCTED segments from character fields ────────
+// If no direct records exist, we still know where the character was based on
+// work schedule, school schedule, and current location state.
+function buildScheduleSegments(character, cutoff24h, now) {
+  const segments = [];
+  const nowMs = now.getTime();
+  const cutoffMs = cutoff24h.getTime();
+
+  // ── Work schedule ─────────────────────────────────────────────────────────
+  const workStart = character.work_start_time;
+  const workEnd   = character.work_end_time;
+  const workDays  = character.work_days || [];
+  const workLocName = character.occupation_location_name || character.occupation_location_id
+    ? (character.occupation_location_name || 'Work')
+    : null;
+  const homeName = character.resolved_current_location_name || 'Home';
+
+  if (workLocName && workStart && workEnd && workDays.length > 0) {
+    // Check last 2 days for work shifts that occurred
+    for (let daysAgo = 0; daysAgo <= 1; daysAgo++) {
+      const dayDate = new Date(now);
+      dayDate.setDate(dayDate.getDate() - daysAgo);
+      const dayOfWeek = dayDate.getDay(); // 0=Sun
+
+      if (workDays.includes(dayOfWeek)) {
+        const [sh, sm] = workStart.split(':').map(Number);
+        const [eh, em] = workEnd.split(':').map(Number);
+
+        const shiftStart = new Date(dayDate);
+        shiftStart.setHours(sh, sm, 0, 0);
+
+        const shiftEnd = new Date(dayDate);
+        shiftEnd.setHours(eh, em, 0, 0);
+
+        // Only include if shift start is within our 24h window
+        if (shiftStart.getTime() >= cutoffMs && shiftStart.getTime() <= nowMs) {
+          segments.push({
+            timestamp: shiftStart,
+            endTimestamp: shiftEnd.getTime() <= nowMs ? shiftEnd : null,
+            type: 'reconstructed',
+            source: 'Work Schedule',
+            evidenceLabel: 'RECONSTRUCTED',
+            location: workLocName,
+            origin: homeName,
+            destination: workLocName,
+            description: `Work shift ${workStart}–${workEnd}`,
+            locationId: character.occupation_location_id || 'work_schedule',
+          });
+        }
+
+        // Also add departure (going home) if shift ended
+        if (shiftEnd.getTime() >= cutoffMs && shiftEnd.getTime() <= nowMs) {
+          segments.push({
+            timestamp: shiftEnd,
+            type: 'reconstructed',
+            source: 'Work Schedule',
+            evidenceLabel: 'RECONSTRUCTED',
+            location: homeName,
+            origin: workLocName,
+            destination: homeName,
+            description: `Left work after shift (${workEnd})`,
+            locationId: character.current_home_location_id || 'home',
+          });
+        }
+      }
+    }
+  }
+
+  // ── School schedule ────────────────────────────────────────────────────────
+  const schoolLocName = character.education_location_name || null;
+  const isStudent = character.student_status === 'enrolled';
+  if (isStudent && schoolLocName) {
+    // Use standard school hours 8am–3pm as fallback when no explicit schedule exists
+    for (let daysAgo = 0; daysAgo <= 1; daysAgo++) {
+      const dayDate = new Date(now);
+      dayDate.setDate(dayDate.getDate() - daysAgo);
+      const dayOfWeek = dayDate.getDay();
+      // Mon–Fri
+      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        const schoolArrival = new Date(dayDate);
+        schoolArrival.setHours(8, 0, 0, 0);
+        if (schoolArrival.getTime() >= cutoffMs && schoolArrival.getTime() <= nowMs) {
+          segments.push({
+            timestamp: schoolArrival,
+            type: 'reconstructed',
+            source: 'School Schedule',
+            evidenceLabel: 'RECONSTRUCTED',
+            location: schoolLocName,
+            origin: homeName,
+            destination: schoolLocName,
+            description: `School day at ${schoolLocName}`,
+            locationId: character.education_location_id || 'school_schedule',
+          });
+        }
+      }
+    }
+  }
+
+  // ── Current location anchor ───────────────────────────────────────────────
+  // Always include the character's current verified location as a RECONSTRUCTED anchor
+  const currentLocName = character.resolved_current_location_name;
+  const lastArrived = character.last_arrived_time;
+  if (currentLocName && lastArrived) {
+    const arrivedAt = new Date(lastArrived);
+    if (arrivedAt.getTime() >= cutoffMs) {
+      segments.push({
+        timestamp: arrivedAt,
+        type: 'reconstructed',
+        source: 'Current Location State',
+        evidenceLabel: 'RECONSTRUCTED',
+        location: currentLocName,
+        origin: null,
+        destination: currentLocName,
+        description: `Currently at ${currentLocName} (verified by system)`,
+        locationId: character.resolved_current_location_id || 'current',
+      });
+    }
+  }
+
+  return segments;
+}
 
 export default function TravelHistoryCard({ characterId, ownerEmail, character }) {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
-  const formatTime = (iso) => {
-    if (!iso) return null;
-    return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  };
-
-  // Audit all movement sources
   const { data: auditData = null, isLoading } = useQuery({
     queryKey: ['travelHistoryAudit', characterId, ownerEmail],
     queryFn: async () => {
       if (!characterId || !ownerEmail) return null;
-      
+
       const now = new Date();
       const cutoff24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-      const movements = [];
-      const dedupeMap = new Map(); // key: "${location_id}:${Math.round(timestamp/60000)}" — dedupe by location + minute
-      let audit = {
-        locationHistory: 0,
-        travelSession: 0,
-        automaticNarrative: 0,
-        recentLocationHistory: 0,
-        totalFound: 0,
-        totalAfterDedup: 0,
+      const allMovements = [];
+      const dedupeMap = new Map();
+      const audit = {
+        locationHistory: 0, travelSession: 0,
+        automaticNarrative: 0, recentLocationHistory: 0,
+        scheduleSegments: 0, currentStateDerived: 0,
+        totalFound: 0, totalAfterDedup: 0,
       };
 
-      try {
-        // Source 1: LocationHistory records
-        const locationHistory = await base44.entities.LocationHistory.filter(
-          { character_id: characterId, owner_email: ownerEmail },
-          '-arrival_time', 100
-        ).catch(() => []);
-        const validLocHist = locationHistory.filter(r => new Date(r.arrival_time) >= cutoff24h);
-        audit.locationHistory = validLocHist.length;
-        
-        validLocHist.forEach(h => {
-          movements.push({
-            timestamp: new Date(h.arrival_time),
-            type: 'proven',
-            source: 'LocationHistory',
-            origin: h.location_name,
-            destination: null,
-            eventType: h.event_type,
-            travelSource: h.travel_source,
-            travelReason: h.travel_reason,
-            isCurrent: h.is_current,
-            locationId: h.location_id,
-            recordId: h.id,
-            data: h,
-          });
+      // ── Source 1: LocationHistory ─────────────────────────────────────────
+      const locationHistory = await base44.entities.LocationHistory.filter(
+        { character_id: characterId, owner_email: ownerEmail },
+        '-arrival_time', 100
+      ).catch(() => []);
+      const validLocHist = locationHistory.filter(r => r.arrival_time && new Date(r.arrival_time) >= cutoff24h);
+      audit.locationHistory = validLocHist.length;
+      validLocHist.forEach(h => {
+        allMovements.push({
+          timestamp: new Date(h.arrival_time),
+          type: 'proven',
+          evidenceLabel: 'PROVEN',
+          source: 'LocationHistory',
+          origin: h.location_name,
+          destination: null,
+          location: h.location_name,
+          travelSource: h.travel_source,
+          travelReason: h.travel_reason,
+          locationId: h.location_id,
+          description: h.travel_reason || h.event_type || 'Location arrival',
         });
+      });
 
-        // Source 2: TravelSession records (all statuses with actual/estimated arrival in 24h window)
-        const travelSessionsRaw = await base44.entities.TravelSession.filter(
-          { character_id: characterId, owner_email: ownerEmail },
-          '-updated_date', 100
-        ).catch(() => []);
-        const validSessions = travelSessionsRaw.filter(s => {
-          // Include if actual_arrival_time OR estimated_arrival_time falls in 24h window
-          const arrivalTime = s.actual_arrival_time ? new Date(s.actual_arrival_time) : null;
-          const estTime = s.estimated_arrival_time ? new Date(s.estimated_arrival_time) : null;
-          const refTime = arrivalTime || estTime;
-          return refTime && refTime >= cutoff24h;
+      // ── Source 2: TravelSession ────────────────────────────────────────────
+      const travelSessions = await base44.entities.TravelSession.filter(
+        { character_id: characterId, owner_email: ownerEmail },
+        '-updated_date', 100
+      ).catch(() => []);
+      const validSessions = travelSessions.filter(s => {
+        const refTime = s.actual_arrival_time
+          ? new Date(s.actual_arrival_time)
+          : (s.estimated_arrival_time ? new Date(s.estimated_arrival_time) : null);
+        return refTime && refTime >= cutoff24h;
+      });
+      audit.travelSession = validSessions.length;
+      validSessions.forEach(s => {
+        const arrTime = s.actual_arrival_time ? new Date(s.actual_arrival_time) : new Date(s.estimated_arrival_time);
+        const isArrived = s.route_status === 'arrived' && s.actual_arrival_time;
+        allMovements.push({
+          timestamp: arrTime,
+          type: isArrived ? 'proven' : 'inferred',
+          evidenceLabel: isArrived ? 'PROVEN' : 'INFERRED',
+          source: isArrived ? 'TravelSession (arrived)' : `TravelSession (${s.route_status})`,
+          origin: s.origin_location_name,
+          destination: s.destination_location_name,
+          location: s.destination_location_name,
+          travelSource: s.travel_source,
+          travelReason: s.travel_reason,
+          locationId: s.destination_location_id,
+          description: s.travel_reason || `Travel to ${s.destination_location_name}`,
         });
-        audit.travelSession = validSessions.length;
-        
-        validSessions.forEach(s => {
-          const arrivalTime = s.actual_arrival_time ? new Date(s.actual_arrival_time) : null;
-          const estTime = s.estimated_arrival_time ? new Date(s.estimated_arrival_time) : null;
-          const refTime = arrivalTime || estTime;
-          
-          if (!refTime) return;
-          
-          let evidenceType = 'proven';
-          let sourceLabel = 'TravelSession';
-          if (s.route_status === 'arrived' && s.actual_arrival_time) {
-            sourceLabel = 'TravelSession (arrived)';
-          } else if (s.route_status === 'arrival_due') {
-            evidenceType = 'inferred';
-            sourceLabel = 'TravelSession (stuck arrival)';
-          } else {
-            evidenceType = 'inferred';
-            sourceLabel = `TravelSession (${s.route_status})`;
-          }
-          
-          movements.push({
-            timestamp: refTime,
-            type: evidenceType,
-            source: sourceLabel,
-            origin: s.origin_location_name,
-            destination: s.destination_location_name,
-            travelSource: s.travel_source,
-            travelReason: s.travel_reason,
-            routeStatus: s.route_status,
-            arrivalPending: s.arrival_pending_character_write,
-            locationId: s.destination_location_id,
-            recordId: s.id,
-            data: s,
-          });
-        });
+      });
 
-        // Source 3: Character.recent_location_history array entries
-        if (character?.recent_location_history && Array.isArray(character.recent_location_history)) {
-          const validRecent = character.recent_location_history.filter(h => {
-            const arrTime = h.arrived_at ? new Date(h.arrived_at) : null;
-            return arrTime && arrTime >= cutoff24h;
-          });
-          audit.recentLocationHistory = validRecent.length;
-          
-          validRecent.forEach(h => {
-            movements.push({
-              timestamp: new Date(h.arrived_at),
-              type: 'proven',
-              source: 'Recent Location History',
-              origin: h.location_name,
-              destination: null,
-              locationId: h.location_id,
-              recordId: `recent_${h.location_id}_${h.arrived_at}`, // synthetic ID
-              reason: h.reason,
-              data: h,
-            });
-          });
+      // ── Source 3: Character.recent_location_history ────────────────────────
+      const recentHist = Array.isArray(character?.recent_location_history)
+        ? character.recent_location_history
+        : [];
+      const validRecent = recentHist.filter(h => h.arrived_at && new Date(h.arrived_at) >= cutoff24h);
+      audit.recentLocationHistory = validRecent.length;
+      validRecent.forEach(h => {
+        allMovements.push({
+          timestamp: new Date(h.arrived_at),
+          type: 'proven',
+          evidenceLabel: 'PROVEN',
+          source: 'Recent Location History',
+          origin: h.location_name,
+          destination: null,
+          location: h.location_name,
+          locationId: h.location_id,
+          description: h.reason || 'Location visit',
+        });
+      });
+
+      // ── Source 4: AutomaticNarrative travel events ─────────────────────────
+      const narratives = await base44.entities.AutomaticNarrative.filter(
+        { character_id: characterId, owner_email: ownerEmail },
+        '-timestamp', 100
+      ).catch(() => []);
+      const travelNarratives = narratives.filter(n =>
+        ['travel_arrival', 'travel_departure', 'location_change'].includes(n.event_type)
+        && n.timestamp && new Date(n.timestamp) >= cutoff24h
+      );
+      audit.automaticNarrative = travelNarratives.length;
+      travelNarratives.forEach(n => {
+        allMovements.push({
+          timestamp: new Date(n.timestamp),
+          type: 'proven',
+          evidenceLabel: 'PROVEN',
+          source: 'AutomaticNarrative',
+          origin: n.location_name,
+          destination: null,
+          location: n.location_name,
+          locationId: n.location_id,
+          description: (n.narrative_text || '').substring(0, 80) || n.event_type,
+        });
+      });
+
+      // ── Source 5–8: Schedule + Current State RECONSTRUCTED segments ────────
+      // Only add reconstructed segments if there is very little direct evidence
+      const directCount = audit.locationHistory + audit.travelSession + audit.recentLocationHistory + audit.automaticNarrative;
+      const schedSegments = buildScheduleSegments(character, cutoff24h, now);
+      audit.scheduleSegments = schedSegments.length;
+      schedSegments.forEach(seg => allMovements.push(seg));
+
+      // ── DEDUPLICATION ──────────────────────────────────────────────────────
+      // Priority: proven > inferred > reconstructed. Within same type: keep first.
+      audit.totalFound = allMovements.length;
+      const typePriority = { proven: 3, inferred: 2, reconstructed: 1 };
+
+      allMovements.forEach(m => {
+        const timeBucket = Math.round(m.timestamp.getTime() / 60000);
+        const dedupeKey = `${m.locationId || m.location || m.origin}:${timeBucket}`;
+        const existing = dedupeMap.get(dedupeKey);
+        if (!existing) {
+          dedupeMap.set(dedupeKey, m);
+        } else {
+          const mPri = typePriority[m.type] || 0;
+          const exPri = typePriority[existing.type] || 0;
+          if (mPri > exPri) dedupeMap.set(dedupeKey, m);
         }
+      });
 
-        // Source 4: AutomaticNarrative travel/location events
-        const narratives = await base44.entities.AutomaticNarrative.filter(
-          { character_id: characterId, owner_email: ownerEmail },
-          '-timestamp', 100
-        ).catch(() => []);
-        const travelNarratives = narratives.filter(n => {
-          const isTravelEvent = ['travel_arrival', 'travel_departure', 'location_change'].includes(n.event_type);
-          return isTravelEvent && new Date(n.timestamp) >= cutoff24h;
-        });
-        audit.automaticNarrative = travelNarratives.length;
-        
-        travelNarratives.forEach(n => {
-          movements.push({
-            timestamp: new Date(n.timestamp),
-            type: 'proven',
-            source: 'AutomaticNarrative',
-            origin: n.location_name,
-            destination: null,
-            eventType: n.event_type,
-            narrativeText: n.narrative_text,
-            locationId: n.location_id,
-            recordId: n.id,
-            data: n,
-          });
-        });
+      const finalMovements = Array.from(dedupeMap.values());
+      audit.totalAfterDedup = finalMovements.length;
+      finalMovements.sort((a, b) => b.timestamp - a.timestamp);
 
-        // ── DEDUPLICATION PASS ──
-        // Deduplicate by: location_id + timestamp (rounded to 1-minute buckets)
-        // Keep proven records over inferred, keep first source if same evidence type
-        audit.totalFound = movements.length;
-        
-        movements.forEach(m => {
-          // Round timestamp to nearest minute for deduplication
-          const timeBucket = Math.round(m.timestamp.getTime() / 60000);
-          const dedupeKey = `${m.locationId || m.origin}:${timeBucket}`;
-          
-          const existing = dedupeMap.get(dedupeKey);
-          if (!existing) {
-            dedupeMap.set(dedupeKey, m);
-          } else {
-            // Keep proven over inferred; keep first if same type
-            if (m.type === 'proven' && existing.type === 'inferred') {
-              dedupeMap.set(dedupeKey, m);
-            }
-          }
-        });
-
-        // Extract deduplicated movements
-        const finalMovements = Array.from(dedupeMap.values());
-        audit.totalAfterDedup = finalMovements.length;
-
-        // Sort by timestamp descending (newest first)
-        finalMovements.sort((a, b) => b.timestamp - a.timestamp);
-
-        return {
-          movements: finalMovements,
-          audit,
-          cutoff24h: cutoff24h.toISOString(),
-          currentLocation: character?.resolved_current_location_name || 'Unknown',
-          currentPresenceStatus: character?.resolved_presence_status || 'Unknown',
-          lastLocationUpdate: character?.last_location_update_time,
-          lastArrived: character?.last_arrived_time,
-          characterId,
-          now: now.toISOString(),
-        };
-      } catch (error) {
-        console.error('[TravelHistoryAudit] Error:', error?.message);
-        return {
-          movements: [],
-          audit,
-          error: error?.message,
-          currentLocation: character?.resolved_current_location_name || 'Unknown',
-          currentPresenceStatus: character?.resolved_presence_status || 'Unknown',
-          cutoff24h: cutoff24h.toISOString(),
-          now: now.toISOString(),
-          characterId,
-        };
-      }
+      return {
+        movements: finalMovements,
+        audit,
+        directCount,
+        cutoff24h: cutoff24h.toISOString(),
+        currentLocation: character?.resolved_current_location_name || '—',
+        currentPresenceStatus: character?.resolved_presence_status || '—',
+        lastLocationUpdate: character?.last_location_update_time,
+        now: now.toISOString(),
+      };
     },
     enabled: !!characterId && !!ownerEmail && !!character,
     staleTime: 5 * 60 * 1000,
   });
 
-  if (isLoading) {
-    return (
-      <Card className="col-span-full">
-        <CardHeader>
-          <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <MapPin className="w-4 h-4" /> Travel History · Last 24 Hours
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-xs text-muted-foreground animate-pulse">Auditing movement sources...</div>
-        </CardContent>
-      </Card>
-    );
-  }
+  // ── RENDER ─────────────────────────────────────────────────────────────────
+  // This card ALWAYS renders — never returns null, never throws, never blocks siblings.
 
-  if (!auditData) {
-    return (
-      <Card className="col-span-full">
-        <CardHeader>
-          <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <MapPin className="w-4 h-4" /> Travel History · Last 24 Hours
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <AlertCircle className="w-3 h-3" />
-            Travel history unavailable.
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const { movements, audit, currentLocation, currentPresenceStatus, lastLocationUpdate, error } = auditData;
-  const hasMovement = movements.length > 0;
-  const provenMovements = movements.filter(m => m.type === 'proven');
-  const inferredMovements = movements.filter(m => m.type === 'inferred');
+  const typeColor = {
+    proven: 'border-primary/50',
+    inferred: 'border-amber-400/50',
+    reconstructed: 'border-blue-400/30',
+  };
+  const typeBadgeStyle = {
+    proven: 'bg-green-500/10 border-green-500/30 text-green-700',
+    inferred: 'bg-amber-500/10 border-amber-500/30 text-amber-700',
+    reconstructed: 'bg-blue-500/10 border-blue-500/30 text-blue-700',
+  };
+  const typeBg = {
+    proven: '',
+    inferred: 'bg-amber-400/5',
+    reconstructed: 'bg-blue-400/5',
+  };
 
   return (
-    <Card className="col-span-full">
-      <CardHeader>
-        <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <MapPin className="w-4 h-4" /> Travel History · Last 24 Hours
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Current Location Summary */}
-        <div className="bg-muted/40 rounded-lg p-3 space-y-1">
-          <div className="text-[10px] font-semibold text-muted-foreground uppercase">Current Status</div>
-          <div className="text-sm font-medium">{currentLocation}</div>
-          <div className="text-xs text-muted-foreground">
-            Status: <span className="text-foreground capitalize">{currentPresenceStatus}</span>
-            {lastLocationUpdate && (
-              <span className="ml-2">
-                · Updated {formatTime(lastLocationUpdate)}
-              </span>
+    <div className="rounded-xl overflow-hidden bg-card border border-border">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+          <MapPin className="w-3.5 h-3.5" /> Location Continuity · Last 24 Hours
+        </p>
+        {isLoading && <span className="text-[9px] text-muted-foreground animate-pulse">Auditing...</span>}
+      </div>
+
+      <div className="px-4 py-3 space-y-3">
+        {/* Current status bar */}
+        {auditData && (
+          <div className="bg-muted/40 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-medium">{auditData.currentLocation}</div>
+              <div className="text-[10px] text-muted-foreground capitalize">{auditData.currentPresenceStatus}</div>
+            </div>
+            {auditData.lastLocationUpdate && (
+              <div className="text-[9px] text-muted-foreground text-right">
+                Updated<br />{fmtTime(new Date(auditData.lastLocationUpdate))}
+              </div>
             )}
           </div>
-        </div>
+        )}
 
-        {/* Movement Timeline */}
-        {!hasMovement ? (
+        {/* Loading state */}
+        {isLoading && (
+          <div className="text-xs text-muted-foreground animate-pulse py-2">Auditing movement sources…</div>
+        )}
+
+        {/* No data */}
+        {!isLoading && !auditData && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+            <AlertCircle className="w-3 h-3 flex-shrink-0" />
+            Location data unavailable.
+          </div>
+        )}
+
+        {/* Movement timeline */}
+        {!isLoading && auditData && auditData.movements.length === 0 && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground border border-dashed rounded-lg p-3">
             <AlertCircle className="w-3 h-3 flex-shrink-0" />
-            <span>Travel history unavailable.</span>
+            <span>No location activity recorded in the past 24 hours from any source.</span>
           </div>
-        ) : (
+        )}
+
+        {!isLoading && auditData && auditData.movements.length > 0 && (
           <div className="space-y-2">
-            {/* Proven Movements */}
-            {provenMovements.map((m, i) => (
-              <div key={`proven-${i}`} className="border-l-2 border-primary/50 pl-3 py-1">
-                <div className="text-xs font-medium flex items-center gap-2">
-                  <Clock className="w-3 h-3" />
-                  {formatTime(m.timestamp)}
+            {auditData.movements.map((m, i) => (
+              <div
+                key={i}
+                className={`border-l-2 ${typeColor[m.type] || 'border-border'} ${typeBg[m.type] || ''} pl-3 py-1.5 rounded-r`}
+              >
+                <div className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+                  <Clock className="w-3 h-3 flex-shrink-0" />
+                  {fmtTime(m.timestamp)}
+                  <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[9px] border ${typeBadgeStyle[m.type] || ''}`}>
+                    {m.evidenceLabel}
+                  </span>
                 </div>
-                <div className="text-xs mt-1 text-foreground">
-                  {m.origin} → {m.destination || m.origin}
+                <div className="text-xs text-foreground mt-1">
+                  {m.origin && m.destination && m.origin !== m.destination
+                    ? <>{m.origin} <span className="text-muted-foreground">→</span> {m.destination}</>
+                    : m.location || m.origin || m.destination || '—'}
                 </div>
-                <div className="flex items-center gap-1 mt-1 flex-wrap">
-                  {m.travelSource && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      {TRAVEL_SOURCE_LABELS[m.travelSource] || m.travelSource}
-                    </Badge>
-                  )}
-                  <Badge variant="outline" className="text-[10px] bg-green-500/10 border-green-500/30 text-green-700">
-                    {m.source}
-                  </Badge>
-                </div>
-                {m.travelReason && (
-                  <div className="text-[11px] text-muted-foreground mt-1">{m.travelReason}</div>
+                {m.description && m.description !== m.location && (
+                  <div className="text-[10px] text-muted-foreground mt-0.5 leading-snug">{m.description}</div>
                 )}
-              </div>
-            ))}
-
-            {/* Inferred Movements */}
-            {inferredMovements.map((m, i) => (
-              <div key={`inferred-${i}`} className="border-l-2 border-amber-400/50 pl-3 py-1 bg-amber-400/5 rounded">
-                <div className="text-xs font-medium flex items-center gap-2 text-amber-700">
-                  <Clock className="w-3 h-3" />
-                  {formatTime(m.timestamp)}
-                </div>
-                <div className="text-xs mt-1 text-foreground">
-                  {m.origin} → {m.destination || m.origin}
-                </div>
-                <div className="flex items-center gap-1 mt-1 flex-wrap">
-                  <Badge variant="outline" className="text-[10px] bg-amber-500/10 border-amber-500/30 text-amber-700">
-                    Inferred Movement
-                  </Badge>
-                </div>
+                <div className="text-[9px] text-muted-foreground/60 mt-0.5">{m.source}</div>
               </div>
             ))}
           </div>
         )}
 
-        {/* Diagnostics Toggle */}
-        <button
-          onClick={() => setShowDiagnostics(!showDiagnostics)}
-          className="w-full flex items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground transition-colors p-2 hover:bg-muted/50 rounded"
-        >
-          <span>Travel History Audit</span>
-          <ChevronDown className={`w-3 h-3 transition-transform ${showDiagnostics ? 'rotate-180' : ''}`} />
-        </button>
+        {/* Diagnostics toggle */}
+        {auditData && (
+          <>
+            <button
+              onClick={() => setShowDiagnostics(!showDiagnostics)}
+              className="w-full flex items-center justify-between text-[10px] text-muted-foreground hover:text-foreground transition-colors px-1 py-1"
+            >
+              <span>Location Continuity Audit</span>
+              <ChevronDown className={`w-3 h-3 transition-transform ${showDiagnostics ? 'rotate-180' : ''}`} />
+            </button>
 
-        {/* Diagnostics Section */}
-        {showDiagnostics && (
-          <div className="bg-muted/30 rounded-lg p-3 space-y-3 text-[10px]">
-            <div>
-              <span className="font-semibold text-muted-foreground">24-hour window:</span>
-              <div className="mt-1 space-y-0.5 text-muted-foreground font-mono text-[9px]">
-                <div>Now: {auditData?.now ? formatTime(new Date(auditData.now)) : '—'}</div>
-                <div>Cutoff: {auditData?.cutoff24h ? formatTime(new Date(auditData.cutoff24h)) : '—'}</div>
-              </div>
-            </div>
-            
-            <div>
-              <span className="font-semibold text-muted-foreground">Raw records by source:</span>
-              <div className="mt-1 space-y-0.5 text-muted-foreground">
-                <div>LocationHistory: {audit.locationHistory}</div>
-                <div>TravelSession: {audit.travelSession}</div>
-                <div>Recent Location History: {audit.recentLocationHistory}</div>
-                <div>AutomaticNarrative: {audit.automaticNarrative}</div>
-                <div className="font-semibold mt-1 pt-1 border-t border-muted">
-                  Total found: {audit.totalFound}
+            {showDiagnostics && (
+              <div className="bg-muted/30 rounded-lg p-3 space-y-2 text-[9px] font-mono text-muted-foreground">
+                <div>
+                  <div className="font-semibold text-[10px] mb-1">Sources checked:</div>
+                  <div>LocationHistory: {auditData.audit.locationHistory}</div>
+                  <div>TravelSession: {auditData.audit.travelSession}</div>
+                  <div>Recent Location History: {auditData.audit.recentLocationHistory}</div>
+                  <div>AutomaticNarrative: {auditData.audit.automaticNarrative}</div>
+                  <div>Schedule-derived: {auditData.audit.scheduleSegments}</div>
+                  <div className="font-semibold mt-1 pt-1 border-t border-muted/60">
+                    Total raw: {auditData.audit.totalFound} → After dedup: {auditData.audit.totalAfterDedup}
+                  </div>
                 </div>
-              </div>
-            </div>
-
-            <div>
-              <span className="font-semibold text-muted-foreground">After deduplication:</span>
-              <div className="mt-1 text-muted-foreground">
-                {audit.totalAfterDedup} final rows (merged by location + timestamp)
-              </div>
-            </div>
-
-            {movements.length > 0 && (
-              <div>
-                <span className="font-semibold text-muted-foreground">Most recent movement:</span>
-                <div className="mt-1 text-muted-foreground">
-                  {movements[0].origin} → {movements[0].destination || movements[0].origin}
+                <div>
+                  <div className="font-semibold text-[10px]">Legend:</div>
+                  <div>PROVEN = direct arrival/travel record</div>
+                  <div>INFERRED = ETA passed, write pending</div>
+                  <div>RECONSTRUCTED = derived from schedule / current state</div>
                 </div>
-                <div className="text-muted-foreground">
-                  Source: {movements[0].source}
-                </div>
-                <div className="text-muted-foreground">
-                  Time: {formatTime(movements[0].timestamp)}
+                <div>
+                  <div>Window: {auditData.cutoff24h ? fmtTime(new Date(auditData.cutoff24h)) : '—'} → {auditData.now ? fmtTime(new Date(auditData.now)) : '—'}</div>
                 </div>
               </div>
             )}
-            {error && (
-              <div className="text-red-600 font-medium">
-                Query Error: {error}
-              </div>
-            )}
-          </div>
+          </>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

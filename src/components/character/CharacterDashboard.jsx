@@ -885,11 +885,29 @@ export default function CharacterDashboard({ character }) {
       setData({ liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 12), socialStats: { msgsSent, positiveInteractions, conflictEvents }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext });
       setLoaded(true);
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch((err) => {
+      console.error('[CharacterDashboard] Fatal fetch error:', err?.message);
+      // Set minimal fallback data so the dashboard renders with what it has
+      setData({
+        liveLocationDisplay: character?.resolved_current_location_name || '—',
+        liveStatus: character?.resolved_presence_status || 'home',
+        trendData: [],
+        timelineEntries: [],
+        socialStats: { msgsSent: 0, positiveInteractions: 0, conflictEvents: 0 },
+        insights: [],
+        memoryHighlights: [],
+        workDisplay: character?.occupation_location_name || character?.occupation || null,
+        hasPeopleJob: false,
+        occSocialContext: null,
+      });
+      setLoaded(true);
+      setLoading(false);
+    });
   }, [character?.id]); // eslint-disable-line
 
   if (loading) return <div className="flex items-center justify-center py-10"><div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" /></div>;
-  if (!data) return null;
+  // NEVER return null — always render the dashboard shell even if data is minimal
+  if (!data) return <div className="flex items-center justify-center py-10"><div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" /></div>;
 
   const { liveLocationDisplay, trendData, timelineEntries, socialStats, insights, memoryHighlights, workDisplay } = data;
   const emotionState = character.emotional_state || "calm";
@@ -1073,10 +1091,7 @@ export default function CharacterDashboard({ character }) {
         </div>
       </div>
 
-      {/* ── 3. TRAVEL HISTORY ─────────────────────────────────────────────── */}
-      <TravelHistoryCard characterId={character?.id} ownerEmail={character?.owner_email} character={character} />
-
-      {/* ── 4. PATTERN INSIGHTS + MEMORY HIGHLIGHTS ──────────────────────── */}
+      {/* ── 3. PATTERN INSIGHTS + MEMORY HIGHLIGHTS + TRAVEL HISTORY ─────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {insights.length > 0 && (
           <div className="rounded-xl overflow-hidden bg-card border border-border">
@@ -1117,6 +1132,9 @@ export default function CharacterDashboard({ character }) {
             </div>
           </div>
         )}
+
+        {/* Travel History — in the same grid row as Memory Highlights */}
+        <TravelHistoryCard characterId={character?.id} ownerEmail={character?.owner_email} character={character} />
       </div>
 
     </div>
