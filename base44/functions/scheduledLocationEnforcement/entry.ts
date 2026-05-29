@@ -734,6 +734,33 @@ Deno.serve(async (req) => {
             });
             updated++;
             entry.action = 'updated';
+
+            // Write durable location history for schedule-driven moves (fire-and-forget)
+            if (character.owner_email && resolved.resolved_current_location_id) {
+              let evtType = 'arrival';
+              if (resolved.resolved_presence_status === 'at_work') evtType = 'work_start';
+              else if (resolved.resolved_presence_status === 'at_school') evtType = 'school_start';
+              else if (resolved.resolved_presence_status === 'home') evtType = 'return_home';
+              else if (resolved.resolved_presence_status === 'sleeping') evtType = 'stay';
+
+              const travelSrc = resolved.resolved_source_reason === 'work_schedule' ? 'schedule'
+                : resolved.resolved_source_reason === 'school_schedule' ? 'schedule'
+                : 'system';
+
+              base44.asServiceRole.functions.invoke('recordLocationHistoryEvent', {
+                characterId: character.id,
+                characterName: character.name,
+                ownerEmail: character.owner_email,
+                locationId: resolved.resolved_current_location_id,
+                locationName: resolved.resolved_current_location_name,
+                locationCategory: 'other',
+                eventType: evtType,
+                travelSource: travelSrc,
+                travelReason: resolved.resolved_source_reason || null,
+                arrivalTime: timestamp,
+                previousLocationId: stored.resolved_current_location_id || null,
+              }).catch(() => {});
+            }
             if (Object.keys(lockFields).length > 0) {
               entry.correction_lock_written = true;
               entry.lock_until = lockFields.location_correction_locked_until;

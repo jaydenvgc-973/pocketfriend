@@ -1074,7 +1074,7 @@ export default function CharacterDashboard({ character }) {
       </div>
 
       {/* ── 3. TRAVEL HISTORY ─────────────────────────────────────────────── */}
-      <TravelHistoryCard character={character} />
+      <TravelHistoryCard characterId={character?.id} ownerEmail={character?.owner_email} />
 
       {/* ── 4. PATTERN INSIGHTS + MEMORY HIGHLIGHTS ──────────────────────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

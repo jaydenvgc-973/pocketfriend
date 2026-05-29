@@ -1,129 +1,167 @@
-import React from "react";
-import { MapPin, Clock, LogOut, LogIn } from "lucide-react";
-import { format, formatDistance } from "date-fns";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useQuery } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { MapPin, Clock, AlertCircle } from 'lucide-react';
 
-export default function TravelHistoryCard({ character }) {
-  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+const LOCATION_ICONS = {
+  home: '🏠',
+  work: '💼',
+  school: '🎓',
+  gym: '💪',
+  food_drink: '🍽️',
+  religion: '🙏',
+  social: '👥',
+  shopping: '🛍️',
+  medical: '⚕️',
+  other: '📍',
+};
 
-  const { data: locationHistory = [], isLoading } = useQuery({
-    queryKey: ["locationHistory", character.id],
+const EVENT_LABELS = {
+  arrival: 'Arrived',
+  departure: 'Left',
+  return_home: 'Returned home',
+  work_start: 'Work started',
+  work_end: 'Left work',
+  school_start: 'School started',
+  school_end: 'Left school',
+  religious_service: 'Religious service',
+  food_need: 'Ate',
+  social_visit: 'Visited',
+  gym_visit: 'Gym visit',
+  transit: 'In transit',
+  stay: 'Stayed',
+  other: 'Visited',
+};
+
+const TRAVEL_SOURCE_LABELS = {
+  schedule: 'Schedule',
+  autonomous: 'Autonomous',
+  promise: 'Promise',
+  commitment: 'Commitment',
+  need_fulfillment: 'Need',
+  manual: 'Manual',
+  system: 'System',
+  other: 'Other',
+};
+
+export default function TravelHistoryCard({ characterId, ownerEmail }) {
+  const formatTime = (iso) => {
+    if (!iso) return null;
+    return new Date(iso).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  };
+
+  const formatDate = (iso) => {
+    if (!iso) return null;
+    return new Date(iso).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
+  // Fetch LocationHistory for last 24 hours
+  const { data: history = [], isLoading } = useQuery({
+    queryKey: ['locationHistory', characterId, ownerEmail],
     queryFn: async () => {
-      if (!character.id || !character.owner_email) return [];
-      return base44.entities.LocationHistory.filter(
-        { character_id: character.id, owner_email: character.owner_email },
-        "-arrival_time",
-        50
-      ).catch(() => []);
+      if (!characterId || !ownerEmail) return [];
+      
+      const now = new Date();
+      const cutoff24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+
+      try {
+        const records = await base44.entities.LocationHistory.filter(
+          {
+            character_id: characterId,
+            owner_email: ownerEmail,
+          },
+          '-arrival_time',
+          30
+        );
+        
+        return records.filter(r => new Date(r.arrival_time) >= new Date(cutoff24h));
+      } catch {
+        return [];
+      }
     },
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    enabled: !!characterId && !!ownerEmail,
+    staleTime: 5 * 60 * 1000, // 5 min
   });
 
-  // Filter to last 24 hours
-  const recentHistory = locationHistory.filter(h => new Date(h.arrival_time) >= twentyFourHoursAgo);
+  if (isLoading) {
+    return (
+      <Card className="col-span-full">
+        <CardHeader>
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <MapPin className="w-4 h-4" /> Travel History · Last 24 Hours
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-xs text-muted-foreground animate-pulse">Loading...</div>
+        </CardContent>
+      </Card>
+    );
+  }
 
-  const getEventIcon = (eventType) => {
-    if (eventType.includes("arrival") || eventType === "arrival") return <LogIn className="w-4 h-4 text-emerald-400" />;
-    if (eventType.includes("departure") || eventType === "departure") return <LogOut className="w-4 h-4 text-orange-400" />;
-    if (eventType === "return_home") return <LogIn className="w-4 h-4 text-blue-400" />;
-    return <MapPin className="w-4 h-4 text-slate-400" />;
-  };
-
-  const getEventLabel = (eventType) => {
-    const labels = {
-      arrival: "Arrived",
-      departure: "Left",
-      return_home: "Returned home",
-      work_start: "Started work",
-      work_end: "Ended work",
-      school_start: "Started school",
-      school_end: "Left school",
-      religious_service: "Attended service",
-      food_need: "Visited for food",
-      social_visit: "Social visit",
-      gym_visit: "Gym visit",
-      transit: "Traveling",
-      stay: "Stayed at",
-      other: "Visited"
-    };
-    return labels[eventType] || "Visited";
-  };
-
-  const getTravelReason = (h) => {
-    if (h.travel_reason) return h.travel_reason;
-    const reasons = {
-      schedule: "Scheduled",
-      autonomous: "Autonomous travel",
-      promise: "Promised to be there",
-      commitment: "Commitment",
-      need_fulfillment: "Fulfilling a need",
-      manual: "Manual move",
-      system: "System",
-    };
-    return reasons[h.travel_source] || "";
-  };
+  if (history.length === 0) {
+    return (
+      <Card className="col-span-full">
+        <CardHeader>
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <MapPin className="w-4 h-4" /> Travel History · Last 24 Hours
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <AlertCircle className="w-3 h-3" />
+            No location changes recorded in the last 24 hours.
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <Card className="bg-card border border-border">
+    <Card className="col-span-full">
       <CardHeader>
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <Clock className="w-4 h-4 text-primary" />
-          Travel History · Last 24 Hours
+          <MapPin className="w-4 h-4" /> Travel History · Last 24 Hours
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {isLoading ? (
-          <p className="text-xs text-muted-foreground">Loading travel history...</p>
-        ) : recentHistory.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic">No location changes recorded in the last 24 hours.</p>
-        ) : (
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {recentHistory.map((h) => {
-              const departureTime = h.departure_time ? new Date(h.departure_time) : null;
-              const arrivalTime = new Date(h.arrival_time);
-              const duration = h.duration_minutes ? `${Math.round(h.duration_minutes / 60)}h ${h.duration_minutes % 60}m` : null;
+      <CardContent>
+        <div className="space-y-2">
+          {history.map((h, i) => {
+            const arrTime = formatTime(h.arrival_time);
+            const depTime = h.departure_time ? formatTime(h.departure_time) : null;
+            const timeStr = depTime ? `${arrTime}–${depTime}` : `${arrTime}`;
+            const icon = LOCATION_ICONS[h.location_category] || LOCATION_ICONS.other;
+            const eventLabel = EVENT_LABELS[h.event_type] || h.event_type;
+            const sourceLabel = TRAVEL_SOURCE_LABELS[h.travel_source] || h.travel_source;
 
-              return (
-                <div key={h.id} className="text-xs space-y-1 p-2 rounded-lg bg-secondary/40 border border-border/50">
-                  <div className="flex items-start gap-2">
-                    {getEventIcon(h.event_type)}
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-foreground">{h.location_name}</p>
-                      <p className="text-[10px] text-muted-foreground">{getEventLabel(h.event_type)} · {h.location_category}</p>
-                    </div>
-                    {h.is_current && (
-                      <span className="flex-shrink-0 px-1.5 py-0.5 rounded-full bg-primary/20 text-primary text-[9px] font-semibold">
-                        Currently here
-                      </span>
-                    )}
+            return (
+              <div key={h.id} className="flex gap-2 text-xs">
+                <span className="text-lg shrink-0">{icon}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{h.location_name}</div>
+                  <div className="flex items-center gap-2 text-muted-foreground flex-wrap">
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> {timeStr}
+                    </span>
+                    {h.is_current && <Badge variant="outline" className="text-[10px]">Currently here</Badge>}
+                    {sourceLabel && <Badge variant="secondary" className="text-[10px]">{sourceLabel}</Badge>}
                   </div>
-
-                  <div className="flex items-center gap-4 text-muted-foreground">
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      <span className="text-[9px]">
-                        {format(arrivalTime, "h:mm a")}
-                        {departureTime && ` - ${format(departureTime, "h:mm a")}`}
-                        {duration && ` (${duration})`}
-                      </span>
-                    </div>
-                  </div>
-
-                  {getTravelReason(h) && (
-                    <p className="text-[9px] text-slate-400 italic">{getTravelReason(h)}</p>
-                  )}
-
-                  {h.notes && (
-                    <p className="text-[9px] text-slate-500">{h.notes}</p>
+                  {h.travel_reason && (
+                    <div className="text-muted-foreground text-[11px] mt-0.5">{h.travel_reason}</div>
                   )}
                 </div>
-              );
-            })}
-          </div>
-        )}
+              </div>
+            );
+          })}
+        </div>
       </CardContent>
     </Card>
   );

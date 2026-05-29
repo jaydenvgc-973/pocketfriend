@@ -237,6 +237,40 @@ Deno.serve(async (req) => {
 
         console.log(`[completeTravelArrivalVerified] ✅ VERIFIED ARRIVAL | char=${char.name} | dest=${destLoc.name} | session=${session.id} | readback=PASS | travel_cleared=${travelCleared}`);
 
+        // ── CONSEQUENCE: record durable location history (fire-and-forget) ──────
+        if (char.owner_email) {
+          let eventType = 'arrival';
+          if (finalPresenceStatus === 'at_work') eventType = 'work_start';
+          else if (finalPresenceStatus === 'at_school') eventType = 'school_start';
+          else if (finalPresenceStatus === 'home') eventType = 'return_home';
+          else if (destLoc.category === 'gym') eventType = 'gym_visit';
+          else if (destLoc.category === 'religion') eventType = 'religious_service';
+          else if (destLoc.category === 'food_drink') eventType = 'food_need';
+
+          let travelSrc = 'system';
+          if (session.travel_source) {
+            if (session.travel_source.includes('schedule')) travelSrc = 'schedule';
+            else if (session.travel_source.includes('autonomous')) travelSrc = 'autonomous';
+            else if (session.travel_source === 'promise' || session.travel_source === 'commitment') travelSrc = 'promise';
+            else if (session.travel_source === 'manual') travelSrc = 'manual';
+            else travelSrc = session.travel_source;
+          }
+
+          base44.functions.invoke('recordLocationHistoryEvent', {
+            characterId: char.id,
+            characterName: char.name,
+            ownerEmail: char.owner_email,
+            locationId: destLoc.id,
+            locationName: destLoc.name,
+            locationCategory: destLoc.category || 'other',
+            eventType,
+            travelSource: travelSrc,
+            travelReason: session.travel_reason || null,
+            arrivalTime: nowISO,
+            previousLocationId: session.origin_location_id || null,
+          }).catch(e => console.log(`[completeTravelArrivalVerified] location history write non-fatal: ${e.message}`));
+        }
+
         // ── CONSEQUENCE: food/drink spending — fire-and-forget, NEVER blocks arrival ──
         base44.asServiceRole.functions.invoke('processCharacterFoodAndDrinkSpending', {
           character_id:              char.id,
