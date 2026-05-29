@@ -100,9 +100,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     queryKey: ['characterFinancial', character.id],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id })
       .then(r => r[0] || null),
-    staleTime: 10 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
+    refetchOnMount: true,
     enabled: !!character.id && queryReady,
   });
   const balance = financialRecord?.current_balance;
@@ -432,9 +433,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
             <div className="flex items-center gap-2 mt-1">
               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${stateDots[state] || "bg-zinc-500"}`} />
               <span className="text-xs text-muted-foreground capitalize">{stateLabels[state] || state}</span>
-              {balance !== undefined && (
+              {balance != null && (
                 <span className="ml-auto flex items-center gap-0.5 text-xs text-green-400 font-medium">
-                  <DollarSign className="w-3 h-3" />{balance.toLocaleString()}
+                  <DollarSign className="w-3 h-3" />{Number(balance).toLocaleString()}
                 </span>
               )}
             </div>
