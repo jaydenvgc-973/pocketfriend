@@ -139,6 +139,16 @@ export default function CharacterProfile() {
     };
   }, [characterId]);
 
+  // currentUser MUST be declared first — the character queryFn closure captures it.
+  // On cold/direct URL loads, currentUser resolves asynchronously. The character query
+  // runs immediately (enabled: !!characterId) and the closure reads currentUser at call time.
+  // If currentUser is declared after, the closure always captures undefined on first run.
+  const { data: currentUser = null } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+    staleTime: 300000,
+  });
+
   const { data: character, isLoading, refetch } = useQuery({
     // Stable key — never includes currentUser.email so the key doesn't change when user resolves.
     queryKey: ["character", characterId],
@@ -154,8 +164,7 @@ export default function CharacterProfile() {
 
       // SECONDARY: if currentUser is already resolved, try owner_email + id.
       // Covers legacy characters where the id-only RLS path may not resolve yet.
-      // currentUser is captured at query time — if it's null here, the query
-      // will be re-triggered by the invalidation below when currentUser arrives.
+      // currentUser is now guaranteed to be in scope — declared above this query.
       if (currentUser?.email) {
         const byOwner = await base44.entities.Character.filter({
           owner_email: currentUser.email,
@@ -173,25 +182,18 @@ export default function CharacterProfile() {
     staleTime: 0,
   });
 
-  // When currentUser resolves and character is still null, invalidate to retry.
-  // This triggers a re-fetch that now has currentUser.email available for the
-  // owner_email fallback path — covers legacy characters on cold/direct URL load.
+  // When currentUser resolves after the first character query ran with currentUser=null,
+  // re-trigger the query so the owner_email fallback gets a real chance.
+  // This covers legacy characters that require both id AND owner_email to resolve via RLS.
   const prevUserEmailRef = useRef(null);
   useEffect(() => {
     if (!currentUser?.email) return;
     if (prevUserEmailRef.current === currentUser.email) return;
     prevUserEmailRef.current = currentUser.email;
-    // Only re-fetch if we don't have the character yet
     if (!character) {
       queryClient.invalidateQueries({ queryKey: ["character", characterId] });
     }
   }, [currentUser?.email, character, characterId, queryClient]);
-
-  const { data: currentUser = null } = useQuery({
-    queryKey: ["user"],
-    queryFn: () => base44.auth.me(),
-    staleTime: 300000,
-  });
 
   const { data: allCharacters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email || ""],
