@@ -22,7 +22,36 @@ function toMinutes(timeStr) {
 
 const NPC_SLEEP_TYPES = new Set(['npc_regular', 'npc_family_member', 'npc_fictitious', 'npc']);
 
-function computeAdaptiveSleepWindow(character, etTime) {
+// VGC Towers NPC resident sleep window — mirrors sleepUtils.js constants
+const VGC_RESIDENT_SLEEP_START_MIN = 2 * 60 + 30;  // 2:30 AM
+const VGC_RESIDENT_WAKE_TIME_MIN   = 8 * 60 + 30;  // 8:30 AM
+
+/**
+ * Returns true if this character is an NPC resident of VGC Towers.
+ * Residency proof: character.current_home_location_id → location.name === 'VGC Towers'.
+ * Requires locationMap to be passed by the caller. Falls back to false when absent.
+ * Applies only to NPC character types. active_created_character is never affected.
+ */
+function isVGCTowersNPCResident(character, locationMap) {
+  if (!character || !locationMap) return false;
+  if (!NPC_SLEEP_TYPES.has(character.character_type)) return false;
+  const homeId = character.current_home_location_id;
+  if (!homeId) return false;
+  const homeLoc = locationMap[homeId];
+  if (!homeLoc) return false;
+  return homeLoc.name === 'VGC Towers';
+}
+
+/**
+ * computeAdaptiveSleepWindow
+ *
+ * @param {object} character
+ * @param {Date}   etTime     — current ET time
+ * @param {object} [locationMap] — optional { [locationId]: LocationReference }
+ *   When provided, enables VGC Towers residency detection so residents use
+ *   'vgc_resident_schedule' (2:30–8:30 AM) instead of 'npc_forced_default' (0:00–8:00 AM).
+ */
+function computeAdaptiveSleepWindow(character, etTime, locationMap) {
   const SLEEP_DURATION_MIN = 7 * 60;  // 7 hours
   const PRE_SHIFT_BUFFER   = 60;       // 1h prep before shift (used for wake time of day workers)
   const DECOMPRESSION_MIN  = 60;       // 1h wind-down after overnight shift
@@ -35,8 +64,23 @@ function computeAdaptiveSleepWindow(character, etTime) {
     if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, source: 'stored_schedule' };
   }
 
-  // PRIORITY 2 (NPC types): forced default 00:00–08:00 ET
+  // PRIORITY 2 (NPC types): VGC Towers residents use a dedicated window; generic NPCs use fallback.
+  //
+  //   VGC Towers residents → 2:30 AM–8:30 AM ('vgc_resident_schedule')
+  //     Residents return home at ~1 AM, need wind-down, sleep 2:30, wake 8:30.
+  //     DEPARTURE travel block fires at 10 AM — fully clear of sleep window by then.
+  //
+  //   Generic NPCs (non-VGC-resident) → 0:00 AM–8:00 AM ('npc_forced_default')
+  //     Unchanged behavior for background world NPCs.
+  //
   if (NPC_SLEEP_TYPES.has(character.character_type)) {
+    if (isVGCTowersNPCResident(character, locationMap)) {
+      return {
+        sleepStartMin: VGC_RESIDENT_SLEEP_START_MIN,
+        wakeMin: VGC_RESIDENT_WAKE_TIME_MIN,
+        source: 'vgc_resident_schedule',
+      };
+    }
     return { sleepStartMin: 0, wakeMin: 8 * 60, source: 'npc_forced_default' };
   }
 
@@ -117,8 +161,8 @@ function computeAdaptiveSleepWindow(character, etTime) {
   return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, source: 'no_structured_timing' };
 }
 
-function isScheduledSleeping(character, etTime) {
-  const window = computeAdaptiveSleepWindow(character, etTime);
+function isScheduledSleeping(character, etTime, locationMap) {
+  const window = computeAdaptiveSleepWindow(character, etTime, locationMap);
   if (!window) return false;
   const now = etTime.getHours() * 60 + etTime.getMinutes();
   const { sleepStartMin, wakeMin } = window;
@@ -126,7 +170,19 @@ function isScheduledSleeping(character, etTime) {
   return now >= sleepStartMin && now < wakeMin;
 }
 
-export function getCharacterSleepState(character) {
+/**
+ * getCharacterSleepState
+ *
+ * @param {object} character
+ * @param {object} [locationMap] — optional { [locationId]: LocationReference }
+ *   When provided, enables VGC Towers residency detection so NPC residents of
+ *   VGC Towers use the correct 2:30 AM–8:30 AM sleep window rather than the
+ *   generic 0:00–8:00 AM npc_forced_default window.
+ *   Callers with location map access (Travel page, CharacterCard, etc.) should pass it.
+ *   Callers without location data may omit it — VGC residents safely fall through to
+ *   npc_forced_default (conservative, never causes false-awake state).
+ */
+export function getCharacterSleepState(character, locationMap) {
   if (!character) {
     return {
       isSleeping: false,
@@ -245,9 +301,9 @@ export function getCharacterSleepState(character) {
         // source Travel page uses. A character whose sleep_start_time/wake_up_time puts them
         // in the sleep window IS asleep, regardless of what the DB resolved_presence_status says.
         if (!hasAwakeOverride) {
-          const scheduleAsleep = isScheduledSleeping(character, nowET);
+          const scheduleAsleep = isScheduledSleeping(character, nowET, locationMap);
           if (scheduleAsleep) {
-            const window = computeAdaptiveSleepWindow(character, nowET);
+            const window = computeAdaptiveSleepWindow(character, nowET, locationMap);
             const wakeMin = window?.wakeMin ?? null;
             const wakeHour = wakeMin !== null ? Math.floor(wakeMin / 60) : null;
             const wakeMinPart = wakeMin !== null ? wakeMin % 60 : null;
@@ -278,7 +334,7 @@ export function getCharacterSleepState(character) {
         // no explicit fields). This prevents characters with no schedule from appearing
         // fully awake at 3 AM when their energy is critically low.
         if (!hasAwakeOverride) {
-          const window = computeAdaptiveSleepWindow(character, nowET);
+          const window = computeAdaptiveSleepWindow(character, nowET, locationMap);
           if (window?.source === 'no_structured_timing') {
             const energyCritical = character.energy_value !== undefined && character.energy_value < 20;
             if (energyCritical) {
@@ -315,9 +371,11 @@ export function getCharacterSleepState(character) {
         };
       } else {
         // NPC / FAMILY / UNTYPED: schedule-window override is appropriate for these character types.
-        const scheduleAsleep = isScheduledSleeping(character, nowET);
+        // locationMap is passed so VGC Towers residents get 'vgc_resident_schedule' (2:30–8:30 AM)
+        // instead of 'npc_forced_default' (0:00–8:00 AM).
+        const scheduleAsleep = isScheduledSleeping(character, nowET, locationMap);
         if (scheduleAsleep) {
-          const window = computeAdaptiveSleepWindow(character, nowET);
+          const window = computeAdaptiveSleepWindow(character, nowET, locationMap);
           const wakeMin = window?.wakeMin ?? null;
           const wakeHour = wakeMin !== null ? Math.floor(wakeMin / 60) : null;
           const wakeMinPart = wakeMin !== null ? wakeMin % 60 : null;
@@ -360,7 +418,7 @@ export function getCharacterSleepState(character) {
   }
 
   // ── SLEEPING: Check if within scheduled window ───────────────────────────────
-  const scheduledAsleep = isScheduledSleeping(character, nowET);
+  const scheduledAsleep = isScheduledSleeping(character, nowET, locationMap);
   if (scheduledAsleep) {
     return {
       isSleeping: true,
@@ -441,7 +499,7 @@ export function getCharacterSleepState(character) {
     diagnosticClues: {
       db_status: status,
       db_reason: reason,
-      scheduled_window: isScheduledSleeping(character, nowET),
+      scheduled_window: isScheduledSleeping(character, nowET, locationMap),
       minutes_past_wake: minutesPastWake,
       energy: character.energy_value ?? 75,
       health: character.health_value ?? 100,

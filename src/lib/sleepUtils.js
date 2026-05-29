@@ -178,22 +178,62 @@ export function isNPCCharacterType(character) {
 }
 
 /**
+ * Returns true if this character is an NPC resident of VGC Towers.
+ *
+ * RESIDENCY PROOF:
+ *   character.current_home_location_id must point to a LocationReference whose
+ *   name === 'VGC Towers'. This is the sole canonical residency source.
+ *   No name matching on characters. No created_by. No heuristics.
+ *
+ * locationMap: { [locationId]: LocationReference } — must include VGC Towers entry.
+ * Returns false when locationMap is not provided (safe fallback → generic NPC path).
+ *
+ * VGC Towers NPC residents are routed to the dedicated resident sleep window
+ * (2:30 AM → 8:30 AM) instead of the generic npc_forced_default (0:00 → 8:00).
+ * This keeps them available for the VGC Towers Travel system which sends residents
+ * out into the world starting at 10 AM (DEPARTURE block).
+ *
+ * APPLIES ONLY to NPC-type characters. active_created_character is never affected.
+ */
+export function isVGCTowersNPCResident(character, locationMap) {
+  if (!character || !locationMap) return false;
+  if (!isNPCCharacterType(character)) return false;
+  const homeId = character.current_home_location_id;
+  if (!homeId) return false;
+  const homeLoc = locationMap[homeId];
+  if (!homeLoc) return false;
+  return homeLoc.name === 'VGC Towers';
+}
+
+// VGC Towers resident sleep window (ET minutes-since-midnight)
+//   Residents return home ~2:00 AM via returnVGCResidentsHome automation
+//   Sleep begins ~2:30 AM (30-min wind-down after return)
+//   Wake time   ~8:30 AM
+//   Morning DEPARTURE travel block fires at 10:00 AM — fully clear of sleep by then
+export const VGC_RESIDENT_SLEEP_START_MIN = 2 * 60 + 30;  // 150 min (2:30 AM)
+export const VGC_RESIDENT_WAKE_TIME_MIN   = 8 * 60 + 30;  // 510 min (8:30 AM)
+
+/**
  * Computes the sleep window for a character.
  * Schedule-based only. No debt.
  *
  * ONE TRUTH RULE: This is the single canonical sleep-window resolver.
  *
  * SOURCE LABELS (returned as `source` field):
- *   'stored_schedule'    — explicit sleep_start_time + wake_up_time on the record
- *   'npc_forced_default' — NPC forced 00:00–08:00 window
- *   'overnight_work'     — derived from overnight work shift connected to a selected work day
- *   'work_schedule'      — derived from day shift; today or tomorrow is a selected work day
- *   'school_enrollment'  — derived from enrollment override start time
- *   'school_hours'       — documented fallback (08:00) when enrollment has no override time
- *   'no_structured_timing'— no explicit schedule, no work, no school of any kind
+ *   'stored_schedule'        — explicit sleep_start_time + wake_up_time on the record
+ *   'vgc_resident_schedule'  — VGC Towers NPC resident window 02:30–08:30 AM
+ *   'npc_forced_default'     — generic NPC fallback 00:00–08:00 (non-VGC-resident NPCs only)
+ *   'overnight_work'         — derived from overnight work shift connected to a selected work day
+ *   'work_schedule'          — derived from day shift; today or tomorrow is a selected work day
+ *   'school_enrollment'      — derived from enrollment override start time
+ *   'school_hours'           — documented fallback (08:00) when enrollment has no override time
+ *   'no_structured_timing'   — no explicit schedule, no work, no school of any kind
  *
  * KEY RULES:
- *   - Work-derived sleep applies ONLY on selected work days (and overnight adjacency).
+ *   - VGC Towers NPC residents use 'vgc_resident_schedule', NOT 'npc_forced_default'.
+ *     Residency is proven by character.current_home_location_id → location.name === 'VGC Towers'.
+ *   - Non-VGC NPC types still use 'npc_forced_default' (00:00–08:00). Unchanged.
+ *   - Work-derived sleep applies ONLY on selected work days (and adjacent overnight logic).
  *   - Non-selected work days are not "no schedule" — but they are also not work days.
  *     Saturday for a Mon–Fri worker is simply not a work day. Do not invent timing for it.
  *   - The one overnight exception: if yesterday was a selected work day and the overnight
@@ -202,8 +242,13 @@ export function isNPCCharacterType(character) {
  *   - Midnight (00:00) as a sleep start is arithmetic: 07:00 wake - 7h = 00:00.
  *   - Wake time is ALWAYS: sleepStart + SLEEP_DURATION. Never shiftStart - prepBuffer.
  *     Those are separate concepts (sleepWakeTime vs nextShiftPrepTime vs nextShiftStartTime).
+ *
+ * @param {object} character
+ * @param {object} [locationMap] — optional { [locationId]: LocationReference }
+ *   When provided, used to identify VGC Towers residency. When absent, VGC residents
+ *   fall through to npc_forced_default (safe, conservative fallback).
  */
-function computeAdaptiveSleepWindow(character) {
+function computeAdaptiveSleepWindow(character, locationMap) {
   const SLEEP_DURATION_MIN = 7 * 60;  // 7 hours
   const PRE_SHIFT_BUFFER   = 60;       // 1h prep before shift (determines wake time for day workers)
   const DECOMPRESSION_MIN  = 60;       // 1h wind-down after overnight shift
@@ -216,8 +261,25 @@ function computeAdaptiveSleepWindow(character) {
     if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, source: 'stored_schedule' };
   }
 
-  // PRIORITY 2 (NPC types only): forced default window 00:00–08:00 ET
+  // PRIORITY 2 (NPC types): Separate VGC Towers residents from generic NPCs.
+  //
+  //   VGC Towers NPC residents → 'vgc_resident_schedule' (2:30 AM–8:30 AM)
+  //   All other NPC types     → 'npc_forced_default'    (0:00 AM–8:00 AM)
+  //
+  // VGC residents participate in forced world travel (DEPARTURE block at 10 AM).
+  // The generic 0:00–8:00 window is acceptable for background NPCs, but for VGC
+  // residents it would suppress travel availability in ways inconsistent with the
+  // VGC Travel system design: residents return home at ~1 AM, need wind-down time,
+  // then sleep 2:30–8:30, fully awake and eligible for 10 AM departure.
   if (isNPCCharacterType(character)) {
+    if (isVGCTowersNPCResident(character, locationMap)) {
+      return {
+        sleepStartMin: VGC_RESIDENT_SLEEP_START_MIN,
+        wakeMin: VGC_RESIDENT_WAKE_TIME_MIN,
+        source: 'vgc_resident_schedule',
+      };
+    }
+    // Generic NPC (non-VGC-resident) — unchanged behavior
     return { sleepStartMin: 0, wakeMin: 8 * 60, source: 'npc_forced_default' };
   }
 
@@ -238,14 +300,6 @@ function computeAdaptiveSleepWindow(character) {
       const isOvernightShift = endMin < startMin;
 
       if (isOvernightShift) {
-        // Overnight shift (e.g. Mon–Fri 22:00–02:00):
-        //   sleepStart = shiftEnd + decompression  e.g. 02:00 + 1h = 03:00
-        //   sleepWake  = sleepStart + 7h            e.g. 03:00 + 7h = 10:00
-        // Applies ONLY when an overnight shift actually connects to today:
-        //   - yesterday is a selected work day (shift started last night, ends this morning)
-        //   - today is a selected work day (shift starts tonight)
-        // If neither is true, this is a genuine non-work day with no overnight connection.
-        // Do NOT apply overnight work sleep on unrelated non-work days.
         const workedLastNight = character.work_days.includes(yesterday);
         const worksTonight    = character.work_days.includes(today);
         if (workedLastNight || worksTonight) {
@@ -253,16 +307,7 @@ function computeAdaptiveSleepWindow(character) {
           const wakeMin       = (sleepStartMin + SLEEP_DURATION_MIN) % 1440;
           return { sleepStartMin, wakeMin, source: 'overnight_work' };
         }
-        // No overnight connection — fall through to school/default
       } else {
-        // Day shift (e.g. Mon–Fri 09:00–17:00):
-        //   sleepWake  = shiftStart - prepBuffer  e.g. 09:00 - 1h = 08:00
-        //   sleepStart = sleepWake - 7h            e.g. 08:00 - 7h = 01:00
-        // Applies ONLY when there is an actual upcoming or current work day:
-        //   - today is a selected work day
-        //   - tomorrow is a selected work day (sleep tonight for tomorrow's shift)
-        // Saturday and Sunday are simply not work days for Mon–Fri workers.
-        // Sunday night qualifies if tomorrow (Monday) is a work day.
         const worksToday    = character.work_days.includes(today);
         const worksTomorrow = character.work_days.includes(tomorrow);
         if (worksToday || worksTomorrow) {
@@ -270,22 +315,12 @@ function computeAdaptiveSleepWindow(character) {
           const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
           return { sleepStartMin, wakeMin, source: 'work_schedule' };
         }
-        // Non-work day with no adjacent work day tomorrow — fall through to school or explicit schedule.
-        // IMPORTANT: This is NOT "no_structured_timing". The character has structure (work schedule exists),
-        // but work is inactive today. The character remains autonomous unless another real obligation,
-        // explicit sleep setting, active commitment, school schedule, or needs/wants logic determines behavior.
       }
     }
   }
 
   // PRIORITY 4: School-enrolled character (no work schedule).
-  // Resolution order:
-  //   1. Character enrollment override times (character-specific)
-  //   2. School location operating hours (passed in via schoolLocationHours param if available)
-  //   3. Documented fallback: school starts 08:00 → wake 07:00 → sleep 00:00 (arithmetic)
-  // Note: 00:00 sleep start = 07:00 wake - 7h. This is math, not a midnight assumption.
   if (character.student_status === 'enrolled' && character.education_location_id) {
-    // 4a: Enrollment schedule override (character-specific start time)
     const enrollments = character.education_enrollments;
     if (Array.isArray(enrollments) && enrollments.length > 0) {
       const active = enrollments.find(e => e.status === 'active' && e.start_time);
@@ -298,14 +333,10 @@ function computeAdaptiveSleepWindow(character) {
         }
       }
     }
-    // 4b: School location hours not accessible here (no location map in this resolver).
-    //     Callers that have location data should compute and inject enrollment override times.
-    //     Fallback: 08:00 school start → wake 07:00 → sleep 00:00.
     return { sleepStartMin: 0, wakeMin: 7 * 60, source: 'school_hours' };
   }
 
   // PRIORITY 5: No structured timing at all.
-  // Reaches here ONLY when: no explicit sleep schedule, no work assignment, no school enrollment.
   return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, source: 'no_structured_timing' };
 }
 
@@ -323,8 +354,13 @@ function computeAdaptiveSleepWindow(character) {
  *   1. decided_to_stay_up_until override → awake
  *   2. Active obligation (work shift, school, travel, confinement) → awake
  *   3. Sleep window check via computeAdaptiveSleepWindow → asleep/awake
+ *
+ * @param {object} character
+ * @param {object} [locationMap] — optional { [locationId]: LocationReference }
+ *   When provided, enables VGC Towers residency detection so residents use the
+ *   correct 2:30 AM–8:30 AM window instead of the generic 0:00–8:00 window.
  */
-export function isCharacterAsleep(character) {
+export function isCharacterAsleep(character, locationMap) {
   if (!character) return false;
 
   // Guard 1: explicit stay-up override
@@ -356,7 +392,6 @@ export function isCharacterAsleep(character) {
   if (character.student_status === 'enrolled' && character.education_location_id) {
     const weekday = [1, 2, 3, 4, 5].includes(dayOfWeek);
     if (weekday) {
-      // Use enrollment override if present, otherwise 08:00–15:00 default
       let schoolStart = 8 * 60;
       let schoolEnd   = 15 * 60;
       const enrollments = character.education_enrollments;
@@ -379,8 +414,8 @@ export function isCharacterAsleep(character) {
   // Guard 2d: confinement — jailed or house arrest characters follow facility schedule, not sleep
   if (character.is_jailed || character.house_arrest_active) return false;
 
-  // Guard 3: sleep window
-  const window = computeAdaptiveSleepWindow(character);
+  // Guard 3: sleep window — pass locationMap so VGC residents get the correct window
+  const window = computeAdaptiveSleepWindow(character, locationMap);
   if (!window) return false;
 
   const { sleepStartMin, wakeMin } = window;

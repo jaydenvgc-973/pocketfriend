@@ -15,7 +15,17 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * - 10:00 PM: WRAP_UP   — final position before 1 AM return
  * - 1:00 AM:  Handled by returnVGCResidentsHome automation
  *
- * Lockdown window: 1 AM – 10 AM (residents stay home, cooldown/rest)
+ * Rest window: 1 AM – 10 AM (residents stay home)
+ *
+ * VGC Towers NPC Resident Sleep Schedule (canonical):
+ *   Return home: ~1:00 AM (returnVGCResidentsHome automation)
+ *   Sleep begins: 2:30 AM (vgc_resident_schedule in sleepUtils.js)
+ *   Wake time:    8:30 AM
+ *   DEPARTURE:   10:00 AM (first travel block — residents fully awake and eligible)
+ *
+ * The rest window (1–10 AM) fully contains the VGC sleep window (2:30–8:30 AM).
+ * No travel movement is triggered during rest regardless of sleep state.
+ * The generic npc_forced_default (0:00–8:00) does NOT apply to VGC Towers residents.
  */
 
 // NPC character_type values that live in VGC Towers (matches Character entity schema)
@@ -133,10 +143,30 @@ Deno.serve(async (req) => {
       }
 
       // ── ELIGIBILITY: skip residents blocked by work/school/hospital ──
+      //
+      // SLEEP NOTE: 'sleeping' status is excluded from DEPARTURE because a resident
+      // with a stale 'sleeping' DB state (e.g. written by a generic NPC enforcement pass
+      // before the VGC-specific sleep window fix) should not block travel.
+      //
+      // The VGC resident sleep window is 2:30 AM–8:30 AM (vgc_resident_schedule).
+      // The DEPARTURE block fires at 10:00 AM — 90 minutes after VGC wake time.
+      // Any resident still marked 'sleeping' at 10 AM has a stale DB state and should
+      // be cleared. We add a stale-sleep override: if the hour is >= 9 (past VGC wake time
+      // of 8:30 AM) and the only block is sleeping, treat as eligible and let DEPARTURE
+      // write the correct location/presence.
+      //
+      // This is NOT a blanket override — work/school/confinement blocks are still respected.
       const BLOCKED_PRESENCE = ['at_work', 'at_school'];
+      const isVGCWakeWindowClear = hour >= 9; // 9 AM ET — safely past 8:30 AM VGC wake time
       const eligible = vgcResidents.filter(npc => {
         if (BLOCKED_PRESENCE.includes(npc.resolved_presence_status)) return false;
-        if (npc.resolved_presence_status === 'sleeping' || npc.resolved_presence_status === 'napping') return false;
+        // Confinement always blocks
+        if (npc.is_jailed || npc.house_arrest_active) return false;
+        // Sleeping/napping: block unless we are past the VGC wake window (stale sleep clear)
+        if (npc.resolved_presence_status === 'sleeping' || npc.resolved_presence_status === 'napping') {
+          if (!isVGCWakeWindowClear) return false;
+          // Post-wake-window: stale sleep — allow DEPARTURE to clear it
+        }
         if (isOnWorkSchedule(npc, nowET)) return false;
         return true;
       });
