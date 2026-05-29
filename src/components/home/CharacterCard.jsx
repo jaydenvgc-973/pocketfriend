@@ -94,17 +94,18 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     return () => clearTimeout(t);
   }, []);
 
-  const { data: financialRecords = [] } = useQuery({
+  // Returns a single record (same shape as CharacterProfile's query) so both
+  // sides store identical data under the shared queryKey and the cache is coherent.
+  const { data: financialRecord = null } = useQuery({
     queryKey: ['characterFinancial', character.id],
-    queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id }),
+    queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id })
+      .then(r => r[0] || null),
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    // refetchOnMount must be true (default) so the balance appears even on first load.
-    // queryReady gate staggers the query start to avoid N simultaneous fetches on mount.
     enabled: !!character.id && queryReady,
   });
-  const balance = financialRecords[0]?.current_balance;
+  const balance = financialRecord?.current_balance;
 
   const { data: conversations = [] } = useQuery({
     // Query conversations scoped by owner_email + character_ids.
