@@ -37,23 +37,25 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
       if (!characterId || !ownerEmail) return null;
       
       const now = new Date();
-      const cutoff24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+      const cutoff24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const movements = [];
+      const dedupeMap = new Map(); // key: "${location_id}:${Math.round(timestamp/60000)}" — dedupe by location + minute
       let audit = {
         locationHistory: 0,
         travelSession: 0,
         automaticNarrative: 0,
         recentLocationHistory: 0,
-        allSources: [],
+        totalFound: 0,
+        totalAfterDedup: 0,
       };
 
       try {
-        // Source 1: LocationHistory
+        // Source 1: LocationHistory records
         const locationHistory = await base44.entities.LocationHistory.filter(
           { character_id: characterId, owner_email: ownerEmail },
-          '-arrival_time', 50
+          '-arrival_time', 100
         ).catch(() => []);
-        const validLocHist = locationHistory.filter(r => new Date(r.arrival_time) >= new Date(cutoff24h));
+        const validLocHist = locationHistory.filter(r => new Date(r.arrival_time) >= cutoff24h);
         audit.locationHistory = validLocHist.length;
         
         validLocHist.forEach(h => {
@@ -67,40 +69,47 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
             travelSource: h.travel_source,
             travelReason: h.travel_reason,
             isCurrent: h.is_current,
+            locationId: h.location_id,
+            recordId: h.id,
             data: h,
           });
         });
 
-        // Source 2: TravelSession — all statuses (arrived, arrival_due, in_transit, preparing)
+        // Source 2: TravelSession records (all statuses with actual/estimated arrival in 24h window)
         const travelSessionsRaw = await base44.entities.TravelSession.filter(
           { character_id: characterId, owner_email: ownerEmail },
-          '-created_at', 80
+          '-updated_date', 100
         ).catch(() => []);
         const validSessions = travelSessionsRaw.filter(s => {
-          const refTime = s.actual_arrival_time || s.estimated_arrival_time || s.created_at;
-          return refTime && new Date(refTime) >= new Date(cutoff24h);
+          // Include if actual_arrival_time OR estimated_arrival_time falls in 24h window
+          const arrivalTime = s.actual_arrival_time ? new Date(s.actual_arrival_time) : null;
+          const estTime = s.estimated_arrival_time ? new Date(s.estimated_arrival_time) : null;
+          const refTime = arrivalTime || estTime;
+          return refTime && refTime >= cutoff24h;
         });
         audit.travelSession = validSessions.length;
         
         validSessions.forEach(s => {
-          const refTime = s.actual_arrival_time || s.estimated_arrival_time || s.created_at;
-          // Determine event classification
+          const arrivalTime = s.actual_arrival_time ? new Date(s.actual_arrival_time) : null;
+          const estTime = s.estimated_arrival_time ? new Date(s.estimated_arrival_time) : null;
+          const refTime = arrivalTime || estTime;
+          
+          if (!refTime) return;
+          
           let evidenceType = 'proven';
           let sourceLabel = 'TravelSession';
-          if (s.route_status === 'arrived') {
+          if (s.route_status === 'arrived' && s.actual_arrival_time) {
             sourceLabel = 'TravelSession (arrived)';
           } else if (s.route_status === 'arrival_due') {
             evidenceType = 'inferred';
-            sourceLabel = 'TravelSession (arrival stuck — write failed)';
-          } else if (s.route_status === 'in_transit') {
-            evidenceType = 'inferred';
-            sourceLabel = 'TravelSession (in transit)';
+            sourceLabel = 'TravelSession (stuck arrival)';
           } else {
             evidenceType = 'inferred';
             sourceLabel = `TravelSession (${s.route_status})`;
           }
+          
           movements.push({
-            timestamp: new Date(refTime),
+            timestamp: refTime,
             type: evidenceType,
             source: sourceLabel,
             origin: s.origin_location_name,
@@ -109,18 +118,43 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
             travelReason: s.travel_reason,
             routeStatus: s.route_status,
             arrivalPending: s.arrival_pending_character_write,
+            locationId: s.destination_location_id,
+            recordId: s.id,
             data: s,
           });
         });
 
-        // Source 3: AutomaticNarrative travel events
+        // Source 3: Character.recent_location_history array entries
+        if (character?.recent_location_history && Array.isArray(character.recent_location_history)) {
+          const validRecent = character.recent_location_history.filter(h => {
+            const arrTime = h.arrived_at ? new Date(h.arrived_at) : null;
+            return arrTime && arrTime >= cutoff24h;
+          });
+          audit.recentLocationHistory = validRecent.length;
+          
+          validRecent.forEach(h => {
+            movements.push({
+              timestamp: new Date(h.arrived_at),
+              type: 'proven',
+              source: 'Recent Location History',
+              origin: h.location_name,
+              destination: null,
+              locationId: h.location_id,
+              recordId: `recent_${h.location_id}_${h.arrived_at}`, // synthetic ID
+              reason: h.reason,
+              data: h,
+            });
+          });
+        }
+
+        // Source 4: AutomaticNarrative travel/location events
         const narratives = await base44.entities.AutomaticNarrative.filter(
           { character_id: characterId, owner_email: ownerEmail },
-          '-timestamp', 50
+          '-timestamp', 100
         ).catch(() => []);
         const travelNarratives = narratives.filter(n => {
           const isTravelEvent = ['travel_arrival', 'travel_departure', 'location_change'].includes(n.event_type);
-          return isTravelEvent && new Date(n.timestamp) >= new Date(cutoff24h);
+          return isTravelEvent && new Date(n.timestamp) >= cutoff24h;
         });
         audit.automaticNarrative = travelNarratives.length;
         
@@ -133,44 +167,50 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
             destination: null,
             eventType: n.event_type,
             narrativeText: n.narrative_text,
+            locationId: n.location_id,
+            recordId: n.id,
             data: n,
           });
         });
 
-        // Source 4: Character recent_location_history array (inferred from state changes)
-        if (character?.recent_location_history && Array.isArray(character.recent_location_history)) {
-          audit.recentLocationHistory = character.recent_location_history.length;
-        }
-
-        // Source 5: Detect inferred movement from resolved_current_location state changes
-        // This is complex — we'd need historical snapshots. For now, check if character moved since a point
-        if (character?.resolved_current_location_id && character?.last_location_update_time) {
-          const lastUpdateTime = new Date(character.last_location_update_time);
-          if (lastUpdateTime >= new Date(cutoff24h)) {
-            // Character's location has changed in the last 24h
-            // But we don't have the "from" location without historical data
-            movements.push({
-              timestamp: lastUpdateTime,
-              type: 'inferred',
-              source: 'Inferred Movement (Location State Change)',
-              origin: '(unknown origin)',
-              destination: character.resolved_current_location_name,
-              eventType: 'location_change',
-              data: null,
-            });
+        // ── DEDUPLICATION PASS ──
+        // Deduplicate by: location_id + timestamp (rounded to 1-minute buckets)
+        // Keep proven records over inferred, keep first source if same evidence type
+        audit.totalFound = movements.length;
+        
+        movements.forEach(m => {
+          // Round timestamp to nearest minute for deduplication
+          const timeBucket = Math.round(m.timestamp.getTime() / 60000);
+          const dedupeKey = `${m.locationId || m.origin}:${timeBucket}`;
+          
+          const existing = dedupeMap.get(dedupeKey);
+          if (!existing) {
+            dedupeMap.set(dedupeKey, m);
+          } else {
+            // Keep proven over inferred; keep first if same type
+            if (m.type === 'proven' && existing.type === 'inferred') {
+              dedupeMap.set(dedupeKey, m);
+            }
           }
-        }
+        });
 
-        // Sort by timestamp descending
-        movements.sort((a, b) => b.timestamp - a.timestamp);
+        // Extract deduplicated movements
+        const finalMovements = Array.from(dedupeMap.values());
+        audit.totalAfterDedup = finalMovements.length;
+
+        // Sort by timestamp descending (newest first)
+        finalMovements.sort((a, b) => b.timestamp - a.timestamp);
 
         return {
-          movements,
+          movements: finalMovements,
           audit,
+          cutoff24h: cutoff24h.toISOString(),
           currentLocation: character?.resolved_current_location_name || 'Unknown',
           currentPresenceStatus: character?.resolved_presence_status || 'Unknown',
           lastLocationUpdate: character?.last_location_update_time,
           lastArrived: character?.last_arrived_time,
+          characterId,
+          now: now.toISOString(),
         };
       } catch (error) {
         console.error('[TravelHistoryAudit] Error:', error?.message);
@@ -180,6 +220,9 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
           error: error?.message,
           currentLocation: character?.resolved_current_location_name || 'Unknown',
           currentPresenceStatus: character?.resolved_presence_status || 'Unknown',
+          cutoff24h: cutoff24h.toISOString(),
+          now: now.toISOString(),
+          characterId,
         };
       }
     },
@@ -312,19 +355,38 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
 
         {/* Diagnostics Section */}
         {showDiagnostics && (
-          <div className="bg-muted/30 rounded-lg p-3 space-y-2 text-[10px]">
+          <div className="bg-muted/30 rounded-lg p-3 space-y-3 text-[10px]">
             <div>
-              <span className="font-semibold text-muted-foreground">Movement records found:</span>
-              <div className="mt-1 space-y-1 text-muted-foreground">
-                <div>LocationHistory: {audit.locationHistory}</div>
-                <div>TravelSession: {audit.travelSession}</div>
-                <div>AutomaticNarrative: {audit.automaticNarrative}</div>
-                <div>Recent Location History: {audit.recentLocationHistory}</div>
+              <span className="font-semibold text-muted-foreground">24-hour window:</span>
+              <div className="mt-1 space-y-0.5 text-muted-foreground font-mono text-[9px]">
+                <div>Now: {auditData?.now ? formatTime(new Date(auditData.now)) : '—'}</div>
+                <div>Cutoff: {auditData?.cutoff24h ? formatTime(new Date(auditData.cutoff24h)) : '—'}</div>
               </div>
             </div>
+            
+            <div>
+              <span className="font-semibold text-muted-foreground">Raw records by source:</span>
+              <div className="mt-1 space-y-0.5 text-muted-foreground">
+                <div>LocationHistory: {audit.locationHistory}</div>
+                <div>TravelSession: {audit.travelSession}</div>
+                <div>Recent Location History: {audit.recentLocationHistory}</div>
+                <div>AutomaticNarrative: {audit.automaticNarrative}</div>
+                <div className="font-semibold mt-1 pt-1 border-t border-muted">
+                  Total found: {audit.totalFound}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <span className="font-semibold text-muted-foreground">After deduplication:</span>
+              <div className="mt-1 text-muted-foreground">
+                {audit.totalAfterDedup} final rows (merged by location + timestamp)
+              </div>
+            </div>
+
             {movements.length > 0 && (
               <div>
-                <span className="font-semibold text-muted-foreground">Last transition:</span>
+                <span className="font-semibold text-muted-foreground">Most recent movement:</span>
                 <div className="mt-1 text-muted-foreground">
                   {movements[0].origin} → {movements[0].destination || movements[0].origin}
                 </div>
