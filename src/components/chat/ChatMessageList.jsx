@@ -122,7 +122,8 @@ export default function ChatMessageList({
         </div>
       )}
 
-      {messages.length > 0 && (
+      {/* ArchiveNotice is rendered inside ArchiveNotice itself only when archived messages exist */}
+      {conversationId && character && (
         <ArchiveNotice
           conversationId={conversationId}
           characterId={characterId}

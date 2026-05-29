@@ -238,9 +238,13 @@ export function useChatLoadConvo({
           console.log(`[CHAT_LOAD] Message.filter START convoId=${convoId} window=${MSG_WINDOW} t=${Date.now()}`);
           let loadedMsgs;
           try {
+            // CRITICAL: Exclude archived messages from the initial visible window.
+            // Archived messages have archived_date set — they were moved to long-term storage.
+            // The initial 200-message window should only show non-archived (live) messages.
+            // Archived messages are still stored in DB and restorable via ArchiveNotice.
             loadedMsgs = await retryAfter8s(() =>
               base44.entities.Message.filter(
-                { conversation_id: convoId },
+                { conversation_id: convoId, archived_date: { $exists: false } },
                 "-created_date",
                 MSG_WINDOW
               )
@@ -464,10 +468,10 @@ export function useChatLoadConvo({
     console.log(`[CHAT_LOAD] loadOlderMessages START cursor=${cursor} convoId=${convoId}`);
 
     try {
-      // Server-side $lt cursor — only fetches messages strictly before the cursor timestamp
-      // $lt is confirmed supported by Base44's MongoDB-compatible query layer
+      // Server-side $lt cursor — only fetches non-archived messages strictly before the cursor timestamp.
+      // Excludes archived messages (archived_date exists) — those are in long-term storage.
       const older = await base44.entities.Message.filter(
-        { conversation_id: convoId, created_date: { $lt: cursor } },
+        { conversation_id: convoId, created_date: { $lt: cursor }, archived_date: { $exists: false } },
         "-created_date",
         PAGINATION_PAGE
       );

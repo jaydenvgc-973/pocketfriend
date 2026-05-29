@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Archive, ChevronDown, ChevronUp, Brain, CheckCircle2, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
@@ -7,6 +7,25 @@ export default function ArchiveNotice({ conversationId, characterId, characterNa
   const [expanded, setExpanded] = useState(false);
   const [retrieving, setRetrieving] = useState(false);
   const [result, setResult] = useState(null); // { count, message }
+  const [hasArchived, setHasArchived] = useState(false); // only show when archived messages exist
+
+  // Check if there are actually archived messages for this conversation.
+  // This prevents the banner from appearing when there are no archived messages.
+  useEffect(() => {
+    if (!conversationId) return;
+    let cancelled = false;
+    base44.entities.Message.filter(
+      { conversation_id: conversationId, archived_date: { $exists: true } },
+      "-created_date",
+      1  // we only need to know if at least 1 exists
+    ).then(msgs => {
+      if (!cancelled) setHasArchived(msgs.length > 0);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [conversationId]);
+
+  // Don't render at all if no archived messages
+  if (!hasArchived) return null;
 
   const handleRetrieve = async () => {
     if (!conversationId || !characterId) return;
