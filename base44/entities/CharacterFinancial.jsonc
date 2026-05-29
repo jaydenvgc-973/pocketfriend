@@ -10,6 +10,10 @@
       "type": "string",
       "description": "Display name of the character"
     },
+    "owner_email": {
+      "type": "string",
+      "description": "Email of the user who owns this character. Required for all ownership-scoped queries. Written by onCharacterCreated."
+    },
     "is_npc": {
       "type": "boolean",
       "default": false,

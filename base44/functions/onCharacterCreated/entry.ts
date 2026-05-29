@@ -154,10 +154,16 @@ Deno.serve(async (req) => {
         financial = await base44.asServiceRole.entities.CharacterFinancial.create({
           character_id: character.id,
           character_name: character.name,
+          owner_email: ownerEmail || null,
           current_balance: 6000,
           total_income: 0,
           total_expenses: 0,
         });
+      } else if (!financial.owner_email && ownerEmail) {
+        // Backfill owner_email on existing records that were created without it
+        await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
+          owner_email: ownerEmail,
+        }).catch(() => {});
       }
     } catch (finErr) {
       console.error('[onCharacterCreated] Failed to ensure CharacterFinancial:', finErr.message);

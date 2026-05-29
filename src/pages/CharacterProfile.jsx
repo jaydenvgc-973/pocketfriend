@@ -217,9 +217,10 @@ export default function CharacterProfile() {
   });
 
   // Canonical financial fetch — same queryKey as CharacterCard so they share the cache.
-  // refetchOnMount must be true (default) so cold profile loads (direct URL, no homepage visit)
+  // refetchOnMount default (true) means cold profile loads (direct URL, no homepage visit)
   // always fetch the real record. staleTime=10min prevents redundant re-fetches when warm.
-  const { data: characterFinancial = null } = useQuery({
+  // Query by character_id only — owner_email is not reliably stored on existing records.
+  const { data: characterFinancial = null, isLoading: isFinancialLoading } = useQuery({
     queryKey: ['characterFinancial', characterId],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: characterId })
       .then(r => r[0] || null),
@@ -468,6 +469,7 @@ export default function CharacterProfile() {
             <CharacterFinancialSummary
               characterId={characterId}
               financial={characterFinancial}
+              isLoading={isFinancialLoading}
             />
 
             {/* Narrative Biography */}

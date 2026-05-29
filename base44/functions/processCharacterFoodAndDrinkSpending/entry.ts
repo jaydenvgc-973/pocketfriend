@@ -479,9 +479,12 @@ Deno.serve(async (req) => {
     }
     log.push(`char=${char.name} type=${char.character_type}`);
 
-    // ── GUARD 2: CharacterFinancial — owner_email + character_id scoped ───────
+    // ── GUARD 2: CharacterFinancial — query by character_id (canonical key).
+    // owner_email was historically not stored on CharacterFinancial records.
+    // Querying { owner_email, character_id } silently returns nothing for those records.
+    // character_id is the stable unique key for CharacterFinancial — use it alone.
     const finArr = await base44.asServiceRole.entities.CharacterFinancial.filter(
-      { owner_email, character_id }, null, 1
+      { character_id }, null, 1
     ).catch(() => []);
     const financial = finArr[0];
 

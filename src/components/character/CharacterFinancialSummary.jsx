@@ -5,67 +5,28 @@ import { Loader2, AlertTriangle } from 'lucide-react';
 /**
  * CharacterFinancialSummary
  *
- * DATA CONTRACT:
- * - `financial` prop: the CharacterFinancial record passed from CharacterProfile's React Query cache.
- *   The profile query now always fetches on mount (refetchOnMount=true), so this prop resolves
- *   correctly on cold profile loads (direct URL) without requiring homepage or chat to load first.
+ * SINGLE CANONICAL PATH:
+ * - Receives `financial` prop from CharacterProfile's React Query cache.
+ * - CharacterProfile uses queryKey=['characterFinancial', characterId] with
+ *   refetchOnMount=true (default) so it always fetches on cold profile loads.
+ * - This component does NOT maintain its own financial resolver.
+ *   It is a display component. The canonical financial source is CharacterProfile's query.
  *
- * IF FINANCIAL PROP IS NULL AFTER PROFILE QUERY COMPLETES:
- * - This is a system error. Every character should have a CharacterFinancial record created
- *   by onCharacterCreated at creation time.
- * - Do NOT display fake $0 values.
- * - Do NOT show "No financial record found" as if it's a normal character state.
- * - Do NOT create a new record from the UI (causes duplicates).
- * - Show a system error indicator so the failure is visible, not hidden.
- * - The fallback fetch below retries the canonical query one more time after a brief delay
- *   to cover timing races (profile mounted before query resolved).
+ * IF `financial` PROP IS NULL AFTER `isLoading` CLEARS:
+ * - This is a system error. Every character should have a CharacterFinancial record.
+ * - The record is created by onCharacterCreated at character creation time.
+ * - If null after a genuine fetch: the record is missing from the DB (system failure)
+ *   or the query failed silently. Display a visible system error — do NOT invent data.
+ *
+ * `isLoading` is passed from CharacterProfile to distinguish "still fetching"
+ * from "fetched and found nothing".
  */
-export default function CharacterFinancialSummary({ characterId, financial }) {
+export default function CharacterFinancialSummary({ characterId, financial, isLoading }) {
   const [rentIncomeSources, setRentIncomeSources] = useState([]);
-  const [resolvedFinancial, setResolvedFinancial] = useState(null);
-  const [fallbackLoading, setFallbackLoading] = useState(false);
-  const [fallbackFailed, setFallbackFailed] = useState(false);
 
-  // Sync prop → local state. Once resolved, keep it (prop may go null on re-render).
+  // Secondary: rent income from FinancialTransaction — only after real financial data is present.
   useEffect(() => {
-    if (financial) {
-      setResolvedFinancial(financial);
-      setFallbackFailed(false);
-    }
-  }, [financial]);
-
-  // FALLBACK: if prop is still null after prop settles, do one direct fetch.
-  // This covers timing races where the profile query resolves after the first render
-  // but the prop hasn't propagated yet. Uses the same canonical query as CharacterCard.
-  useEffect(() => {
-    if (!characterId || resolvedFinancial || fallbackLoading || fallbackFailed) return;
-    // Only run if the prop is still null — wait briefly to let React Query propagate first.
-    const timer = setTimeout(async () => {
-      setFallbackLoading(true);
-      try {
-        const records = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
-        if (records[0]) {
-          setResolvedFinancial(records[0]);
-        } else {
-          // Record truly missing — this is a system error, not a character state.
-          // Log visibly so it can be diagnosed and repaired.
-          console.error(`[CharacterFinancialSummary] SYSTEM ERROR: No CharacterFinancial record found for character_id=${characterId}. Every character should have a record created by onCharacterCreated. The financial system is broken for this character.`);
-          setFallbackFailed(true);
-        }
-      } catch (err) {
-        console.error(`[CharacterFinancialSummary] Fallback fetch failed for character_id=${characterId}:`, err?.message);
-        setFallbackFailed(true);
-      } finally {
-        setFallbackLoading(false);
-      }
-    }, 1200); // brief delay — let React Query propagate prop first
-
-    return () => clearTimeout(timer);
-  }, [characterId, resolvedFinancial, fallbackLoading, fallbackFailed]);
-
-  // Secondary: rent income — only after real financial data is present.
-  useEffect(() => {
-    if (!characterId || !resolvedFinancial) return;
+    if (!characterId || !financial) return;
     let cancelled = false;
 
     const rentTimer = setTimeout(async () => {
@@ -99,10 +60,10 @@ export default function CharacterFinancialSummary({ characterId, financial }) {
       cancelled = true;
       clearTimeout(rentTimer);
     };
-  }, [characterId, resolvedFinancial]);
+  }, [characterId, financial]);
 
-  // ── LOADING ─────────────────────────────────────────────────────────────────
-  if (!resolvedFinancial && (fallbackLoading || (!fallbackFailed && !financial))) {
+  // ── LOADING: profile financial query still in flight ────────────────────────
+  if (isLoading) {
     return (
       <div className="bg-muted/30 border border-border rounded-xl p-3 flex items-center gap-2 text-xs text-muted-foreground">
         <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
@@ -111,20 +72,21 @@ export default function CharacterFinancialSummary({ characterId, financial }) {
     );
   }
 
-  // ── SYSTEM ERROR: record missing — visible failure, not hidden ───────────────
-  // If we reach here with no resolved record, the financial system is broken for this character.
-  // Show a visible error — do not hide it, do not show $0, do not show empty space.
-  if (!resolvedFinancial) {
+  // ── SYSTEM ERROR: record missing after genuine fetch ─────────────────────────
+  // If financial is null and we are not loading, the CharacterFinancial record is absent.
+  // This is a system error — every character should have one from onCharacterCreated.
+  // Fail visibly. Do not show $0. Do not hide the failure.
+  if (!financial) {
     return (
       <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-center gap-2 text-xs text-amber-400">
         <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-        Financial data unavailable — system error. Balance could not be loaded.
+        Financial data unavailable — system error. Run backfillCharacterFinancialOwnerEmail to repair.
       </div>
     );
   }
 
   // ── REAL DATA PATH ──────────────────────────────────────────────────────────
-  const fin = resolvedFinancial;
+  const fin = financial;
   const monthlyExpenses = (fin.recurring_expenses || []).reduce((sum, e) => sum + (e.monthly_cost || 0), 0);
   const jobMonthlyIncome = (fin.income_sources || []).reduce((sum, s) => {
     if (s.pay_type === 'hourly') {
@@ -140,7 +102,7 @@ export default function CharacterFinancialSummary({ characterId, financial }) {
 
   return (
     <div className="space-y-2">
-      {/* Row 1: Current Balance — real value from canonical CharacterFinancial record */}
+      {/* Current Balance — real value from canonical CharacterFinancial record */}
       <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-3">
         <p className="text-[10px] text-green-400 uppercase font-semibold tracking-wider">Current Balance</p>
         <p className="text-2xl font-bold text-green-300 mt-0.5">
@@ -152,7 +114,7 @@ export default function CharacterFinancialSummary({ characterId, financial }) {
           </p>
         )}
       </div>
-      {/* Row 2: Total Earned, Total Spent */}
+      {/* Total Earned / Total Spent */}
       <div className="grid grid-cols-2 gap-2">
         <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-2.5">
           <p className="text-[10px] text-blue-400 uppercase font-semibold tracking-wider">Total Earned</p>
