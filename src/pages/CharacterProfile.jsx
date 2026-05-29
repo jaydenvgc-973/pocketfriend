@@ -135,19 +135,22 @@ export default function CharacterProfile() {
   // This signals background systems (archive, simulations, narratives) to yield.
   useEffect(() => {
     const release = registerForegroundTask(FOREGROUND_TASKS.PROFILE_LOAD, 'high');
-    const timer = setTimeout(release, 12000);
+    // Hold foreground priority for up to 8s — covers the full character + financial load.
+    // Released automatically when character resolves (see clearTimeout below).
+    const timer = setTimeout(release, 8000);
     return () => {
       clearTimeout(timer);
       release();
     };
   }, [characterId]);
 
-  // Escape-hatch timer: if the character query hasn't resolved in 12s (e.g. 429 storm),
+  // Escape-hatch timer: if the character query hasn't resolved in 5s (e.g. 429 storm),
   // break out of the infinite spinner and show a retry button instead.
+  // 5s is the safety net — a valid cached character should render in <1s.
   useEffect(() => {
     setLoadTimedOut(false);
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => setLoadTimedOut(true), 12000);
+    timeoutRef.current = setTimeout(() => setLoadTimedOut(true), 5000);
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, [characterId]);
 
@@ -162,8 +165,9 @@ export default function CharacterProfile() {
   });
 
   const { data: character, isLoading, isError, refetch } = useQuery({
-    // Simple key — runs as soon as characterId is available.
-    // RLS enforces ownership server-side. No currentUser gate needed here.
+    // Simple key — matches what Home's CharacterCard subscription patches.
+    // When navigating from Home → Profile, the cache already has this record
+    // and isLoading=false immediately — no spinner shown.
     queryKey: ["character", characterId],
     queryFn: async () => {
       const chars = await base44.entities.Character.filter({ id: characterId });
@@ -174,8 +178,10 @@ export default function CharacterProfile() {
       return null;
     },
     enabled: !!characterId,
-    staleTime: 0,
-    // Retry up to 3 times with exponential backoff — handles transient 429s.
+    // 60s staleTime: serve cached data (from Home's subscription patches) immediately,
+    // then revalidate silently in background. This is the fast path for Home→Profile.
+    staleTime: 60 * 1000,
+    // Retry with backoff for cold/direct URL loads that hit 429s.
     retry: 3,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
   });
@@ -369,8 +375,9 @@ export default function CharacterProfile() {
     }
   };
 
-  // Clear the timeout guard once the character query settles (success or null).
-  // This prevents the timeout from firing after a fast successful load.
+  // Clear the escape-hatch timeout the moment the character query settles.
+  // Fast path: if character is already in React Query cache (navigated from Home/Chat),
+  // this fires immediately — no spinner at all, no timeout needed.
   useEffect(() => {
     if (character !== undefined || isError) {
       setLoadTimedOut(false);
