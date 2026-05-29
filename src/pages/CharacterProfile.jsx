@@ -150,39 +150,21 @@ export default function CharacterProfile() {
   });
 
   const { data: character, isLoading, refetch } = useQuery({
-    // Key includes currentUser.email so query re-runs once user resolves.
-    queryKey: ["character", characterId, currentUser?.email || ""],
+    // Simple key — runs as soon as characterId is available.
+    // RLS enforces ownership server-side. No currentUser gate needed here.
+    queryKey: ["character", characterId],
     queryFn: async () => {
-      // PRIMARY: filter by id — RLS enforces ownership server-side.
       const chars = await base44.entities.Character.filter({ id: characterId });
       if (chars[0]) {
         const { system_prompt, ...char } = chars[0];
         return char;
       }
-
-      // SECONDARY: owner_email + id fallback for legacy characters.
-      if (currentUser?.email) {
-        const byOwner = await base44.entities.Character.filter({
-          owner_email: currentUser.email,
-          id: characterId,
-        }).catch(() => []);
-        if (byOwner[0]) {
-          const { system_prompt, ...char } = byOwner[0];
-          return char;
-        }
-      }
-
       return null;
     },
-    // Wait for currentUser to resolve before running — prevents "Character Not Found"
-    // flash on direct URL loads where currentUser arrives asynchronously.
-    enabled: !!characterId && currentUser !== null,
+    enabled: !!characterId,
     staleTime: 0,
+    retry: 2,
   });
-
-  // No longer needed — query key includes currentUser.email so React Query
-  // automatically re-runs when user resolves. Kept as no-op for safety.
-  const prevUserEmailRef = useRef(null);
 
   const { data: allCharacters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email || ""],
@@ -207,19 +189,15 @@ export default function CharacterProfile() {
     staleTime: 180000,
   });
 
-  // Canonical financial fetch — same queryKey as CharacterCard so they share the cache.
-  // character_id is the authoritative filter — owner_email is null on most existing records
-  // and cannot be used as a filter. refetchOnMount:true guarantees fresh data on profile open.
+  // Canonical financial fetch — same queryKey and shape as CharacterCard.
+  // Runs as soon as characterId is available. character_id is the authoritative filter.
   const { data: characterFinancial = null, isLoading: isFinancialLoading } = useQuery({
     queryKey: ['characterFinancial', characterId],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: characterId })
       .then(r => r[0] || null),
-    // Gate on currentUser like the character query — prevents an unauthenticated fetch
-    // from caching an empty result and blocking the real fetch behind staleTime.
-    enabled: !!characterId && currentUser !== null,
+    enabled: !!characterId,
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
-    refetchOnMount: true,
   });
 
   const { data: workLocations = [] } = useQuery({
@@ -377,12 +355,9 @@ export default function CharacterProfile() {
     }
   };
 
-  // Show spinner in ALL cases where the character is not yet confirmed present or absent:
-  // 1. currentUser is null — auth not resolved, query hasn't started yet
-  // 2. isLoading — query is in flight
-  // 3. currentUser resolved but character is still undefined (query ran, result pending)
-  // Never show "Character Not Found" while auth is still resolving.
-  if (currentUser === null || isLoading || (currentUser !== null && !isLoading && character === undefined)) {
+  // Show spinner while the character query is in flight.
+  // character===undefined means query hasn't settled yet (disabled or in-flight).
+  if (isLoading || character === undefined) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
