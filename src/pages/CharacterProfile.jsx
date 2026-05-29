@@ -377,8 +377,12 @@ export default function CharacterProfile() {
     }
   };
 
-  // Show spinner while user or character is loading — do NOT flash "Not Found" prematurely.
-  if (isLoading || currentUser === null) {
+  // Show spinner in ALL cases where the character is not yet confirmed present or absent:
+  // 1. currentUser is null — auth not resolved, query hasn't started yet
+  // 2. isLoading — query is in flight
+  // 3. currentUser resolved but character is still undefined (query ran, result pending)
+  // Never show "Character Not Found" while auth is still resolving.
+  if (currentUser === null || isLoading || (currentUser !== null && !isLoading && character === undefined)) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
@@ -457,9 +461,7 @@ export default function CharacterProfile() {
               </div>
             </div>
 
-            {/* Financial Summary — passes pre-fetched data from React Query cache.
-                No internal fetch needed. Data is available as soon as the profile loads.
-                characterFinancial may be null for legacy/new characters — component handles safely. */}
+            {/* Financial Summary — passes pre-fetched data from React Query cache. */}
             <CharacterFinancialSummary
               characterId={characterId}
               financial={characterFinancial}
