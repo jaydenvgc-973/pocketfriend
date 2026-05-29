@@ -1,29 +1,84 @@
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { Loader2 } from 'lucide-react';
 
 /**
  * CharacterFinancialSummary
  *
- * PRIMARY: receives `financial` prop directly from CharacterProfile's React Query cache.
- * This means financial data is available immediately on profile open — no second fetch,
- * no delay, no silent failure path.
+ * DATA CONTRACT:
+ * - `financial` prop: the CharacterFinancial record from CharacterProfile's React Query cache.
+ *   This is the REAL record — not a default. If null, the record does not exist yet.
  *
- * SECONDARY: fetches rent income transactions independently (does not block rendering).
+ * WHEN FINANCIAL IS NULL (record missing — legacy or new character):
+ * - Do NOT display fake $0.00 values. $0 is NOT a valid default — it is false financial data.
+ * - Instead: call initializeCharacterFinancials to create the canonical record via the
+ *   financial system, then re-fetch and display the real result.
+ * - While initializing: show a loading state. Never invent values.
  *
- * If `financial` prop is null (CharacterFinancial record doesn't exist yet for this
- * character), the component renders a minimal balance display using safe defaults,
- * because CharacterFinancial records are created on-demand and may not exist for
- * legacy or newly-created characters.
+ * SECONDARY: rent income transactions fetched independently after primary data is visible.
  */
-export default function CharacterFinancialSummary({ characterId, financial }) {
+export default function CharacterFinancialSummary({ characterId, character, financial, onFinancialCreated }) {
   const [rentIncomeSources, setRentIncomeSources] = useState([]);
+  const [initializing, setInitializing] = useState(false);
+  const [resolvedFinancial, setResolvedFinancial] = useState(null);
 
+  // When financial prop arrives (real record), sync it into local state.
+  // When financial prop is null after a creation cycle, keep resolvedFinancial.
   useEffect(() => {
-    if (!characterId) return;
+    if (financial) {
+      setResolvedFinancial(financial);
+    }
+  }, [financial]);
+
+  // If no record exists: create it canonically, then re-fetch the real record.
+  useEffect(() => {
+    if (!characterId || financial || resolvedFinancial || initializing) return;
+    if (!character?.name) return; // need character name for the canonical record
+
+    let cancelled = false;
+    setInitializing(true);
+
+    const init = async () => {
+      try {
+        // Step 1: Create the canonical CharacterFinancial record via the financial system.
+        // This sets the real starting balance ($6,000) and proper ownership.
+        await base44.functions.invoke('initializeCharacterFinancials', {
+          characterId,
+          characterName: character.name,
+          isNpc: character.character_type !== 'active_created_character',
+          homeLocationId: character.current_home_location_id || null,
+          homeLocationName: character.resolved_current_location_name || null,
+        });
+
+        if (cancelled) return;
+
+        // Step 2: Re-fetch the now-created record using owner_email (canonical ownership field).
+        // Never use created_by. Use character_id as the scoping key.
+        await new Promise(r => setTimeout(r, 600)); // allow write to propagate
+        const records = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
+        if (cancelled) return;
+
+        if (records[0]) {
+          setResolvedFinancial(records[0]);
+          onFinancialCreated?.(records[0]);
+        }
+      } catch (_) {
+        // Initialization failed — show visible failure state, not fake data.
+        // resolvedFinancial stays null, which renders the "needs setup" message below.
+      } finally {
+        if (!cancelled) setInitializing(false);
+      }
+    };
+
+    init();
+    return () => { cancelled = true; };
+  }, [characterId, financial, resolvedFinancial, initializing, character]);
+
+  // Secondary: rent income — only after real financial data is present.
+  useEffect(() => {
+    if (!characterId || !resolvedFinancial) return;
     let cancelled = false;
 
-    // Secondary query: rent income — fires after financial data is already visible.
-    // Never blocks or delays the primary financial display.
     const rentTimer = setTimeout(async () => {
       try {
         const fortyFiveDaysAgo = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
@@ -48,22 +103,40 @@ export default function CharacterFinancialSummary({ characterId, financial }) {
           monthly_amount: Math.round((loc.total / Math.max(loc.count, 1)) * 100) / 100,
         }));
         if (!cancelled) setRentIncomeSources(rentSources);
-      } catch (_) {
-        // Non-blocking — rent income is supplemental, never blocks financial header
-      }
+      } catch (_) {}
     }, 3000);
 
     return () => {
       cancelled = true;
       clearTimeout(rentTimer);
     };
-  }, [characterId]);
+  }, [characterId, resolvedFinancial]);
 
-  // Safe defaults when CharacterFinancial record doesn't exist yet (legacy/new character)
-  const fin = financial || { current_balance: 0, total_income: 0, total_expenses: 0, recurring_expenses: [], income_sources: [] };
+  // ── LOADING: initializing the canonical record ──────────────────────────────
+  if (initializing) {
+    return (
+      <div className="bg-muted/30 border border-border rounded-xl p-3 flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+        Setting up financial profile…
+      </div>
+    );
+  }
 
+  // ── NO RECORD AND NOT INITIALIZING: fail visibly, never show fake $0 ─────────
+  // This branch means: character exists but no financial record was found and
+  // initialization either hasn't started yet or failed after the character name
+  // was unavailable. Show a visible diagnostic state, not invented values.
+  if (!resolvedFinancial) {
+    return (
+      <div className="bg-muted/30 border border-border rounded-xl p-3 text-xs text-muted-foreground">
+        Financial profile loading…
+      </div>
+    );
+  }
+
+  // ── REAL DATA PATH ──────────────────────────────────────────────────────────
+  const fin = resolvedFinancial;
   const monthlyExpenses = (fin.recurring_expenses || []).reduce((sum, e) => sum + (e.monthly_cost || 0), 0);
-  // Estimate monthly job/salary income
   const jobMonthlyIncome = (fin.income_sources || []).reduce((sum, s) => {
     if (s.pay_type === 'hourly') {
       if (s.monthly_estimate) return sum + s.monthly_estimate;
@@ -73,16 +146,17 @@ export default function CharacterFinancialSummary({ characterId, financial }) {
     if (s.pay_type === 'annual') return sum + (s.pay_amount || 0) / 12;
     return sum;
   }, 0);
-  // Rent income from owned locations (separate from job income)
   const rentMonthlyIncome = rentIncomeSources.reduce((sum, s) => sum + (s.monthly_amount || 0), 0);
   const monthlyIncome = jobMonthlyIncome + rentMonthlyIncome;
 
   return (
     <div className="space-y-2">
-      {/* Row 1: Current Balance full width */}
+      {/* Row 1: Current Balance — real value from canonical CharacterFinancial record */}
       <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-3">
         <p className="text-[10px] text-green-400 uppercase font-semibold tracking-wider">Current Balance</p>
-        <p className="text-2xl font-bold text-green-300 mt-0.5">${(fin.current_balance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+        <p className="text-2xl font-bold text-green-300 mt-0.5">
+          ${(fin.current_balance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </p>
         {monthlyIncome > 0 && monthlyExpenses > 0 && (
           <p className={`text-xs mt-0.5 font-medium ${monthlyIncome >= monthlyExpenses ? 'text-green-400' : 'text-red-400'}`}>
             ${Math.round(monthlyIncome - monthlyExpenses)}/mo net {monthlyIncome >= monthlyExpenses ? '▲' : '▼'}
@@ -93,11 +167,15 @@ export default function CharacterFinancialSummary({ characterId, financial }) {
       <div className="grid grid-cols-2 gap-2">
         <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-2.5">
           <p className="text-[10px] text-blue-400 uppercase font-semibold tracking-wider">Total Earned</p>
-          <p className="text-base font-bold text-blue-300 mt-0.5">${(fin.total_income ?? 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
+          <p className="text-base font-bold text-blue-300 mt-0.5">
+            ${(fin.total_income ?? 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+          </p>
         </div>
         <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-2.5">
           <p className="text-[10px] text-red-400 uppercase font-semibold tracking-wider">Total Spent</p>
-          <p className="text-base font-bold text-red-300 mt-0.5">${(fin.total_expenses ?? 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
+          <p className="text-base font-bold text-red-300 mt-0.5">
+            ${(fin.total_expenses ?? 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+          </p>
         </div>
       </div>
     </div>

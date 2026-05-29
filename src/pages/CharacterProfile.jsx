@@ -11,6 +11,7 @@ import BottomNav from "@/components/BottomNav";
 import FamilyEditor from "@/components/character/FamilyEditor";
 import CharacterFeelingsCard from "@/components/character/CharacterFeelingsCard";
 import CharacterFinancialSummary from "@/components/character/CharacterFinancialSummary";
+import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import { EditableTextField, EditableSelectField, EditableEthnicityField, NonEditableField } from "@/components/character/ProfileFieldEditor";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
@@ -126,6 +127,18 @@ export default function CharacterProfile() {
   const [showOutfitSharer, setShowOutfitSharer] = useState(false);
   const [expandedMemory, setExpandedMemory] = useState(null);
   
+  // Register a HIGH-priority foreground task for the duration of the profile load.
+  // This signals background systems (archive, simulations, narratives) to yield.
+  useEffect(() => {
+    const release = registerForegroundTask(FOREGROUND_TASKS.PROFILE_LOAD, 'high');
+    // Hold priority for 12 seconds — covers character + financial + feelings queries.
+    const timer = setTimeout(release, 12000);
+    return () => {
+      clearTimeout(timer);
+      release();
+    };
+  }, [characterId]);
+
   const { data: character, isLoading, refetch } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
@@ -436,7 +449,12 @@ export default function CharacterProfile() {
             {/* Financial Summary — passes pre-fetched data from React Query cache.
                 No internal fetch needed. Data is available as soon as the profile loads.
                 characterFinancial may be null for legacy/new characters — component handles safely. */}
-            <CharacterFinancialSummary characterId={characterId} financial={characterFinancial} />
+            <CharacterFinancialSummary
+              characterId={characterId}
+              character={character}
+              financial={characterFinancial}
+              onFinancialCreated={(rec) => queryClient.setQueryData(['characterFinancial', characterId], rec)}
+            />
 
             {/* Narrative Biography */}
              {(character.backstory || character.background_story) && (

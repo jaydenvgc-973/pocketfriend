@@ -33,13 +33,22 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const KEEP_RECENT                = 500;   // messages to keep visible per conversation
 const ARCHIVE_THRESHOLD          = 600;   // min unarchived count before a conversation is eligible
-const RECENT_ACTIVITY_WINDOW_MS  = 45 * 60 * 1000; // 45 minutes — active session protection
+// 2-hour window: covers any active chat session including slow responders.
+// Additionally, any conversation IDs passed in activeConversationIds are ALWAYS skipped
+// regardless of their last_message_date. This is the direct foreground protection.
+const RECENT_ACTIVITY_WINDOW_MS  = 2 * 60 * 60 * 1000; // 2 hours
 const GLOBAL_TARGET_PER_RUN      = 200;  // max messages archived across ALL conversations per run
 const MAX_PER_CONVERSATION       = 25;   // hard cap per conversation per run
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
+
+    // Accept an optional list of currently-open conversation IDs from the caller.
+    // These are ALWAYS skipped — direct foreground protection, not a heuristic.
+    let body = {};
+    try { body = await req.json(); } catch (_) {}
+    const activeConversationIds = new Set(Array.isArray(body.activeConversationIds) ? body.activeConversationIds : []);
 
     // ── STEP 1: Load all conversations (sorted by updated_date desc — most recently active first)
     // We intentionally do NOT use this sort order to pick archive targets.
@@ -66,7 +75,13 @@ Deno.serve(async (req) => {
       if (convo.shared_conversation_key) continue;
       if (convo.channel === 'world_phone') continue;
 
-      // RECENT ACTIVITY GUARD
+      // DIRECT FOREGROUND PROTECTION: skip any conversation the caller identified as open.
+      if (activeConversationIds.has(convo.id)) {
+        skippedActive.push(convo.id);
+        continue;
+      }
+
+      // RECENT ACTIVITY GUARD (2-hour heuristic for conversations not explicitly listed)
       const lastMsgDate = convo.last_message_date ? new Date(convo.last_message_date).getTime() : 0;
       if (now - lastMsgDate < RECENT_ACTIVITY_WINDOW_MS) {
         skippedActive.push(convo.id);
@@ -91,23 +106,37 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // STEP B: If we hit the cap exactly, fetch the REAL total unarchived count
-      // so proportional allocation is based on accurate excess, not a capped approximation.
-      // We do this by fetching newest messages to determine total count accurately.
-      let trueUnarchivedCount = messages.length;
-      if (messages.length === ARCHIVE_THRESHOLD + 50) {
-        // Fetch from the newest end to count beyond our cap
-        const newestCheck = await base44.asServiceRole.entities.Message.filter(
-          { conversation_id: convo.id, archived_date: { $exists: false } },
-          '-created_date',  // newest first
-          500               // check up to 500 more from the top
-        ).catch(() => null);
-        if (newestCheck) {
-          // True count = at least messages.length + newestCheck.length (if no overlap)
-          // More accurately: combine both ends and deduplicate by id
-          const allIds = new Set([...messages.map(m => m.id), ...newestCheck.map(m => m.id)]);
-          trueUnarchivedCount = allIds.size;
+      // STEP B: Count the REAL total of all unarchived messages via paginated walk.
+      // Two-ended deduplication is NOT reliable for large conversations (>1150 messages).
+      // We walk newest-first in pages of 500 until exhausted, accumulating IDs into a Set.
+      // This guarantees an accurate count regardless of conversation size.
+      // The oldest-first `messages` array (from STEP A) already has our archive candidates —
+      // we only need the count from this step, not the message objects.
+      let trueUnarchivedCount = 0;
+      {
+        const seenIds = new Set();
+        let keepPaging = true;
+        let pageNum = 0;
+        const PAGE_SIZE = 500;
+        const MAX_PAGES = 20; // safety cap: 20 × 500 = 10,000 messages max counted
+
+        while (keepPaging && pageNum < MAX_PAGES) {
+          await new Promise(r => setTimeout(r, 150)); // pace paging to avoid 429
+          const filter = { conversation_id: convo.id, archived_date: { $exists: false } };
+          const page = await base44.asServiceRole.entities.Message.filter(
+            filter,
+            '-created_date', // newest first — consistent walk direction
+            PAGE_SIZE,
+            pageNum * PAGE_SIZE // offset
+          ).catch(() => null);
+
+          if (!page || page.length === 0) { keepPaging = false; break; }
+          page.forEach(m => seenIds.add(m.id));
+          if (page.length < PAGE_SIZE) { keepPaging = false; }
+          pageNum++;
         }
+
+        trueUnarchivedCount = seenIds.size;
       }
 
       const excess = trueUnarchivedCount - KEEP_RECENT;
@@ -242,7 +271,9 @@ Deno.serve(async (req) => {
         recent_activity_window_minutes: RECENT_ACTIVITY_WINDOW_MS / 60000,
         global_target_per_run: GLOBAL_TARGET_PER_RUN,
         max_per_conversation: MAX_PER_CONVERSATION,
-        distribution_method: 'proportional_to_excess_capped_at_max_per_conversation',
+        distribution_method: 'proportional_to_excess_with_paginated_true_count',
+        active_conversation_ids_provided: activeConversationIds.size,
+        count_method: 'paginated_walk_newest_first_500_per_page',
       },
     };
 
