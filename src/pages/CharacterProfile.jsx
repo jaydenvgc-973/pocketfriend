@@ -126,17 +126,29 @@ export default function CharacterProfile() {
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [showOutfitSharer, setShowOutfitSharer] = useState(false);
   const [expandedMemory, setExpandedMemory] = useState(null);
+  // Timeout guard: after 12s of spinning, escape to a retry-able error state.
+  // This prevents infinite spinner when 429s or network errors block the query.
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
+  const timeoutRef = useRef(null);
   
   // Register a HIGH-priority foreground task for the duration of the profile load.
   // This signals background systems (archive, simulations, narratives) to yield.
   useEffect(() => {
     const release = registerForegroundTask(FOREGROUND_TASKS.PROFILE_LOAD, 'high');
-    // Hold priority for 12 seconds — covers character + financial + feelings queries.
     const timer = setTimeout(release, 12000);
     return () => {
       clearTimeout(timer);
       release();
     };
+  }, [characterId]);
+
+  // Escape-hatch timer: if the character query hasn't resolved in 12s (e.g. 429 storm),
+  // break out of the infinite spinner and show a retry button instead.
+  useEffect(() => {
+    setLoadTimedOut(false);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => setLoadTimedOut(true), 12000);
+    return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, [characterId]);
 
   // currentUser MUST be declared first — the character queryFn closure captures it.
@@ -149,7 +161,7 @@ export default function CharacterProfile() {
     staleTime: 300000,
   });
 
-  const { data: character, isLoading, refetch } = useQuery({
+  const { data: character, isLoading, isError, refetch } = useQuery({
     // Simple key — runs as soon as characterId is available.
     // RLS enforces ownership server-side. No currentUser gate needed here.
     queryKey: ["character", characterId],
@@ -163,7 +175,9 @@ export default function CharacterProfile() {
     },
     enabled: !!characterId,
     staleTime: 0,
-    retry: 2,
+    // Retry up to 3 times with exponential backoff — handles transient 429s.
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
   });
 
   const { data: allCharacters = [] } = useQuery({
@@ -355,12 +369,45 @@ export default function CharacterProfile() {
     }
   };
 
-  // Show spinner while the character query is in flight.
-  // character===undefined means query hasn't settled yet (disabled or in-flight).
-  if (isLoading || character === undefined) {
+  // Clear the timeout guard once the character query settles (success or null).
+  // This prevents the timeout from firing after a fast successful load.
+  useEffect(() => {
+    if (character !== undefined || isError) {
+      setLoadTimedOut(false);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    }
+  }, [character, isError]);
+
+  // Show spinner while the character query is in flight — but escape after timeout.
+  if ((isLoading || character === undefined) && !loadTimedOut && !isError) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  // Timed out or errored — show a retry state instead of spinning forever.
+  if (isError || (loadTimedOut && character === undefined)) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
+          <Link to="/home" className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></Link>
+          <h2 className="text-sm font-semibold">Profile</h2>
+        </div>
+        <div className="flex flex-col items-center justify-center gap-4 pt-24 px-6 text-center">
+          <p className="text-sm text-muted-foreground">Could not load this profile right now. This is usually a temporary network issue.</p>
+          <button
+            onClick={() => { setLoadTimedOut(false); refetch(); }}
+            className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+          >
+            Try Again
+          </button>
+          <Link to="/home" className="text-xs text-muted-foreground underline underline-offset-2">Back to Home</Link>
+        </div>
       </div>
     );
   }
