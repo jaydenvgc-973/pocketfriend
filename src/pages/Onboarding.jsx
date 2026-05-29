@@ -274,13 +274,13 @@ Return JSON matching this schema exactly:
 
               {!isLoading && characterCheckError && (
                 <div className="flex flex-col items-center gap-3">
-                  <div className="w-full h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center gap-2">
-                    <Loader2 className="w-4 h-4 text-white/50 animate-spin" />
-                    <span className="text-white/60 text-sm">Almost ready…</span>
-                  </div>
-                  <Link to="/home" className="text-xs text-white/40 hover:text-white/70 transition-colors">
+                  <Link
+                    to="/home"
+                    className="block w-full h-12 rounded-xl bg-white text-center font-semibold text-base leading-[48px] text-gray-900 hover:bg-white/90 transition-colors shadow-lg"
+                  >
                     Go to homepage →
                   </Link>
+                  <p className="text-xs text-white/50">Having trouble loading? Tap above to continue.</p>
                 </div>
               )}
 

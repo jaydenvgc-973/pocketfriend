@@ -97,11 +97,12 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const { data: financialRecords = [] } = useQuery({
     queryKey: ['characterFinancial', character.id],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id }),
-    // Financial balance changes infrequently — 10 min stale time prevents re-fetch storms
+    // staleTime=10min prevents re-fetch storms when many cards mount simultaneously.
+    // refetchOnMount:true (default) ensures cold-load cache miss still fetches once per card,
+    // matching the profile page behavior so homepage and profile show the same balance.
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
     enabled: !!character.id && queryReady,
   });
   const balance = financialRecords[0]?.current_balance;
