@@ -1,66 +1,67 @@
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle } from 'lucide-react';
 
 /**
  * CharacterFinancialSummary
  *
  * DATA CONTRACT:
- * - `financial` prop: the CharacterFinancial record from CharacterProfile's React Query cache.
- *   This is the REAL record — not a default. If null, the record does not exist yet.
+ * - `financial` prop: the CharacterFinancial record passed from CharacterProfile's React Query cache.
+ *   The profile query now always fetches on mount (refetchOnMount=true), so this prop resolves
+ *   correctly on cold profile loads (direct URL) without requiring homepage or chat to load first.
  *
- * WHEN FINANCIAL IS NULL (record missing — legacy or new character):
- * - Do NOT display fake $0.00 values. $0 is NOT a valid default — it is false financial data.
- * - Instead: call initializeCharacterFinancials to create the canonical record via the
- *   financial system, then re-fetch and display the real result.
- * - While initializing: show a loading state. Never invent values.
- *
- * SECONDARY: rent income transactions fetched independently after primary data is visible.
+ * IF FINANCIAL PROP IS NULL AFTER PROFILE QUERY COMPLETES:
+ * - This is a system error. Every character should have a CharacterFinancial record created
+ *   by onCharacterCreated at creation time.
+ * - Do NOT display fake $0 values.
+ * - Do NOT show "No financial record found" as if it's a normal character state.
+ * - Do NOT create a new record from the UI (causes duplicates).
+ * - Show a system error indicator so the failure is visible, not hidden.
+ * - The fallback fetch below retries the canonical query one more time after a brief delay
+ *   to cover timing races (profile mounted before query resolved).
  */
 export default function CharacterFinancialSummary({ characterId, financial }) {
   const [rentIncomeSources, setRentIncomeSources] = useState([]);
-  const [initializing, setInitializing] = useState(false);
   const [resolvedFinancial, setResolvedFinancial] = useState(null);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
+  const [fallbackFailed, setFallbackFailed] = useState(false);
 
-  // When financial prop arrives (real record), sync it into local state.
-  // When financial prop is null after a creation cycle, keep resolvedFinancial.
+  // Sync prop → local state. Once resolved, keep it (prop may go null on re-render).
   useEffect(() => {
     if (financial) {
       setResolvedFinancial(financial);
+      setFallbackFailed(false);
     }
   }, [financial]);
 
-  // If no record exists in the prop: attempt a direct fetch by character_id.
-  // This covers the case where the profile loads before CharacterCard has populated
-  // the ['characterFinancial', characterId] React Query cache.
-  // Do NOT call initializeCharacterFinancials from the UI — that creates duplicate records.
+  // FALLBACK: if prop is still null after prop settles, do one direct fetch.
+  // This covers timing races where the profile query resolves after the first render
+  // but the prop hasn't propagated yet. Uses the same canonical query as CharacterCard.
   useEffect(() => {
-    if (!characterId || financial || resolvedFinancial || initializing) return;
-
-    let cancelled = false;
-    setInitializing(true);
-
-    const fetch = async () => {
+    if (!characterId || resolvedFinancial || fallbackLoading || fallbackFailed) return;
+    // Only run if the prop is still null — wait briefly to let React Query propagate first.
+    const timer = setTimeout(async () => {
+      setFallbackLoading(true);
       try {
-        await new Promise(r => setTimeout(r, 800)); // brief delay — let React Query cache warm first
-        if (cancelled) return;
         const records = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
-        if (cancelled) return;
         if (records[0]) {
           setResolvedFinancial(records[0]);
+        } else {
+          // Record truly missing — this is a system error, not a character state.
+          // Log visibly so it can be diagnosed and repaired.
+          console.error(`[CharacterFinancialSummary] SYSTEM ERROR: No CharacterFinancial record found for character_id=${characterId}. Every character should have a record created by onCharacterCreated. The financial system is broken for this character.`);
+          setFallbackFailed(true);
         }
-        // If still null after fetch: character genuinely has no financial record yet.
-        // Display nothing — do not initialize, do not invent data.
-      } catch (_) {
-        // Fetch failed — leave resolvedFinancial null, show "not available" state below.
+      } catch (err) {
+        console.error(`[CharacterFinancialSummary] Fallback fetch failed for character_id=${characterId}:`, err?.message);
+        setFallbackFailed(true);
       } finally {
-        if (!cancelled) setInitializing(false);
+        setFallbackLoading(false);
       }
-    };
+    }, 1200); // brief delay — let React Query propagate prop first
 
-    fetch();
-    return () => { cancelled = true; };
-  }, [characterId, financial, resolvedFinancial, initializing]);
+    return () => clearTimeout(timer);
+  }, [characterId, resolvedFinancial, fallbackLoading, fallbackFailed]);
 
   // Secondary: rent income — only after real financial data is present.
   useEffect(() => {
@@ -100,23 +101,24 @@ export default function CharacterFinancialSummary({ characterId, financial }) {
     };
   }, [characterId, resolvedFinancial]);
 
-  // ── LOADING: initializing the canonical record ──────────────────────────────
-  if (initializing) {
+  // ── LOADING ─────────────────────────────────────────────────────────────────
+  if (!resolvedFinancial && (fallbackLoading || (!fallbackFailed && !financial))) {
     return (
       <div className="bg-muted/30 border border-border rounded-xl p-3 flex items-center gap-2 text-xs text-muted-foreground">
         <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
-        Setting up financial profile…
+        Loading financial data…
       </div>
     );
   }
 
-  // ── NO RECORD AND NOT INITIALIZING: no financial data for this character yet ──
-  // Do not show fake $0. Do not show a permanent loading state.
-  // Show a clear diagnostic — the record either doesn't exist or fetch failed.
+  // ── SYSTEM ERROR: record missing — visible failure, not hidden ───────────────
+  // If we reach here with no resolved record, the financial system is broken for this character.
+  // Show a visible error — do not hide it, do not show $0, do not show empty space.
   if (!resolvedFinancial) {
     return (
-      <div className="bg-muted/30 border border-border rounded-xl p-3 text-xs text-muted-foreground">
-        No financial record found for this character.
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-center gap-2 text-xs text-amber-400">
+        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+        Financial data unavailable — system error. Balance could not be loaded.
       </div>
     );
   }

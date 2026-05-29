@@ -216,7 +216,9 @@ export default function CharacterProfile() {
     staleTime: 180000,
   });
 
-  // SAME queryKey and settings as CharacterCard — shares the React Query cache.
+  // Canonical financial fetch — same queryKey as CharacterCard so they share the cache.
+  // refetchOnMount must be true (default) so cold profile loads (direct URL, no homepage visit)
+  // always fetch the real record. staleTime=10min prevents redundant re-fetches when warm.
   const { data: characterFinancial = null } = useQuery({
     queryKey: ['characterFinancial', characterId],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: characterId })
@@ -224,8 +226,6 @@ export default function CharacterProfile() {
     enabled: !!characterId,
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
-    refetchOnWindowFocus: false,
-    refetchOnMount: false,
   });
 
   const { data: workLocations = [] } = useQuery({
