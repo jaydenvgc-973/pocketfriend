@@ -150,21 +150,17 @@ export default function CharacterProfile() {
   });
 
   const { data: character, isLoading, refetch } = useQuery({
-    // Stable key — never includes currentUser.email so the key doesn't change when user resolves.
-    queryKey: ["character", characterId],
+    // Key includes currentUser.email so query re-runs once user resolves.
+    queryKey: ["character", characterId, currentUser?.email || ""],
     queryFn: async () => {
-      // PRIMARY: direct RLS filter by id — the canonical path.
-      // The Base44 platform enforces owner_email scope server-side via RLS.
-      // This is sufficient for any character whose owner_email is properly indexed.
+      // PRIMARY: filter by id — RLS enforces ownership server-side.
       const chars = await base44.entities.Character.filter({ id: characterId });
       if (chars[0]) {
         const { system_prompt, ...char } = chars[0];
         return char;
       }
 
-      // SECONDARY: if currentUser is already resolved, try owner_email + id.
-      // Covers legacy characters where the id-only RLS path may not resolve yet.
-      // currentUser is now guaranteed to be in scope — declared above this query.
+      // SECONDARY: owner_email + id fallback for legacy characters.
       if (currentUser?.email) {
         const byOwner = await base44.entities.Character.filter({
           owner_email: currentUser.email,
@@ -178,22 +174,15 @@ export default function CharacterProfile() {
 
       return null;
     },
-    enabled: !!characterId,
+    // Wait for currentUser to resolve before running — prevents "Character Not Found"
+    // flash on direct URL loads where currentUser arrives asynchronously.
+    enabled: !!characterId && currentUser !== null,
     staleTime: 0,
   });
 
-  // When currentUser resolves after the first character query ran with currentUser=null,
-  // re-trigger the query so the owner_email fallback gets a real chance.
-  // This covers legacy characters that require both id AND owner_email to resolve via RLS.
+  // No longer needed — query key includes currentUser.email so React Query
+  // automatically re-runs when user resolves. Kept as no-op for safety.
   const prevUserEmailRef = useRef(null);
-  useEffect(() => {
-    if (!currentUser?.email) return;
-    if (prevUserEmailRef.current === currentUser.email) return;
-    prevUserEmailRef.current = currentUser.email;
-    if (!character) {
-      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-    }
-  }, [currentUser?.email, character, characterId, queryClient]);
 
   const { data: allCharacters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email || ""],
@@ -219,13 +208,23 @@ export default function CharacterProfile() {
   });
 
   // Canonical financial fetch — same queryKey as CharacterCard so they share the cache.
-  // refetchOnMount default (true) means cold profile loads (direct URL, no homepage visit)
-  // always fetch the real record. staleTime=10min prevents redundant re-fetches when warm.
-  // Query by character_id only — owner_email is not reliably stored on existing records.
+  // Tries character_id first, falls back to owner_email scope if record not found.
   const { data: characterFinancial = null, isLoading: isFinancialLoading } = useQuery({
     queryKey: ['characterFinancial', characterId],
-    queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: characterId })
-      .then(r => r[0] || null),
+    queryFn: async () => {
+      // Primary: filter by character_id
+      const primary = await base44.entities.CharacterFinancial.filter({ character_id: characterId }).catch(() => []);
+      if (primary[0]) return primary[0];
+      // Fallback: owner_email scope if currentUser is resolved
+      if (currentUser?.email) {
+        const byOwner = await base44.entities.CharacterFinancial.filter({
+          owner_email: currentUser.email,
+          character_id: characterId,
+        }).catch(() => []);
+        if (byOwner[0]) return byOwner[0];
+      }
+      return null;
+    },
     enabled: !!characterId,
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
@@ -386,7 +385,8 @@ export default function CharacterProfile() {
     }
   };
 
-  if (isLoading) {
+  // Show spinner while user or character is loading — do NOT flash "Not Found" prematurely.
+  if (isLoading || currentUser === null) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>

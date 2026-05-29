@@ -97,12 +97,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const { data: financialRecords = [] } = useQuery({
     queryKey: ['characterFinancial', character.id],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id }),
-    // staleTime=10min prevents re-fetch storms when many cards mount simultaneously.
-    // refetchOnMount:false prevents N simultaneous financial queries when many cards mount at once.
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    // refetchOnMount must be true (default) so the balance appears even on first load.
+    // queryReady gate staggers the query start to avoid N simultaneous fetches on mount.
     enabled: !!character.id && queryReady,
   });
   const balance = financialRecords[0]?.current_balance;
