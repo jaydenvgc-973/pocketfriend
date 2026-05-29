@@ -1,30 +1,29 @@
-import { DollarSign, TrendingDown, Home, Briefcase, ShoppingCart, Dumbbell, Phone, Tv, Building2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 
-export default function CharacterFinancialSummary({ characterId }) {
-  const [financial, setFinancial] = useState(null);
+/**
+ * CharacterFinancialSummary
+ *
+ * PRIMARY: receives `financial` prop directly from CharacterProfile's React Query cache.
+ * This means financial data is available immediately on profile open — no second fetch,
+ * no delay, no silent failure path.
+ *
+ * SECONDARY: fetches rent income transactions independently (does not block rendering).
+ *
+ * If `financial` prop is null (CharacterFinancial record doesn't exist yet for this
+ * character), the component renders a minimal balance display using safe defaults,
+ * because CharacterFinancial records are created on-demand and may not exist for
+ * legacy or newly-created characters.
+ */
+export default function CharacterFinancialSummary({ characterId, financial }) {
   const [rentIncomeSources, setRentIncomeSources] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!characterId) return;
     let cancelled = false;
 
-    // Primary query: load CharacterFinancial — fires first, sets loading=false immediately on completion
-    // so the UI is always stable regardless of what happens to the secondary rent query.
-    const primaryTimer = setTimeout(async () => {
-      try {
-        const results = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
-        if (!cancelled && results.length > 0) setFinancial(results[0]);
-      } catch (_) {
-        // Silently handle — financial display stays as null (hidden), not flickering
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }, 600);
-
-    // Secondary query: rent income — fires later, fully independent, never affects loading state
-    // Wrapped in its own try/catch so a rate limit here never disrupts the primary display
+    // Secondary query: rent income — fires after financial data is already visible.
+    // Never blocks or delays the primary financial display.
     const rentTimer = setTimeout(async () => {
       try {
         const fortyFiveDaysAgo = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
@@ -50,25 +49,22 @@ export default function CharacterFinancialSummary({ characterId }) {
         }));
         if (!cancelled) setRentIncomeSources(rentSources);
       } catch (_) {
-        // Rate limit or error on secondary query — silently skip, never affect primary display
+        // Non-blocking — rent income is supplemental, never blocks financial header
       }
-    }, 4000);
+    }, 3000);
 
     return () => {
       cancelled = true;
-      clearTimeout(primaryTimer);
       clearTimeout(rentTimer);
     };
   }, [characterId]);
 
-  // LAST-KNOWN-GOOD: never return null on load failure — show skeleton until data arrives,
-  // then show data forever. Section never disappears once it has loaded.
-  if (loading) return <div className="h-32 bg-secondary/30 rounded-xl animate-pulse" />;
-  if (!financial) return <div className="h-20 bg-secondary/20 rounded-xl flex items-center justify-center text-xs text-muted-foreground">Financial data unavailable</div>;
+  // Safe defaults when CharacterFinancial record doesn't exist yet (legacy/new character)
+  const fin = financial || { current_balance: 0, total_income: 0, total_expenses: 0, recurring_expenses: [], income_sources: [] };
 
-  const monthlyExpenses = (financial.recurring_expenses || []).reduce((sum, e) => sum + (e.monthly_cost || 0), 0);
+  const monthlyExpenses = (fin.recurring_expenses || []).reduce((sum, e) => sum + (e.monthly_cost || 0), 0);
   // Estimate monthly job/salary income
-  const jobMonthlyIncome = (financial.income_sources || []).reduce((sum, s) => {
+  const jobMonthlyIncome = (fin.income_sources || []).reduce((sum, s) => {
     if (s.pay_type === 'hourly') {
       if (s.monthly_estimate) return sum + s.monthly_estimate;
       if (s.weekly_hours) return sum + (s.pay_amount || 0) * s.weekly_hours * 4.33;
@@ -80,39 +76,28 @@ export default function CharacterFinancialSummary({ characterId }) {
   // Rent income from owned locations (separate from job income)
   const rentMonthlyIncome = rentIncomeSources.reduce((sum, s) => sum + (s.monthly_amount || 0), 0);
   const monthlyIncome = jobMonthlyIncome + rentMonthlyIncome;
-  const monthlyRemaining = monthlyIncome > 0 ? monthlyIncome - monthlyExpenses : financial.current_balance - monthlyExpenses;
-
-  const expenseIcons = {
-    rent: Home,
-    utilities: TrendingDown,
-    groceries: ShoppingCart,
-    gym: Dumbbell,
-    phone: Phone,
-    streaming: Tv,
-    custom: DollarSign,
-  };
 
   return (
     <div className="space-y-2">
       {/* Row 1: Current Balance full width */}
       <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-3">
         <p className="text-[10px] text-green-400 uppercase font-semibold tracking-wider">Current Balance</p>
-        <p className="text-2xl font-bold text-green-300 mt-0.5">${(financial.current_balance ?? 6000).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+        <p className="text-2xl font-bold text-green-300 mt-0.5">${(fin.current_balance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
         {monthlyIncome > 0 && monthlyExpenses > 0 && (
           <p className={`text-xs mt-0.5 font-medium ${monthlyIncome >= monthlyExpenses ? 'text-green-400' : 'text-red-400'}`}>
             ${Math.round(monthlyIncome - monthlyExpenses)}/mo net {monthlyIncome >= monthlyExpenses ? '▲' : '▼'}
           </p>
         )}
       </div>
-      {/* Row 2: Monthly Net, Total Earned, Total Spent in one row */}
+      {/* Row 2: Total Earned, Total Spent */}
       <div className="grid grid-cols-2 gap-2">
         <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-2.5">
           <p className="text-[10px] text-blue-400 uppercase font-semibold tracking-wider">Total Earned</p>
-          <p className="text-base font-bold text-blue-300 mt-0.5">${(financial.total_income ?? 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
+          <p className="text-base font-bold text-blue-300 mt-0.5">${(fin.total_income ?? 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
         </div>
         <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-2.5">
           <p className="text-[10px] text-red-400 uppercase font-semibold tracking-wider">Total Spent</p>
-          <p className="text-base font-bold text-red-300 mt-0.5">${(financial.total_expenses ?? 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
+          <p className="text-base font-bold text-red-300 mt-0.5">${(fin.total_expenses ?? 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</p>
         </div>
       </div>
     </div>

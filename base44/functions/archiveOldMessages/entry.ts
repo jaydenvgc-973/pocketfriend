@@ -76,11 +76,12 @@ Deno.serve(async (req) => {
       // Pace the per-conversation count queries — 200ms between each to avoid 429
       await new Promise(r => setTimeout(r, 200));
 
-      // Fetch unarchived message count (capped — we only need to know if > ARCHIVE_THRESHOLD)
+      // STEP A: Fetch oldest ARCHIVE_THRESHOLD+50 messages to check eligibility AND get candidates
+      // These are the messages we will actually archive (oldest end of the conversation).
       const messages = await base44.asServiceRole.entities.Message.filter(
         { conversation_id: convo.id, archived_date: { $exists: false } },
         'created_date',   // oldest first — archive from the bottom
-        ARCHIVE_THRESHOLD + 50  // slightly more than threshold so we know the true excess
+        ARCHIVE_THRESHOLD + 50
       ).catch(() => null);
 
       if (!messages) continue;
@@ -90,13 +91,32 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const excess = messages.length - KEEP_RECENT;
+      // STEP B: If we hit the cap exactly, fetch the REAL total unarchived count
+      // so proportional allocation is based on accurate excess, not a capped approximation.
+      // We do this by fetching newest messages to determine total count accurately.
+      let trueUnarchivedCount = messages.length;
+      if (messages.length === ARCHIVE_THRESHOLD + 50) {
+        // Fetch from the newest end to count beyond our cap
+        const newestCheck = await base44.asServiceRole.entities.Message.filter(
+          { conversation_id: convo.id, archived_date: { $exists: false } },
+          '-created_date',  // newest first
+          500               // check up to 500 more from the top
+        ).catch(() => null);
+        if (newestCheck) {
+          // True count = at least messages.length + newestCheck.length (if no overlap)
+          // More accurately: combine both ends and deduplicate by id
+          const allIds = new Set([...messages.map(m => m.id), ...newestCheck.map(m => m.id)]);
+          trueUnarchivedCount = allIds.size;
+        }
+      }
+
+      const excess = trueUnarchivedCount - KEEP_RECENT;
       if (excess <= 0) {
-        skippedBelowThreshold.push({ id: convo.id, count: messages.length });
+        skippedBelowThreshold.push({ id: convo.id, count: trueUnarchivedCount });
         continue;
       }
 
-      eligibleConversations.push({ convo, excess, messages });
+      eligibleConversations.push({ convo, excess, messages, trueUnarchivedCount });
     }
 
     // ── STEP 3: FAIR-SHARE ALLOCATION ─────────────────────────────────────────
@@ -111,7 +131,7 @@ Deno.serve(async (req) => {
 
     const totalExcess = eligibleConversations.reduce((sum, e) => sum + e.excess, 0);
 
-    const allocations = eligibleConversations.map(({ convo, excess, messages }) => {
+    const allocations = eligibleConversations.map(({ convo, excess, messages, trueUnarchivedCount }) => {
       // Proportional share of the global budget
       const proportionalShare = totalExcess > 0
         ? Math.round((excess / totalExcess) * GLOBAL_TARGET_PER_RUN)
@@ -124,6 +144,7 @@ Deno.serve(async (req) => {
         convo,
         messages,
         excess,
+        trueUnarchivedCount,
         allocated,
         proportionalShare,
       };
@@ -140,7 +161,7 @@ Deno.serve(async (req) => {
 
     const perConversationReport = [];
 
-    for (const { convo, messages, excess, allocated } of allocations) {
+    for (const { convo, messages, excess, trueUnarchivedCount, allocated } of allocations) {
       if (globalBudgetRemaining <= 0) break;
       if (allocated <= 0) continue;
 
@@ -183,7 +204,7 @@ Deno.serve(async (req) => {
 
       perConversationReport.push({
         conversation_id: convo.id,
-        unarchived_count: messages.length,
+        true_unarchived_count: trueUnarchivedCount,
         excess,
         proportional_share: allocated,
         actually_archived: archivedThisConvo,

@@ -433,8 +433,10 @@ export default function CharacterProfile() {
               </div>
             </div>
 
-            {/* Financial Summary */}
-            <CharacterFinancialSummary characterId={characterId} />
+            {/* Financial Summary — passes pre-fetched data from React Query cache.
+                No internal fetch needed. Data is available as soon as the profile loads.
+                characterFinancial may be null for legacy/new characters — component handles safely. */}
+            <CharacterFinancialSummary characterId={characterId} financial={characterFinancial} />
 
             {/* Narrative Biography */}
              {(character.backstory || character.background_story) && (
