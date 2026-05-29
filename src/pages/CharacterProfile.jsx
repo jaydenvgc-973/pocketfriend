@@ -207,15 +207,19 @@ export default function CharacterProfile() {
     staleTime: 180000,
   });
 
-  // Canonical financial fetch — same queryKey and queryFn as CharacterCard so they share the cache.
-  // Filter by character_id only — owner_email is not reliably set on existing records.
+  // Canonical financial fetch — same queryKey as CharacterCard so they share the cache.
+  // character_id is the authoritative filter — owner_email is null on most existing records
+  // and cannot be used as a filter. refetchOnMount:true guarantees fresh data on profile open.
   const { data: characterFinancial = null, isLoading: isFinancialLoading } = useQuery({
     queryKey: ['characterFinancial', characterId],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: characterId })
       .then(r => r[0] || null),
-    enabled: !!characterId,
+    // Gate on currentUser like the character query — prevents an unauthenticated fetch
+    // from caching an empty result and blocking the real fetch behind staleTime.
+    enabled: !!characterId && currentUser !== null,
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+    refetchOnMount: true,
   });
 
   const { data: workLocations = [] } = useQuery({
