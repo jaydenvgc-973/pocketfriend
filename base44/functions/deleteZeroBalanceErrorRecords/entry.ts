@@ -71,12 +71,11 @@ Deno.serve(async (req) => {
 
     console.log(`[deleteZeroBalanceErrorRecords] Total CharacterFinancial records: ${allFinancials.length}`);
 
-    // Identify error records: NOT in canonical set AND character_id not in active_created set
-    // These are records whose owning character either no longer exists as active_created_character,
-    // or are duplicates that were not selected as canonical (highest balance wins above).
+    // Identify ONLY zero-balance error records: balance === 0 AND not in canonical set.
+    // Never delete records with non-zero balances regardless of orphan status.
     const toDelete = allFinancials.filter(f =>
-      !canonicalIds.has(f.id) &&
-      !activeCharIds.has(f.character_id)
+      (f.current_balance === 0 || f.current_balance === null || f.current_balance === undefined) &&
+      !canonicalIds.has(f.id)
     );
 
     console.log(`[deleteZeroBalanceErrorRecords] Records to delete: ${toDelete.length}`);
