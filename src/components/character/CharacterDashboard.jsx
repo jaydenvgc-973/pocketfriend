@@ -5,6 +5,7 @@ import {
   Moon, Sun, Briefcase, Home, MessageCircle, Phone,
   DollarSign, Heart, MapPin, Zap, BookOpen, Brain, Activity
 } from "lucide-react";
+import TravelHistoryCard from "@/components/character/TravelHistoryCard";
 import { format, subHours, isAfter, parseISO, subDays } from "date-fns";
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 
@@ -1072,7 +1073,10 @@ export default function CharacterDashboard({ character }) {
         </div>
       </div>
 
-      {/* ── 3. PATTERN INSIGHTS + MEMORY HIGHLIGHTS ──────────────────────── */}
+      {/* ── 3. TRAVEL HISTORY ─────────────────────────────────────────────── */}
+      <TravelHistoryCard character={character} />
+
+      {/* ── 4. PATTERN INSIGHTS + MEMORY HIGHLIGHTS ──────────────────────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {insights.length > 0 && (
           <div className="rounded-xl overflow-hidden bg-card border border-border">

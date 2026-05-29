@@ -1329,13 +1329,33 @@ Reference the passage of time naturally in your response.
       contextLog.push({ step: 'worship_location', status: 'error', error: wlErr.message });
     }
 
+    // ── Step 10b: Fetch last-24h travel context from LocationHistory ─────────
+    // This feeds the "what did you do today?" awareness for all characters.
+    let travelContextBlock = '';
+    try {
+      const travelCtxRes = await base44.functions.invoke('getCharacterTravelContext', {
+        characterId,
+        ownerEmail: character.owner_email || user.email,
+      }).catch(() => null);
+      if (travelCtxRes?.data?.context_block) {
+        travelContextBlock = `\n${travelCtxRes.data.context_block}\n`;
+        contextLog.push({ step: 'travel_context', loaded: true, history_count: travelCtxRes.data.history_count });
+        console.log(`[buildCanonicalCharacterContext] travel_context | char=${character.name} | history_count=${travelCtxRes.data.history_count} | has_history=${travelCtxRes.data.has_history}`);
+      } else {
+        contextLog.push({ step: 'travel_context', loaded: false, reason: 'no_data' });
+      }
+    } catch (tcErr) {
+      contextLog.push({ step: 'travel_context', status: 'error', error: tcErr.message });
+    }
+
     // ── Step 11: Build canonical system prompt ────────────────────────────────
     // CRITICAL: worldStateContext is injected BEFORE recentMessageBlock
     // Education + today location blocks come from profile data directly — no memory needed.
     // Religion block now receives the live-queried worshipLocation — no memory required.
     const educationBlock = buildEducationBlock(character);
     const todayLocationBlock = buildTodayLocationBlock(character);
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation);
+    // travelContextBlock is injected alongside todayLocationBlock for "what did I do today"
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation);
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
 
     const totalMs = Date.now() - startTime;

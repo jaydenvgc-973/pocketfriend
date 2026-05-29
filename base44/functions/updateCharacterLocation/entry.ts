@@ -145,6 +145,42 @@ Deno.serve(async (req) => {
       }, { status: 500 });
     }
 
+    // STEP 7: Write LocationHistory event (non-blocking, fire-and-forget)
+    // Only write if this is a genuine location change
+    if (isNewLocation && matched.owner_email) {
+      // Derive event type from sourceReason + resolvedStatus
+      let eventType = 'arrival';
+      if (sourceReason === 'return_home' || resolvedStatus === 'home') eventType = 'return_home';
+      else if (sourceReason === 'work_schedule' || resolvedStatus === 'at_work') eventType = 'work_start';
+      else if (sourceReason === 'school_schedule' || resolvedStatus === 'at_school') eventType = 'school_start';
+      else if (resolvedType === 'gym') eventType = 'gym_visit';
+      else if (resolvedType === 'religion') eventType = 'religious_service';
+      else if (resolvedType === 'food_drink') eventType = 'food_need';
+
+      const locCategory = matchedLoc.category || 'other';
+      let travelSrc = 'system';
+      if (sourceReason) {
+        if (sourceReason.includes('schedule')) travelSrc = 'schedule';
+        else if (sourceReason.includes('autonomous')) travelSrc = 'autonomous';
+        else if (sourceReason.includes('promise') || sourceReason.includes('commitment')) travelSrc = 'promise';
+        else if (sourceReason === 'manual_update') travelSrc = 'manual';
+      }
+
+      base44.functions.invoke('recordLocationHistoryEvent', {
+        characterId: matched.id,
+        characterName: matched.name,
+        ownerEmail: matched.owner_email,
+        locationId: matchedLoc.id,
+        locationName: matchedLoc.name,
+        locationCategory: locCategory,
+        eventType,
+        travelSource: travelSrc,
+        travelReason: sourceReason || null,
+        arrivalTime: now,
+        previousLocationId: previousLocationId || null,
+      }).catch(() => {}); // non-blocking
+    }
+
     return Response.json({
       success: true,
       write_confirmed: true,

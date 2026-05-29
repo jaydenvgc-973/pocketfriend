@@ -1,0 +1,124 @@
+{
+  "name": "LocationHistory",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character whose movement this records"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of the character"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Email of the user who owns this character \u2014 primary ownership source"
+    },
+    "location_id": {
+      "type": "string",
+      "description": "ID of the location the character is/was at"
+    },
+    "location_name": {
+      "type": "string",
+      "description": "Display name of the location"
+    },
+    "location_category": {
+      "type": "string",
+      "enum": [
+        "home",
+        "work",
+        "school",
+        "gym",
+        "social",
+        "food_drink",
+        "religion",
+        "medical",
+        "shopping",
+        "travel",
+        "other"
+      ],
+      "description": "Category of location"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "arrival",
+        "departure",
+        "stay",
+        "return_home",
+        "work_start",
+        "work_end",
+        "school_start",
+        "school_end",
+        "religious_service",
+        "food_need",
+        "social_visit",
+        "gym_visit",
+        "transit",
+        "other"
+      ],
+      "description": "Type of location event"
+    },
+    "arrival_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the character arrived at this location"
+    },
+    "departure_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the character left this location (null if still there)"
+    },
+    "duration_minutes": {
+      "type": "integer",
+      "description": "How long the character was there (if departed)"
+    },
+    "travel_source": {
+      "type": "string",
+      "enum": [
+        "schedule",
+        "autonomous",
+        "promise",
+        "commitment",
+        "need_fulfillment",
+        "manual",
+        "system",
+        "other"
+      ],
+      "description": "What triggered this travel"
+    },
+    "travel_reason": {
+      "type": "string",
+      "description": "Human-readable reason (school schedule, work shift, social visit, etc.)"
+    },
+    "is_current": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if character is currently at this location"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Additional context about this location visit"
+    }
+  },
+  "required": [
+    "character_id",
+    "owner_email",
+    "location_id",
+    "location_name",
+    "event_type",
+    "arrival_time"
+  ],
+  "rls": {
+    "create": true,
+    "read": {
+      "owner_email": "{{user.email}}"
+    },
+    "update": {
+      "owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "owner_email": "{{user.email}}"
+    }
+  }
+}
