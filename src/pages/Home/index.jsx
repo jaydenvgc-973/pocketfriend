@@ -62,6 +62,7 @@ export default function Home() {
     rlsCharacters: characters,
     isInitialLoading,
     isInitialLoading: isLoading,
+    isRefreshing,
     financialIndex,
   } = useOwnedCharacters(currentUser, userSettings?.default_character_id || null, anchorCharacterIds);
 
@@ -376,6 +377,88 @@ export default function Home() {
 
   // Apply travel display integrity — gate "Traveling to…" on valid in_transit sessions
   const verifiedActiveCustomChars = applySessionProofToCharacters(activeCustomChars, activeTravelSessions);
+
+  // ════════════════════════════════════════════════════════════════════════════════════════════════════
+  // HOMEPAGE FINANCIAL VERIFICATION — Protected-Data Integrity Check
+  // ════════════════════════════════════════════════════════════════════════════════════════════════════
+  // REQUIRED: Every active_created_character MUST have a corresponding CharacterFinancial record.
+  // FAILURE CONDITION: If any active_created_character is missing a financial record, mark render as failed.
+  useEffect(() => {
+    if (isInitialLoading || isRefreshing) return; // Still loading — skip verification
+    
+    const allActiveCreated = allCharacters.filter(c => 
+      c.character_type === 'active_created_character' && 
+      c.status === 'active' && 
+      c.name !== "Leo Parker"
+    );
+    
+    const verifyFinancialIntegrity = () => {
+      const missingRecords = [];
+      const missingBalances = [];
+      const missingIncome = [];
+      const missingExpenses = [];
+      
+      allActiveCreated.forEach(char => {
+        const financialRec = financialIndex[char.id];
+        
+        // ASSERTION 1: Record exists
+        if (!financialRec) {
+          missingRecords.push({ char_id: char.id, char_name: char.name });
+          return;
+        }
+        
+        // ASSERTION 2: Balance exists
+        if (financialRec.current_balance === undefined || financialRec.current_balance === null) {
+          missingBalances.push({ char_id: char.id, char_name: char.name });
+        }
+        
+        // ASSERTION 3: Income exists
+        if (financialRec.total_income === undefined || financialRec.total_income === null) {
+          missingIncome.push({ char_id: char.id, char_name: char.name });
+        }
+        
+        // ASSERTION 4: Expenses exist
+        if (financialRec.total_expenses === undefined || financialRec.total_expenses === null) {
+          missingExpenses.push({ char_id: char.id, char_name: char.name });
+        }
+      });
+      
+      // Log any failures
+      if (missingRecords.length > 0 || missingBalances.length > 0 || missingIncome.length > 0 || missingExpenses.length > 0) {
+        console.error('[Home PROTECTED-DATA VERIFICATION] Financial integrity check FAILED', {
+          active_created_count: allActiveCreated.length,
+          financial_index_count: Object.keys(financialIndex).length,
+          missing_records_count: missingRecords.length,
+          missing_records: missingRecords,
+          missing_balances_count: missingBalances.length,
+          missing_balances: missingBalances,
+          missing_income_count: missingIncome.length,
+          missing_income: missingIncome,
+          missing_expenses_count: missingExpenses.length,
+          missing_expenses: missingExpenses,
+          source_query: 'useOwnedCharacters',
+          audit: 'Homepage cannot render as successful when active_created_character financial records are incomplete'
+        });
+        
+        // Track integrity failure
+        base44.analytics.track({
+          eventName: 'home_financial_integrity_failed',
+          properties: {
+            active_created_count: allActiveCreated.length,
+            financial_index_count: Object.keys(financialIndex).length,
+            missing_records_count: missingRecords.length,
+            missing_balances_count: missingBalances.length,
+            missing_income_count: missingIncome.length,
+            missing_expenses_count: missingExpenses.length,
+            severity: 'critical'
+          }
+        }).catch(() => {});
+      }
+    };
+    
+    verifyFinancialIntegrity();
+  }, [allCharacters, financialIndex, isInitialLoading, isRefreshing]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen bg-background">

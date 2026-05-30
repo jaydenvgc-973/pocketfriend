@@ -87,14 +87,56 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
 
   // financialRecord is passed as a prop from Home — no self-fetching, no cache reads.
-  // Source of truth: CharacterFinancial record fetched by useOwnedCharacters and indexed by character_id.
-  // If missing for active_created_character, log a hard error — this is a data integrity failure.
-  if (!financialRecord && character.character_type === 'active_created_character') {
-    console.error(`[CharacterCard] MISSING financialRecord for active_created_character id=${character.id} name="${character.name}". Financial display will be blank — trigger repairCharacterFinancialsFromTransactions to fix.`);
+  // PROTECTED-DATA ASSERTIONS: active_created_character MUST have financial records.
+  // CRITICAL: Assertions execute before any render. Missing data = failure.
+  const isActiveCreated = character.character_type === 'active_created_character';
+  
+  if (isActiveCreated) {
+    // ASSERTION 1: Financial record exists
+    if (!financialRecord) {
+      console.error(`[CharacterCard PROTECTED-DATA ASSERTION] FAILED: Missing financialRecord for active_created_character`, {
+        character_id: character.id,
+        character_name: character.name,
+        owner_email: character.owner_email,
+        source: 'useOwnedCharacters financialIndex',
+        audit: 'Financial integrity failure — record not found in index'
+      });
+      // Record audit entry for protected-data failure
+      base44.analytics.track({
+        eventName: 'protected_data_assertion_failed',
+        properties: {
+          assertion_type: 'missing_financial_record',
+          character_id: character.id,
+          character_name: character.name,
+          character_type: character.character_type,
+          owner_email: character.owner_email,
+          severity: 'critical'
+        }
+      }).catch(() => {});
+    }
   }
-  const balance = financialRecord?.current_balance ?? null;
-  const totalIncome = financialRecord?.total_income ?? null;
-  const totalExpenses = financialRecord?.total_expenses ?? null;
+  
+  const balance = financialRecord?.current_balance;
+  const totalIncome = financialRecord?.total_income;
+  const totalExpenses = financialRecord?.total_expenses;
+  
+  // ASSERTION 2: All required financial fields exist (for active_created_character)
+  if (isActiveCreated && financialRecord) {
+    const hasBalance = balance !== undefined && balance !== null;
+    const hasIncome = totalIncome !== undefined && totalIncome !== null;
+    const hasExpenses = totalExpenses !== undefined && totalExpenses !== null;
+    
+    if (!hasBalance || !hasIncome || !hasExpenses) {
+      console.error(`[CharacterCard PROTECTED-DATA ASSERTION] FAILED: Incomplete financial fields`, {
+        character_id: character.id,
+        character_name: character.name,
+        has_balance: hasBalance,
+        has_income: hasIncome,
+        has_expenses: hasExpenses,
+        audit: 'CharacterFinancial record exists but required fields are missing'
+      });
+    }
+  }
 
   const { data: conversations = [] } = useQuery({
     // Query conversations scoped by owner_email + character_ids.
@@ -420,24 +462,33 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
             <div className="flex items-center gap-2 mt-1">
               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${stateDots[state] || "bg-zinc-500"}`} />
               <span className="text-xs text-muted-foreground capitalize">{stateLabels[state] || state}</span>
-              {balance != null && (
+              {/* REQUIRED FOR active_created_character: balance must always display */}
+              {balance !== undefined && balance !== null ? (
                 <span className="ml-auto flex items-center gap-0.5 text-xs text-green-400 font-medium">
                   <DollarSign className="w-3 h-3" />{Number(balance).toLocaleString()}
                 </span>
-              )}
+              ) : isActiveCreated ? (
+                <span className="ml-auto flex items-center gap-0.5 text-xs text-red-500 font-medium">
+                  MISSING FINANCIAL DATA
+                </span>
+              ) : null}
             </div>
-            {financialRecord ? (
+            {isActiveCreated ? (
               <div className="flex items-center gap-3 mt-1">
-                <span className="text-xs text-muted-foreground">
-                  In: <span className="text-green-400 font-medium">${Number(totalIncome ?? 0).toLocaleString()}</span>
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  Out: <span className="text-red-400 font-medium">${Number(totalExpenses ?? 0).toLocaleString()}</span>
-                </span>
-              </div>
-            ) : character.character_type === 'active_created_character' ? (
-              <div className="flex items-center gap-3 mt-1">
-                <span className="text-xs text-amber-500/70">Financial data loading...</span>
+                {totalIncome !== undefined && totalIncome !== null ? (
+                  <span className="text-xs text-muted-foreground">
+                    In: <span className="text-green-400 font-medium">${Number(totalIncome).toLocaleString()}</span>
+                  </span>
+                ) : (
+                  <span className="text-xs text-red-500">In: ERROR</span>
+                )}
+                {totalExpenses !== undefined && totalExpenses !== null ? (
+                  <span className="text-xs text-muted-foreground">
+                    Out: <span className="text-red-400 font-medium">${Number(totalExpenses).toLocaleString()}</span>
+                  </span>
+                ) : (
+                  <span className="text-xs text-red-500">Out: ERROR</span>
+                )}
               </div>
             ) : null}
           </div>
