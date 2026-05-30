@@ -86,13 +86,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const queryClient = useQueryClient();
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
 
-  // Mount-delay gate: stagger queries so N cards don't fire simultaneously on Home mount.
-  // Each card waits 600ms after mounting before enabling its queries.
-  const [queryReady, setQueryReady] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setQueryReady(true), 600);
-    return () => clearTimeout(t);
-  }, []);
+
 
   // Returns a single record (same shape as CharacterProfile's query) so both
   // sides store identical data under the shared queryKey and the cache is coherent.
@@ -104,7 +98,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchOnMount: true,
-    enabled: !!character.id && queryReady,
+    enabled: !!character.id,
   });
   const balance = financialRecord?.current_balance;
 
@@ -123,7 +117,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
-    enabled: !!character.id && !!character.owner_email && queryReady,
+    enabled: !!character.id && !!character.owner_email,
   });
 
 
@@ -230,7 +224,6 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   }, [conversations]);
 
   useEffect(() => {
-    if (!queryReady) return;
     const unsubscribe = base44.entities.Message.subscribe((event) => {
       if (event.type !== "create" && event.type !== "update") return;
       // During thread:read settle window, suppress subscription-driven recounts.
@@ -250,7 +243,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       }
     });
     return () => unsubscribe();
-  }, [character.id, countUnread, queryReady]);
+  }, [character.id, countUnread]);
 
 
 
