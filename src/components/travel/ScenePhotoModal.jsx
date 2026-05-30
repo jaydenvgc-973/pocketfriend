@@ -5,8 +5,17 @@ import { X, Sparkles, Send, Check, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { buildPhotoGenerationPrompt, extractPhotoAvatarUrls, validatePhotoGenerationInput, logPhotoGenerationState } from "@/lib/scenePhotoIdentityLock";
 
-export default function ScenePhotoModal({ location, characters, currentUser, displayName, onClose, allCharacters }) {
-  const [participants, setParticipants] = useState(characters.map(c => c.id));
+export default function ScenePhotoModal({ location, characters, allPossibleNpcs, currentUser, displayName, onClose, allCharacters, onGenerateSceneImage, isGeneratingImage }) {
+  // Build the full selectable participant list from the canonical scene list (same source as Who's here)
+  const allSceneParticipants = (() => {
+    const combined = [...(characters || [])];
+    (allPossibleNpcs || []).forEach(n => {
+      if (!combined.find(c => c.id === n.id)) combined.push(n);
+    });
+    return combined;
+  })();
+
+  const [participants, setParticipants] = useState(allSceneParticipants.map(c => c.id));
   const [recipients, setRecipients] = useState([]);
   const [prompt, setPrompt] = useState("");
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
@@ -151,11 +160,7 @@ export default function ScenePhotoModal({ location, characters, currentUser, dis
             >
               <Check className="w-3 h-3" /> {displayName}
             </button>
-            {[
-              ...characters.filter(c => c.character_type !== 'npc' && c.character_type !== 'family_npc' && c.character_type !== 'background'),
-              ...characters.filter(c => c.character_type === 'npc' || c.character_type === 'promoted_npc'),
-              ...characters.filter(c => c.character_type === 'family_npc' || c.character_type === 'background'),
-            ].map(char => (
+            {allSceneParticipants.map(char => (
               <button
                 key={char.id}
                 onClick={() => toggleParticipant(char.id)}
@@ -193,9 +198,9 @@ export default function ScenePhotoModal({ location, characters, currentUser, dis
         </div>
 
         {/* Generate */}
-        <Button onClick={generate} disabled={isGenerating} className="w-full rounded-xl gap-2">
+        <Button onClick={() => onGenerateSceneImage ? onGenerateSceneImage() : generate()} disabled={isGenerating || isGeneratingImage} className="w-full rounded-xl gap-2">
           <Sparkles className="w-4 h-4" />
-          {isGenerating ? "Generating..." : generatedImage ? "Regenerate" : "Generate Photo"}
+          {(isGenerating || isGeneratingImage) ? "Generating..." : generatedImage ? "Regenerate" : "Generate Photo"}
         </Button>
 
         {/* Preview */}

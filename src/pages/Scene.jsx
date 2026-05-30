@@ -1766,10 +1766,13 @@ Return JSON:
           <ScenePhotoModal
             location={location}
             characters={allSceneChars}
+            allPossibleNpcs={allPossibleNpcs}
             currentUser={currentUser}
             displayName={displayName}
             onClose={() => setShowPhotoModal(false)}
             allCharacters={characters}
+            onGenerateSceneImage={generateSceneImage}
+            isGeneratingImage={isGeneratingImage}
           />
         )}
       </AnimatePresence>
