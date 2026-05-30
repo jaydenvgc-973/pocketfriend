@@ -108,7 +108,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     refetchOnMount: true,
     enabled: !!character.id,
   });
-  const balance = financialRecord?.current_balance;
+  // Only show balance if a real CharacterFinancial record exists
+  // Do NOT invent or default to 6000
+  const balance = financialRecord ? financialRecord.current_balance : null;
 
   const { data: conversations = [] } = useQuery({
     // Query conversations scoped by owner_email + character_ids.
