@@ -1875,7 +1875,9 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
                     const recent = [...next].sort((a, b) =>
                       new Date(b.created_date || b.timestamp || 0) - new Date(a.created_date || a.timestamp || 0)
                     ).slice(0, 50).reverse();
-                    lfcWrite(currentUser.email, `chat_msgs:${characterId}`, recent);
+                    // CRITICAL: key must match useChatLoadConvo's readCachedMessages key
+                    // which uses chat_msgs:${chatType}:${characterId}
+                    lfcWrite(currentUser.email, `chat_msgs:${chatType}:${characterId}`, recent);
                   }).catch(() => {});
                 }
                 return next;

@@ -244,11 +244,16 @@ export function useChatLoadConvo({
             // Archived messages are still stored in DB and restorable via ArchiveNotice.
             loadedMsgs = await retryAfter8s(() =>
               base44.entities.Message.filter(
-                { conversation_id: convoId, archived_date: { $exists: false } },
+                { conversation_id: convoId },
                 "-created_date",
                 MSG_WINDOW
               )
             , 'Message.filter');
+            // Filter archived messages client-side — $exists: false can strip legacy messages
+            // that don't have archived_date in their schema (saved before the field was added)
+            if (Array.isArray(loadedMsgs)) {
+              loadedMsgs = loadedMsgs.filter(m => !m.archived_date);
+            }
             console.log(`[CHAT_LOAD] Message.filter DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
           } catch (err) {
             if (is429(err)) {
@@ -488,11 +493,13 @@ export function useChatLoadConvo({
     try {
       // Server-side $lt cursor — only fetches non-archived messages strictly before the cursor timestamp.
       // Excludes archived messages (archived_date exists) — those are in long-term storage.
-      const older = await base44.entities.Message.filter(
-        { conversation_id: convoId, created_date: { $lt: cursor }, archived_date: { $exists: false } },
+      const olderRaw = await base44.entities.Message.filter(
+        { conversation_id: convoId, created_date: { $lt: cursor } },
         "-created_date",
         PAGINATION_PAGE
       );
+      // Filter archived messages client-side — $exists: false can strip legacy messages
+      const older = Array.isArray(olderRaw) ? olderRaw.filter(m => !m.archived_date) : olderRaw;
 
       if (!older || older.length === 0) {
         if (setHasOlderMessages) setHasOlderMessages(false);
