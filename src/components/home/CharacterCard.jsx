@@ -88,36 +88,31 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
 
 
-  // Read from the prefetched financial index (populated by useOwnedCharacters).
-  // This ensures cards render with accurate financial data immediately on mount,
-  // not after a deferred secondary fetch.
-  const { data: financialIndex = {} } = useQuery({
-    queryKey: ['characterFinancialIndex', character.owner_email],
-    // If the index isn't in cache yet, query will refetch. If available, uses cache immediately.
+  // Fetch this character's financial record directly — scoped by character_id.
+  // refetchOnMount: true ensures the card always loads real data even if the
+  // shared prefetch index hasn't populated yet.
+  const { data: financialRecord = null } = useQuery({
+    queryKey: ['characterFinancial', character.id],
     queryFn: async () => {
-      if (!character.owner_email) return {};
       const result = await base44.entities.CharacterFinancial.filter(
-        { owner_email: character.owner_email },
+        { character_id: character.id },
         null,
-        300
+        1
       );
-      const byId = {};
-      for (const record of result) {
-        byId[record.character_id] = record;
-      }
-      return byId;
+      return result[0] || null;
     },
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
-    enabled: !!character.owner_email,
+    refetchOnMount: true,
+    enabled: !!character.id,
   });
 
-  const financialRecord = financialIndex[character.id] || null;
-  // Only show balance if a real CharacterFinancial record exists
-  // Do NOT invent or default to 6000
+  // Derive display values strictly from canonical CharacterFinancial fields.
+  // Never invent, default, or fallback to 6000.
   const balance = financialRecord ? financialRecord.current_balance : null;
+  const totalIncome = financialRecord ? (financialRecord.total_income || 0) : null;
+  const totalExpenses = financialRecord ? (financialRecord.total_expenses || 0) : null;
 
   const { data: conversations = [] } = useQuery({
     // Query conversations scoped by owner_email + character_ids.
@@ -449,6 +444,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 </span>
               )}
             </div>
+            {financialRecord && (
+              <div className="flex items-center gap-3 mt-1">
+                <span className="text-xs text-muted-foreground">
+                  In: <span className="text-green-400 font-medium">${Number(totalIncome).toLocaleString()}</span>
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Out: <span className="text-red-400 font-medium">${Number(totalExpenses).toLocaleString()}</span>
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
