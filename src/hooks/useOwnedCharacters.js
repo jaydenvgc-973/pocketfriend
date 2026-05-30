@@ -455,28 +455,25 @@ export function useOwnedCharacters(
   const npcRegular       = allCharacters.filter(c => resolveTypeLegacy(c) === "npc_regular");
   const travelCompanions = [...activeCreated, ...npcFictitious, ...npcFamilyMembers];
 
-  // ── 3. Prefetch CharacterFinancial for all characters ──────────────────────────
-  // Ensures card renders show accurate income/expense data immediately,
-  // not after a deferred secondary fetch. Fetched once, cached in React Query.
-  const { isLoading: isLoadingFinancial } = useQuery({
-    queryKey: ["characterFinancial", "all", email],
+  // ── 3. Prefetch CharacterFinancial for all active_created_characters ───────────
+  // Returns financialIndex directly so Home can pass it as props to CharacterCard.
+  // Uses useQuery (reactive) — cards update automatically when this data arrives.
+  const { data: financialIndex = {} } = useQuery({
+    queryKey: ["characterFinancialIndex", email],
     queryFn: async () => {
-      if (!email || allCharacters.length === 0) return {};
+      if (!email) return {};
       const financialRecords = await base44.entities.CharacterFinancial.filter(
         { owner_email: email },
         null,
         300
       );
-      // Index by character_id for fast card lookups
       const byCharacterId = {};
       for (const record of financialRecords) {
         byCharacterId[record.character_id] = record;
       }
-      // Cache indexed results so CharacterCard can access without re-fetching
-      queryClient.setQueryData(["characterFinancialIndex", email], byCharacterId);
       return byCharacterId;
     },
-    enabled: !!email && allCharacters.length > 0,
+    enabled: !!email,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
@@ -500,5 +497,6 @@ export function useOwnedCharacters(
     isRefreshing,
     rlsCharacters,
     backendNpcs,
+    financialIndex,
   };
 }

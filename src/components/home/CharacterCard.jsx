@@ -65,7 +65,7 @@ const stateDots = {
 
 
 
-export default function CharacterCard({ character, onDelete, onMoveAway, locationMap = {} }) {
+export default function CharacterCard({ character, onDelete, onMoveAway, locationMap = {}, financialRecord = null }) {
   // OWNERSHIP GUARD: owner_email is the sole ownership source of truth.
   // If missing, log visibly so data integrity issues surface rather than silently fail.
   if (!character.owner_email) {
@@ -86,16 +86,15 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const queryClient = useQueryClient();
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
 
-  // Read from pre-populated financial index cache (set by useOwnedCharacters).
-  // The Home page prefetches all CharacterFinancial records into this cache key.
-  // Do NOT re-fetch here — just read what's already there.
-  const financialIndex = queryClient.getQueryData(['characterFinancialIndex', character.owner_email]) || {};
-  const financialRecord = financialIndex[character.id] || null;
-  // Derive display values strictly from canonical CharacterFinancial fields.
-  // Never invent, default, or fallback to 6000.
-  const balance = financialRecord ? financialRecord.current_balance : null;
-  const totalIncome = financialRecord ? (financialRecord.total_income || 0) : null;
-  const totalExpenses = financialRecord ? (financialRecord.total_expenses || 0) : null;
+  // financialRecord is passed as a prop from Home — no self-fetching, no cache reads.
+  // Source of truth: CharacterFinancial record fetched by useOwnedCharacters and indexed by character_id.
+  // If missing for active_created_character, log a hard error — this is a data integrity failure.
+  if (!financialRecord && character.character_type === 'active_created_character') {
+    console.error(`[CharacterCard] MISSING financialRecord for active_created_character id=${character.id} name="${character.name}". Financial display will be blank — trigger repairCharacterFinancialsFromTransactions to fix.`);
+  }
+  const balance = financialRecord?.current_balance ?? null;
+  const totalIncome = financialRecord?.total_income ?? null;
+  const totalExpenses = financialRecord?.total_expenses ?? null;
 
   const { data: conversations = [] } = useQuery({
     // Query conversations scoped by owner_email + character_ids.
@@ -427,16 +426,20 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 </span>
               )}
             </div>
-            {financialRecord && (
+            {financialRecord ? (
               <div className="flex items-center gap-3 mt-1">
                 <span className="text-xs text-muted-foreground">
-                  In: <span className="text-green-400 font-medium">${Number(totalIncome).toLocaleString()}</span>
+                  In: <span className="text-green-400 font-medium">${Number(totalIncome ?? 0).toLocaleString()}</span>
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  Out: <span className="text-red-400 font-medium">${Number(totalExpenses).toLocaleString()}</span>
+                  Out: <span className="text-red-400 font-medium">${Number(totalExpenses ?? 0).toLocaleString()}</span>
                 </span>
               </div>
-            )}
+            ) : character.character_type === 'active_created_character' ? (
+              <div className="flex items-center gap-3 mt-1">
+                <span className="text-xs text-amber-500/70">Financial data loading...</span>
+              </div>
+            ) : null}
           </div>
         </div>
 
