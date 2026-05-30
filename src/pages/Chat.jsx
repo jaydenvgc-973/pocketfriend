@@ -78,7 +78,7 @@ import { useChatTimingProof } from "@/hooks/useChatTimingProof";
 import ChatTimingOverlay from "@/components/chat/ChatTimingOverlay";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
-import { useChatPromptBackfill } from "@/hooks/useChatPromptBackfill";
+
 
 export default function Chat({ chatTypeOverride } = {}) {
   const { characterId } = useParams();
@@ -260,17 +260,17 @@ export default function Chat({ chatTypeOverride } = {}) {
     enabled: !!characterId && showSendMoney,
   });
 
-  useEffect(() => {
-    // Guard: only run once per session — prevents 429 storms on repeated Chat mounts
-    const voiceInitKey = 'voice_settings_initialized';
-    if (sessionStorage.getItem(voiceInitKey)) return;
-    sessionStorage.setItem(voiceInitKey, '1');
-    base44.functions.invoke('initializeVoiceSettings', {}).catch(() => {});
-  }, []);
-
-  // Chat/Text-owned prompt backfill — stores system_prompt_url for characters missing it.
-  // No AI call. Deferred 3s. Does not block response path (Chat inline fallback handles missing URL).
-  useChatPromptBackfill({ character, characterId, currentUser, queryClient });
+  // PRIORITY ARCHITECTURE: initializeVoiceSettings removed from Chat mount.
+  // Voice settings are initialized lazily when the user first triggers voice playback,
+  // not preemptively on every Chat open. useCharacterVoice checks all required fields
+  // at call time — no pre-initialization is required for core Chat/Text operation.
+  //
+  // PRIORITY ARCHITECTURE: useChatPromptBackfill removed entirely.
+  // The inline buildSystemPrompt fallback in sendMessage (below) fully handles
+  // characters missing system_prompt_url on every send — no stored URL is required.
+  // Prompt storage is an optimization. Optimizations do not run on page open.
+  // If prompt storage is ever needed, it must trigger post-response, after the user
+  // has already received their chat reply, not on Chat mount.
 
   const { isLoadingConvoRef, loadOlderMessages } = useChatLoadConvo({
     characterId,
