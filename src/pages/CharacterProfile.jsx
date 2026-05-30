@@ -493,6 +493,7 @@ export default function CharacterProfile() {
             {/* Financial Summary — passes pre-fetched data from React Query cache. */}
             <CharacterFinancialSummary
               characterId={characterId}
+              characterName={character?.name || ''}
               financial={characterFinancial}
               isLoading={isFinancialLoading}
             />

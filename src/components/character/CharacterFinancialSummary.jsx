@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { useQueryClient } from '@tanstack/react-query';
 import { Loader2, AlertTriangle } from 'lucide-react';
 
 /**
@@ -21,8 +22,34 @@ import { Loader2, AlertTriangle } from 'lucide-react';
  * `isLoading` is passed from CharacterProfile to distinguish "still fetching"
  * from "fetched and found nothing".
  */
-export default function CharacterFinancialSummary({ characterId, financial, isLoading }) {
+export default function CharacterFinancialSummary({ characterId, characterName = '', financial, isLoading }) {
+  const queryClient = useQueryClient();
   const [rentIncomeSources, setRentIncomeSources] = useState([]);
+
+  // ── AUTO-REPAIR STATE — must be declared at top level, before any early returns ──
+  const [isAutoRepairing, setIsAutoRepairing] = useState(false);
+  const [autoRepairDone, setAutoRepairDone] = useState(false);
+
+  // AUTO-REPAIR: if financial record is missing after a genuine fetch, create it immediately.
+  // Handles service-created, NPC, and automation-created characters previously skipped
+  // by owner_email-filtered repair paths. No ownership filter — character existence = record needed.
+  useEffect(() => {
+    if (!financial && !isLoading && characterId && !isAutoRepairing && !autoRepairDone) {
+      setIsAutoRepairing(true);
+      base44.functions.invoke('initializeCharacterFinancials', {
+        characterId,
+        characterName: characterName || 'Unknown',
+        isNpc: false,
+      }).then(() => {
+        setAutoRepairDone(true);
+        setIsAutoRepairing(false);
+        // Invalidate so CharacterProfile re-fetches the newly created record
+        queryClient.invalidateQueries({ queryKey: ['characterFinancial', characterId] });
+      }).catch(() => {
+        setIsAutoRepairing(false);
+      });
+    }
+  }, [financial, isLoading, characterId, isAutoRepairing, autoRepairDone, characterName, queryClient]);
 
   // Secondary: rent income from FinancialTransaction — only after real financial data is present.
   useEffect(() => {
@@ -72,17 +99,18 @@ export default function CharacterFinancialSummary({ characterId, financial, isLo
     );
   }
 
-  // ── SYSTEM ERROR: record missing after genuine fetch ─────────────────────────
-  // If financial is null and we are not loading, the CharacterFinancial record is absent.
-  // This is a system error — every character should have one from onCharacterCreated.
-  // Fail visibly. Do not show $0. Do not hide the failure.
+  // ── MISSING RECORD: show spinner while auto-repair runs, then nothing while refetch settles ──
   if (!financial) {
-    return (
-      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-center gap-2 text-xs text-amber-400">
-        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-        Financial record pending initialization — this character has not yet received their starting balance. It will be created automatically during the next maintenance cycle.
-      </div>
-    );
+    if (isAutoRepairing) {
+      return (
+        <div className="bg-muted/30 border border-border rounded-xl p-3 flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+          Initializing financial record…
+        </div>
+      );
+    }
+    // Record was just created — parent query invalidated, will refetch momentarily.
+    return null;
   }
 
   // ── REAL DATA PATH ──────────────────────────────────────────────────────────
