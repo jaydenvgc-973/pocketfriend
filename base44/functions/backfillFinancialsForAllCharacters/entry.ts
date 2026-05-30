@@ -73,6 +73,28 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── STEP 3b: Patch owner_email onto existing NPC financial records where it is null ──
+    // Records created with owner_email: null are invisible to the owner_email-scoped UI query.
+    // Resolve owner_email from the matching Character record and patch it in.
+    let patched = 0;
+    const characterById = Object.fromEntries(eligibleCharacters.map(c => [c.id, c]));
+    for (const fin of allFinancials) {
+      if (fin.owner_email) continue; // already has owner_email — skip
+      if (!fin.character_id) continue;
+      const char = characterById[fin.character_id];
+      if (!char?.owner_email) continue; // Character also has no owner_email — cannot resolve
+      try {
+        await base44.asServiceRole.entities.CharacterFinancial.update(fin.id, {
+          owner_email: char.owner_email,
+        });
+        patched++;
+        await new Promise(r => setTimeout(r, 100));
+      } catch (err) {
+        console.error(`[backfillFinancialsForAllCharacters] Failed to patch owner_email for financial record ${fin.id}:`, err.message);
+      }
+    }
+    console.log(`[backfillFinancialsForAllCharacters] Patched owner_email on ${patched} existing financial records`);
+
     // ── STEP 4: Create missing records — character-scoped, no owner_email required ──
     let created = 0;
     let errors = 0;
@@ -143,6 +165,7 @@ Deno.serve(async (req) => {
       total_characters_scanned: allCharacters.length,
       eligible_characters: eligibleCharacters.length,
       existing_before: existingCharacterIds.size - created,
+      patched_owner_email: patched,
       created,
       errors,
       final_financial_record_count: finalCount,

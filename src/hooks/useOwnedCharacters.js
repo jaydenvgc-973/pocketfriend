@@ -455,13 +455,20 @@ export function useOwnedCharacters(
   const npcRegular       = allCharacters.filter(c => resolveTypeLegacy(c) === "npc_regular");
   const travelCompanions = [...activeCreated, ...npcFictitious, ...npcFamilyMembers];
 
-  // ── 3. Prefetch CharacterFinancial for all active_created_characters ───────────
-  // Returns financialIndex directly so Home can pass it as props to CharacterCard.
-  // Uses useQuery (reactive) — cards update automatically when this data arrives.
+  // ── 3. Prefetch CharacterFinancial for all characters ────────────────────────
+  // TWO-PASS STRATEGY:
+  //   Pass 1 (owner_email scoped): Catches records written with owner_email set.
+  //   Pass 2 (character_id targeted): Catches NPC/service-created records where
+  //     owner_email is null/missing on the CharacterFinancial record. These are
+  //     valid records created by backfill/automation but invisible to the RLS-scoped
+  //     owner_email query.
+  // No records are created or modified here — read-only resolution.
   const { data: financialIndex = {} } = useQuery({
-    queryKey: ["characterFinancialIndex", email],
+    queryKey: ["characterFinancialIndex", email, allCharacters.length],
     queryFn: async () => {
       if (!email) return {};
+
+      // Pass 1: owner_email-scoped fetch (covers active_created_character and NPCs with owner_email set)
       const financialRecords = await base44.entities.CharacterFinancial.filter(
         { owner_email: email },
         null,
@@ -469,11 +476,43 @@ export function useOwnedCharacters(
       );
       const byCharacterId = {};
       for (const record of financialRecords) {
-        byCharacterId[record.character_id] = record;
+        if (record.character_id) byCharacterId[record.character_id] = record;
       }
+
+      // Pass 2: Fetch CharacterFinancial records that have owner_email: null (service/automation-created NPCs).
+      // These are missed by the owner_email-scoped pass 1. Since CharacterFinancial has no RLS,
+      // we query with is_npc: true to get all NPC financial records, then match by character_id.
+      const npcCharacterIds = new Set(
+        allCharacters
+          .filter(c => {
+            const t = c.character_type;
+            return (t === 'npc_fictitious' || t === 'npc_family_member' || t === 'npc_regular');
+          })
+          .map(c => c.id)
+          .filter(id => id && !byCharacterId[id]) // only those not found in pass 1
+      );
+
+      if (npcCharacterIds.size > 0) {
+        try {
+          // Query all NPC financial records (no owner_email filter) — no RLS on this entity
+          const npcFinancials = await base44.entities.CharacterFinancial.filter(
+            { is_npc: true },
+            null,
+            300
+          );
+          for (const record of npcFinancials) {
+            if (record.character_id && npcCharacterIds.has(record.character_id) && !byCharacterId[record.character_id]) {
+              byCharacterId[record.character_id] = record;
+            }
+          }
+        } catch {
+          // Pass 2 miss is non-fatal — pass 1 records are still returned
+        }
+      }
+
       return byCharacterId;
     },
-    enabled: !!email,
+    enabled: !!email && allCharacters.length > 0,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
