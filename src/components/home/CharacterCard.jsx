@@ -86,33 +86,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const queryClient = useQueryClient();
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
 
-
-
-  // Read from pre-populated financial index (queryKey: ['characterFinancialIndex', owner_email]).
-  // This index is populated upfront by Home/useOwnedCharacters, NOT deferred per-card.
-  // refetchOnMount: false — data is already in cache when card mounts.
-  const { data: financialIndex = {} } = useQuery({
-    queryKey: ['characterFinancialIndex', character.owner_email],
-    queryFn: async () => {
-      if (!character.owner_email) return {};
-      const result = await base44.entities.CharacterFinancial.filter(
-        { owner_email: character.owner_email },
-        null,
-        300
-      );
-      const byId = {};
-      for (const rec of result) {
-        byId[rec.character_id] = rec;
-      }
-      return byId;
-    },
-    staleTime: 5 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
-    refetchOnWindowFocus: false,
-    refetchOnMount: false,
-    enabled: !!character.owner_email,
-  });
-
+  // Read from pre-populated financial index cache (set by useOwnedCharacters).
+  // The Home page prefetches all CharacterFinancial records into this cache key.
+  // Do NOT re-fetch here — just read what's already there.
+  const financialIndex = queryClient.getQueryData(['characterFinancialIndex', character.owner_email]) || {};
   const financialRecord = financialIndex[character.id] || null;
   // Derive display values strictly from canonical CharacterFinancial fields.
   // Never invent, default, or fallback to 6000.
