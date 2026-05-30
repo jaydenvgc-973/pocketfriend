@@ -92,8 +92,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   // sides store identical data under the shared queryKey and the cache is coherent.
   const { data: financialRecord = null } = useQuery({
     queryKey: ['characterFinancial', character.id],
-    queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id, owner_email: character.owner_email })
-      .then(r => r[0] || null),
+    queryFn: async () => {
+      // Try with owner_email scope first (secure)
+      if (character.owner_email) {
+        const result = await base44.entities.CharacterFinancial.filter({ character_id: character.id, owner_email: character.owner_email });
+        if (result[0]) return result[0];
+      }
+      // Fallback to character_id only if scoped query returns nothing (legacy records)
+      const fallback = await base44.entities.CharacterFinancial.filter({ character_id: character.id });
+      return fallback[0] || null;
+    },
     staleTime: 0,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
