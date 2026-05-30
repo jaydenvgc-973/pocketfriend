@@ -78,6 +78,7 @@ import { useChatTimingProof } from "@/hooks/useChatTimingProof";
 import ChatTimingOverlay from "@/components/chat/ChatTimingOverlay";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
+import { useChatPromptBackfill } from "@/hooks/useChatPromptBackfill";
 
 export default function Chat({ chatTypeOverride } = {}) {
   const { characterId } = useParams();
@@ -266,6 +267,10 @@ export default function Chat({ chatTypeOverride } = {}) {
     sessionStorage.setItem(voiceInitKey, '1');
     base44.functions.invoke('initializeVoiceSettings', {}).catch(() => {});
   }, []);
+
+  // Chat/Text-owned prompt backfill — stores system_prompt_url for characters missing it.
+  // No AI call. Deferred 3s. Does not block response path (Chat inline fallback handles missing URL).
+  useChatPromptBackfill({ character, characterId, currentUser, queryClient });
 
   const { isLoadingConvoRef, loadOlderMessages } = useChatLoadConvo({
     characterId,

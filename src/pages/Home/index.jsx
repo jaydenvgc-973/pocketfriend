@@ -20,7 +20,6 @@ import GraduationEventModal from "@/components/home/GraduationEventModal";
 import InviteOutModal from "@/components/home/InviteOutModal";
 import NPCContactPanel from "@/components/home/NPCContactPanel";
 import CommunityEventsStrip from "@/components/home/CommunityEventsStrip.jsx";
-// DEFAULT_CHARACTER_DATA and buildSystemPrompt removed — prompt backfill moved to Chat page (Priority 3)
 import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { usePageContext } from "@/hooks/usePageContext";
@@ -230,14 +229,6 @@ export default function Home() {
       });
     },
   });
-
-  // PRIORITY ARCHITECTURE: Default character prompt backfill has been removed from Home startup.
-  // This was a Priority 8 violation — it triggered an AI/LLM call (InvokeLLM) at startup
-  // with no user request and no visible Home requirement.
-  // Correct location: Chat page, triggered the first time that character's Chat opens,
-  // before the first response generation, only if system_prompt_url is missing.
-  // Home must not run AI calls. Home is a launchpad.
-  const promptBackfillDoneRef = useRef(null); // kept for Chat page compatibility
 
   useEffect(() => {
     if (!isLoading && !currentUser?.email) {
