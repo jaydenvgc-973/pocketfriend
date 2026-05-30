@@ -207,16 +207,17 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   }, [conversations, character.id]);
 
   useEffect(() => {
-    // PAGE-OWNERSHIP GATE: unread recounts must not run at full priority while
-    // Chat/Text is the active page. Per governance model: event-only outside Home.
-    // If Chat/Text is active, defer by 5s to yield to the active conversation load.
-    // If globally rate-limited, skip entirely — badges stay at last known value.
+    // PAGE-OWNERSHIP GATE: unread recounts must not run while Chat/Text is active.
+    // Per governance model: event-only outside Home.
+    // If Chat/Text is active: skip entirely (cache remains stale until Home is active).
+    // If rate-limited: skip (cache remains stale).
+    // If Home is active: run immediately.
     if (isGloballyRateLimited()) return;
     const ctx = getActiveContext();
     if (ctx.page === 'chat' || ctx.page === 'text') {
-      // Defer — Chat owns priority. Recount after Chat's foreground window settles.
-      const t = setTimeout(() => countUnread(), 5000);
-      return () => clearTimeout(t);
+      // Skip — Chat owns priority. Do not schedule delayed recount.
+      // Unread badges remain stale until Home becomes active again.
+      return;
     }
     countUnread();
   }, [conversations.length, character.id]);

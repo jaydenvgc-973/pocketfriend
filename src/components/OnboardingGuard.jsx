@@ -1,11 +1,17 @@
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useLocation } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { lfcRead } from "@/lib/localFirstCache.js";
 
+// Session key: set after readiness screen has successfully preloaded Home foundation.
+// Prevents redirecting established users through readiness more than once per session.
+const READINESS_KEY = "home_readiness_complete";
+
 export default function OnboardingGuard({ children }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
 
   const { data: currentUser, isLoading: isLoadingUser } = useQuery({
     queryKey: ["user"],
@@ -75,11 +81,35 @@ export default function OnboardingGuard({ children }) {
     !settings?.has_completed_onboarding &&
     !(Array.isArray(guardChars) && guardChars.length > 0);
 
+  // Has the readiness screen already run this session?
+  const readinessDone = !!sessionStorage.getItem(READINESS_KEY);
+
+  // Is the characters cache already warm? If so, no readiness screen needed.
+  const charsCacheWarm = Array.isArray(
+    queryClient.getQueryData(["characters", currentUser?.email])
+  );
+
   useEffect(() => {
     if (confirmedNew) {
       navigate("/onboarding", { replace: true });
+      return;
     }
-  }, [confirmedNew, navigate]);
+
+    // Established user but Home cache not warmed and readiness not done this session:
+    // send through Onboarding (readiness screen) once per session.
+    // Guard: only redirect if we are on a Home path (not if coming from /onboarding itself).
+    const isOnHomePath = location.pathname === "/" || location.pathname === "/home";
+    if (
+      !confirmedNew &&
+      !isLoading &&
+      !isCharsError &&
+      !readinessDone &&
+      !charsCacheWarm &&
+      isOnHomePath
+    ) {
+      navigate("/onboarding", { replace: true });
+    }
+  }, [confirmedNew, isLoading, isCharsError, readinessDone, charsCacheWarm, navigate, location.pathname]);
 
   // Established via localStorage — render immediately, no server wait.
   if (hasLfcCharacters || hasLfcOnboarding) return children;

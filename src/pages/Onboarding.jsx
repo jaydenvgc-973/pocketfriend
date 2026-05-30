@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useNavigate, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,72 +10,144 @@ import { Loader2 } from "lucide-react";
 
 const BG_IMAGE = "https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/162a4b6d0_file_00000000e46471fb9edd54ccd1916ae3.png";
 
+/**
+ * Onboarding / App Readiness Screen
+ *
+ * Two distinct states handled here:
+ *   1. First-time user (onboardingComplete = false, no characters) → show character creation flow
+ *   2. Returning user → show readiness loading screen, preload Home foundation, then route to Home
+ *
+ * PRELOAD CONTRACT:
+ * Uses the SAME React Query cache keys as Home so that when the user enters Home,
+ * all foundation data is already in cache and Home renders instantly.
+ *
+ * Keys warmed here (must match Home exactly):
+ *   ["user"]                              → auth.me()
+ *   ["userSettings", email]              → UserSettings.filter({ owner_email: email })
+ *   ["characters", email]                → Character.filter({ owner_email: email })
+ *
+ * NOT preloaded here (page-specific, not Home foundation):
+ *   - scene data, media gallery, chat histories, travel deep data
+ *   - AI calls, maintenance/repair jobs, diagnostics, enrichment
+ */
 export default function Onboarding() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [step, setStep] = useState(0);
   const [characterName, setCharacterName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // ── Loading gate state ────────────────────────────────────────────────────
-  const [isCheckingCharacters, setIsCheckingCharacters] = useState(true);
-  const [hasUsableCharacters, setHasUsableCharacters] = useState(false);
-  const [characterCheckError, setCharacterCheckError] = useState(false);
+  // Readiness state — tracks whether Home foundation has been preloaded
+  const [homeReady, setHomeReady] = useState(false);
+  const [readinessError, setReadinessError] = useState(false);
+
+  // Account classification state
   const [isTrulyEmptyAccount, setIsTrulyEmptyAccount] = useState(false);
+  const [isCheckingAccount, setIsCheckingAccount] = useState(true);
+
+  // Rotating atmospheric loading phrases
+  const loadingPhrases = [
+    "Getting your world ready…",
+    "Preparing your characters…",
+    "Loading your world…",
+    "Syncing conversations…",
+    "Almost ready…",
+  ];
+  const [phraseIndex, setPhraseIndex] = useState(0);
 
   const { data: currentUser } = useQuery({
     queryKey: ['user'],
     queryFn: () => base44.auth.me(),
-  });
-
-  const { data: userSettings } = useQuery({
-    queryKey: ['userSettings', currentUser?.email],
-    queryFn: async () => {
-      if (!currentUser?.email) return null;
-      const settings = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
-      return settings[0] || null;
-    },
-    enabled: !!currentUser?.email,
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
 
-  // ── Character existence check — scoped strictly to owner_email ───────────
+  // Rotate phrases while loading
+  useEffect(() => {
+    if (!isCheckingAccount) return;
+    const interval = setInterval(() => {
+      setPhraseIndex(i => (i + 1) % loadingPhrases.length);
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [isCheckingAccount]);
+
+  /**
+   * PRELOAD HOME FOUNDATION
+   *
+   * Fires once when currentUser is available.
+   * Populates exactly the cache keys Home reads on mount.
+   * No AI calls. No maintenance. No page-specific work.
+   *
+   * Two outcomes:
+   *   A. Empty account → setIsTrulyEmptyAccount(true) → show onboarding flow
+   *   B. Returning user → data is in cache → setHomeReady(true) → show "Enter" button
+   */
   useEffect(() => {
     if (!currentUser?.email) return;
 
-    const checkCharacters = async () => {
-      setIsCheckingCharacters(true);
-      setCharacterCheckError(false);
+    const preloadHomeFoundation = async () => {
+      setIsCheckingAccount(true);
+      setReadinessError(false);
+
       try {
-        const chars = await base44.entities.Character.filter(
-          { owner_email: currentUser.email },
-          null,
-          50
+        const email = currentUser.email;
+
+        // STEP 1: Warm UserSettings cache (same key as Home's useUserSettings hook)
+        // useUserSettings uses queryKey: ["userSettings", email]
+        let settings = queryClient.getQueryData(["userSettings", email]);
+        if (!settings) {
+          const settingsList = await base44.entities.UserSettings.filter({ owner_email: email });
+          const settingsObj = settingsList[0] || null;
+          // Store as the object shape that useUserSettings expects
+          queryClient.setQueryData(["userSettings", email], settingsObj);
+          settings = settingsObj;
+        }
+
+        // STEP 2: Warm Characters cache (same key as useOwnedCharacters)
+        // useOwnedCharacters uses queryKey: ["characters", email]
+        let characters = queryClient.getQueryData(["characters", email]);
+        if (!Array.isArray(characters)) {
+          characters = await base44.entities.Character.filter(
+            { owner_email: email },
+            null,
+            300
+          );
+          queryClient.setQueryData(["characters", email], characters);
+        }
+
+        // STEP 3: Classify account — onboarding needed or returning user?
+        const qualifying = (characters || []).filter(c =>
+          c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged' &&
+          (
+            c.character_type === "active_created_character" ||
+            c.character_type === "npc_fictitious" ||
+            c.character_type === "NPC_fictitious"
+          )
         );
-        const qualifying = (chars || []).filter(c =>
-          c.character_type === "active_created_character" ||
-          c.character_type === "npc_fictitious" ||
-          c.character_type === "NPC_fictitious"
-        );
-        if (qualifying.length > 0) {
-          setHasUsableCharacters(true);
-          setIsTrulyEmptyAccount(false);
-        } else {
-          setHasUsableCharacters(false);
+
+        if (qualifying.length === 0) {
+          // Empty account — show onboarding
           setIsTrulyEmptyAccount(true);
+          setHomeReady(false);
+        } else {
+          // Returning user — Home foundation is warmed, mark readiness done for this session
+          setIsTrulyEmptyAccount(false);
+          setHomeReady(true);
+          sessionStorage.setItem("home_readiness_complete", "1");
         }
       } catch (err) {
-        console.error("[Onboarding] Character check failed:", err?.message);
+        console.error("[Onboarding] Preload failed:", err?.message);
+        // On failure: surface error, offer direct entry to Home
         // NEVER treat a failed query as an empty account
-        setCharacterCheckError(true);
-        setHasUsableCharacters(false);
+        setReadinessError(true);
         setIsTrulyEmptyAccount(false);
+        setHomeReady(false);
       } finally {
-        setIsCheckingCharacters(false);
+        setIsCheckingAccount(false);
       }
     };
 
-    checkCharacters();
+    preloadHomeFoundation();
   }, [currentUser?.email]);
 
   const handleCreate = async () => {
@@ -182,9 +254,17 @@ Return JSON matching this schema exactly:
     });
     data.system_prompt_url = file_url;
 
-    await base44.entities.Character.create(data);
+    const newChar = await base44.entities.Character.create(data);
 
-    const existingSettingsId = userSettings?.id;
+    // Warm characters cache with the new character so Home doesn't need to re-fetch
+    if (currentUser?.email) {
+      const existing = queryClient.getQueryData(["characters", currentUser.email]);
+      if (Array.isArray(existing)) {
+        queryClient.setQueryData(["characters", currentUser.email], [...existing, newChar]);
+      }
+    }
+
+    const existingSettingsId = queryClient.getQueryData(["userSettings", currentUser?.email])?.id;
     if (existingSettingsId) {
       await base44.entities.UserSettings.update(existingSettingsId, { has_completed_onboarding: true });
     } else {
@@ -196,26 +276,7 @@ Return JSON matching this schema exactly:
     navigate("/home");
   };
 
-  // ── Rotating atmospheric loading phrases ─────────────────────────────────
-  const loadingPhrases = [
-    "Getting your world ready…",
-    "Preparing your characters…",
-    "Loading your world…",
-    "Syncing conversations…",
-    "Almost ready…",
-  ];
-  const [phraseIndex, setPhraseIndex] = useState(0);
-
-  useEffect(() => {
-    if (!isCheckingCharacters) return;
-    const interval = setInterval(() => {
-      setPhraseIndex(i => (i + 1) % loadingPhrases.length);
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [isCheckingCharacters]);
-
-  // ── Derive button state ───────────────────────────────────────────────────
-  const isLoading = isCheckingCharacters || !currentUser;
+  const isLoading = isCheckingAccount || !currentUser;
 
   return (
     <div
@@ -250,7 +311,7 @@ Return JSON matching this schema exactly:
                 </p>
               </div>
 
-              {/* ── Loading gate button area ── */}
+              {/* ── State: Loading / preloading Home foundation ── */}
               {isLoading && (
                 <div className="flex flex-col items-center gap-3">
                   <div className="w-full h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center gap-2">
@@ -272,7 +333,8 @@ Return JSON matching this schema exactly:
                 </div>
               )}
 
-              {!isLoading && characterCheckError && (
+              {/* ── State: Readiness check failed ── */}
+              {!isLoading && readinessError && (
                 <div className="flex flex-col items-center gap-3">
                   <Link
                     to="/home"
@@ -284,21 +346,21 @@ Return JSON matching this schema exactly:
                 </div>
               )}
 
-              {!isLoading && !characterCheckError && hasUsableCharacters && (
+              {/* ── State: Returning user — Home is preloaded and ready ── */}
+              {!isLoading && !readinessError && homeReady && (
                 <div className="space-y-3">
-                  <div className="w-full h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center">
-                    <span className="text-white/70 text-sm">Click below</span>
-                  </div>
                   <Link
                     to="/home"
-                    className="block text-center text-sm text-white font-medium hover:text-white/80 transition-colors"
+                    className="block w-full h-12 rounded-xl bg-primary text-center font-semibold text-base leading-[48px] text-white hover:bg-primary/90 transition-colors shadow-lg shadow-primary/30"
                   >
-                    Go to homepage → →
+                    Enter →
                   </Link>
+                  <p className="text-xs text-white/40 text-center">Your world is ready</p>
                 </div>
               )}
 
-              {!isLoading && !characterCheckError && isTrulyEmptyAccount && (
+              {/* ── State: Empty account — first-time onboarding ── */}
+              {!isLoading && !readinessError && isTrulyEmptyAccount && (
                 <div className="space-y-3">
                   <Button
                     onClick={() => setStep(1)}

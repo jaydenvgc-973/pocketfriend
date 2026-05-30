@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { analyzeImageForCharacterContext } from '@/lib/analyzeImageForCharacterContext';
+import { usePageContext } from '@/hooks/usePageContext';
 import { motion } from 'framer-motion';
 import { X, Send, Trash2, Search, ArrowLeft, RefreshCw } from 'lucide-react';
 
@@ -79,6 +80,7 @@ function nukeAllGalleryCache() {
 }
 
 export default function MediaGallery() {
+  usePageContext({ page: 'media_gallery' });
   const navigate = useNavigate();
   const [selectedImage, setSelectedImage] = useState(null);
   const [showSendModal, setShowSendModal] = useState(false);
