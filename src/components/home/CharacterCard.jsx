@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
 import { lfcDelete } from "@/lib/localFirstCache";
@@ -87,6 +87,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const isDefault = character.is_default;
   const queryClient = useQueryClient();
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
+  const navigate = useNavigate();
 
   // financialRecord is passed as a prop from Home — no self-fetching, no cache reads.
   // PROTECTED-DATA ASSERTIONS: active_created_character MUST have financial records.
@@ -584,7 +585,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuItem onClick={() => { window.location.href = `/profile/${character.id}`; }} className="gap-2 text-muted-foreground cursor-pointer">
+                  <DropdownMenuItem onClick={() => navigate(`/profile/${character.id}`)} className="gap-2 text-muted-foreground cursor-pointer">
                     <User className="w-4 h-4" /> View Profile
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
@@ -615,7 +616,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuItem onClick={() => { window.location.href = `/profile/${character.id}`; }} className="gap-2 text-muted-foreground cursor-pointer">
+                  <DropdownMenuItem onClick={() => navigate(`/profile/${character.id}`)} className="gap-2 text-muted-foreground cursor-pointer">
                     <User className="w-4 h-4" /> View Profile
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
