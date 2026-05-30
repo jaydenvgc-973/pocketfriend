@@ -20,7 +20,7 @@ import GraduationEventModal from "@/components/home/GraduationEventModal";
 import InviteOutModal from "@/components/home/InviteOutModal";
 import NPCContactPanel from "@/components/home/NPCContactPanel";
 import CommunityEventsStrip from "@/components/home/CommunityEventsStrip.jsx";
-import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
+// DEFAULT_CHARACTER_DATA and buildSystemPrompt removed — prompt backfill moved to Chat page (Priority 3)
 import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { usePageContext } from "@/hooks/usePageContext";
@@ -104,70 +104,13 @@ export default function Home() {
 
 
 
-  // AUTO-RESOLVE STUCK TRAVEL on home mount — session-gated.
-  // completeStuckTravelUserScoped is the only path that can write to Character (user-scoped RLS).
-  useEffect(() => {
-    if (!currentUser?.email) return;
-    const stuckKey = `stuck_travel_resolved_${currentUser.email}`;
-    if (sessionStorage.getItem(stuckKey)) return;
-    sessionStorage.setItem(stuckKey, '1');
-    base44.functions.invoke('completeStuckTravelUserScoped', {})
-      .then(res => {
-        const found = res?.data?.stuck_characters_found || 0;
-        if (found > 0) {
-          queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
-        }
-      })
-      .catch(() => {});
-  }, [currentUser?.email]);
-
-  // Check for character invites on first mount only
-  useEffect(() => {
-    if (!currentUser?.email) return;
-    const hasCheckedThisSession = sessionStorage.getItem(`invites_checked_${currentUser.email}`);
-    if (hasCheckedThisSession) return;
-
-    sessionStorage.setItem(`invites_checked_${currentUser.email}`, 'true');
-    base44.functions.invoke('checkAndTriggerInvites', {})
-      .then(res => {
-        if (res.data?.shouldShow && res.data?.invitations?.length > 0) {
-          setInvitations(res.data.invitations);
-        }
-      })
-      .catch(() => {});
-  }, [currentUser?.email]);
-
-  // Run lifecycle checker once per page-load session — checks education completions + jail auto-releases.
-  // Gate key is per-user + per-session-instance (UUID), NOT date-based.
-  // This means same-day enrollment changes, sentence extensions, or new completions will be
-  // checked on the next page load, not blocked by a stale date key.
-  useEffect(() => {
-    if (!currentUser?.email) return;
-    // Use a per-session instance key — cleared only when the tab is closed, not by date.
-    // This prevents the "already checked today" false gate after same-day changes.
-    const sessionInstanceKey = `lifecycle_session_${currentUser.email}`;
-    if (sessionStorage.getItem(sessionInstanceKey)) return;
-    sessionStorage.setItem(sessionInstanceKey, '1');
-    base44.functions.invoke('checkLifecycleEvents', {})
-      .then(res => {
-        const data = res?.data;
-        if (!data) return;
-        // releases[] = characters already auto-released server-side (notification only)
-        if (data.releases?.length > 0) {
-          setPendingReleases(data.releases);
-          // Invalidate so released characters no longer show jail status
-          queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
-        }
-        // graduations[] = characters whose education end_date just passed (lifecycle processed)
-        if (data.graduations?.length > 0) {
-          setGraduationEvents(data.graduations);
-          // Invalidate so updated student_status and completed_education reflect immediately
-          queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
-          queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser.email] });
-        }
-      })
-      .catch(() => {});
-  }, [currentUser?.email]); // eslint-disable-line react-hooks/exhaustive-deps
+  // PRIORITY ARCHITECTURE: completeStuckTravelUserScoped, checkAndTriggerInvites,
+  // and checkLifecycleEvents are NOT startup requirements. They are maintenance,
+  // repair, and enrichment tasks that do not belong in Home startup.
+  // They have been removed from this mount sequence per the priority correction plan.
+  // - completeStuckTravelUserScoped → Priority 6: triggered by Travel page or scheduled automation
+  // - checkAndTriggerInvites → Priority 7: idle processing, triggered after user is settled
+  // - checkLifecycleEvents → Priority 6: server-side automation owns this, not the client
 
   // Real-time: patch individual character records in the cache without re-fetching the whole list.
   // CRITICAL: Never call invalidateQueries for character updates — it triggers a full 300-record
@@ -288,40 +231,13 @@ export default function Home() {
     },
   });
 
-  // Guard: only run the prompt backfill once per default character ID per session.
-  // Without this, every real-time Character update (dozens/min from automations) changes
-  // the `characters` array reference, re-fires this effect, and triggers an
-  // invalidateQueries → refetch → new reference → effect fires again loop.
-  const promptBackfillDoneRef = useRef(null);
-  useEffect(() => {
-    const defaultChar = characters.find(c => c.is_default);
-    if (!defaultChar) return;
-    if (defaultChar.family_history && defaultChar.system_prompt_url) return;
-    // Already attempted for this character ID this session — don't retry
-    if (promptBackfillDoneRef.current === defaultChar.id) return;
-    promptBackfillDoneRef.current = defaultChar.id;
-
-    const updated = {
-      ...DEFAULT_CHARACTER_DATA,
-      name: defaultChar.name,
-      avatar_url: defaultChar.avatar_url || undefined,
-      reference_image_urls: defaultChar.reference_image_urls || undefined,
-      emotional_state: defaultChar.emotional_state || "calm",
-    };
-    const promptText = buildSystemPrompt(updated);
-    base44.integrations.Core.UploadFile({
-      file: new File([promptText], "system_prompt.txt", { type: "text/plain" })
-    }).then(({ file_url }) => {
-      return base44.entities.Character.update(defaultChar.id, { ...updated, system_prompt_url: file_url });
-    }).then(() => {
-      // Surgical cache patch instead of full invalidation — avoids triggering
-      // another 300-record fetch just to update one character's system_prompt_url.
-      queryClient.setQueryData(["characters", currentUser?.email], (prev) => {
-        if (!Array.isArray(prev)) return prev;
-        return prev.map(c => c.id === defaultChar.id ? { ...c, ...updated } : c);
-      });
-    }).catch(() => {});
-  }, [characters.find(c => c.is_default)?.id, currentUser?.email]); // eslint-disable-line react-hooks/exhaustive-deps
+  // PRIORITY ARCHITECTURE: Default character prompt backfill has been removed from Home startup.
+  // This was a Priority 8 violation — it triggered an AI/LLM call (InvokeLLM) at startup
+  // with no user request and no visible Home requirement.
+  // Correct location: Chat page, triggered the first time that character's Chat opens,
+  // before the first response generation, only if system_prompt_url is missing.
+  // Home must not run AI calls. Home is a launchpad.
+  const promptBackfillDoneRef = useRef(null); // kept for Chat page compatibility
 
   useEffect(() => {
     if (!isLoading && !currentUser?.email) {
@@ -378,87 +294,10 @@ export default function Home() {
   // Apply travel display integrity — gate "Traveling to…" on valid in_transit sessions
   const verifiedActiveCustomChars = applySessionProofToCharacters(activeCustomChars, activeTravelSessions);
 
-  // ════════════════════════════════════════════════════════════════════════════════════════════════════
-  // HOMEPAGE FINANCIAL VERIFICATION — Protected-Data Integrity Check
-  // ════════════════════════════════════════════════════════════════════════════════════════════════════
-  // REQUIRED: Every active_created_character MUST have a corresponding CharacterFinancial record.
-  // FAILURE CONDITION: If any active_created_character is missing a financial record, mark render as failed.
-  useEffect(() => {
-    if (isInitialLoading || isRefreshing) return; // Still loading — skip verification
-    
-    const allActiveCreated = allCharacters.filter(c => 
-      c.character_type === 'active_created_character' && 
-      c.status === 'active' && 
-      c.name !== "Leo Parker"
-    );
-    
-    const verifyFinancialIntegrity = () => {
-      const missingRecords = [];
-      const missingBalances = [];
-      const missingIncome = [];
-      const missingExpenses = [];
-      
-      allActiveCreated.forEach(char => {
-        const financialRec = financialIndex[char.id];
-        
-        // ASSERTION 1: Record exists
-        if (!financialRec) {
-          missingRecords.push({ char_id: char.id, char_name: char.name });
-          return;
-        }
-        
-        // ASSERTION 2: Balance exists
-        if (financialRec.current_balance === undefined || financialRec.current_balance === null) {
-          missingBalances.push({ char_id: char.id, char_name: char.name });
-        }
-        
-        // ASSERTION 3: Income exists
-        if (financialRec.total_income === undefined || financialRec.total_income === null) {
-          missingIncome.push({ char_id: char.id, char_name: char.name });
-        }
-        
-        // ASSERTION 4: Expenses exist
-        if (financialRec.total_expenses === undefined || financialRec.total_expenses === null) {
-          missingExpenses.push({ char_id: char.id, char_name: char.name });
-        }
-      });
-      
-      // Log any failures
-      if (missingRecords.length > 0 || missingBalances.length > 0 || missingIncome.length > 0 || missingExpenses.length > 0) {
-        console.error('[Home PROTECTED-DATA VERIFICATION] Financial integrity check FAILED', {
-          active_created_count: allActiveCreated.length,
-          financial_index_count: Object.keys(financialIndex).length,
-          missing_records_count: missingRecords.length,
-          missing_records: missingRecords,
-          missing_balances_count: missingBalances.length,
-          missing_balances: missingBalances,
-          missing_income_count: missingIncome.length,
-          missing_income: missingIncome,
-          missing_expenses_count: missingExpenses.length,
-          missing_expenses: missingExpenses,
-          source_query: 'useOwnedCharacters',
-          audit: 'Homepage cannot render as successful when active_created_character financial records are incomplete'
-        });
-        
-        // Track integrity failure
-        base44.analytics.track({
-          eventName: 'home_financial_integrity_failed',
-          properties: {
-            active_created_count: allActiveCreated.length,
-            financial_index_count: Object.keys(financialIndex).length,
-            missing_records_count: missingRecords.length,
-            missing_balances_count: missingBalances.length,
-            missing_income_count: missingIncome.length,
-            missing_expenses_count: missingExpenses.length,
-            severity: 'critical'
-          }
-        }).catch(() => {});
-      }
-    };
-    
-    verifyFinancialIntegrity();
-  }, [allCharacters, financialIndex, isInitialLoading, isRefreshing]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // PRIORITY ARCHITECTURE: Financial integrity audit removed from Home startup.
+  // This was a Priority 8 violation — diagnostics do not belong in the Home render pipeline.
+  // Financial data integrity is verified at the CharacterCard level (console.error only)
+  // when the data is actually needed for display, not proactively at page mount.
 
   return (
     <div className="min-h-screen bg-background">

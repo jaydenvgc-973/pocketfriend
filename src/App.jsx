@@ -85,13 +85,10 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
   // Preserve current route across orientation changes and remounts (read-only — no navigate)
   useRoutePreservation();
 
-  useEffect(() => {
-    // Session-gated: only run once per browser session to avoid 429 storms on repeated mounts.
-    const vgcInitKey = 'vgc_towers_initialized';
-    if (sessionStorage.getItem(vgcInitKey)) return;
-    sessionStorage.setItem(vgcInitKey, '1');
-    base44.functions.invoke('ensureUserVGCTowers', {}).catch(() => {});
-  }, []);
+  // PRIORITY ARCHITECTURE: ensureUserVGCTowers removed from App startup.
+  // Infrastructure maintenance does not belong in the startup sequence.
+  // VGC Towers existence is verified lazily when a location requiring them is first needed.
+  // Correct priority class: Priority 6 — Scheduled maintenance (server-side automation).
 
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (

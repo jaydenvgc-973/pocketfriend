@@ -209,24 +209,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     countUnread();
   }, [conversations.length, character.id]);
 
-  // Re-count when user returns to the tab/window.
-  // THROTTLE: shared module-level cooldown prevents N cards × focus = N invalidation storms.
-  // Only the first card to handle a focus event within the 3-min window triggers a recount;
-  // subsequent cards skip silently. The event is still handled per-card, but work is gated.
-  useEffect(() => {
-    const handleFocus = () => {
-      const now = Date.now();
-      const key = `focus_recount_${character.id}`;
-      const last = window.__cardFocusCooldowns?.[key] || 0;
-      if (now - last < 3 * 60 * 1000) return; // within 3-min window — skip
-      if (!window.__cardFocusCooldowns) window.__cardFocusCooldowns = {};
-      window.__cardFocusCooldowns[key] = now;
-      queryClient.invalidateQueries({ queryKey: ['conversations', character.id, character.owner_email] });
-      countUnread();
-    };
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, [conversations, character.id, character.owner_email, queryClient, countUnread]);
+  // PRIORITY ARCHITECTURE: window.focus listener removed from CharacterCard.
+  // Window focus is NOT a valid triggering event for known state (unread counts).
+  // Unread counts are already known. They change only when:
+  //   1. A new message arrives (handled by thread:read event below)
+  //   2. The user marks a thread read (handled by thread:read event below)
+  // Re-reading all messages for all characters on every tab-focus violated the known-state
+  // rule and created N × DB read bursts competing with Chat when the user returned to the app.
 
   // Re-count when a thread is opened (badge clear path).
   // On thread:read: bust LFC world-contacts cache, then do ONE fresh live count after a
@@ -259,36 +248,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     };
   }, [character.id, character.owner_email, countUnread]);
 
-  // Real-time: recount when a relevant message lands in any conversation this character is in.
-  // CRITICAL: autonomous beats have character_id = SENDER (other char), NOT the viewed character.
-  // We must also trigger on receiver_character_id and on conversation_id membership.
-  // Build a Set of known convoIds so we can check if the incoming message belongs to this character.
-  const conversationIdSetRef = useRef(new Set());
-  useEffect(() => {
-    conversationIdSetRef.current = new Set(conversations.map(c => c.id));
-  }, [conversations]);
-
-  useEffect(() => {
-    const unsubscribe = base44.entities.Message.subscribe((event) => {
-      if (event.type !== "create" && event.type !== "update") return;
-      // During thread:read settle window, suppress subscription-driven recounts.
-      // The is_read:true writes themselves fire update events — without this guard,
-      // each write resets countUnread's 400ms debounce, causing badge oscillation
-      // while mark-read is still in flight.
-      if (threadReadSettleRef.current) return;
-      const msg = event.data || {};
-      // Match if: sender is this char, receiver is this char, or message belongs to a known convo
-      const isForThisChar =
-        msg.character_id === character.id ||
-        msg.receiver_character_id === character.id ||
-        msg.sender_character_id === character.id ||
-        conversationIdSetRef.current.has(msg.conversation_id);
-      if (isForThisChar) {
-        countUnread();
-      }
-    });
-    return () => unsubscribe();
-  }, [character.id, countUnread]);
+  // PRIORITY ARCHITECTURE: Per-card Message.subscribe removed from CharacterCard.
+  // Opening N subscriptions for N characters (one per Home card) violates page-ownership rules:
+  //   - N open WebSocket connections consume subscription capacity regardless of active page
+  //   - These subscriptions persist after navigation and compete with Chat's active conversation
+  //   - Chat owns the single active subscription for its conversation
+  // Unread badge updates on Home cards now rely solely on:
+  //   1. Initial count on load (countUnread fired when conversations.length changes)
+  //   2. thread:read event (user reads a thread — handled below)
+  // A Home card that shows a slightly stale badge for a few seconds is acceptable.
+  // A Chat conversation being starved of quota by 5 idle subscriptions is not.
 
 
 
