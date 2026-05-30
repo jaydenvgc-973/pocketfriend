@@ -152,7 +152,7 @@ export default function Settings() {
     setIsProcessingPayday(true);
     setPaydayResult(null);
     try {
-      const res = await base44.functions.invoke('processWeeklyBusinessPayroll', {});
+      const res = await base44.functions.invoke('processPayroll', {});
       setPaydayResult({ success: true, count: res.data?.processed || 0 });
     } catch (err) {
       setPaydayResult({ success: false });
