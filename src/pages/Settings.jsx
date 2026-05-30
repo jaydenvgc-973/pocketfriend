@@ -33,8 +33,11 @@ import HomeAnchorsEditor from "@/components/settings/HomeAnchorsEditor";
 import RecoverySignalGlossary from "@/components/settings/RecoverySignalGlossary";
 import SleepDebtCleanupPanel from "@/components/settings/SleepDebtCleanupPanel";
 import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
+import { usePageContext } from "@/hooks/usePageContext";
 
 export default function Settings() {
+  usePageContext({ page: 'settings' });
+
   const queryClient = useQueryClient();
   const [pendingDelete, setPendingDelete] = useState(null);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);

@@ -30,6 +30,7 @@ import PositionInput from "@/components/location/PositionInput";
 import { getEditableCharactersForModule } from "@/lib/characterEditableListResolver";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import { calculateCharacterAvailability, getAvailabilityLabel, formatShiftDisplay } from "@/lib/characterAvailabilityEngine";
+import { usePageContext } from "@/hooks/usePageContext";
 
 const ZONE_PRESETS = {
   home: ["Living Room", "Kitchen", "Bedroom 1", "Bedroom 2", "Bedroom 3", "Bedroom 4", "Bathroom", "Dining Room", "Hallway", "Backyard", "Basement", "Office"],
@@ -1372,6 +1373,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 }
 
 export default function Locations() {
+  usePageContext({ page: 'locations' });
+
   const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
   const [inlineEditId, setInlineEditId] = useState(null);

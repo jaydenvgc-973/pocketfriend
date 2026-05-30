@@ -25,8 +25,7 @@ import { resolveTravelPresenceEntities, getPresenceAtLocation, isLocationEmpty }
 import { useUserPresence } from "@/hooks/useUserPresence";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
-import { useForegroundTask } from "@/hooks/useForegroundTask";
-import { FOREGROUND_TASKS } from "@/lib/foregroundPriority";
+import { usePageContext } from "@/hooks/usePageContext";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 
 
@@ -83,7 +82,7 @@ export default function Travel() {
   const { userPresence } = useUserPresence(currentUser, safeSettings, safeSettings?.id);
 
   // Travel page is foreground — background simulation must yield while user is here
-  useForegroundTask(FOREGROUND_TASKS.TRAVEL_PAGE, !!currentUser?.email);
+  usePageContext({ page: 'travel' });
 
   // ALL character records for internal family scanning (parent character lookup)
   const allCharactersForFamilyScan = [...activeCharacters, ...npcCharacters, ...npcFamilyMembers];

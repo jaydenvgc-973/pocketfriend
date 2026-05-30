@@ -14,10 +14,13 @@ import TroubleshootingPanelMoments from "@/components/moments/TroubleshootingPan
 import MomentsCalendar from "@/components/moments/MomentsCalendar";
 import { ACHIEVEMENTS, CATEGORY_LABELS } from "@/lib/achievements";
 import { buildDefaultCommunityEvents } from "@/lib/defaultCommunityEvents";
+import { usePageContext } from "@/hooks/usePageContext";
 
 const CATEGORIES = Object.keys(CATEGORY_LABELS);
 
 export default function Moments() {
+  usePageContext({ page: 'moments' });
+
   const [activeCategory, setActiveCategory] = useState("all");
   const [scanning, setScanning] = useState(false);
   const [reelJobStatus, setReelJobStatus] = useState(null); // null | 'processing' | 'complete'
