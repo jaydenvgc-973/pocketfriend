@@ -463,8 +463,14 @@ export function useOwnedCharacters(
   //     valid records created by backfill/automation but invisible to the RLS-scoped
   //     owner_email query.
   // No records are created or modified here — read-only resolution.
+  //
+  // KEY STABILITY: Use a sorted ID fingerprint instead of allCharacters.length.
+  // allCharacters.length stays stable when characters are updated (patch events),
+  // but the sorted IDs change only when characters are actually added or removed.
+  // This prevents financial re-fetches on every automation write to a character.
+  const characterIdFingerprint = [...allCharacters.map(c => c.id)].sort().join(',');
   const { data: financialIndex = {} } = useQuery({
-    queryKey: ["characterFinancialIndex", email, allCharacters.length],
+    queryKey: ["characterFinancialIndex", email, characterIdFingerprint],
     queryFn: async () => {
       if (!email) return {};
 

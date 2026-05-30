@@ -209,15 +209,24 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     countUnread();
   }, [conversations.length, character.id]);
 
-  // Re-count when user returns to the tab/window
+  // Re-count when user returns to the tab/window.
+  // THROTTLE: shared module-level cooldown prevents N cards × focus = N invalidation storms.
+  // Only the first card to handle a focus event within the 3-min window triggers a recount;
+  // subsequent cards skip silently. The event is still handled per-card, but work is gated.
   useEffect(() => {
     const handleFocus = () => {
+      const now = Date.now();
+      const key = `focus_recount_${character.id}`;
+      const last = window.__cardFocusCooldowns?.[key] || 0;
+      if (now - last < 3 * 60 * 1000) return; // within 3-min window — skip
+      if (!window.__cardFocusCooldowns) window.__cardFocusCooldowns = {};
+      window.__cardFocusCooldowns[key] = now;
       queryClient.invalidateQueries({ queryKey: ['conversations', character.id, character.owner_email] });
       countUnread();
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [conversations, character.id, character.owner_email, queryClient]);
+  }, [conversations, character.id, character.owner_email, queryClient, countUnread]);
 
   // Re-count when a thread is opened (badge clear path).
   // On thread:read: bust LFC world-contacts cache, then do ONE fresh live count after a
