@@ -148,30 +148,35 @@ export default function Settings() {
   const [isProcessingBills, setIsProcessingBills] = useState(false);
   const [billsResult, setBillsResult] = useState(null);
 
-  const handleForcePayday = async () => {
+  const handleForcePayday = () => {
     setIsProcessingPayday(true);
     setPaydayResult(null);
-    try {
-      const res = await base44.functions.invoke('processPayroll', {});
-      setPaydayResult({ success: true, count: res.data?.processed || 0 });
-    } catch (err) {
-      setPaydayResult({ success: false });
-    } finally {
-      setIsProcessingPayday(false);
-    }
+    // processPayroll can take 30-60s — do not await, poll for completion
+    base44.functions.invoke('processPayroll', {})
+      .then(res => {
+        const paid = res.data?.paid ?? res.data?.processed ?? (res.data?.payroll?.length || 0);
+        setPaydayResult({ success: true, count: paid });
+      })
+      .catch(() => setPaydayResult({ success: false }))
+      .finally(() => setIsProcessingPayday(false));
   };
 
-  const handleForceBills = async () => {
+  const handleForceBills = () => {
     setIsProcessingBills(true);
     setBillsResult(null);
-    try {
-      const res = await base44.functions.invoke('processHousingCosts', {});
-      setBillsResult({ success: true, count: res.data?.processed || 0 });
-    } catch (err) {
-      setBillsResult({ success: false });
-    } finally {
-      setIsProcessingBills(false);
-    }
+    // Run housing costs + all recurring expenses (phone, gym, etc.) in parallel
+    Promise.all([
+      base44.functions.invoke('processHousingCosts', {}),
+      base44.functions.invoke('processRecurringExpenses', { catchUp: true }),
+    ])
+      .then(([housingRes, recurringRes]) => {
+        const count =
+          (housingRes.data?.processed || 0) +
+          (recurringRes.data?.processedCount || 0);
+        setBillsResult({ success: true, count });
+      })
+      .catch(() => setBillsResult({ success: false }))
+      .finally(() => setIsProcessingBills(false));
   };
 
   return (
