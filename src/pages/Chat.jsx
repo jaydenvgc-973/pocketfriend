@@ -66,7 +66,7 @@ import { useChatScrollTracking } from "@/hooks/useChatScrollTracking";
 import { useChatLocationShare } from "@/hooks/useChatLocationShare";
 import { useChatBackgroundTasks } from "@/hooks/useChatBackgroundTasks.js";
 import { usePageContext } from "@/hooks/usePageContext";
-import { isGloballyRateLimited, reportRateLimit, activateChatSafeMode, isChatSafeModeActive } from "@/lib/simulationGate";
+import { isGloballyRateLimited, reportRateLimit, activateChatSafeMode, isChatSafeModeActive, escalateChatRetry } from "@/lib/simulationGate";
 import { registerForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from "@/lib/foregroundPriority";
 import { lfcRead as lfcReadChat } from "@/lib/localFirstCache.js";
 import { resolveCoPresence } from "@/lib/coPresenceResolver";
@@ -1843,10 +1843,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           </div>
           <button
             onClick={() => {
-              // SAFEGUARD RECOVERY: Retry is not passive. It activates Chat-Safe Mode
-              // which pauses all nonessential background work for 45s, then retries the page load.
-              console.warn('[Chat] RETRY pressed — activating chat-safe mode and running safeguard recovery');
-              activateChatSafeMode(45000);
+              // SAFEGUARD RECOVERY: Retry escalates throttling on each press.
+              // Level 1 = 60s pause. Level 2 = 2min. Level 3 = 5min + optional systems off.
+              // escalateChatRetry() calls activateChatSafeMode internally with the escalated duration.
+              const retryState = escalateChatRetry();
+              console.warn(`[Chat] RETRY pressed — escalated to level=${retryState.level}, pause=${retryState.pauseUntil ? Math.round((retryState.pauseUntil - Date.now()) / 1000) : 0}s`);
               // Brief delay to let in-flight background tasks drain before retrying
               setTimeout(() => {
                 setConvoLoadError(null);

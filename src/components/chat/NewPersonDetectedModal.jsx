@@ -136,7 +136,7 @@ export default function NewPersonDetectedModal({ people, characterId, characterN
   const handleLinkCharacter = async (char) => {
     setIsProcessing(true);
     try {
-      // Save as alias on the target character
+      // 1. Save as alias on the target character (name resolution)
       const existingAliases = Array.isArray(char.aliases) ? char.aliases : [];
       const aliasExists = existingAliases.some(a => {
         const t = typeof a === 'string' ? a : (a?.text || a?.alias || '');
@@ -147,6 +147,28 @@ export default function NewPersonDetectedModal({ people, characterId, characterN
           aliases: [...existingAliases, { text: currentPerson.name, source: 'user_confirmed' }],
         });
       }
+
+      // 2. CANONICAL RELATIONSHIP PERSISTENCE — the critical missing step.
+      // The speaking character (characterId) knows the selected character (char).
+      // This creates/updates the fictional_relationships entry on BOTH sides
+      // so the link survives reload and appears in World Contacts, profile, and chat context.
+      // detectAndSyncRelationship is the canonical relationship pipeline used by
+      // post-send background tasks — we reuse it here to ensure consistency.
+      await base44.functions.invoke('detectAndSyncRelationship', {
+        character_id: characterId,           // the speaker who mentioned the name
+        response_text: `I know ${char.name}`, // minimal relationship signal
+        user_message_text: currentPerson.context || `User confirmed: "${currentPerson.name}" is ${char.name}`,
+        conversation_id: null,               // no conversation — user confirmed from modal
+        owner_email: user?.email || null,
+        // Pass the resolved target directly so the backend doesn't need to guess
+        resolved_target_character_id: char.id,
+        resolved_target_character_name: char.name,
+        source: 'user_confirmed_mention',
+      }).catch(err => {
+        // Non-fatal: alias was saved above; relationship sync failure is recoverable
+        console.warn('[NewPersonDetectedModal] detectAndSyncRelationship failed (non-fatal):', err?.message);
+      });
+
       markResolved(currentPerson.name, 'character');
       advance();
     } catch (err) {
