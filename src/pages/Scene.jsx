@@ -622,10 +622,18 @@ export default function Scene() {
     }
   }, [location?.id, activeZone]);
 
-  // ensureChildCaregiverPresence removed from mount.
-  // Caregiver enforcement is presence maintenance — the visible Scene page does not require
-  // it to complete before rendering or before the user acts.
-  // It runs on Leave (handleLeaveWithCharacters / handleLeaveCharactersBehind) instead.
+  // ── CHILD SAFETY INVARIANT ──────────────────────────────────────────────
+  // When entering a home/location scene, ensure no child is left alone.
+  // This is a safety/continuity requirement, not optional maintenance.
+  // Scoped to active location only. Fast-exits if no children exist on account.
+  // Writes only when needed (sitter assignment/despawn). No AI, no broad invalidation.
+  useEffect(() => {
+    if (!isHomeLocation || !location?.id || !currentUser?.email) return;
+    // targetLocationId gates to active location only
+    base44.functions.invoke('ensureChildCaregiverPresence', {
+      locationId: location.id,
+    }).catch(() => {});
+  }, [isHomeLocation, location?.id, currentUser?.email]);
 
   // PRESENCE ENFORCEMENT: When characters arrive at a scene, write to the AUTHORITATIVE resolved fields.
   // This is the single location truth that propagates across ALL UI surfaces:
