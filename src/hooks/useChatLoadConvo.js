@@ -394,24 +394,41 @@ export function useChatLoadConvo({
           } // end else (selectedConvo exists)
         }
 
-        // No valid direct user↔character conversation — REUSE EXISTING or create one
+        // No valid direct user↔character conversation — REUSE or CREATE (never duplicate)
         if (!convoId) {
-          // CRITICAL FIX: Before creating, try to find ANY existing conversation
-          // Re-query to get any available direct conversations
-          const existingCheck = await base44.entities.Conversation.filter(
-            { owner_email: currentUser.email, character_ids: characterId },
-            "-last_message_date",
-            10
+          // ABSOLUTE GUARD: Query for ANY conversation with this owner+character
+          // This is the final safety net to ensure we NEVER create a duplicate
+          const absoluteCheck = await base44.entities.Conversation.filter(
+            { 
+              owner_email: currentUser.email,
+              character_ids: characterId,
+              type: chatType
+            },
+            "-created_date",
+            100
           );
-          
-          const reuseCheck = existingCheck.length > 0 ? existingCheck[0] : null;
-          if (reuseCheck) {
-            console.log(`[CHAT_LOAD] REUSING existing conversation ${reuseCheck.id} instead of creating duplicate`);
-            convoId = reuseCheck.id;
+
+          // Filter to direct conversations only (no world_phone, no char-to-char, no shared_key)
+          const directCandidates = absoluteCheck.filter(c => {
+            const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
+            return ids.length === 1 && !c.shared_conversation_key && c.channel !== 'world_phone';
+          });
+
+          if (directCandidates.length > 0) {
+            // REUSE the most recent conversation
+            const mostRecent = directCandidates.reduce((prev, curr) => {
+              const prevTime = new Date(prev.last_message_date || prev.created_date).getTime();
+              const currTime = new Date(curr.last_message_date || curr.created_date).getTime();
+              return currTime > prevTime ? curr : prev;
+            });
+            
+            console.log(`[CHAT_LOAD] REUSING canonical conversation ${mostRecent.id} (found ${directCandidates.length} direct conversations)`);
+            convoId = mostRecent.id;
             setConversationId(convoId);
             convoIdRef.current = convoId;
           } else {
-            console.log(`[CHAT_LOAD] No existing conversation found — creating new one t=${Date.now()}`);
+            // No existing direct conversation: CREATE one
+            console.log(`[CHAT_LOAD] No existing direct conversation found — creating new one t=${Date.now()}`);
             const convo = await base44.entities.Conversation.create({
               title: `${chatType} with ${character.name}`,
               type: chatType,
@@ -421,7 +438,7 @@ export function useChatLoadConvo({
             setConversationId(convo.id);
             convoIdRef.current = convo.id;
             convoId = convo.id;
-            console.log(`[CHAT_LOAD] Conversation CREATED id=${convoId} t=${Date.now()}`);
+            console.log(`[CHAT_LOAD] Conversation CREATED id=${convoId} (new, no prior conversations found) t=${Date.now()}`);
           }
           if (setHasOlderMessages) setHasOlderMessages(false);
           setConvoLoadError(null);

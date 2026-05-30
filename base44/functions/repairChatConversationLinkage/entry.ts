@@ -86,30 +86,48 @@ Deno.serve(async (req) => {
       const msgs = messagesByConvo[convo.id] || [];
       console.log(`[REPAIR_CHAT] Moving ${msgs.length} messages from convo ${convo.id} to canonical ${canonical.id}`);
 
-      // Process in small batches with delays
-      for (let i = 0; i < msgs.length; i += 5) {
-        const batch = msgs.slice(i, i + 5);
-        
-        for (const msg of batch) {
+      // Process each message individually with exponential backoff for rate limits
+      for (let i = 0; i < msgs.length; i++) {
+        const msg = msgs[i];
+        let retries = 0;
+        const maxRetries = 5;
+        let moved = false;
+
+        while (retries <= maxRetries && !moved) {
           try {
             // Update message to point to canonical conversation
             await base44.entities.Message.update(msg.id, {
               conversation_id: canonical.id,
             });
             movedCount++;
+            moved = true;
+            console.log(`[REPAIR_CHAT] Moved message ${msg.id} (${i + 1}/${msgs.length})`);
           } catch (err) {
-            errors.push({
-              message_id: msg.id,
-              error: err.message,
-            });
-            console.error(`[REPAIR_CHAT] Failed to move message ${msg.id}: ${err.message}`);
+            // Check if this is a rate limit error
+            const isRateLimit = err.message?.includes('429') || err.message?.includes('Rate limit');
+            
+            if (isRateLimit && retries < maxRetries) {
+              // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
+              const delayMs = Math.pow(2, retries) * 100;
+              console.log(`[REPAIR_CHAT] Rate limited on message ${msg.id}, retry ${retries + 1}/${maxRetries} after ${delayMs}ms`);
+              await new Promise(r => setTimeout(r, delayMs));
+              retries++;
+            } else {
+              // Non-rate-limit error or max retries exceeded
+              errors.push({
+                message_id: msg.id,
+                error: err.message,
+                retries: retries,
+              });
+              console.error(`[REPAIR_CHAT] Failed to move message ${msg.id} after ${retries} retries: ${err.message}`);
+              moved = true; // Stop retrying this message
+            }
           }
         }
-        
-        // Delay between batches to avoid rate limiting
-        if (i + 5 < msgs.length) {
-          console.log(`[REPAIR_CHAT] Batch processed, waiting before next batch...`);
-          await new Promise(r => setTimeout(r, 2000));
+
+        // Small delay between messages to spread out requests
+        if (i < msgs.length - 1) {
+          await new Promise(r => setTimeout(r, 50));
         }
       }
     }
