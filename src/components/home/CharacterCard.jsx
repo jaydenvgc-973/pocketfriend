@@ -88,26 +88,32 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
 
 
-  // Fetch this character's financial record directly — scoped by character_id.
-  // refetchOnMount: true ensures the card always loads real data even if the
-  // shared prefetch index hasn't populated yet.
-  const { data: financialRecord = null } = useQuery({
-    queryKey: ['characterFinancial', character.id],
+  // Read from pre-populated financial index (queryKey: ['characterFinancialIndex', owner_email]).
+  // This index is populated upfront by Home/useOwnedCharacters, NOT deferred per-card.
+  // refetchOnMount: false — data is already in cache when card mounts.
+  const { data: financialIndex = {} } = useQuery({
+    queryKey: ['characterFinancialIndex', character.owner_email],
     queryFn: async () => {
+      if (!character.owner_email) return {};
       const result = await base44.entities.CharacterFinancial.filter(
-        { character_id: character.id },
+        { owner_email: character.owner_email },
         null,
-        1
+        300
       );
-      return result[0] || null;
+      const byId = {};
+      for (const rec of result) {
+        byId[rec.character_id] = rec;
+      }
+      return byId;
     },
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    refetchOnMount: true,
-    enabled: !!character.id,
+    refetchOnMount: false,
+    enabled: !!character.owner_email,
   });
 
+  const financialRecord = financialIndex[character.id] || null;
   // Derive display values strictly from canonical CharacterFinancial fields.
   // Never invent, default, or fallback to 6000.
   const balance = financialRecord ? financialRecord.current_balance : null;
