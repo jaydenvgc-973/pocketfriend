@@ -109,7 +109,6 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     enabled: !!character.id,
   });
   const balance = financialRecord?.current_balance;
-  const totalIncome = financialRecord?.total_income;
 
   const { data: conversations = [] } = useQuery({
     // Query conversations scoped by owner_email + character_ids.
@@ -435,16 +434,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
             <div className="flex items-center gap-2 mt-1">
               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${stateDots[state] || "bg-zinc-500"}`} />
               <span className="text-xs text-muted-foreground capitalize">{stateLabels[state] || state}</span>
-            </div>
-            <div className="flex items-center gap-3 mt-2 text-xs">
               {balance != null && (
-                <span className="flex items-center gap-0.5 text-green-400 font-medium">
-                  <DollarSign className="w-3 h-3" /> Balance: {Number(balance).toLocaleString()}
-                </span>
-              )}
-              {totalIncome != null && totalIncome > 0 && (
-                <span className="flex items-center gap-0.5 text-blue-400 font-medium">
-                  <Briefcase className="w-3 h-3" /> Income: {Number(totalIncome).toLocaleString()}
+                <span className="ml-auto flex items-center gap-0.5 text-xs text-green-400 font-medium">
+                  <DollarSign className="w-3 h-3" />{Number(balance).toLocaleString()}
                 </span>
               )}
             </div>
