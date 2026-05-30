@@ -125,32 +125,10 @@ export default function Moments() {
     return [...dbCommunityEvents, ...defaults];
   }, [dbCommunityEvents, appLocations]);
 
-  // Run retroactive achievement scan once per session when user loads Moments
-  useEffect(() => {
-    if (!currentUser?.email || hasScanned.current) return;
-    hasScanned.current = true;
-
-    const runScan = async () => {
-      setScanning(true);
-      try {
-        const res = await base44.functions.invoke('retroactiveAchievementScan', {});
-        const granted = res?.data?.granted || 0;
-        if (granted > 0) {
-          setScanResult(granted);
-          // Refresh achievements list
-          await refetchAchievements();
-          queryClient.invalidateQueries({ queryKey: ["userAchievements"] });
-        }
-      } catch (err) {
-        // Silent fail — scan is a bonus, not critical
-        console.warn('[Moments] retroactive scan failed:', err.message);
-      } finally {
-        setScanning(false);
-      }
-    };
-
-    runScan();
-  }, [currentUser?.email]);
+  // retroactiveAchievementScan removed from mount.
+  // The Moments page renders from already-stored UserAchievement records.
+  // retroactiveAchievementScan is an audit/enrichment operation — it is not required
+  // for the visible Moments page to load. It is triggered by the "Scan" button below.
 
   // Check for active reel job — session-gated, lightweight
   useEffect(() => {
@@ -204,9 +182,34 @@ export default function Moments() {
              </p>
            </div>
            <div className="flex items-center gap-2">
+             <button
+              onClick={async () => {
+                if (scanning || !currentUser?.email) return;
+                setScanning(true);
+                setScanResult(null);
+                try {
+                  const res = await base44.functions.invoke('retroactiveAchievementScan', {});
+                  const granted = res?.data?.granted || 0;
+                  setScanResult(granted);
+                  if (granted > 0) {
+                    await refetchAchievements();
+                    queryClient.invalidateQueries({ queryKey: ["userAchievements"] });
+                  }
+                } catch (err) {
+                  console.warn('[Moments] retroactive scan failed:', err.message);
+                } finally {
+                  setScanning(false);
+                }
+              }}
+              disabled={scanning}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors text-xs font-medium disabled:opacity-50"
+              title="Scan for missed achievements"
+             >
+              {scanning ? 'Scanning...' : '🔍 Scan'}
+             </button>
              <Link
-               to="/memory-reel"
-               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-xs font-medium"
+              to="/memory-reel"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-xs font-medium"
              >
                {reelJobStatus === 'processing'
                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Memory Reel processing</>

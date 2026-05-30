@@ -132,15 +132,11 @@ export default function Travel() {
     e.residence_location_id === vgcTowers?.id
   );
 
-  // Ensure every location has saved map coordinates
-  useEffect(() => {
-    if (!locationsData.length || !currentUser?.email) return;
-    const saveLocation = async (locationId, updates) => {
-      await base44.entities.LocationReference.update(locationId, updates);
-      queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser.email] });
-    };
-    ensureLocationsMapped(locationsData, saveLocation).catch(() => {});
-  }, [locationsData.length, currentUser?.email]);
+  // ensureLocationsMapped is deferred to when the user opens the map.
+  // Map coordinate assignment is NOT required for page display — the location grid
+  // and character selector render from locationsData directly without coordinates.
+  // Coordinates are only needed for LivePresenceMap pin rendering.
+  // Called inside the showMap toggle handler below.
 
   // Close popup on outside click/tap or Escape key
   useEffect(() => {
@@ -161,44 +157,11 @@ export default function Travel() {
     };
   }, [selectedLocation]);
 
-  // AUTO-RESOLVE STUCK TRAVEL on page load.
-  // completeStuckTravelUserScoped uses user-scoped RLS (the only path that works for Character writes).
-  // Session-gated: run once per session to avoid hammering the API.
-  useEffect(() => {
-    if (!currentUser?.email) return;
-    const stuckKey = `stuck_travel_resolved_${currentUser.email}`;
-    if (sessionStorage.getItem(stuckKey)) return;
-    sessionStorage.setItem(stuckKey, '1');
-    base44.functions.invoke('completeStuckTravelUserScoped', {})
-      .then(res => {
-        const completed = res?.data?.stuck_characters_found || 0;
-        if (completed > 0) {
-          queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
-          queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
-        }
-      })
-      .catch(() => {});
-  }, [currentUser?.email]);
-
-  // Auto-distribute VGC NPCs on page load so UI shows their real locations.
-  // Session-gated: distributeVGCTowersNPCs is expensive — run at most once per session.
-  useEffect(() => {
-    if (!currentUser?.email) return;
-    const sessionKey = `vgc_distributed_${currentUser.email}`;
-    if (sessionStorage.getItem(sessionKey)) return;
-    if (hasRunDistribution) return;
-    setHasRunDistribution(true);
-    sessionStorage.setItem(sessionKey, '1');
-    base44.functions.invoke('distributeVGCTowersNPCs', {})
-      .then(() => new Promise(r => setTimeout(r, 1000)))
-      .then(() => {
-        // Use the SHARED query keys so cache is invalidated consistently across Home + Travel
-        queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] });
-        queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser.id] });
-        queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser.email] });
-      })
-      .catch(() => {});
-  }, [currentUser?.email, hasRunDistribution]);
+  // completeStuckTravelUserScoped and distributeVGCTowersNPCs removed from mount.
+  // The visible Travel page (location grid, character selector, presence map) does NOT
+  // require stuck travel repair or NPC distribution before the user acts.
+  // - completeStuckTravelUserScoped: repair work — must be user-triggered from the debug panel
+  // - distributeVGCTowersNPCs: world simulation maintenance — already in debug panel as manual action
 
 
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
@@ -473,7 +436,20 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
         </div>
         <FixLocationsButton currentUserEmail={currentUser?.email} />
         <button
-          onClick={() => setShowMap(!showMap)}
+          onClick={() => {
+            const opening = !showMap;
+            setShowMap(opening);
+            // Ensure map coordinates are saved only when user opens the map.
+            // ensureLocationsMapped writes coordinates to the DB — map pins need them,
+            // but the location grid and selector do NOT. Deferred to here by design.
+            if (opening && locationsData.length && currentUser?.email) {
+              const saveLocation = async (locationId, updates) => {
+                await base44.entities.LocationReference.update(locationId, updates);
+                queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser.email] });
+              };
+              ensureLocationsMapped(locationsData, saveLocation).catch(() => {});
+            }
+          }}
           className={`p-2 rounded-lg transition-colors ${showMap ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}
           title="Live Presence Map"
         >
@@ -809,6 +785,24 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Debug Info</h3>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await base44.functions.invoke('completeStuckTravelUserScoped', {});
+                      const fixed = res?.data?.stuck_characters_found || 0;
+                      if (fixed > 0) {
+                        queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+                        queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
+                      }
+                      console.log('[Travel Debug] Stuck travel repair:', res?.data);
+                    } catch (e) {
+                      console.error('[Travel Debug] Stuck travel repair failed:', e.message);
+                    }
+                  }}
+                  className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 transition-colors"
+                >
+                  Fix Stuck Travel
+                </button>
                 <button
                   onClick={async () => {
                     setIsDistributing(true);

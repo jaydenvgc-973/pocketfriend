@@ -65,6 +65,9 @@ export default function Scene() {
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [sceneImage, setSceneImage] = useState(null);
+  // Tracks whether the user has explicitly requested an image (↻ button or zone change).
+  // Prevents automatic generation on mount — the page renders a placeholder until the user acts.
+  const [hasUserRequestedImage, setHasUserRequestedImage] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [actions, setActions] = useState([]);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
@@ -595,7 +598,8 @@ export default function Scene() {
       content: `You move to the ${zoneName}.`,
       timestamp: new Date().toISOString(),
     }]);
-    // Regenerate the scene image for the new zone
+    // Regenerate the scene image for the new zone (user-triggered zone change)
+    setHasUserRequestedImage(true);
     setTimeout(() => setSceneImage(null), 50);
   };
 
@@ -618,11 +622,10 @@ export default function Scene() {
     }
   }, [location?.id, activeZone]);
 
-  // CHILD SAFETY: When entering a home scene, ensure a caregiver is present if a child is alone.
-  useEffect(() => {
-    if (!location || location.category !== 'home') return;
-    base44.functions.invoke('ensureChildCaregiverPresence', { locationId: location.id }).catch(() => {});
-  }, [location?.id]);
+  // ensureChildCaregiverPresence removed from mount.
+  // Caregiver enforcement is presence maintenance — the visible Scene page does not require
+  // it to complete before rendering or before the user acts.
+  // It runs on Leave (handleLeaveWithCharacters / handleLeaveCharactersBehind) instead.
 
   // PRESENCE ENFORCEMENT: When characters arrive at a scene, write to the AUTHORITATIVE resolved fields.
   // This is the single location truth that propagates across ALL UI surfaces:
@@ -747,28 +750,22 @@ export default function Scene() {
     return () => clearInterval(interval);
   }, [location?.id, activeZone]);
 
-  // Generate scene image on load or when zone changes (sceneImage set to null)
+  // Scene image is NOT generated automatically on mount.
+  // Reason: the page is fully usable without it (placeholder emoji renders, chat/actions/input all work).
+  // Automatic AI image generation on mount competes with the user's first interaction.
+  // Image is generated only when:
+  //   1. User explicitly taps the ↻ refresh button (sets hasUserRequestedImage=true + sceneImage=null)
+  //   2. User changes zone (handleZoneChange sets hasUserRequestedImage=true + sceneImage=null)
+  //   3. An action triggers generateSceneImage() directly (handleAction path)
   // RABBIT HOLE MODE: Skip scene generation for real-world locations
   useEffect(() => {
+    if (!hasUserRequestedImage) return;
     if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
       generateSceneImage();
     }
-  // NOTE: resolvedWhosHereList is intentionally NOT in the dep array — it's a new array every render
-  // and would cause infinite re-generation loops. Image regeneration is triggered by:
-  // - location change (location?.id)
-  // - sceneImage set to null (null = explicit regen request)
-  // - zone change (activeZone)
-  // - selectedNpcIds change (explicit user selection changes who appears)
-  }, [location?.id, sceneImage, activeZone, selectedNpcIds]);
+  }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage]);
 
-  // Ensure child caregiver presence on home location load
-  useEffect(() => {
-    if (!isHomeLocation || !location?.id || !currentUser?.email) return;
-    base44.functions.invoke('ensureChildCaregiverPresence', {
-      locationId: location.id,
-      userEmail: currentUser.email,
-    }).then(() => queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] })).catch(() => {});
-  }, [isHomeLocation, location?.id, currentUser?.email]);
+  // Duplicate ensureChildCaregiverPresence removed — see comment above.
 
   const generateSceneImage = async (actionOverridePrompt = null) => {
     if (!location || isGeneratingImage) return;
@@ -1539,7 +1536,7 @@ Return JSON:
         )}
 
         <button
-          onClick={() => { setSceneImage(null); }}
+          onClick={() => { setHasUserRequestedImage(true); setSceneImage(null); }}
           disabled={isGeneratingImage}
           className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/40 text-white hover:bg-black/60 transition-colors"
           title="Refresh scene image"
