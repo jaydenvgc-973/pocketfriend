@@ -113,9 +113,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── ALL CHARACTER TYPES: Ensure CharacterFinancial record exists ──────────
-    // NPCs get $6,000 default. This must run BEFORE the billing skip below.
-    // Do not overwrite an existing record — only create if missing.
+    // ── ENSURE CharacterFinancial record exists (for ALL character types) ─────────────
     let financial = null;
     try {
       const financialRecs = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: character.id });
@@ -130,13 +128,9 @@ Deno.serve(async (req) => {
           current_balance: 6000,
           total_income: 0,
           total_expenses: 0,
-          income_sources: [],
-          recurring_expenses: [],
-          last_updated: new Date().toISOString(),
         });
-        console.log(`[onCharacterCreated] Created CharacterFinancial for ${character.name} (${character.character_type}) — balance: $6000`);
       } else if (!financial.owner_email && ownerEmail) {
-        // Backfill owner_email on existing records created without it — non-destructive
+        // Backfill owner_email on existing records that were created without it
         await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
           owner_email: ownerEmail,
         }).catch(() => {});
@@ -145,7 +139,7 @@ Deno.serve(async (req) => {
       console.error('[onCharacterCreated] Failed to ensure CharacterFinancial:', finErr.message);
     }
 
-    // NPCs: financial record is ensured above. Skip all billing (VGC Mobile, rent).
+    // Skip billing for NPCs — financial record is now ensured above
     if (!isActive || character.status !== 'active') {
       return Response.json({ success: true, skipped: true, reason: isNPC ? 'NPC financial record ensured, no billing' : 'Not an active character' });
     }
@@ -176,7 +170,15 @@ Deno.serve(async (req) => {
       console.error('[onCharacterCreated] Failed to auto-link home location:', homeLinkErr.message);
     }
 
+
+
     // ── ACTIVE CHARACTER: Charge VGC Mobile ──────────────────────────────────
+    // financial was set above in the ensure block; re-fetch in case create updated it
+    try {
+      const freshRecs = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: character.id });
+      financial = freshRecs[0] || financial;
+    } catch (_e) {}
+
     try {
       if (financial) {
         const newBalance = Math.max(0, (financial.current_balance || 6000) - VGC_MOBILE_MONTHLY_COST);
@@ -228,22 +230,33 @@ Deno.serve(async (req) => {
     }
 
     // ── ACTIVE CHARACTER: Off-app rent scheduling ─────────────────────────────
+    // Only charge if the character has NO in-app home and is not homeless/sheltered.
+    // Rule:
+    //   - Charge 2 days after creation (initial rent)
+    //   - UNLESS the 1st of next month falls within those 2 days → skip initial, charge on the 1st only.
+    //   - Recurring: 1st of each month via processRecurringExpenses.
     try {
       if (financial && requiresOffAppRent(character)) {
         const now = new Date();
         const creationDate = now;
 
+        // Compute the next 1st of month
         const nextFirst = new Date(creationDate.getFullYear(), creationDate.getMonth() + 1, 1);
         const msUntilFirst = nextFirst - creationDate;
         const daysUntilFirst = msUntilFirst / (1000 * 60 * 60 * 24);
 
         if (daysUntilFirst <= 2) {
+          // 1st arrives within 2 days — skip early charge, let monthly billing handle it
           console.log(`[onCharacterCreated] Off-app rent: 1st of month is in ${daysUntilFirst.toFixed(1)} days — skipping 2-day charge, monthly billing will apply`);
         } else {
+          // Charge now (creation = day 0, charge at 2-day mark = immediately for simplicity since
+          // we can't schedule a delayed function here — we charge on creation as the "initial" rent)
           const chargeLabel = `initial — ${creationDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
           financial.current_balance = await chargeOffAppRent(base44, character, financial, chargeLabel);
         }
 
+        // Register as a recurring_expense entry in CharacterFinancial so processRecurringExpenses
+        // picks it up on the 1st of every month automatically — using the existing recurring expense path.
         const refreshed = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: character.id });
         const fin = refreshed[0];
         if (fin) {
