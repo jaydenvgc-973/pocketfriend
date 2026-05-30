@@ -444,6 +444,9 @@ export default function CommunityEventsStrip({ currentUser, characters = [] }) {
     queryFn: () => base44.entities.CommunityEvent.filter({ is_active: true }, 'start_date', 100).catch(() => []),
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    placeholderData: (prev) => prev,
   });
 
   // User-created Moments calendar events
@@ -453,8 +456,11 @@ export default function CommunityEventsStrip({ currentUser, characters = [] }) {
       { owner_email: currentUser.email, is_active: true }, 'start_date', 50
     ).catch(() => []),
     enabled: !!currentUser?.email,
-    staleTime: 2 * 60 * 1000,
-    gcTime: 15 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    placeholderData: (prev) => prev,
   });
 
   // Merge + dedupe events (DB first, defaults fill gaps)

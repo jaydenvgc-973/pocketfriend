@@ -1,7 +1,8 @@
 import { useEffect, useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
-import { activateChatSafeMode, escalateChatRetry, resetChatRetry } from "@/lib/simulationGate";
+import { activateChatSafeMode, escalateChatRetry, resetChatRetry, getActiveContext } from "@/lib/simulationGate";
+import { traceRequest, traceEvent, traceMilestone, traceRateLimit } from "@/lib/chatLoadTrace";
 import { lfcRead, lfcWrite, lfcDelete } from "@/lib/localFirstCache.js";
 import {
   prewarmCharacterRuntime,
@@ -146,11 +147,8 @@ export function useChatLoadConvo({
       // in the 300ms gap between the synchronous seed and this async load.
 
       // PART 3 FIX: Proactively activate chat-safe mode on every chat load.
-      // Background simulations, presence checks, and scheduled tasks fire on a shared
-      // rate-limit budget. A chat open is always user-facing priority — activate safe
-      // mode for 20s to throttle background work and ensure the chat load gets through.
-      // The 20s window is short enough that background tasks resume promptly after load.
       activateChatSafeMode(20000);
+      traceMilestone('CHAT_LOAD_START', `charId=${characterId} chatType=${chatType}`);
 
       // Helper: check if a 429 error
       const is429 = (err) =>
@@ -178,8 +176,7 @@ export function useChatLoadConvo({
       try {
         // ── STEP 1: Find the conversation for this character ─────────────────
         console.log(`[CHAT_LOAD] Conversation.filter START t=${Date.now()}`);
-        // Scope query to this specific character + type — avoids fetching all 200 conversations
-        // on every character open. Server filters, not client-side.
+        traceRequest('Conversation.filter', { caller: 'useChatLoadConvo', page: getActiveContext().page, status: 'ALLOWED', detail: `charId=${characterId} type=${chatType}` });
         let convos;
         try {
           convos = await retryAfter8s(() =>
@@ -191,10 +188,9 @@ export function useChatLoadConvo({
           , 'Conversation.filter');
           console.log(`[CHAT_LOAD] Conversation.filter DONE count=${convos.length} t=${Date.now()}`);
         } catch (err) {
-          // If Conversation.filter fully fails (both attempts) and we have NO messages yet,
-          // show the rate-limit screen. If we somehow have cached state, preserve it.
           if (is429(err)) {
             console.error(`[CHAT_LOAD] Conversation.filter EXHAUSTED after retry t=${Date.now()}`);
+            traceRateLimit('Conversation.filter', `charId=${characterId} — 429 exhausted`);
             if (!hasShownMessagesRef.current) {
               setConvoLoadError('rate_limited');
             } else {
@@ -252,6 +248,7 @@ export function useChatLoadConvo({
 
           // ── STEP 2: Load most recent MSG_WINDOW messages for initial render ──
           console.log(`[CHAT_LOAD] Message.filter START convoId=${convoId} window=${MSG_WINDOW} t=${Date.now()}`);
+          traceRequest('Message.filter', { caller: 'useChatLoadConvo', page: getActiveContext().page, status: 'ALLOWED', detail: `convoId=${convoId} window=${MSG_WINDOW}` });
           let loadedMsgs;
           try {
             // CRITICAL: Exclude archived messages from the initial visible window.
@@ -273,9 +270,8 @@ export function useChatLoadConvo({
             console.log(`[CHAT_LOAD] Message.filter DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
           } catch (err) {
             if (is429(err)) {
-              // Message.filter exhausted — we know the convoId so set it and show a soft warning.
-              // Do NOT wipe the screen. The user can still send messages once recovered.
               console.error(`[CHAT_LOAD] Message.filter EXHAUSTED after retry — showing soft warning t=${Date.now()}`);
+              traceRateLimit('Message.filter', `convoId=${convoId} — 429 exhausted`);
               convoIdRef.current = convoId;
               setConversationId(convoId);
               setConvoLoadError('rate_limited_soft');
@@ -373,12 +369,12 @@ export function useChatLoadConvo({
               m.content && m.content.trim() !== '' &&
               !['date','divider','system','timestamp','separator'].includes((m.type||'').toLowerCase())
             );
-            // ALWAYS dispatch thread:read when direct chat loads — even if 0 unread in DB.
-            // This ensures stale LFC world-contacts cache is busted on every chat open.
+            // ALWAYS dispatch thread:read when direct chat loads.
             if (currentUser?.email) {
               lfcDelete(currentUser.email, `world_contacts_unread:${characterId}`);
             }
             queryClient.invalidateQueries({ queryKey: ['conversations', characterId, currentUser.email] });
+            traceEvent('thread:read DISPATCH', { caller: 'useChatLoadConvo', page: getActiveContext().page, detail: `charId=${characterId} channel=${chatType}` });
             window.dispatchEvent(new CustomEvent('thread:read', { detail: { characterId, channel: chatType } }));
             if (unread.length > 0) {
               unread.forEach(m => {
@@ -447,10 +443,9 @@ export function useChatLoadConvo({
         // ── STEP 3: Deliver any pending messages queued during offline/away ──
         // PendingMessage failure is non-fatal — silently skip if 429 exhausted.
         console.log(`[CHAT_LOAD] PendingMessage.filter START t=${Date.now()}`);
+        traceRequest('PendingMessage.filter', { caller: 'useChatLoadConvo', page: getActiveContext().page, status: 'ALLOWED', detail: `charId=${characterId}` });
         let pending = [];
         try {
-          // PendingMessage is non-essential on load — skip retry entirely on 429.
-          // Attempting a retry here just burns more quota that Conversation/Message need.
           pending = await base44.entities.PendingMessage.filter(
             { character_id: characterId, delivered: false }
           );
@@ -486,7 +481,8 @@ export function useChatLoadConvo({
           queryClient.invalidateQueries({ queryKey: ['pendingMessages'] });
         }
 
-        resetChatRetry(); // successful load — reset escalation counter
+        resetChatRetry();
+        traceMilestone('CHAT_LOAD_COMPLETE', `elapsed=${Date.now() - t0}ms charId=${characterId}`);
         console.log(`[CHAT_LOAD] loadConvo COMPLETE elapsed=${Date.now() - t0}ms t=${Date.now()}`);
       } catch (err) {
         const rateLimited = is429(err);
@@ -494,6 +490,7 @@ export function useChatLoadConvo({
         // Only show full-page error screen if NO messages have been shown yet.
         // If messages are already visible, preserve them and show a soft non-blocking warning.
         if (rateLimited) {
+          traceRateLimit('useChatLoadConvo outer catch', `charId=${characterId} hasShownMessages=${hasShownMessagesRef.current}`);
           if (hasShownMessagesRef.current) {
             console.warn(`[CHAT_LOAD] 429 outer catch but messages already shown — suppressing full-page screen`);
             setConvoLoadError('rate_limited_soft');

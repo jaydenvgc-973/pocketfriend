@@ -20,6 +20,7 @@ import CharacterTeleportPicker from "@/components/home/CharacterTeleportPicker";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { isGloballyRateLimited, getActiveContext } from "@/lib/simulationGate";
+import { traceRequest, traceEvent } from "@/lib/chatLoadTrace";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -141,19 +142,25 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
   const { data: conversations = [] } = useQuery({
     // Query conversations scoped by owner_email + character_ids.
-    // This is the safe ownership-scoped query. The resolver and WorldContactsPopup
-    // use the same owner_email scope when loading contacts and conversations.
+    // RATE LIMIT PROTECTION: staleTime=5min prevents re-fetch when navigating
+    // Home→Chat→Home within a 5-minute window. With 11 characters on screen,
+    // each CharacterCard fires this query — 11 simultaneous Conversation.filter
+    // calls compete directly with Chat's own load budget. Keep stale data during
+    // chat session; invalidated explicitly by thread:read event handler (above).
     queryKey: ['conversations', character.id, character.owner_email],
     queryFn: async () => {
       if (!character.id || !character.owner_email) return [];
+      traceRequest('Conversation.filter (CharacterCard)', { caller: 'CharacterCard', page: getActiveContext().page, status: 'ALLOWED', detail: `char=${character.name}` });
       return base44.entities.Conversation.filter(
         { owner_email: character.owner_email, character_ids: [character.id] },
         '-updated_date', 150
       );
     },
-    staleTime: 2 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,       // 5 min — prevents re-fetch on Home→Chat→Home navigation
+    gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
+    placeholderData: (prev) => prev,  // show stale data immediately, never blank while fresh
     enabled: !!character.id && !!character.owner_email,
   });
 
@@ -169,13 +176,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         setUnreadWorldPhone(0);
         return;
       }
+      const ctx = getActiveContext();
+      traceRequest('countUnread', { caller: 'CharacterCard', page: ctx.page, status: 'ALLOWED', detail: `char=${character.name} convos=${conversations.length}` });
       try {
-        // Use canonical resolver — same classification as useWorldContactsUnread and WorldContactsPopup.
-        // classifyConversationChannel handles: merged exclusion, world_phone, npc, direct, phone.
         const activeConvos = conversations.filter(c => classifyConversationChannel(c) !== null);
         const allConvoIds = activeConvos.map(c => c.id);
 
-        // Fetch unread messages per-conversation using canonical fetcher.
+        traceRequest('fetchUnreadMessagesForConversations', { caller: 'CharacterCard.countUnread', page: ctx.page, status: 'ALLOWED', detail: `char=${character.name} convoIds=${allConvoIds.length}` });
         const perConvoMessages = await fetchUnreadMessagesForConversations(allConvoIds, base44);
 
         // Aggregate using canonical resolver — single source of truth for all badge counts.
@@ -239,11 +246,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   useEffect(() => {
     const handleThreadRead = (e) => {
       if (e.detail?.characterId !== character.id) return;
-      // Bust stale world contacts cache so next render reads fresh data
+      traceEvent('thread:read LISTENER', { caller: 'CharacterCard', page: getActiveContext().page, detail: `char=${character.name}` });
       if (character.owner_email) {
         lfcDelete(character.owner_email, `world_contacts_unread:${character.id}`);
       }
-      // Cancel any in-flight debounce AND any pending settle timer
       if (debounceRef.current) clearTimeout(debounceRef.current);
       if (threadReadSettleRef.current) clearTimeout(threadReadSettleRef.current);
       // Wait 2.5s for all is_read:true writes + subscription events to settle,
@@ -255,13 +261,17 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       // The badge will refresh naturally when the user returns to Home (conversations.length effect).
       threadReadSettleRef.current = setTimeout(() => {
         threadReadSettleRef.current = null;
-        if (isGloballyRateLimited()) return;
         const ctx = getActiveContext();
+        if (isGloballyRateLimited()) {
+          traceEvent('thread:read SETTLE SKIPPED (rate limited)', { caller: 'CharacterCard', page: ctx.page, detail: `char=${character.name}` });
+          return;
+        }
         if (ctx.page === 'chat' || ctx.page === 'text') {
-          // Chat/Text is still active — skip recount, badge stays stale until Home is re-entered.
+          traceEvent('thread:read SETTLE SKIPPED (chat/text active)', { caller: 'CharacterCard', page: ctx.page, detail: `char=${character.name}` });
           console.log(`[BADGE] thread:read settle SKIPPED for char=${character.name} — Chat/Text still active`);
           return;
         }
+        traceEvent('thread:read SETTLE FIRING countUnread', { caller: 'CharacterCard', page: ctx.page, detail: `char=${character.name}` });
         countUnread();
       }, 2500);
     };

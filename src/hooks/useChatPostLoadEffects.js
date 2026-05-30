@@ -1,5 +1,7 @@
 import { useEffect } from "react";
 import { base44 } from "@/api/base44Client";
+import { traceRequest, traceEvent } from "@/lib/chatLoadTrace";
+import { getActiveContext } from "@/lib/simulationGate";
 
 /**
  * useChatPostLoadEffects
@@ -36,9 +38,8 @@ export function useChatPostLoadEffects({
     let isMounted = true;
 
     (async () => {
-      // ── MARK THREAD READ ─────────────────────────────────────────────────────
-      // Always fire markThreadRead when a thread opens — it clears orphaned unread
-      // messages not included in the loaded window. Non-blocking, non-AI.
+      const ctx = getActiveContext();
+      traceRequest('markThreadRead', { caller: 'useChatPostLoadEffects', page: ctx.page, status: 'ALLOWED', detail: `convoId=${conversationId} charId=${snapshotCharacterId}` });
       try {
         const result = await base44.functions.invoke('markThreadRead', {
           conversationId,
@@ -60,9 +61,8 @@ export function useChatPostLoadEffects({
         }
       }
       if (!isMounted || snapshotCharacterId !== characterId) return;
-      // Invalidate with the EXACT same key CharacterCard uses — must include owner_email.
       queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId, ownerEmail] });
-      // Dispatch thread:read event so CharacterCard's countUnread re-runs immediately.
+      traceEvent('thread:read DISPATCH (postLoad)', { caller: 'useChatPostLoadEffects', page: getActiveContext().page, detail: `charId=${snapshotCharacterId}` });
       window.dispatchEvent(new CustomEvent('thread:read', { detail: { characterId: snapshotCharacterId } }));
     })();
 

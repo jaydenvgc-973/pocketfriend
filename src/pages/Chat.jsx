@@ -67,6 +67,7 @@ import { useChatLocationShare } from "@/hooks/useChatLocationShare";
 import { useChatBackgroundTasks } from "@/hooks/useChatBackgroundTasks.js";
 import { usePageContext } from "@/hooks/usePageContext";
 import { isGloballyRateLimited, reportRateLimit, activateChatSafeMode, isChatSafeModeActive, escalateChatRetry } from "@/lib/simulationGate";
+import { traceReset, traceMilestone, traceRequest } from "@/lib/chatLoadTrace";
 import { registerForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from "@/lib/foregroundPriority";
 import { lfcRead as lfcReadChat } from "@/lib/localFirstCache.js";
 import { resolveCoPresence } from "@/lib/coPresenceResolver";
@@ -118,10 +119,9 @@ export default function Chat({ chatTypeOverride } = {}) {
   const [isRecovering, setIsRecovering] = useState(false);
 
   // Reset conversation state immediately when switching characters.
-  // This prevents Character A's messages showing while Character B loads.
-  // Do NOT set isLoadingConvo(true) here — the hook owns that flag.
-  // Setting it here causes an endless spinner if character query returns null.
   useEffect(() => {
+    traceReset();
+    traceMilestone('CHAT_MOUNT', `charId=${characterId} chatType=${chatType}`);
     setMessages([]);
     setConversationId(null);
     setIsTyping(false);
@@ -1835,6 +1835,8 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           <div className="space-y-1">
             <p className="text-sm font-semibold text-foreground">
               {convoLoadError === 'rate_limited' ? 'Too many requests — app is recovering' : 'Chat failed to load'}
+              {/* TRACE: log whenever recovery screen renders */}
+              {convoLoadError === 'rate_limited' && (() => { traceRequest('RECOVERY_SCREEN_SHOWN', { caller: 'Chat render', page: 'chat', status: 'RATE_LIMIT', detail: 'convoLoadError=rate_limited' }); return null; })()}
             </p>
             <p className="text-xs text-muted-foreground">
               {convoLoadError === 'rate_limited'

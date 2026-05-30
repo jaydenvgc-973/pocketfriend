@@ -473,6 +473,9 @@ export function useOwnedCharacters(
     queryKey: ["characterFinancialIndex", email, characterIdFingerprint],
     queryFn: async () => {
       if (!email) return {};
+      // RATE LIMIT PROTECTION: this query fires two CharacterFinancial.filter calls.
+      // It is gated by characterIdFingerprint — only re-runs when the character ID set
+      // actually changes (add/delete), not on field updates (automation writes).
 
       // Pass 1: owner_email-scoped fetch (covers active_created_character and NPCs with owner_email set)
       const financialRecords = await base44.entities.CharacterFinancial.filter(
@@ -523,6 +526,7 @@ export function useOwnedCharacters(
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
+    placeholderData: (prev) => prev,
   });
 
   // isInitialLoading is true ONLY when we have nothing to show at all.

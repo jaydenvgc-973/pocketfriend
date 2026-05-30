@@ -13,7 +13,8 @@
 
 import { useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
-import { reportRateLimit, isGloballyRateLimited, isChatSafeModeActive, escalateChatRetry, resetChatRetry, getChatRetryState, isRetryPaused, areOptionalSystemsDisabled } from "@/lib/simulationGate";
+import { reportRateLimit, isGloballyRateLimited, isChatSafeModeActive, escalateChatRetry, resetChatRetry, getChatRetryState, isRetryPaused, areOptionalSystemsDisabled, getActiveContext } from "@/lib/simulationGate";
+import { traceRequest, traceRateLimit as traceRL } from "@/lib/chatLoadTrace";
 import { isForegroundActive, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
 import { filterDetectedMentions } from "@/lib/entityDetectionFilter";
@@ -49,36 +50,42 @@ function setInFlight(characterId, taskName, val) {
 }
 
 async function safeInvoke(fnName, payload, characterId, taskName) {
-  // Yield to any active foreground task that isn't chat itself
+  const page = getActiveContext().page;
   const fg = isForegroundActive ? isForegroundActive() : false;
   if (fg) {
+    traceRequest(fnName, { caller: `Governor:${taskName}`, page, status: 'BLOCKED', detail: 'foreground active' });
     console.log(`[Governor] YIELD ${taskName} — foreground task active`);
     return null;
   }
   if (isGloballyRateLimited()) {
+    traceRequest(fnName, { caller: `Governor:${taskName}`, page, status: 'SKIPPED', detail: 'global rate limit' });
     console.log(`[Governor] SKIP ${taskName} — global rate limit active`);
     return null;
   }
   if (isChatSafeModeActive()) {
+    traceRequest(fnName, { caller: `Governor:${taskName}`, page, status: 'SKIPPED', detail: 'chat-safe mode' });
     console.log(`[Governor] SKIP ${taskName} — chat-safe mode active (page recovery in progress)`);
     return null;
   }
   if (isRetryPaused()) {
+    traceRequest(fnName, { caller: `Governor:${taskName}`, page, status: 'SKIPPED', detail: 'retry paused' });
     console.log(`[Governor] SKIP ${taskName} — escalating retry pause active until ${new Date(getChatRetryState().pauseUntil).toLocaleTimeString()}`);
     return null;
   }
   if (areOptionalSystemsDisabled()) {
-    // Only truly essential tasks bypass this — all optional background work is blocked
     const essentialTasks = new Set(['activityUpdate', 'locationUpdate', 'memoryExtract']);
     if (!essentialTasks.has(taskName)) {
+      traceRequest(fnName, { caller: `Governor:${taskName}`, page, status: 'SKIPPED', detail: 'optional systems disabled' });
       console.log(`[Governor] SKIP ${taskName} — optional systems disabled (level-3 retry active)`);
       return null;
     }
   }
   if (isInFlight(characterId, taskName)) {
+    traceRequest(fnName, { caller: `Governor:${taskName}`, page, status: 'SKIPPED', detail: 'in-flight' });
     console.log(`[Governor] SKIP ${taskName} — already in-flight for char=${characterId}`);
     return null;
   }
+  traceRequest(fnName, { caller: `Governor:${taskName}`, page, status: 'ALLOWED', detail: `charId=${characterId}` });
   setInFlight(characterId, taskName, true);
   try {
     const res = await base44.functions.invoke(fnName, payload);
@@ -86,8 +93,12 @@ async function safeInvoke(fnName, payload, characterId, taskName) {
     return res;
   } catch (err) {
     const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit') || err?.status === 429;
-    if (is429) setRateLimited();
-    else console.warn(`[Governor] ${taskName} failed:`, err?.message);
+    if (is429) {
+      setRateLimited();
+      traceRL(fnName, `Governor:${taskName} — 429`);
+    } else {
+      console.warn(`[Governor] ${taskName} failed:`, err?.message);
+    }
     return null;
   } finally {
     setInFlight(characterId, taskName, false);
