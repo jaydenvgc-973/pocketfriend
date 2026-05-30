@@ -394,21 +394,37 @@ export function useChatLoadConvo({
           } // end else (selectedConvo exists)
         }
 
-        // No valid direct user↔character conversation — create one
+        // No valid direct user↔character conversation — REUSE EXISTING or create one
         if (!convoId) {
-          console.log(`[CHAT_LOAD] No conversation found — creating new one t=${Date.now()}`);
-          const convo = await base44.entities.Conversation.create({
-            title: `${chatType} with ${character.name}`,
-            type: chatType,
-            character_ids: [characterId],
-            owner_email: currentUser.email,
-          });
-          setConversationId(convo.id);
-          convoIdRef.current = convo.id;
-          convoId = convo.id;
+          // CRITICAL FIX: Before creating, try to find ANY existing conversation
+          // Re-query to get any available direct conversations
+          const existingCheck = await base44.entities.Conversation.filter(
+            { owner_email: currentUser.email, character_ids: characterId },
+            "-last_message_date",
+            10
+          );
+          
+          const reuseCheck = existingCheck.length > 0 ? existingCheck[0] : null;
+          if (reuseCheck) {
+            console.log(`[CHAT_LOAD] REUSING existing conversation ${reuseCheck.id} instead of creating duplicate`);
+            convoId = reuseCheck.id;
+            setConversationId(convoId);
+            convoIdRef.current = convoId;
+          } else {
+            console.log(`[CHAT_LOAD] No existing conversation found — creating new one t=${Date.now()}`);
+            const convo = await base44.entities.Conversation.create({
+              title: `${chatType} with ${character.name}`,
+              type: chatType,
+              character_ids: [characterId],
+              owner_email: currentUser.email,
+            });
+            setConversationId(convo.id);
+            convoIdRef.current = convo.id;
+            convoId = convo.id;
+            console.log(`[CHAT_LOAD] Conversation CREATED id=${convoId} t=${Date.now()}`);
+          }
           if (setHasOlderMessages) setHasOlderMessages(false);
           setConvoLoadError(null);
-          console.log(`[CHAT_LOAD] Conversation CREATED id=${convoId} t=${Date.now()}`);
         }
 
         // ── STEP 3: Deliver any pending messages queued during offline/away ──
