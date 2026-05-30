@@ -91,7 +91,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   // Returns a single record (same shape as CharacterProfile's query) so both
   // sides store identical data under the shared queryKey and the cache is coherent.
   const { data: financialRecord = null } = useQuery({
-    queryKey: ['characterFinancial', character.id],
+    queryKey: ['characterFinancial', character.id, character.owner_email],
     queryFn: async () => {
       // Try with owner_email scope first (secure)
       if (character.owner_email) {
@@ -106,7 +106,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchOnMount: true,
-    enabled: !!character.id,
+    enabled: !!character.id && !!character.owner_email,
   });
   const balance = financialRecord?.current_balance;
   const totalIncome = financialRecord?.total_income;
@@ -442,7 +442,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   <DollarSign className="w-3 h-3" /> Balance: {Number(balance).toLocaleString()}
                 </span>
               )}
-              {totalIncome != null && totalIncome > 0 && (
+              {totalIncome != null && (
                 <span className="flex items-center gap-0.5 text-blue-400 font-medium">
                   <Briefcase className="w-3 h-3" /> Income: {Number(totalIncome).toLocaleString()}
                 </span>
