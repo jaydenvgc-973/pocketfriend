@@ -15,6 +15,7 @@ const CATEGORIES = {
   community:  { label: 'Community',     dot: 'bg-emerald-400', badge: 'bg-emerald-500/20 text-emerald-300' },
   birthday:   { label: 'Birthday',      dot: 'bg-rose-400',    badge: 'bg-rose-500/20 text-rose-300' },
   user:       { label: 'My Event',      dot: 'bg-indigo-400',  badge: 'bg-indigo-500/20 text-indigo-300' },
+  payday:     { label: 'Payday',        dot: 'bg-green-400',   badge: 'bg-green-500/20 text-green-300' },
 };
 
 // ── MONTH-BASED OBSERVANCES (apply every year by month/day) ──────────────────
@@ -367,7 +368,12 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
     // User-created events
     const custom = userEvents.filter(e => e.date === dateStr);
 
-    return [...annual, ...floating, ...birthdays, ...community, ...custom];
+    // Payday — every Friday
+    const payday = date.getDay() === 5
+      ? [{ name: '💸 Payday', icon: '💰', category: 'payday', date: dateStr }]
+      : [];
+
+    return [...annual, ...floating, ...birthdays, ...community, ...custom, ...payday];
   };
 
   const handleDayClick = (date) => {
@@ -535,6 +541,10 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
           <div className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
             <span className="text-[9px] text-muted-foreground">My Event</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+            <span className="text-[9px] text-muted-foreground">Payday</span>
           </div>
         </div>
       </div>
