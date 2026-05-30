@@ -247,12 +247,22 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       if (debounceRef.current) clearTimeout(debounceRef.current);
       if (threadReadSettleRef.current) clearTimeout(threadReadSettleRef.current);
       // Wait 2.5s for all is_read:true writes + subscription events to settle,
-      // then do ONE definitive live count. This prevents the subscription loop
-      // from oscillating the badge while mark-read writes are still in flight.
+      // then do ONE definitive live count — BUT ONLY if we are back on Home.
+      // PRIORITY ARCHITECTURE: thread:read is dispatched by Chat/Text when a thread opens.
+      // If Chat/Text is still the active page when the timer fires, skip the recount entirely.
+      // Running fetchUnreadMessagesForConversations while Chat is active consumes quota that
+      // Chat needs for its own Conversation.filter + Message.filter load sequence.
+      // The badge will refresh naturally when the user returns to Home (conversations.length effect).
       threadReadSettleRef.current = setTimeout(() => {
         threadReadSettleRef.current = null;
-        // Still respect rate limit at settlement time — if 429 hit during the 2.5s window, skip.
-        if (!isGloballyRateLimited()) countUnread();
+        if (isGloballyRateLimited()) return;
+        const ctx = getActiveContext();
+        if (ctx.page === 'chat' || ctx.page === 'text') {
+          // Chat/Text is still active — skip recount, badge stays stale until Home is re-entered.
+          console.log(`[BADGE] thread:read settle SKIPPED for char=${character.name} — Chat/Text still active`);
+          return;
+        }
+        countUnread();
       }, 2500);
     };
     window.addEventListener('thread:read', handleThreadRead);
