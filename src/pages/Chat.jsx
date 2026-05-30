@@ -342,11 +342,7 @@ export default function Chat({ chatTypeOverride } = {}) {
     conversationId,
     characterId,
     ownerEmail: currentUser?.email,
-    messages,
     queryClient,
-    catchupTimerRef,
-    isMountedRef,
-    setCatchupNarrativeText,
   });
 
   useChatScroll(
