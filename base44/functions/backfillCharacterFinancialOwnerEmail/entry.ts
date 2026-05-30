@@ -89,8 +89,12 @@ Deno.serve(async (req) => {
     let createErrors = 0;
     const createReport = [];
 
+    // CANONICAL RULE: Financial record belongs to the CHARACTER, not to owner_email.
+    // Do NOT skip characters that lack owner_email — service-created, NPC, automation-created,
+    // and lifecycle-created characters are all valid world citizens and must have financial records.
+    // The ONLY exclusion is confirmed deleted/merged status.
     for (const char of allCharacters) {
-      if (!char.id || !char.owner_email) continue;
+      if (!char.id || !char.name) continue; // need at minimum an id and name
       if (char.status === 'deleted' || char.status === 'soft_deleted' || char.status === 'merged') continue;
       if (existingCharacterIds.has(char.id)) continue; // already has a record
 
@@ -98,7 +102,10 @@ Deno.serve(async (req) => {
         await base44.asServiceRole.entities.CharacterFinancial.create({
           character_id: char.id,
           character_name: char.name,
-          owner_email: char.owner_email,
+          // owner_email is stored on the financial record when available — used for RLS-scoped reads.
+          // When absent (service-created characters), leave null. The record still exists and is valid.
+          owner_email: char.owner_email || null,
+          is_npc: (char.character_type === 'npc_regular' || char.character_type === 'npc_family_member' || char.character_type === 'npc_fictitious') || false,
           current_balance: 6000,
           total_income: 0,
           total_expenses: 0,
@@ -107,7 +114,7 @@ Deno.serve(async (req) => {
           last_updated: new Date().toISOString(),
         });
         existingCharacterIds.add(char.id); // prevent duplicate if char appears twice
-        createReport.push({ character_id: char.id, character_name: char.name, owner_email: char.owner_email, result: 'created' });
+        createReport.push({ character_id: char.id, character_name: char.name, owner_email: char.owner_email || null, result: 'created' });
         created++;
         await new Promise(r => setTimeout(r, 300));
       } catch (err) {

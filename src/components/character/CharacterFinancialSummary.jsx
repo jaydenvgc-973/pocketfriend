@@ -80,7 +80,7 @@ export default function CharacterFinancialSummary({ characterId, financial, isLo
     return (
       <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-center gap-2 text-xs text-amber-400">
         <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-        Financial data unavailable — system error. Run backfillCharacterFinancialOwnerEmail to repair.
+        Financial record pending initialization — this character has not yet received their starting balance. It will be created automatically during the next maintenance cycle.
       </div>
     );
   }
