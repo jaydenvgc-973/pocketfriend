@@ -442,7 +442,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   <DollarSign className="w-3 h-3" /> Balance: {Number(balance).toLocaleString()}
                 </span>
               )}
-              {totalIncome != null && (
+              {totalIncome != null && totalIncome > 0 && (
                 <span className="flex items-center gap-0.5 text-blue-400 font-medium">
                   <Briefcase className="w-3 h-3" /> Income: {Number(totalIncome).toLocaleString()}
                 </span>
