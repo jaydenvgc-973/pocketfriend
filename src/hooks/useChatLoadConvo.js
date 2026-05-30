@@ -235,11 +235,14 @@ export function useChatLoadConvo({
             try { lfcWrite(currentUser.email, `chat_msgs:${chatType}:${characterId}`, []); } catch {}
           }
 
-          const withMsgs = candidatePool.filter(c => c.last_message_date);
-          const withoutMsgs = candidatePool.filter(c => !c.last_message_date);
-          withMsgs.sort((a, b) => new Date(b.last_message_date) - new Date(a.last_message_date));
-          withoutMsgs.sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
-          const selectedConvo = [...withMsgs, ...withoutMsgs][0];
+          // CRITICAL: Sort ALL candidates by last activity (most recent first).
+          // Conversations with last_message_date are ALWAYS more recent than empty ones.
+          const allSorted = [...candidatePool].sort((a, b) => {
+            const aTime = a.last_message_date ? new Date(a.last_message_date) : new Date(a.created_date);
+            const bTime = b.last_message_date ? new Date(b.last_message_date) : new Date(b.created_date);
+            return bTime - aTime; // descending: newest first
+          });
+          const selectedConvo = allSorted[0];
           if (!selectedConvo) {
             // No valid direct conversation — fall through to creation block below
             console.log(`[CHAT_LOAD] No valid direct user↔character conversation — will create new one`);
