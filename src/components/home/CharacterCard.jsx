@@ -584,10 +584,8 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuItem asChild>
-                    <Link to={`/profile/${character.id}`} className="flex items-center gap-2 text-muted-foreground">
-                      <User className="w-4 h-4" /> View Profile
-                    </Link>
+                  <DropdownMenuItem onClick={() => { window.location.href = `/profile/${character.id}`; }} className="gap-2 text-muted-foreground cursor-pointer">
+                    <User className="w-4 h-4" /> View Profile
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setShowEditName(true)} className="gap-2 text-muted-foreground">
@@ -617,10 +615,8 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuItem asChild>
-                    <Link to={`/profile/${character.id}`} className="flex items-center gap-2 text-muted-foreground">
-                      <User className="w-4 h-4" /> View Profile
-                    </Link>
+                  <DropdownMenuItem onClick={() => { window.location.href = `/profile/${character.id}`; }} className="gap-2 text-muted-foreground cursor-pointer">
+                    <User className="w-4 h-4" /> View Profile
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setShowEditName(true)} className="gap-2 text-muted-foreground">
