@@ -92,7 +92,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   // sides store identical data under the shared queryKey and the cache is coherent.
   const { data: financialRecord = null } = useQuery({
     queryKey: ['characterFinancial', character.id],
-    queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id })
+    queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id, owner_email: character.owner_email })
       .then(r => r[0] || null),
     staleTime: 0,
     gcTime: 5 * 60 * 1000,
