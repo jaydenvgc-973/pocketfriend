@@ -88,26 +88,33 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
 
 
-  // Returns a single record (same shape as CharacterProfile's query) so both
-  // sides store identical data under the shared queryKey and the cache is coherent.
-  const { data: financialRecord = null } = useQuery({
-    queryKey: ['characterFinancial', character.id],
+  // Read from the prefetched financial index (populated by useOwnedCharacters).
+  // This ensures cards render with accurate financial data immediately on mount,
+  // not after a deferred secondary fetch.
+  const { data: financialIndex = {} } = useQuery({
+    queryKey: ['characterFinancialIndex', character.owner_email],
+    // If the index isn't in cache yet, query will refetch. If available, uses cache immediately.
     queryFn: async () => {
-      // Try with owner_email scope first (secure)
-      if (character.owner_email) {
-        const result = await base44.entities.CharacterFinancial.filter({ character_id: character.id, owner_email: character.owner_email });
-        if (result[0]) return result[0];
+      if (!character.owner_email) return {};
+      const result = await base44.entities.CharacterFinancial.filter(
+        { owner_email: character.owner_email },
+        null,
+        300
+      );
+      const byId = {};
+      for (const record of result) {
+        byId[record.character_id] = record;
       }
-      // Fallback to character_id only if scoped query returns nothing (legacy records)
-      const fallback = await base44.entities.CharacterFinancial.filter({ character_id: character.id });
-      return fallback[0] || null;
+      return byId;
     },
-    staleTime: 0,
-    gcTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: true,
-    refetchOnMount: true,
-    enabled: !!character.id,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    enabled: !!character.owner_email,
   });
+
+  const financialRecord = financialIndex[character.id] || null;
   // Only show balance if a real CharacterFinancial record exists
   // Do NOT invent or default to 6000
   const balance = financialRecord ? financialRecord.current_balance : null;
