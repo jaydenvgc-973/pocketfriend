@@ -97,9 +97,18 @@ export function useChatLoadConvo({
     // Reset conversation state on character switch.
     // CRITICAL: Seed from lfc BEFORE clearing — avoids the 300ms blank window.
     // If lfc has messages for this character, show them instantly. Server will refresh.
-    // Clear any stale old-format cache entries (pre-chatType-key era: chat_msgs:${characterId})
-    // These were written without the chatType prefix and can seed wrong messages on load.
-    try { lfcDelete(currentUser.email, `chat_msgs:${characterId}`); } catch (_) {}
+    // CRITICAL: Clear potentially stale cache entries on every load
+    // The conversation history may have been reset or changed since last visit.
+    // Stale cached messages from a previous day must not appear.
+    try {
+      // Old format (pre-chatType-key era)
+      lfcDelete(currentUser.email, `chat_msgs:${characterId}`);
+      // Current format — must be cleared to prevent showing yesterday's messages
+      lfcDelete(currentUser.email, `chat_msgs:direct:${characterId}`);
+      lfcDelete(currentUser.email, `chat_msgs:phone:${characterId}`);
+      // Unread badge cache
+      lfcDelete(currentUser.email, `world_contacts_unread:${characterId}`);
+    } catch (_) {}
 
     const immediateCache = readCachedMessages(currentUser.email, characterId, chatType);
     if (immediateCache && immediateCache.length > 0) {
