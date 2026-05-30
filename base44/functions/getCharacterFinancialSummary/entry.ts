@@ -23,17 +23,9 @@ Deno.serve(async (req) => {
 
     if (!financials[0]) {
       return Response.json({
-        character_id,
-        character_name: character.name,
-        current_balance: 6000,
-        total_income: 0,
-        total_expenses: 0,
-        monthly_income: 0,
-        monthly_expenses: 0,
-        income_sources: [],
-        recurring_expenses: [],
-        status: 'initialized'
-      });
+        error: 'CharacterFinancial record not found',
+        status: 'no_record'
+      }, { status: 404 });
     }
 
     const financial = financials[0];
