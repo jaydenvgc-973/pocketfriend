@@ -19,6 +19,7 @@ import CharacterMovementStatus from "@/components/home/CharacterMovementStatus";
 import CharacterTeleportPicker from "@/components/home/CharacterTeleportPicker";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { isGloballyRateLimited, getActiveContext } from "@/lib/simulationGate";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -206,6 +207,17 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   }, [conversations, character.id]);
 
   useEffect(() => {
+    // PAGE-OWNERSHIP GATE: unread recounts must not run at full priority while
+    // Chat/Text is the active page. Per governance model: event-only outside Home.
+    // If Chat/Text is active, defer by 5s to yield to the active conversation load.
+    // If globally rate-limited, skip entirely — badges stay at last known value.
+    if (isGloballyRateLimited()) return;
+    const ctx = getActiveContext();
+    if (ctx.page === 'chat' || ctx.page === 'text') {
+      // Defer — Chat owns priority. Recount after Chat's foreground window settles.
+      const t = setTimeout(() => countUnread(), 5000);
+      return () => clearTimeout(t);
+    }
     countUnread();
   }, [conversations.length, character.id]);
 
@@ -238,7 +250,8 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       // from oscillating the badge while mark-read writes are still in flight.
       threadReadSettleRef.current = setTimeout(() => {
         threadReadSettleRef.current = null;
-        countUnread();
+        // Still respect rate limit at settlement time — if 429 hit during the 2.5s window, skip.
+        if (!isGloballyRateLimited()) countUnread();
       }, 2500);
     };
     window.addEventListener('thread:read', handleThreadRead);
