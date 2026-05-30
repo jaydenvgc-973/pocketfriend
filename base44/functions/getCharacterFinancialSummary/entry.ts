@@ -16,10 +16,23 @@ Deno.serve(async (req) => {
     }
     const character = chars[0];
 
-    // Get financial record
-    const financials = await base44.entities.CharacterFinancial.filter({
-      character_id
-    });
+    // Get financial record.
+    // CANONICAL LOOKUP: filter by character_id + owner_email to avoid reading
+    // owner_email:null duplicate shells. Fall back to character_id-only if no
+    // owner-scoped record exists (legacy compatibility).
+    let financials = await base44.entities.CharacterFinancial.filter(
+      { character_id, owner_email: character.owner_email },
+      '-created_date',
+      1
+    );
+    if (!financials.length) {
+      // Legacy fallback: no owner-scoped record — read any record for this character
+      financials = await base44.entities.CharacterFinancial.filter(
+        { character_id },
+        '-created_date',
+        1
+      );
+    }
 
     if (!financials[0]) {
       return Response.json({

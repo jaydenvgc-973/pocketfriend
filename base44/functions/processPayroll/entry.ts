@@ -81,8 +81,15 @@ Deno.serve(async (req) => {
     const AVG_WEEKS_PER_MONTH = 4.33;
 
     for (const char of characters) {
-      // Get or create financial record
-      const financials = await base44.entities.CharacterFinancial.filter({ character_id: char.id });
+      // Get or create financial record.
+      // CANONICAL LOOKUP: filter by BOTH character_id AND owner_email to prevent
+      // writing to owner_email:null duplicate shells. Sort by created_date descending
+      // so the most recent owner-scoped record is selected if multiple exist.
+      const financials = await base44.entities.CharacterFinancial.filter(
+        { character_id: char.id, owner_email: user.email },
+        '-created_date',
+        1
+      );
       let financial = financials[0];
       if (!financial) {
         financial = await base44.entities.CharacterFinancial.create({
