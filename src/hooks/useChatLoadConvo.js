@@ -97,6 +97,10 @@ export function useChatLoadConvo({
     // Reset conversation state on character switch.
     // CRITICAL: Seed from lfc BEFORE clearing — avoids the 300ms blank window.
     // If lfc has messages for this character, show them instantly. Server will refresh.
+    // Clear any stale old-format cache entries (pre-chatType-key era: chat_msgs:${characterId})
+    // These were written without the chatType prefix and can seed wrong messages on load.
+    try { lfcDelete(currentUser.email, `chat_msgs:${characterId}`); } catch (_) {}
+
     const immediateCache = readCachedMessages(currentUser.email, characterId, chatType);
     if (immediateCache && immediateCache.length > 0) {
       setMessages(immediateCache);
@@ -173,7 +177,7 @@ export function useChatLoadConvo({
             base44.entities.Conversation.filter(
               { owner_email: currentUser.email, type: chatType, character_ids: characterId },
               "-last_message_date",
-              20
+              100
             )
           , 'Conversation.filter');
           console.log(`[CHAT_LOAD] Conversation.filter DONE count=${convos.length} t=${Date.now()}`);
