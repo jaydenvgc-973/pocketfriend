@@ -113,9 +113,65 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Skip billing for NPCs
+    // ── ENSURE CharacterFinancial record exists (for ALL character types) ─────────────
+    let financial = null;
+    try {
+      const financialRecs = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: character.id });
+      financial = financialRecs[0] || null;
+
+      if (!financial) {
+        financial = await base44.asServiceRole.entities.CharacterFinancial.create({
+          character_id: character.id,
+          character_name: character.name,
+          is_npc: isNPC,
+          owner_email: ownerEmail || null,
+          current_balance: 6000,
+          total_income: 0,
+          total_expenses: 0,
+        });
+      } else if (!financial.owner_email && ownerEmail) {
+        // Backfill owner_email on existing records that were created without it
+        await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
+          owner_email: ownerEmail,
+        }).catch(() => {});
+      }
+    } catch (finErr) {
+      console.error('[onCharacterCreated] Failed to ensure CharacterFinancial:', finErr.message);
+    }
+
+    // ── ALL CHARACTER TYPES: Ensure CharacterFinancial record exists ─────────────
+    // This runs for NPCs AND active characters. NPCs get a $6,000 default record.
+    // Billing (VGC Mobile, rent) runs only for active characters below.
+    try {
+      const financialRecs = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: character.id });
+      let financial = financialRecs[0] || null;
+
+      if (!financial) {
+        financial = await base44.asServiceRole.entities.CharacterFinancial.create({
+          character_id: character.id,
+          character_name: character.name,
+          owner_email: ownerEmail || null,
+          is_npc: isNPC,
+          current_balance: 6000,
+          total_income: 0,
+          total_expenses: 0,
+          income_sources: [],
+          recurring_expenses: [],
+          last_updated: new Date().toISOString(),
+        });
+        console.log(`[onCharacterCreated] Created CharacterFinancial for ${character.name} (${character.character_type}) — balance: $6000`);
+      } else if (!financial.owner_email && ownerEmail) {
+        await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
+          owner_email: ownerEmail,
+        }).catch(() => {});
+      }
+    } catch (finErr) {
+      console.error('[onCharacterCreated] Failed to ensure CharacterFinancial:', finErr.message);
+    }
+
+    // Skip billing for NPCs — financial record is now ensured above
     if (!isActive || character.status !== 'active') {
-      return Response.json({ success: true, skipped: true, reason: isNPC ? 'NPC assigned home, no billing' : 'Not an active character' });
+      return Response.json({ success: true, skipped: true, reason: isNPC ? 'NPC financial record ensured, no billing' : 'Not an active character' });
     }
 
     // ── ACTIVE CHARACTER: Auto-link home location ─────────────────────────────
@@ -144,30 +200,7 @@ Deno.serve(async (req) => {
       console.error('[onCharacterCreated] Failed to auto-link home location:', homeLinkErr.message);
     }
 
-    // ── ACTIVE CHARACTER: Ensure CharacterFinancial record exists ─────────────
-    let financial = null;
-    try {
-      const financialRecs = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: character.id });
-      financial = financialRecs[0] || null;
 
-      if (!financial) {
-        financial = await base44.asServiceRole.entities.CharacterFinancial.create({
-          character_id: character.id,
-          character_name: character.name,
-          owner_email: ownerEmail || null,
-          current_balance: 6000,
-          total_income: 0,
-          total_expenses: 0,
-        });
-      } else if (!financial.owner_email && ownerEmail) {
-        // Backfill owner_email on existing records that were created without it
-        await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
-          owner_email: ownerEmail,
-        }).catch(() => {});
-      }
-    } catch (finErr) {
-      console.error('[onCharacterCreated] Failed to ensure CharacterFinancial:', finErr.message);
-    }
 
     // ── ACTIVE CHARACTER: Charge VGC Mobile ──────────────────────────────────
     try {
