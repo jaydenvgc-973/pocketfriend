@@ -120,26 +120,6 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   }
   
   const balance = financialRecord?.current_balance;
-  const totalIncome = financialRecord?.total_income;
-  const totalExpenses = financialRecord?.total_expenses;
-  
-  // ASSERTION 2: All required financial fields exist (for active_created_character)
-  if (isActiveCreated && financialRecord) {
-    const hasBalance = balance !== undefined && balance !== null;
-    const hasIncome = totalIncome !== undefined && totalIncome !== null;
-    const hasExpenses = totalExpenses !== undefined && totalExpenses !== null;
-    
-    if (!hasBalance || !hasIncome || !hasExpenses) {
-      console.error(`[CharacterCard PROTECTED-DATA ASSERTION] FAILED: Incomplete financial fields`, {
-        character_id: character.id,
-        character_name: character.name,
-        has_balance: hasBalance,
-        has_income: hasIncome,
-        has_expenses: hasExpenses,
-        audit: 'CharacterFinancial record exists but required fields are missing'
-      });
-    }
-  }
 
   const { data: conversations = [] } = useQuery({
     // Query conversations scoped by owner_email + character_ids.
@@ -486,24 +466,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 </span>
               ) : null}
             </div>
-            {isActiveCreated ? (
-              <div className="flex items-center gap-3 mt-1">
-                {totalIncome !== undefined && totalIncome !== null ? (
-                  <span className="text-xs text-muted-foreground">
-                    In: <span className="text-green-400 font-medium">${Number(totalIncome).toLocaleString()}</span>
-                  </span>
-                ) : (
-                  <span className="text-xs text-red-500">In: ERROR</span>
-                )}
-                {totalExpenses !== undefined && totalExpenses !== null ? (
-                  <span className="text-xs text-muted-foreground">
-                    Out: <span className="text-red-400 font-medium">${Number(totalExpenses).toLocaleString()}</span>
-                  </span>
-                ) : (
-                  <span className="text-xs text-red-500">Out: ERROR</span>
-                )}
-              </div>
-            ) : null}
+
           </div>
         </div>
 
