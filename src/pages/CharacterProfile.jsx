@@ -12,6 +12,7 @@ import FamilyEditor from "@/components/character/FamilyEditor";
 import CharacterFeelingsCard from "@/components/character/CharacterFeelingsCard";
 import CharacterFinancialSummary from "@/components/character/CharacterFinancialSummary";
 import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
+import { lfcRead } from "@/lib/localFirstCache";
 import { EditableTextField, EditableSelectField, EditableEthnicityField, NonEditableField } from "@/components/character/ProfileFieldEditor";
 import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
@@ -165,10 +166,30 @@ export default function CharacterProfile() {
   });
 
   const { data: character, isLoading, isError, refetch } = useQuery({
-    // Simple key — matches what Home's CharacterCard subscription patches.
-    // When navigating from Home → Profile, the cache already has this record
-    // and isLoading=false immediately — no spinner shown.
     queryKey: ["character", characterId],
+    // Seed from the characters-list cache immediately — same pattern Chat uses.
+    // When navigating from Home → Profile, the list is already in cache so this
+    // resolves instantly with no spinner and no network request.
+    initialData: () => {
+      if (!characterId || !currentUser?.email) return undefined;
+      const rqCache = queryClient.getQueryData(["characters", currentUser.email]);
+      if (Array.isArray(rqCache)) {
+        const found = rqCache.find(c => c.id === characterId);
+        if (found) return found;
+      }
+      // Fallback: check localFirstCache (same key Chat uses)
+      const lfc = lfcRead(currentUser.email, 'characters');
+      if (lfc?.data) {
+        const found = lfc.data.find(c => c.id === characterId);
+        if (found) return found;
+      }
+      return undefined;
+    },
+    initialDataUpdatedAt: () => {
+      if (!currentUser?.email) return undefined;
+      const lfc = lfcRead(currentUser.email, 'characters');
+      return lfc?.loaded_at ?? undefined;
+    },
     queryFn: async () => {
       const chars = await base44.entities.Character.filter({ id: characterId });
       if (chars[0]) {
@@ -178,10 +199,7 @@ export default function CharacterProfile() {
       return null;
     },
     enabled: !!characterId,
-    // 60s staleTime: serve cached data (from Home's subscription patches) immediately,
-    // then revalidate silently in background. This is the fast path for Home→Profile.
     staleTime: 60 * 1000,
-    // Retry with backoff for cold/direct URL loads that hit 429s.
     retry: 3,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
   });

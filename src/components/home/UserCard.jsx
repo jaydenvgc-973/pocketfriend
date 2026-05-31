@@ -8,9 +8,11 @@ export default function UserCard({ user, settings, settingsId, settingsLoading =
   // Only use fictional_world_name if settings actually loaded — never fall back to full_name as if it were the world name
   const displayName = settings?.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
-  // Never show a fake balance. Only show the value when settings are confirmed loaded.
-  // If settings failed or are still loading, show "—" so the user knows the real value isn't available.
-  const balanceKnown = !settingsLoading && !settingsError && settings?.user_balance !== undefined;
+  // Never show a fake balance. Only show the value when settings are confirmed loaded
+  // (i.e. the record has an id — not just the {} empty shell returned during loading).
+  // user_balance can legitimately be 0, so check for !== undefined not truthiness.
+  const settingsReady = !settingsLoading && !settingsError && !!settings?.id;
+  const balanceKnown = settingsReady && settings?.user_balance !== undefined;
   const balance = balanceKnown ? settings.user_balance : null;
 
   const { userPresence, setUserLocation, setUserAway } = useUserPresence(user, settings, settingsId);
