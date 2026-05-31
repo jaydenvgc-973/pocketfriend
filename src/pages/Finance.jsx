@@ -8,6 +8,7 @@ import BottomNav from '@/components/BottomNav';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
 import FinancialDashboard from '@/components/finance/FinancialDashboard';
 import ManualTransactionModal from '@/components/finance/ManualTransactionModal';
+import { useOwnedCharacters } from '@/hooks/useOwnedCharacters';
 
 // ── Character type grouping config ───────────────────────────────────────────
 // Uses existing schema values only. Legacy types fall into "Other" — never hidden.
@@ -159,44 +160,26 @@ export default function Finance() {
   const { data: currentUser } = useQuery({
     queryKey: ['user'],
     queryFn: () => base44.auth.me(),
-  });
-
-  // All characters scoped to owner_email — no type filter, legacy-safe
-  const { data: rlsCharacters = [] } = useQuery({
-    queryKey: ['characters', currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 300)
-      : [],
-    enabled: !!currentUser?.email,
     staleTime: 5 * 60 * 1000,
   });
 
-  // NPC fictitious — needs service-role fetch (same as Settings)
-  const { data: npcFictitious = [] } = useQuery({
-    queryKey: ['npc-characters', currentUser?.id],
-    queryFn: async () => {
-      if (!currentUser?.id) return [];
-      const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      return res?.data?.npcs || [];
-    },
-    enabled: !!currentUser?.id,
-    staleTime: 5 * 60 * 1000,
-  });
+  // Use the canonical useOwnedCharacters hook — same cache as Home.
+  // This means Finance shares the warmed character list and financialIndex
+  // without creating a parallel fetch. No duplicate data sources.
+  const { allCharacters, financialIndex, isFinancialLoading } = useOwnedCharacters(
+    currentUser,
+    null,  // no default character expectation
+    []     // no anchors needed on Finance
+  );
 
-  // Merge + deduplicate — all active/moved_away characters, never filter by type
-  const allCharacters = (() => {
-    const seen = new Set();
-    return [...rlsCharacters, ...npcFictitious].filter(c => {
-      if (!c.id || seen.has(c.id)) return false;
-      if (c.status === 'deleted' || c.status === 'soft_deleted' || c.status === 'merged') return false;
-      seen.add(c.id);
-      return true;
-    });
-  })();
+  // Filter out deleted/merged — legacy-safe (never exclude by missing fields)
+  const visibleCharacters = allCharacters.filter(c =>
+    c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
+  );
 
-  const groups = groupAndSortCharacters(allCharacters);
+  const groups = groupAndSortCharacters(visibleCharacters);
 
-  // User settings for user_balance
+  // User settings for user_balance — same query key as Home/UserCard
   const { data: userSettingsList = [], isLoading: isSettingsLoading } = useQuery({
     queryKey: ['userSettings', currentUser?.email],
     queryFn: () => currentUser?.email
@@ -207,22 +190,6 @@ export default function Finance() {
     placeholderData: (prev) => prev,
   });
   const userSettings = userSettingsList[0] || null;
-
-  // Fetch all CharacterFinancial records to show balances on rows
-  const { data: allFinancials = [] } = useQuery({
-    queryKey: ['allCharacterFinancials', currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.CharacterFinancial.filter({ owner_email: currentUser.email }, null, 300)
-      : [],
-    enabled: !!currentUser?.email,
-    staleTime: 2 * 60 * 1000,
-    placeholderData: (prev) => prev,
-  });
-  // Index by character_id for O(1) lookup
-  const financialIndex = allFinancials.reduce((acc, f) => {
-    if (f.character_id) acc[f.character_id] = f;
-    return acc;
-  }, {});
 
   const handlePayroll = async () => {
     setProcessing(true);
@@ -259,15 +226,14 @@ export default function Finance() {
   };
 
   const handleTransactionSuccess = (result) => {
+    const affectedCharId = result?.character_id || transactionTarget?.character?.id;
     setTransactionTarget(null);
-    // Invalidate financial data for the affected character
-    queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-    queryClient.invalidateQueries({ queryKey: ['allCharacterFinancials', currentUser?.email] });
-    queryClient.invalidateQueries({ queryKey: ['financials', result.character_id || transactionTarget?.character?.id] });
-    // Refresh the selected dashboard if open
-    if (selectedCharId) {
+    // Invalidate the canonical financial index so all consumers (Home + Finance) refresh
+    queryClient.invalidateQueries({ queryKey: ['characterFinancialIndex'] });
+    // Force re-open the dashboard for the affected character to pick up new balance
+    if (selectedCharId && affectedCharId) {
       setSelectedCharId(null);
-      setTimeout(() => setSelectedCharId(result.character_id || selectedCharId), 50);
+      setTimeout(() => setSelectedCharId(affectedCharId), 80);
     }
   };
 
