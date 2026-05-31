@@ -797,7 +797,44 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
 
     // STEP 6: Assemble full prompt — SAME structure as Chat's fullPrompt.
     // Hoisted so the catch block can pass it to triggerRecoveryBackground.
-    const fullPrompt = `${systemPromptForContact}${memoryContext}
+
+    // ── AUTHORITATIVE TIME CONTEXT ─────────────────────────────────────────────
+    // Inject the app's canonical current time so the character never invents its own clock.
+    // Characters in the same region as the app must use this time.
+    // Only override if character's verified location proves a different timezone.
+    const now = new Date();
+    const appTimeStr = now.toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    });
+    const appTimeBlock = `\n\nAUTHORITATIVE CURRENT TIME (DO NOT OVERRIDE):
+The app's verified current time is: ${appTimeStr} (Eastern Time / America/New_York).
+This is the canonical real-world time for this interaction.
+You MUST use this time as your reference. Do NOT invent a different local time, timezone, or clock.
+If the user or sender corrects you about the time, accept the correction unless your verified location proves otherwise.
+Characters living in the same region must not claim it is a different hour than this.`;
+
+    // ── SENDER IDENTITY CONTEXT ────────────────────────────────────────────────
+    // World Phone is character-to-character. The sender is NOT the app user.
+    // The contacted character (${selectedContact.person_name}) must understand who is messaging them.
+    const contactRecord = contactCharRecordRef.current;
+    const senderCharType = character.character_type || 'active_created_character';
+    const senderIdentityBlock = `\n\nCRITICAL — SENDER IDENTITY (World Phone / Character-to-Character):
+CHANNEL: World Phone
+SENDER: ${character.name} (character ID: ${character.id}, type: ${senderCharType})
+RECEIVER: ${selectedContact.person_name} (you)
+SENDER IS THE APP USER: false
+SENDER IS A CHARACTER IN YOUR WORLD: true
+
+This message was sent by ${character.name} — NOT by the app user, NOT by any human operator.
+You must respond to ${character.name} as you would in real life.
+Recognize them by name and your real relationship with them.
+Do NOT default to treating the sender as "the user" or as a stranger.
+This is a character-to-character conversation. Respond to ${character.name} directly.
+Replies stay in this World Phone thread and are addressed to ${character.name}.`;
+
+    const fullPrompt = `${systemPromptForContact}${memoryContext}${appTimeBlock}${senderIdentityBlock}
 ${imageAnalysisContext}
 
 CURRENT CHANNEL: World Phone / World Contacts

@@ -125,6 +125,25 @@ export default function Moments() {
     return [...dbCommunityEvents, ...defaults];
   }, [dbCommunityEvents, appLocations]);
 
+  // ── MEDIA GALLERY PREFETCH ────────────────────────────────────────────────────
+  // Kick off first-page gallery fetch in the background when Moments opens.
+  // This warms the React Query cache so gallery is already loaded when user navigates there.
+  // Non-blocking: does NOT slow Moments. Only fires once per session per user.
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    const sessionKey = `media_gallery_prefetched_${currentUser.email}`;
+    if (sessionStorage.getItem(sessionKey)) return;
+    sessionStorage.setItem(sessionKey, '1');
+    // Fire-and-forget: prefetch first page into the query cache
+    queryClient.prefetchQuery({
+      queryKey: ['mediaGallery', currentUser.email, 1],
+      queryFn: () => base44.functions.invoke('fetchMediaGalleryPage', { page: 1, page_size: 20 })
+        .then(res => res?.data || { images: [], total: 0 })
+        .catch(() => ({ images: [], total: 0 })),
+      staleTime: 5 * 60 * 1000,
+    });
+  }, [currentUser?.email]);
+
   // retroactiveAchievementScan removed from mount.
   // The Moments page renders from already-stored UserAchievement records.
   // retroactiveAchievementScan is an audit/enrichment operation — it is not required

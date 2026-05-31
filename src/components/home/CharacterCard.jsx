@@ -552,7 +552,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuItem onClick={() => navigate(`/profile/${character.id}`)} className="gap-2 text-muted-foreground cursor-pointer">
+                  <DropdownMenuItem onClick={() => { const id = character.id; setTimeout(() => navigate(`/profile/${id}`), 50); }} className="gap-2 text-muted-foreground cursor-pointer">
                     <User className="w-4 h-4" /> View Profile
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
@@ -583,7 +583,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuItem onClick={() => navigate(`/profile/${character.id}`)} className="gap-2 text-muted-foreground cursor-pointer">
+                  <DropdownMenuItem onClick={() => { const id = character.id; setTimeout(() => navigate(`/profile/${id}`), 50); }} className="gap-2 text-muted-foreground cursor-pointer">
                     <User className="w-4 h-4" /> View Profile
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />

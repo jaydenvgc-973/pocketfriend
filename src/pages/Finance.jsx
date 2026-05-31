@@ -44,7 +44,7 @@ const formatCurrency = (n) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n ?? 0);
 
 // ── Per-character account row ─────────────────────────────────────────────────
-function CharacterAccountRow({ character, isSelected, onSelect, onTransact }) {
+function CharacterAccountRow({ character, isSelected, onSelect, onTransact, balance }) {
   return (
     <div
       className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
@@ -59,28 +59,37 @@ function CharacterAccountRow({ character, isSelected, onSelect, onTransact }) {
           {character.character_type?.replace(/_/g, ' ') || 'character'}
         </p>
       </div>
-      <div className="flex items-center gap-1.5">
-        <button
-          onClick={e => { e.stopPropagation(); onTransact('income'); }}
-          className="p-1.5 rounded-lg text-green-400 hover:bg-green-500/15 transition-colors"
-          title="Add money"
-        >
-          <PlusCircle className="w-4 h-4" />
-        </button>
-        <button
-          onClick={e => { e.stopPropagation(); onTransact('expense'); }}
-          className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/15 transition-colors"
-          title="Subtract money"
-        >
-          <MinusCircle className="w-4 h-4" />
-        </button>
+      <div className="flex items-center gap-2">
+        {balance !== undefined && balance !== null ? (
+          <span className="text-xs font-semibold text-green-400 flex items-center gap-0.5">
+            <DollarSign className="w-3 h-3" />{Number(balance).toLocaleString()}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground/40">$ --</span>
+        )}
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={e => { e.stopPropagation(); onTransact('income'); }}
+            className="p-1.5 rounded-lg text-green-400 hover:bg-green-500/15 transition-colors"
+            title="Add money"
+          >
+            <PlusCircle className="w-4 h-4" />
+          </button>
+          <button
+            onClick={e => { e.stopPropagation(); onTransact('expense'); }}
+            className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/15 transition-colors"
+            title="Subtract money"
+          >
+            <MinusCircle className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 // ── Character type group section ──────────────────────────────────────────────
-function CharacterGroup({ label, members, selectedCharId, onSelectChar, onTransact }) {
+function CharacterGroup({ label, members, selectedCharId, onSelectChar, onTransact, financialIndex }) {
   const [collapsed, setCollapsed] = useState(false);
   return (
     <div className="space-y-2">
@@ -100,6 +109,7 @@ function CharacterGroup({ label, members, selectedCharId, onSelectChar, onTransa
                 isSelected={selectedCharId === char.id}
                 onSelect={() => onSelectChar(char.id === selectedCharId ? null : char.id)}
                 onTransact={(dir) => onTransact(char, dir)}
+                balance={financialIndex?.[char.id]?.current_balance}
               />
               {selectedCharId === char.id && (
                 <div className="mt-2 ml-1 border-l-2 border-primary/30 pl-3">
@@ -115,8 +125,9 @@ function CharacterGroup({ label, members, selectedCharId, onSelectChar, onTransa
 }
 
 // ── User account panel ────────────────────────────────────────────────────────
-function UserAccountPanel({ user, settings }) {
+function UserAccountPanel({ user, settings, isLoading }) {
   const balance = settings?.user_balance;
+  const showBalance = balance !== undefined && balance !== null;
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-2">
       <div className="flex items-center gap-2 mb-1">
@@ -128,8 +139,8 @@ function UserAccountPanel({ user, settings }) {
           <p className="text-xs text-muted-foreground">Your account</p>
         </div>
         <div className="text-right">
-          <p className={`text-lg font-bold ${balance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {balance !== undefined && balance !== null ? formatCurrency(balance) : '$ --'}
+          <p className={`text-lg font-bold ${showBalance && balance >= 0 ? 'text-green-400' : showBalance ? 'text-red-400' : 'text-muted-foreground/50'}`}>
+            {showBalance ? formatCurrency(balance) : isLoading ? '...' : '$ --'}
           </p>
           <p className="text-[10px] text-muted-foreground">current balance</p>
         </div>
@@ -186,15 +197,32 @@ export default function Finance() {
   const groups = groupAndSortCharacters(allCharacters);
 
   // User settings for user_balance
-  const { data: userSettingsList = [] } = useQuery({
+  const { data: userSettingsList = [], isLoading: isSettingsLoading } = useQuery({
     queryKey: ['userSettings', currentUser?.email],
     queryFn: () => currentUser?.email
       ? base44.entities.UserSettings.filter({ owner_email: currentUser.email })
       : [],
     enabled: !!currentUser?.email,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
   const userSettings = userSettingsList[0] || null;
+
+  // Fetch all CharacterFinancial records to show balances on rows
+  const { data: allFinancials = [] } = useQuery({
+    queryKey: ['allCharacterFinancials', currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.CharacterFinancial.filter({ owner_email: currentUser.email }, null, 300)
+      : [],
+    enabled: !!currentUser?.email,
+    staleTime: 2 * 60 * 1000,
+    placeholderData: (prev) => prev,
+  });
+  // Index by character_id for O(1) lookup
+  const financialIndex = allFinancials.reduce((acc, f) => {
+    if (f.character_id) acc[f.character_id] = f;
+    return acc;
+  }, {});
 
   const handlePayroll = async () => {
     setProcessing(true);
@@ -234,6 +262,7 @@ export default function Finance() {
     setTransactionTarget(null);
     // Invalidate financial data for the affected character
     queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+    queryClient.invalidateQueries({ queryKey: ['allCharacterFinancials', currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ['financials', result.character_id || transactionTarget?.character?.id] });
     // Refresh the selected dashboard if open
     if (selectedCharId) {
@@ -260,7 +289,7 @@ export default function Finance() {
 
         {/* User Account Panel */}
         {currentUser && (
-          <UserAccountPanel user={currentUser} settings={userSettings} />
+          <UserAccountPanel user={currentUser} settings={userSettings} isLoading={isSettingsLoading} />
         )}
 
         {/* Manual Triggers */}
@@ -293,6 +322,7 @@ export default function Finance() {
                   selectedCharId={selectedCharId}
                   onSelectChar={setSelectedCharId}
                   onTransact={openTransact}
+                  financialIndex={financialIndex}
                 />
               </div>
             ))}
