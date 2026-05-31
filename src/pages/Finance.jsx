@@ -94,13 +94,19 @@ function CharacterGroup({ label, members, selectedCharId, onSelectChar, onTransa
       {!collapsed && (
         <div className="space-y-2">
           {members.map(char => (
-            <CharacterAccountRow
-              key={char.id}
-              character={char}
-              isSelected={selectedCharId === char.id}
-              onSelect={() => onSelectChar(char.id === selectedCharId ? null : char.id)}
-              onTransact={(dir) => onTransact(char, dir)}
-            />
+            <div key={char.id}>
+              <CharacterAccountRow
+                character={char}
+                isSelected={selectedCharId === char.id}
+                onSelect={() => onSelectChar(char.id === selectedCharId ? null : char.id)}
+                onTransact={(dir) => onTransact(char, dir)}
+              />
+              {selectedCharId === char.id && (
+                <div className="mt-2 ml-1 border-l-2 border-primary/30 pl-3">
+                  <FinancialDashboard characterId={char.id} key={char.id} />
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -293,15 +299,6 @@ export default function Finance() {
           </div>
         )}
 
-        {/* Financial Dashboard for selected character */}
-        {selectedCharId && (
-          <div className="space-y-2">
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-1">
-              Account Details — {allCharacters.find(c => c.id === selectedCharId)?.name}
-            </p>
-            <FinancialDashboard characterId={selectedCharId} key={selectedCharId} />
-          </div>
-        )}
 
       </div>
 

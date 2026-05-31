@@ -24,24 +24,22 @@ import {
 } from "@/lib/characterRuntimeCache";
 
 // ── DATE DIVIDER DETECTION ──────────────────────────────────────────────────
-// Catches Message records that are actually date/timestamp separators saved to the DB.
-// These must NEVER render as bubbles or count toward any unread badge.
-const DATE_CONTENT_PATTERN = /^[-–—\s]*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|yesterday)[\s,]*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)?[\s,\d]*/i;
+// Catches Message records that are true date/timestamp separators saved to the DB.
+// CRITICAL: WorldContacts messages use role="sent"|"npc" — never sender_type.
+// Any message with a real role MUST render as a bubble, never as a divider.
 const DATE_DIVIDER_TYPES = new Set(['date', 'divider', 'timestamp', 'separator', 'system']);
 
 function isDateDividerMessage(msg) {
   if (!msg) return false;
-  // By type field
+  // Must have a role to be a real message. WorldContacts messages use role="sent"|"npc".
+  // If it has a valid role, it's a real message — never treat it as a date divider.
+  if (msg.role === 'sent' || msg.role === 'npc' || msg.role === 'user') return false;
+  // By explicit type field only (never infer from missing sender_type)
   if (DATE_DIVIDER_TYPES.has((msg.type || '').toLowerCase())) return true;
-  // By sender_type
-  if (!msg.sender_type || msg.sender_type === 'system') return true;
-  // By content pattern: "—— Thursday, May 22, 2026 ——" or "Thursday, May 22, 2026"
+  // Only check content patterns for messages without a role (true system separators)
   const content = (msg.content || '').trim();
   if (!content) return false;
   if (/^[-–—\s]+$/.test(content)) return true; // dash-only row
-  // Contains a weekday + month + year pattern (date marker)
-  if (/^[-–—\s]*(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|yesterday)/i.test(content) &&
-      /\d{4}/.test(content)) return true;
   // Wrapped in dash lines: "—— ... ——"
   if (/^[-–—]{2,}/.test(content) && /[-–—]{2,}$/.test(content)) return true;
   return false;
