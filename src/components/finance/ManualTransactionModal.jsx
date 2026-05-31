@@ -4,8 +4,8 @@ import { X, PlusCircle, MinusCircle, DollarSign, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { base44 } from '@/api/base44Client';
 
-export default function ManualTransactionModal({ character, onClose, onSuccess }) {
-  const [direction, setDirection] = useState('income');
+export default function ManualTransactionModal({ character, initialDirection = 'income', onClose, onSuccess }) {
+  const [direction, setDirection] = useState(initialDirection || 'income');
   const [amount, setAmount] = useState('');
   const [title, setTitle] = useState('');
   const [note, setNote] = useState('');
