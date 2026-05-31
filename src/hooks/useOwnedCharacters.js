@@ -535,6 +535,14 @@ export function useOwnedCharacters(
   const isInitialLoading = (isLoadingRls && !rlsCharacters.length) && (isLoadingNpc && !backendNpcs.length);
   const isRefreshing     = (isFetchingRls || isFetchingNpc) && !isInitialLoading;
 
+  // isFinancialLoading: true while the financialIndex query has not yet returned data.
+  // Used by CharacterCard to distinguish "still loading" from "confirmed missing".
+  const { isFetching: isFetchingFinancial, isLoading: isLoadingFinancial } = useQuery({
+    queryKey: ["characterFinancialIndex", email, characterIdFingerprint],
+    enabled: false, // already managed above — just read the state
+  });
+  const isFinancialLoading = isLoadingFinancial || isFetchingFinancial;
+
   return {
     allCharacters,
     activeCreated,
@@ -544,6 +552,7 @@ export function useOwnedCharacters(
     travelCompanions,
     isInitialLoading,
     isRefreshing,
+    isFinancialLoading,
     rlsCharacters,
     backendNpcs,
     financialIndex,

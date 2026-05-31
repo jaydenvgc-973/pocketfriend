@@ -67,7 +67,7 @@ const stateDots = {
 
 
 
-export default function CharacterCard({ character, onDelete, onMoveAway, locationMap = {}, financialRecord = null }) {
+export default function CharacterCard({ character, onDelete, onMoveAway, locationMap = {}, financialRecord = null, isFinancialLoading = false }) {
   // OWNERSHIP GUARD: owner_email is the sole ownership source of truth.
   // If missing, log visibly so data integrity issues surface rather than silently fail.
   if (!character.owner_email) {
@@ -455,15 +455,19 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
             <div className="flex items-center gap-2 mt-1">
               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${stateDots[state] || "bg-zinc-500"}`} />
               <span className="text-xs text-muted-foreground capitalize">{stateLabels[state] || state}</span>
-              {/* REQUIRED FOR active_created_character: balance must always display */}
+              {/* Balance display: neutral loading state while fetching, real value when ready */}
               {balance !== undefined && balance !== null ? (
                 <span className="ml-auto flex items-center gap-0.5 text-xs text-green-400 font-medium">
                   <DollarSign className="w-3 h-3" />{Number(balance).toLocaleString()}
                 </span>
               ) : isActiveCreated ? (
-                <span className="ml-auto flex items-center gap-0.5 text-xs text-red-500 font-medium">
-                  MISSING FINANCIAL DATA
-                </span>
+                isFinancialLoading ? (
+                  <span className="ml-auto flex items-center gap-0.5 text-xs text-muted-foreground/50 font-medium">
+                    <DollarSign className="w-3 h-3" />--
+                  </span>
+                ) : (
+                  <span className="ml-auto text-xs text-muted-foreground/40">$ --</span>
+                )
               ) : null}
             </div>
 
