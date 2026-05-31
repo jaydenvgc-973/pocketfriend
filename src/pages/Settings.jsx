@@ -685,9 +685,20 @@ export default function Settings() {
           </div>
 
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Manage Characters</p>
-          <div className="mb-6 bg-card border border-border rounded-2xl p-4">
+          <div className="mb-4 bg-card border border-border rounded-2xl p-4">
             <ManageCharacterList characters={characters} currentUser={user} />
           </div>
+          <Link to="/finance" className="mb-6 block">
+            <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-green-500/30 hover:border-green-500/60 transition-colors text-left">
+              <div className="w-9 h-9 rounded-xl bg-green-500/10 flex items-center justify-center flex-shrink-0">
+                <DollarSign className="w-4 h-4 text-green-500" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">View Finance &amp; Accounts</p>
+                <p className="text-xs text-muted-foreground">Balances, income, expenses, and manual account controls</p>
+              </div>
+            </button>
+          </Link>
 
            <button
             onClick={handleForcePayday}
