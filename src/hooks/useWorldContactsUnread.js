@@ -214,18 +214,12 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       return;
     }
 
-    // DO NOT seed from LFC on mount for green badge counts.
-    // LFC-cached counts may have been written before the direction guard (outgoing message filter)
-    // was applied, causing outgoing messages to appear as positive unread counts.
-    // The live fetch via loadUnreadCounts always applies isCountableUnread correctly — trust it.
-
-    // On mount: respect fresh cache (avoids redundant DB round-trip if data is < 2min old).
-    // Force only when cache is absent or stale — the cooldown already gates re-subscription bounces.
-    // Previously this was always force=true, which bypassed ALL caching on every popup open,
-    // firing Conversation.filter + N×Message.filter unconditionally — unnecessary when cache is fresh.
-    const mountCached = ownerEmail && cacheKey ? lfcRead(ownerEmail, cacheKey) : null;
-    const mountIsStale = !mountCached || lfcIsStale(mountCached, 'unread');
-    loadUnreadCounts(mountIsStale);
+    // SELF-REPAIR: Always start from zero on mount — never seed the UI from LFC.
+    // Any stale LFC entry with positive counts (written before the direction guard was applied)
+    // would show false green dots immediately. The live fetch runs right after and corrects state.
+    // The LFC cache is only used inside loadUnreadCounts to skip the DB round-trip when fresh;
+    // it is never applied directly to UI state on mount.
+    loadUnreadCounts(true); // always force-fetch on mount to bypass any stale LFC
 
     // Subscription: debounced 5s, force=true bypasses cache + cooldown.
     // CRITICAL: Only react to 'create' events — new incoming messages.

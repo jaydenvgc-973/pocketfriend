@@ -31,6 +31,7 @@ import {
   fetchUnreadMessagesForConversations,
   resolveUnreadBadgeCounts,
 } from '@/lib/canonicalUnreadResolver';
+import { lfcDelete } from '@/lib/localFirstCache';
 
 const MAX_CONVOS_TO_CHECK = 100;
 
@@ -49,6 +50,20 @@ export function useHomeUnreadCounts(ownerEmail, allConversations = []) {
     queryKey: ['home_unread_counts', ownerEmail, convoIdKey],
     queryFn: async () => {
       if (!ownerEmail || eligibleConvos.length === 0) return new Map();
+
+      // SELF-REPAIR: Proactively purge ALL world_contacts_unread:* LFC entries for this owner
+      // at the start of every Home load. This ensures stale cache from prior sessions
+      // (written before direction guards were applied) cannot persist across reloads.
+      // The live resolver below will re-write only entries that have real unread messages.
+      try {
+        const prefix = `lfc:${ownerEmail}:world_contacts_unread:`;
+        const keysToDelete = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k?.startsWith(prefix)) keysToDelete.push(k);
+        }
+        keysToDelete.forEach(k => localStorage.removeItem(k));
+      } catch {}
 
       const convoIds = eligibleConvos.map(c => c.id);
 
@@ -75,6 +90,13 @@ export function useHomeUnreadCounts(ownerEmail, allConversations = []) {
           characterId
         );
         resultMap.set(characterId, { red_chat, red_text, green });
+
+        // SELF-REPAIR: If the live resolver confirms green=0 for this character,
+        // delete any stale LFC world_contacts_unread entry that may be holding a
+        // false positive from a prior session. The app must clean its own stale state.
+        if (green === 0) {
+          lfcDelete(ownerEmail, `world_contacts_unread:${characterId}`);
+        }
       }
 
       return resultMap;

@@ -313,7 +313,9 @@ export default function CharacterProfile() {
       return combined;
     },
     enabled: !!characterId && !!character,
-    staleTime: 120000,
+    // staleTime: 0 — always fetch fresh on profile navigation.
+    // A stale 2-min cache from before the account_global scope fix would serve empty results.
+    staleTime: 0,
   });
 
   const getWorkLocationName = (locationId) => {
