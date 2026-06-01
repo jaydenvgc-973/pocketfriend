@@ -33,9 +33,13 @@ async function fetchAndConsolidate(userEmail) {
 
 export function useUserSettings() {
   const queryClient = useQueryClient();
+  // Use staleTime: Infinity so this reads from the shared ['user'] cache populated by Home.
+  // This eliminates the double-waterfall: without this, useUserSettings fires its own
+  // base44.auth.me() call that races with Home's user fetch, delaying settings resolution.
   const { data: user = {} } = useQuery({
     queryKey: ['user'],
     queryFn: () => base44.auth.me(),
+    staleTime: Infinity, // always read from shared cache — Home's query populates it
   });
 
   const queryKey = ["userSettings", user?.email];
@@ -59,7 +63,7 @@ export function useUserSettings() {
       if (result && user?.email) lfcWrite(user.email, 'settings', result);
       return result;
     },
-    staleTime: 10 * 60 * 1000,   // 10 min — settings are stable
+    staleTime: 5 * 60 * 1000,   // 5 min — settings including user_balance
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
     enabled: !!user?.email,

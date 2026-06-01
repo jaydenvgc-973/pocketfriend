@@ -125,10 +125,14 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         if (staleToMark.length > 0) {
           console.log(`[WorldContactsPopup] Reconciliation: marking ${staleToMark.length} stale unread messages as read for char=${character.id}`);
           await Promise.all(staleToMark.map(m => base44.entities.Message.update(m.id, { is_read: true }).catch(() => {})));
-          // Invalidate LFC cache and dispatch thread:read so badges update
+          // Dispatch thread:read so the world contacts hook clears its LFC cache
           window.dispatchEvent(new CustomEvent('thread:read', {
             detail: { characterId: character.id, channel: 'world_phone', conversationId: null }
           }));
+          // After writes settle, also refresh the home unread cache so CharacterCard green dot clears
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('home:refresh_unread'));
+          }, 2000);
         }
       } catch { /* non-fatal */ }
     };
@@ -327,6 +331,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         );
         // Wait for ALL mark-read writes to complete BEFORE dispatching thread:read.
         // Pass contactId so the hook clears only THIS contact's badge, not all contacts.
+        // Also dispatch home:refresh_unread so the CharacterCard green dot clears immediately
+        // rather than waiting for the 5-minute stale time to expire.
         Promise.all(markReadPromises).then(() => {
           window.dispatchEvent(new CustomEvent('thread:read', {
             detail: {
@@ -336,6 +342,10 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
               contactId: contactId || null,
             }
           }));
+          // After a short settle, also refresh the home unread cache so the green dot clears
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('home:refresh_unread'));
+          }, 1500);
         });
 
         subscribeToConversation(found.id);

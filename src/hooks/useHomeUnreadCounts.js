@@ -80,7 +80,9 @@ export function useHomeUnreadCounts(ownerEmail, allConversations = []) {
       return resultMap;
     },
     enabled: !!ownerEmail && eligibleConvos.length > 0,
-    staleTime: 5 * 60 * 1000,
+    // 60s staleTime: green dots must clear promptly after WorldContactsPopup marks messages read.
+    // The prior 5-minute staleTime caused green dots to persist long after opening World Contacts.
+    staleTime: 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
     refetchOnWindowFocus: false,

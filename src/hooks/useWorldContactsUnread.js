@@ -296,11 +296,14 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       }
       // else: no contactId on green event — cache was busted above, live fetch will correct.
 
-      // 4. After writes settle, do ONE live fetch to confirm DB state
+      // 4. After writes settle, do ONE live fetch to confirm DB state.
+      // Also dispatch home:refresh_unread so CharacterCard green dot syncs.
       isFetchingRef.current = false;
       settleTimerRef.current = setTimeout(() => {
         settleTimerRef.current = null;
         loadUnreadCounts(true);
+        // Refresh the home unread cache so the CharacterCard green badge reflects live state
+        window.dispatchEvent(new CustomEvent('home:refresh_unread'));
       }, 2500);
     };
     window.addEventListener('thread:read', handleThreadRead);
