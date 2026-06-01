@@ -78,7 +78,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [ownerEmail, setOwnerEmail] = useState(null);
 
   // Unread counts per contact — green badge source of truth
-  const { unreadByContact } = useWorldContactsUnread(character?.id, contacts, ownerEmail);
+  const { unreadByContact, previewByContact } = useWorldContactsUnread(character?.id, contacts, ownerEmail);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1120,7 +1120,8 @@ Respond ONLY with valid JSON in this exact format:
                 contacts.map((contact, i) => {
                   // Prefer stable related_character_id key; fallback to normalized person_name
                   const contactKey = contact.related_character_id || contact.person_name?.toLowerCase().trim();
-                  const contactUnread = unreadByContact[contactKey] || 0;
+                   const contactUnread = unreadByContact[contactKey] || 0;
+                   const contactPreview = previewByContact[contactKey] || null;
                   return (
                   <motion.button
                     key={contact.related_character_id || `name:${contact.person_name}`}
@@ -1146,10 +1147,16 @@ Respond ONLY with valid JSON in this exact format:
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className={`text-sm font-medium ${contactUnread > 0 ? 'text-foreground font-semibold' : 'text-foreground'}`}>{contact.person_name}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {contact.relationship_type || "known contact"}
-                        {contact.current_status ? ` · ${contact.current_status}` : ""}
-                      </p>
+                      {contactUnread > 0 && contactPreview ? (
+                        <p className="text-xs text-green-400 truncate font-medium">
+                          {contactPreview}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground truncate">
+                          {contact.relationship_type || "known contact"}
+                          {contact.current_status ? ` · ${contact.current_status}` : ""}
+                        </p>
+                      )}
                     </div>
                     <div className="flex-shrink-0 flex items-center gap-1">
                       {contact.romantic_level > 30 && <span className="text-xs text-pink-400">❤</span>}

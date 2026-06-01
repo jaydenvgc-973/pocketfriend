@@ -640,7 +640,7 @@ export default function CharacterProfile() {
           </div>
           
           <CollapsibleProfileSection icon={Activity} title="Dashboard">
-            <CharacterDashboard character={character} />
+            <CharacterDashboard character={character} allCharacters={allCharacters} />
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection icon={BarChart3} title="Life Needs">

@@ -31,6 +31,7 @@ export { isCountableUnread as isCountableUnreadMessage };
 export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = null) {
   const [unreadByContact, setUnreadByContact] = useState({});
   const [globalUnreadCount, setGlobalUnreadCount] = useState(0);
+  const [previewByContact, setPreviewByContact] = useState({});
   const debounceTimerRef = useRef(null);
   const isFetchingRef = useRef(false);
   // Settle timer: set during thread:read to suppress subscription events while
@@ -40,9 +41,10 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
   const cacheKey = characterId ? `world_contacts_unread:${characterId}` : null;
   const cooldownKey = characterId ? `wc_unread_fetch:${characterId}` : null;
 
-  const applyData = useCallback((byContact, total) => {
+  const applyData = useCallback((byContact, total, previewMap = {}) => {
     setUnreadByContact(byContact || {});
     setGlobalUnreadCount(total || 0);
+    setPreviewByContact(previewMap || {});
   }, []);
 
   const loadUnreadCounts = useCallback(async (force = false) => {
@@ -65,7 +67,7 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       const cached = lfcRead(ownerEmail, cacheKey);
       if (cached && !lfcIsStale(cached, 'unread')) {
         const d = cached.data;
-        if (d) { applyData(d.byContact, d.total); return; }
+        if (d) { applyData(d.byContact, d.total, d.previewMap || {}); return; }
       }
     }
 
@@ -158,23 +160,35 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       const perConvoMessages = await fetchUnreadMessagesForConversations(validConvoIds, base44);
 
       let total = 0;
+      // previewByContact: last unread message preview per contact key
+      const previewMap = {};
       for (const [convoId, msgs] of perConvoMessages) {
         const contactKey = convoToContactKey[convoId];
         if (!contactKey || !(contactKey in byContact)) continue;
 
-        for (const msg of msgs) {
+        // Sort by created_date ascending so last message is latest
+        const sorted = [...msgs].sort((a, b) => {
+          const ta = a.created_date || a.timestamp || '';
+          const tb = b.created_date || b.timestamp || '';
+          return ta < tb ? -1 : ta > tb ? 1 : 0;
+        });
+
+        for (const msg of sorted) {
           // Use canonical filter — direction + receiver guards included
           if (!isCountableUnread(msg, characterId)) continue;
           byContact[contactKey] = (byContact[contactKey] || 0) + 1;
           total++;
+          // Keep the latest unread message preview for this contact
+          const preview = (msg.content || '').trim();
+          if (preview) previewMap[contactKey] = preview.length > 60 ? preview.substring(0, 60) + '…' : preview;
         }
       }
 
-      applyData(byContact, total);
+      applyData(byContact, total, previewMap);
 
       // Write to LFC for instant next-mount
       if (ownerEmail && cacheKey) {
-        lfcWrite(ownerEmail, cacheKey, { byContact, total });
+        lfcWrite(ownerEmail, cacheKey, { byContact, total, previewMap });
       }
     } catch (err) {
       console.warn('[useWorldContactsUnread] fetch failed (non-fatal):', err?.message);
@@ -199,7 +213,7 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
     if (ownerEmail && cacheKey) {
       const cached = lfcRead(ownerEmail, cacheKey);
       if (cached?.data && cached.loaded_at && (Date.now() - cached.loaded_at < SEED_MAX_AGE_MS)) {
-        applyData(cached.data.byContact, cached.data.total);
+        applyData(cached.data.byContact, cached.data.total, cached.data.previewMap || {});
       }
     }
 
@@ -251,5 +265,5 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
     };
   }, [characterId, contacts.length, ownerEmail]); // eslint-disable-line
 
-  return { unreadByContact, globalUnreadCount };
+  return { unreadByContact, globalUnreadCount, previewByContact };
 }
