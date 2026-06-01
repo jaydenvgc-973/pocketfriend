@@ -237,7 +237,7 @@ export default function CharacterProfile() {
   });
 
   const { data: workLocations = [] } = useQuery({
-    queryKey: ['workLocations', characterId, character?.occupation_location_id, (character?.additional_occupation_locations || []).map(l => l.location_id).join(','), character?.owner_email || ''],
+    queryKey: ['workLocations', characterId, character?.occupation_location_id, (character?.additional_occupation_locations || []).map(l => l.location_id).join(',')],
     queryFn: async () => {
       if (!character) return [];
 
