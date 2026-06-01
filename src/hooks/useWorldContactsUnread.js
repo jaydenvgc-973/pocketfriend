@@ -236,6 +236,11 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
     // thread:read: bust LFC cache, suppress subscription events for 2.5s settle window,
     // then do ONE definitive live fetch. The settle window prevents badge oscillation from
     // the is_read:true subscription events that fire while mark-read writes are in flight.
+    //
+    // CRITICAL FIX: Only zero the specific contact whose thread was opened (detail.contactId).
+    // Previously this zeroed ALL contacts optimistically, wiping unread badges for characters
+    // whose threads the user had NOT opened. Now we only clear the one contact that was read.
+    // If contactId is not provided (legacy dispatch), fall back to zeroing all (old behavior).
     const handleThreadRead = (e) => {
       const detail = e.detail || {};
       if (detail.characterId !== characterId) return;
@@ -244,10 +249,36 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       // 2. Cancel pending debounce and any existing settle timer
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
-      // 3. Set optimistic zero immediately — user already opened the thread
-      applyData(Object.fromEntries(contacts.map(c => [
-        c.related_character_id || c.person_name?.toLowerCase().trim(), 0
-      ])), 0);
+      // 3. Set optimistic zero — ONLY for the specific contact that was opened, not all contacts.
+      //    This preserves unread badges for other characters whose threads haven't been viewed.
+      const readContactId = detail.contactId || null;
+      if (readContactId) {
+        // Surgical clear: zero only the contact whose thread was read
+        setUnreadByContact(prev => {
+          const next = { ...prev };
+          // The contact key is the stable character ID (preferred) or lowercased person_name
+          const contactKey = readContactId; // contactId is always the stable character ID here
+          if (contactKey in next) {
+            next[contactKey] = 0;
+          }
+          return next;
+        });
+        setPreviewByContact(prev => {
+          const next = { ...prev };
+          delete next[readContactId];
+          return next;
+        });
+        // Recalculate global count from new per-contact state
+        setGlobalUnreadCount(prev => {
+          // We'll recompute after the live fetch, but optimistically decrement
+          return Math.max(0, prev - (unreadByContact[readContactId] || 0));
+        });
+      } else {
+        // Fallback: no specific contactId — zero everything (legacy behavior)
+        applyData(Object.fromEntries(contacts.map(c => [
+          c.related_character_id || c.person_name?.toLowerCase().trim(), 0
+        ])), 0);
+      }
       // 4. After writes settle, do ONE live fetch to confirm DB state
       isFetchingRef.current = false;
       settleTimerRef.current = setTimeout(() => {

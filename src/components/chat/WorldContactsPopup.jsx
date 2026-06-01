@@ -326,11 +326,15 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           base44.entities.Message.update(m.id, { is_read: true }).catch(() => {})
         );
         // Wait for ALL mark-read writes to complete BEFORE dispatching thread:read.
-        // This eliminates the race condition where the badge recount fires before
-        // the DB writes have committed, causing the badge to remain stuck.
+        // Pass contactId so the hook clears only THIS contact's badge, not all contacts.
         Promise.all(markReadPromises).then(() => {
           window.dispatchEvent(new CustomEvent('thread:read', {
-            detail: { characterId: character.id, channel: 'world_phone', conversationId: found.id }
+            detail: {
+              characterId: character.id,
+              channel: 'world_phone',
+              conversationId: found.id,
+              contactId: contactId || null,
+            }
           }));
         });
 
@@ -515,19 +519,31 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       });
   };
 
+  // Ref to current conversationId — used inside subscription callback without stale closure.
+  const conversationIdRef = useRef(null);
+  useEffect(() => { conversationIdRef.current = conversationId; }, [conversationId]);
+
+  // Ref to current selectedContact — used inside subscription callback without stale closure.
+  const selectedContactRef = useRef(null);
+  useEffect(() => { selectedContactRef.current = selectedContact; }, [selectedContact]);
+
   // ── SHARED SUBSCRIPTION HELPER ─────────────────────────────────────────────
   // Uses sender_character_id (not character_id) for direction — the single source of truth.
+  // CRITICAL FIX: When an incoming NPC message arrives via subscription while the thread
+  // is open, mark it read immediately. The user is already viewing this thread — the message
+  // should never generate a new unread badge when they close the popup.
   const subscribeToConversation = (convoId) => {
     if (unsubscribeRef.current) unsubscribeRef.current();
     unsubscribeRef.current = base44.entities.Message.subscribe((event) => {
       if (event.data?.conversation_id !== convoId) return;
       if (event.type === "create") {
+        const d = event.data;
+        // DIRECTION: sender_character_id is authoritative; character_id is legacy fallback
+        const isSent = d.sender_character_id === character.id ||
+          (!d.sender_character_id && d.character_id === character.id);
+
         setMessages(prev => {
-          if (prev.some(m => m.id === event.data.id)) return prev;
-          const d = event.data;
-          // DIRECTION: sender_character_id is authoritative; character_id is legacy fallback
-          const isSent = d.sender_character_id === character.id ||
-            (!d.sender_character_id && d.character_id === character.id);
+          if (prev.some(m => m.id === d.id)) return prev;
           return [...prev, {
             id: d.id,
             dbId: d.id,
@@ -537,6 +553,25 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
             message_type: d.message_type || null,
           }];
         });
+
+        // Mark incoming (NPC) messages read immediately — user is already viewing this thread.
+        // This prevents: character replies while World Phone is open → user exits → badge appears.
+        if (!isSent && isCountableUnread(d, character.id)) {
+          base44.entities.Message.update(d.id, { is_read: true }).catch(() => {});
+          // Dispatch scoped thread:read with the specific contactId so only this thread's
+          // badge clears — not all contacts' badges.
+          const contact = selectedContactRef.current;
+          const contactId = contact?.related_character_id;
+          window.dispatchEvent(new CustomEvent('thread:read', {
+            detail: {
+              characterId: character.id,
+              channel: 'world_phone',
+              conversationId: convoId,
+              // Pass the specific contact key so the hook clears only this contact's badge
+              contactId: contactId || null,
+            }
+          }));
+        }
       }
     });
   };
@@ -1129,11 +1164,15 @@ Respond ONLY with valid JSON in this exact format:
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.04 }}
                     onClick={() => selectContact(contact)}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/60 transition-colors text-left"
+                    className={`w-full flex items-center gap-3 px-4 py-3 transition-colors text-left ${
+                      contactUnread > 0
+                        ? 'bg-green-500/8 hover:bg-green-500/15 border-l-2 border-green-500/60'
+                        : 'hover:bg-secondary/60'
+                    }`}
                   >
-                    {/* Avatar with green unread dot overlay */}
+                     {/* Avatar with green unread count badge */}
                     <div className="relative w-10 h-10 flex-shrink-0">
-                      <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center overflow-hidden">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${contactUnread > 0 ? 'ring-2 ring-green-500/60' : 'bg-primary/15'}`}>
                         {contact.avatar_url
                           ? <img src={contact.avatar_url} alt={contact.person_name} className="w-full h-full object-cover" />
                           : <span className="text-sm font-semibold text-primary">{contact.person_name?.[0]?.toUpperCase() || "?"}</span>
@@ -1146,10 +1185,19 @@ Respond ONLY with valid JSON in this exact format:
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium ${contactUnread > 0 ? 'text-foreground font-semibold' : 'text-foreground'}`}>{contact.person_name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className={`text-sm ${contactUnread > 0 ? 'font-bold text-foreground' : 'font-medium text-foreground'}`}>
+                          {contact.person_name}
+                        </p>
+                        {contactUnread > 0 && (
+                          <span className="text-[9px] font-bold bg-green-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wide flex-shrink-0">
+                            {contactUnread} new
+                          </span>
+                        )}
+                      </div>
                       {contactUnread > 0 && contactPreview ? (
-                        <p className="text-xs text-green-400 truncate font-medium">
-                          {contactPreview}
+                        <p className="text-xs text-green-400 truncate font-medium mt-0.5">
+                          {contact.person_name}: {contactPreview}
                         </p>
                       ) : (
                         <p className="text-xs text-muted-foreground truncate">
@@ -1190,6 +1238,20 @@ Respond ONLY with valid JSON in this exact format:
                   <p className="text-[10px] text-amber-300/80">Not linked to a Character record — memory may not carry over to Chat/Scene</p>
                 </div>
               )}
+              {/* Sender identity confirmation banner — shown when this thread has unread messages */}
+              {(() => {
+                const cKey = selectedContact.related_character_id || selectedContact.person_name?.toLowerCase().trim();
+                const unreadCount = unreadByContact[cKey] || 0;
+                if (unreadCount === 0) return null;
+                return (
+                  <div className="px-4 py-1.5 bg-green-500/10 border-b border-green-500/20 flex items-center gap-2 flex-shrink-0">
+                    <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0 animate-pulse" />
+                    <p className="text-[11px] text-green-400 font-medium">
+                      {unreadCount} unread message{unreadCount !== 1 ? 's' : ''} from {selectedContact.person_name}
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Messages */}
               <div className="flex-1 overflow-y-auto py-4 space-y-2 px-4">
@@ -1238,8 +1300,14 @@ Respond ONLY with valid JSON in this exact format:
                         key={msg.id}
                         initial={{ opacity: 0, y: 6 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className={`flex ${isSent ? "justify-end" : "justify-start"}`}
+                        className={`flex flex-col ${isSent ? "items-end" : "items-start"}`}
                       >
+                        {/* Sender name label — shown above NPC messages for unambiguous identity */}
+                        {!isSent && (
+                          <p className="text-[10px] text-muted-foreground font-medium mb-0.5 px-1">
+                            {selectedContact.person_name}
+                          </p>
+                        )}
                         <div className={`max-w-[78%] rounded-2xl overflow-hidden text-sm ${
                           isSent
                             ? "bg-primary text-primary-foreground rounded-br-sm"
@@ -1268,7 +1336,10 @@ Respond ONLY with valid JSON in this exact format:
                 </AnimatePresence>
 
                 {isTyping && (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-start">
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-start">
+                    <p className="text-[10px] text-muted-foreground font-medium mb-0.5 px-1">
+                      {selectedContact.person_name}
+                    </p>
                     <div className="bg-secondary rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
                       <div className="w-2 h-2 rounded-full bg-muted-foreground typing-dot-1" />
                       <div className="w-2 h-2 rounded-full bg-muted-foreground typing-dot-2" />
