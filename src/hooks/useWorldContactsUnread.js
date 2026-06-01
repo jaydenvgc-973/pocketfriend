@@ -272,21 +272,18 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       //    instead just bust the cache and let the live fetch resolve the true state.
       const readContactId = detail.contactId || null;
       if (readContactId) {
+        // Optimistic clear: zero this contact, decrement global by its prior count.
+        // Both updaters use functional form so they read the latest state, not stale closure.
         setUnreadByContact(prev => {
           const next = { ...prev };
           if (readContactId in next) next[readContactId] = 0;
           return next;
         });
+        setGlobalUnreadCount(prev => Math.max(0, prev - (unreadByContact[readContactId] || 0)));
         setPreviewByContact(prev => {
           const next = { ...prev };
           delete next[readContactId];
           return next;
-        });
-        // Recompute global count by summing remaining per-contact values
-        // Use a functional updater that reads the post-clear unreadByContact via a separate pass
-        setGlobalUnreadCount(() => {
-          // Will be reconciled by the live fetch below — return 0 as safe floor
-          return 0;
         });
       }
       // else: no contactId on green event — cache was busted above, live fetch will correct.

@@ -153,6 +153,15 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const conversationsRef = useRef(conversations);
   useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
 
+  // Per-card stagger offset: spread N simultaneous card-mount countUnread calls
+  // across a 0–3s window to prevent all cards firing Message.filter in the same
+  // 400ms window. Uses character.id to produce a stable, deterministic offset.
+  const staggerOffsetMs = (() => {
+    let hash = 0;
+    for (let i = 0; i < character.id.length; i++) hash = (hash * 31 + character.id.charCodeAt(i)) | 0;
+    return 400 + (Math.abs(hash) % 2600); // 400ms–3000ms spread
+  })();
+
   const debounceRef = useRef(null);
   const countUnread = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -202,12 +211,23 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   // Stable: character.id only — conversations read via ref to avoid recreation on every render
   }, [character.id]); // eslint-disable-line
 
+  // Separate ref for stagger timer — distinct from debounceRef used inside countUnread
+  const staggerTimerRef = useRef(null);
   useEffect(() => {
     // PAGE-OWNERSHIP GATE: unread recounts must not run while Chat/Text is active.
     if (isGloballyRateLimited()) return;
     const ctx = getActiveContext();
     if (ctx.page === 'chat' || ctx.page === 'text') return;
-    countUnread();
+    // Stagger per-card: spread all N card-mount countUnread calls across 0.4–3s.
+    // Prevents N×M simultaneous Message.filter calls that cause 429 storms on page load.
+    if (staggerTimerRef.current) clearTimeout(staggerTimerRef.current);
+    staggerTimerRef.current = setTimeout(() => {
+      staggerTimerRef.current = null;
+      if (isGloballyRateLimited()) return;
+      const ctx2 = getActiveContext();
+      if (ctx2.page === 'chat' || ctx2.page === 'text') return;
+      countUnread();
+    }, staggerOffsetMs);
   }, [conversations.length, character.id]); // eslint-disable-line
 
   // PRIORITY ARCHITECTURE: window.focus listener removed from CharacterCard.
@@ -260,6 +280,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     return () => {
       window.removeEventListener('thread:read', handleThreadRead);
       if (threadReadSettleRef.current) clearTimeout(threadReadSettleRef.current);
+      if (staggerTimerRef.current) clearTimeout(staggerTimerRef.current);
     };
   }, [character.id, character.owner_email]); // eslint-disable-line
 
