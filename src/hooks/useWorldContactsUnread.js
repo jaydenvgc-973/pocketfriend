@@ -217,9 +217,13 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       }
     }
 
-    // Always force a live fetch on mount — never let cooldown suppress the initial DB read.
-    // The cooldown is for re-subscription bounces, not for first-paint accuracy.
-    loadUnreadCounts(true);
+    // On mount: respect fresh cache (avoids redundant DB round-trip if data is < 2min old).
+    // Force only when cache is absent or stale — the cooldown already gates re-subscription bounces.
+    // Previously this was always force=true, which bypassed ALL caching on every popup open,
+    // firing Conversation.filter + N×Message.filter unconditionally — unnecessary when cache is fresh.
+    const mountCached = ownerEmail && cacheKey ? lfcRead(ownerEmail, cacheKey) : null;
+    const mountIsStale = !mountCached || lfcIsStale(mountCached, 'unread');
+    loadUnreadCounts(mountIsStale);
 
     // Subscription: debounced 5s, force=true bypasses cache + cooldown.
     // Suppressed during settle window (thread:read in flight) to prevent mark-read

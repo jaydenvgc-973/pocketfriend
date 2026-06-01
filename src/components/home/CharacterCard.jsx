@@ -146,20 +146,28 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
 
 
+  // Use a ref for conversations so countUnread always reads the latest value without
+  // being recreated on every React Query re-render. This prevents the thread:read
+  // event listener from re-registering on every conversations array reference change,
+  // and eliminates stale-closure badge recounts triggered by reference churn.
+  const conversationsRef = useRef(conversations);
+  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
+
   const debounceRef = useRef(null);
   const countUnread = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
-      if (conversations.length === 0) {
+      const currentConvos = conversationsRef.current;
+      if (currentConvos.length === 0) {
         setUnreadChat(0);
         setUnreadPhone(0);
         setUnreadWorldPhone(0);
         return;
       }
       const ctx = getActiveContext();
-      traceRequest('countUnread', { caller: 'CharacterCard', page: ctx.page, status: 'ALLOWED', detail: `char=${character.name} convos=${conversations.length}` });
+      traceRequest('countUnread', { caller: 'CharacterCard', page: ctx.page, status: 'ALLOWED', detail: `char=${character.name} convos=${currentConvos.length}` });
       try {
-        const activeConvos = conversations.filter(c => classifyConversationChannel(c) !== null);
+        const activeConvos = currentConvos.filter(c => classifyConversationChannel(c) !== null);
         const allConvoIds = activeConvos.map(c => c.id);
 
         traceRequest('fetchUnreadMessagesForConversations', { caller: 'CharacterCard.countUnread', page: ctx.page, status: 'ALLOWED', detail: `char=${character.name} convoIds=${allConvoIds.length}` });
@@ -191,23 +199,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
         setUnreadWorldPhone(0);
       }
     }, 400);
-  }, [conversations, character.id]);
+  // Stable: character.id only — conversations read via ref to avoid recreation on every render
+  }, [character.id]); // eslint-disable-line
 
   useEffect(() => {
     // PAGE-OWNERSHIP GATE: unread recounts must not run while Chat/Text is active.
-    // Per governance model: event-only outside Home.
-    // If Chat/Text is active: skip entirely (cache remains stale until Home is active).
-    // If rate-limited: skip (cache remains stale).
-    // If Home is active: run immediately.
     if (isGloballyRateLimited()) return;
     const ctx = getActiveContext();
-    if (ctx.page === 'chat' || ctx.page === 'text') {
-      // Skip — Chat owns priority. Do not schedule delayed recount.
-      // Unread badges remain stale until Home becomes active again.
-      return;
-    }
+    if (ctx.page === 'chat' || ctx.page === 'text') return;
     countUnread();
-  }, [conversations.length, character.id]);
+  }, [conversations.length, character.id]); // eslint-disable-line
 
   // PRIORITY ARCHITECTURE: window.focus listener removed from CharacterCard.
   // Window focus is NOT a valid triggering event for known state (unread counts).
@@ -260,7 +261,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       window.removeEventListener('thread:read', handleThreadRead);
       if (threadReadSettleRef.current) clearTimeout(threadReadSettleRef.current);
     };
-  }, [character.id, character.owner_email, countUnread]);
+  }, [character.id, character.owner_email]); // eslint-disable-line
 
   // PRIORITY ARCHITECTURE: Per-card Message.subscribe removed from CharacterCard.
   // Opening N subscriptions for N characters (one per Home card) violates page-ownership rules:

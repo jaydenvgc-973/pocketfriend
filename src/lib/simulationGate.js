@@ -61,18 +61,14 @@ export function reportRateLimit(durationMs = 60000) {
 // Activated by Retry — temporarily pauses ALL nonessential background work
 // so the active chat page gets exclusive API quota.
 // Cleared automatically after `durationMs`, or manually via clearChatSafeMode().
-// Track the expiry timer for safe mode so we can extend it without duplicate AppWorldState writes
+// Track the expiry timer for safe mode
 let _safeModeExpiryTimer = null;
-// Track when we last wrote 'true' to AppWorldState — debounce repeat writes within 30s
-let _appWorldStateLastWrittenTrue = 0;
 
 export function activateChatSafeMode(durationMs = 45000) {
   const newUntil = Date.now() + durationMs;
 
   // If safe mode is already active and the new expiry is EARLIER, don't shorten it.
-  // This prevents a page navigation (15s) from truncating a Chat safe mode window (60s).
   if (window.__chatSafeMode && window.__chatSafeModeUntil && newUntil <= window.__chatSafeModeUntil) {
-    // Already covered — just log the skip, don't reset the expiry timer
     console.log(`[SimGate] CHAT-SAFE MODE already active until ${new Date(window.__chatSafeModeUntil).toLocaleTimeString()} — ignoring shorter ${durationMs / 1000}s request`);
     return;
   }
@@ -81,43 +77,23 @@ export function activateChatSafeMode(durationMs = 45000) {
   window.__chatSafeModeUntil = newUntil;
   console.warn(`[SimGate] CHAT-SAFE MODE ON — nonessential background work paused for ${durationMs / 1000}s`);
 
-  // Cancel any existing expiry timer — we'll set a new one at the updated duration
+  // Cancel any existing expiry timer
   if (_safeModeExpiryTimer) {
     clearTimeout(_safeModeExpiryTimer);
     _safeModeExpiryTimer = null;
   }
 
-  // RATE LIMIT PROTECTION: AppWorldState writes are backend API calls.
-  // Only write 'true' if we haven't done so in the last 30 seconds —
-  // prevents N × AppWorldState.filter + update/create on rapid page navigations.
-  const now = Date.now();
-  if (now - _appWorldStateLastWrittenTrue > 30000) {
-    _appWorldStateLastWrittenTrue = now;
-    import('@/api/base44Client').then(({ base44 }) => {
-      base44.entities.AppWorldState.filter({ key: 'chat_safe_mode_active' }, null, 1)
-        .then(records => {
-          if (records.length > 0) {
-            return base44.entities.AppWorldState.update(records[0].id, { value: 'true' });
-          }
-          return base44.entities.AppWorldState.create({ key: 'chat_safe_mode_active', value: 'true' });
-        })
-        .catch(() => {});
-    }).catch(() => {});
-  }
+  // REMOVED: AppWorldState DB writes on every safe-mode activation.
+  // Writing to AppWorldState (filter + update/create) on every Chat navigation was itself
+  // generating API calls that triggered Character subscription events, which in turn fired
+  // badge recounts across all CharacterCards — a self-amplifying load cycle.
+  // Safe mode state is ephemeral (in-memory window flags). It does NOT need DB persistence.
+  // Background automations read AppWorldState independently on their own schedule.
 
   _safeModeExpiryTimer = setTimeout(() => {
     _safeModeExpiryTimer = null;
     window.__chatSafeMode = false;
     console.log('[SimGate] Chat-safe mode expired — background systems resuming');
-    // Clear the backend flag after expiry — only one write on expiry regardless of how many calls activated it
-    import('@/api/base44Client').then(({ base44 }) => {
-      base44.entities.AppWorldState.filter({ key: 'chat_safe_mode_active' }, null, 1)
-        .then(records => {
-          if (records.length > 0) {
-            base44.entities.AppWorldState.update(records[0].id, { value: 'false' }).catch(() => {});
-          }
-        }).catch(() => {});
-    }).catch(() => {});
   }, durationMs);
 }
 
