@@ -1719,6 +1719,11 @@ export default function Locations() {
 
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    // Invalidate workLocations for every worker assigned — so CharacterProfile Income Sources
+    // reflects the new assignment immediately without waiting for the 2-minute stale window.
+    workerIds.forEach(charId => {
+      queryClient.invalidateQueries({ queryKey: ['workLocations', charId] });
+    });
     setShowAddForm(false);
     setInlineEditId(null);
   };
