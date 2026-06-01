@@ -99,8 +99,8 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
 
       if (allConvos.length === 0) {
         applyData(byContact, 0);
-        // Always write zero result to bust any stale cache that had positive counts
-        if (ownerEmail && cacheKey) lfcWrite(ownerEmail, cacheKey, { byContact, total: 0 });
+        // Delete rather than write zero — ensures the seed path (removed above) can't restore stale counts
+        if (ownerEmail && cacheKey) lfcDelete(ownerEmail, cacheKey);
         return;
       }
 
@@ -155,8 +155,7 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
 
       if (Object.keys(convoToContactKey).length === 0) {
         applyData(byContact, 0);
-        // Always write zero result to bust any stale cache
-        if (ownerEmail && cacheKey) lfcWrite(ownerEmail, cacheKey, { byContact, total: 0 });
+        if (ownerEmail && cacheKey) lfcDelete(ownerEmail, cacheKey);
         return;
       }
 
@@ -191,9 +190,15 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
 
       applyData(byContact, total, previewMap);
 
-      // Write to LFC for instant next-mount
+      // Only write to LFC if total > 0. If total is 0, delete stale cache instead.
+      // Writing zero counts to LFC is safe, but we explicitly delete to ensure
+      // the removed seed path cannot later serve a stale positive count from a prior session.
       if (ownerEmail && cacheKey) {
-        lfcWrite(ownerEmail, cacheKey, { byContact, total, previewMap });
+        if (total > 0) {
+          lfcWrite(ownerEmail, cacheKey, { byContact, total, previewMap });
+        } else {
+          lfcDelete(ownerEmail, cacheKey);
+        }
       }
     } catch (err) {
       console.warn('[useWorldContactsUnread] fetch failed (non-fatal):', err?.message);
@@ -209,18 +214,10 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       return;
     }
 
-    // Seed from LFC immediately (zero-latency first paint) — ONLY if the cache is VERY fresh.
-    // We use a 30-second seed window (not the full 2-min stale threshold) because:
-    // - The 2-min window could re-serve stale positive counts after cleanup/mark-read.
-    // - Only paint from cache if it was written less than 30s ago (navigation-safe,
-    //   prevents post-cleanup badge restoration on mount).
-    const SEED_MAX_AGE_MS = 30 * 1000;
-    if (ownerEmail && cacheKey) {
-      const cached = lfcRead(ownerEmail, cacheKey);
-      if (cached?.data && cached.loaded_at && (Date.now() - cached.loaded_at < SEED_MAX_AGE_MS)) {
-        applyData(cached.data.byContact, cached.data.total, cached.data.previewMap || {});
-      }
-    }
+    // DO NOT seed from LFC on mount for green badge counts.
+    // LFC-cached counts may have been written before the direction guard (outgoing message filter)
+    // was applied, causing outgoing messages to appear as positive unread counts.
+    // The live fetch via loadUnreadCounts always applies isCountableUnread correctly — trust it.
 
     // On mount: respect fresh cache (avoids redundant DB round-trip if data is < 2min old).
     // Force only when cache is absent or stale — the cooldown already gates re-subscription bounces.
