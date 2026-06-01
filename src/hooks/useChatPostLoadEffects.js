@@ -63,7 +63,19 @@ export function useChatPostLoadEffects({
       if (!isMounted || snapshotCharacterId !== characterId) return;
       queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId, ownerEmail] });
       traceEvent('thread:read DISPATCH (postLoad)', { caller: 'useChatPostLoadEffects', page: getActiveContext().page, detail: `charId=${snapshotCharacterId}` });
-      window.dispatchEvent(new CustomEvent('thread:read', { detail: { characterId: snapshotCharacterId } }));
+      // NOTE: Chat/Text opens a direct (red) thread, not a world_phone (green) thread.
+      // Dispatching thread:read with no contactId previously caused useWorldContactsUnread
+      // to zero ALL green-channel contacts as a fallback — wiping unread badges for every
+      // character even though the user only opened one direct chat thread.
+      // Fix: do not pass contactId here (it's a direct/text thread, not a world_phone contact).
+      // useWorldContactsUnread only responds to contactId being present to do surgical clear;
+      // without it the handler now SKIPS the zero-all fallback for direct/text channels.
+      window.dispatchEvent(new CustomEvent('thread:read', {
+        detail: {
+          characterId: snapshotCharacterId,
+          channel: 'direct', // signals this is a red-channel thread, not green
+        }
+      }));
     })();
 
     return () => {

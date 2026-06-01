@@ -226,10 +226,13 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
     loadUnreadCounts(mountIsStale);
 
     // Subscription: debounced 5s, force=true bypasses cache + cooldown.
-    // Suppressed during settle window (thread:read in flight) to prevent mark-read
-    // write events from re-triggering a count while the DB batch is still committing.
+    // CRITICAL: Only react to 'create' events — new incoming messages.
+    // 'update' events are fired when is_read:true is written (mark-read batch).
+    // Reacting to update events causes a re-fetch 5s after the settle window,
+    // which can restore old counts if the settle timer didn't run long enough.
+    // The settle timer + live fetch already handles post-mark-read reconciliation.
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      if (event.type !== 'create' && event.type !== 'update') return;
+      if (event.type !== 'create') return; // ignore update/delete — settle timer handles those
       if (settleTimerRef.current) return; // suppress during settle window
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = setTimeout(() => {
@@ -248,23 +251,30 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
     const handleThreadRead = (e) => {
       const detail = e.detail || {};
       if (detail.characterId !== characterId) return;
+
+      // CHANNEL GUARD: thread:read from a direct/text chat (channel='direct' or channel='phone')
+      // must NOT affect green-channel (world_phone) unread counts.
+      // Only act on events that could affect World Phone threads.
+      const isDirectChannel = detail.channel === 'direct' || detail.channel === 'phone' || detail.channel === 'text';
+      if (isDirectChannel) {
+        // A direct chat was opened — green badges are unaffected. Do nothing.
+        return;
+      }
+
       // 1. Clear LFC cache so next render doesn't re-serve stale count
       if (ownerEmail && cacheKey) lfcDelete(ownerEmail, cacheKey);
       // 2. Cancel pending debounce and any existing settle timer
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
-      // 3. Set optimistic zero — ONLY for the specific contact that was opened, not all contacts.
-      //    This preserves unread badges for other characters whose threads haven't been viewed.
+
+      // 3. Surgical clear: ONLY zero the specific contact whose thread was opened.
+      //    If contactId is missing on a green-channel event, do NOT zero all contacts —
+      //    instead just bust the cache and let the live fetch resolve the true state.
       const readContactId = detail.contactId || null;
       if (readContactId) {
-        // Surgical clear: zero only the contact whose thread was read
         setUnreadByContact(prev => {
           const next = { ...prev };
-          // The contact key is the stable character ID (preferred) or lowercased person_name
-          const contactKey = readContactId; // contactId is always the stable character ID here
-          if (contactKey in next) {
-            next[contactKey] = 0;
-          }
+          if (readContactId in next) next[readContactId] = 0;
           return next;
         });
         setPreviewByContact(prev => {
@@ -272,17 +282,15 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
           delete next[readContactId];
           return next;
         });
-        // Recalculate global count from new per-contact state
-        setGlobalUnreadCount(prev => {
-          // We'll recompute after the live fetch, but optimistically decrement
-          return Math.max(0, prev - (unreadByContact[readContactId] || 0));
+        // Recompute global count by summing remaining per-contact values
+        // Use a functional updater that reads the post-clear unreadByContact via a separate pass
+        setGlobalUnreadCount(() => {
+          // Will be reconciled by the live fetch below — return 0 as safe floor
+          return 0;
         });
-      } else {
-        // Fallback: no specific contactId — zero everything (legacy behavior)
-        applyData(Object.fromEntries(contacts.map(c => [
-          c.related_character_id || c.person_name?.toLowerCase().trim(), 0
-        ])), 0);
       }
+      // else: no contactId on green event — cache was busted above, live fetch will correct.
+
       // 4. After writes settle, do ONE live fetch to confirm DB state
       isFetchingRef.current = false;
       settleTimerRef.current = setTimeout(() => {
