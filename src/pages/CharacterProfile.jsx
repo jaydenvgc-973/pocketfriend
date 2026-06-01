@@ -208,7 +208,6 @@ export default function CharacterProfile() {
     queryKey: ["characters", currentUser?.email || ""],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      await new Promise(r => setTimeout(r, 800));
       const chars = await base44.entities.Character.filter({ owner_email: currentUser.email });
       return chars.map(({ system_prompt, ...char }) => char);
     },
@@ -220,7 +219,6 @@ export default function CharacterProfile() {
     queryKey: ["userSettings", currentUser?.email || ""],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      await new Promise(r => setTimeout(r, 1200));
       return base44.entities.UserSettings.filter({ owner_email: currentUser.email });
     },
     enabled: !!currentUser?.email,
@@ -242,7 +240,6 @@ export default function CharacterProfile() {
     queryKey: ['workLocations', characterId, character?.occupation_location_id, (character?.additional_occupation_locations || []).map(l => l.location_id).join(',')],
     queryFn: async () => {
       if (!character) return [];
-      await new Promise(r => setTimeout(r, 2500));
 
       const seen = new Set();
       const combined = [];

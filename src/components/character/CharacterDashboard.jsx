@@ -335,10 +335,15 @@ export default function CharacterDashboard({ character }) {
     const cutoff3d  = subDays(now, 3).toISOString();
 
     // ── FETCH ALL DATA IN PARALLEL ─────────────────────────────────────────
+    // IMPORTANT: All 8 queries use .catch(() => []) so a single 429 cannot
+    // fail the entire Promise.allSettled. The outer .catch() is only for
+    // catastrophic failures (e.g. the Promise.allSettled itself throws).
+    // This means the graph and timeline always render with whatever data loads,
+    // even under rate-limit pressure — partial data is shown, not a blank screen.
     Promise.allSettled([
       // Messages where viewed character is sender (character_id = charId)
-      base44.entities.Message.filter({ character_id: charId }, "-created_date", 200),
-      base44.entities.FinancialTransaction.filter({ character_id: charId }, "-timestamp", 20),
+      base44.entities.Message.filter({ character_id: charId }, "-created_date", 200).catch(() => []),
+      base44.entities.FinancialTransaction.filter({ character_id: charId }, "-timestamp", 20).catch(() => []),
       base44.entities.AutomaticNarrative.filter({ character_id: charId }, "-timestamp", 80).catch(() => []),
       // Conversations where [VIEWED_CHARACTER] is a participant (any side)
       ownerEmail
@@ -352,8 +357,10 @@ export default function CharacterDashboard({ character }) {
       // Messages where viewed character is RECEIVER — autonomous beats have character_id = sender, receiver_character_id = viewed char
       base44.entities.Message.filter({ receiver_character_id: charId }, "-created_date", 100).catch(() => []),
       // All characters for this owner — needed to resolve receiver IDs to names for sent messages
+      // Uses a reduced limit (50) to reduce rate-limit pressure; name resolution only needs
+      // a manageable set of recently-active characters, not the full roster.
       ownerEmail
-        ? base44.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => [])
+        ? base44.entities.Character.filter({ owner_email: ownerEmail }, null, 50).catch(() => [])
         : Promise.resolve([]),
     ]).then(([msgsR, txR, narrR, convosR, locsR, lifeEventsR, rcvMsgsR, allCharsR]) => {
       const msgs       = msgsR.status       === "fulfilled" ? (msgsR.value       || []) : [];
@@ -895,7 +902,10 @@ export default function CharacterDashboard({ character }) {
       setLoading(false);
     }).catch((err) => {
       console.error('[CharacterDashboard] Fatal fetch error:', err?.message);
-      // Set minimal fallback data so the dashboard renders with what it has
+      // Set minimal fallback data so the dashboard renders with what it has.
+      // IMPORTANT: Do NOT cache this fallback — a 429 or transient failure is
+      // temporary. Caching empty fallback would suppress the graph and timeline
+      // for the entire session on this character. Let it retry on next open.
       const fallbackData = {
         liveLocationDisplay: character?.resolved_current_location_name || '—',
         liveStatus: character?.resolved_presence_status || 'home',
@@ -908,10 +918,9 @@ export default function CharacterDashboard({ character }) {
         hasPeopleJob: false,
         occSocialContext: null,
       };
-      // Only cache fallback if we have a charId — don't pollute cache with null-key data
-      if (charId) dashboardCache[charId] = fallbackData;
+      // Do NOT write to dashboardCache here — keep loaded=false so next open retries
       setData(fallbackData);
-      setLoaded(true);
+      setLoaded(false); // allows retry on next profile open
       setLoading(false);
     });
   }, [charId]); // eslint-disable-line
