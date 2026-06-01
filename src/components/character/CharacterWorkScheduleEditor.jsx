@@ -47,12 +47,21 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
 
   const handleSave = async () => {
     setSaving(true);
-    // Update LocationReference with shift/pay/title data
+    // Keep worker_character_ids in sync with worker map writes.
+    // If characterId is in any worker map (job_titles/pay_rates/shifts) but missing from
+    // the roster array, this gap is what causes syncEmploymentAssignments to need repair.
+    // Writing both the map entry and the array entry together prevents the gap from forming.
+    const existingWorkerIds = location.worker_character_ids || [];
+    const workerCharacterIds = existingWorkerIds.includes(characterId)
+      ? existingWorkerIds
+      : [...existingWorkerIds, characterId];
+    // Update LocationReference with shift/pay/title data AND roster array
     await base44.entities.LocationReference.update(location.id, {
       worker_shifts: { ...location.worker_shifts, [characterId]: form.shift },
       worker_pay_type: { ...location.worker_pay_type, [characterId]: form.payType },
       worker_pay_rates: { ...location.worker_pay_rates, [characterId]: parseFloat(form.payRate) || 0 },
       worker_job_titles: { ...location.worker_job_titles, [characterId]: form.jobTitle },
+      worker_character_ids: workerCharacterIds,
     });
     // Await sync so Character entity is fully updated before cache invalidation fires
     await base44.functions.invoke('syncLocationJobToCharacter', {
@@ -223,18 +232,29 @@ export default function CharacterWorkScheduleEditor({ character }) {
       // used by LocationDetailPanel's arrow dropdown. This resolves the data split where
       // a character has employment metadata on the location but no worker_character_ids entry
       // AND no occupation_location_id on the Character entity.
+      // Source 4: Scan owner_email, account_global, and shared locations for characterId in
+      // worker map keys. This is the same three-scope scan used by syncEmploymentAssignments
+      // and CharacterProfile. All three scopes must be checked — account_global locations
+      // (e.g. schools, businesses, gyms) have no owner_email and are invisible to an
+      // owner_email-only query even when paid worker data exists in their worker dicts.
       const seen = new Set([...charFileLocs.filter(Boolean).map(l => l.id), ...byWorkerList.map(l => l.id)]);
-      if (character.owner_email) {
-        const ownerLocs = await base44.entities.LocationReference.filter({ owner_email: character.owner_email }).catch(() => []);
-        for (const loc of ownerLocs) {
-          if (seen.has(loc.id)) continue;
-          const inJobTitles = loc.worker_job_titles && Object.prototype.hasOwnProperty.call(loc.worker_job_titles, character.id);
-          const inShifts = loc.worker_shifts && Object.prototype.hasOwnProperty.call(loc.worker_shifts, character.id);
-          const inPayRates = loc.worker_pay_rates && Object.prototype.hasOwnProperty.call(loc.worker_pay_rates, character.id);
-          if (inJobTitles || inShifts || inPayRates) {
-            seen.add(loc.id);
-            byWorkerList.push(loc); // treat as worker-list loc for dedup below
-          }
+      const scanLocs = [];
+      const [ownerLocs, accountGlobalLocs, sharedLocs] = await Promise.all([
+        character.owner_email ? base44.entities.LocationReference.filter({ owner_email: character.owner_email }).catch(() => []) : Promise.resolve([]),
+        base44.entities.LocationReference.filter({ scope: 'account_global' }).catch(() => []),
+        base44.entities.LocationReference.filter({ scope: 'shared' }).catch(() => []),
+      ]);
+      const scanSeenIds = new Set();
+      for (const loc of [...ownerLocs, ...accountGlobalLocs, ...sharedLocs]) {
+        if (!seen.has(loc.id) && !scanSeenIds.has(loc.id)) { scanSeenIds.add(loc.id); scanLocs.push(loc); }
+      }
+      for (const loc of scanLocs) {
+        const inJobTitles = loc.worker_job_titles && Object.prototype.hasOwnProperty.call(loc.worker_job_titles, character.id);
+        const inShifts = loc.worker_shifts && Object.prototype.hasOwnProperty.call(loc.worker_shifts, character.id);
+        const inPayRates = loc.worker_pay_rates && Object.prototype.hasOwnProperty.call(loc.worker_pay_rates, character.id);
+        if (inJobTitles || inShifts || inPayRates) {
+          seen.add(loc.id);
+          byWorkerList.push(loc);
         }
       }
 
