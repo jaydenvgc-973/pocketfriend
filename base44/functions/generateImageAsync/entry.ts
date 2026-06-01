@@ -39,6 +39,14 @@ function cdnFilter(urls) {
 // Sims-style outfit resolution — inlined since Deno cannot import local lib files.
 // Source of truth: outfitRotationEngine.js (lib). Keep in sync with that file.
 
+// Detects AI-generated style prompts masquerading as outfit descriptions.
+// These are injected into the outfit lock and then compete with appearance authority.
+// They must be excluded — only real clothing descriptions are valid wardrobe data.
+function isAIStylePrompt(t) {
+  if (!t) return false;
+  return /\b(cinematic|chiaroscuro|dramatic lighting|editorial photography|fine art|low-key lighting|sculptural anatomy|artistic composition|museum.quality|photorealistic|ultra.detailed|high.resolution|bokeh|dramatic shadow|noir atmosphere|hyper.realistic|studio lighting|professional photography|stock photo|silhouette|atmosphere|moody|high contrast|film grain|depth of field|aesthetic|luxury editorial)\b/i.test(t);
+}
+
 function buildOutfitText(outfit) {
   if (!outfit) return null;
   const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
@@ -46,7 +54,9 @@ function buildOutfitText(outfit) {
     .map(p => { const t = p.trim(); if(/^(n\/?a|none|-)$/i.test(t)) return null; const s=t.replace(/^n\/?a[,\-–]\s*/i,'').trim(); return /^(shirtless|no top|no shirt)$/i.test(s)?'No shirt / bare torso':(s||null); })
     .filter(Boolean);
   if (parts.length > 0) return parts.join(', ');
-  if (outfit.full_description?.trim()) return outfit.full_description.trim();
+  // full_description: only use if it's actual clothing text, not an AI style/aesthetic prompt
+  const fd = outfit.full_description?.trim();
+  if (fd && !isAIStylePrompt(fd)) return fd;
   return null;
 }
 
@@ -467,7 +477,7 @@ The camera IS the character's phone. The background IS only what appears directl
 ${charRefCount > 0 ? `Images ${charRefStart}–${charEnd}: These are face reference photos for "${charName}".
 Extract ONLY: face structure, skin tone, eyes, nose, mouth, hair color/length/texture, facial hair.
 ⛔ DISCARD: pose, background, clothing, lighting, camera angle from these photos.
-The face appearance is the ONLY data used from these references.` : `No reference photos. Generate "${charName}" from text description: ${charDesc || 'realistic human'}.`}
+The face appearance is the ONLY data used from these references.` : `No reference photos. See canonical identity block below for "${charName}".`}
 
 `;
     }
@@ -709,9 +719,9 @@ Extract ONLY: face structure, skin tone, eye shape, nose, mouth, hair color/leng
 ⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.`
   : `Subject 1 Reference Images: NONE — generate from text description below ONLY.`
 }
-Subject 1 Appearance Lock (ABSOLUTE — 100% non-negotiable):
-  ${charDesc ? charDesc : 'Generate as described in scene prompt.'}
-Subject 1 Canonical Identity: ${buildAppearanceLockText(charRecord, charName)}
+Subject 1 Demographics: ${charDesc || 'see canonical identity below'}
+Subject 1 Canonical Identity (ABSOLUTE — 100% non-negotiable — overrides all prompt styling):
+${buildAppearanceLockText(charRecord, charName)}
 ⛔ Subject 1 MUST look like "${charName}" at all times. Do NOT substitute a generic person.
 ⛔ Do NOT let Subject 2's appearance overwrite or bleed into Subject 1.
 
@@ -758,9 +768,10 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
 
   CHARACTER IDENTITY — "${charName}":
   ${charRefCount > 0
-  ? `Images ${charRefStart}–${charEnd} are face/identity reference photographs.${charDesc ? ` Description: ${charDesc}.` : ''}
-  Match ONLY: face structure, eyes, nose, mouth, skin tone, hair color/length/style, body type.`
-  : `No reference photos. Generate from text description: ${charDesc || 'realistic human'}.`
+  ? `Images ${charRefStart}–${charEnd} are face/identity reference photographs for "${charName}".${charDesc ? ` Demographics: ${charDesc}.` : ''}
+  Extract ONLY: face structure, eyes, nose, mouth, skin tone, hair color/length/style, body type.
+  ⛔ DISCARD: pose, clothing, background, lighting — face and body identity ONLY.`
+  : `No reference photos. Demographics: ${charDesc || 'see canonical identity below'}.`
   }
 
   CHARACTER RENDERING RULES — THIS PERSON IS RENDERED FRESH INSIDE THE ROOM:
@@ -771,7 +782,7 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
   ✅ Cast real shadows from the character onto the floor and nearby furniture using ${timeLighting.period} lighting
   ✅ Skin tones, highlights, and shadows on the character MUST match the room's time-of-day lighting exactly
   ✅ Character scale must be physically correct relative to the room furniture and camera distance
-  ✅ APPEARANCE LOCK (100% ABSOLUTE): ${buildAppearanceLockText(charRecord, charName)}
+  ✅ APPEARANCE LOCK (100% ABSOLUTE — ONLY appearance authority): ${buildAppearanceLockText(charRecord, charName)}
   ✅ OUTFIT ENFORCEMENT: See CLOSET OUTFIT LOCK block below — this is NON-NEGOTIABLE.
   
   ⛔ HARD FAILS:
@@ -784,10 +795,12 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
 
   CHARACTER IDENTITY — "${charName}":
   ${charRefCount > 0
-  ? `Images ${charRefStart}–${charEnd} are face reference photos. Match ONLY face structure, skin tone, eyes, hair color/length/style, facial hair, body type.`
-  : `Generate "${charName}" from text description: ${charDesc || 'realistic human'}.`
+  ? `Images ${charRefStart}–${charEnd} are face reference photos for "${charName}".${charDesc ? ` Demographics: ${charDesc}.` : ''}
+  Extract ONLY: face structure, skin tone, eyes, hair color/length/style, facial hair, body type.
+  ⛔ DISCARD: pose, background, clothing from these photos — face identity ONLY.`
+  : `Demographics: ${charDesc || 'see canonical identity below'}.`
   }
-  ✅ APPEARANCE LOCK: ${buildAppearanceLockText(charRecord, charName)}
+  ✅ APPEARANCE LOCK (ONLY appearance authority): ${buildAppearanceLockText(charRecord, charName)}
   ⛔ Do NOT copy pose, background, or clothing from reference photos — only the face identity transfers`;
   }
 
@@ -1062,14 +1075,21 @@ Deno.serve(async (req) => {
         console.log(`[IdentityAudit] body_type:                ${charRecord.appearance_lock?.body_type || charRecord.appearance_lock?.overall_aesthetic || 'none'}`);
         console.log(`[IdentityAudit] ══════════════════════════════════════════════`);
 
-        const isAIPromptText = (t) => !t ? false : /\b(cinematic|chiaroscuro|dramatic lighting|editorial photography|fine art|low-key lighting|sculptural anatomy|artistic composition|museum.quality|photorealistic|ultra.detailed|high.resolution|bokeh|dramatic shadow|noir atmosphere|hyper.realistic|studio lighting|professional photography|stock photo)\b/i.test(t);
-        // charDesc is the text-based descriptor — used in the reference block only.
-        // Identity lock (ethnicity, skin, hair, body) comes from charRecord via buildAppearanceLockText.
+        // ── APPEARANCE AUTHORITY SEPARATION ──────────────────────────────────────
+        // charDesc carries ONLY scene-neutral demographics (age range, gender).
+        // It must NOT carry appearance_notes or avatar_description_text — those are
+        // free-text prose fields that may reinvent hair, skin, body, and face,
+        // creating a second competing appearance authority in the same prompt.
+        //
+        // The ONLY appearance authority is buildAppearanceLockText(charRecord),
+        // which reads structured fields (ethnicities, appearance_lock.*) directly.
+        // No prose field may override or supplement that structured lock.
+        //
+        // appearance_notes and avatar_description_text are intentionally excluded here.
+        // They are not injected into the prompt anywhere — the canonical lock handles all appearance.
         const parts = [
           charRecord.age_range ? `${charRecord.age_range} years old` : null,
-          charRecord.gender,
-          !isAIPromptText(charRecord.appearance_notes) ? charRecord.appearance_notes || null : null,
-          !isAIPromptText(charRecord.avatar_description_text) ? charRecord.avatar_description_text || null : null,
+          charRecord.gender || null,
         ].filter(Boolean);
         charDesc = parts.join(', ');
 
@@ -1122,7 +1142,11 @@ Deno.serve(async (req) => {
         }
       }
 
-      if (charRefs.length === 0 && !charDesc) {
+      // Identity missing guard: block if NO refs AND NO appearance lock AND NO demographics.
+      // charDesc is now demographics-only (age/gender), so also check appearance_lock and ethnicities.
+      const hasAppearanceLock = charRecord?.appearance_lock && Object.keys(charRecord.appearance_lock).length > 0;
+      const hasEthnicities = (charRecord?.ethnicities || []).length > 0;
+      if (charRefs.length === 0 && !charDesc && !hasAppearanceLock && !hasEthnicities) {
         console.error(`[generateImageAsync] ❌ IDENTITY MISSING — Caucasian-default guard triggered for "${characterName || characterId}". Blocking generation to prevent whitewashed default.`);
         await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
         return Response.json({

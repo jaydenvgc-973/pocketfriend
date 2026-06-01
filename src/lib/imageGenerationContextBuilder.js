@@ -87,7 +87,12 @@ export async function buildImageGenerationContext({
     }
   }
 
-  // Build appearance lock text from character record
+  // Build appearance lock text from character record.
+  // CRITICAL: Only structured fields (ethnicities, appearance_lock.*) are used.
+  // appearance_notes and avatar_description_text are intentionally EXCLUDED —
+  // they are free-text prose that may reinvent the character's look and create
+  // a second competing appearance authority. Structured lock fields are the
+  // ONLY canonical appearance source.
   if (effectiveCharacterRecord) {
     const al = effectiveCharacterRecord.appearance_lock || {};
     const descParts = [
@@ -97,9 +102,10 @@ export async function buildImageGenerationContext({
       al.skin_tone ? `${al.skin_tone} skin tone` : null,
       al.hairstyle ? `${al.hairstyle} hairstyle` : null,
       al.hair_type ? `${al.hair_type} hair` : null,
+      al.hair_color ? `${al.hair_color} hair color` : null,
       al.facial_hair || null,
-      effectiveCharacterRecord.appearance_notes || null,
-      effectiveCharacterRecord.avatar_description_text || null,
+      al.body_type || al.overall_aesthetic || null,
+      al.distinguishing_features || null,
     ].filter(Boolean);
     appearanceLockText = descParts.join(', ');
   }
