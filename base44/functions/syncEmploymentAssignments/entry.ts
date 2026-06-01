@@ -37,9 +37,24 @@ Deno.serve(async (req) => {
 
     const ownerEmail = user.email;
 
-    // Load all relevant locations for this user
-    const allLocations = await base44.entities.LocationReference.filter({ owner_email: ownerEmail }).catch(() => []);
-    const workLocations = allLocations.filter(l => WORK_CATEGORIES.has(l.category));
+    // Load all relevant locations for this user.
+    // THREE scopes must be checked — the missing scope was the root cause of the Khalil-class bug:
+    //   1. owner_email-matched: private user locations (homes, personal businesses)
+    //   2. account_global: user-created locations readable by all (schools, businesses, gyms, etc.)
+    //   3. shared: admin/system-seeded locations with no owner_email
+    // Locations with scope=account_global hold worker dicts but have no owner_email,
+    // so they are invisible to an owner_email-only query even though the character is a paid worker.
+    const [ownerLocs, accountGlobalLocs, sharedLocs] = await Promise.all([
+      base44.entities.LocationReference.filter({ owner_email: ownerEmail }).catch(() => []),
+      base44.entities.LocationReference.filter({ scope: 'account_global' }).catch(() => []),
+      base44.entities.LocationReference.filter({ scope: 'shared' }).catch(() => []),
+    ]);
+    const seenLocIds = new Set();
+    const combinedLocs = [];
+    for (const loc of [...ownerLocs, ...accountGlobalLocs, ...sharedLocs]) {
+      if (!seenLocIds.has(loc.id)) { seenLocIds.add(loc.id); combinedLocs.push(loc); }
+    }
+    const workLocations = combinedLocs.filter(l => WORK_CATEGORIES.has(l.category));
 
     // Load all characters for this user (needed for occupation_location_id check)
     const allChars = await base44.entities.Character.filter({ owner_email: ownerEmail, status: 'active' }).catch(() => []);

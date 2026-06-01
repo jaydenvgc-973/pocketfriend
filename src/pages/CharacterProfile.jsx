@@ -310,6 +310,18 @@ export default function CharacterProfile() {
         }
       });
 
+      // GLOBAL SELF-REPAIR: If all three sources returned nothing, run syncEmploymentAssignments
+      // once in the background to repair worker_character_ids from worker map keys.
+      // This applies to ANY character whose ID appears in worker_job_titles / worker_pay_rates /
+      // worker_shifts on a location but whose worker_character_ids array was never backfilled.
+      // The backend function is owner-scoped and non-destructive. We only trigger it when
+      // combined is empty AND the character has an occupation field (evidence of intended employment).
+      if (combined.length === 0 && character.occupation) {
+        base44.functions.invoke('syncEmploymentAssignments', {}).catch(() => {}).then(() => {
+          queryClient.invalidateQueries({ queryKey: ['workLocations', characterId] });
+        });
+      }
+
       return combined;
     },
     enabled: !!characterId && !!character,
