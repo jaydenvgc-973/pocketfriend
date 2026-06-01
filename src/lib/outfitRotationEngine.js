@@ -96,25 +96,35 @@ function getDailyRotationIndex(outfitPool, characterId = '') {
  * Pick an outfit from a category pool, rotating daily.
  * Avoids re-picking the currently active outfit if alternatives exist.
  */
-function pickFromPool(pool, currentOutfitId = null, characterId = '') {
+// rotationEnabled: pass character.outfit_rotation_enabled (defaults true when undefined)
+function pickFromPool(pool, currentOutfitId = null, characterId = '', rotationEnabled = true) {
   if (pool.length === 0) return null;
   if (pool.length === 1) return pool[0];
 
-  // CANONICAL RULE: If the currently worn outfit is in this pool, return it immediately.
-  // The current_outfit selection is the user's explicit choice and must never be skipped.
-  if (currentOutfitId) {
+  // ROTATION OFF: always return the selected outfit if it's in this pool
+  if (!rotationEnabled && currentOutfitId) {
+    const locked = pool.find(o => o.outfit_id === currentOutfitId);
+    if (locked) return locked;
+  }
+
+  // ROTATION ON: if current outfit is in the pool and context matches, prefer it
+  if (rotationEnabled && currentOutfitId) {
     const currentInPool = pool.find(o => o.outfit_id === currentOutfitId);
     if (currentInPool) return currentInPool;
   }
 
-  // No currently worn outfit in this pool — use daily rotation among candidates.
-  // Prioritize favorites within the rotation.
+  // Daily rotation among candidates — prioritize favorites
   const favorites = pool.filter(o => o.is_favorite);
   const candidates = favorites.length > 0 ? favorites : pool;
   if (candidates.length === 1) return candidates[0];
 
   const idx = getDailyRotationIndex(candidates, characterId);
-  return candidates[idx];
+  const picked = candidates[idx];
+  // When rotating, skip the currently worn outfit if alternatives exist
+  if (rotationEnabled && picked?.outfit_id === currentOutfitId && candidates.length > 1) {
+    return candidates[(idx + 1) % candidates.length];
+  }
+  return picked;
 }
 
 /**
@@ -213,20 +223,26 @@ export function resolveCurrentOutfit(character, activityText = '', locationCateg
   if (outfits.length === 0) return character.current_outfit || null;
 
   const currentOutfitId = character.current_outfit?.outfit_id || null;
-  const targetCategory = resolveTargetCategory(character, activityText, locationCategory);
+  const rotationEnabled = character.outfit_rotation_enabled !== false;
 
-  // Build priority fallback chain for this category
+  // ROTATION OFF: return the currently selected outfit directly (no category check)
+  if (!rotationEnabled && currentOutfitId) {
+    const locked = outfits.find(o => o.outfit_id === currentOutfitId);
+    if (locked) return locked;
+  }
+
+  const targetCategory = resolveTargetCategory(character, activityText, locationCategory);
   const fallbackChain = buildFallbackChain(targetCategory);
 
   for (const cat of fallbackChain) {
     const pool = outfits.filter(o => o.category === cat);
     if (pool.length > 0) {
-      return pickFromPool(pool, currentOutfitId, character.id);
+      return pickFromPool(pool, currentOutfitId, character.id, rotationEnabled);
     }
   }
 
   // Last resort: any outfit from closet
-  return pickFromPool(outfits, currentOutfitId, character.id);
+  return pickFromPool(outfits, currentOutfitId, character.id, rotationEnabled);
 }
 
 /**

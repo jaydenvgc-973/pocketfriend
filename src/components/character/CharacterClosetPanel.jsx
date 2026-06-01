@@ -3,7 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Shirt, Plus, X, Star, Loader2, Wand2, Upload, Package,
-  Camera, ChevronDown, ChevronUp, Check, Pencil, ZoomIn
+  Camera, ChevronDown, ChevronUp, Check, Pencil, ZoomIn, RefreshCw, Lock
 } from "lucide-react";
 import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
@@ -83,9 +83,26 @@ function PieceCard({ piece, onDelete, onToggleFavorite }) {
 }
 
 // ── Outfit Card ───────────────────────────────────────────────────────────────
-function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit }) {
+function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit, onFillFromImage }) {
   const [expanded, setExpanded] = useState(false);
+  const [fillingFromImage, setFillingFromImage] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
+
+  // An outfit is usable for image generation if it has text fields OR an image
+  const hasTextData = outfit.top || outfit.bottom || outfit.shoes || outfit.full_description;
+  const hasImage = !!outfit.image_url;
+  const needsTextFill = hasImage && !hasTextData;
+
+  const handleFillFromImage = async () => {
+    if (!outfit.image_url) return;
+    setFillingFromImage(true);
+    try {
+      await onFillFromImage(outfit);
+    } finally {
+      setFillingFromImage(false);
+    }
+  };
+
   return (
     <div className={`relative rounded-xl border p-3 space-y-2 transition-colors ${isActive ? 'border-primary bg-primary/5' : 'border-border bg-card'}`}>
       {isActive && (
@@ -99,6 +116,9 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite,
           <div>
             <p className="text-sm font-medium text-foreground">{outfit.label}</p>
             <p className="text-[10px] text-muted-foreground capitalize">{catDef.label}</p>
+            {needsTextFill && (
+              <p className="text-[9px] text-amber-400 font-medium">Image only · tap below to fill text</p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -132,7 +152,22 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite,
           {outfit.full_description && (
             <p className="text-muted-foreground leading-relaxed mt-1 pt-1 border-t border-border">{outfit.full_description}</p>
           )}
+          {!hasTextData && !hasImage && (
+            <p className="text-muted-foreground/50 italic">No details yet — edit or add an image to fill.</p>
+          )}
         </div>
+      )}
+
+      {/* Fill text from image — shown when outfit has an image but no text fields */}
+      {needsTextFill && (
+        <button
+          onClick={handleFillFromImage}
+          disabled={fillingFromImage}
+          className="w-full text-xs text-amber-400 border border-amber-400/30 hover:bg-amber-400/10 rounded-lg py-1.5 transition-colors font-medium flex items-center justify-center gap-1.5"
+        >
+          {fillingFromImage ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+          {fillingFromImage ? "Reading outfit from image…" : "Fill outfit details from image"}
+        </button>
       )}
 
       {!isActive && (
@@ -570,6 +605,17 @@ export default function CharacterClosetPanel({ character }) {
   const [editingOutfit, setEditingOutfit] = useState(null); // outfit being edited
   const [saving, setSaving] = useState(false);
 
+  // outfit_rotation_enabled is stored on the character record.
+  // Default: true (rotation on) if never set — preserves existing behavior.
+  const rotationEnabled = character?.outfit_rotation_enabled !== false;
+
+  const saveRotationSetting = async (enabled) => {
+    await base44.entities.Character.update(character.id, { outfit_rotation_enabled: enabled });
+    queryClient.setQueryData(["character", character.id], (prev) =>
+      prev ? { ...prev, outfit_rotation_enabled: enabled } : prev
+    );
+  };
+
   const closet = character?.character_closet || [];
   const currentOutfit = character?.current_outfit || null;
 
@@ -640,6 +686,53 @@ export default function CharacterClosetPanel({ character }) {
     await saveCloset(pieces.map(p => p.piece_id === piece_id ? { ...p, is_favorite: !p.is_favorite } : p).concat(outfits));
   };
 
+  // Fill outfit text fields from its image using AI vision analysis.
+  // This allows outfits that were created with an image but no text to become
+  // fully usable for image generation without losing the existing image.
+  const handleFillFromImage = async (outfit) => {
+    if (!outfit.image_url) return;
+    try {
+      const res = await base44.integrations.Core.InvokeLLM({
+        prompt: `Analyze this outfit image and extract all clothing details for image generation. Return JSON:
+{
+  "top": "Describe the top/shirt/sweater visible (or empty string if none)",
+  "bottom": "Describe the pants/shorts/skirt visible (or empty string if none)",
+  "shoes": "Describe the shoes/sneakers visible (or empty string if none)",
+  "outerwear": "Describe any jacket/coat/hoodie (or empty string if none)",
+  "accessories": "Describe any accessories (hat, bag, jewelry etc.), or empty string",
+  "hair_state": "Describe hair if clearly visible, or empty string",
+  "full_description": "Vivid complete outfit description for image generation (50-80 words)",
+  "category": "daily_casual|work|gym|church|nightlife|formal|sleepwear|lounge|outdoor|swimwear|bath|school|date_night|travel|special|medical"
+}`,
+        file_urls: [outfit.image_url],
+        response_json_schema: {
+          type: "object",
+          properties: {
+            top: { type: "string" }, bottom: { type: "string" }, shoes: { type: "string" },
+            outerwear: { type: "string" }, accessories: { type: "string" },
+            hair_state: { type: "string" }, full_description: { type: "string" },
+            category: { type: "string" },
+          }
+        }
+      });
+      if (res) {
+        const updatedOutfit = { ...outfit, ...res };
+        // Only update category if the outfit didn't already have one set by user
+        if (!outfit.category || outfit.category === 'daily_casual') {
+          updatedOutfit.category = res.category || outfit.category;
+        } else {
+          updatedOutfit.category = outfit.category; // preserve user's category choice
+        }
+        const newCloset = closet.map(o => o.outfit_id === outfit.outfit_id ? updatedOutfit : o);
+        const isCurrentlyWorn = currentOutfit?.outfit_id === outfit.outfit_id;
+        const currentOutfitUpdate = isCurrentlyWorn ? { ...updatedOutfit, last_changed_at: currentOutfit?.last_changed_at, change_reason: currentOutfit?.change_reason } : null;
+        await saveCloset(newCloset, currentOutfitUpdate);
+      }
+    } catch (e) {
+      console.error("Fill from image failed:", e);
+    }
+  };
+
   const groupedOutfits = OUTFIT_CATEGORIES.reduce((acc, cat) => {
     const items = outfits.filter(o => o.category === cat.value);
     if (items.length > 0) acc[cat.value] = items;
@@ -673,6 +766,31 @@ export default function CharacterClosetPanel({ character }) {
             </button>
           )}
         </div>
+      </div>
+
+      {/* Rotation toggle */}
+      <div className="flex items-center justify-between bg-secondary/40 rounded-xl px-3 py-2">
+        <div className="flex items-center gap-2">
+          {rotationEnabled
+            ? <RefreshCw className="w-3.5 h-3.5 text-primary" />
+            : <Lock className="w-3.5 h-3.5 text-amber-400" />}
+          <div>
+            <p className="text-xs font-medium text-foreground">
+              {rotationEnabled ? "Outfit Rotation: On" : "Outfit Rotation: Off"}
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              {rotationEnabled
+                ? "Rotates context-appropriate outfits from closet"
+                : "Always wears the currently selected outfit"}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => saveRotationSetting(!rotationEnabled)}
+          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${rotationEnabled ? 'bg-primary' : 'bg-muted'}`}
+        >
+          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${rotationEnabled ? 'translate-x-4' : 'translate-x-1'}`} />
+        </button>
       </div>
 
       {/* Currently Wearing */}
@@ -745,6 +863,7 @@ export default function CharacterClosetPanel({ character }) {
                          onDelete={handleDeleteOutfit}
                          onToggleFavorite={handleToggleFavoriteOutfit}
                          onEdit={setEditingOutfit}
+                         onFillFromImage={handleFillFromImage}
                        />
                     ))}
                   </div>

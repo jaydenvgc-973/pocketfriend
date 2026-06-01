@@ -153,8 +153,9 @@ export function pickOutfitFromCloset(character, targetCategory) {
   if (outfits.length === 0) return null;
 
   const currentOutfitId = character.current_outfit?.outfit_id || null;
+  // outfit_rotation_enabled defaults to true when not set (preserves existing behavior)
+  const rotationEnabled = character.outfit_rotation_enabled !== false;
 
-  // Safe fallback chain per spec
   const FALLBACK_CHAINS = {
     sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
     swimwear:     ['swimwear', 'gym', 'daily_casual'],
@@ -173,23 +174,34 @@ export function pickOutfitFromCloset(character, targetCategory) {
 
   const chain = FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
 
+  // ROTATION OFF: always return the currently selected outfit if it exists in closet
+  if (!rotationEnabled && currentOutfitId) {
+    const locked = outfits.find(o => o.outfit_id === currentOutfitId);
+    if (locked) return locked;
+  }
+
+  // ROTATION ON: if current outfit matches the context category chain, prefer it
+  if (rotationEnabled && currentOutfitId) {
+    const currentItem = outfits.find(o => o.outfit_id === currentOutfitId);
+    if (currentItem && chain.includes(currentItem.category)) {
+      return currentItem;
+    }
+  }
+
+  // Walk the chain — pick by daily rotation within each category pool
   for (const cat of chain) {
     const pool = outfits.filter(o => o.category === cat);
     if (pool.length === 0) continue;
     if (pool.length === 1) return pool[0];
 
-    // CANONICAL RULE: If the currently worn outfit (current_outfit) is in this category pool,
-    // return it first — it is the user's explicit selection and must not be skipped by rotation.
-    if (currentOutfitId) {
-      const currentInPool = pool.find(o => o.outfit_id === currentOutfitId);
-      if (currentInPool) return currentInPool;
-    }
-
-    // No currently worn outfit in this pool — use daily rotation
     const now = new Date();
     const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
     const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    const idx = (dayOfYear + idHash) % pool.length;
+    let idx = (dayOfYear + idHash) % pool.length;
+    // When rotating, skip the currently selected outfit if alternatives exist
+    if (rotationEnabled && pool[idx]?.outfit_id === currentOutfitId && pool.length > 1) {
+      idx = (idx + 1) % pool.length;
+    }
     return pool[idx];
   }
 
