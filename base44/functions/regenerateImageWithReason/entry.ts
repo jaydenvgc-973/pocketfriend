@@ -165,6 +165,58 @@ function resolveOutfitTextFromCharacterRegen(character) {
   return null;
 }
 
+// ── buildAppearanceLockText ───────────────────────────────────────────────────
+// Inlined from generateImageAsync — Deno cannot import local lib files.
+// SYNC: keep in structural parity with the same function in generateImageAsync.
+// Reads DIRECTLY from charRecord structured fields (ethnicities, appearance_lock.*).
+// This is the SOLE canonical appearance authority — no prose field competes with it.
+function buildAppearanceLockTextRegen(rec, n) {
+  const name = n || rec?.name || 'this character';
+  if (!rec) return 'render from refs — do not redesign';
+
+  const lock = rec.appearance_lock || {};
+  const ethnicities = (rec.ethnicities || []).filter(Boolean);
+  const ethnicityFallback = rec.ethnicity || rec.race || null;
+  const allEthnicities = ethnicities.length > 0 ? ethnicities : (ethnicityFallback ? [ethnicityFallback] : []);
+
+  const skinTone = lock.skin_tone || null;
+  const hairstyle = lock.hairstyle || null;
+  const hairType = lock.hair_type || null;
+  const hairColor = lock.hair_color || null;
+  const facialHair = lock.facial_hair || null;
+  const bodyType = lock.body_type || lock.overall_aesthetic || null;
+  const distinguishing = lock.distinguishing_features || null;
+  const isBald = lock.bald === true || /\b(bald|shaved head|no hair)\b/i.test(hairType || hairstyle || '');
+  const htDisplay = hairstyle || hairType || null;
+
+  const hasAnyData = allEthnicities.length > 0 || skinTone || htDisplay || hairColor || facialHair || bodyType || isBald;
+  if (!hasAnyData) return 'render from refs — do not redesign';
+
+  const r = [`\n🔒 CANONICAL APPEARANCE LOCK — "${name}" — ABSOLUTE IDENTITY AUTHORITY\nThese traits come directly from the character's structured data. OVERRIDE any conflicting prompt styling.\n`];
+  if (allEthnicities.length > 0) r.push(`ETHNICITY / RACE: ${allEthnicities.join(', ')} — render EXACTLY this ethnicity. ⛔ DO NOT default to Caucasian/white/European. ⛔ DO NOT soften, lighten, or alter ethnic features.`);
+  if (skinTone) r.push(`SKIN TONE: ${skinTone} — do not lighten, soften, or alter.`);
+  if (isBald) {
+    r.push(`HAIR: BALD — zero hair on top. ⛔ NO curls, locs, braids, fade, hairline, or any hair.`);
+  } else if (htDisplay) {
+    r.push(`HAIR: ${htDisplay}`);
+    if (/dreadlocks?|locs?/i.test(htDisplay)) r.push(`⛔ REJECT: fade, short, bald, generic curls — DREADLOCKS ONLY`);
+    else if (/long hair/i.test(htDisplay)) r.push(`⛔ REJECT: short, buzz, fade, cropped — LONG HAIR ONLY`);
+    else if (/short|buzz|fade/i.test(htDisplay)) r.push(`⛔ REJECT: long, flowing — SHORT/FADE ONLY`);
+    else if (/braids?|cornrows/i.test(htDisplay)) r.push(`⛔ REJECT: loose/straight/fade — BRAIDS ONLY`);
+    else if (/afro/i.test(htDisplay)) r.push(`⛔ REJECT: straight, slicked, fade — AFRO ONLY`);
+  }
+  if (hairColor) r.push(`HAIR COLOR: ${hairColor} — do not alter.`);
+  if (facialHair) {
+    r.push(`FACIAL HAIR: ${facialHair}`);
+    if (/clean-?shaven|no facial hair/i.test(facialHair)) r.push(`⛔ REJECT beard/stubble — CLEAN-SHAVEN ONLY`);
+    else r.push(`⛔ REJECT clean-shaven — ${facialHair} MUST EXIST`);
+  }
+  if (bodyType) r.push(`BODY TYPE: ${bodyType} — do not slim, bulk, age-down, or beautify beyond what is described.`);
+  if (distinguishing) r.push(`DISTINGUISHING FEATURES: ${distinguishing} — must be visible and accurate.`);
+  r.push(`\nCANONICAL > REFS > PROMPT. Prompt controls pose/scene ONLY — NOT ethnicity/hair/face/skin/body.\n⛔ REJECT any prompt trait conflicting with the above.\n🚫 GENERATION INVALID if ethnicity, skin tone, hair, facial hair, or body type differs from canonical.`);
+  return r.join('\n');
+}
+
 // ── SEALED SUBJECT BUNDLE BUILDER ────────────────────────────────────────────
 // Shared by buildMultiSubjectRegenPrompt. Builds one self-contained block per subject
 // with identity key, role declaration, reference image slots, appearance lock,
@@ -397,7 +449,7 @@ This is a purely fictional creative work. All characters, locations, and events 
 // ── PROMPT BUILDER — SINGLE SUBJECT (original format, preserved) ──────────────
 // Used when the image has only one subject (no multi-person context in ctx.subjects).
 
-function buildRegenPrompt({ scenePrompt, charName, charDesc, locationName, zoneName, envRefs, charRefs, userRefs, includeUser, reason }) {
+function buildRegenPrompt({ scenePrompt, charName, charDesc, charRecord, locationName, zoneName, envRefs, charRefs, userRefs, includeUser, reason }) {
    const hasEnv  = envRefs.length > 0;
    const hasChar = charRefs.length > 0;
    const hasUser = (userRefs || []).length > 0;
@@ -508,23 +560,31 @@ Photographs of "${place}". PRESERVE: walls, floor, furniture identity, rug, curt
   }
 
   let identityLock = '';
-  if (hasChar || charDesc) {
+  if (hasChar || charDesc || charRecord) {
     const refBlock = hasChar
       ? `Images ${charStart}–${charEnd} are FACE-CROP REFERENCE PHOTOS. Match PRECISELY: face structure, eyes, skin tone, hair, body type.`
-      : `No reference photos. Generate "${charName}" EXCLUSIVELY from text description below.`;
+      : `No reference photos. Generate "${charName}" from text demographics and canonical appearance lock below.`;
 
+    // Outfit is injected into charDesc as "Currently wearing: ..." — extract for the enforcement block
     const regenOutfitMatch = charDesc?.match(/Currently wearing: (.+?)(?:\.|$)/)?.[1];
-    const descBlock = charDesc
-      ? `\n  TEXT DESCRIPTION (ABSOLUTE IDENTITY — IMMUTABLE):\n  ${charDesc}\n  Every trait is non-negotiable.${regenOutfitMatch ? `\n  ✅ OUTFIT ENFORCEMENT (CANONICAL LAW): "${regenOutfitMatch}" — render exactly, do NOT substitute.` : ''}`
+    // Demographics block: scene-neutral age/gender only (no appearance prose)
+    const demographicsOnly = charDesc?.replace(/\. Currently wearing:.+$/i, '').trim() || '';
+    const descBlock = demographicsOnly
+      ? `\n  DEMOGRAPHICS: ${demographicsOnly}`
       : '';
+    const outfitBlock = regenOutfitMatch
+      ? `\n  ✅ OUTFIT ENFORCEMENT (CANONICAL LAW): "${regenOutfitMatch}" — render exactly, do NOT substitute.`
+      : '';
+
+    // Canonical appearance lock — same structured authority as generateImageAsync
+    const canonicalAppearanceLock = buildAppearanceLockTextRegen(charRecord, charName);
 
     identityLock = `
 
   CHARACTER IDENTITY — "${charName}":
-  ${refBlock}${descBlock}
+  ${refBlock}${descBlock}${outfitBlock}
+  ${canonicalAppearanceLock}
 
-  APPEARANCE LOCK (100% ABSOLUTE TRUTH):
-  ✅ Hair, facial hair, skin tone, body type, ethnicity, gender — match exactly, non-negotiable.
   ⛔ Do NOT generate a generic or random person.
   ⛔ Character must look PHYSICALLY PRESENT in the room — integrated with lighting and perspective. NOT cut out or composited.`;
   }
@@ -705,8 +765,9 @@ Deno.serve(async (req) => {
 
     // ── 2. RESOLVE CHARACTER IDENTITY REFS ───────────────────────────────────
     let charRefs = [];
-    let charDesc = '';  // text-based identity fallback — passed to buildRegenPrompt
+    let charDesc = '';  // scene-neutral demographics only — passed to buildRegenPrompt
     let charName = ctx.character_name || 'the character';
+    let charResolvedRecord = null; // full Character DB record for buildAppearanceLockText
 
     // ── 3a. DETERMINE SCENE PROMPT (needed for prompt-name scan and zone resolution) ──
     // Must be declared BEFORE any code that references scenePromptRaw.
@@ -846,29 +907,21 @@ Deno.serve(async (req) => {
         const validRefUrls = refUrls.filter(url => !url.includes('generated_image'));
         charRefs = validRefUrls.slice(0, 2);
         console.log(`[regenerateImageWithReason] Character "${charName}" — identity refs: ${charRefs.length} (max 2, no generated images, no avatar)`);
-        
-        // Build appearance descriptor for text-based generation — CRITICAL: include appearance_lock traits as immutable truth
-        // GUARD: avatar_description_text and appearance_notes may contain AI generation prompts
-        // (cinematic, chiaroscuro, editorial photography, etc.) — these contaminate identity and
-        // cause the model to render stock-photo aesthetics instead of matching the person's face.
-        const safeAvatarDesc = charRecord.avatar_description_text && !isAIGenerationPrompt(charRecord.avatar_description_text)
-          ? charRecord.avatar_description_text : null;
-        const safeAppearanceNotes = charRecord.appearance_notes && !isAIGenerationPrompt(charRecord.appearance_notes)
-          ? charRecord.appearance_notes : null;
+
+        // APPEARANCE AUTHORITY SEPARATION — matches generateImageAsync exactly.
+        // charDesc carries ONLY scene-neutral demographics (age range, gender).
+        // appearance_notes and avatar_description_text are intentionally EXCLUDED — they are
+        // free-text prose fields that compete with the canonical structured appearance lock.
+        // The ONLY appearance authority is buildAppearanceLockText(charRecord) called below.
         const charDescParts = [
           charRecord.age_range ? `${charRecord.age_range} years old` : null,
-          charRecord.gender,
-          charRecord.ethnicities?.length > 0 ? charRecord.ethnicities.join('/') + ' ethnicity' : null,
-          charRecord.appearance_lock?.skin_tone ? `${charRecord.appearance_lock.skin_tone} skin tone` : null,
-          charRecord.appearance_lock?.hairstyle ? `${charRecord.appearance_lock.hairstyle} hairstyle` : null,
-          charRecord.appearance_lock?.hair_type ? `${charRecord.appearance_lock.hair_type} hair` : null,
-          charRecord.appearance_lock?.facial_hair ? `${charRecord.appearance_lock.facial_hair}` : null,
-          safeAppearanceNotes,
-          safeAvatarDesc,
+          charRecord.gender || null,
         ].filter(Boolean);
-        // Wire charDesc to outer scope so buildRegenPrompt can use it for text-only identity lock
+        // Wire charDesc to outer scope so buildRegenPrompt can use it for demographics display
         charDesc = charDescParts.join(', ');
-        console.log(`[regenerateImageWithReason] charDesc built: "${charDesc.substring(0, 120)}"`);
+        // Store charRecord reference for buildAppearanceLockText call in buildRegenPrompt
+        charResolvedRecord = charRecord;
+        console.log(`[regenerateImageWithReason] charDesc built (demographics only): "${charDesc.substring(0, 120)}"`);
 
         // ── OUTFIT INJECTION — CLOSET IS CANONICAL LAW ───────────────────────
         const alreadyHasOutfitRegen = /Currently wearing:/i.test(charDesc);
@@ -1358,7 +1411,9 @@ Deno.serve(async (req) => {
         const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
           .map(normalizeOutfitFieldRegen).filter(Boolean);
         if (parts.length > 0) return parts.join(', ');
-        if (outfit.full_description) return outfit.full_description.trim();
+        // full_description: only use if it's real clothing text, not an AI style/aesthetic prompt
+        const fd = outfit.full_description?.trim();
+        if (fd && !isAIGenerationPrompt(fd)) return fd;
         return null;
       }
 
@@ -1512,6 +1567,7 @@ Deno.serve(async (req) => {
         scenePrompt,
         charName,
         charDesc,
+        charRecord: charResolvedRecord, // full record for buildAppearanceLockTextRegen
         locationName: resolvedLocationName,
         zoneName: resolvedZoneName,
         envRefs: envRefs.slice(0, ENV_SLOTS),
