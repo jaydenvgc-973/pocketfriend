@@ -34,6 +34,9 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
   const [previewByContact, setPreviewByContact] = useState({});
   const debounceTimerRef = useRef(null);
   const isFetchingRef = useRef(false);
+  // Ref mirrors unreadByContact so event handlers always read current values
+  // without stale-closure captures from useEffect registration time.
+  const unreadByContactRef = useRef({});
   // Settle timer: set during thread:read to suppress subscription events while
   // mark-read writes are still in flight. Prevents badge oscillation.
   const settleTimerRef = useRef(null);
@@ -42,7 +45,9 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
   const cooldownKey = characterId ? `wc_unread_fetch:${characterId}` : null;
 
   const applyData = useCallback((byContact, total, previewMap = {}) => {
-    setUnreadByContact(byContact || {});
+    const map = byContact || {};
+    unreadByContactRef.current = map; // keep ref in sync with state
+    setUnreadByContact(map);
     setGlobalUnreadCount(total || 0);
     setPreviewByContact(previewMap || {});
   }, []);
@@ -274,12 +279,15 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       if (readContactId) {
         // Optimistic clear: zero this contact, decrement global by its prior count.
         // Both updaters use functional form so they read the latest state, not stale closure.
+        // Use ref for pre-clear count — avoids stale closure from effect registration time.
+        const priorCount = unreadByContactRef.current[readContactId] || 0;
+        unreadByContactRef.current = { ...unreadByContactRef.current, [readContactId]: 0 };
         setUnreadByContact(prev => {
           const next = { ...prev };
           if (readContactId in next) next[readContactId] = 0;
           return next;
         });
-        setGlobalUnreadCount(prev => Math.max(0, prev - (unreadByContact[readContactId] || 0)));
+        setGlobalUnreadCount(prev => Math.max(0, prev - priorCount));
         setPreviewByContact(prev => {
           const next = { ...prev };
           delete next[readContactId];
