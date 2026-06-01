@@ -61,21 +61,24 @@ export function useChatPostLoadEffects({
         }
       }
       if (!isMounted || snapshotCharacterId !== characterId) return;
+      // Invalidate the per-character conversation cache (used by Chat page itself).
       queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId, ownerEmail] });
       traceEvent('thread:read DISPATCH (postLoad)', { caller: 'useChatPostLoadEffects', page: getActiveContext().page, detail: `charId=${snapshotCharacterId}` });
-      // NOTE: Chat/Text opens a direct (red) thread, not a world_phone (green) thread.
-      // Dispatching thread:read with no contactId previously caused useWorldContactsUnread
-      // to zero ALL green-channel contacts as a fallback — wiping unread badges for every
-      // character even though the user only opened one direct chat thread.
-      // Fix: do not pass contactId here (it's a direct/text thread, not a world_phone contact).
-      // useWorldContactsUnread only responds to contactId being present to do surgical clear;
-      // without it the handler now SKIPS the zero-all fallback for direct/text channels.
+      // Dispatch thread:read so WorldContactsPopup and useWorldContactsUnread can react
+      // to green-channel (world_phone) reads with a contactId.
+      // channel:'direct' signals this is a red-channel thread — green hooks ignore it.
       window.dispatchEvent(new CustomEvent('thread:read', {
         detail: {
           characterId: snapshotCharacterId,
-          channel: 'direct', // signals this is a red-channel thread, not green
+          channel: 'direct',
         }
       }));
+      // After the mark-read writes settle (2.5s), invalidate the shared home unread cache
+      // so all Home card badges refresh from one shared query instead of N per-card recounts.
+      setTimeout(() => {
+        if (!isMounted) return;
+        window.dispatchEvent(new CustomEvent('home:refresh_unread'));
+      }, 2500);
     })();
 
     return () => {

@@ -2,12 +2,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
-import { lfcDelete } from "@/lib/localFirstCache";
-import {
-  classifyConversationChannel,
-  fetchUnreadMessagesForConversations,
-  resolveUnreadBadgeCounts,
-} from "@/lib/canonicalUnreadResolver";
 // Note: Sparkles is reused for prayer icon
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
@@ -18,9 +12,7 @@ import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import CharacterMovementStatus from "@/components/home/CharacterMovementStatus";
 import CharacterTeleportPicker from "@/components/home/CharacterTeleportPicker";
 import { base44 } from "@/api/base44Client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { isGloballyRateLimited, getActiveContext } from "@/lib/simulationGate";
-import { traceRequest, traceEvent } from "@/lib/chatLoadTrace";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -67,7 +59,7 @@ const stateDots = {
 
 
 
-export default function CharacterCard({ character, onDelete, onMoveAway, locationMap = {}, financialRecord = null, isFinancialLoading = false }) {
+export default function CharacterCard({ character, onDelete, onMoveAway, locationMap = {}, financialRecord = null, isFinancialLoading = false, unreadCounts = null }) {
   // OWNERSHIP GUARD: owner_email is the sole ownership source of truth.
   // If missing, log visibly so data integrity issues surface rather than silently fail.
   if (!character.owner_email) {
@@ -80,9 +72,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const [showAvatarModal, setShowAvatarModal] = useState(false);
   const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
-  const [unreadChat, setUnreadChat] = useState(0);
-  const [unreadPhone, setUnreadPhone] = useState(0);
-  const [unreadWorldPhone, setUnreadWorldPhone] = useState(0);
+  // Unread counts are now computed once at Home level (useHomeUnreadCounts) and passed as props.
+  // CharacterCard no longer runs its own Conversation.filter or Message.filter queries.
+  const unreadChat = unreadCounts?.red_chat ?? 0;
+  const unreadPhone = unreadCounts?.red_text ?? 0;
+  const unreadWorldPhone = unreadCounts?.green ?? 0;
   const isMovedAway = character.status === "moved_away";
   const isDefault = character.is_default;
   const queryClient = useQueryClient();
@@ -120,180 +114,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   
   const balance = financialRecord?.current_balance;
 
-  const { data: conversations = [] } = useQuery({
-    // Query conversations scoped by owner_email + character_ids.
-    // RATE LIMIT PROTECTION: staleTime=5min prevents re-fetch when navigating
-    // Home→Chat→Home within a 5-minute window. With 11 characters on screen,
-    // each CharacterCard fires this query — 11 simultaneous Conversation.filter
-    // calls compete directly with Chat's own load budget. Keep stale data during
-    // chat session; invalidated explicitly by thread:read event handler (above).
-    queryKey: ['conversations', character.id, character.owner_email],
-    queryFn: async () => {
-      if (!character.id || !character.owner_email) return [];
-      traceRequest('Conversation.filter (CharacterCard)', { caller: 'CharacterCard', page: getActiveContext().page, status: 'ALLOWED', detail: `char=${character.name}` });
-      return base44.entities.Conversation.filter(
-        { owner_email: character.owner_email, character_ids: [character.id] },
-        '-updated_date', 150
-      );
-    },
-    staleTime: 5 * 60 * 1000,       // 5 min — prevents re-fetch on Home→Chat→Home navigation
-    gcTime: 30 * 60 * 1000,
-    refetchOnWindowFocus: false,
-    refetchOnMount: false,
-    placeholderData: (prev) => prev,  // show stale data immediately, never blank while fresh
-    enabled: !!character.id && !!character.owner_email,
-  });
-
-
-
-  // Use a ref for conversations so countUnread always reads the latest value without
-  // being recreated on every React Query re-render. This prevents the thread:read
-  // event listener from re-registering on every conversations array reference change,
-  // and eliminates stale-closure badge recounts triggered by reference churn.
-  const conversationsRef = useRef(conversations);
-  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
-
-  // Per-card stagger offset: spread N simultaneous card-mount countUnread calls
-  // across a 0–3s window to prevent all cards firing Message.filter in the same
-  // 400ms window. Uses character.id to produce a stable, deterministic offset.
-  const staggerOffsetMs = (() => {
-    let hash = 0;
-    for (let i = 0; i < character.id.length; i++) hash = (hash * 31 + character.id.charCodeAt(i)) | 0;
-    return 400 + (Math.abs(hash) % 2600); // 400ms–3000ms spread
-  })();
-
-  const debounceRef = useRef(null);
-  const countUnread = useCallback(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      const currentConvos = conversationsRef.current;
-      if (currentConvos.length === 0) {
-        setUnreadChat(0);
-        setUnreadPhone(0);
-        setUnreadWorldPhone(0);
-        return;
-      }
-      const ctx = getActiveContext();
-      traceRequest('countUnread', { caller: 'CharacterCard', page: ctx.page, status: 'ALLOWED', detail: `char=${character.name} convos=${currentConvos.length}` });
-      try {
-        const activeConvos = currentConvos.filter(c => classifyConversationChannel(c) !== null);
-        const allConvoIds = activeConvos.map(c => c.id);
-
-        traceRequest('fetchUnreadMessagesForConversations', { caller: 'CharacterCard.countUnread', page: ctx.page, status: 'ALLOWED', detail: `char=${character.name} convoIds=${allConvoIds.length}` });
-        const perConvoMessages = await fetchUnreadMessagesForConversations(allConvoIds, base44);
-
-        // Aggregate using canonical resolver — single source of truth for all badge counts.
-        const { red_chat, red_text, green, diagnostics } = resolveUnreadBadgeCounts(
-          activeConvos,
-          perConvoMessages,
-          character.id
-        );
-
-        // Emit diagnostics so badge state changes are always traceable in console.
-        diagnostics.forEach(d => {
-          if (d.excluded) {
-            console.log(`[BADGE_AUDIT] char=${character.name} | msg=${d.message_id||'?'} | convo=${d.conversation_id||'?'} | channel=${d.channel||'?'} | type=${d.conversation_type||'?'} | sender_type=${d.sender_type||'?'} | sender_cid=${d.sender_character_id||'none'} | receiver_cid=${d.receiver_character_id||'none'} | is_read=${d.is_read} | EXCLUDED: ${d.exclusion_reason||'unknown'}`);
-          } else {
-            console.log(`[BADGE_AUDIT] char=${character.name} | msg=${d.message_id||'?'} | convo=${d.conversation_id||'?'} | channel=${d.channel||'?'} | type=${d.conversation_type||'?'} | is_read=${d.is_read} | INCLUDED: badge=${d.badge_channel}`);
-          }
-        });
-        console.log(`[BADGE_SUMMARY] char=${character.name} | green=${green} | red_chat=${red_chat} | red_text=${red_text}`);
-
-        setUnreadChat(red_chat);
-        setUnreadPhone(red_text);
-        setUnreadWorldPhone(green);
-      } catch {
-        setUnreadChat(0);
-        setUnreadPhone(0);
-        setUnreadWorldPhone(0);
-      }
-    }, 400);
-  // Stable: character.id only — conversations read via ref to avoid recreation on every render
-  }, [character.id]); // eslint-disable-line
-
-  // Separate ref for stagger timer — distinct from debounceRef used inside countUnread
-  const staggerTimerRef = useRef(null);
-  useEffect(() => {
-    // PAGE-OWNERSHIP GATE: unread recounts must not run while Chat/Text is active.
-    if (isGloballyRateLimited()) return;
-    const ctx = getActiveContext();
-    if (ctx.page === 'chat' || ctx.page === 'text') return;
-    // Stagger per-card: spread all N card-mount countUnread calls across 0.4–3s.
-    // Prevents N×M simultaneous Message.filter calls that cause 429 storms on page load.
-    if (staggerTimerRef.current) clearTimeout(staggerTimerRef.current);
-    staggerTimerRef.current = setTimeout(() => {
-      staggerTimerRef.current = null;
-      if (isGloballyRateLimited()) return;
-      const ctx2 = getActiveContext();
-      if (ctx2.page === 'chat' || ctx2.page === 'text') return;
-      countUnread();
-    }, staggerOffsetMs);
-  }, [conversations.length, character.id]); // eslint-disable-line
-
-  // PRIORITY ARCHITECTURE: window.focus listener removed from CharacterCard.
-  // Window focus is NOT a valid triggering event for known state (unread counts).
-  // Unread counts are already known. They change only when:
-  //   1. A new message arrives (handled by thread:read event below)
-  //   2. The user marks a thread read (handled by thread:read event below)
-  // Re-reading all messages for all characters on every tab-focus violated the known-state
-  // rule and created N × DB read bursts competing with Chat when the user returned to the app.
-
-  // Re-count when a thread is opened (badge clear path).
-  // On thread:read: bust LFC world-contacts cache, then do ONE fresh live count after a
-  // settled delay. The delay absorbs all the is_read:true subscription events that fire
-  // during the mark-read batch — without it, each write event resets the 400ms debounce
-  // in countUnread and the badge oscillates while writes are still in flight.
-  const threadReadSettleRef = useRef(null);
-  useEffect(() => {
-    const handleThreadRead = (e) => {
-      if (e.detail?.characterId !== character.id) return;
-      traceEvent('thread:read LISTENER', { caller: 'CharacterCard', page: getActiveContext().page, detail: `char=${character.name}` });
-      if (character.owner_email) {
-        lfcDelete(character.owner_email, `world_contacts_unread:${character.id}`);
-      }
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      if (threadReadSettleRef.current) clearTimeout(threadReadSettleRef.current);
-      // Wait 2.5s for all is_read:true writes + subscription events to settle,
-      // then do ONE definitive live count — BUT ONLY if we are back on Home.
-      // PRIORITY ARCHITECTURE: thread:read is dispatched by Chat/Text when a thread opens.
-      // If Chat/Text is still the active page when the timer fires, skip the recount entirely.
-      // Running fetchUnreadMessagesForConversations while Chat is active consumes quota that
-      // Chat needs for its own Conversation.filter + Message.filter load sequence.
-      // The badge will refresh naturally when the user returns to Home (conversations.length effect).
-      threadReadSettleRef.current = setTimeout(() => {
-        threadReadSettleRef.current = null;
-        const ctx = getActiveContext();
-        if (isGloballyRateLimited()) {
-          traceEvent('thread:read SETTLE SKIPPED (rate limited)', { caller: 'CharacterCard', page: ctx.page, detail: `char=${character.name}` });
-          return;
-        }
-        if (ctx.page === 'chat' || ctx.page === 'text') {
-          traceEvent('thread:read SETTLE SKIPPED (chat/text active)', { caller: 'CharacterCard', page: ctx.page, detail: `char=${character.name}` });
-          console.log(`[BADGE] thread:read settle SKIPPED for char=${character.name} — Chat/Text still active`);
-          return;
-        }
-        traceEvent('thread:read SETTLE FIRING countUnread', { caller: 'CharacterCard', page: ctx.page, detail: `char=${character.name}` });
-        countUnread();
-      }, 2500);
-    };
-    window.addEventListener('thread:read', handleThreadRead);
-    return () => {
-      window.removeEventListener('thread:read', handleThreadRead);
-      if (threadReadSettleRef.current) clearTimeout(threadReadSettleRef.current);
-      if (staggerTimerRef.current) clearTimeout(staggerTimerRef.current);
-    };
-  }, [character.id, character.owner_email]); // eslint-disable-line
-
-  // PRIORITY ARCHITECTURE: Per-card Message.subscribe removed from CharacterCard.
-  // Opening N subscriptions for N characters (one per Home card) violates page-ownership rules:
-  //   - N open WebSocket connections consume subscription capacity regardless of active page
-  //   - These subscriptions persist after navigation and compete with Chat's active conversation
-  //   - Chat owns the single active subscription for its conversation
-  // Unread badge updates on Home cards now rely solely on:
-  //   1. Initial count on load (countUnread fired when conversations.length changes)
-  //   2. thread:read event (user reads a thread — handled below)
-  // A Home card that shows a slightly stale badge for a few seconds is acceptable.
-  // A Chat conversation being starved of quota by 5 idle subscriptions is not.
+  // ARCHITECTURE NOTE: CharacterCard no longer runs any independent queries.
+  // All unread badge data comes from the shared useHomeUnreadCounts hook (Home level).
+  // When a thread is read, Home dispatches 'home:refresh_unread' after the settle window,
+  // which invalidates the shared React Query cache and recomputes all badges at once.
+  // This eliminates the N-per-card Conversation.filter + N×M Message.filter storm.
 
 
 

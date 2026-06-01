@@ -26,6 +26,8 @@ import { usePageContext } from "@/hooks/usePageContext";
 import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import { useTravelSessions, applySessionProofToCharacters } from "@/lib/travelDisplayIntegrity";
+import { useHomeConversations } from "@/hooks/useHomeConversations";
+import { useHomeUnreadCounts } from "@/hooks/useHomeUnreadCounts";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -243,6 +245,13 @@ export default function Home() {
   // Load active in_transit sessions — used to gate travel display (ONE TRUTH RULE)
   const { sessions: activeTravelSessions } = useTravelSessions(currentUser?.email);
 
+  // SHARED CONVERSATION + UNREAD LAYER
+  // ONE Conversation.filter for all characters (not per-card).
+  // ONE batched Message.filter pass for all conversations (not per-card).
+  // CharacterCard receives its pre-computed badge counts as props — zero independent queries.
+  const { allConversations: homeConversations, getConversationsForCharacter } = useHomeConversations(currentUser?.email);
+  const { getUnreadForCharacter } = useHomeUnreadCounts(currentUser?.email, homeConversations);
+
   const defaultChar = allCharacters.find(c => c.is_default);
   const customChars = allCharacters.filter(c => !c.is_default && c.status !== "deleted");
   
@@ -354,7 +363,7 @@ export default function Home() {
           {defaultChar && (
             <div>
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
-              <CharacterCard character={defaultChar} locationMap={locationMap} locationData={{}} financialRecord={financialIndex[defaultChar.id] || null} isFinancialLoading={isFinancialLoading} />
+              <CharacterCard character={defaultChar} locationMap={locationMap} locationData={{}} financialRecord={financialIndex[defaultChar.id] || null} isFinancialLoading={isFinancialLoading} unreadCounts={getUnreadForCharacter(defaultChar.id)} />
             </div>
           )}
           {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
@@ -420,10 +429,11 @@ export default function Home() {
                     locationData={{}}
                     financialRecord={financialIndex[c.id] || null}
                     isFinancialLoading={isFinancialLoading}
+                    unreadCounts={getUnreadForCharacter(c.id)}
                   />
                 ))}
                 {movedAwayChars.map(c => (
-                  <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationMap={locationMap} locationData={{}} financialRecord={financialIndex[c.id] || null} isFinancialLoading={isFinancialLoading} />
+                  <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationMap={locationMap} locationData={{}} financialRecord={financialIndex[c.id] || null} isFinancialLoading={isFinancialLoading} unreadCounts={getUnreadForCharacter(c.id)} />
                 ))}
                 <Link to="/create">
                   <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
