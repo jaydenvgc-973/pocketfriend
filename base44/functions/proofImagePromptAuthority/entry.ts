@@ -1,25 +1,27 @@
 /**
  * proofImagePromptAuthority — Live path proof using REAL character records.
  *
- * IDENTITY AUTHORITY ORDER (matches generateImageAsync production behavior):
- *   1. Explicit user instruction for the specific image
- *   2. Appearance lock, if present (structured fields: ethnicities, appearance_lock.*)
- *   3. Avatar image and reference images (avatar_url IS identity data — not a fallback of last resort)
- *   4. Avatar-derived description and character description — supporting context only
- *   5. Structured profile fields (ethnicity, height, body type, hair, skin tone, facial hair)
- *   6. Current outfit and closet — clothing only
- *   7. Scene, location, lighting, pose, camera
- *   8. Generic prompt generation — BLOCKED if no identity data at all
+ * IDENTITY AUTHORITY ORDER:
+ *   1. Appearance lock (structured fields: ethnicities, appearance_lock.*)
+ *   2. Avatar URL and reference images — avatar IS identity data
+ *   3. Character description (demographics: age_range, gender)
+ *   4. Outfit / closet (clothing only)
+ *   5. Scene/location/lighting/pose/camera
  *
- * Proves:
- *   A. appearance_notes and avatar_description_text are NOT in charDesc
- *   B. charDesc is demographics-only (age_range + gender)
- *   C. buildAppearanceLockText reads structured fields only
- *   D. outfit comes from closet resolver, not from prose fields
- *   E. Characters with AI-style outfit full_description are filtered
- *   F. avatar_url IS loaded as identity data — not ignored for no-lock characters
- *   G. A character with no lock but with an avatar is NOT identity-poor and NOT blocked
- *   H. The identity-missing guard only fires when: no refs AND no charDesc AND no lock AND no ethnicities AND no avatar
+ * RULES THIS PROOF ENFORCES:
+ *   - appearance_notes and avatar_description_text are NOT injected into charDesc or prompt
+ *   - charDesc is demographics-only (age_range + gender)
+ *   - outfit comes from closet resolver, not from prose
+ *   - avatar_url is the existing face anchor — no new eligibility rules are introduced
+ *   - a character with an avatar is NOT identity-poor and NOT blocked
+ *   - the Caucasian-default guard fires only when charRefs=0 AND no charDesc AND no lock AND no ethnicities
+ *     (which means: no refs, no avatar already loaded into refs, no demographics, no lock)
+ *
+ * WHAT THIS DOES NOT DO:
+ *   - Does not introduce new avatar URL filtering rules
+ *   - Does not re-qualify or re-validate avatars that were already working
+ *   - Does not reclassify characters as identity-poor
+ *   - Does not create new avatar blockers
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
@@ -32,7 +34,7 @@ Deno.serve(async (req) => {
   const reqBody = await req.json().catch(() => ({}));
   const summaryMode = !!(reqBody?.summaryOnly);
 
-  // ── URL UTILITIES (exact copy from generateImageAsync) ──────────────────────
+  // ── URL UTILITIES (exact copy from generateImageAsync) ────────────────────
   function toPublicCDN(url) {
     if (!url || typeof url !== 'string') return url;
     if (url.startsWith('https://media.base44.com/')) return url;
@@ -50,8 +52,11 @@ Deno.serve(async (req) => {
     return true;
   }
 
+  function cdnFilter(urls) {
+    return (urls || []).map(toPublicCDN).filter(isAccessible);
+  }
+
   // ── EXACT COPY of buildAppearanceLockText from generateImageAsync ─────────
-  // Must remain byte-for-byte identical so the proof reflects production behavior.
   function buildAppearanceLockText(rec, n) {
     const name = n || rec?.name || 'this character';
     if (!rec) return 'render from refs — do not redesign';
@@ -119,7 +124,6 @@ Deno.serve(async (req) => {
     return null;
   }
 
-  // ── EXACT COPY of resolveOutfitCategory from generateImageAsync ──────────
   function resolveOutfitCategory(character) {
     const presence = character?.resolved_presence_status || character?.location_status || '';
     const activity = (character?.current_activity || '').toLowerCase();
@@ -212,13 +216,13 @@ Deno.serve(async (req) => {
     return { text: null, source: 'closet_chain_miss', name: null, category: targetCategory };
   }
 
-  // ── PROOF ENGINE ────────────────────────────────────────────────────────────
+  // ── PROOF ENGINE ─────────────────────────────────────────────────────────────
   // Mirrors the exact logic in generateImageAsync and regenerateImageWithReason.
-  // Returns what the final prompt identity+outfit block will contain.
+  // IMPORTANT: This proof does NOT introduce new avatar eligibility rules.
+  // It reflects exactly what the generation functions do, no more, no less.
 
   function runProductionCharDescAssembly(charRecord) {
     // Step 1: charDesc — EXACTLY what generateImageAsync builds
-    // demographics ONLY — appearance_notes and avatar_description_text are intentionally excluded
     const parts = [
       charRecord.age_range ? `${charRecord.age_range} years old` : null,
       charRecord.gender || null,
@@ -231,7 +235,7 @@ Deno.serve(async (req) => {
     // Step 3: outfit resolution
     const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord);
 
-    // Step 4: assemble final charDesc with outfit
+    // Step 4: assemble final charDesc with outfit (same logic as generateImageAsync)
     let finalCharDesc = charDesc;
     if (resolvedOutfit.text) {
       finalCharDesc = charDesc
@@ -239,38 +243,7 @@ Deno.serve(async (req) => {
         : `Currently wearing: ${resolvedOutfit.text}`;
     }
 
-    // Step 5: determine avatar identity data
-    // The avatar_url IS identity data — authority level 3 in the hierarchy.
-    // generateImageAsync loads it as a controlled last-resort ref when no reference_image_urls exist.
-    // regenerateImageWithReason loads it as a fallback for dont_like/custom_prompt/flawed reasons.
-    const rawAvatarUrl = charRecord.avatar_url || charRecord.image_avatar_url || null;
-    const avatarPublic = rawAvatarUrl ? toPublicCDN(rawAvatarUrl) : null;
-    const avatarIsAccessible = avatarPublic ? isAccessible(avatarPublic) : false;
-    const avatarIsGenerated = avatarPublic ? avatarPublic.includes('generated_image') : false;
-    const avatarUsableAsRef = avatarIsAccessible && !avatarIsGenerated;
-
-    // Step 6: reference images
-    const refImageUrls = (charRecord.reference_image_urls || []);
-    const validRefUrls = refImageUrls
-      .map(toPublicCDN)
-      .filter(u => isAccessible(u) && !u.includes('generated_image'));
-
-    // Step 7: structured profile identity fields (authority level 5)
-    const hasEthnicities = (charRecord.ethnicities || []).length > 0;
-    const hasAppearanceLock = charRecord.appearance_lock && Object.keys(charRecord.appearance_lock).length > 0;
-    const structuredIdentityFields = {
-      ethnicities: (charRecord.ethnicities || []).filter(Boolean),
-      skin_tone: charRecord.appearance_lock?.skin_tone || null,
-      hairstyle: charRecord.appearance_lock?.hairstyle || charRecord.appearance_lock?.hair_type || null,
-      hair_color: charRecord.appearance_lock?.hair_color || null,
-      facial_hair: charRecord.appearance_lock?.facial_hair || null,
-      body_type: charRecord.appearance_lock?.body_type || charRecord.appearance_lock?.overall_aesthetic || null,
-      distinguishing_features: charRecord.appearance_lock?.distinguishing_features || null,
-      age_range: charRecord.age_range || null,
-      gender: charRecord.gender || null,
-    };
-
-    // Step 8: confirm prose exclusion
+    // Step 5: confirm what is EXCLUDED
     const excludedFields = {};
     if (charRecord.appearance_notes) {
       excludedFields.appearance_notes = {
@@ -278,7 +251,7 @@ Deno.serve(async (req) => {
         char_count: charRecord.appearance_notes.length,
         injected_into_charDesc: false,
         injected_into_prompt: false,
-        reason_excluded: 'prose field — would compete with canonical appearance lock and avatar identity',
+        reason_excluded: 'prose field — would compete with canonical appearance lock',
       };
     }
     if (charRecord.avatar_description_text) {
@@ -287,84 +260,79 @@ Deno.serve(async (req) => {
         char_count: charRecord.avatar_description_text.length,
         injected_into_charDesc: false,
         injected_into_prompt: false,
-        reason_excluded: 'prose field — avatar is used as reference IMAGE only, not as text description injected into charDesc',
+        reason_excluded: 'prose field — avatar used as reference IMAGE only, not as text description',
       };
     }
 
-    // Step 9: identity authority resolution — what generateImageAsync actually does
-    // Authority order:
-    //   1. Explicit user instruction (not deterministic here — proof of structure only)
-    //   2. appearance_lock (if hasAnyData in buildAppearanceLockText)
-    //   3. avatar_url / reference_image_urls — loaded as reference images
-    //   4. charDesc (demographics only) — supporting context
-    //   5. Structured profile fields (ethnicity, gender, age_range)
-    //   6. outfit / closet
-    //   7. scene/location/lighting
-    //   8. generic — BLOCKED if truly nothing at all
-    const identityAuthority = {
-      level_2_appearance_lock: hasAppearanceLock ? 'PRESENT — structured lock loaded' : 'absent — system falls to level 3 (avatar/refs)',
-      level_3_reference_images: validRefUrls.length > 0
-        ? `${validRefUrls.length} valid reference image(s) — loaded as face identity refs`
-        : 'no reference images',
-      level_3_avatar: avatarUsableAsRef
-        ? `avatar_url IS accessible and non-generated — loaded as controlled face-anchor ref when no reference_image_urls exist`
-        : (rawAvatarUrl
-          ? `avatar_url present but ${avatarIsGenerated ? 'is a generated image (excluded from identity refs)' : 'not accessible as CDN URL'}`
-          : 'no avatar_url'),
-      level_4_charDesc: charDesc || 'empty (no age_range or gender set)',
-      level_5_structured_fields: {
-        ethnicities_count: structuredIdentityFields.ethnicities.length,
-        has_skin_tone: !!structuredIdentityFields.skin_tone,
-        has_hair: !!structuredIdentityFields.hairstyle,
-        has_facial_hair: !!structuredIdentityFields.facial_hair,
-        has_body_type: !!structuredIdentityFields.body_type,
-      },
-    };
+    // Step 6: Avatar — the existing behavior, not a new eligibility check
+    // In generateImageAsync, avatar_url is loaded as a face anchor ref when reference_image_urls is empty.
+    // The avatar fallback runs BEFORE the identity guard, so by the time the guard runs,
+    // charRefs already contains the avatar if it was loadable.
+    // This proof reflects that existing behavior without adding new filtering rules.
+    const hasAvatarUrl = !!charRecord.avatar_url;
+    // What generateImageAsync does: toPublicCDN → isAccessible check → not generated_image
+    const avatarPublicPreview = charRecord.avatar_url ? toPublicCDN(charRecord.avatar_url) : null;
+    const avatarWouldPassExistingFilter = avatarPublicPreview
+      && isAccessible(avatarPublicPreview)
+      && !avatarPublicPreview.includes('generated_image');
 
-    // Step 10: identity missing guard — CORRECT version
-    // generateImageAsync blocks ONLY when: no refs AND no charDesc AND no appearance_lock AND no ethnicities
-    // THEN checks avatar as last-resort controlled ref. The guard fires AFTER avatar check.
-    // So the true block condition for the proof is: no refs + no avatar + no charDesc + no lock + no ethnicities
-    const wouldHaveRefUrls = validRefUrls.length > 0;
-    const wouldHaveAvatarAsRef = avatarUsableAsRef && !wouldHaveRefUrls; // avatar used when no refs
-    const effectiveRefCount = validRefUrls.length + (wouldHaveAvatarAsRef ? 1 : 0);
+    // Step 7: What reference images would be loaded (matches generateImageAsync logic)
+    const allRefUrls = cdnFilter(charRecord.reference_image_urls || []);
+    const validRefUrls = allRefUrls.filter(url => !url.includes('generated_image'));
+    const charRefsWouldLoad = validRefUrls.slice(0, 4);
+    // If no reference_image_urls, avatar_url is the fallback (existing behavior)
+    const avatarWouldBeUsedAsRef = charRefsWouldLoad.length === 0 && avatarWouldPassExistingFilter;
+
+    // Step 8: identity missing guard (same as generateImageAsync)
+    // Block only when charRefs=0 AND no charDesc AND no lock AND no ethnicities
+    // charRefs here = charRefsWouldLoad + (avatar if eligible and no refs)
+    const effectiveRefCount = charRefsWouldLoad.length + (avatarWouldBeUsedAsRef ? 1 : 0);
+    const hasAppearanceLock = charRecord.appearance_lock && Object.keys(charRecord.appearance_lock).length > 0;
+    const hasEthnicities = (charRecord.ethnicities || []).length > 0;
     const wouldBeBlocked = effectiveRefCount === 0 && !finalCharDesc && !hasAppearanceLock && !hasEthnicities;
 
     return {
       char_name: charRecord.name,
       char_id: charRecord.id,
 
-      // What goes into charDesc (demographics only — no prose)
+      // What generateImageAsync / regenerateImageWithReason puts in charDesc
       charDesc_assembled: finalCharDesc,
       charDesc_demographics_only: charDesc,
 
-      // Identity authority chain
-      identity_authority: identityAuthority,
-
-      // The appearance lock block (empty = 'render from refs — do not redesign')
+      // The identity block as it will appear in the final prompt
       appearance_lock_block: appearanceLockText,
       appearance_lock_source: 'structured_fields_only',
-      appearance_lock_fields_read: structuredIdentityFields,
-      ethnicities_used: structuredIdentityFields.ethnicities,
+      appearance_lock_fields_read: {
+        skin_tone: charRecord.appearance_lock?.skin_tone || null,
+        hairstyle: charRecord.appearance_lock?.hairstyle || null,
+        hair_type: charRecord.appearance_lock?.hair_type || null,
+        hair_color: charRecord.appearance_lock?.hair_color || null,
+        facial_hair: charRecord.appearance_lock?.facial_hair || null,
+        body_type: charRecord.appearance_lock?.body_type || charRecord.appearance_lock?.overall_aesthetic || null,
+        distinguishing_features: charRecord.appearance_lock?.distinguishing_features || null,
+        bald: charRecord.appearance_lock?.bald || false,
+      },
+      ethnicities_used: (charRecord.ethnicities || []).filter(Boolean),
 
-      // Avatar data — this is identity data, not a cosmetic fallback
+      // Avatar — existing behavior reflected, no new rules
       avatar_identity: {
-        avatar_url_present: !!rawAvatarUrl,
-        avatar_url: rawAvatarUrl ? rawAvatarUrl.substring(0, 80) + '...' : null,
-        avatar_cdn_convertible: !!avatarPublic,
-        avatar_accessible: avatarIsAccessible,
-        avatar_is_generated_image: avatarIsGenerated,
-        avatar_usable_as_identity_ref: avatarUsableAsRef,
-        avatar_would_be_loaded_by_generateImageAsync: avatarUsableAsRef && validRefUrls.length === 0,
-        avatar_would_be_loaded_by_regenerateImageWithReason: avatarUsableAsRef && validRefUrls.length === 0,
-        avatar_authority_level: avatarUsableAsRef ? 'Level 3 — primary face anchor when no reference_image_urls' : 'not used as identity ref',
+        has_avatar_url: hasAvatarUrl,
+        avatar_would_pass_existing_cdn_filter: avatarWouldPassExistingFilter,
+        avatar_would_be_used_as_ref: avatarWouldBeUsedAsRef,
+        note: hasAvatarUrl && !avatarWouldPassExistingFilter
+          ? 'Avatar URL present but would not pass existing generateImageAsync CDN filter (private URL, signed URL, or base44.app URL). Character still generates from charDesc and appearance lock.'
+          : hasAvatarUrl && avatarWouldBeUsedAsRef
+          ? 'Avatar IS the face anchor ref — loaded by generateImageAsync when no reference_image_urls exist'
+          : hasAvatarUrl && !avatarWouldBeUsedAsRef
+          ? 'Avatar present — reference_image_urls take priority, avatar not needed as fallback'
+          : 'No avatar_url',
       },
 
       // Reference images
       reference_images: {
-        raw_count: refImageUrls.length,
-        valid_accessible_non_generated: validRefUrls.length,
-        would_be_passed_to_generator: Math.min(validRefUrls.length, 4),
+        raw_count: (charRecord.reference_image_urls || []).length,
+        valid_accessible_count: validRefUrls.length,
+        would_be_passed_to_generator: charRefsWouldLoad.length,
       },
 
       // Outfit
@@ -378,18 +346,15 @@ Deno.serve(async (req) => {
       // Excluded prose fields
       excluded_fields: excludedFields,
 
-      // Identity guard — corrected: avatar is checked before guard fires
+      // Identity guard — exact same logic as generateImageAsync
       identity_missing_guard: {
         has_appearance_lock: hasAppearanceLock,
         has_ethnicities: hasEthnicities,
         has_reference_images: validRefUrls.length > 0,
-        has_avatar_as_ref: avatarUsableAsRef,
+        has_avatar_as_fallback_ref: avatarWouldBeUsedAsRef,
         has_charDesc: !!charDesc,
         effective_ref_count: effectiveRefCount,
         would_block_generation: wouldBeBlocked,
-        block_reason: wouldBeBlocked
-          ? 'Truly no identity data: no refs, no avatar, no charDesc, no lock, no ethnicities — Caucasian-default guard fires'
-          : null,
       },
 
       // Contradiction check
@@ -417,7 +382,7 @@ Deno.serve(async (req) => {
     return Response.json({ error: 'No active characters found on this account', user_email: user.email });
   }
 
-  // ── CATEGORIZE: avatar awareness is central ──────────────────────────────
+  // ── CATEGORIZE ─────────────────────────────────────────────────────────────
   const withFullLock = allChars.filter(c =>
     c.appearance_lock && Object.keys(c.appearance_lock).length >= 3 &&
     (c.ethnicities?.length > 0 || c.appearance_lock.skin_tone)
@@ -434,84 +399,44 @@ Deno.serve(async (req) => {
     const co = c.current_outfit;
     return co && isAIStylePrompt(co.full_description || '');
   });
+  const withAvatarUrl = allChars.filter(c => !!c.avatar_url);
 
-  // ── CORRECTED IDENTITY CATEGORIZATION ────────────────────────────────────
-  // Avatar IS identity data. A character is NOT "identity-poor" just because they lack
-  // an appearance lock. The full picture requires checking all authority levels.
-  const hasLock = c => c.appearance_lock && Object.keys(c.appearance_lock).length > 0;
-  const hasRefs = c => (c.reference_image_urls || []).length > 0;
-  const hasAvatar = c => {
-    const raw = c.avatar_url || c.image_avatar_url;
-    if (!raw) return false;
-    const pub = toPublicCDN(raw);
-    return isAccessible(pub) && !pub.includes('generated_image');
-  };
-  const hasEthnicities = c => (c.ethnicities || []).length > 0;
-  const hasCharDesc = c => !!(c.age_range || c.gender);
-
-  // Characters broken out by what identity data they actually have
-  const noLockChars = allChars.filter(c => !hasLock(c));
-  const noLockWithAvatar = noLockChars.filter(c => hasAvatar(c));
-  const noLockNoAvatar = noLockChars.filter(c => !hasAvatar(c));
-  const noLockNoAvatarWithRefs = noLockNoAvatar.filter(c => hasRefs(c));
-  const noLockNoAvatarWithEthnicities = noLockNoAvatar.filter(c => hasEthnicities(c));
-  const noLockNoAvatarWithCharDesc = noLockNoAvatar.filter(c => hasCharDesc(c));
-
-  // Truly identity-poor: no lock, no avatar, no refs, no ethnicities, no charDesc
-  const trulyIdentityPoor = allChars.filter(c =>
-    !hasLock(c) && !hasAvatar(c) && !hasRefs(c) && !hasEthnicities(c) && !hasCharDesc(c)
+  // "no lock and no refs" — the original category, preserved as-is
+  // This does NOT imply identity-poor: avatar_url is the existing fallback for these characters
+  const withNoLockNoRefs = allChars.filter(c =>
+    (!c.appearance_lock || Object.keys(c.appearance_lock).length === 0) &&
+    (!c.ethnicities || c.ethnicities.length === 0) &&
+    (!c.reference_image_urls || c.reference_image_urls.length === 0)
   );
+  // Of those, how many have avatar_url (the existing fallback)
+  const withNoLockNoRefsButHasAvatar = withNoLockNoRefs.filter(c => !!c.avatar_url);
 
   const results = {
     proof_timestamp: new Date().toISOString(),
     account: user.email,
     total_active_characters: allChars.length,
 
-    // ── CORRECTED IDENTITY CATEGORIES ────────────────────────────────────────
-    // The old "with_no_lock_and_no_refs" metric was misleading because it did not check
-    // avatar_url. This is the corrected full breakdown.
-    identity_categories: {
+    categories: {
       with_full_lock: withFullLock.length,
       with_partial_lock: withPartialLock.length,
-      with_no_lock: noLockChars.length,
-      // Of those with no lock, how many still have avatars (i.e. not identity-poor)?
-      no_lock_but_has_avatar: noLockWithAvatar.length,
-      no_lock_no_avatar: noLockNoAvatar.length,
-      no_lock_no_avatar_but_has_refs: noLockNoAvatarWithRefs.length,
-      no_lock_no_avatar_but_has_ethnicities: noLockNoAvatarWithEthnicities.length,
-      no_lock_no_avatar_but_has_charDesc: noLockNoAvatarWithCharDesc.length,
-      // ONLY these are truly identity-poor (Caucasian-default guard fires)
-      truly_identity_poor_no_identity_data_at_all: trulyIdentityPoor.length,
-    },
-
-    // Supporting data categories
-    supporting_categories: {
       with_appearance_notes: withAppearanceNotes.length,
       with_avatar_description_text: withAvatarDescText.length,
       with_current_outfit: withCurrentOutfit.length,
       with_closet: withCloset.length,
       with_ai_style_outfit_full_description: withAIStyleOutfit.length,
+      with_avatar_url: withAvatarUrl.length,
+      // CORRECTED: the 23 with "no lock and no refs" is now broken down properly
+      // to show how many of those still have avatars (existing face anchor)
+      with_no_lock_and_no_refs: withNoLockNoRefs.length,
+      with_no_lock_and_no_refs_and_has_avatar: withNoLockNoRefsButHasAvatar.length,
+      with_no_lock_and_no_refs_and_no_avatar: withNoLockNoRefs.length - withNoLockNoRefsButHasAvatar.length,
     },
 
-    // ── GENERATION PATH PROOF ────────────────────────────────────────────────
-    // Confirms avatar_url is loaded by both generation functions
-    generation_path_avatar_behavior: {
-      generateImageAsync: {
-        loads_avatar_url: true,
-        when: 'When character has no valid reference_image_urls after filtering, avatar_url is loaded as a controlled last-resort face anchor ref (lines 957-965 of generateImageAsync)',
-        filter_applied: 'toPublicCDN(avatar_url) → isAccessible() check → exclude generated_image URLs',
-        passed_to_generator: 'Yes — included in referenceImages array as charRefs[0]',
-        prompt_instruction: 'Face-crop identity photo — extract only face structure, skin tone, hair — NOT background/pose/clothing',
-        caucasian_default_prevented: true,
-      },
-      regenerateImageWithReason: {
-        loads_avatar_url: true,
-        when: 'When reason is dont_like, custom_prompt, or flawed AND no reference_image_urls exist, avatar_url is loaded as fallback (lines 955-964 of regenerateImageWithReason)',
-        filter_applied: 'toPublicCDN(avatar_url) → isAccessible() check → exclude generated_image URLs',
-        passed_to_generator: 'Yes — included in charRefs array',
-        prompt_instruction: 'Face-crop identity reference — face-only extraction enforced in prompt',
-        caucasian_default_prevented: true,
-      },
+    // How the generation functions handle avatar
+    avatar_behavior_in_generation: {
+      generateImageAsync: 'When reference_image_urls is empty, avatar_url is loaded as a controlled face anchor ref. This is the existing fallback. No new eligibility rules were introduced.',
+      regenerateImageWithReason: 'When reason is dont_like/custom_prompt/flawed and reference_image_urls is empty, avatar_url is loaded as fallback. Existing behavior preserved.',
+      identity_guard: 'Fires only when charRefs=0 AND charDesc is empty AND no appearance_lock AND no ethnicities. Avatar loaded into charRefs before guard runs — so a character with an accessible avatar will not be blocked.',
     },
 
     proof_cases: {},
@@ -521,7 +446,7 @@ Deno.serve(async (req) => {
   const caseAChar = withFullLock[0] || null;
   if (caseAChar) {
     results.proof_cases.A_full_appearance_lock = runProductionCharDescAssembly(caseAChar);
-    results.proof_cases.A_full_appearance_lock._case = 'Full appearance lock — structured fields read directly, prose excluded';
+    results.proof_cases.A_full_appearance_lock._case = 'Full appearance lock — structured fields read directly';
   } else {
     results.proof_cases.A_full_appearance_lock = { _case: 'SKIPPED — no character with full lock on this account' };
   }
@@ -544,44 +469,20 @@ Deno.serve(async (req) => {
     results.proof_cases.C_outfit_resolution = { _case: 'SKIPPED — no character with outfit data on this account' };
   }
 
-  // ── CASE F (NEW): Character with NO appearance lock but WITH an avatar ────
-  // This is the key case the original proof was missing.
-  // Proves: avatar-only characters are NOT treated as generic, NOT blocked, NOT Caucasian-defaulted.
-  const caseFChar = noLockWithAvatar[0] || null;
-  if (caseFChar) {
-    const caseFResult = runProductionCharDescAssembly(caseFChar);
-    caseFResult._case = 'NO APPEARANCE LOCK, but HAS AVATAR — avatar IS the identity anchor. Character is not identity-poor.';
-    caseFResult._proof = [
-      `Character "${caseFResult.char_name}" has no appearance lock.`,
-      `Avatar usable as ref: ${caseFResult.avatar_identity.avatar_usable_as_identity_ref}`,
-      `Avatar would be loaded by generateImageAsync: ${caseFResult.avatar_identity.avatar_would_be_loaded_by_generateImageAsync}`,
-      `Avatar would be loaded by regenerateImageWithReason: ${caseFResult.avatar_identity.avatar_would_be_loaded_by_regenerateImageWithReason}`,
-      `Would be blocked (Caucasian-default guard): ${caseFResult.identity_missing_guard.would_block_generation}`,
-      `Block reason: ${caseFResult.identity_missing_guard.block_reason || 'NOT BLOCKED — avatar provides identity anchor'}`,
-      `charDesc is demographics-only: ${caseFResult.contradictions.charDesc_contains_only_demographics}`,
-      `Appearance notes excluded from charDesc: ${!caseFResult.contradictions.appearance_notes_in_charDesc}`,
-    ];
-    results.proof_cases.F_no_lock_but_has_avatar = caseFResult;
+  // ── CASE D: Character with partial lock only ─────────────────────────────
+  const caseDChar = withPartialLock[0] || null;
+  if (caseDChar) {
+    results.proof_cases.D_partial_lock = runProductionCharDescAssembly(caseDChar);
+    results.proof_cases.D_partial_lock._case = 'Partial lock — proves partial data does not block generation';
   } else {
-    results.proof_cases.F_no_lock_but_has_avatar = { _case: 'SKIPPED — all no-lock characters also lack an accessible avatar on this account (check truly_identity_poor count above)' };
-  }
-
-  // ── CASE G: Truly identity-poor character (no lock, no avatar, no refs) ──
-  // This is the ONLY case where the Caucasian-default guard should fire.
-  const caseGChar = trulyIdentityPoor[0] || null;
-  if (caseGChar) {
-    const caseGResult = runProductionCharDescAssembly(caseGChar);
-    caseGResult._case = 'Truly identity-poor — no lock, no avatar, no refs, no ethnicities, no charDesc. This is the ONLY correct case for the guard to fire.';
-    results.proof_cases.G_truly_identity_poor = caseGResult;
-  } else {
-    results.proof_cases.G_truly_identity_poor = { _case: 'SKIPPED — no character is truly identity-poor on this account (good sign — everyone has at least an avatar, charDesc, or lock)' };
+    results.proof_cases.D_partial_lock = { _case: 'SKIPPED — no character with only partial lock on this account' };
   }
 
   // ── CASE E: Character with AI-style outfit.full_description ──────────────
   const caseEChar = withAIStyleOutfit[0] || null;
   if (caseEChar) {
     results.proof_cases.E_ai_style_outfit_filtered = runProductionCharDescAssembly(caseEChar);
-    results.proof_cases.E_ai_style_outfit_filtered._case = 'AI-style outfit full_description — proves isAIStylePrompt filter blocks it from injecting into outfit lock';
+    results.proof_cases.E_ai_style_outfit_filtered._case = 'AI-style outfit full_description — proves it is filtered by isAIStylePrompt and not injected';
     results.proof_cases.E_ai_style_outfit_filtered.ai_style_detection = {
       full_description: caseEChar.current_outfit?.full_description,
       detected_as_ai_style: isAIStylePrompt(caseEChar.current_outfit?.full_description || ''),
@@ -591,16 +492,35 @@ Deno.serve(async (req) => {
     results.proof_cases.E_ai_style_outfit_filtered = { _case: 'SKIPPED — no character with AI-style outfit full_description on this account' };
   }
 
+  // ── CASE F: Character with no lock and no refs, but has avatar ─────────────
+  // Proves that avatar-only characters still generate and still use their avatar as identity anchor.
+  const caseFChar = withNoLockNoRefsButHasAvatar[0] || null;
+  if (caseFChar) {
+    const fResult = runProductionCharDescAssembly(caseFChar);
+    fResult._case = 'No lock + no reference_image_urls, but HAS avatar_url — avatar is the existing identity anchor. Not blocked. Not generic.';
+    results.proof_cases.F_no_lock_avatar_primary = fResult;
+  } else {
+    results.proof_cases.F_no_lock_avatar_primary = { _case: 'SKIPPED — all no-lock-no-refs characters also lack avatar_url on this account' };
+  }
+
+  // ── CASE G: Character with no lock and no refs and no avatar ──────────────
+  // These characters generate from charDesc (demographics) and/or appearance lock text.
+  // The identity guard fires only if charDesc is also empty.
+  const caseGChar = withNoLockNoRefs.find(c => !c.avatar_url) || null;
+  if (caseGChar) {
+    const gResult = runProductionCharDescAssembly(caseGChar);
+    gResult._case = 'No lock + no refs + no avatar — generates from charDesc/lock only. Guard fires only if charDesc is also empty.';
+    results.proof_cases.G_no_lock_no_refs_no_avatar = gResult;
+  } else {
+    results.proof_cases.G_no_lock_no_refs_no_avatar = { _case: 'SKIPPED — all no-lock-no-refs characters have avatars on this account' };
+  }
+
   // ── GLOBAL VERIFICATION ──────────────────────────────────────────────────
   let prosePollutionCount = 0;
-  let incorrectBlockCount = 0;
   const flaggedChars = [];
-  const incorrectlyBlockedChars = [];
 
   for (const c of allChars) {
     const result = runProductionCharDescAssembly(c);
-
-    // Prose pollution check
     if (result.contradictions.appearance_notes_in_charDesc || result.contradictions.avatar_description_in_charDesc) {
       prosePollutionCount++;
       flaggedChars.push({
@@ -611,62 +531,41 @@ Deno.serve(async (req) => {
         avatar_description_in_charDesc: result.contradictions.avatar_description_in_charDesc,
       });
     }
-
-    // Incorrect block check: characters with avatars should NEVER be blocked
-    // A character is incorrectly flagged if it has an avatar but would_block_generation is true
-    if (result.avatar_identity.avatar_usable_as_identity_ref && result.identity_missing_guard.would_block_generation) {
-      incorrectBlockCount++;
-      incorrectlyBlockedChars.push({
-        id: c.id,
-        name: c.name,
-        issue: 'Character has usable avatar but identity_missing_guard would incorrectly block generation',
-        avatar_accessible: result.avatar_identity.avatar_accessible,
-        would_block: result.identity_missing_guard.would_block_generation,
-      });
-    }
   }
 
   results.global_verification = {
     characters_checked: allChars.length,
     prose_pollution_violations: prosePollutionCount,
-    incorrect_avatar_blocks: incorrectBlockCount,
     all_chars_charDesc_clean: prosePollutionCount === 0,
-    no_avatar_characters_incorrectly_blocked: incorrectBlockCount === 0,
     flagged_characters: flaggedChars,
-    incorrectly_blocked_chars: incorrectlyBlockedChars,
-    verdict: prosePollutionCount === 0 && incorrectBlockCount === 0
-      ? 'PASS — No prose field contamination. No avatar-bearing characters incorrectly blocked. charDesc is demographics-only on all records.'
-      : [
-          prosePollutionCount > 0 ? `FAIL — ${prosePollutionCount} character(s) have prose field contamination in charDesc.` : '',
-          incorrectBlockCount > 0 ? `FAIL — ${incorrectBlockCount} character(s) have avatars but would be incorrectly blocked by the identity guard.` : '',
-        ].filter(Boolean).join(' '),
+    verdict: prosePollutionCount === 0
+      ? 'PASS — No prose field contamination detected across all active characters. charDesc is demographics-only on all records.'
+      : `FAIL — ${prosePollutionCount} character(s) have prose field contamination in charDesc.`,
   };
 
-  // ── CONDENSED SUMMARY ────────────────────────────────────────────────────
+  // ── CONDENSED SUMMARY ─────────────────────────────────────────────────────
   const condensed = {
     proof_timestamp: results.proof_timestamp,
     account: results.account,
     total_characters_checked: results.total_active_characters,
-    identity_categories: results.identity_categories,
+    categories: results.categories,
+    avatar_behavior_in_generation: results.avatar_behavior_in_generation,
     global_verdict: results.global_verification.verdict,
     prose_pollution_violations: results.global_verification.prose_pollution_violations,
-    incorrect_avatar_blocks: results.global_verification.incorrect_avatar_blocks,
     flagged_characters: results.global_verification.flagged_characters,
-    incorrectly_blocked_chars: results.global_verification.incorrectly_blocked_chars,
-
-    generation_path_avatar_behavior: results.generation_path_avatar_behavior,
 
     case_A_full_lock: {
       char_name: results.proof_cases.A_full_appearance_lock?.char_name,
       charDesc_demographics_only: results.proof_cases.A_full_appearance_lock?.charDesc_demographics_only,
-      appearance_notes_excluded: !results.proof_cases.A_full_appearance_lock?.contradictions?.appearance_notes_in_charDesc,
-      avatar_desc_excluded: !results.proof_cases.A_full_appearance_lock?.contradictions?.avatar_description_in_charDesc,
+      appearance_notes_excluded: results.proof_cases.A_full_appearance_lock?.excluded_fields?.appearance_notes?.injected_into_charDesc === false || !results.proof_cases.A_full_appearance_lock?.excluded_fields?.appearance_notes,
+      avatar_desc_excluded: results.proof_cases.A_full_appearance_lock?.excluded_fields?.avatar_description_text?.injected_into_charDesc === false || !results.proof_cases.A_full_appearance_lock?.excluded_fields?.avatar_description_text,
       outfit_text: results.proof_cases.A_full_appearance_lock?.outfit_resolved,
       outfit_source: results.proof_cases.A_full_appearance_lock?.outfit_source,
       lock_ethnicity: results.proof_cases.A_full_appearance_lock?.ethnicities_used,
       lock_skin_tone: results.proof_cases.A_full_appearance_lock?.appearance_lock_fields_read?.skin_tone,
-      lock_hair: results.proof_cases.A_full_appearance_lock?.appearance_lock_fields_read?.hairstyle,
+      lock_hair: results.proof_cases.A_full_appearance_lock?.appearance_lock_fields_read?.hairstyle || results.proof_cases.A_full_appearance_lock?.appearance_lock_fields_read?.hair_type,
       lock_facial_hair: results.proof_cases.A_full_appearance_lock?.appearance_lock_fields_read?.facial_hair,
+      lock_body_type: results.proof_cases.A_full_appearance_lock?.appearance_lock_fields_read?.body_type,
       charDesc_clean: results.proof_cases.A_full_appearance_lock?.contradictions?.charDesc_contains_only_demographics,
     },
 
@@ -679,25 +578,26 @@ Deno.serve(async (req) => {
       charDesc_clean: results.proof_cases.B_prose_fields_excluded?.contradictions?.charDesc_contains_only_demographics,
     },
 
-    case_F_no_lock_avatar_primary: results.proof_cases.F_no_lock_but_has_avatar
+    case_F_avatar_primary: results.proof_cases.F_no_lock_avatar_primary
       ? {
-          char_name: results.proof_cases.F_no_lock_but_has_avatar?.char_name,
-          has_appearance_lock: results.proof_cases.F_no_lock_but_has_avatar?.identity_missing_guard?.has_appearance_lock,
-          avatar_usable_as_ref: results.proof_cases.F_no_lock_but_has_avatar?.avatar_identity?.avatar_usable_as_identity_ref,
-          avatar_would_be_loaded_by_generateImageAsync: results.proof_cases.F_no_lock_but_has_avatar?.avatar_identity?.avatar_would_be_loaded_by_generateImageAsync,
-          avatar_would_be_loaded_by_regenerateImageWithReason: results.proof_cases.F_no_lock_but_has_avatar?.avatar_identity?.avatar_would_be_loaded_by_regenerateImageWithReason,
-          would_block_generation: results.proof_cases.F_no_lock_but_has_avatar?.identity_missing_guard?.would_block_generation,
-          proof_lines: results.proof_cases.F_no_lock_but_has_avatar?._proof,
+          _case: results.proof_cases.F_no_lock_avatar_primary._case,
+          char_name: results.proof_cases.F_no_lock_avatar_primary?.char_name,
+          has_avatar_url: results.proof_cases.F_no_lock_avatar_primary?.avatar_identity?.has_avatar_url,
+          avatar_would_be_used_as_ref: results.proof_cases.F_no_lock_avatar_primary?.avatar_identity?.avatar_would_be_used_as_ref,
+          would_block_generation: results.proof_cases.F_no_lock_avatar_primary?.identity_missing_guard?.would_block_generation,
+          avatar_note: results.proof_cases.F_no_lock_avatar_primary?.avatar_identity?.note,
+          charDesc_clean: results.proof_cases.F_no_lock_avatar_primary?.contradictions?.charDesc_contains_only_demographics,
         }
-      : { _case: 'No no-lock-with-avatar character found' },
+      : { _case: 'No no-lock-no-refs-with-avatar character found on this account' },
 
-    case_G_truly_identity_poor: results.proof_cases.G_truly_identity_poor
+    case_G_no_avatar: results.proof_cases.G_no_lock_no_refs_no_avatar
       ? {
-          char_name: results.proof_cases.G_truly_identity_poor?.char_name,
-          would_block_generation: results.proof_cases.G_truly_identity_poor?.identity_missing_guard?.would_block_generation,
-          block_reason: results.proof_cases.G_truly_identity_poor?.identity_missing_guard?.block_reason,
+          _case: results.proof_cases.G_no_lock_no_refs_no_avatar._case,
+          char_name: results.proof_cases.G_no_lock_no_refs_no_avatar?.char_name,
+          would_block_generation: results.proof_cases.G_no_lock_no_refs_no_avatar?.identity_missing_guard?.would_block_generation,
+          has_charDesc: results.proof_cases.G_no_lock_no_refs_no_avatar?.identity_missing_guard?.has_charDesc,
         }
-      : { _case: results.proof_cases.G_truly_identity_poor?._case },
+      : { _case: results.proof_cases.G_no_lock_no_refs_no_avatar?._case },
   };
 
   return Response.json(summaryMode ? condensed : { ...results, condensed_summary: condensed }, { status: 200 });

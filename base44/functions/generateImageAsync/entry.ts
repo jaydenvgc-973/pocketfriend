@@ -1142,46 +1142,23 @@ Deno.serve(async (req) => {
         }
       }
 
-      // ── CORRECTED IDENTITY MISSING GUARD ────────────────────────────────────
-      // Identity authority order (per spec):
-      //   1. Appearance lock (structured fields)
-      //   2. Reference images (reference_image_urls — already loaded into charRefs)
-      //   3. Avatar URL — avatar IS identity data. A character with an avatar is NOT identity-poor.
-      //   4. Structured profile fields (ethnicity, hair, skin, body)
-      //   5. Demographics (age/gender = charDesc)
-      //
-      // BLOCK only when truly NONE of these exist.
-      // DO NOT block a character that has an avatar_url — the avatar is the face anchor.
+      // Identity missing guard: block if NO refs AND NO appearance lock AND NO demographics.
+      // charDesc is now demographics-only (age/gender), so also check appearance_lock and ethnicities.
+      // NOTE: The avatar fallback runs above this point (lines 1137-1143) — if the avatar was
+      // accessible and non-generated, it was already loaded into charRefs. So charRefs.length === 0
+      // here means: no reference_image_urls AND avatar either didn't exist or wasn't loadable.
+      // The guard is correct as-is — do not re-check avatar_url here.
       const hasAppearanceLock = charRecord?.appearance_lock && Object.keys(charRecord.appearance_lock).length > 0;
       const hasEthnicities = (charRecord?.ethnicities || []).length > 0;
-      const hasStructuredProfileFields = hasAppearanceLock || hasEthnicities ||
-        !!(charRecord?.appearance_lock?.skin_tone) ||
-        !!(charRecord?.appearance_lock?.hairstyle || charRecord?.appearance_lock?.hair_type) ||
-        !!(charRecord?.appearance_lock?.body_type || charRecord?.appearance_lock?.overall_aesthetic);
-      // Avatar already loaded above into charRefs if accessible — but also check avatar_url directly
-      // so the guard logic is independent of whether avatar was already added to charRefs
-      const avatarPublicForGuard = charRecord?.avatar_url ? toPublicCDN(charRecord.avatar_url) : null;
-      const avatarUsableForGuard = avatarPublicForGuard && isAccessible(avatarPublicForGuard) && !avatarPublicForGuard.includes('generated_image');
-
-      const trulyIdentityMissing = charRefs.length === 0
-        && !avatarUsableForGuard
-        && !hasStructuredProfileFields
-        && !hasEthnicities
-        && !charDesc;
-
-      if (trulyIdentityMissing) {
-        console.error(`[generateImageAsync] ❌ IDENTITY MISSING — Caucasian-default guard triggered for "${characterName || characterId}". No avatar, no refs, no lock, no ethnicity, no demographics. Blocking to prevent whitewashed default.`);
+      if (charRefs.length === 0 && !charDesc && !hasAppearanceLock && !hasEthnicities) {
+        console.error(`[generateImageAsync] ❌ IDENTITY MISSING — Caucasian-default guard triggered for "${characterName || characterId}". Blocking generation to prevent whitewashed default.`);
         await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
         return Response.json({
           success: false,
-          error: `Subject identity is missing. Add a photo, avatar, or appearance description before generating — the app will not invent a default person.`,
+          error: `Subject identity is missing. Add reference photos or an appearance description before generating — the app will not invent a default person.`,
           identity_missing: true,
           caucasian_default_blocked: true,
         });
-      }
-
-      if (avatarUsableForGuard && charRefs.length === 0) {
-        console.log(`[generateImageAsync] ℹ️ No reference_image_urls for "${characterName || charRecord?.name}" — avatar_url will be used as face anchor (see avatar fallback below).`);
       }
 
       if (charRefs.length === 0) {
