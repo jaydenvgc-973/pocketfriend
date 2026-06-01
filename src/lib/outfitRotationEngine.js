@@ -100,23 +100,21 @@ function pickFromPool(pool, currentOutfitId = null, characterId = '') {
   if (pool.length === 0) return null;
   if (pool.length === 1) return pool[0];
 
-  // Prioritize favorites
-  const favorites = pool.filter(o => o.is_favorite);
-  const candidates = favorites.length > 0 ? favorites : pool;
-
-  // If only one candidate, return it
-  if (candidates.length === 1) return candidates[0];
-
-  // Rotate using daily index, skipping current outfit if possible
-  const idx = getDailyRotationIndex(candidates, characterId);
-  const picked = candidates[idx];
-
-  // If we landed on the current outfit and there are alternatives, pick the next one
-  if (picked?.outfit_id === currentOutfitId && candidates.length > 1) {
-    return candidates[(idx + 1) % candidates.length];
+  // CANONICAL RULE: If the currently worn outfit is in this pool, return it immediately.
+  // The current_outfit selection is the user's explicit choice and must never be skipped.
+  if (currentOutfitId) {
+    const currentInPool = pool.find(o => o.outfit_id === currentOutfitId);
+    if (currentInPool) return currentInPool;
   }
 
-  return picked;
+  // No currently worn outfit in this pool — use daily rotation among candidates.
+  // Prioritize favorites within the rotation.
+  const favorites = pool.filter(o => o.is_favorite);
+  const candidates = favorites.length > 0 ? favorites : pool;
+  if (candidates.length === 1) return candidates[0];
+
+  const idx = getDailyRotationIndex(candidates, characterId);
+  return candidates[idx];
 }
 
 /**

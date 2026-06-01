@@ -178,18 +178,19 @@ export function pickOutfitFromCloset(character, targetCategory) {
     if (pool.length === 0) continue;
     if (pool.length === 1) return pool[0];
 
-    // Daily rotation: deterministic by day + character ID
+    // CANONICAL RULE: If the currently worn outfit (current_outfit) is in this category pool,
+    // return it first — it is the user's explicit selection and must not be skipped by rotation.
+    if (currentOutfitId) {
+      const currentInPool = pool.find(o => o.outfit_id === currentOutfitId);
+      if (currentInPool) return currentInPool;
+    }
+
+    // No currently worn outfit in this pool — use daily rotation
     const now = new Date();
     const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
     const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
     const idx = (dayOfYear + idHash) % pool.length;
-    const picked = pool[idx];
-
-    // Avoid same as current if alternatives exist
-    if (picked?.outfit_id === currentOutfitId && pool.length > 1) {
-      return pool[(idx + 1) % pool.length];
-    }
-    return picked;
+    return pool[idx];
   }
 
   // Last resort: any outfit

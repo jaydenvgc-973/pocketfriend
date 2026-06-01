@@ -72,30 +72,82 @@ function resolveOutfitCategory(character) {
 
 function resolveCharacterOutfitForPrompt(character) {
   if (!character) return { text: null, source: 'no_character', name: null, category: null };
+
+  // ── PRIORITY 1: character.current_outfit (the explicitly selected/worn outfit) ──
+  // This is the canonical "currently wearing" field. It must win whenever it has any
+  // usable clothing data — piece fields, full_description, or even a label alone.
+  // Do NOT skip it just because buildOutfitText returns null; try all text sources first.
   const co = character.current_outfit;
   if (co?.outfit_id || co?.label) {
     const t = buildOutfitText(co);
-    if (t) { console.log(`[OutfitResolver] ✅ P1 current_outfit WINS: label="${co.label}" id="${co.outfit_id}" cat="${co.category}" → "${t.substring(0,120)}"`); return { text: t, source: 'current_outfit', name: co.label || co.outfit_id || 'active', category: co.category || null }; }
-    if (co.full_description?.trim()) { const fd = co.full_description.trim(); console.log(`[OutfitResolver] ✅ P1 current_outfit full_description: "${fd.substring(0,80)}"`); return { text: fd, source: 'current_outfit_full_desc', name: co.label || 'active', category: co.category || null }; }
-    console.warn(`[OutfitResolver] ⚠️ P1 current_outfit (label="${co.label}" id="${co.outfit_id}") all fields empty — falling to P2`);
+    if (t) {
+      console.log(`[OutfitResolver] ✅ P1 current_outfit WINS: label="${co.label}" id="${co.outfit_id}" cat="${co.category}" → "${t.substring(0,120)}"`);
+      return { text: t, source: 'current_outfit', name: co.label || co.outfit_id || 'active', category: co.category || null };
+    }
+    if (co.full_description?.trim()) {
+      const fd = co.full_description.trim();
+      console.log(`[OutfitResolver] ✅ P1 current_outfit full_description: "${fd.substring(0,80)}"`);
+      return { text: fd, source: 'current_outfit_full_desc', name: co.label || 'active', category: co.category || null };
+    }
+    // If current_outfit has an outfit_id, look it up in the closet and use that item's data.
+    // This handles the case where current_outfit is a reference stub (id + label only) whose
+    // full clothing fields live on the matching closet item.
+    if (co.outfit_id) {
+      const closetMatch = (character.character_closet || []).find(item => item.outfit_id === co.outfit_id);
+      if (closetMatch) {
+        const t2 = buildOutfitText(closetMatch);
+        if (t2) {
+          console.log(`[OutfitResolver] ✅ P1 current_outfit resolved from closet match: id="${co.outfit_id}" → "${t2.substring(0,120)}"`);
+          return { text: t2, source: 'current_outfit_closet_match', name: co.label || closetMatch.label || 'active', category: closetMatch.category || co.category || null };
+        }
+      }
+    }
+    console.warn(`[OutfitResolver] ⚠️ P1 current_outfit (label="${co.label}" id="${co.outfit_id}") has no usable text — falling to P2 closet`);
   }
+
+  // ── PRIORITY 2: Closet selection by context category ──────────────────────────
+  // Walk the context-appropriate fallback chain. Within each category pool,
+  // PREFER the currently worn outfit (co) if it exists in that pool — do NOT skip it.
+  // The rotation logic must not actively avoid the selected outfit.
   const outfits = (character.character_closet || []).filter(item => item.outfit_id);
-  if (!outfits.length) { console.warn(`[OutfitResolver] ⚠️ P2: no closet outfits`); return { text: null, source: 'no_closet', name: null, category: null }; }
+  if (!outfits.length) {
+    console.warn(`[OutfitResolver] ⚠️ P2: no closet outfits`);
+    return { text: null, source: 'no_closet', name: null, category: null };
+  }
+
   const targetCategory = resolveOutfitCategory(character);
-  console.log(`[OutfitResolver] P2 closet rotation: category="${targetCategory}" presence="${character?.resolved_presence_status || 'unknown'}"`);
+  console.log(`[OutfitResolver] P2 closet: category="${targetCategory}" presence="${character?.resolved_presence_status || 'unknown'}"`);
   const chain = OUTFIT_FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
+
   for (const cat of chain) {
     const pool = outfits.filter(o => o.category === cat);
     if (!pool.length) continue;
-    if (pool.length === 1) { const t = buildOutfitText(pool[0]); return { text: t, source: 'closet_rotation', name: pool[0].label || cat, category: cat }; }
+
+    // If the currently worn outfit is in this category pool, use it — it is the selected state.
+    if (co?.outfit_id) {
+      const currentInPool = pool.find(o => o.outfit_id === co.outfit_id);
+      if (currentInPool) {
+        const t = buildOutfitText(currentInPool);
+        if (t) {
+          console.log(`[OutfitResolver] ✅ P2 current outfit found in pool cat="${cat}": "${t.substring(0,80)}"`);
+          return { text: t, source: 'closet_current_worn', name: currentInPool.label || cat, category: cat };
+        }
+      }
+    }
+
+    // No currently worn outfit in this pool — use daily rotation across the pool.
+    if (pool.length === 1) {
+      const t = buildOutfitText(pool[0]);
+      return { text: t, source: 'closet_rotation', name: pool[0].label || cat, category: cat };
+    }
     const dayOfYear = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
     const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    let idx = (dayOfYear + idHash) % pool.length;
-    if (pool[idx]?.outfit_id === co?.outfit_id && pool.length > 1) idx = (idx + 1) % pool.length;
+    const idx = (dayOfYear + idHash) % pool.length;
     const t = buildOutfitText(pool[idx]);
     console.log(`[OutfitResolver] P2 rotation: cat="${cat}" → "${(t||'null').substring(0,80)}"`);
     return { text: t, source: 'closet_rotation', name: pool[idx].label || cat, category: cat };
   }
+
   return { text: null, source: 'closet_chain_miss', name: null, category: targetCategory };
 }
 
