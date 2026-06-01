@@ -148,9 +148,36 @@ export function resolveUnreadBadgeCounts(conversations, perConvoMessages, viewed
       continue;
     }
 
+    // BILATERAL RECEIVER GUARD: for bilateral world_phone convos, the conversation has
+    // exactly two participant_character_ids: [senderSide, receiverSide].
+    // A message is only unread FOR the viewedCharacterId if the viewedCharacterId is
+    // the intended RECEIVER. We derive the receiver as: the participant who is NOT the sender.
+    // This prevents bilateral convo messages from double-counting on both participants' cards.
+    // We only apply this guard when participant_character_ids is populated (bilateral convos).
+    // For non-bilateral (direct, phone, npc) convos we rely on the existing direction guard.
+    const bilateralParticipants = (convo.type === 'bilateral' || convo.channel === 'world_phone')
+      ? (convo.participant_character_ids || [])
+      : [];
+    const isBilateral = bilateralParticipants.length === 2;
+
     const msgs = perConvoMessages.get(convo.id) || [];
     for (const msg of msgs) {
-      const counted = isCountableUnread(msg, viewedCharacterId);
+      // For bilateral convos: derive the receiver from conversation participants.
+      // If receiver_character_id is already set on the message, trust it.
+      // If not set, derive: receiver = the participant who is NOT the sender.
+      let effectiveReceiverId = msg.receiver_character_id || null;
+      if (!effectiveReceiverId && isBilateral) {
+        const senderId = msg.sender_character_id || msg.character_id;
+        // The other participant is the receiver
+        effectiveReceiverId = bilateralParticipants.find(p => p !== senderId) || null;
+      }
+
+      // Build a synthetic message with the derived receiver for isCountableUnread
+      const msgForCheck = (effectiveReceiverId && !msg.receiver_character_id)
+        ? { ...msg, receiver_character_id: effectiveReceiverId }
+        : msg;
+
+      const counted = isCountableUnread(msgForCheck, viewedCharacterId);
       const diagEntry = {
         message_id: msg.id?.substring(0, 8),
         conversation_id: convo.id?.substring(0, 8),
@@ -159,7 +186,8 @@ export function resolveUnreadBadgeCounts(conversations, perConvoMessages, viewed
         sender_type: msg.sender_type,
         sender_character_id: msg.sender_character_id?.substring(0, 8) || 'none',
         character_id: msg.character_id?.substring(0, 8) || 'none',
-        receiver_character_id: msg.receiver_character_id?.substring(0, 8) || 'none',
+        receiver_character_id: msgForCheck.receiver_character_id?.substring(0, 8) || 'none',
+        derived_receiver: (!msg.receiver_character_id && effectiveReceiverId) ? effectiveReceiverId.substring(0, 8) : null,
         msg_type: msg.type || 'none',
         is_read: msg.is_read,
         recovery_signal: msg.recovery_signal,
@@ -179,7 +207,7 @@ export function resolveUnreadBadgeCounts(conversations, perConvoMessages, viewed
         else {
           const senderId = msg.sender_character_id || msg.character_id;
           if (senderId === viewedCharacterId) diagEntry.exclusion_reason = 'outgoing_from_viewed_char';
-          else if (msg.receiver_character_id && msg.receiver_character_id !== viewedCharacterId) diagEntry.exclusion_reason = 'receiver_is_other_char';
+          else if (msgForCheck.receiver_character_id && msgForCheck.receiver_character_id !== viewedCharacterId) diagEntry.exclusion_reason = 'receiver_is_other_char';
           else diagEntry.exclusion_reason = 'unknown';
         }
       }

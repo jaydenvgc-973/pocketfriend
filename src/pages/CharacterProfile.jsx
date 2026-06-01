@@ -236,8 +236,14 @@ export default function CharacterProfile() {
     gcTime: 30 * 60 * 1000,
   });
 
+  // workLocations query key includes characterId + the character's occupation fields.
+  // CRITICAL: owner_email is NOT in the key — it's read from character inside queryFn.
+  // If character.owner_email is absent on first render the query would produce empty results
+  // and then never re-run (staleTime caches the empty result). Instead we gate on
+  // !!character (which already ensures character fields are present) and read owner_email
+  // inside queryFn at execution time, not from the cache key.
   const { data: workLocations = [] } = useQuery({
-    queryKey: ['workLocations', characterId, character?.occupation_location_id, (character?.additional_occupation_locations || []).map(l => l.location_id).join(','), character?.owner_email || ''],
+    queryKey: ['workLocations', characterId, character?.occupation_location_id, (character?.additional_occupation_locations || []).map(l => l.location_id).join(',')],
     queryFn: async () => {
       if (!character) return [];
 
@@ -262,48 +268,55 @@ export default function CharacterProfile() {
         if (result) addLoc(result);
       }
 
-      // SOURCE 2: Location-side worker_character_ids array (contains characterId).
-      // CRITICAL FIX: the correct "array contains value" syntax passes the scalar value,
-      // NOT wrapped in an array. { worker_character_ids: [characterId] } means
-      // "field equals exactly this array" — it will never match a location with multiple
-      // workers. The correct form passes the characterId scalar so the filter tests
-      // whether the array field contains that value.
+      // SOURCE 2: Location-side worker_character_ids array.
+      // Pass the characterId scalar — the platform filter tests whether the array field
+      // contains this value.
       const byWorkerList = await base44.entities.LocationReference.filter({ worker_character_ids: characterId }).catch(() => []);
       byWorkerList.forEach(loc => addLoc(loc));
 
-      // SOURCE 3: Scan shared and owner-email-matched locations for characterId in
-      // worker_job_titles / worker_shifts / worker_pay_rates object keys.
-      // This catches locations assigned via the location editor (Workers & Employees panel)
-      // where worker_character_ids may not have been populated, and where the location
-      // scope is "shared" (admin/seeded) rather than owner-email-scoped.
-      // We run TWO queries:
-      //   (a) owner-email-matched (account-private locations)
-      //   (b) shared-scope (global/admin locations like gyms, workplaces)
+      // SOURCE 3: Full scan of locations accessible to this character's owner.
+      // Reads owner_email AT EXECUTION TIME from the fully-loaded character object.
+      // Covers locations where characterId appears as a key in worker_job_titles /
+      // worker_shifts / worker_pay_rates even if worker_character_ids was never populated.
+      // SCOPE COVERAGE:
+      //   (a) owner_email-matched locations (user-created private locations)
+      //   (b) scope='shared' locations (admin/seeded global locations)
+      //   (c) scope='account_global' locations (seeded per-account locations)
+      // All three must be scanned — the location editor writes worker data to whichever
+      // scope the location was originally created with.
+      const ownerEmail = character.owner_email;
       const scanLocs = [];
-      if (character.owner_email) {
-        const ownerLocs = await base44.entities.LocationReference.filter({ owner_email: character.owner_email }).catch(() => []);
-        ownerLocs.forEach(l => { if (!seen.has(l.id)) scanLocs.push(l); });
-      }
-      // Always scan shared-scope locations — shared locations have no owner_email
-      // and are missed entirely by the owner-email-only query above.
-      const sharedLocs = await base44.entities.LocationReference.filter({ scope: 'shared' }).catch(() => []);
-      const scanSeenIds = new Set(scanLocs.map(l => l.id));
-      sharedLocs.forEach(l => { if (!seen.has(l.id) && !scanSeenIds.has(l.id)) scanLocs.push(l); });
+      const scanSeen = new Set(seen); // track IDs we will scan (avoid duplicate scan entries)
 
-      scanLocs.forEach(loc => {
-        if (seen.has(loc.id)) return;
+      if (ownerEmail) {
+        const ownerLocs = await base44.entities.LocationReference.filter({ owner_email: ownerEmail }).catch(() => []);
+        ownerLocs.forEach(l => { if (!scanSeen.has(l.id)) { scanSeen.add(l.id); scanLocs.push(l); } });
+      }
+
+      // Shared/global scope locations (no owner_email) — always scan these
+      const sharedLocs = await base44.entities.LocationReference.filter({ scope: 'shared' }).catch(() => []);
+      sharedLocs.forEach(l => { if (!scanSeen.has(l.id)) { scanSeen.add(l.id); scanLocs.push(l); } });
+
+      // account_global scope — covers seeded locations that may have no owner_email
+      const accountGlobalLocs = await base44.entities.LocationReference.filter({ scope: 'account_global' }).catch(() => []);
+      accountGlobalLocs.forEach(l => { if (!scanSeen.has(l.id)) { scanSeen.add(l.id); scanLocs.push(l); } });
+
+      for (const loc of scanLocs) {
+        if (seen.has(loc.id)) continue; // already added via Source 1 or 2
         const inJobTitles = loc.worker_job_titles && Object.prototype.hasOwnProperty.call(loc.worker_job_titles, characterId);
         const inShifts = loc.worker_shifts && Object.prototype.hasOwnProperty.call(loc.worker_shifts, characterId);
         const inPayRates = loc.worker_pay_rates && Object.prototype.hasOwnProperty.call(loc.worker_pay_rates, characterId);
         if (inJobTitles || inShifts || inPayRates) {
+          console.log(`[workLocations] FOUND via scan: char=${character.name} loc=${loc.name} scope=${loc.scope} inJobTitles=${inJobTitles} inShifts=${inShifts} inPayRates=${inPayRates}`);
           addLoc(loc);
         }
-      });
+      }
 
+      console.log(`[workLocations] char=${character.name}(${characterId.substring(0,8)}) found=${combined.length} locs=[${combined.map(l=>l.name).join(',')}]`);
       return combined;
     },
     enabled: !!characterId && !!character,
-    staleTime: 120000,
+    staleTime: 0, // always re-fetch when character profile opens — employment data must be live
   });
 
   const getWorkLocationName = (locationId) => {

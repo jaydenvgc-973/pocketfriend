@@ -56,10 +56,15 @@ export function useHomeUnreadCounts(ownerEmail, allConversations = []) {
       const perConvoMessages = await fetchUnreadMessagesForConversations(convoIds, base44);
 
       // Build result map: characterId → badge counts
-      // Each conversation can have multiple character_ids — attribute unread to each character.
       const resultMap = new Map();
 
-      // Group conversations by character for efficient resolution
+      // Group conversations by character for efficient resolution.
+      // BILATERAL CONVO RULE: a bilateral world_phone convo has character_ids=[A, B].
+      // It appears in BOTH A's and B's convo lists. For A's card, viewedCharacterId=A,
+      // so messages FROM A are direction-guarded out (correct: those are outgoing for A).
+      // For B's card, viewedCharacterId=B, so messages FROM B are direction-guarded out.
+      // This is correct behaviour — each character only sees messages sent TO them as unread.
+      // The direction guard in isCountableUnread handles this per-character correctly.
       const convosByChar = new Map();
       for (const convo of eligibleConvos) {
         for (const cid of (convo.character_ids || [])) {
@@ -80,13 +85,15 @@ export function useHomeUnreadCounts(ownerEmail, allConversations = []) {
       return resultMap;
     },
     enabled: !!ownerEmail && eligibleConvos.length > 0,
-    // 60s staleTime: green dots must clear promptly after WorldContactsPopup marks messages read.
-    // The prior 5-minute staleTime caused green dots to persist long after opening World Contacts.
-    staleTime: 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime: 30 * 60 * 1000,
-    refetchOnMount: false,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
-    placeholderData: (prev) => prev,
+    // NO placeholderData: do not return stale positive counts while re-fetching.
+    // placeholderData: (prev) => prev was causing green dots to re-appear immediately
+    // after invalidation because the previous positive-count map was shown during the
+    // re-fetch window, even after mark-read settled. Remove it so the map returns
+    // fresh data only — the 30s staleTime keeps it from refetching excessively.
   });
 
   // Listen for 'home:refresh_unread' — dispatched by thread:read settle timers
