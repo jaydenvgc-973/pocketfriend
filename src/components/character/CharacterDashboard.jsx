@@ -313,16 +313,22 @@ function StatChip({ icon: Icon, label, value }) {
 const ICON_MAP = { moon: Moon, sun: Sun, briefcase: Briefcase, home: Home, mappin: MapPin, heart: Heart, book: BookOpen, dollar: DollarSign, message: MessageCircle, phone: Phone, activity: Activity };
 const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I className="w-3.5 h-3.5" />; };
 
+// Session-level cache — persists across remounts within the same tab session.
+// Prevents re-running 8 parallel entity queries when navigating away and back to the same profile.
+// Key: characterId → dashboard data object.
+const dashboardCache = {};
+
 export default function CharacterDashboard({ character }) {
-  const [data, setData] = useState(null);
+  const charId = character?.id;
+
+  const [data, setData] = useState(() => dashboardCache[charId] || null);
   const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(() => !!dashboardCache[charId]);
 
   useEffect(() => {
-    if (loaded || loading || !character?.id) return;
+    if (loaded || loading || !charId) return;
     setLoading(true);
 
-    const charId = character.id;
     const ownerEmail = character.owner_email;
     const now = new Date();
     const cutoff24h = subHours(now, 24).toISOString();
@@ -882,13 +888,15 @@ export default function CharacterDashboard({ character }) {
         ? `${workLocationName}${character.occupation ? ` · ${character.occupation}` : ''}`
         : character.occupation || null;
 
-      setData({ liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 12), socialStats: { msgsSent, positiveInteractions, conflictEvents }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext });
+      const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 12), socialStats: { msgsSent, positiveInteractions, conflictEvents }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
+      dashboardCache[charId] = dashData;
+      setData(dashData);
       setLoaded(true);
       setLoading(false);
     }).catch((err) => {
       console.error('[CharacterDashboard] Fatal fetch error:', err?.message);
       // Set minimal fallback data so the dashboard renders with what it has
-      setData({
+      const fallbackData = {
         liveLocationDisplay: character?.resolved_current_location_name || '—',
         liveStatus: character?.resolved_presence_status || 'home',
         trendData: [],
@@ -899,11 +907,14 @@ export default function CharacterDashboard({ character }) {
         workDisplay: character?.occupation_location_name || character?.occupation || null,
         hasPeopleJob: false,
         occSocialContext: null,
-      });
+      };
+      // Only cache fallback if we have a charId — don't pollute cache with null-key data
+      if (charId) dashboardCache[charId] = fallbackData;
+      setData(fallbackData);
       setLoaded(true);
       setLoading(false);
     });
-  }, [character?.id]); // eslint-disable-line
+  }, [charId]); // eslint-disable-line
 
   if (loading) return <div className="flex items-center justify-center py-10"><div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" /></div>;
   // NEVER return null — always render the dashboard shell even if data is minimal
