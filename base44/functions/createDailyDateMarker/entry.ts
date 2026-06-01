@@ -1,132 +1,36 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * createDailyDateMarker
- * 
- * Inserts daily date marker messages for all active created characters.
- * Runs daily at midnight (user local time).
- * 
- * Creates a system message (not user, not character) that displays:
- * —— Monday, April 27, 2026 ——
- * 
- * Inserted into both:
- * - Conversation (Chat timeline)
- * - Message (if separate Text timeline exists)
+ * createDailyDateMarker — DEPRECATED AND DISABLED
+ *
+ * This function previously inserted "—— Monday, April 27, 2026 ——" records
+ * into the Message table with sender_type='system'. That architecture was
+ * fundamentally wrong:
+ *
+ * 1. Date dividers are UI-only. They must be derived from real message timestamps
+ *    during rendering via injectDateSeparators() in lib/messageDateGrouping.js.
+ * 2. Saving divider text as Message records caused:
+ *    - The LLM to receive date strings as conversation context and sometimes echo them back
+ *    - Malformed "—— Monday, June 1, 2026 ——" bubbles appearing in the chat stream
+ *    - Unread count contamination (even with sender_type guards, recovery paths leaked)
+ *    - Last-message preview showing a date string instead of real dialogue
+ *
+ * The scheduled automation "Daily Date Marker — Midnight" has been archived.
+ * The UI date divider rendering (DateSeparator component + injectDateSeparators) is unaffected.
+ *
+ * This function is kept as a stub so the archived automation reference does not break.
+ * It does nothing and writes nothing.
  */
 Deno.serve(async (req) => {
-  try {
-    const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Get all active created characters for this user
-    const characters = await base44.entities.Character.filter({
-      created_by: user.email,
-      status: 'active',
-      character_type: 'active_created_character'
-    });
-
-    if (!characters || characters.length === 0) {
-      return Response.json({
-        success: true,
-        message: 'No active characters found',
-        characters_processed: 0,
-        date_markers_created: 0,
-        skipped: []
-      });
-    }
-
-    // Support backfill via payload parameter
-    const payload = await req.json().catch(() => ({}));
-    const targetDate = payload.targetDate ? new Date(payload.targetDate) : new Date();
-    const dateStr = targetDate.toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
-    });
-    const markerText = `—— ${dateStr} ——`;
-
-    let created = 0;
-    const skipped = [];
-
-    // For each character, get or create a conversation
-    for (const character of characters) {
-      if (!character.id) {
-        skipped.push({
-          character_id: character.id || 'unknown',
-          character_name: character.name || 'unknown',
-          reason: 'No character ID'
-        });
-        continue;
-      }
-
-      const characterId = character.id;
-      const characterName = character.name || characterId;
-
-      // Get the conversation for this character (usually exists from chat)
-      const conversations = await base44.entities.Conversation.filter({
-        character_ids: characterId,
-        created_by: user.email
-      });
-
-      if (!conversations || conversations.length === 0) {
-        skipped.push({
-          character_id: characterId,
-          character_name: characterName,
-          reason: 'No conversation found'
-        });
-        continue;
-      }
-
-      const conversation = conversations[0];
-
-      // Check if a marker already exists for today
-      const existingMarker = await base44.entities.Message.filter({
-        conversation_id: conversation.id,
-        content: markerText,
-        sender_type: 'system'
-      });
-
-      if (existingMarker && existingMarker.length > 0) {
-        skipped.push({
-          character_id: characterId,
-          character_name: characterName,
-          reason: 'Marker already exists for today'
-        });
-        continue;
-      }
-
-      // Create the date marker message
-      await base44.entities.Message.create({
-        conversation_id: conversation.id,
-        sender_type: 'system',
-        character_id: null,
-        content: markerText,
-        timestamp: new Date().toISOString(),
-        is_narrative: false
-      });
-
-      created++;
-    }
-
-    return Response.json({
-      success: true,
-      message: 'Daily date markers created',
-      characters_processed: characters.length,
-      date_markers_created: created,
-      date_string: dateStr,
-      skipped: skipped,
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    return Response.json({
-      error: error.message,
-      stack: error.stack
-    }, { status: 500 });
+  const base44 = createClientFromRequest(req);
+  const user = await base44.auth.me();
+  if (!user) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  return Response.json({
+    success: true,
+    message: 'createDailyDateMarker is deprecated. Date dividers are UI-only, derived from message timestamps. No Message records were created.',
+    records_created: 0,
+  });
 });

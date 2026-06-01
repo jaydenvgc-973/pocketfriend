@@ -44,7 +44,7 @@ import {
   buildStatusPromptContext,
   buildSleepInterruptionContext,
 } from "@/lib/responseTimingUtils";
-import { filterDashes } from "@/lib/dashFilter";
+import { filterDashes, isDateDividerContent } from "@/lib/dashFilter";
 import { stripCharacterNamePrefix } from "@/lib/nameFilterUtils";
 import { useUnifiedBehaviour } from "@/lib/useUnifiedBehaviour";
 import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
@@ -260,17 +260,8 @@ export default function Chat({ chatTypeOverride } = {}) {
     enabled: !!characterId && showSendMoney,
   });
 
-  // PRIORITY ARCHITECTURE: initializeVoiceSettings removed from Chat mount.
-  // Voice settings are initialized lazily when the user first triggers voice playback,
-  // not preemptively on every Chat open. useCharacterVoice checks all required fields
-  // at call time — no pre-initialization is required for core Chat/Text operation.
-  //
-  // PRIORITY ARCHITECTURE: useChatPromptBackfill removed entirely.
-  // The inline buildSystemPrompt fallback in sendMessage (below) fully handles
-  // characters missing system_prompt_url on every send — no stored URL is required.
-  // Prompt storage is an optimization. Optimizations do not run on page open.
-  // If prompt storage is ever needed, it must trigger post-response, after the user
-  // has already received their chat reply, not on Chat mount.
+  // Voice settings initialized lazily on first playback. Prompt storage is an
+  // optimization handled post-response — not on mount.
 
   const { isLoadingConvoRef, loadOlderMessages } = useChatLoadConvo({
     characterId,
@@ -1335,6 +1326,12 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       responseText = filterDashes(responseText);
       responseText = stripCharacterNamePrefix(responseText, character.name);
+
+      // SAVE GUARD: Reject date-divider shaped LLM output before it reaches the DB.
+      if (responseText && isDateDividerContent(responseText)) {
+        console.error(`[SAVE_GUARD] Rejected date-divider shaped response for ${character.name}: "${responseText.substring(0, 80)}"`);
+        responseText = "";
+      }
 
       // ── WORLD PHONE CHARACTER-ACTION DETECTION ──────────────────────────────
       // If the LLM response CLAIMS it sent/texted/called someone, detect and persist it.

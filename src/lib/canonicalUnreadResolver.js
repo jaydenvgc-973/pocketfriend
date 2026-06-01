@@ -213,15 +213,30 @@ export function resolveUnreadBadgeCounts(conversations, perConvoMessages, viewed
 export async function fetchUnreadMessagesForConversations(conversationIds, base44, limitPerConvo = 50) {
   if (!conversationIds || conversationIds.length === 0) return new Map();
 
-  const results = await Promise.all(
-    conversationIds.map(convoId =>
-      base44.entities.Message.filter(
-        { conversation_id: convoId, sender_type: 'character', is_read: false },
-        null,
-        limitPerConvo
-      ).catch(() => [])
-    )
-  );
+  // RATE LIMIT PROTECTION: Never fire all Message.filter calls simultaneously.
+  // Process in chunks of 3, with a 60ms pause between chunks.
+  // This replaces the prior Promise.all burst which created N concurrent DB reads.
+  const CHUNK_SIZE = 3;
+  const CHUNK_DELAY_MS = 60;
+
+  const results = [];
+  for (let i = 0; i < conversationIds.length; i += CHUNK_SIZE) {
+    const chunk = conversationIds.slice(i, i + CHUNK_SIZE);
+    const chunkResults = await Promise.all(
+      chunk.map(convoId =>
+        base44.entities.Message.filter(
+          { conversation_id: convoId, sender_type: 'character', is_read: false },
+          null,
+          limitPerConvo
+        ).catch(() => [])
+      )
+    );
+    results.push(...chunkResults);
+    // Pause between chunks (skip delay after the last chunk)
+    if (i + CHUNK_SIZE < conversationIds.length) {
+      await new Promise(r => setTimeout(r, CHUNK_DELAY_MS));
+    }
+  }
 
   const map = new Map();
   conversationIds.forEach((convoId, idx) => {

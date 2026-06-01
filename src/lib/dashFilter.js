@@ -14,6 +14,31 @@
  *
  * EXCEPTION: hyphens inside words ("self-aware", "x-ray", "well-known") are preserved.
  */
+/**
+ * isDateDividerContent(text)
+ *
+ * Returns true if the text is shaped like a date divider rather than real dialogue.
+ * Used as a save guard before any character Message is persisted.
+ *
+ * Catches patterns like:
+ *   ", . Monday, June 1, 2026, ,"
+ *   "—— Thursday, May 22, 2026 ——"
+ *   "Monday, June 1, 2026"
+ */
+export function isDateDividerContent(text) {
+  if (!text) return false;
+  const t = text.trim();
+  if (!t) return false;
+  // dash-wrapped: —— text ——
+  if (/^[-–—,.\s]{2,}/.test(t) && /[-–—,.\s]{2,}$/.test(t) &&
+      /(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(t) &&
+      /\d{4}/.test(t) && t.length < 80) return true;
+  // plain weekday + year with no other content
+  if (/^[-–—,.\s]*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)[,\s]+/i.test(t) &&
+      /\d{4}/.test(t) && t.length < 60) return true;
+  return false;
+}
+
 export function filterDashes(text) {
   if (!text) return text;
 
