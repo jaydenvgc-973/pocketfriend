@@ -194,6 +194,17 @@ export function resolveUnreadBadgeCounts(conversations, perConvoMessages, viewed
     }
   }
 
+  // PROOF LOG: log exact unread message IDs backing every green dot.
+  // This makes green dot accuracy auditable — each green dot is traceable to real DB records.
+  if (green > 0) {
+    const greenMsgs = diagnostics.filter(d => d.badge_channel === 'green' && d.counted);
+    console.log(
+      `[GREEN_BADGE_PROOF] char=${viewedCharacterId?.substring(0, 8)} green=${green}` +
+      ` | msg_ids=[${greenMsgs.map(d => d.message_id).join(',')}]` +
+      ` | convos=[${[...new Set(greenMsgs.map(d => d.conversation_id))].join(',')}]`
+    );
+  }
+
   return { red_chat, red_text, green, diagnostics };
 }
 

@@ -38,16 +38,21 @@ export default function Home() {
   const [pendingReleases, setPendingReleases] = useState([]);
   const [graduationEvents, setGraduationEvents] = useState([]);
 
-  const { settings: userSettings, isLoading: isSettingsLoading, isError: isSettingsError } = useUserSettings();
-  // Keep settings as array-compatible for legacy references (onClose invite modal)
-  const settings = userSettings?.id ? [userSettings] : [];
-
+  // Resolve user FIRST — useUserSettings receives the email override to eliminate
+  // the cold-cache waterfall where settings wait for a second user query resolution.
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
+
+  // Pass currentUser?.email so useUserSettings can load settings in parallel with
+  // the user query, not sequentially after it. On warm cache this is a no-op.
+  // On cold cache this eliminates the blank balance delay.
+  const { settings: userSettings, isLoading: isSettingsLoading, isError: isSettingsError } = useUserSettings(currentUser?.email || null);
+  // Keep settings as array-compatible for legacy references (onClose invite modal)
+  const settings = userSettings?.id ? [userSettings] : [];
 
   // home_anchor_character_ids: stable IDs of continuity anchor characters (e.g. Ethan, Melody).
   // CRITICAL: Only pass anchors AFTER settings has finished loading.

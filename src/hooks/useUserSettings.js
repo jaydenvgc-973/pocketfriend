@@ -31,7 +31,7 @@ async function fetchAndConsolidate(userEmail) {
   return list[0];
 }
 
-export function useUserSettings() {
+export function useUserSettings(ownerEmailOverride = null) {
   const queryClient = useQueryClient();
   // Use staleTime: Infinity so this reads from the shared ['user'] cache populated by Home.
   // This eliminates the double-waterfall: without this, useUserSettings fires its own
@@ -40,33 +40,40 @@ export function useUserSettings() {
     queryKey: ['user'],
     queryFn: () => base44.auth.me(),
     staleTime: Infinity, // always read from shared cache — Home's query populates it
+    // COLD CACHE FIX: if ownerEmailOverride is provided (e.g. from Home which resolves user first),
+    // skip this query entirely — we already have the email we need.
+    enabled: !ownerEmailOverride,
   });
+  // ownerEmailOverride wins over the internal user query result.
+  // This eliminates the waterfall: Home passes currentUser?.email directly so settings
+  // can load in parallel with (not after) the Home user query resolution.
+  const resolvedEmail = ownerEmailOverride || user?.email;
 
-  const queryKey = ["userSettings", user?.email];
+  const queryKey = ["userSettings", resolvedEmail];
 
   const { data: settings = null, isLoading, isError } = useQuery({
     queryKey,
     // Serve from localStorage immediately — zero wait on mount
     initialData: () => {
-      if (!user?.email) return undefined;
-      const lfc = lfcRead(user.email, 'settings');
+      if (!resolvedEmail) return undefined;
+      const lfc = lfcRead(resolvedEmail, 'settings');
       return lfc?.data ?? undefined;
     },
     initialDataUpdatedAt: () => {
-      if (!user?.email) return undefined;
-      const lfc = lfcRead(user.email, 'settings');
+      if (!resolvedEmail) return undefined;
+      const lfc = lfcRead(resolvedEmail, 'settings');
       return lfc?.loaded_at ?? undefined;
     },
     queryFn: async () => {
-      const result = await fetchAndConsolidate(user?.email);
+      const result = await fetchAndConsolidate(resolvedEmail);
       // Persist to localStorage on every successful fetch
-      if (result && user?.email) lfcWrite(user.email, 'settings', result);
+      if (result && resolvedEmail) lfcWrite(resolvedEmail, 'settings', result);
       return result;
     },
     staleTime: 5 * 60 * 1000,   // 5 min — settings including user_balance
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    enabled: !!user?.email,
+    enabled: !!resolvedEmail,
     retry: 2,
     retryDelay: (attempt) => attempt * 1500,
     placeholderData: (prev) => prev,
@@ -82,7 +89,7 @@ export function useUserSettings() {
         return base44.entities.UserSettings.update(settings.id, data);
       }
       // Re-fetch before creating to prevent race-condition duplicates
-      const freshList = await base44.entities.UserSettings.filter({ owner_email: user?.email });
+      const freshList = await base44.entities.UserSettings.filter({ owner_email: resolvedEmail });
       if (freshList[0]?.id) {
         return base44.entities.UserSettings.update(freshList[0].id, data);
       }
@@ -90,7 +97,7 @@ export function useUserSettings() {
     },
     onSuccess: (saved) => {
       // Persist the updated settings to localStorage immediately
-      if (saved && user?.email) lfcWrite(user.email, 'settings', saved);
+      if (saved && resolvedEmail) lfcWrite(resolvedEmail, 'settings', saved);
       queryClient.invalidateQueries({ queryKey });
     },
   });

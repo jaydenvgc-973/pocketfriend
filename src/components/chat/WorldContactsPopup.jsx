@@ -123,16 +123,15 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           return false;
         });
         if (staleToMark.length > 0) {
-          console.log(`[WorldContactsPopup] Reconciliation: marking ${staleToMark.length} stale unread messages as read for char=${character.id}`);
-          await Promise.all(staleToMark.map(m => base44.entities.Message.update(m.id, { is_read: true }).catch(() => {})));
-          // Dispatch thread:read so the world contacts hook clears its LFC cache
-          window.dispatchEvent(new CustomEvent('thread:read', {
-            detail: { characterId: character.id, channel: 'world_phone', conversationId: null }
-          }));
-          // After writes settle, also refresh the home unread cache so CharacterCard green dot clears
-          setTimeout(() => {
-            window.dispatchEvent(new CustomEvent('home:refresh_unread'));
-          }, 2000);
+        console.log(`[WorldContactsPopup] Reconciliation: marking ${staleToMark.length} stale unread messages as read for char=${character.id} | msg_ids=[${staleToMark.map(m => m.id.substring(0, 8)).join(',')}]`);
+        await Promise.all(staleToMark.map(m => base44.entities.Message.update(m.id, { is_read: true }).catch(() => {})));
+        // Dispatch thread:read — the settle timer in useWorldContactsUnread will
+        // await the live fetch and THEN dispatch home:refresh_unread.
+        // Do NOT dispatch home:refresh_unread here — it must fire after the live fetch,
+        // not after the mark-read writes (DB write propagation may still be in flight).
+        window.dispatchEvent(new CustomEvent('thread:read', {
+          detail: { characterId: character.id, channel: 'world_phone', conversationId: null }
+        }));
         }
       } catch { /* non-fatal */ }
     };
@@ -334,6 +333,14 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         // Also dispatch home:refresh_unread so the CharacterCard green dot clears immediately
         // rather than waiting for the 5-minute stale time to expire.
         Promise.all(markReadPromises).then(() => {
+          // Dispatch thread:read immediately after all mark-read writes complete.
+          // The thread:read handler in useWorldContactsUnread will:
+          //   1. Bust its LFC cache
+          //   2. Run a 2.5s settle timer
+          //   3. await loadUnreadCounts(true) — live DB read
+          //   4. THEN dispatch home:refresh_unread
+          // So we do NOT dispatch home:refresh_unread here — the settle timer in the hook
+          // handles that after the live fetch confirms zero unread, preventing false positives.
           window.dispatchEvent(new CustomEvent('thread:read', {
             detail: {
               characterId: character.id,
@@ -342,10 +349,6 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
               contactId: contactId || null,
             }
           }));
-          // After a short settle, also refresh the home unread cache so the green dot clears
-          setTimeout(() => {
-            window.dispatchEvent(new CustomEvent('home:refresh_unread'));
-          }, 1500);
         });
 
         subscribeToConversation(found.id);

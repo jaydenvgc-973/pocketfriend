@@ -297,12 +297,16 @@ export function useWorldContactsUnread(characterId, contacts = [], ownerEmail = 
       // else: no contactId on green event — cache was busted above, live fetch will correct.
 
       // 4. After writes settle, do ONE live fetch to confirm DB state.
-      // Also dispatch home:refresh_unread so CharacterCard green dot syncs.
+      // CRITICAL: home:refresh_unread must fire AFTER the live fetch resolves,
+      // not simultaneously with calling loadUnreadCounts(true) (which is async).
+      // Firing before the fetch completes means useHomeUnreadCounts re-queries DB
+      // before mark-read writes have propagated, restoring the stale positive count.
       isFetchingRef.current = false;
-      settleTimerRef.current = setTimeout(() => {
+      settleTimerRef.current = setTimeout(async () => {
         settleTimerRef.current = null;
-        loadUnreadCounts(true);
-        // Refresh the home unread cache so the CharacterCard green badge reflects live state
+        await loadUnreadCounts(true);
+        // Now dispatch — DB reads in loadUnreadCounts have completed, so
+        // useHomeUnreadCounts will also see the committed mark-read state.
         window.dispatchEvent(new CustomEvent('home:refresh_unread'));
       }, 2500);
     };
