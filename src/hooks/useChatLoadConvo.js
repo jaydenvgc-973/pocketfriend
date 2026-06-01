@@ -261,8 +261,20 @@ export function useChatLoadConvo({
             , 'Message.filter');
             // Filter archived messages client-side — $exists: false can strip legacy messages
             // that don't have archived_date in their schema (saved before the field was added)
+            // Also filter out date-divider records created by the now-archived createDailyDateMarker
+            // function. These have sender_type='system' and content like "—— Monday, June 1, 2026 ——".
+            // Date dividers are UI-only and derived from real message timestamps at render time.
             if (Array.isArray(loadedMsgs)) {
-              loadedMsgs = loadedMsgs.filter(m => !m.archived_date);
+              loadedMsgs = loadedMsgs.filter(m => {
+                if (m.archived_date) return false;
+                // Exclude legacy date-marker records (sender_type='system' + date-like content)
+                if (m.sender_type === 'system') return false;
+                // Exclude any message whose content matches a date-divider pattern
+                const c = (m.content || '').trim();
+                if (c && /^[-–—]{2,}/.test(c) && /[-–—]{2,}$/.test(c) && /\d{4}/.test(c)) return false;
+                if (c && /^[-–—,.\s]{0,8}(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(c) && /\d{4}/.test(c)) return false;
+                return true;
+              });
             }
             console.log(`[CHAT_LOAD] Message.filter DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
           } catch (err) {
@@ -540,8 +552,15 @@ export function useChatLoadConvo({
         "-created_date",
         PAGINATION_PAGE
       );
-      // Filter archived messages client-side — $exists: false can strip legacy messages
-      const older = Array.isArray(olderRaw) ? olderRaw.filter(m => !m.archived_date) : olderRaw;
+      // Filter archived messages + legacy date-marker records (sender_type='system')
+      const older = Array.isArray(olderRaw) ? olderRaw.filter(m => {
+        if (m.archived_date) return false;
+        if (m.sender_type === 'system') return false;
+        const c = (m.content || '').trim();
+        if (c && /^[-–—]{2,}/.test(c) && /[-–—]{2,}$/.test(c) && /\d{4}/.test(c)) return false;
+        if (c && /^[-–—,.\s]{0,8}(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(c) && /\d{4}/.test(c)) return false;
+        return true;
+      }) : olderRaw;
 
       if (!older || older.length === 0) {
         if (setHasOlderMessages) setHasOlderMessages(false);

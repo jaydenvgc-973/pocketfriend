@@ -17,30 +17,53 @@
 /**
  * isDateDividerContent(text)
  *
- * Returns true if the text is shaped like a date divider rather than real dialogue.
- * Used as a save guard before any character Message is persisted.
+ * Returns true if the text is a date string, divider label, or malformed
+ * punctuation-wrapped date that should NEVER be saved as a character message.
  *
- * Catches patterns like:
- *   ", . Monday, June 1, 2026, ,"
- *   "—— Thursday, May 22, 2026 ——"
- *   "Monday, June 1, 2026"
+ * Root cause: createDailyDateMarker (now archived) wrote records like
+ * "—— Monday, June 1, 2026 ——" to the Message table. When the LLM received
+ * these in chatHistory it sometimes echoed them back. This guard is the
+ * final rejection point before any such string reaches Message.create().
+ *
+ * Called by filterDashes — every LLM text response passes through here.
+ * Returns empty string instead of the divider content so the caller can
+ * detect a rejected response (falsy / empty) and skip saving.
  */
 export function isDateDividerContent(text) {
   if (!text) return false;
-  const t = text.trim();
-  if (!t) return false;
-  // dash-wrapped: —— text ——
-  if (/^[-–—,.\s]{2,}/.test(t) && /[-–—,.\s]{2,}$/.test(t) &&
-      /(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(t) &&
-      /\d{4}/.test(t) && t.length < 80) return true;
-  // plain weekday + year with no other content
-  if (/^[-–—,.\s]*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)[,\s]+/i.test(t) &&
-      /\d{4}/.test(t) && t.length < 60) return true;
+  const s = text.trim();
+  if (!s) return false;
+
+  // Dash-wrapped: "—— Monday, June 1, 2026 ——" or "-- Thursday --"
+  if (/^[-–—]{2,}/.test(s) && /[-–—]{2,}$/.test(s) && /\d{4}/.test(s)) return true;
+
+  // Starts with day name (possibly prefixed by commas/dashes) + year
+  // Catches: "Monday, June 1, 2026" or ", . Monday, June 1, 2026, ,"
+  if (/^[-–—,.\s]{0,8}(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(s) && /\d{4}/.test(s)) return true;
+
+  // Standalone month+date+year: "June 1, 2026"
+  if (/^(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}[.,]?$/i.test(s)) return true;
+
+  // Malformed comma/period-wrapped date with no real content: ", . Monday, June 1, 2026, ,"
+  // Check: mostly punctuation/spaces around a date
+  if (/^[,.\s]+/.test(s) && /[,.\s]+$/.test(s) && /\d{4}/.test(s)) {
+    const stripped = s.replace(/[,.\s\-–—]/g, '');
+    if (stripped.length < 40) return true;
+  }
+
   return false;
 }
 
 export function filterDashes(text) {
   if (!text) return text;
+
+  // DATE-DIVIDER GUARD: reject before any dash rewriting touches the string.
+  // If the LLM echoed a date-divider record, return empty string so the caller
+  // knows to skip saving this message.
+  if (isDateDividerContent(text)) {
+    console.error(`[filterDashes/SAVE_GUARD] Date-divider content rejected: "${text.substring(0, 100)}"`);
+    return '';
+  }
 
   let result = text;
 
