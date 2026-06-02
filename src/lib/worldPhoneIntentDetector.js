@@ -82,6 +82,23 @@ export function detectWorldPhoneIntent(userText) {
     }
   }
 
+  // ── PRONOUN-BASED INTENTS ("text him", "call her", "message them") ───────────
+  // When the user says "text him now", "call her", "message them" — no name is given.
+  // Return a special marker so the caller can resolve the pronoun from conversation context.
+  const pronounPatterns = [
+    /^\s*(?:text|call|message|msg|dm|hit\s+up|reach\s+out\s+to)\s+(him|her|them)\s*(?:now|please|real\s+quick|asap)?\s*[.!]?\s*$/i,
+    /\bsend\s+(?:a\s+)?(?:text|message|dm)\s+to\s+(him|her|them)\s*$/i,
+    /\blet\s+(him|her|them)\s+know\s*$/i,
+    /\btell\s+(him|her|them)\b/i,
+  ];
+  for (const pattern of pronounPatterns) {
+    const match = userText.match(pattern);
+    if (match) {
+      // Return special sentinel — caller must resolve pronoun from conversation context
+      return { recipient: null, message: null, pronounIntent: true, pronoun: match[1].toLowerCase() };
+    }
+  }
+
   return null;
 }
 

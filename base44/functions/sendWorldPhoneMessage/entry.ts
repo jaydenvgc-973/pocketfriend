@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
 
     const {
       sender_character_id,
-      recipient_identifier,       // character ID or name string
+      recipient_identifier,       // character ID or name string — may be null for pronoun intents
       requested_message,          // raw message content to send
       image_url,                  // optional: image URL for image sends
       image_description,          // optional: caption/description for image
@@ -44,6 +44,9 @@ Deno.serve(async (req) => {
       current_conversation_id,    // active chat conversation ID (not the WP thread)
       owner_email,
       generate_recipient_response, // optional: if true, generate Character B's response now
+      // Pronoun resolution: when user says "text him/her/them", pass recent message text
+      // so we can resolve the pronoun to a known contact name
+      pronoun_context,            // optional: recent conversation text to resolve pronoun recipient
       // Media Gallery send tracking (non-destructive, written to new message only)
       needs_detailed_visual_analysis, // true = no original context, trigger detailed visual analysis
       source_media_message_id,    // original gallery message ID
@@ -52,10 +55,11 @@ Deno.serve(async (req) => {
       source_media_had_generation_context,
     } = await req.json();
 
-    if (!sender_character_id || !recipient_identifier) {
+    // Allow null recipient_identifier when pronoun_context is provided — will be resolved below
+    if (!sender_character_id || (!recipient_identifier && !pronoun_context)) {
       return Response.json({
         success: false,
-        error: 'Missing required fields: sender_character_id, recipient_identifier',
+        error: 'Missing required fields: sender_character_id, and either recipient_identifier or pronoun_context',
       }, { status: 400 });
     }
 
@@ -82,6 +86,47 @@ Deno.serve(async (req) => {
     const sender = senderArr?.[0];
     if (!sender) {
       return Response.json({ success: false, error: `Sender character not found: ${sender_character_id}` });
+    }
+
+    // ── RESOLVE RECIPIENT FROM PRONOUN CONTEXT ────────────────────────────────
+    // When recipient_identifier is null but pronoun_context is provided,
+    // use the LLM to extract the most likely recipient from recent conversation text.
+    let effectiveRecipientIdentifier = recipient_identifier;
+    if (!effectiveRecipientIdentifier && pronoun_context) {
+      try {
+        const knownNames = (sender.fictional_relationships || [])
+          .map(r => r.person_name).filter(Boolean)
+          .concat((sender.family_members || []).map(f => f.name).filter(Boolean))
+          .join(', ');
+
+        const extractedName = await base44.asServiceRole.integrations.Core.InvokeLLM({
+          prompt: `Recent conversation:
+${pronoun_context}
+
+Known contacts of ${sender.name}: ${knownNames || 'none listed'}
+
+Based on the conversation above, who is the person being referred to by "him", "her", or "them" in the most recent user message?
+If you can identify the person from the conversation context or known contacts list, return their exact name.
+If you cannot determine who they are, return the word "UNKNOWN".
+Return ONLY the person's name or "UNKNOWN" — nothing else.`,
+        });
+        const resolved = (typeof extractedName === 'string' ? extractedName : '').trim();
+        if (resolved && resolved !== 'UNKNOWN' && resolved.length > 1) {
+          effectiveRecipientIdentifier = resolved;
+          console.log(`[sendWorldPhoneMessage] Pronoun resolved to: "${resolved}" via LLM context`);
+        } else {
+          return Response.json({
+            success: false,
+            error: 'Could not resolve pronoun (him/her/them) to a known contact from conversation context.',
+            pronoun_resolution: 'failed',
+          });
+        }
+      } catch (pronErr) {
+        return Response.json({
+          success: false,
+          error: `Pronoun resolution failed: ${pronErr.message}`,
+        });
+      }
     }
 
     // ── RESOLVE RECIPIENT ──────────────────────────────────────────────────────
