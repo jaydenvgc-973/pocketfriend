@@ -1252,6 +1252,9 @@ Deno.serve(async (req) => {
     let charRecord = null;
     let charRefs = [];
     let charDesc = '';
+    // Hoisted work-shift vars — must be accessible in both the outfit block AND the location block below.
+    let _effectiveIsOnWorkShift = false;
+    let _effectiveWorkLocId = null;
 
     if (isThirdPartyPhoto && !characterId) {
       console.log(`[generateImageAsync] ⛔ Third-party hard block — no characterId, skipping all sender identity injection. Image generated from prompt description only.`);
@@ -1374,8 +1377,8 @@ Deno.serve(async (req) => {
         // Callout check for work shift
         const _todayETStr = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString().slice(0, 10);
         const _hasCallout = charRecord.work_exception_status === 'called_out' && charRecord.work_exception_date === _todayETStr;
-        const _effectiveIsOnWorkShift = _preIsOnWorkShift && !_hasCallout;
-        const _effectiveWorkLocId = _effectiveIsOnWorkShift ? _preWorkLocId : null;
+        _effectiveIsOnWorkShift = _preIsOnWorkShift && !_hasCallout;
+        _effectiveWorkLocId = _effectiveIsOnWorkShift ? _preWorkLocId : null;
         console.log(`[OutfitAudit] work_shift_precheck: isOnShift=${_effectiveIsOnWorkShift} workLocId=${_effectiveWorkLocId || 'none'}`);
 
         const alreadyHasOutfitInDesc = /Currently wearing:/i.test(charDesc);
@@ -1580,12 +1583,15 @@ Deno.serve(async (req) => {
 
       if (!useManualLocation && charRecord) {
         const _pl = (sanitizedPrompt || prompt || '').toLowerCase();
-        const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house))\b/.test(_pl);
+        const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house)|living room zone|bedroom zone|kitchen zone|bathroom zone|haledon home|home living room|home bedroom|home kitchen)\b/.test(_pl);
         const _work = /\b(at (my |his |her )?(work|job|office|workplace|store|restaurant|bar|studio)|on the job|during (my|his|her) (shift|work day)|busy day at work|work today|yesterday at work|busy at work|at the (office|store|restaurant|bar|studio|workplace)|his (job|office|shift)|her (job|office|shift))\b/.test(_pl);
         const _school = /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus))\b/.test(_pl);
 
+        // PROMPT KEYWORD OVERRIDE — explicit home/work/school keyword in prompt wins
+        // This ensures "living room zone" in the prompt routes to home, not work bar
         if (_home) {
           locationId = charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null;
+          if (locationId) console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME: home keyword in prompt overrides work-shift routing → ${locationId}`);
         } else if (_work) {
           locationId = charRecord.current_work_location_id || charRecord.occupation_location_id || null;
         } else if (_school) {
@@ -1597,15 +1603,13 @@ Deno.serve(async (req) => {
         // resolveCharacterLocation() and the character card/map/travel page.
         //
         // PRIORITY ORDER (matches frontend exactly):
-        //   1. Work schedule (if character has a work location and is on shift right now)
-        //   2. School schedule (if character is enrolled and school is in session)
-        //   3. Incarcerated
-        //   4. resolved_current_location_id (DB truth — written by enforcements/travel)
-        //   5. Presence-status-derived fallback
-        //   6. Home as absolute last resort
-        //
-        // This ensures image generation uses the SAME location that the character card,
-        // map, and travel page display — no more divergence between UI and image backend.
+        //   1. Explicit home/work/school keyword in prompt (above) — highest priority
+        //   2. Work schedule (if character has a work location and is on shift right now)
+        //   3. School schedule (if character is enrolled and school is in session)
+        //   4. Incarcerated
+        //   5. resolved_current_location_id (DB truth — written by enforcements/travel)
+        //   6. Presence-status-derived fallback
+        //   7. Home as absolute last resort
         if (!locationId) {
           const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || '';
           const resolvedLocId = charRecord.resolved_current_location_id || null;
