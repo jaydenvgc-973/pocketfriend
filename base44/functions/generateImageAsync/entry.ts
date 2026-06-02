@@ -1186,6 +1186,11 @@ Deno.serve(async (req) => {
     if (isThirdPartyPhoto && !characterId) {
       console.log(`[generateImageAsync] ⛔ Third-party hard block — no characterId, skipping all sender identity injection. Image generated from prompt description only.`);
     } else if (characterId && (subjectType === 'character' || subjectType === 'joint' || subjectType === 'known_character')) {
+      // ── CHARACTER FETCH — service role first, user-scoped fallback ────────────
+      // The Character entity RLS enforces owner_email = user.email even for asServiceRole
+      // queries on this app. When the service role filter returns empty for a valid character
+      // ID (because the character is owner-scoped), fall back to the user-scoped read.
+      // This is the correct path — the user session IS present in the request.
       const charListSR = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
       const candidate = charListSR?.[0] || null;
       if (candidate) {
@@ -1196,6 +1201,19 @@ Deno.serve(async (req) => {
           return Response.json({ error: 'Character does not belong to your account.' }, { status: 403 });
         }
         charRecord = candidate;
+        console.log(`[generateImageAsync] ✅ Character fetched via service role: "${charRecord.name}"`);
+      }
+
+      // USER-SCOPED FALLBACK — RLS blocks service role reads on this entity
+      if (!charRecord && user) {
+        const charListUser = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+        const userCandidate = charListUser?.[0] || null;
+        if (userCandidate) {
+          charRecord = userCandidate;
+          console.log(`[generateImageAsync] ✅ Character fetched via user-scoped fallback: "${charRecord.name}" (service role returned empty due to RLS)`);
+        } else {
+          console.error(`[generateImageAsync] ❌ Character ${characterId} not found via service role OR user-scoped query`);
+        }
       }
 
       if (charRecord) {
@@ -1383,7 +1401,7 @@ Deno.serve(async (req) => {
         console.log(`[generateImageAsync] Using UI-provided charRefs: ${charRefs.length}`);
       }
 
-      if (charRefs.length === 0 && charRecord?.avatar_url) {
+    if (charRefs.length === 0 && charRecord?.avatar_url) {
         const avatarPublic = toPublicCDN(charRecord.avatar_url);
         // AVATAR FALLBACK RULE:
         // Allow CDN-hosted avatar images even if they contain "generated_image" in the URL.
