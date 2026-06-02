@@ -1,18 +1,29 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // Check if a location-specific shift for this character is active right now (ET)
+// Handles cross-midnight shifts correctly — e.g. 17:00→01:00 spanning two calendar days.
 function isLocationShiftActiveNow(shift, nowET) {
   if (!shift?.start || !shift?.end) return false;
-  if (shift.days && shift.days.length > 0) {
-    if (!shift.days.includes(nowET.getDay())) return false;
-  }
-  const now = nowET.getHours() * 60 + nowET.getMinutes();
+  const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
   const [sh, sm] = shift.start.split(':').map(Number);
   const [eh, em] = shift.end.split(':').map(Number);
   const startMin = sh * 60 + sm;
   const endMin = eh * 60 + em;
-  if (endMin < startMin) return now >= startMin || now < endMin;
-  return now >= startMin && now < endMin;
+  const isCrossMidnight = endMin < startMin;
+  const today = nowET.getDay();
+  const yesterday = (today + 6) % 7;
+  const hasDays = shift.days && shift.days.length > 0;
+
+  if (isCrossMidnight) {
+    // On shift if: today is a shift day AND time >= start (e.g. 17:00→23:59 window)
+    //           OR yesterday was a shift day AND time < end (e.g. 00:00→01:00 overnight window)
+    const afterStartToday = (!hasDays || shift.days.includes(today)) && nowMin >= startMin;
+    const beforeEndYesterday = (!hasDays || shift.days.includes(yesterday)) && nowMin < endMin;
+    return afterStartToday || beforeEndYesterday;
+  } else {
+    if (hasDays && !shift.days.includes(today)) return false;
+    return nowMin >= startMin && nowMin < endMin;
+  }
 }
 
 /**
@@ -32,10 +43,9 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const { characterId } = body;
 
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const dayOfWeek = now.getDay();
+    // Use ET time for all schedule decisions — never UTC.
+    // These vars are unused in global mode (each char loop re-derives nowET), kept for single-char path only.
+    const _unusedUtc = new Date(); void _unusedUtc;
 
     // --- Single character mode (requires session auth to scope to owned character) ---
     if (characterId) {
@@ -72,7 +82,8 @@ Deno.serve(async (req) => {
 
       // CALLOUT GUARD: valid callout for today = full work schedule bypass
       const singleNowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const todayET = singleNowET.toISOString().slice(0, 10);
+      // CRITICAL: Do NOT use toISOString() — that returns UTC date which differs from ET date at night.
+      const todayET = `${singleNowET.getFullYear()}-${String(singleNowET.getMonth()+1).padStart(2,'0')}-${String(singleNowET.getDate()).padStart(2,'0')}`;
       if (character.work_exception_status === 'called_out' && character.work_exception_date === todayET) {
         return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' });
       }
@@ -113,13 +124,17 @@ Deno.serve(async (req) => {
         }
         // No location-specific shift — use character-level schedule
         if (character.work_start_time && character.work_end_time && character.work_days) {
-          const now = singleNowET.getHours() * 60 + singleNowET.getMinutes();
+          const nowMin = singleNowET.getHours() * 60 + singleNowET.getMinutes();
           const [sh, sm] = character.work_start_time.split(':').map(Number);
           const [eh, em] = character.work_end_time.split(':').map(Number);
           const startMin = sh * 60 + sm;
           const endMin = eh * 60 + em;
-          const isWorkDay = character.work_days.includes(singleNowET.getDay());
-          const active = isWorkDay && (endMin < startMin ? (now >= startMin || now < endMin) : (now >= startMin && now < endMin));
+          const isCross = endMin < startMin;
+          const today = singleNowET.getDay();
+          const yesterday = (today + 6) % 7;
+          const active = isCross
+            ? (character.work_days.includes(today) && nowMin >= startMin) || (character.work_days.includes(yesterday) && nowMin < endMin)
+            : character.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
           if (active) { singleActiveWorkLocId = locId; break; }
         }
       }
@@ -224,7 +239,8 @@ Deno.serve(async (req) => {
 
         // CALLOUT GUARD: skip work enforcement for characters with valid callout today
         const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-        const todayET = nowET.toISOString().slice(0, 10);
+        // CRITICAL: Do NOT use toISOString() — returns UTC date, wrong when ET date ≠ UTC date (e.g. 11PM ET = next day UTC).
+        const todayET = `${nowET.getFullYear()}-${String(nowET.getMonth()+1).padStart(2,'0')}-${String(nowET.getDate()).padStart(2,'0')}`;
         if (char.work_exception_status === 'called_out' && char.work_exception_date === todayET) {
           continue; // Called out — do not force to work
         }
@@ -263,13 +279,17 @@ Deno.serve(async (req) => {
           }
           // No location-specific shift — use character-level schedule
           if (char.work_start_time && char.work_end_time && char.work_days) {
-            const now = nowET.getHours() * 60 + nowET.getMinutes();
+            const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
             const [sh, sm] = char.work_start_time.split(':').map(Number);
             const [eh, em] = char.work_end_time.split(':').map(Number);
             const startMin = sh * 60 + sm;
             const endMin = eh * 60 + em;
-            const isWorkDay = char.work_days.includes(nowET.getDay());
-            const onCharSchedule = isWorkDay && (endMin < startMin ? (now >= startMin || now < endMin) : (now >= startMin && now < endMin));
+            const isCross = endMin < startMin;
+            const today = nowET.getDay();
+            const yesterday = (today + 6) % 7;
+            const onCharSchedule = isCross
+              ? (char.work_days.includes(today) && nowMin >= startMin) || (char.work_days.includes(yesterday) && nowMin < endMin)
+              : char.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
             if (onCharSchedule) {
               activeWorkLocId = locId;
               break;

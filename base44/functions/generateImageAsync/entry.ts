@@ -1359,23 +1359,27 @@ Deno.serve(async (req) => {
         const _preWorkDays = charRecord.work_days;
         let _preIsOnWorkShift = false;
         if (_preWorkLocId && _preWorkStart && _preWorkEnd && _preWorkDays && _preWorkDays.length > 0) {
+          // CRITICAL: Always use America/New_York — never raw UTC. UTC is 4-5h ahead of ET.
           const _nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
           const _dayOfWeek = _nowET.getDay();
-          if (_preWorkDays.includes(_dayOfWeek)) {
-            const _nowMin = _nowET.getHours() * 60 + _nowET.getMinutes();
-            const [_sh, _sm] = _preWorkStart.split(':').map(Number);
-            const [_eh, _em] = _preWorkEnd.split(':').map(Number);
-            const _startMin = _sh * 60 + _sm;
-            const _endMin = _eh * 60 + _em;
-            if (_endMin < _startMin) {
-              _preIsOnWorkShift = _nowMin >= _startMin || _nowMin < _endMin;
-            } else {
-              _preIsOnWorkShift = _nowMin >= _startMin && _nowMin < _endMin;
-            }
+          const _nowMin = _nowET.getHours() * 60 + _nowET.getMinutes();
+          const [_sh, _sm] = _preWorkStart.split(':').map(Number);
+          const [_eh, _em] = _preWorkEnd.split(':').map(Number);
+          const _startMin = _sh * 60 + _sm;
+          const _endMin = _eh * 60 + _em;
+          const _isCrossMidnight = _endMin < _startMin;
+          if (_isCrossMidnight) {
+            // e.g. 17:00→01:00: on shift if after 17:00 today (work day) OR before 01:00 and yesterday was work day
+            const _yesterday = (_dayOfWeek + 6) % 7;
+            _preIsOnWorkShift = (_preWorkDays.includes(_dayOfWeek) && _nowMin >= _startMin)
+              || (_preWorkDays.includes(_yesterday) && _nowMin < _endMin);
+          } else {
+            _preIsOnWorkShift = _preWorkDays.includes(_dayOfWeek) && _nowMin >= _startMin && _nowMin < _endMin;
           }
         }
-        // Callout check for work shift
-        const _todayETStr = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString().slice(0, 10);
+        // Callout check — derive ET date without ISO rollover (toISOString is always UTC)
+        const _etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const _todayETStr = `${_etNow.getFullYear()}-${String(_etNow.getMonth()+1).padStart(2,'0')}-${String(_etNow.getDate()).padStart(2,'0')}`;
         const _hasCallout = charRecord.work_exception_status === 'called_out' && charRecord.work_exception_date === _todayETStr;
         _effectiveIsOnWorkShift = _preIsOnWorkShift && !_hasCallout;
         _effectiveWorkLocId = _effectiveIsOnWorkShift ? _preWorkLocId : null;
@@ -1802,9 +1806,8 @@ All reference images (if any) are environment/location refs only — do NOT trea
 `;
     }
 
-    const serverTime = new Date();
-    // Pass charRecord directly to buildPrompt so buildAppearanceLockText can read structured fields.
-    // charDesc is kept for the reference block text; identity lock reads from charRecord.
+    // CRITICAL: Use Eastern time for lighting — not UTC. At 03:00 UTC it is 23:00 ET.
+    const serverTime = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     let finalPrompt = thirdPartyPreamble + buildPrompt({
       prompt: sanitizedPrompt,
       charName: isThirdPartyPhoto && !characterId ? 'the described person' : (charRecord?.name || characterName || 'the character'),
@@ -1818,8 +1821,8 @@ All reference images (if any) are environment/location refs only — do NOT trea
       envRefStart,
       charRefStart,
       userRefStart,
-      serverHour: serverTime.getHours(),
-      serverTime: serverTime.toLocaleTimeString(),
+      serverHour: serverTime.getHours(), // ET hours (correct — serverTime is now ET-derived)
+      serverTime: serverTime.toLocaleTimeString('en-US'),
       subjectType,
       characterId,
       userWorldName,
@@ -1894,7 +1897,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       attempts: [],
     };
 
-    console.log(`[generateImageAsync] ── PROVIDER DISPATCH ── env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} hour=${serverTime.getHours()}`);
+    console.log(`[generateImageAsync] ── PROVIDER DISPATCH ── env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} hour=${serverTime.getHours()} ET`);
     console.log(`  prompt: ${sanitizedPrompt.substring(0, 200)}${sanitizedPrompt.length > 200 ? '…' : ''}`);
 
     // ── SINGLE ATTEMPT — no internal retries ─────────────────────────────────
