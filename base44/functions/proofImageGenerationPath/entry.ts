@@ -182,14 +182,49 @@ Deno.serve(async (req) => {
   };
 
   // STEP 1A: UNIFORM CHECK
-  const uniformPresence = presenceStatus === 'at_work' || presenceStatus === 'at_school' || presenceStatus === 'incarcerated';
-  const uniformLocationId = presenceStatus === 'at_work'
+  // Mirror generateImageAsync exactly: work schedule (ET) is the first authority,
+  // then presenceStatus fallback. This ensures the proof reflects production behavior
+  // even when the DB presence hasn't been updated yet by the schedule enforcer.
+  let _proofIsOnShift = false;
+  let _proofWorkLocId = null;
+  const _wLocId = char.current_work_location_id || char.occupation_location_id || null;
+  if (_wLocId && char.work_start_time && char.work_end_time && char.work_days?.length > 0) {
+    const _etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const _dayOfWeek = _etNow.getDay();
+    const _nowMin = _etNow.getHours() * 60 + _etNow.getMinutes();
+    const [_sh, _sm] = char.work_start_time.split(':').map(Number);
+    const [_eh, _em] = char.work_end_time.split(':').map(Number);
+    const _startMin = _sh * 60 + _sm;
+    const _endMin = _eh * 60 + _em;
+    const _isCross = _endMin < _startMin;
+    const _yesterday = (_dayOfWeek + 6) % 7;
+    _proofIsOnShift = _isCross
+      ? (char.work_days.includes(_dayOfWeek) && _nowMin >= _startMin) || (char.work_days.includes(_yesterday) && _nowMin < _endMin)
+      : char.work_days.includes(_dayOfWeek) && _nowMin >= _startMin && _nowMin < _endMin;
+    if (_proofIsOnShift) {
+      // Callout check — use ET date (not toISOString which can be next UTC day)
+      const _todayET = `${_etNow.getFullYear()}-${String(_etNow.getMonth()+1).padStart(2,'0')}-${String(_etNow.getDate()).padStart(2,'0')}`;
+      const _hasCallout = char.work_exception_status === 'called_out' && char.work_exception_date === _todayET;
+      if (!_hasCallout) _proofWorkLocId = _wLocId;
+    }
+  }
+  const uniformPresence = !!_proofWorkLocId || presenceStatus === 'at_work' || presenceStatus === 'at_school' || presenceStatus === 'incarcerated';
+  const uniformLocationId = _proofWorkLocId
+    ? _proofWorkLocId
+    : presenceStatus === 'at_work'
     ? (char.current_work_location_id || char.occupation_location_id || null)
     : presenceStatus === 'at_school'
     ? (char.current_school_location_id || char.education_location_id || null)
     : presenceStatus === 'incarcerated'
     ? (char.incarceration_facility_id || null)
     : null;
+
+  proof.schedule_check = {
+    et_work_schedule_active: _proofIsOnShift,
+    et_work_loc_id: _proofWorkLocId,
+    db_presence_status: presenceStatus,
+    authority_source: _proofWorkLocId ? 'work_schedule_et' : 'db_presence_status',
+  };
 
   let uniformText = null;
   let uniformLocationRecord = null;
