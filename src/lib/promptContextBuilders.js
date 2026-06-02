@@ -211,7 +211,14 @@ ${userNameForPrompts ? `- WORLD NAME RULE: When referencing the person you're ta
 The room is a 3D space. Treat it as one. Every image prompt must include: (1) character action/pose, (2) explicit camera position inside the room, (3) camera distance. Use the room reference images to understand the space — do NOT copy their angle. Move the camera: doorway looking in | corner wide shot | beside furniture | across the room | low angle | overhead | over-the-shoulder | near window looking toward character.
 BEDROOM RULE: bedroom is NOT always "lying in bed close-up". Sleeping: wide doorway view, character under covers from across the room, side view at distance. Awake: sitting on bed edge | by the window | standing near dresser | on the floor | folding clothes.
 ${lastImagePromptSnippet ? `ANTI-REPETITION — last image used: "${lastImagePromptSnippet.substring(0, 120)}..." — use a DIFFERENT camera position, distance, and pose.` : `ANTI-REPETITION: vary camera, distance, and pose every time.`}
-FORMAT: [CHARACTER] [action]. Camera [position]. [Wide/Medium/Close]. [Time-of-day lighting]. [Zone — 1-2 furniture anchors]."`;
+
+⛔ FURNITURE INVENTION PROHIBITION — CRITICAL:
+DO NOT invent or name specific furniture in image prompts. NEVER write: "worn leather couch", "brown leather sofa", "sectional", "velvet couch", "overstuffed armchair", "wooden dining table", or any other invented furniture description.
+The image system has REFERENCE PHOTOS of the character's actual room. It will use those photos to render the correct furniture.
+Your job is to describe: (1) the character, (2) the action/pose, (3) the camera position, (4) the zone name only.
+The reference system handles all room details. You must NOT preempt it with invented descriptions.
+
+FORMAT: [CHARACTER] [action]. Camera [position]. [Wide/Medium/Close]. [Time-of-day lighting]. [zone name only — e.g. "living room zone" or "bedroom zone" — NO furniture descriptions]."`;
 }
 
 // ── SOAP OPERA LIFE CONTEXT BUILDER ──────────────────────────────────────────

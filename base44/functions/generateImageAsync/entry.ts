@@ -1211,6 +1211,34 @@ Deno.serve(async (req) => {
     const rawPromptForSanitize = prompt.replace(/^\[CHARACTER\]\s*/i, '').trim();
     let sanitizedPrompt = sanitizePrompt(rawPromptForSanitize);
 
+    // ── FURNITURE INVENTION GUARD ──────────────────────────────────────────────
+    // Strip LLM-hallucinated furniture from the scene prompt. The image provider
+    // already receives zone reference photos — these photos ARE the room authority.
+    // Any furniture named in the prompt competes with reference photos and loses,
+    // causing the model to render the named furniture INSTEAD of what's in the photos.
+    // Remove only specific named furniture patterns that the LLM invents — preserve
+    // natural language that doesn't interfere with reference photo usage.
+    const furnitureStrippedPrompt = sanitizedPrompt
+      // worn/aged qualifiers before furniture
+      .replace(/,?\s*(?:on|seated on|sitting on|lounging on|resting on|lying on|perched on|leans? on|leaning on)\s+(?:a\s+)?(?:worn|old|beat-up|battered|vintage|tattered|weathered|distressed|soft|plush|overstuffed|massive|huge|large|small|big|comfortable|comfy|cozy|cosy|velvet|leather|faux-leather|suede|corduroy|microfiber|brown|black|gray|grey|white|tan|beige|dark|light|burgundy|red|blue|green)\s+(?:leather\s+)?(?:couch|sofa|sectional|chair|armchair|loveseat|recliner|ottoman|bench|futon|daybed|settee|chaise)/gi, '')
+      // generic named furniture
+      .replace(/,?\s*(?:on|seated on|sitting on|lounging on|resting on|lying on|perched on)\s+(?:a\s+)?(?:couch|sofa|sectional|loveseat|armchair|recliner|futon|chaise|daybed|settee)/gi, '')
+      // "his/her/the worn leather couch" patterns
+      .replace(/,?\s*(?:his|her|their|the)\s+(?:worn|old|beat-up|battered|vintage|tattered|weathered)\s+(?:leather\s+)?(?:couch|sofa|sectional|chair|armchair|loveseat)/gi, '')
+      // edge-of + furniture
+      .replace(/,?\s*(?:on\s+the\s+edge\s+of|at\s+the\s+edge\s+of)\s+(?:his|her|their|the)\s+(?:\w+\s+)?(?:couch|sofa|chair|armchair|loveseat|recliner|ottoman|bench|bed)/gi, '')
+      // "his worn leather couch" without sitting preposition
+      .replace(/,?\s*(?:his|her|their)\s+(?:worn|old|beaten|battered|vintage)\s+(?:\w+\s+)?(?:couch|sofa|chair|armchair)/gi, '')
+      .replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').trim();
+    if (furnitureStrippedPrompt !== sanitizedPrompt) {
+      console.log(`[generateImageAsync] ⚠️ FURNITURE INVENTION STRIPPED:`);
+      console.log(`  BEFORE: ${sanitizedPrompt}`);
+      console.log(`  AFTER:  ${furnitureStrippedPrompt}`);
+      sanitizedPrompt = furnitureStrippedPrompt;
+    } else {
+      console.log(`[generateImageAsync] ✓ No hallucinated furniture found in prompt`);
+    }
+
     if (sanitizedPrompt !== rawPromptForSanitize) {
       console.log(`[generateImageAsync] ⚠️ PROMPT MUTATION DETECTED:`);
       console.log(`  BEFORE: ${rawPromptForSanitize}`);
