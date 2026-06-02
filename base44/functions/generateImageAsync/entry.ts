@@ -315,26 +315,26 @@ function resolveCharacterOutfitForPrompt(character) {
 // ── ZONE RESOLUTION ────────────────────────────────────────────────────────────
 
 const ZONE_KEYWORD_MAP = [
-  { keywords: ['bedroom', 'in bed', 'on the bed', 'sleeping', 'woke up', 'waking up', 'nightstand', 'duvet', 'pillow', 'mattress', 'my room', 'her room', 'his room'], zone: 'bedroom' },
-  { keywords: ['kitchen', 'cooking', 'stove', 'fridge', 'oven', 'microwave', 'counter', 'pancake', 'breakfast', 'making food', 'grabbing food'], zone: 'kitchen' },
-  { keywords: ['bathroom', 'shower', 'bathtub', 'toilet', 'vanity', 'brushing teeth', 'getting ready'], zone: 'bathroom' },
-  { keywords: ['living room', 'couch', 'sofa', 'tv ', 'on the couch', 'lounge', 'sectional', 'watching tv', 'watching a movie'], zone: 'living room' },
-  { keywords: ['backyard', 'patio', 'deck', 'yard', 'garden', 'grill', 'fire pit', 'outside at home'], zone: 'backyard' },
-  { keywords: ['dining room', 'dining table', 'dinner table', 'eating at the table'], zone: 'dining room' },
-  { keywords: ['office', 'desk', 'home office', 'workspace', 'working from home'], zone: 'office' },
-  { keywords: ['gym', 'workout', 'weights', 'treadmill', 'lifting', 'training', 'exercise'], zone: 'gym' },
-  { keywords: ['vip', 'vip section', 'vip lounge', 'vip area'], zone: 'vip' },
-  { keywords: ['bar area', 'behind the bar', 'bartending', 'bar counter'], zone: 'bar area' },
-  { keywords: ['dance floor', 'main floor', 'dancefloor', 'on the floor'], zone: 'main floor' },
-  { keywords: ['rooftop', 'roof deck', 'rooftop bar', 'on the roof'], zone: 'rooftop' },
-  { keywords: ['hallway', 'corridor', 'entryway', 'front door', 'foyer'], zone: 'hallway' },
-  { keywords: ['balcony', 'on the balcony', 'balcony view'], zone: 'balcony' },
-  { keywords: ['laundry', 'laundry room', 'washer', 'dryer'], zone: 'laundry' },
-  { keywords: ['lake', 'by the lake', 'on the lake', 'water', 'shoreline', 'reflecting off the water', 'city lights reflecting'], zone: 'main area' },
-  { keywords: ['trail', 'hiking', 'path', 'forest', 'woods', 'trees', 'outdoors', 'outside', 'park'], zone: 'trail' },
-  { keywords: ['picnic', 'picnic area', 'picnic table', 'relaxing outdoors'], zone: 'picnic area' },
-  { keywords: ['shelter', 'pavilion', 'under shelter', 'covered area'], zone: 'shelter / pavilion' },
-  { keywords: ['entrance', 'at the entrance', 'front entrance', 'entry'], zone: 'entrance' },
+  {keywords:['bedroom','in bed','on the bed','sleeping','woke up','waking up','nightstand','duvet','pillow','mattress','my room','her room','his room'],zone:'bedroom'},
+  {keywords:['kitchen','cooking','stove','fridge','oven','microwave','counter','pancake','breakfast','making food','grabbing food'],zone:'kitchen'},
+  {keywords:['bathroom','shower','bathtub','toilet','vanity','brushing teeth','getting ready'],zone:'bathroom'},
+  {keywords:['living room','couch','sofa','tv ','on the couch','lounge','sectional','watching tv','watching a movie'],zone:'living room'},
+  {keywords:['backyard','patio','deck','yard','garden','grill','fire pit','outside at home'],zone:'backyard'},
+  {keywords:['dining room','dining table','dinner table','eating at the table'],zone:'dining room'},
+  {keywords:['office','desk','home office','workspace','working from home'],zone:'office'},
+  {keywords:['gym','workout','weights','treadmill','lifting','training','exercise'],zone:'gym'},
+  {keywords:['vip','vip section','vip lounge','vip area'],zone:'vip'},
+  {keywords:['bar area','behind the bar','bartending','bar counter'],zone:'bar area'},
+  {keywords:['dance floor','main floor','dancefloor','on the floor'],zone:'main floor'},
+  {keywords:['rooftop','roof deck','rooftop bar','on the roof'],zone:'rooftop'},
+  {keywords:['hallway','corridor','entryway','front door','foyer'],zone:'hallway'},
+  {keywords:['balcony','on the balcony','balcony view'],zone:'balcony'},
+  {keywords:['laundry','laundry room','washer','dryer'],zone:'laundry'},
+  {keywords:['lake','by the lake','on the lake','water','shoreline','reflecting off the water','city lights reflecting'],zone:'main area'},
+  {keywords:['trail','hiking','path','forest','woods','trees','outdoors','outside','park'],zone:'trail'},
+  {keywords:['picnic','picnic area','picnic table','relaxing outdoors'],zone:'picnic area'},
+  {keywords:['shelter','pavilion','under shelter','covered area'],zone:'shelter / pavilion'},
+  {keywords:['entrance','at the entrance','front entrance','entry'],zone:'entrance'},
 ];
 
 function cdnFilterNoGenerated(urls) {
@@ -1067,9 +1067,9 @@ Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. No
   const expectedHumanCount = subjectType==='joint'?2:(subjectType==='character'||subjectType==='user'||subjectType==='known_character')?1:0;
   const pLow=(prompt||'').toLowerCase();
   const isIso=/\b(alone|empty|vacant|no people|room only|object only|just the|document only|id only|id card|card only|photo of the|picture of the|image of the|nobody|no one|no person|no humans|no figures)\b/.test(pLow);
-  const isPub=/\b(pool party|club|concert|beach party|festival|mall|airport|crowd)\b/i.test(prompt)&&!isIso;
+  const lnL=(locationName||'').toLowerCase();const zn=(zoneName||'').toLowerCase();const isPub=!isIso&&(/\b(bar|nightclub|lounge|restaurant|diner|cafe|coffee shop|church|school|college|university|gym|fitness|park|stadium|arena|theater|cinema|venue|concert hall|mall|airport|shop|store|workplace|office building|hospital|clinic|library|museum|casino|hotel lobby|community center|sports bar|comedy club)\b/.test(lnL)||/\b(pool party|club|concert|beach party|festival|crowd)\b/i.test(pLow));const isResid=!isIso&&(/\b(home|apartment|bedroom|hotel room|shelter room|residential suite|private residence)\b/.test(lnL)||/\b(bedroom|living room|kitchen|bathroom|backyard|home office|residential)\b/.test(zn));const isStaffZone=/\b(stockroom|stock room|back office|storage|break room|service area|staff area|kitchen)\b/.test(zn);const isCrowded=isPub&&/\b(packed|crowded|busy|swamped|lively|people everywhere|full house|standing room|sold out|noisy|loud|dance floor is full|line at the bar|shoulder to shoulder|wall to wall)\b/.test(pLow);
   const ec=isIso&&expectedHumanCount===0?0:expectedHumanCount;
-  const humanPurityBlock=`\n\n════════════════════════════════════════════════════════════\n⛔⛔⛔ HUMAN PRESENCE PURITY LAW — ABSOLUTE OVERRIDE ⛔⛔⛔\n════════════════════════════════════════════════════════════\n\nEXPECTED HUMAN COUNT: ${ec}\n${ec===0?'→ ZERO HUMANS. No people, bodies, faces, hands, silhouettes, or reflections of people.':ec===1?'→ EXACTLY ONE declared person. No extras. No background occupants. No bystanders.':'→ EXACTLY TWO declared subjects. No third person. No background figures.'}\n\nFORBIDDEN (unless a named person is explicitly declared in the prompt):\n⛔ Extra people anywhere — foreground, midground, background\n⛔ Partial people — arms, legs, torsos, feet, hands of undeclared persons\n⛔ Silhouettes behind doors, windows, or walls\n⛔ Reflections of people in mirrors, windows, glass, or any surface\n⛔ Shadows implying a person is present\n⛔ Blurred background humans or ambient patrons\n⛔ POV photographer body parts (over-the-shoulder, hands in frame)\n⛔ Environmental extras added for atmosphere\n⛔ Location owners, workers, residents, or family members unless explicitly named\n\nLOCATION OWNER/RESIDENT FIREWALL:\nLocation metadata = setting description ONLY.\nNo person associated with this location may appear unless explicitly named as a subject.\n${isIso?'\nISOLATION ACTIVE: zero humans total. No hand holding the object. No reflection of photographer.\n':''}\n${isPub?'\nPUBLIC ENV EXCEPTION: background figures allowed ONLY as out-of-focus blur. Never foreground. Never identifiable.\n':'\nPRIVATE ENV: zero background figures. Zero extras.\n'}\nGENERATION INVALID IF:\n🚫 Any undeclared human appears anywhere including reflections\n🚫 Human count exceeds ${ec}\n🚫 Any location-associated person appears without being named\n════════════════════════════════════════════════════════════`;
+  const humanPurityBlock=`\n\n════════════════════════════════════════════════════════════\n⛔⛔⛔ HUMAN PRESENCE PURITY LAW — ABSOLUTE OVERRIDE ⛔⛔⛔\n════════════════════════════════════════════════════════════\n\nEXPECTED FOREGROUND SUBJECTS: ${ec}\n${ec===0?'→ ZERO declared foreground subjects.':ec===1?'→ EXACTLY ONE declared foreground subject. No undeclared foreground people.':'→ EXACTLY TWO declared foreground subjects. No undeclared foreground people.'}\n\nFOREGROUND PURITY (applies always):\n⛔ No undeclared people in the foreground competing with the declared subject(s)\n⛔ No partial people — arms, legs, hands of undeclared persons in the foreground\n⛔ No POV photographer body parts (over-the-shoulder, hands in frame)\n⛔ No foreground reflections of undeclared people in mirrors or glass\n⛔ Location owners/workers/residents may NOT appear as foreground subjects unless explicitly named\n\n${isIso?'ISOLATION ACTIVE: zero humans total anywhere. No hands, silhouettes, or reflections.\n\n':''}BACKGROUND OCCUPANCY RULE FOR THIS SPECIFIC SCENE:\n${isStaffZone?'STAFF-ONLY ZONE: Only appropriate staff/employees may appear in the background. ⛔ NO customers, patrons, or members of the public behind the employee boundary.':isResid?'PRIVATE RESIDENTIAL: ⛔ DO NOT invent strangers, neighbors, visitors, or filler people. Occupancy = actual known presence only. If no other person is contextually established, the character is alone.':isPub?(isCrowded?'PUBLIC SOCIAL — ACTIVE CROWD: The prompt describes a busy/packed/crowded environment. ✅ Background crowd IS part of the scene reality — include blurred, non-specific, visually subordinate background figures. Subject is foreground focus. ⛔ DO NOT erase the crowd because the subject is the focus. Subject focus ≠ empty background.':'PUBLIC SOCIAL: Context-appropriate background figures are permitted as out-of-focus, non-specific environmental texture. Match the natural activity level of this location and zone. ⛔ Do not make an active venue appear sterile and empty.'):'CONTEXT-APPROPRIATE: Match the environment. Active public spaces may have background figures (blurred, subordinate). Private/quiet spaces: minimal or none.'}\n\nGENERATION INVALID IF:\n🚫 Undeclared person appears in the foreground competing with declared subject(s)\n🚫 Background contradicts the occupancy rule above (e.g. empty when described as packed)\n🚫 Any location-associated person appears as a foreground subject without being named\n════════════════════════════════════════════════════════════`;
 
   // Prepend fictional character declaration to the final assembled prompt
   const withFictionalDecl = (s) => fictionalCharacterDeclaration + s;
