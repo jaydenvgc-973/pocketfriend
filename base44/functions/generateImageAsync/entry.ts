@@ -370,6 +370,21 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
     return { images: imgs, zoneName: zones[0].zone_name };
   }
 
+  // Multiple zones, no keyword match — prefer a sensible default zone over blindly picking first.
+  // Priority: living room > bedroom > first zone with images.
+  // This prevents the model always getting "zone 0" which may be an exterior or unused area.
+  const preferenceOrder = ['living room', 'bedroom', 'main area', 'main floor', 'lounge'];
+  for (const preferred of preferenceOrder) {
+    const match = zones.find(z => z.zone_name && z.zone_name.toLowerCase().includes(preferred));
+    if (match) {
+      const imgs = cdnFilterNoGenerated(match.image_urls).slice(0, 4);
+      if (imgs.length > 0) {
+        console.log(`[resolveZone] Multiple zones, no keyword match — using preferred default zone "${match.zone_name}" (${imgs.length} imgs)`);
+        return { images: imgs, zoneName: match.zone_name };
+      }
+    }
+  }
+
   const firstZoneWithImages = zones[0];
   const imgs = cdnFilterNoGenerated(firstZoneWithImages.image_urls).slice(0, 4);
   console.log(`[resolveZone] Multiple zones, no keyword match — falling back to first zone "${firstZoneWithImages.zone_name}" (${imgs.length} imgs)`);
@@ -480,7 +495,16 @@ function buildAppearanceLockText(rec, n) {
     r.push(`ETHNICITY / RACE: ${allEthnicities.join(', ')} — render EXACTLY this ethnicity. ⛔ DO NOT default to Caucasian/white/European. ⛔ DO NOT soften, lighten, or alter ethnic features toward any other baseline.`);
   }
   if (skinTone) {
-    r.push(`SKIN TONE: ${skinTone} — do not lighten, soften, or alter in any direction.`);
+    // Add explicit anti-whitewashing guard when skin tone contains "light" or "caramel"
+    // because the model can misread "light caramel" as "light-skinned/fair" and ignore ethnicity.
+    const skinLower = skinTone.toLowerCase();
+    const hasAmbiguousLight = /\b(light|caramel|honey|tan|medium)\b/.test(skinLower);
+    const hasBlackOrAfricanAmerican = allEthnicities.some(e => /\b(black|african american|afro)\b/i.test(e));
+    if (hasAmbiguousLight && hasBlackOrAfricanAmerican) {
+      r.push(`SKIN TONE: ${skinTone} — this is a warm brown melanated skin tone consistent with Black / African American heritage. ⛔ DO NOT render as pale, fair, or Caucasian-light. ⛔ DO NOT interpret "light" as white or European. Render warm melanated brown, rich caramel — clearly a person of color.`);
+    } else {
+      r.push(`SKIN TONE: ${skinTone} — do not lighten, soften, or alter in any direction.`);
+    }
   }
 
   // HAIR
@@ -1361,9 +1385,17 @@ Deno.serve(async (req) => {
 
       if (charRefs.length === 0 && charRecord?.avatar_url) {
         const avatarPublic = toPublicCDN(charRecord.avatar_url);
-        if (isAccessible(avatarPublic) && !avatarPublic.includes('generated_image')) {
+        // AVATAR FALLBACK RULE:
+        // Allow CDN-hosted avatar images even if they contain "generated_image" in the URL.
+        // An avatar on media.base44.com IS the character's canonical face portrait —
+        // it was generated specifically to represent this character and is safe to use as an identity anchor.
+        // The "generated_image" filter exists to block environment/scene images (non-CDN) from being
+        // incorrectly used as face refs. It must NOT block a character's own CDN-hosted avatar.
+        // Only block: private URLs, signed URLs, internal base44.app API URLs (already filtered by isAccessible).
+        const isCharacterAvatar = avatarPublic.startsWith('https://media.base44.com/');
+        if (isAccessible(avatarPublic) && (isCharacterAvatar || !avatarPublic.includes('generated_image'))) {
           charRefs = [avatarPublic];
-          console.warn(`[generateImageAsync] ⚠️ No reference_image_urls for "${charRecord.name}" — using avatar_url as controlled last-resort face anchor.`);
+          console.warn(`[generateImageAsync] ⚠️ No reference_image_urls for "${charRecord.name}" — using avatar_url as controlled face anchor (CDN avatar: ${isCharacterAvatar}).`);
         }
       }
 
