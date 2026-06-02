@@ -466,132 +466,87 @@ Return ONLY the description text, nothing else.`,
 
     // ── GENERATE CHARACTER B's REAL RESPONSE ───────────────────────────────────
     // CRITICAL: Character B responds using their own LLM pipeline — not guessed by Character A.
-    // This creates the visible incoming message in Character B's World Phone thread.
+    // Uses a lightweight direct LLM call with recipient's personality — no canonical context
+    // fetch needed here (that's too slow when chained after pronoun+rewrite calls).
     let recipientResponse = null;
     let recipientResponseMessageId = null;
-    
+
     try {
-      // Load recent conversation history for context
+      // Load recent conversation history
       const recentHistory = await base44.entities.Message.filter(
         { conversation_id: conversationId },
         'created_date',
-        20
+        10
       ).catch(() => []);
 
-      // Build Character B's canonical context
-      const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
-        characterId: recipient.id,
-        interactionContext: 'world_phone',
-        topKMemories: 10,
-      }).catch(() => null);
+      const conversationLog = [
+        ...recentHistory.slice(-8).map(m => {
+          const speakerName = m.sender_character_id === recipient.id ? recipient.name : sender.name;
+          return `${speakerName}: ${m.content}`;
+        }),
+        `${sender.name}: ${rewrittenMessage}`,
+      ].join('\n');
 
-      const canonicalPrompt = ctxRes?.data?.systemPrompt || null;
+      const personalityHint = [
+        recipient.personality_summary,
+        recipient.communication_style,
+        recipient.archetype,
+        (recipient.personality_traits || []).slice(0, 3).join(', '),
+      ].filter(Boolean).join('. ');
 
-      if (canonicalPrompt) {
-        // Retrieve memories relevant to this exchange
-        const memRes = await base44.functions.invoke('retrieveActiveMemory', {
-          characterId: recipient.id,
-          currentMessage: rewrittenMessage,
-          recentMessages: recentHistory.slice(-6).map(m => ({
-            role: m.sender_character_id === recipient.id ? 'assistant' : 'user',
-            content: m.content,
-          })),
-          topK: 8,
-        }).catch(() => null);
+      const traitHints = ['dry_humor','blunt','flirty','oversharer','night_owl','loud','rude','competitive','toxic']
+        .filter(t => recipient[`trait_${t}`]).slice(0, 3).join(', ');
 
-        const mems = memRes?.data?.memories || [];
-        const memoryContext = mems.length > 0
-          ? `\n\nLONG-TERM MEMORY (${mems.length} relevant memories):\n${mems.map(m => `- ${m.title}: ${m.description}`).join('\n')}`
-          : '';
+      const rawReply = await base44.asServiceRole.integrations.Core.InvokeLLM({
+        prompt: `You are ${recipient.name}.${personalityHint ? ` Personality: ${personalityHint}.` : ''}${traitHints ? ` Traits: ${traitHints}.` : ''}${recipient.emotional_state ? ` Current mood: ${recipient.emotional_state}.` : ''}
 
-        // Build conversation history for the prompt
-        const conversationLog = [
-          ...recentHistory.slice(-10).map(m => {
-            const speakerName = m.sender_character_id === recipient.id ? recipient.name : sender.name;
-            return `${speakerName}: ${m.content}`;
-          }),
-          `${sender.name}: ${rewrittenMessage}`,
-        ].join('\n');
+${sender.name} just texted you. This is a World Phone / text message exchange.
+Do NOT start with your name. Do NOT say "I'm an AI". Respond naturally as you would in a real text.
+Keep it to 1-3 sentences max.
 
-        const recipientPersonalityHint = [recipient.personality_summary, recipient.communication_style]
-          .filter(Boolean).join(', ');
-
-        const fullPrompt = `${canonicalPrompt}${memoryContext}
-
-CURRENT CHANNEL: World Phone / World Contacts
-${sender.name} is texting you. This is a real phone/text exchange.
-Do NOT start with your name. Do NOT say "I'm an AI". Respond as you naturally would.
-${recipientPersonalityHint ? `\nYour personality: ${recipientPersonalityHint}` : ''}
-${recipient.emotional_state ? `\nYour current mood: ${recipient.emotional_state}` : ''}
-
-Conversation so far:
+Conversation:
 ${conversationLog}
 
-Respond ONLY with valid JSON:
-{
-  "message_type": "text_only",
-  "text_content": "Your reply as ${recipient.name}. Keep it natural, like a real text."
-}`;
+Reply as ${recipient.name} — casual, authentic, in your voice:`,
+      });
 
-        const { InvokeLLM } = base44.integrations.Core;
-        const rawResponse = await InvokeLLM({ prompt: fullPrompt });
-        
-        // Parse JSON response
-        let parsedText = null;
-        try {
-          const jsonStr = typeof rawResponse === 'string'
-            ? rawResponse.replace(/```json\n?|\n?```/g, '').trim()
-            : JSON.stringify(rawResponse);
-          const parsed = JSON.parse(jsonStr);
-          parsedText = parsed.text_content?.trim();
-        } catch {
-          // If not JSON, use raw text directly
-          parsedText = typeof rawResponse === 'string' ? rawResponse.trim() : null;
+      const replyText = (typeof rawReply === 'string' ? rawReply : '').trim();
+
+      if (replyText && replyText.length > 2 && !replyText.startsWith('{')) {
+        recipientResponse = replyText;
+        const responseTimestamp = new Date(Date.now() + 2000).toISOString();
+        const recipientMsg = await base44.entities.Message.create({
+          conversation_id: conversationId,
+          sender_type: 'character',
+          character_id: recipient.id,
+          character_name: recipient.name,
+          sender_character_id: recipient.id,
+          receiver_character_id: sender_character_id,
+          participant_character_ids: participantIds,
+          shared_conversation_key: canonicalKey,
+          content: recipientResponse,
+          channel: 'world_phone',
+          timestamp: responseTimestamp,
+          is_read: false,
+          reply_to_message_id: savedMessage.id,
+          source_message_id: savedMessage.id,
+          sync_status: 'pending',
+          recovery_signal: false,
+          memory_eligible: true,
+          relationship_eligible: true,
+        });
+        if (recipientMsg?.id) {
+          recipientResponseMessageId = recipientMsg.id;
+          await base44.entities.Conversation.update(conversationId, {
+            last_message_preview: recipientResponse.substring(0, 100),
+            last_message_date: responseTimestamp,
+          }).catch(() => {});
+          console.log(`[sendWorldPhoneMessage] ✅ Recipient response saved | msg=${recipientMsg.id} | from=${recipient.name}`);
         }
-
-        if (parsedText && parsedText.length > 0 && !parsedText.startsWith('{')) {
-          recipientResponse = parsedText;
-
-          // Save Character B's response as a real Message record
-          const responseTimestamp = new Date(Date.now() + 2000).toISOString(); // 2s after send
-          const recipientMsg = await base44.entities.Message.create({
-            conversation_id: conversationId,
-            sender_type: 'character',
-            character_id: recipient.id,
-            character_name: recipient.name,
-            sender_character_id: recipient.id,
-            receiver_character_id: sender_character_id,
-            participant_character_ids: participantIds,
-            shared_conversation_key: canonicalKey,
-            content: recipientResponse,
-            channel: 'world_phone',
-            timestamp: responseTimestamp,
-            is_read: false,
-            reply_to_message_id: savedMessage.id,
-            source_message_id: savedMessage.id,
-            sync_status: 'pending',
-            recovery_signal: false,
-            memory_eligible: true,
-            relationship_eligible: true,
-          });
-
-          if (recipientMsg?.id) {
-            recipientResponseMessageId = recipientMsg.id;
-            // Update conversation with latest message
-            await base44.entities.Conversation.update(conversationId, {
-              last_message_preview: recipientResponse.substring(0, 100),
-              last_message_date: responseTimestamp,
-            }).catch(() => {});
-            console.log(`[sendWorldPhoneMessage] ✅ Recipient response saved | msg=${recipientMsg.id} | from=${recipient.name}`);
-          }
-        }
-      } else {
-        warnings.push(`Could not generate Character B response — canonical context unavailable for ${recipient.name}`);
-        console.warn(`[sendWorldPhoneMessage] No canonical context for recipient ${recipient.id} — response generation skipped`);
       }
     } catch (respErr) {
       warnings.push(`Recipient response generation failed (non-fatal): ${respErr.message}`);
-      console.warn(`[sendWorldPhoneMessage] Recipient response generation error: ${respErr.message}`);
+      console.warn(`[sendWorldPhoneMessage] Recipient response error: ${respErr.message}`);
     }
 
     // ── BILATERAL SYNC: memory + relationship for BOTH characters ──────────────
