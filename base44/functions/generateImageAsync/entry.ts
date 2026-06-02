@@ -36,12 +36,18 @@ function cdnFilter(urls) {
 }
 
 // ── OUTFIT RESOLVER ───────────────────────────────────────────────────────────
-// Sims-style outfit resolution — inlined since Deno cannot import local lib files.
-// Source of truth: outfitRotationEngine.js (lib). Keep in sync with that file.
+// Canonical authority order (matches user-defined spec):
+//   1. Uniform — when character is at a location that requires one (worker/inmate/student role)
+//   2. Rotation OFF lock — current_outfit is authoritative when rotation is disabled
+//   3. Rotation ON P1 — current_outfit wins if it matches the scene context category
+//   4. Rotation ON P2 — context-appropriate outfit selected daily from closet
+//
+// NOTE: Sleep/wake context is handled separately in the main handler (runs before this resolver)
+// because sleepwear is a legitimate context override that takes priority over closet rotation
+// but NOT over uniforms. Uniforms (step 1) still override sleepwear detection.
+//
+// Inlined from outfitRotationEngine.js + uniformResolver.js since Deno cannot import local files.
 
-// Detects AI-generated style prompts masquerading as outfit descriptions.
-// These are injected into the outfit lock and then compete with appearance authority.
-// They must be excluded — only real clothing descriptions are valid wardrobe data.
 function isAIStylePrompt(t) {
   if (!t) return false;
   return /\b(cinematic|chiaroscuro|dramatic lighting|editorial photography|fine art|low-key lighting|sculptural anatomy|artistic composition|museum.quality|photorealistic|ultra.detailed|high.resolution|bokeh|dramatic shadow|noir atmosphere|hyper.realistic|studio lighting|professional photography|stock photo|silhouette|atmosphere|moody|high contrast|film grain|depth of field|aesthetic|luxury editorial)\b/i.test(t);
@@ -54,7 +60,6 @@ function buildOutfitText(outfit) {
     .map(p => { const t = p.trim(); if(/^(n\/?a|none|-)$/i.test(t)) return null; const s=t.replace(/^n\/?a[,\-–]\s*/i,'').trim(); return /^(shirtless|no top|no shirt)$/i.test(s)?'No shirt / bare torso':(s||null); })
     .filter(Boolean);
   if (parts.length > 0) return parts.join(', ');
-  // full_description: only use if it's actual clothing text, not an AI style/aesthetic prompt
   const fd = outfit.full_description?.trim();
   if (fd && !isAIStylePrompt(fd)) return fd;
   return null;
@@ -80,57 +85,137 @@ function resolveOutfitCategory(character) {
   return 'daily_casual';
 }
 
-function resolveCharacterOutfitForPrompt(character) {
+// ── UNIFORM RESOLVER — inlined from lib/uniformResolver.js ───────────────────
+// Returns uniform description text if a required uniform applies, null otherwise.
+// Only fires when character is a worker/inmate/student at the location — never for visitors.
+function resolveUniformText(character, locationRecord) {
+  if (!character || !locationRecord) return null;
+  const uniforms = locationRecord.uniforms || {};
+  if (!uniforms || Object.keys(uniforms).length === 0) return null;
+
+  const workerIds = locationRecord.worker_character_ids || [];
+  const isWorker = workerIds.includes(character.id);
+  const jobTitle = locationRecord.worker_job_titles?.[character.id];
+  const isInmate = locationRecord.category === 'jail_prison' && character.is_jailed;
+  const isStudent = (locationRecord.category === 'school' || locationRecord.category === 'education')
+    && character.education_location_id === locationRecord.id;
+
+  // Visitors/customers never wear uniforms
+  if (!isWorker && !isInmate && !isStudent) return null;
+
+  // Derive character role
+  let role = isInmate ? 'inmate' : isStudent ? 'student' : isWorker ? 'employee' : null;
+  if (isWorker && locationRecord.category === 'jail_prison') role = 'staff';
+  if (isWorker && locationRecord.category === 'medical') role = 'staff';
+  if (!role) return null;
+
+  function uniformToText(u) {
+    if (!u) return null;
+    const parts = [u.description, u.name].filter(Boolean);
+    return parts[0] || null;
+  }
+
+  // Priority 1: Manual per-character override
+  const manualKey = locationRecord.worker_manual_uniforms?.[character.id];
+  if (manualKey && uniforms[manualKey]) return uniformToText(uniforms[manualKey]);
+
+  // Priority 2: Job-title uniform
+  if (jobTitle) {
+    const normalizedTitle = jobTitle.toLowerCase().trim();
+    for (const u of Object.values(uniforms)) {
+      if (u?.applicability === 'job_title' && (u.job_title || '').toLowerCase().trim() === normalizedTitle) {
+        return uniformToText(u);
+      }
+    }
+  }
+
+  // Priority 3: Zone-specific uniform
+  const characterZone = (character.current_zone || character.current_activity || '').toLowerCase();
+  if (characterZone) {
+    for (const u of Object.values(uniforms)) {
+      if (u?.applicability === 'zone' && u.zone && characterZone.includes(u.zone.toLowerCase())) {
+        return uniformToText(u);
+      }
+    }
+  }
+
+  // Priority 4: Role/status uniform
+  for (const u of Object.values(uniforms)) {
+    if (u?.applicability === 'role_status' && (u.role_status || '').toLowerCase().trim() === role) {
+      return uniformToText(u);
+    }
+  }
+
+  // Priority 5: Generic staff uniform (workers with unmatched job titles)
+  if (isWorker && jobTitle) {
+    for (const u of Object.values(uniforms)) {
+      if (u?.applicability === 'generic_staff') return uniformToText(u);
+    }
+  }
+
+  // Priority 6: Location-wide uniform
+  for (const u of Object.values(uniforms)) {
+    if (u?.applicability === 'location_wide') return uniformToText(u);
+  }
+
+  return null;
+}
+
+// ── MAIN OUTFIT RESOLVER ──────────────────────────────────────────────────────
+// locationRecord: optional LocationReference DB record — used for uniform resolution.
+// Pass the character's current work/school location when available.
+function resolveCharacterOutfitForPrompt(character, locationRecord) {
   if (!character) return { text: null, source: 'no_character', name: null, category: null };
 
-  // ── Outfit resolution respects character.outfit_rotation_enabled ──────────────
-  // outfit_rotation_enabled defaults to TRUE (rotation on) when not set.
-  // When rotation is OFF: current_outfit always wins (locked selection).
-  // When rotation is ON: current_outfit wins if it matches the context category;
-  //   otherwise the context-appropriate closet outfit is used.
-  const rotationEnabled = character?.outfit_rotation_enabled !== false;
-  const co = character.current_outfit;
-
-  // Helper: resolve text from an outfit object, including image-only outfits.
-  // An outfit with only an image_url has usable data; the image informs generation.
-  // In that case we return the label as a minimal text descriptor so generation
-  // is not blocked, and the image itself (if passed as a reference) carries the detail.
+  // Helper: build text from outfit object — closet entry or current_outfit stub
   function resolveOutfitText(outfit) {
     if (!outfit) return null;
     const t = buildOutfitText(outfit);
     if (t) return t;
-    // If no piece-level or full_description text, but outfit has a label, use it as fallback.
-    // This ensures image-only outfits are not silently dropped.
     if (outfit.label?.trim()) return outfit.label.trim();
     return null;
   }
 
-  // ── ROTATION OFF: current_outfit is locked — always use it ───────────────────
+  // ── STEP 1: UNIFORM — overrides all closet selection when character is on duty ──
+  // Applies when character is at_work/at_school/incarcerated AND location has uniforms.
+  // This is the highest priority — even a rotation-locked outfit yields to a required uniform.
+  const presence = character?.resolved_presence_status || character?.location_status || '';
+  const uniformApplies = (presence === 'at_work' || presence === 'at_school' || presence === 'incarcerated');
+  if (uniformApplies && locationRecord) {
+    const uniformText = resolveUniformText(character, locationRecord);
+    if (uniformText) {
+      console.log(`[OutfitResolver] ✅ UNIFORM override: presence="${presence}" uniform="${uniformText.substring(0,120)}"`);
+      return { text: uniformText, source: 'uniform', name: 'uniform', category: 'uniform' };
+    }
+  }
+
+  const rotationEnabled = character?.outfit_rotation_enabled !== false;
+  const co = character.current_outfit;
+
+  // ── STEP 2: ROTATION OFF — current_outfit is locked, always use it ───────────
   if (!rotationEnabled) {
     if (co?.outfit_id || co?.label) {
       let t = resolveOutfitText(co);
-      // Also check closet for full data if co is a stub
+      // If stub has no text, look up full data from closet by outfit_id
       if (!t && co.outfit_id) {
         const closetMatch = (character.character_closet || []).find(item => item.outfit_id === co.outfit_id);
         if (closetMatch) t = resolveOutfitText(closetMatch);
       }
       if (t) {
-        console.log(`[OutfitResolver] ✅ ROTATION_OFF lock: "${co.label}" → "${t.substring(0,120)}"`);
+        console.log(`[OutfitResolver] ✅ ROTATION_OFF lock: "${co.label || co.outfit_id}" → "${t.substring(0,120)}"`);
         return { text: t, source: 'rotation_off_lock', name: co.label || 'active', category: co.category || null };
       }
     }
     console.warn(`[OutfitResolver] ⚠️ ROTATION_OFF but current_outfit has no usable text — falling to closet`);
   }
 
-  // ── ROTATION ON: P1 — current_outfit wins if it matches context category ──────
+  // ── STEP 3: ROTATION ON — current_outfit wins if it matches context category ──
   if (co?.outfit_id || co?.label) {
     const targetCategory = resolveOutfitCategory(character);
     const coCategory = co.category || null;
     const chain = OUTFIT_FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
     const contextMatch = coCategory && chain.includes(coCategory);
-
     if (contextMatch) {
-      // Resolve full data from closet if needed
       let resolvedOutfit = co;
       if (co.outfit_id) {
         const closetMatch = (character.character_closet || []).find(item => item.outfit_id === co.outfit_id);
@@ -138,23 +223,23 @@ function resolveCharacterOutfitForPrompt(character) {
       }
       const t = resolveOutfitText(resolvedOutfit);
       if (t) {
-        console.log(`[OutfitResolver] ✅ ROTATION_ON P1 context match: cat="${coCategory}" in chain for "${targetCategory}" → "${t.substring(0,120)}"`);
+        console.log(`[OutfitResolver] ✅ ROTATION_ON P1 context match: cat="${coCategory}" for "${targetCategory}" → "${t.substring(0,120)}"`);
         return { text: t, source: 'current_outfit_context_match', name: co.label || 'active', category: coCategory };
       }
     } else {
-      console.log(`[OutfitResolver] ROTATION_ON P1 skip: current_outfit cat="${coCategory}" not in chain for context="${resolveOutfitCategory(character)}"`);
+      console.log(`[OutfitResolver] ROTATION_ON P1 skip: current_outfit cat="${coCategory}" not in chain for "${resolveOutfitCategory(character)}"`);
     }
   }
 
-  // ── ROTATION ON: P2 — pick context-appropriate outfit from closet ─────────────
+  // ── STEP 4: ROTATION ON — daily closet rotation ───────────────────────────────
   const outfits = (character.character_closet || []).filter(item => item.outfit_id);
   if (!outfits.length) {
-    console.warn(`[OutfitResolver] ⚠️ P2: no closet outfits`);
+    console.warn(`[OutfitResolver] ⚠️ No closet outfits — no wardrobe constraint`);
     return { text: null, source: 'no_closet', name: null, category: null };
   }
 
   const targetCategory = resolveOutfitCategory(character);
-  console.log(`[OutfitResolver] P2 closet rotation: category="${targetCategory}" presence="${character?.resolved_presence_status || 'unknown'}"`);
+  console.log(`[OutfitResolver] P2 daily rotation: category="${targetCategory}" presence="${presence}"`);
   const chain = OUTFIT_FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
 
   for (const cat of chain) {
@@ -164,13 +249,14 @@ function resolveCharacterOutfitForPrompt(character) {
       const t = resolveOutfitText(pool[0]);
       return { text: t, source: 'closet_rotation', name: pool[0].label || cat, category: cat };
     }
+    // Day-stable rotation index — same outfit all day, changes next day
     const dayOfYear = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
     const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    // When rotating, skip the currently worn outfit if alternatives exist
     let idx = (dayOfYear + idHash) % pool.length;
+    // Skip currently worn outfit when alternatives exist (force variety across days)
     if (pool[idx]?.outfit_id === co?.outfit_id && pool.length > 1) idx = (idx + 1) % pool.length;
     const t = resolveOutfitText(pool[idx]);
-    console.log(`[OutfitResolver] P2 rotation: cat="${cat}" → "${(t||'null').substring(0,80)}"`);
+    console.log(`[OutfitResolver] P2 daily rotation: cat="${cat}" → "${(t||'null').substring(0,80)}"`);
     return { text: t, source: 'closet_rotation', name: pool[idx].label || cat, category: cat };
   }
 
@@ -1096,20 +1182,51 @@ Deno.serve(async (req) => {
         const alreadyHasOutfitInDesc = /Currently wearing:/i.test(charDesc);
         if (!alreadyHasOutfitInDesc) {
           const promptLowerForOutfit = sanitizedPrompt.toLowerCase();
-          const sleepWakeKws = ['sleeping','asleep','in bed','woke up','waking up','just woke','getting up','lying in bed','napping','nap','going to bed','bedtime'];
-          const isSleepWake = (charRecord?.resolved_presence_status==='sleeping'||charRecord?.resolved_presence_status==='napping')||/\b(sleep|nap|asleep|bedtime|waking)\b/.test((charRecord?.current_activity||'').toLowerCase())||sleepWakeKws.some(kw=>promptLowerForOutfit.includes(kw));
-          if (isSleepWake) {
-            const closetItems = (charRecord?.character_closet||[]).filter(o=>o.outfit_id);
-            const sleepItem = closetItems.find(o=>o.category==='sleepwear'||o.category==='lounge');
-            const co2 = charRecord?.current_outfit;
-            let sleepText = null;
-            if (sleepItem) { sleepText = [sleepItem.top,sleepItem.bottom,sleepItem.shoes,sleepItem.outerwear,sleepItem.accessories].filter(Boolean).map(p=>{const t=p.trim();return/^(n\/?a|none|-)$/i.test(t)?null:t;}).filter(Boolean).join(', ')||sleepItem.full_description||null; }
-            else if (co2&&(co2.category==='sleepwear'||co2.category==='lounge')) { sleepText = [co2.top,co2.bottom,co2.shoes,co2.outerwear,co2.accessories].filter(Boolean).map(p=>{const t=p.trim();return/^(n\/?a|none|-)$/i.test(t)?null:t;}).filter(Boolean).join(', ')||co2.full_description||null; }
-            else { const g=(charRecord?.gender||'').toLowerCase(); sleepText=g==='female'?'soft cotton pajama set or oversized sleep shirt and shorts':g==='male'?'pajama bottoms or boxer shorts, no shirt or plain sleep shirt':'comfortable pajama set'; }
-            if (sleepText) { charDesc = charDesc?`${charDesc}. Currently wearing: ${sleepText}`:`Currently wearing: ${sleepText}`; console.log(`[SleepWakeOutfit] ✅ Override: "${sleepText.substring(0,80)}"`); }
+
+          // ── UNIFORM CHECK FIRST — fetches work/school location for uniform resolution ──
+          // Must run before sleep detection so a character on duty wears their uniform,
+          // not sleepwear, even if the prompt mentions sleep-adjacent words.
+          const preCheckPresence = charRecord?.resolved_presence_status || charRecord?.location_status || '';
+          const preCheckLocationId = preCheckPresence === 'at_work'
+            ? (charRecord?.current_work_location_id || charRecord?.occupation_location_id || null)
+            : preCheckPresence === 'at_school'
+            ? (charRecord?.current_school_location_id || charRecord?.education_location_id || null)
+            : preCheckPresence === 'incarcerated'
+            ? (charRecord?.incarceration_facility_id || null)
+            : null;
+          let outfitLocationRecord = null;
+          if (preCheckLocationId) {
+            const locForUniform = await base44.asServiceRole.entities.LocationReference.filter({ id: preCheckLocationId }, null, 1).catch(() => []);
+            outfitLocationRecord = locForUniform?.[0] || null;
           }
+          // If a uniform applies, inject it immediately and skip all other outfit logic
+          if (outfitLocationRecord) {
+            const uniformText = resolveUniformText(charRecord, outfitLocationRecord);
+            if (uniformText) {
+              charDesc = charDesc ? `${charDesc}. Currently wearing: ${uniformText}` : `Currently wearing: ${uniformText}`;
+              console.log(`[OutfitResolver] ✅ UNIFORM injected (early path): "${uniformText.substring(0,80)}"`);
+            }
+          }
+
+          // ── SLEEP/WAKE CONTEXT — only runs when no uniform was injected ────────────
           if (!/Currently wearing:/i.test(charDesc)) {
-            const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord, promptLowerForOutfit);
+            const sleepWakeKws = ['sleeping','asleep','in bed','woke up','waking up','just woke','getting up','lying in bed','napping','nap','going to bed','bedtime'];
+            const isSleepWake = (charRecord?.resolved_presence_status==='sleeping'||charRecord?.resolved_presence_status==='napping')||/\b(sleep|nap|asleep|bedtime|waking)\b/.test((charRecord?.current_activity||'').toLowerCase())||sleepWakeKws.some(kw=>promptLowerForOutfit.includes(kw));
+            if (isSleepWake) {
+              const closetItems = (charRecord?.character_closet||[]).filter(o=>o.outfit_id);
+              const sleepItem = closetItems.find(o=>o.category==='sleepwear'||o.category==='lounge');
+              const co2 = charRecord?.current_outfit;
+              let sleepText = null;
+              if (sleepItem) { sleepText = [sleepItem.top,sleepItem.bottom,sleepItem.shoes,sleepItem.outerwear,sleepItem.accessories].filter(Boolean).map(p=>{const t=p.trim();return/^(n\/?a|none|-)$/i.test(t)?null:t;}).filter(Boolean).join(', ')||sleepItem.full_description||null; }
+              else if (co2&&(co2.category==='sleepwear'||co2.category==='lounge')) { sleepText = [co2.top,co2.bottom,co2.shoes,co2.outerwear,co2.accessories].filter(Boolean).map(p=>{const t=p.trim();return/^(n\/?a|none|-)$/i.test(t)?null:t;}).filter(Boolean).join(', ')||co2.full_description||null; }
+              else { const g=(charRecord?.gender||'').toLowerCase(); sleepText=g==='female'?'soft cotton pajama set or oversized sleep shirt and shorts':g==='male'?'pajama bottoms or boxer shorts, no shirt or plain sleep shirt':'comfortable pajama set'; }
+              if (sleepText) { charDesc = charDesc?`${charDesc}. Currently wearing: ${sleepText}`:`Currently wearing: ${sleepText}`; console.log(`[SleepWakeOutfit] ✅ Override: "${sleepText.substring(0,80)}"`); }
+            }
+          }
+
+          if (!/Currently wearing:/i.test(charDesc)) {
+            // outfitLocationRecord already fetched in the early uniform path above (reuse it here)
+            const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord, outfitLocationRecord);
             console.log(`[OutfitDiagnostic] char="${charRecord.name}" source="${resolvedOutfit.source}" cat="${resolvedOutfit.category}" locked=${!!resolvedOutfit.text}`);
             if (resolvedOutfit.text) {
               charDesc = charDesc ? `${charDesc}. Currently wearing: ${resolvedOutfit.text}` : `Currently wearing: ${resolvedOutfit.text}`;
