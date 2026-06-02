@@ -698,6 +698,10 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       user_operated: true,
       channel: "world_phone",
       sync_status: "pending",
+      // CRITICAL: Outgoing messages are always read — the sender wrote them.
+      // Without this, outgoing messages get is_read:false (DB default) and
+      // resurrect as phantom green badges on subsequent notification recalcs.
+      is_read: true,
     });
 
     console.log(`[WorldPhone] Sent message | from=${character.id} | to=${selectedContact.related_character_id} | msg_id=${savedUserMsg.id.substring(0, 8)}`);

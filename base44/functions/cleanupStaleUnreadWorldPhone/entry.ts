@@ -126,19 +126,36 @@ Deno.serve(async (req) => {
         reason = 'merged_dead_conversation';
       }
 
-      // 6. Outgoing message (sender is one of the conversation participants, meaning it came from the viewed character)
+      // 6. Outgoing message — sender is the RECEIVER of this unread record.
+      // In a bilateral world-phone thread, receiver_character_id is the intended reader.
+      // A message is "outgoing" (and incorrectly unread) when the sender IS the receiver,
+      // i.e. a character sent a message to themselves (typed_by_user or self-reply).
+      // More precisely: if receiver_character_id === sender_character_id, it's self-addressed.
+      // Broader rule for pre-canonical messages: if NO receiver_character_id is set AND the
+      // sender is a conversation participant AND this is a world-phone channel, mark as read —
+      // these are outgoing messages saved before receiver stamping was enforced.
       else {
         const senderId = msg.sender_character_id || msg.character_id;
-        if (senderId && convoParticipant.characterIds.has(senderId)) {
-          // This message was sent BY one of the conversation participants
-          // In a bilateral conversation, if the viewed character is one participant
-          // and the sender is that same participant, it's outgoing
+        const receiverId = msg.receiver_character_id || null;
+
+        // Self-addressed: sender === receiver (definitively outgoing)
+        if (senderId && receiverId && senderId === receiverId) {
           shouldMarkRead = true;
-          reason = 'outgoing_from_participant';
+          reason = 'self_addressed_outgoing';
         }
-        // 7. Wrong receiver
-        else if (msg.receiver_character_id) {
-          const isValidReceiver = convoParticipant.characterIds.has(msg.receiver_character_id);
+        // typed_by_user flag: this message was typed by the app user — always outgoing
+        else if (msg.typed_by_user === true) {
+          shouldMarkRead = true;
+          reason = 'typed_by_user_outgoing';
+        }
+        // user_operated flag: sent on user's behalf — always outgoing
+        else if (msg.user_operated === true) {
+          shouldMarkRead = true;
+          reason = 'user_operated_outgoing';
+        }
+        // 7. Wrong receiver — receiver is set but is not a conversation participant
+        else if (receiverId) {
+          const isValidReceiver = convoParticipant.characterIds.has(receiverId);
           if (!isValidReceiver) {
             shouldMarkRead = true;
             reason = 'receiver_not_conversation_participant';
@@ -155,17 +172,26 @@ Deno.serve(async (req) => {
     console.log(`[cleanupStaleUnreadWorldPhone] Marking ${toMarkRead.length} messages as read`);
     console.log('[cleanupStaleUnreadWorldPhone] Reasons:', reasons);
 
-    // Batch mark-read
-    const markReadResults = await Promise.all(
-      toMarkRead.map(msgId =>
-        base44.entities.Message.update(msgId, { is_read: true }).catch(err => {
-          console.error(`[cleanupStaleUnreadWorldPhone] Failed to mark ${msgId} as read:`, err.message);
-          return null;
-        })
-      )
-    );
-
-    const successCount = markReadResults.filter(r => r !== null).length;
+    // Rate-limit-safe sequential batching for mark-read writes.
+    // Promise.all burst at high count causes 429. Process in chunks of 5 with 150ms pause.
+    const WRITE_CHUNK = 5;
+    const WRITE_DELAY_MS = 150;
+    let successCount = 0;
+    for (let i = 0; i < toMarkRead.length; i += WRITE_CHUNK) {
+      const chunk = toMarkRead.slice(i, i + WRITE_CHUNK);
+      const results = await Promise.all(
+        chunk.map(msgId =>
+          base44.entities.Message.update(msgId, { is_read: true }).catch(err => {
+            console.error(`[cleanupStaleUnreadWorldPhone] Failed to mark ${msgId} as read:`, err.message);
+            return null;
+          })
+        )
+      );
+      successCount += results.filter(r => r !== null).length;
+      if (i + WRITE_CHUNK < toMarkRead.length) {
+        await new Promise(r => setTimeout(r, WRITE_DELAY_MS));
+      }
+    }
 
     return Response.json({
       owner_email: ownerEmail,
