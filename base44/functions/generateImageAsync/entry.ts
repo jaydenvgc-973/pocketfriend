@@ -1583,15 +1583,18 @@ Deno.serve(async (req) => {
 
       if (!useManualLocation && charRecord) {
         const _pl = (sanitizedPrompt || prompt || '').toLowerCase();
-        const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house)|living room zone|bedroom zone|kitchen zone|bathroom zone|haledon home|home living room|home bedroom|home kitchen)\b/.test(_pl);
+        const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house))\b/.test(_pl);
         const _work = /\b(at (my |his |her )?(work|job|office|workplace|store|restaurant|bar|studio)|on the job|during (my|his|her) (shift|work day)|busy day at work|work today|yesterday at work|busy at work|at the (office|store|restaurant|bar|studio|workplace)|his (job|office|shift)|her (job|office|shift))\b/.test(_pl);
         const _school = /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus))\b/.test(_pl);
 
-        // PROMPT KEYWORD OVERRIDE — explicit home/work/school keyword in prompt wins
-        // This ensures "living room zone" in the prompt routes to home, not work bar
-        if (_home) {
+        // Prompt keyword home is only accepted when character is NOT on shift.
+        // Work-shift schedule authority outranks prompt drift — an LLM-generated
+        // "living room" mention cannot route to home while the character is on shift.
+        if (_home && !_effectiveWorkLocId) {
           locationId = charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null;
-          if (locationId) console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME: home keyword in prompt overrides work-shift routing → ${locationId}`);
+          if (locationId) console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME (off shift) → ${locationId}`);
+        } else if (_home && _effectiveWorkLocId) {
+          console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME suppressed — character on shift, work authority wins`);
         } else if (_work) {
           locationId = charRecord.current_work_location_id || charRecord.occupation_location_id || null;
         } else if (_school) {
@@ -1599,17 +1602,13 @@ Deno.serve(async (req) => {
         }
 
         // ── PRESENCE-FIRST AUTHORITY ─────────────────────────────────────────────
-        // CANONICAL LOCATION RESOLUTION — same authority chain as the frontend
-        // resolveCharacterLocation() and the character card/map/travel page.
-        //
-        // PRIORITY ORDER (matches frontend exactly):
-        //   1. Explicit home/work/school keyword in prompt (above) — highest priority
-        //   2. Work schedule (if character has a work location and is on shift right now)
-        //   3. School schedule (if character is enrolled and school is in session)
-        //   4. Incarcerated
-        //   5. resolved_current_location_id (DB truth — written by enforcements/travel)
-        //   6. Presence-status-derived fallback
-        //   7. Home as absolute last resort
+        // PRIORITY ORDER:
+        //   1. Work schedule (if on shift) — schedule authority is highest
+        //   2. School schedule
+        //   3. Incarcerated
+        //   4. resolved_current_location_id (DB truth)
+        //   5. Presence-status-derived fallback
+        //   6. Home absolute last resort
         if (!locationId) {
           const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || '';
           const resolvedLocId = charRecord.resolved_current_location_id || null;

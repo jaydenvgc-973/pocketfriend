@@ -169,13 +169,89 @@ Deno.serve(async (req) => {
       } catch { /* non-fatal */ }
     }
 
-    // ── TRIGGER completeTravelArrivalVerified for owners with due sessions ──
-    const ownersWithDue = [...new Set(due.map(r => r.owner_email).filter(Boolean))];
-    if (ownersWithDue.length > 0) {
-      console.log(`[processTravelArrivals] Triggering completeTravelArrivalVerified for ${ownersWithDue.length} owners`);
-      base44.asServiceRole.functions.invoke('completeTravelArrivalVerified', {}).catch(e => {
-        console.warn(`[processTravelArrivals] completeTravelArrivalVerified trigger failed (non-fatal): ${e.message}`);
-      });
+    // ── WRITE CHARACTER ARRIVALS DIRECTLY (service role) ─────────────────
+    // ROOT CAUSE FIX: The previous design delegated Character writes to
+    // completeTravelArrivalVerified via asServiceRole.functions.invoke().
+    // That invocation carries NO user session, so completeTravelArrivalVerified
+    // immediately returns 401 Unauthorized — arrival_write_attempts stayed 0 forever.
+    //
+    // Fix: write Character arrivals directly here using asServiceRole,
+    // then verify by reading back. This mirrors what completeTravelArrivalVerified
+    // does but without requiring a user session in the scheduler context.
+    const nowISO2 = new Date().toISOString();
+    for (const dueEntry of due) {
+      try {
+        const session = dueSessions.find(s => s.id === dueEntry.session_id);
+        if (!session) continue;
+
+        // Load destination LocationReference (already validated above — just need the record)
+        const destLocArr = await base44.asServiceRole.entities.LocationReference.filter(
+          { id: session.destination_location_id }, null, 1
+        ).catch(() => []);
+        const destLoc = destLocArr?.[0];
+        if (!destLoc) continue;
+
+        // Load the character via service role
+        const charArr = await base44.asServiceRole.entities.Character.filter(
+          { id: session.character_id }, null, 1
+        ).catch(() => []);
+        const char = charArr?.[0];
+        if (!char) {
+          console.warn(`[processTravelArrivals] Character ${session.character_id} not found via service role — skipping arrival write`);
+          continue;
+        }
+
+        // Determine arrival presence
+        let finalPresenceStatus = 'visiting';
+        let finalLocationType   = 'visit';
+        if (session.travel_source === 'work_schedule')        { finalPresenceStatus = 'at_work';    finalLocationType = 'work'; }
+        else if (session.travel_source === 'school_schedule') { finalPresenceStatus = 'at_school';  finalLocationType = 'school'; }
+        else if (destLoc.id === char.current_home_location_id){ finalPresenceStatus = 'home';       finalLocationType = 'home'; }
+
+        // Write Character to destination (service role)
+        await base44.asServiceRole.entities.Character.update(char.id, {
+          resolved_current_location_id:   destLoc.id,
+          resolved_current_location_name: destLoc.name,
+          resolved_presence_status:       finalPresenceStatus,
+          resolved_location_type:         finalLocationType,
+          resolved_source_reason:         `verified_arrival:${session.id}`,
+          resolved_last_updated_at:       nowISO2,
+          last_arrived_time:              nowISO2,
+          travel_status:                  'not_traveling',
+          travel_destination_location_id: null,
+          traveling_to_location_id:       null,
+          traveling_to_location_name:     null,
+        });
+
+        // Read back to verify
+        const readbackArr = await base44.asServiceRole.entities.Character.filter(
+          { id: char.id }, null, 1
+        ).catch(() => []);
+        const charAfter = readbackArr?.[0];
+        const locationVerified = charAfter?.resolved_current_location_id === destLoc.id;
+
+        if (locationVerified) {
+          // Stamp session arrived
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            route_status:                    'arrived',
+            actual_arrival_time:             nowISO2,
+            arrival_due:                     false,
+            arrival_pending_character_write: false,
+            arrival_write_attempts:          1,
+          }).catch(() => {});
+          console.log(`[processTravelArrivals] ✅ ARRIVAL WRITTEN & VERIFIED | char=${char.name} | dest=${destLoc.name} | presence=${finalPresenceStatus}`);
+        } else {
+          // Write failed — keep arrival_due for retry
+          console.error(`[processTravelArrivals] ❌ Arrival write failed readback for ${char.name} → ${destLoc.name}`);
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            arrival_write_attempts: 1,
+            blocker_reason: 'service_role_write_readback_mismatch',
+          }).catch(() => {});
+        }
+      } catch (arrErr) {
+        errors.push({ session_id: dueEntry.session_id, error: `arrival_write: ${arrErr.message}` });
+        console.error(`[processTravelArrivals] Arrival write error for ${dueEntry.session_id}: ${arrErr.message}`);
+      }
     }
 
     return Response.json({
