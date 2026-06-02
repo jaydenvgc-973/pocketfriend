@@ -261,6 +261,10 @@ function resolveCharacterOutfitForPrompt(character) {
   }
 
   // ── ROTATION ON P2 — daily closet rotation ───────────────────────────────────
+  // STABILITY RULE: The selected outfit must be THE SAME across every photo request
+  // on the same day. The day+characterId hash is the ONLY selection mechanism.
+  // We do NOT skip the currently worn outfit — that mutation makes selection unstable
+  // across repeated calls. The hash alone determines which outfit is picked.
   const outfits = (character.character_closet || []).filter(item => item.outfit_id);
   if (!outfits.length) {
     console.warn(`[OutfitResolver] ⚠️ No closet outfits — no wardrobe constraint`);
@@ -272,21 +276,19 @@ function resolveCharacterOutfitForPrompt(character) {
   console.log(`[OutfitResolver] P2 daily rotation: category="${targetCategory}" presence="${_presence}"`);
   const chain = OUTFIT_FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
 
+  // Compute the day-stable hash ONCE — used identically for every call on the same day.
+  // This is purely deterministic: same character + same day = same outfit, every time.
+  const dayOfYear = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
+  const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  const stableIndex = (dayOfYear + idHash);
+
   for (const cat of chain) {
     const pool = outfits.filter(o => o.category === cat);
     if (!pool.length) continue;
-    if (pool.length === 1) {
-      const t = resolveOutfitText(pool[0]);
-      return { text: t, source: 'closet_rotation', name: pool[0].label || cat, category: cat };
-    }
-    // Day-stable rotation index — same outfit all day, changes next day
-    const dayOfYear = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
-    const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    let idx = (dayOfYear + idHash) % pool.length;
-    // Skip currently worn outfit when alternatives exist (force variety across days)
-    if (pool[idx]?.outfit_id === co?.outfit_id && pool.length > 1) idx = (idx + 1) % pool.length;
+    // STABLE: same index every call — no skip/mutation that changes results between calls
+    const idx = stableIndex % pool.length;
     const t = resolveOutfitText(pool[idx]);
-    console.log(`[OutfitResolver] P2 daily rotation: cat="${cat}" → "${(t||'null').substring(0,80)}"`);
+    console.log(`[OutfitResolver] P2 daily rotation: cat="${cat}" idx=${idx}/${pool.length} → "${(t||'null').substring(0,80)}"`);
     return { text: t, source: 'closet_rotation', name: pool[idx].label || cat, category: cat };
   }
 
@@ -1232,6 +1234,38 @@ Deno.serve(async (req) => {
         ].filter(Boolean);
         charDesc = parts.join(', ');
 
+        // ── WORK SCHEDULE PRE-COMPUTE — runs before outfit AND location blocks ────
+        // Computed ONCE here and re-used by both the outfit uniform check and the
+        // location resolution block below. This is the canonical shift check that
+        // mirrors the frontend resolveCharacterLocation() Layer 1 logic.
+        const _preWorkLocId = charRecord.current_work_location_id || charRecord.occupation_location_id || null;
+        const _preWorkStart = charRecord.work_start_time;
+        const _preWorkEnd = charRecord.work_end_time;
+        const _preWorkDays = charRecord.work_days;
+        let _preIsOnWorkShift = false;
+        if (_preWorkLocId && _preWorkStart && _preWorkEnd && _preWorkDays && _preWorkDays.length > 0) {
+          const _nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+          const _dayOfWeek = _nowET.getDay();
+          if (_preWorkDays.includes(_dayOfWeek)) {
+            const _nowMin = _nowET.getHours() * 60 + _nowET.getMinutes();
+            const [_sh, _sm] = _preWorkStart.split(':').map(Number);
+            const [_eh, _em] = _preWorkEnd.split(':').map(Number);
+            const _startMin = _sh * 60 + _sm;
+            const _endMin = _eh * 60 + _em;
+            if (_endMin < _startMin) {
+              _preIsOnWorkShift = _nowMin >= _startMin || _nowMin < _endMin;
+            } else {
+              _preIsOnWorkShift = _nowMin >= _startMin && _nowMin < _endMin;
+            }
+          }
+        }
+        // Callout check for work shift
+        const _todayETStr = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString().slice(0, 10);
+        const _hasCallout = charRecord.work_exception_status === 'called_out' && charRecord.work_exception_date === _todayETStr;
+        const _effectiveIsOnWorkShift = _preIsOnWorkShift && !_hasCallout;
+        const _effectiveWorkLocId = _effectiveIsOnWorkShift ? _preWorkLocId : null;
+        console.log(`[OutfitAudit] work_shift_precheck: isOnShift=${_effectiveIsOnWorkShift} workLocId=${_effectiveWorkLocId || 'none'}`);
+
         const alreadyHasOutfitInDesc = /Currently wearing:/i.test(charDesc);
         if (!alreadyHasOutfitInDesc) {
           const promptLowerForOutfit = sanitizedPrompt.toLowerCase();
@@ -1250,8 +1284,14 @@ Deno.serve(async (req) => {
           // ── UNIFORM CHECK FIRST — fetches work/school location for uniform resolution ──
           // Must run before sleep detection so a character on duty wears their uniform,
           // not sleepwear, even if the prompt mentions sleep-adjacent words.
+          //
+          // Use the SAME work-schedule authority as location resolution:
+          // if the character is on shift (by schedule), treat them as at_work even if
+          // the DB presence says otherwise. This keeps outfit and location in sync.
           const preCheckPresence = charRecord?.resolved_presence_status || charRecord?.location_status || '';
-          const preCheckLocationId = preCheckPresence === 'at_work'
+          // _effectiveIsOnWorkShift and _effectiveWorkLocId computed above (same scope).
+          const preCheckLocationId = _effectiveWorkLocId ? _effectiveWorkLocId
+            : preCheckPresence === 'at_work'
             ? (charRecord?.current_work_location_id || charRecord?.occupation_location_id || null)
             : preCheckPresence === 'at_school'
             ? (charRecord?.current_school_location_id || charRecord?.education_location_id || null)
@@ -1424,39 +1464,74 @@ Deno.serve(async (req) => {
         }
 
         // ── PRESENCE-FIRST AUTHORITY ─────────────────────────────────────────────
-        // When no explicit prompt keyword matched, use the character's current resolved
-        // presence as the source of truth — NOT a home fallback.
+        // CANONICAL LOCATION RESOLUTION — same authority chain as the frontend
+        // resolveCharacterLocation() and the character card/map/travel page.
         //
-        // resolved_current_location_id is the canonical "where they are right now" field.
-        // Only fall back to home if their actual presence IS home or sleeping.
-        // Never default to home for a character who is at a bar, park, school, or any
-        // other location just because no prompt keyword matched.
+        // PRIORITY ORDER (matches frontend exactly):
+        //   1. Work schedule (if character has a work location and is on shift right now)
+        //   2. School schedule (if character is enrolled and school is in session)
+        //   3. Incarcerated
+        //   4. resolved_current_location_id (DB truth — written by enforcements/travel)
+        //   5. Presence-status-derived fallback
+        //   6. Home as absolute last resort
+        //
+        // This ensures image generation uses the SAME location that the character card,
+        // map, and travel page display — no more divergence between UI and image backend.
         if (!locationId) {
           const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || '';
           const resolvedLocId = charRecord.resolved_current_location_id || null;
 
-          if (resolvedLocId) {
-            // Trust the resolved location — this is where the character actually is
+          // ── LAYER 1: WORK SCHEDULE CHECK (PRIORITY — matches frontend Layer 1) ──
+          // Re-use pre-computed _effectiveIsOnWorkShift and _effectiveWorkLocId from above.
+          if (_effectiveWorkLocId) {
+            locationId = _effectiveWorkLocId;
+            console.log(`[generateImageAsync] WORK-SCHEDULE-AUTHORITY: character is on shift → work location="${_effectiveWorkLocId}" (overrides presence="${presenceStatus}" resolved="${resolvedLocId || 'none'}")`);
+          }
+
+          // ── LAYER 2: SCHOOL SCHEDULE ──────────────────────────────────────────
+          if (!locationId && charRecord.student_status === 'enrolled') {
+            const schoolLocId = charRecord.current_school_location_id || charRecord.education_location_id || null;
+            if (schoolLocId) {
+              locationId = schoolLocId;
+              console.log(`[generateImageAsync] SCHOOL-SCHEDULE-AUTHORITY: character is enrolled student → school location="${schoolLocId}"`);
+            }
+          }
+
+          // ── LAYER 3: INCARCERATION ────────────────────────────────────────────
+          if (!locationId && charRecord.is_jailed && charRecord.incarceration_facility_id) {
+            locationId = charRecord.incarceration_facility_id;
+            console.log(`[generateImageAsync] INCARCERATION-AUTHORITY: character is jailed → facility="${charRecord.incarceration_facility_id}"`);
+          }
+
+          // ── LAYER 4: resolved_current_location_id — DB truth ─────────────────
+          // Only trust this when it is a non-home location, OR when presence actually is home.
+          // Never silently fall to home when the character is visiting/traveling/at_work.
+          if (!locationId && resolvedLocId) {
             locationId = resolvedLocId;
             console.log(`[generateImageAsync] PRESENCE-AUTHORITY: using resolved_current_location_id="${resolvedLocId}" (presence="${presenceStatus}")`);
-          } else {
-            // resolved_current_location_id is empty — derive from presence status
+          }
+
+          // ── LAYER 5: Presence-status-derived fallback ─────────────────────────
+          if (!locationId) {
             if (presenceStatus === 'at_work') {
               locationId = charRecord.current_work_location_id || charRecord.occupation_location_id || null;
+              if (locationId) console.log(`[generateImageAsync] FALLBACK: presence=at_work → work location="${locationId}"`);
             } else if (presenceStatus === 'at_school') {
               locationId = charRecord.current_school_location_id || charRecord.education_location_id || null;
+              if (locationId) console.log(`[generateImageAsync] FALLBACK: presence=at_school → school location="${locationId}"`);
             } else if (presenceStatus === 'incarcerated') {
               locationId = charRecord.incarceration_facility_id || null;
             } else if (presenceStatus === 'home' || presenceStatus === 'sleeping' || presenceStatus === 'napping') {
               locationId = charRecord.current_home_location_id || charRecord.home_location_id || null;
             } else if (presenceStatus === 'temporary_housing') {
               locationId = charRecord.temporary_housing_location_id || charRecord.current_home_location_id || null;
-            } else {
-              // Unknown/visiting presence — use home only as absolute last resort since
-              // we have no location data at all. Log clearly so this is traceable.
-              locationId = charRecord.current_home_location_id || charRecord.home_location_id || null;
-              if (locationId) console.warn(`[generateImageAsync] ⚠️ PRESENCE-AUTHORITY: presence="${presenceStatus}" has no resolved location — falling back to home as last resort. This may not match actual location.`);
             }
+          }
+
+          // ── LAYER 6: Home absolute last resort ────────────────────────────────
+          if (!locationId) {
+            locationId = charRecord.current_home_location_id || charRecord.home_location_id || null;
+            if (locationId) console.warn(`[generateImageAsync] ⚠️ LAST-RESORT-HOME: presence="${presenceStatus}" has no other resolved location — using home. This may not match actual location.`);
           }
         }
       }
