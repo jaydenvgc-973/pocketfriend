@@ -67,13 +67,28 @@ function classifyOccupancy({ locationName, zoneName, locCategory, promptCue, isI
     : _jV  ? 'VISITATION/INTAKE/MEDICAL: Staff, visitors, or incarcerated persons may be present if context supports. Controlled institutional setting.'
     : 'CONFINEMENT—UNSPECIFIED: Sparse institutional background. Low density if shared space implied. Default minimal. ⛔ No "customers," "patrons," or civilian crowd language.';
 
+  // ── SUBTYPE BASELINE (matches generateImageAsync exactly) ────────────────────
+  const _emptyCtx = /\b(empty|closed|after.?hours|alone in|nobody|no one here|private tutoring|one.?on.?one|abandoned)\b/.test(pLow);
+  const _cs = isCrowded ? ' HIGH density — many blurred figures.' : ' Moderate density — background figures required.';
+  const _isClassroom = !_emptyCtx && (_schoolPub || /\b(classroom|lecture|seminar|tutorial)\b/.test(zn));
+  const _isBar       = !_emptyCtx && (/\b(bar|nightclub|lounge|pub|tavern|sports bar)\b/.test(lnL) || /\b(bar area|main floor|vip)\b/.test(zn));
+  const _isChurch    = !_emptyCtx && (lcCat === 'religion');
+  const _isCafe      = !_emptyCtx && (lcCat === 'food_drink' || /\b(cafeteria|dining hall|restaurant|diner|cafe)\b/.test(zn + ' ' + lnL));
+  const _isGym       = !_emptyCtx && lcCat === 'gym';
+  const _subtypeRule = _isClassroom ? 'CLASSROOM — OCCUPIED BY DEFAULT: ✅ Other students MUST be visible in background seats. ⛔ DO NOT render empty rows. Active class session.' + _cs
+    : _isBar    ? 'BAR/VENUE — OCCUPIED BY DEFAULT: ✅ Patrons MUST be visible at bar and seating. ⛔ DO NOT render empty bar.' + _cs
+    : _isChurch ? 'CHURCH — OCCUPIED BY DEFAULT: ✅ Congregation members MUST be visible in pews behind subject. ⛔ DO NOT render empty sanctuary.' + _cs
+    : _isCafe   ? 'RESTAURANT/CAFETERIA — OCCUPIED BY DEFAULT: ✅ Other diners MUST be visible at surrounding tables. ⛔ DO NOT render empty dining room.' + _cs
+    : _isGym    ? 'GYM — OCCUPIED BY DEFAULT: ✅ Other gym-goers MUST be visible on equipment in background. ⛔ DO NOT render empty gym.' + _cs
+    : null;
+
   const occRule = isIso ? 'ISOLATION ACTIVE: zero humans total. No hands, silhouettes, or reflections.'
     : isConfinement ? _jRule
     : isResid ? 'PRIVATE RESIDENTIAL: ⛔ DO NOT invent strangers, neighbors, visitors, or filler people. Occupancy = actual known presence only. Subject is alone unless otherwise established.'
     : isStaffZone ? 'STAFF-ONLY ZONE: Only appropriate staff/employees in background. ⛔ NO customers, patrons, or members of the public.'
-    : isPub ? (isCrowded
-        ? 'PUBLIC SOCIAL — ACTIVE CROWD: ✅ Background crowd IS part of scene reality — blurred, subordinate figures. ⛔ DO NOT erase the crowd.'
-        : 'PUBLIC SOCIAL: Context-appropriate background figures permitted as out-of-focus environmental texture. Match natural activity level. ⛔ Do not make an active venue appear sterile.')
+    : isPub ? (_subtypeRule || isCrowded
+        ? (_subtypeRule || 'PUBLIC SOCIAL — ACTIVE CROWD: ✅ Background crowd IS part of scene reality — blurred, subordinate figures. ⛔ DO NOT erase the crowd.')
+        : 'PUBLIC SOCIAL — ACTIVE VENUE: ✅ Background people ARE REQUIRED as blurred environmental texture. Active venue — it has other people in it. ⛔ DO NOT render empty.')
     : 'CONTEXT-APPROPRIATE: Active public spaces may have background figures (blurred, subordinate). Private/quiet spaces: minimal or none.';
 
   return {
