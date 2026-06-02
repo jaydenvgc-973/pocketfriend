@@ -287,7 +287,9 @@ Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No g
       content: isImageSend ? '' : rewrittenMessage,
       channel: 'world_phone',
       timestamp: now,
-      is_read: false,
+      // Outgoing messages (sent BY Character A) are always read — they are not incoming notifications.
+      // Only Character B's incoming reply should be is_read: false to trigger the badge.
+      is_read: true,
       typed_by_user: source === 'user_instruction',
       user_operated: source === 'user_instruction',
       source_message_id: current_chat_message_id || null,

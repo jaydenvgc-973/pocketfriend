@@ -17,19 +17,28 @@
  *   "Call Sarah"
  *   "Message Devon that I'll be late"
  *   "Tell Khalil I'm on my way"
+ *   "send a message to Maya saying..."
+ *   "let Ethan know that..."
  */
 export function detectWorldPhoneIntent(userText) {
   if (!userText || userText.length < 5) return null;
 
+  // Name pattern: 1 or 2 words, first letter any case (user may type lowercase)
+  const NAME = '([A-Za-z][a-zA-Z]+(?:\\s+[A-Za-z][a-zA-Z]+)?)';
+
   const patterns = [
-    // "text/message/tell [Name] and/to/that/: [message]"
-    /\b(?:text|message|msg|tell|contact|hit\s+up|reach\s+out\s+to)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+(?:and\s+(?:tell\s+(?:him|her|them)\s+)?|to\s+say\s+|that\s+|:\s*|,\s*)(.{5,})/i,
+    // "text/message/msg/tell/contact/hit up/reach out to [Name] [connector] [message]"
+    new RegExp(`\\b(?:text|message|msg|tell|contact|hit\\s+up|reach\\s+out\\s+to)\\s+${NAME}\\s+(?:and\\s+(?:tell\\s+(?:him|her|them)\\s+)?|to\\s+say\\s+|that\\s+|:\\s*|,\\s*)(.{5,})`, 'i'),
     // "call [Name] and tell them..."
-    /\b(?:call)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+(?:and\s+(?:tell\s+(?:him|her|them)\s+)?|to\s+say\s+|that\s+|:\s*|,\s*)(.{5,})/i,
+    new RegExp(`\\b(?:call)\\s+${NAME}\\s+(?:and\\s+(?:tell\\s+(?:him|her|them)\\s+)?|to\\s+say\\s+|that\\s+|:\\s*|,\\s*)(.{5,})`, 'i'),
     // "send [Name] a message/text saying..."
-    /\bsend\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+(?:a\s+)?(?:message|text|dm)\s+(?:saying\s+|that\s+|:\s*)?(.{5,})/i,
+    new RegExp(`\\bsend\\s+${NAME}\\s+(?:a\\s+)?(?:message|text|dm)\\s+(?:saying\\s+|that\\s+|:\\s*)?(.{5,})`, 'i'),
+    // "send a message/text to [Name] saying..."
+    new RegExp(`\\bsend\\s+(?:a\\s+)?(?:message|text|dm)\\s+to\\s+${NAME}\\s+(?:saying\\s+|that\\s+|:\\s*)?(.{5,})`, 'i'),
     // "let [Name] know [message]"
-    /\blet\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+know\s+(?:that\s+)?(.{5,})/i,
+    new RegExp(`\\blet\\s+${NAME}\\s+know\\s+(?:that\\s+)?(.{5,})`, 'i'),
+    // "tell [Name] that/to..." (without connector word)
+    new RegExp(`\\btell\\s+${NAME}\\s+(?:that\\s+|to\\s+)(.{5,})`, 'i'),
   ];
 
   for (const pattern of patterns) {
@@ -38,7 +47,11 @@ export function detectWorldPhoneIntent(userText) {
       const recipient = match[1]?.trim();
       const message = match[2]?.trim();
       if (recipient && message && recipient.length > 1 && message.length >= 5) {
-        return { recipient, message };
+        // Exclude common false positives (me, him, her, them, us, you, the, a)
+        const excludedWords = new Set(['me','him','her','them','us','you','the','a','an','it','this','that','my','your','his','her','their']);
+        if (!excludedWords.has(recipient.toLowerCase())) {
+          return { recipient, message };
+        }
       }
     }
   }
@@ -74,6 +87,8 @@ export function stripFabricatedReplyFromResponse(responseText) {
  * Examples:
  *   "I just texted Mike that I'm on my way."
  *   "I let Sarah know you said hi."
+ *   "Already messaged him."
+ *   "I reached out to Devon."
  *
  * senderName — to avoid self-reference matches.
  */
@@ -81,14 +96,20 @@ export function detectCharacterWorldPhoneAction(responseText, senderName) {
   if (!responseText || responseText.length < 10) return null;
 
   const senderFirst = (senderName || '').toLowerCase().split(' ')[0];
+  // Name pattern: 1 or 2 capitalized words
+  const NAME = '([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)?)';
 
   const patterns = [
-    // "I texted/messaged [Name] [saying/that/:]..."
-    /\bI\s+(?:just\s+)?(?:texted|messaged|called)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+(?:and\s+told\s+(?:him|her|them)\s+|saying\s+|that\s+|to\s+say\s+|:\s*)?["']?(.{5,}?)["']?[.!]/i,
+    // "I texted/messaged/called [Name] [saying/that/:]..."
+    new RegExp(`\\bI\\s+(?:just\\s+)?(?:texted|messaged|called|hit\\s+up)\\s+${NAME}\\s+(?:and\\s+told\\s+(?:him|her|them)\\s+|saying\\s+|that\\s+|to\\s+say\\s+|:\\s*)?["']?(.{5,}?)["']?[.!]`, 'i'),
     // "I sent [Name] a message/text [saying/that]..."
-    /\bI\s+sent\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+(?:a\s+)?(?:text|message|dm)\s+(?:saying\s+|that\s+|:\s*)?["']?(.{5,}?)["']?[.!]/i,
-    // "I let [Name] know that..."
-    /\bI\s+(?:let|told)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+know\s+(?:that\s+)?(.{5,}?)[.!]/i,
+    new RegExp(`\\bI\\s+sent\\s+${NAME}\\s+(?:a\\s+)?(?:text|message|dm)\\s+(?:saying\\s+|that\\s+|:\\s*)?["']?(.{5,}?)["']?[.!]`, 'i'),
+    // "I let/told [Name] know that..."
+    new RegExp(`\\bI\\s+(?:let|told)\\s+${NAME}\\s+know\\s+(?:that\\s+)?(.{5,}?)[.!]`, 'i'),
+    // "I reached out to [Name] about..."
+    new RegExp(`\\bI\\s+reached\\s+out\\s+to\\s+${NAME}\\s+(?:about\\s+|to\\s+say\\s+|saying\\s+|that\\s+)?(.{5,}?)[.!]`, 'i'),
+    // "Already texted/messaged [Name]..."
+    new RegExp(`\\b(?:already|just)\\s+(?:texted|messaged|called)\\s+${NAME}\\s+(?:about\\s+|that\\s+|saying\\s+)?(.{5,}?)[.!]`, 'i'),
   ];
 
   for (const pattern of patterns) {
@@ -96,11 +117,12 @@ export function detectCharacterWorldPhoneAction(responseText, senderName) {
     if (match) {
       const recipient = match[1]?.trim();
       const message = match[2]?.trim();
-      // Avoid self-reference and overly short matches
+      const excludedWords = new Set(['me','him','her','them','us','you','the','a','an','it','my','your','his','their']);
       if (
         recipient &&
         message &&
         recipient.toLowerCase() !== senderFirst &&
+        !excludedWords.has(recipient.toLowerCase()) &&
         message.length >= 5
       ) {
         return { recipient, message };

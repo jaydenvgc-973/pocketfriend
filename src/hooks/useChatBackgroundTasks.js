@@ -126,6 +126,7 @@ export function useChatBackgroundTasks({
     currentUser,
     isTyping,
     userMsg,
+    worldPhoneAlreadySent, // true when Chat.jsx pre-send worldPhoneIntent already fired
   }) => {
     if (!characterId || !convoId) return;
 
@@ -236,7 +237,8 @@ export function useChatBackgroundTasks({
       // Fires only when the user message contains contact-suggestive language.
       // Uses a targeted LLM call instead of a fragile regex. 5-minute cooldown.
       // Only creates a real contact event — never a narrative-only response.
-      if (!isOnCooldown(characterId, 'contactIntent', 300000) && text && character) {
+      // Skip if the pre-send worldPhoneIntent path already created the World Phone message.
+      if (!worldPhoneAlreadySent && !isOnCooldown(characterId, 'contactIntent', 300000) && text && character) {
         const contactTriggerWords = /\b(call|text|message|contact|reach out|hit up|check on|check in with|let .{0,15} know|tell .{0,15} (that|about|i))\b/i;
         if (contactTriggerWords.test(text)) {
           // Build known names from fictional_relationships for context

@@ -8,8 +8,12 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  *   - need-driven (social_value < 35, introvert prefers call over travel)
  *   - autonomous (scheduled / relationship maintenance)
  *
- * Creates a real World Phone thread + Message + bilateral Memory records.
- * Does NOT create narrative-only contact — if it runs, a real event exists.
+ * CANONICAL PATH: Delegates to sendWorldPhoneMessage so every message is
+ * written with the correct World Phone fields (shared_conversation_key,
+ * channel:'world_phone', sender_character_id, receiver_character_id, etc.)
+ * and is visible in WorldContactsPopup.
+ *
+ * Does NOT create narrative-only contact — if it runs, a real World Phone event exists.
  *
  * Payload:
  *   senderCharacterId: string       — Character A (the sender)
@@ -22,12 +26,6 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * Returns:
  *   { success, conversationId, messageId, senderName, receiverName, receiverResolved, bilateralMemoryWritten }
  */
-
-// World Phone conversation title convention — mirrors WorldContactsPopup
-function npcConvoTitle(ownerCharId, contactName, contactCharId) {
-  if (contactCharId) return `npc_chat__${ownerCharId}__cid_${contactCharId}`;
-  return `npc_chat__${ownerCharId}__${contactName}`;
-}
 
 Deno.serve(async (req) => {
   try {
@@ -45,8 +43,6 @@ Deno.serve(async (req) => {
     }
 
     // ── 1. RESOLVE SENDER ────────────────────────────────────────────────────
-    // Platform throws "Object not found" when filter({ id }) receives a nonexistent ID.
-    // Catch it explicitly and return 404 — not 500.
     let senderList;
     try {
       senderList = await base44.entities.Character.filter({ id: senderCharacterId }, null, 1);
@@ -55,7 +51,7 @@ Deno.serve(async (req) => {
       if (msg.includes('Object not found') || msg.includes('not found') || msg.includes('Invalid id')) {
         return Response.json({ error: `Sender character id=${senderCharacterId} not found`, stage: 'sender_lookup' }, { status: 404 });
       }
-      throw lookupErr; // unexpected — re-throw
+      throw lookupErr;
     }
     const sender = senderList?.[0];
     if (!sender) {
@@ -71,23 +67,15 @@ Deno.serve(async (req) => {
     const triggerSrc = trigger_source || 'user_requested';
     if (triggerSrc !== 'user_requested') {
       const today = new Date().toISOString().split('T')[0];
-      const todayConvos = await base44.entities.Conversation.filter({
-        type: 'npc',
-        character_ids: [senderCharacterId],
-        owner_email: user.email,
-      }).catch(() => []);
-      let autonomousToday = 0;
-      for (const c of todayConvos) {
-        const recentMsgs = await base44.entities.Message.filter({
-          conversation_id: c.id,
-          sender_type: 'character',
-          character_id: senderCharacterId,
-        }, '-timestamp', 20).catch(() => []);
-        autonomousToday += recentMsgs.filter(m =>
-          m.created_date?.startsWith(today) &&
-          (m.trigger_source === 'need_driven' || m.trigger_source === 'autonomous' || m.trigger_source === 'relationship')
-        ).length;
-      }
+      // Check World Phone messages sent today by this character
+      const recentWPMessages = await base44.entities.Message.filter({
+        sender_character_id: senderCharacterId,
+        channel: 'world_phone',
+      }, '-timestamp', 30).catch(() => []);
+      const autonomousToday = recentWPMessages.filter(m =>
+        m.created_date?.startsWith(today) &&
+        (m.trigger_source === 'need_driven' || m.trigger_source === 'autonomous' || m.trigger_source === 'relationship')
+      ).length;
       if (autonomousToday >= 3) {
         return Response.json({
           success: false,
@@ -98,59 +86,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── 2. RESOLVE RECEIVER BY STABLE ID FIRST, THEN NAME ───────────────────
-    let receiver = null;
-    let receiverFoundVia = null;
-    const resolvedReceiverName = receiverCharacterName || '';
-
-    // Path A: caller provided a direct character ID (most reliable)
-    if (receiverCharacterId) {
-      let rcList;
-      try {
-        rcList = await base44.entities.Character.filter({ id: receiverCharacterId }, null, 1);
-      } catch { rcList = []; }
-      if (rcList?.[0] && rcList[0].owner_email === user.email) {
-        receiver = rcList[0];
-        receiverFoundVia = 'direct_id';
-      }
-    }
-
-    // Path B: look in sender's fictional_relationships for a linked Character record
-    if (!receiver && resolvedReceiverName) {
-      const linkedRel = (sender.fictional_relationships || []).find(
-        r => r.person_name?.trim().toLowerCase() === resolvedReceiverName.trim().toLowerCase()
-          && r.related_character_id
-      );
-      if (linkedRel?.related_character_id) {
-        let rcList;
-        try {
-          rcList = await base44.entities.Character.filter({ id: linkedRel.related_character_id }, null, 1);
-        } catch { rcList = []; }
-        if (rcList?.[0] && rcList[0].owner_email === user.email) {
-          receiver = rcList[0];
-          receiverFoundVia = 'fictional_relationships_linked';
-        }
-      }
-    }
-
-    // Path C: search all owned characters by name
-    if (!receiver && resolvedReceiverName) {
-      const nameMatch = await base44.entities.Character.filter({ owner_email: user.email }, null, 300).catch(() => []);
-      const matched = nameMatch.find(
-        c => c.name?.trim().toLowerCase() === resolvedReceiverName.trim().toLowerCase()
-          && c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
-      );
-      if (matched) {
-        receiver = matched;
-        receiverFoundVia = 'owner_name_search';
-      }
-    }
-
-    // Use receiver's real name if resolved, otherwise use provided name
-    const finalReceiverName = receiver?.name || resolvedReceiverName || 'them';
-
-    // ── 3. BUILD MESSAGE CONTENT ─────────────────────────────────────────────
+    // ── 2. BUILD MESSAGE CONTENT ─────────────────────────────────────────────
     let finalMessage = messageContent?.trim() || null;
+    const resolvedReceiverName = receiverCharacterName || '';
 
     if (!finalMessage) {
       const canonicalRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
@@ -163,7 +101,7 @@ Deno.serve(async (req) => {
       finalMessage = await base44.asServiceRole.integrations.Core.InvokeLLM({
         prompt: `${senderContext}
 
-You need to contact ${finalReceiverName} about: ${topic || 'catching up'}.
+You need to contact ${resolvedReceiverName || 'them'} about: ${topic || 'catching up'}.
 
 Write a short, natural text message (1-3 sentences) that you would send them right now.
 Write in your own voice. Make it feel spontaneous and real, not formal.
@@ -176,155 +114,54 @@ Return only the message text, nothing else.`,
       finalMessage = `Hey, thinking about you. We should catch up soon.`;
     }
 
-    // ── 4. FIND OR CREATE WORLD PHONE CONVERSATION (canonical format) ────────
-    // Use canonical World Phone key so this thread is findable by WorldContactsPopup.
-    // Old npcConvoTitle + type:'npc' threads are NOT found by WorldContactsPopup's
-    // canonical key lookup — they become invisible orphans.
-    const participantIds = receiver?.id ? [senderCharacterId, receiver.id].sort() : [senderCharacterId];
-    const canonicalKey = receiver?.id
-      ? `world_phone::${participantIds[0]}::${participantIds[1]}`
-      : null;
+    // ── 3. DELEGATE TO sendWorldPhoneMessage — the canonical World Phone path ──
+    // sendWorldPhoneMessage handles: conversation find/create with canonical key,
+    // message write with all required World Phone fields, bilateral memory sync,
+    // and recipient response generation. This ensures messages are visible in
+    // WorldContactsPopup exactly as if the user manually sent them.
+    const recipientIdentifier = receiverCharacterId || resolvedReceiverName;
 
-    let conversationId = null;
-
-    if (canonicalKey) {
-      // Try canonical key first, then legacy title
-      const [byCanonical, byLegacy] = await Promise.all([
-        base44.entities.Conversation.filter({ shared_conversation_key: canonicalKey }, '-updated_date', 5).catch(() => []),
-        base44.entities.Conversation.filter({ character_ids: [senderCharacterId] }, '-updated_date', 100).catch(() => []),
-      ]);
-      const stableTitle = npcConvoTitle(senderCharacterId, finalReceiverName, receiver.id);
-      const legacyTitle = npcConvoTitle(senderCharacterId, finalReceiverName, null);
-      const existing =
-        byCanonical[0] ||
-        byLegacy.find(c => c.shared_conversation_key === canonicalKey) ||
-        byLegacy.find(c => Array.isArray(c.participant_character_ids) && participantIds.every(id => c.participant_character_ids.includes(id))) ||
-        byLegacy.find(c => c.title === stableTitle) ||
-        byLegacy.find(c => c.title === legacyTitle);
-
-      if (existing) {
-        conversationId = existing.id;
-        // Upgrade legacy thread to canonical if needed
-        if (existing.shared_conversation_key !== canonicalKey || existing.channel !== 'world_phone') {
-          base44.entities.Conversation.update(conversationId, {
-            shared_conversation_key: canonicalKey,
-            participant_character_ids: participantIds,
-            channel: 'world_phone',
-          }).catch(() => {});
-        }
-      } else {
-        const senderType = sender.character_type || null;
-        const recipientType = receiver.character_type || null;
-        const bothActiveCreated = senderType === 'active_created_character' && recipientType === 'active_created_character';
-        const newConvo = await base44.entities.Conversation.create({
-          title: `world_phone::${participantIds.join('::')}`,
-          type: bothActiveCreated ? 'direct' : 'npc',
-          character_ids: [senderCharacterId, receiver.id],
-          participant_character_ids: participantIds,
-          shared_conversation_key: canonicalKey,
-          owner_email: user.email,
-          channel: 'world_phone',
-          sync_status: 'pending',
-          world_contact_mode: bothActiveCreated ? 'active_created_to_active_created' : 'character_to_character',
-        });
-        conversationId = newConvo.id;
-      }
-    } else {
-      // No receiver Character record — fall back to name-only npc thread
-      const stableTitle = npcConvoTitle(senderCharacterId, finalReceiverName, null);
-      const existingConvos = await base44.entities.Conversation.filter({
-        character_ids: [senderCharacterId],
-        owner_email: user.email,
-      }).catch(() => []);
-      const existing = existingConvos.find(c => c.title === stableTitle);
-      if (existing) {
-        conversationId = existing.id;
-      } else {
-        const newConvo = await base44.entities.Conversation.create({
-          title: stableTitle,
-          type: 'npc',
-          character_ids: [senderCharacterId],
-          owner_email: user.email,
-          channel: 'world_phone',
-        });
-        conversationId = newConvo.id;
-      }
-    }
-
-    // ── 5. CREATE THE MESSAGE (with canonical World Phone fields) ─────────────
-    const savedMsg = await base44.entities.Message.create({
-      conversation_id: conversationId,
-      sender_type: 'character',
-      character_id: senderCharacterId,
-      character_name: sender.name,
-      // Canonical fields required for WorldContactsPopup to find/display this message
+    const wpResult = await base44.functions.invoke('sendWorldPhoneMessage', {
       sender_character_id: senderCharacterId,
-      receiver_character_id: receiver?.id || null,
-      participant_character_ids: participantIds,
-      ...(canonicalKey ? { shared_conversation_key: canonicalKey } : {}),
-      channel: 'world_phone',
-      content: finalMessage,
-      timestamp: new Date().toISOString(),
-      is_read: true,   // outgoing — sender already knows they sent it
-      recovery_signal: false,
-      memory_eligible: true,
-      relationship_eligible: true,
-      // Store trigger_source so daily cap queries can count autonomous contacts
-      trigger_source: triggerSrc,
+      recipient_identifier: recipientIdentifier,
+      requested_message: finalMessage,
+      source: triggerSrc === 'user_requested' ? 'user_instruction' : 'character_action',
+      owner_email: user.email,
+      // Pass generate_recipient_response only for autonomous/need-driven — not user_requested
+      // (user_requested is already handled by sendWorldPhoneMessage's default behavior)
+      generate_recipient_response: triggerSrc !== 'user_requested',
     });
 
-    await base44.entities.Conversation.update(conversationId, {
-      last_message_preview: finalMessage.substring(0, 100),
-      last_message_date: new Date().toISOString(),
-    }).catch(() => {});
+    const wpData = wpResult?.data;
 
-    // ── 6. BILATERAL MEMORY — only when both are real Character records ──────
-    let memorySynced = false;
-    if (receiver?.id) {
-      await base44.functions.invoke('syncWorldPhoneMemory', {
-        senderCharacterId,
-        receiverCharacterId: receiver.id,
-        messageContent: finalMessage,
-        context: 'world_phone',
-        conversationId,
-      }).catch(err => {
-        console.warn(`[triggerCharacterContact] syncWorldPhoneMemory failed (non-fatal): ${err.message}`);
+    if (!wpData?.success) {
+      console.warn(`[triggerCharacterContact] sendWorldPhoneMessage failed: ${wpData?.error}`);
+      return Response.json({
+        success: false,
+        error: wpData?.error || 'sendWorldPhoneMessage failed',
+        stage: 'world_phone_send',
       });
-      memorySynced = true;
-    } else {
-      // Receiver is name-only — write sender memory only, mark receiver as unresolved
-      await base44.entities.Memory.create({
-        character_id: senderCharacterId,
-        title: `Reached out to ${receiverCharacterName}`,
-        description: `I contacted ${receiverCharacterName} about: ${topic || 'catching up'}. Message sent: "${finalMessage.substring(0, 200)}"`,
-        emotional_impact: 'neutral',
-        timestamp: new Date().toISOString(),
-        source_context: `world_phone_${conversationId}`,
-      }).catch(() => {});
-      memorySynced = false;
     }
 
     console.log(
-      `[triggerCharacterContact] ✓ ${sender.name} → ${finalReceiverName}` +
+      `[triggerCharacterContact] ✓ ${sender.name} → ${resolvedReceiverName || recipientIdentifier}` +
       ` | trigger=${triggerSrc}` +
-      ` | receiver_resolved=${!!receiver}` +
-      ` | receiver_found_via=${receiverFoundVia || 'not_found'}` +
-      ` | bilateral_memory=${memorySynced}` +
-      ` | convo_id=${conversationId}` +
-      ` | msg_id=${savedMsg.id}`
+      ` | convo_id=${wpData.conversation_id}` +
+      ` | msg_id=${wpData.message_id}` +
+      ` | world_phone=canonical`
     );
 
     return Response.json({
       success: true,
-      conversationId,
-      messageId: savedMsg.id,
+      conversationId: wpData.conversation_id,
+      messageId: wpData.message_id,
       senderName: sender.name,
-      receiverName: finalReceiverName,
-      receiverResolved: !!receiver,
-      receiverFoundVia: receiverFoundVia || null,
-      bilateralMemoryWritten: memorySynced,
+      receiverName: resolvedReceiverName || recipientIdentifier,
+      receiverResolved: !!wpData.receiver_character_id,
+      bilateralMemoryWritten: true,
       messageContent: finalMessage,
       trigger_source: triggerSrc,
+      world_phone_canonical: true,
     });
 
   } catch (error) {

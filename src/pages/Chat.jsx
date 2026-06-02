@@ -1723,6 +1723,9 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     dispatchPostSend({
       characterId, convoId, character, text, responseText, recentMsgs,
       activeCharacter, isPhone, currentUser, isTyping: false, userMsg,
+      // Signal to Tier 2 contactIntent that the World Phone message was already sent
+      // via the pre-send worldPhoneIntent path — prevents duplicate sends.
+      worldPhoneAlreadySent: !!worldPhoneIntent,
     });
 
     // ── RELATIONSHIP CONTINUITY DETECTION (background, non-blocking) ──────────
