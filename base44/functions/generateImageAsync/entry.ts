@@ -559,7 +559,7 @@ function buildAppearanceLockText(rec, n) {
 // can read structured fields directly (ethnicity, appearance_lock, etc.)
 // charDesc is the assembled text description (for reference blocks and fallback text only).
 
-function buildPrompt({ prompt, charName, charDesc, charRecord, locationName, zoneName, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime, subjectType, characterId, userWorldName, userOutfitText }) {
+function buildPrompt({ prompt, charName, charDesc, charRecord, locationName, zoneName, locCategory, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime, subjectType, characterId, userWorldName, userOutfitText }) {
   const hasEnv  = envRefCount > 0;
   const hasChar = charRefCount > 0;
   const hasUser = userRefCount > 0;
@@ -1067,7 +1067,7 @@ Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. No
   const expectedHumanCount = subjectType==='joint'?2:(subjectType==='character'||subjectType==='user'||subjectType==='known_character')?1:0;
   const pLow=(prompt||'').toLowerCase();
   const isIso=/\b(alone|empty|vacant|no people|room only|object only|just the|document only|id only|id card|card only|photo of the|picture of the|image of the|nobody|no one|no person|no humans|no figures)\b/.test(pLow);
-  const lnL=(locationName||'').toLowerCase();const zn=(zoneName||'').toLowerCase();const isPub=!isIso&&(/\b(bar|nightclub|lounge|restaurant|diner|cafe|coffee shop|church|school|college|university|gym|fitness|park|stadium|arena|theater|cinema|venue|concert hall|mall|airport|shop|store|workplace|office building|hospital|clinic|library|museum|casino|hotel lobby|community center|sports bar|comedy club)\b/.test(lnL)||/\b(pool party|club|concert|beach party|festival|crowd)\b/i.test(pLow));const isResid=!isIso&&(/\b(home|apartment|bedroom|hotel room|shelter room|residential suite|private residence)\b/.test(lnL)||/\b(bedroom|living room|kitchen|bathroom|backyard|home office|residential)\b/.test(zn));const isStaffZone=/\b(stockroom|stock room|back office|storage|break room|service area|staff area|kitchen)\b/.test(zn);const isCrowded=isPub&&/\b(packed|crowded|busy|swamped|lively|people everywhere|full house|standing room|sold out|noisy|loud|dance floor is full|line at the bar|shoulder to shoulder|wall to wall)\b/.test(pLow);
+  const lnL=(locationName||'').toLowerCase();const zn=(zoneName||'').toLowerCase();const lcCat=(locCategory||'').toLowerCase();const isPub=!isIso&&(/\b(bar|nightclub|lounge|restaurant|diner|cafe|coffee shop|church|school|college|university|gym|fitness|park|stadium|arena|theater|cinema|venue|concert hall|mall|airport|shop|store|workplace|office building|hospital|clinic|library|museum|casino|hotel lobby|community center|sports bar|comedy club)\b/.test(lnL)||['social','food_drink','gym','religion','education','school','workplace','community','outdoor'].includes(lcCat)||/\b(pool party|club|concert|beach party|festival|crowd)\b/i.test(pLow));const isResid=!isIso&&(/\b(home|apartment|bedroom|hotel room|shelter room|residential suite|private residence)\b/.test(lnL)||/\b(bedroom|living room|kitchen|bathroom|backyard|home office|residential)\b/.test(zn));const isStaffZone=/\b(stockroom|stock room|back office|storage|break room|service area|staff area|kitchen)\b/.test(zn);const isCrowded=isPub&&/\b(packed|crowded|busy|swamped|lively|people everywhere|full house|standing room|sold out|noisy|loud|dance floor is full|line at the bar|shoulder to shoulder|wall to wall)\b/.test(pLow);
   const ec=isIso&&expectedHumanCount===0?0:expectedHumanCount;
   const humanPurityBlock=`\n\n════════════════════════════════════════════════════════════\n⛔⛔⛔ HUMAN PRESENCE PURITY LAW — ABSOLUTE OVERRIDE ⛔⛔⛔\n════════════════════════════════════════════════════════════\n\nEXPECTED FOREGROUND SUBJECTS: ${ec}\n${ec===0?'→ ZERO declared foreground subjects.':ec===1?'→ EXACTLY ONE declared foreground subject. No undeclared foreground people.':'→ EXACTLY TWO declared foreground subjects. No undeclared foreground people.'}\n\nFOREGROUND PURITY (applies always):\n⛔ No undeclared people in the foreground competing with the declared subject(s)\n⛔ No partial people — arms, legs, hands of undeclared persons in the foreground\n⛔ No POV photographer body parts (over-the-shoulder, hands in frame)\n⛔ No foreground reflections of undeclared people in mirrors or glass\n⛔ Location owners/workers/residents may NOT appear as foreground subjects unless explicitly named\n\n${isIso?'ISOLATION ACTIVE: zero humans total anywhere. No hands, silhouettes, or reflections.\n\n':''}BACKGROUND OCCUPANCY RULE FOR THIS SPECIFIC SCENE:\n${isStaffZone?'STAFF-ONLY ZONE: Only appropriate staff/employees may appear in the background. ⛔ NO customers, patrons, or members of the public behind the employee boundary.':isResid?'PRIVATE RESIDENTIAL: ⛔ DO NOT invent strangers, neighbors, visitors, or filler people. Occupancy = actual known presence only. If no other person is contextually established, the character is alone.':isPub?(isCrowded?'PUBLIC SOCIAL — ACTIVE CROWD: The prompt describes a busy/packed/crowded environment. ✅ Background crowd IS part of the scene reality — include blurred, non-specific, visually subordinate background figures. Subject is foreground focus. ⛔ DO NOT erase the crowd because the subject is the focus. Subject focus ≠ empty background.':'PUBLIC SOCIAL: Context-appropriate background figures are permitted as out-of-focus, non-specific environmental texture. Match the natural activity level of this location and zone. ⛔ Do not make an active venue appear sterile and empty.'):'CONTEXT-APPROPRIATE: Match the environment. Active public spaces may have background figures (blurred, subordinate). Private/quiet spaces: minimal or none.'}\n\nGENERATION INVALID IF:\n🚫 Undeclared person appears in the foreground competing with declared subject(s)\n🚫 Background contradicts the occupancy rule above (e.g. empty when described as packed)\n🚫 Any location-associated person appears as a foreground subject without being named\n════════════════════════════════════════════════════════════`;
 
@@ -1573,8 +1573,7 @@ Deno.serve(async (req) => {
     }
 
     let envRefs = [];
-    let resolvedLocationName = null;
-    let resolvedZoneName = null;
+    let resolvedLocationName=null,resolvedZoneName=null,resolvedLocCategory=null;
 
     // ── LOCATION RESOLUTION PRIORITY ─────────────────────────────────────────
     // 1. manualLocationId (from Media Grid dropdown) — HIGHEST PRIORITY, UI is the authority
@@ -1691,6 +1690,7 @@ Deno.serve(async (req) => {
 
         if (locRecord) {
           resolvedLocationName = locRecord.name;
+          resolvedLocCategory = locRecord.category || null;
           const promptLower = (prompt || '').toLowerCase();
           // Zone priority: UI-selected zone > stored generation_context zone > keyword auto-resolve
           const preferredZone = manualZoneName || message?.generation_context?.zone_name || null;
@@ -1815,7 +1815,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       charRecord: isThirdPartyPhoto && !characterId ? null : charRecord,  // ← KEY FIX: pass charRecord directly
       locationName: resolvedLocationName,
       zoneName: resolvedZoneName,
-      envRefCount: ENV_SLOTS,
+      locCategory: resolvedLocCategory, envRefCount: ENV_SLOTS,
       charRefCount: CHAR_SLOTS,
       userRefCount: USER_SLOTS,
       envRefStart,
