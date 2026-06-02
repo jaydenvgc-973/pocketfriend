@@ -170,10 +170,16 @@ function resolveUniformText(character, locationRecord) {
   return null;
 }
 
-// ── MAIN OUTFIT RESOLVER ──────────────────────────────────────────────────────
-// locationRecord: optional LocationReference DB record — used for uniform resolution.
-// Pass the character's current work/school location when available.
-function resolveCharacterOutfitForPrompt(character, locationRecord) {
+// ── NORMAL CLOSET RESOLVER ────────────────────────────────────────────────────
+// This function is ONLY called when no contextual outfit has been injected.
+// Contextual outfits (uniform, sleepwear, swimwear, formalwear) are handled BEFORE
+// this resolver is called in the main handler — they are never blocked by rotation.
+//
+// This resolver handles ONLY the normal closet layer:
+//   - Rotation OFF → locked/selected outfit wins
+//   - Rotation ON P1 → current_outfit wins if it matches scene context category
+//   - Rotation ON P2 → day-stable rotation through closet
+function resolveCharacterOutfitForPrompt(character) {
   if (!character) return { text: null, source: 'no_character', name: null, category: null };
 
   // Helper: build text from outfit object — closet entry or current_outfit stub
@@ -185,23 +191,10 @@ function resolveCharacterOutfitForPrompt(character, locationRecord) {
     return null;
   }
 
-  // ── STEP 1: UNIFORM — overrides all closet selection when character is on duty ──
-  // Applies when character is at_work/at_school/incarcerated AND location has uniforms.
-  // This is the highest priority — even a rotation-locked outfit yields to a required uniform.
-  const presence = character?.resolved_presence_status || character?.location_status || '';
-  const uniformApplies = (presence === 'at_work' || presence === 'at_school' || presence === 'incarcerated');
-  if (uniformApplies && locationRecord) {
-    const uniformText = resolveUniformText(character, locationRecord);
-    if (uniformText) {
-      console.log(`[OutfitResolver] ✅ UNIFORM override: presence="${presence}" uniform="${uniformText.substring(0,120)}"`);
-      return { text: uniformText, source: 'uniform', name: 'uniform', category: 'uniform' };
-    }
-  }
-
   const rotationEnabled = character?.outfit_rotation_enabled !== false;
   const co = character.current_outfit;
 
-  // ── STEP 2: ROTATION OFF — current_outfit is locked, always use it ───────────
+  // ── ROTATION OFF — current_outfit is locked, always use it ───────────────────
   // Rotation OFF means the selected outfit is locked. Period. The closet entry is
   // always the source of truth — look it up by outfit_id even if the stub is empty.
   // Only fall through if current_outfit is entirely absent (no outfit_id and no label).
@@ -245,7 +238,7 @@ function resolveCharacterOutfitForPrompt(character, locationRecord) {
     console.warn(`[OutfitResolver] ⚠️ ROTATION_OFF but current_outfit has no usable text in stub or closet — falling to closet rotation`);
   }
 
-  // ── STEP 3: ROTATION ON — current_outfit wins if it matches context category ──
+  // ── ROTATION ON P1 — current_outfit wins if it matches context category ──────
   if (co?.outfit_id || co?.label) {
     const targetCategory = resolveOutfitCategory(character);
     const coCategory = co.category || null;
@@ -267,7 +260,7 @@ function resolveCharacterOutfitForPrompt(character, locationRecord) {
     }
   }
 
-  // ── STEP 4: ROTATION ON — daily closet rotation ───────────────────────────────
+  // ── ROTATION ON P2 — daily closet rotation ───────────────────────────────────
   const outfits = (character.character_closet || []).filter(item => item.outfit_id);
   if (!outfits.length) {
     console.warn(`[OutfitResolver] ⚠️ No closet outfits — no wardrobe constraint`);
@@ -275,7 +268,8 @@ function resolveCharacterOutfitForPrompt(character, locationRecord) {
   }
 
   const targetCategory = resolveOutfitCategory(character);
-  console.log(`[OutfitResolver] P2 daily rotation: category="${targetCategory}" presence="${presence}"`);
+  const _presence = character?.resolved_presence_status || character?.location_status || '';
+  console.log(`[OutfitResolver] P2 daily rotation: category="${targetCategory}" presence="${_presence}"`);
   const chain = OUTFIT_FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
 
   for (const cat of chain) {
@@ -1242,6 +1236,17 @@ Deno.serve(async (req) => {
         if (!alreadyHasOutfitInDesc) {
           const promptLowerForOutfit = sanitizedPrompt.toLowerCase();
 
+          // ── OUTFIT AUTHORITY ORDER (executed in this exact sequence) ─────────────
+          // LAYER 1 — CONTEXTUAL (applies regardless of rotation setting):
+          //   1a. UNIFORM: work/school/jail location uniform
+          //   1b. SLEEPWEAR/SWIMWEAR/FORMAL: scene or presence context
+          // LAYER 2 — NORMAL CLOSET (only when no contextual outfit was injected):
+          //   2a. Rotation OFF → locked current_outfit from closet
+          //   2b. Rotation ON P1 → current_outfit if category matches scene
+          //   2c. Rotation ON P2 → day-stable closet rotation by category
+          // The rotation toggle ONLY controls Layer 2. It never blocks Layer 1.
+          console.log(`[OutfitAudit] AUTHORITY_ORDER: uniform→sleep→closet | rotation=${charRecord.outfit_rotation_enabled !== false ? 'ON' : 'OFF'}`);
+
           // ── UNIFORM CHECK FIRST — fetches work/school location for uniform resolution ──
           // Must run before sleep detection so a character on duty wears their uniform,
           // not sleepwear, even if the prompt mentions sleep-adjacent words.
@@ -1284,8 +1289,8 @@ Deno.serve(async (req) => {
           }
 
           if (!/Currently wearing:/i.test(charDesc)) {
-            // outfitLocationRecord already fetched in the early uniform path above (reuse it here)
-            const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord, outfitLocationRecord);
+            // No contextual outfit was injected — resolve from normal closet
+            const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord);
             console.log(`[OutfitDiagnostic] char="${charRecord.name}" source="${resolvedOutfit.source}" cat="${resolvedOutfit.category}" locked=${!!resolvedOutfit.text}`);
             if (resolvedOutfit.text) {
               charDesc = charDesc ? `${charDesc}. Currently wearing: ${resolvedOutfit.text}` : `Currently wearing: ${resolvedOutfit.text}`;
