@@ -134,8 +134,8 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
     let recipientResolutionPath = null;
 
     // 1. Direct character ID
-    if (recipient_identifier.length > 15 && !recipient_identifier.includes(' ')) {
-      const byId = await base44.entities.Character.filter({ id: recipient_identifier }, null, 1).catch(() => []);
+    if (effectiveRecipientIdentifier.length > 15 && !effectiveRecipientIdentifier.includes(' ')) {
+      const byId = await base44.entities.Character.filter({ id: effectiveRecipientIdentifier }, null, 1).catch(() => []);
       if (byId?.[0]) {
         recipient = byId[0];
         recipientResolutionPath = 'direct_id';
@@ -144,9 +144,9 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
 
     // 2. sender's fictional_relationships — use related_character_id (stable ID), fall back to name
     if (!recipient && sender.fictional_relationships?.length > 0) {
-      const nameLower = recipient_identifier.toLowerCase().trim();
+      const nameLower = effectiveRecipientIdentifier.toLowerCase().trim();
       const relMatch = sender.fictional_relationships.find(r =>
-        r.related_character_id === recipient_identifier ||
+        r.related_character_id === effectiveRecipientIdentifier ||
         r.person_name?.toLowerCase() === nameLower ||
         r.name?.toLowerCase() === nameLower ||
         r.character_name?.toLowerCase() === nameLower
@@ -162,9 +162,9 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
 
     // 3. sender's family_members — use character_id (stable ID), fall back to name
     if (!recipient && sender.family_members?.length > 0) {
-      const nameLower = recipient_identifier.toLowerCase().trim();
+      const nameLower = effectiveRecipientIdentifier.toLowerCase().trim();
       const famMatch = sender.family_members.find(f =>
-        f.character_id === recipient_identifier ||
+        f.character_id === effectiveRecipientIdentifier ||
         f.name?.toLowerCase() === nameLower
       );
       if (famMatch?.character_id) {
@@ -178,7 +178,7 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
 
     // 4. Account-wide name search — exact match only; partial match requires unique result
     if (!recipient) {
-      const nameLower = recipient_identifier.toLowerCase().trim();
+      const nameLower = effectiveRecipientIdentifier.toLowerCase().trim();
       const allChars = await base44.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => []);
 
       const exactMatches = allChars.filter(c =>
@@ -192,7 +192,7 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
       } else if (exactMatches.length > 1) {
         return Response.json({
           success: false,
-          error: `Ambiguous recipient: "${recipient_identifier}" matches ${exactMatches.length} characters. Use a character ID to be precise.`,
+          error: `Ambiguous recipient: "${effectiveRecipientIdentifier}" matches ${exactMatches.length} characters. Use a character ID to be precise.`,
           ambiguous_matches: exactMatches.map(c => ({ id: c.id, name: c.name })),
         });
       } else {
@@ -203,11 +203,11 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
         if (partialMatches.length === 1) {
           recipient = partialMatches[0];
           recipientResolutionPath = 'account_partial_name';
-          warnings.push(`Recipient resolved via partial name match ("${recipient_identifier}" → "${recipient.name}"). Use character ID for precision.`);
+          warnings.push(`Recipient resolved via partial name match ("${effectiveRecipientIdentifier}" → "${recipient.name}"). Use character ID for precision.`);
         } else if (partialMatches.length > 1) {
           return Response.json({
             success: false,
-            error: `Ambiguous partial name: "${recipient_identifier}" matches ${partialMatches.length} characters. Provide a more specific name or character ID.`,
+            error: `Ambiguous partial name: "${effectiveRecipientIdentifier}" matches ${partialMatches.length} characters. Provide a more specific name or character ID.`,
             ambiguous_matches: partialMatches.map(c => ({ id: c.id, name: c.name })),
           });
         }
@@ -217,7 +217,7 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
     if (!recipient) {
       return Response.json({
         success: false,
-        error: `Recipient not found: "${recipient_identifier}". Character must exist in the app with owner_email=${ownerEmail}.`,
+        error: `Recipient not found: "${effectiveRecipientIdentifier}". Character must exist in the app with owner_email=${ownerEmail}.`,
         resolution_paths_tried: ['direct_id', 'fictional_relationships', 'family_members', 'account_exact_name', 'account_partial_name'],
       });
     }
