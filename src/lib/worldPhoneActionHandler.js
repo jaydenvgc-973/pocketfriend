@@ -30,10 +30,14 @@ export async function handleCharacterWorldPhoneAction({
 
   console.log('[WorldPhone] character-action intent detected:', charActionIntent);
 
+  // If the character claimed they sent something but no explicit message content was detected,
+  // use the character's own response text as context so the backend can generate the message.
+  const messageToSend = charActionIntent.message || responseText;
+
   const charActionResult = await base44.functions.invoke('sendWorldPhoneMessage', {
     sender_character_id: characterId,
     recipient_identifier: charActionIntent.recipient,
-    requested_message: charActionIntent.message,
+    requested_message: messageToSend,
     source: 'character_action',
     current_conversation_id: conversationId,
     owner_email: ownerEmail,

@@ -444,10 +444,13 @@ export default function Chat({ chatTypeOverride } = {}) {
     const worldPhoneIntent = detectWorldPhoneIntent(text);
     let worldPhoneSendResult = null;
     if (worldPhoneIntent) {
+      // If no explicit message content, use the user's full instruction text as context
+      // so the backend LLM can generate an appropriate message in the character's voice.
+      const messageToSend = worldPhoneIntent.message || text;
       worldPhoneSendResult = await base44.functions.invoke('sendWorldPhoneMessage', {
         sender_character_id: characterId,
         recipient_identifier: worldPhoneIntent.recipient,
-        requested_message: worldPhoneIntent.message,
+        requested_message: messageToSend,
         source: 'user_instruction',
         current_conversation_id: conversationIdRef.current || conversationId,
         owner_email: currentUser.email,

@@ -23,10 +23,13 @@
 export function detectWorldPhoneIntent(userText) {
   if (!userText || userText.length < 5) return null;
 
+  const excludedWords = new Set(['me','him','her','them','us','you','the','a','an','it','this','that','my','your','his','her','their']);
+
   // Name pattern: 1 or 2 words, first letter any case (user may type lowercase)
   const NAME = '([A-Za-z][a-zA-Z]+(?:\\s+[A-Za-z][a-zA-Z]+)?)';
 
-  const patterns = [
+  // ── PATTERNS WITH EXPLICIT MESSAGE CONTENT ────────────────────────────────
+  const patternsWithMessage = [
     // "text/message/msg/tell/contact/hit up/reach out to [Name] [connector] [message]"
     new RegExp(`\\b(?:text|message|msg|tell|contact|hit\\s+up|reach\\s+out\\s+to)\\s+${NAME}\\s+(?:and\\s+(?:tell\\s+(?:him|her|them)\\s+)?|to\\s+say\\s+|that\\s+|:\\s*|,\\s*)(.{5,})`, 'i'),
     // "call [Name] and tell them..."
@@ -41,20 +44,44 @@ export function detectWorldPhoneIntent(userText) {
     new RegExp(`\\btell\\s+${NAME}\\s+(?:that\\s+|to\\s+)(.{5,})`, 'i'),
   ];
 
-  for (const pattern of patterns) {
+  for (const pattern of patternsWithMessage) {
     const match = userText.match(pattern);
     if (match) {
       const recipient = match[1]?.trim();
       const message = match[2]?.trim();
       if (recipient && message && recipient.length > 1 && message.length >= 5) {
-        // Exclude common false positives (me, him, her, them, us, you, the, a)
-        const excludedWords = new Set(['me','him','her','them','us','you','the','a','an','it','this','that','my','your','his','her','their']);
         if (!excludedWords.has(recipient.toLowerCase())) {
           return { recipient, message };
         }
       }
     }
   }
+
+  // ── PATTERNS WITHOUT EXPLICIT MESSAGE (recipient-only intents) ────────────
+  // These match "text Maya", "call Devon", "message Sarah" with no specified content.
+  // message will be null — caller must generate appropriate content.
+  const patternsNameOnly = [
+    // "text/call/message/dm/hit up [Name]" — bare intent, no message body
+    new RegExp(`^\\s*(?:text|call|message|msg|dm|hit\\s+up|reach\\s+out\\s+to|contact)\\s+${NAME}\\s*$`, 'i'),
+    // "send [Name] a text/message" — no content specified
+    new RegExp(`\\bsend\\s+${NAME}\\s+(?:a\\s+)?(?:text|message|dm)\\s*$`, 'i'),
+    // "send a text/message to [Name]" — no content specified
+    new RegExp(`\\bsend\\s+(?:a\\s+)?(?:text|message|dm)\\s+to\\s+${NAME}\\s*$`, 'i'),
+    // "let [Name] know" — no content after
+    new RegExp(`\\blet\\s+${NAME}\\s+know\\s*$`, 'i'),
+  ];
+
+  for (const pattern of patternsNameOnly) {
+    const match = userText.match(pattern);
+    if (match) {
+      const recipient = match[1]?.trim();
+      if (recipient && recipient.length > 1 && !excludedWords.has(recipient.toLowerCase())) {
+        // Return with null message — sendWorldPhoneMessage will generate content via LLM
+        return { recipient, message: null };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -96,10 +123,13 @@ export function detectCharacterWorldPhoneAction(responseText, senderName) {
   if (!responseText || responseText.length < 10) return null;
 
   const senderFirst = (senderName || '').toLowerCase().split(' ')[0];
+  const excludedWords = new Set(['me','him','her','them','us','you','the','a','an','it','my','your','his','their']);
+
   // Name pattern: 1 or 2 capitalized words
   const NAME = '([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)?)';
 
-  const patterns = [
+  // ── PATTERNS WITH EXPLICIT RECIPIENT + MESSAGE ────────────────────────────
+  const patternsWithMessage = [
     // "I texted/messaged/called [Name] [saying/that/:]..."
     new RegExp(`\\bI\\s+(?:just\\s+)?(?:texted|messaged|called|hit\\s+up)\\s+${NAME}\\s+(?:and\\s+told\\s+(?:him|her|them)\\s+|saying\\s+|that\\s+|to\\s+say\\s+|:\\s*)?["']?(.{5,}?)["']?[.!]`, 'i'),
     // "I sent [Name] a message/text [saying/that]..."
@@ -112,12 +142,11 @@ export function detectCharacterWorldPhoneAction(responseText, senderName) {
     new RegExp(`\\b(?:already|just)\\s+(?:texted|messaged|called)\\s+${NAME}\\s+(?:about\\s+|that\\s+|saying\\s+)?(.{5,}?)[.!]`, 'i'),
   ];
 
-  for (const pattern of patterns) {
+  for (const pattern of patternsWithMessage) {
     const match = responseText.match(pattern);
     if (match) {
       const recipient = match[1]?.trim();
       const message = match[2]?.trim();
-      const excludedWords = new Set(['me','him','her','them','us','you','the','a','an','it','my','your','his','their']);
       if (
         recipient &&
         message &&
@@ -129,5 +158,36 @@ export function detectCharacterWorldPhoneAction(responseText, senderName) {
       }
     }
   }
+
+  // ── PATTERNS WITH RECIPIENT BUT NO EXPLICIT MESSAGE CONTENT ───────────────
+  // Catches: "I texted Maya", "I called Devon", "I sent Sarah a message"
+  // message will be null — caller must derive content from context.
+  const patternsNameOnly = [
+    // "I texted/messaged/called/hit up [Name]" — no message body
+    new RegExp(`\\bI\\s+(?:just\\s+)?(?:texted|messaged|called|hit\\s+up|contacted)\\s+${NAME}(?:\\s*[.!,]|\\s+(?:about|earlier|already|real quick|really quick))?`, 'i'),
+    // "I sent [Name] a text/message"
+    new RegExp(`\\bI\\s+sent\\s+${NAME}\\s+(?:a\\s+)?(?:text|message|dm)\\b`, 'i'),
+    // "I let/told [Name] know"
+    new RegExp(`\\bI\\s+(?:let|told)\\s+${NAME}\\s+know\\b`, 'i'),
+    // "I reached out to [Name]"
+    new RegExp(`\\bI\\s+reached\\s+out\\s+to\\s+${NAME}\\b`, 'i'),
+    // "Already texted/messaged [Name]"
+    new RegExp(`\\b(?:already|just)\\s+(?:texted|messaged|called|contacted)\\s+${NAME}\\b`, 'i'),
+  ];
+
+  for (const pattern of patternsNameOnly) {
+    const match = responseText.match(pattern);
+    if (match) {
+      const recipient = match[1]?.trim();
+      if (
+        recipient &&
+        recipient.toLowerCase() !== senderFirst &&
+        !excludedWords.has(recipient.toLowerCase())
+      ) {
+        return { recipient, message: null };
+      }
+    }
+  }
+
   return null;
 }
