@@ -238,6 +238,23 @@ function resolveCharacterOutfitForPrompt(character) {
     console.warn(`[OutfitResolver] ⚠️ ROTATION_OFF but current_outfit has no usable text in stub or closet — falling to closet rotation`);
   }
 
+  // ── MANUAL SELECTION LOCK — current_outfit was explicitly chosen by the user ──
+  // change_reason === 'manual_selection' means the user actively picked this outfit.
+  // It must be used regardless of rotation setting or context category match.
+  // This is a higher-priority lock than rotation ON/OFF — it is the user's explicit choice.
+  if (co?.outfit_id && co?.change_reason === 'manual_selection') {
+    let resolvedOutfit = co;
+    if (co.outfit_id) {
+      const closetMatch = (character.character_closet || []).find(item => item.outfit_id === co.outfit_id);
+      if (closetMatch) resolvedOutfit = closetMatch;
+    }
+    const t = resolveOutfitText(resolvedOutfit);
+    if (t) {
+      console.log(`[OutfitResolver] ✅ MANUAL SELECTION LOCK: "${co.label || co.outfit_id}" → "${t.substring(0,120)}"`);
+      return { text: t, source: 'manual_selection_lock', name: co.label || co.outfit_id, category: co.category || null };
+    }
+  }
+
   // ── ROTATION ON P1 — current_outfit wins if it matches context category ──────
   if (co?.outfit_id || co?.label) {
     const targetCategory = resolveOutfitCategory(character);
@@ -806,7 +823,32 @@ RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
 
   FINAL REMINDER — GLOBAL 3D ENVIRONMENT RULE: "${place}"
   The reference images define ONLY the physical space. Active lighting: ${timeLighting.period} — ${timeLighting.desc}.
-  REFERENCE IMAGE LIGHTING IS NON-AUTHORITATIVE. Do NOT preserve lighting visible in references.`;
+  REFERENCE IMAGE LIGHTING IS NON-AUTHORITATIVE. Do NOT preserve lighting visible in references.
+
+  ════════════════════════════════════════════════════════════
+  ⛔ LOCATION FIDELITY — ABSOLUTE PROHIBITION ON INVENTED ENVIRONMENTS
+  ════════════════════════════════════════════════════════════
+  The images above show the ACTUAL room: "${place}".
+  This is the character's real space. It has been photographed and stored.
+  You have been given the exact reference images. USE THEM as the ONLY spatial authority.
+
+  ⛔ DO NOT invent alternate furniture — no worn brown leather couches, no random armchairs, no generic sofas unless clearly shown in the reference images.
+  ⛔ DO NOT invent a different room layout — use ONLY the layout shown in the reference photos.
+  ⛔ DO NOT replace this space with a generic apartment interior, staged home, or stock-photo room.
+  ⛔ DO NOT ignore the zone reference images — they define what this room looks like. Period.
+  ⛔ DO NOT create a hallway, stoop, or exterior scene unless the reference images show one.
+  ⛔ DO NOT add furniture objects not visible in the reference images.
+  ⛔ DO NOT substitute a different neighborhood, building type, or generic home.
+
+  ✅ The character is physically INSIDE the room shown in images ${envRefStart}–${envEnd}.
+  ✅ Every visible background element — walls, floor, furniture, decor — must come from those reference images.
+  ✅ If you cannot determine an exact detail from the references, omit or blur it — do NOT invent.
+
+  GENERATION INVALID IF:
+  🚫 The room does not match the spatial identity visible in the reference images
+  🚫 Furniture appears that is not present in the reference images
+  🚫 The location looks like a generic or staged home interior
+  ════════════════════════════════════════════════════════════`;
   }
 
   let refImageOverride = promptHasExplicitTime ? `
