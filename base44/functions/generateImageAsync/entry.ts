@@ -36,15 +36,24 @@ function cdnFilter(urls) {
 }
 
 // ── OUTFIT RESOLVER ───────────────────────────────────────────────────────────
-// Canonical authority order (matches user-defined spec):
-//   1. Uniform — when character is at a location that requires one (worker/inmate/student role)
-//   2. Rotation OFF lock — current_outfit is authoritative when rotation is disabled
-//   3. Rotation ON P1 — current_outfit wins if it matches the scene context category
-//   4. Rotation ON P2 — context-appropriate outfit selected daily from closet
+// AUTHORITY ORDER — two independent layers:
 //
-// NOTE: Sleep/wake context is handled separately in the main handler (runs before this resolver)
-// because sleepwear is a legitimate context override that takes priority over closet rotation
-// but NOT over uniforms. Uniforms (step 1) still override sleepwear detection.
+// LAYER 1: CONTEXTUAL OUTFIT (temporary, situation-driven, overrides everything)
+//   Applied BEFORE this resolver is called, in the main handler:
+//   1a. Work/school/jail UNIFORM — when location has a required uniform for this character's role
+//   1b. SLEEPWEAR — when character is asleep/napping or prompt is sleep-related
+//   Contextual outfits are temporary: when the context ends, Layer 2 resumes.
+//   These apply regardless of whether outfit rotation is ON or OFF.
+//
+// LAYER 2: NORMAL CLOSET OUTFIT (resolved here, when no contextual outfit applied)
+//   2a. Rotation OFF → locked outfit — the currently selected outfit is used unchanged.
+//       Characters with rotation off can still get contextual outfits (Layer 1) — those are
+//       not rotation. When the context ends, they return to their locked outfit.
+//   2b. Rotation ON P1 → current_outfit if it matches the scene context category
+//   2c. Rotation ON P2 → day-stable rotation through context-appropriate closet outfits
+//
+// The rotation toggle ONLY controls Layer 2 (how the regular closet outfit is selected).
+// It has NO effect on Layer 1 (contextual outfits).
 //
 // Inlined from outfitRotationEngine.js + uniformResolver.js since Deno cannot import local files.
 
