@@ -76,12 +76,34 @@ export async function dispatchImageGeneration({
     }
 
     // Convert all ref URLs to public CDN before sending — private/internal URLs are rejected by provider
-    // IDENTITY FALLBACK: If no reference_image_urls exist, include avatar_url as last-resort identity anchor.
-    // Without this, generateImageAsync receives empty refs and falls back to text-only generation,
-    // producing a random unrelated person instead of the sending character.
-    const rawCharRefs = (charRefs || []).length > 0
-      ? (charRefs || [])
-      : (character.avatar_url ? [character.avatar_url] : []);
+    //
+    // IDENTITY RESOLUTION — matches the regenerate path authority order exactly:
+    // 1. character.reference_image_urls (from the character object the frontend already loaded)
+    // 2. charRefs passed from the caller (may be the same, or pre-resolved)
+    // 3. character.avatar_url as last-resort identity anchor — ONLY if CDN-hosted (media.base44.com)
+    //    CDN-hosted avatars ARE the character's canonical face portrait and are safe to use.
+    //    Non-CDN avatars (generated_image, internal API URLs) are excluded to prevent scene contamination.
+    //
+    // NOTE: generateImageAsync does its own DB fetch and will use reference_image_urls from the
+    // fresh charRecord. These publicCharRefs are passed as characterReferenceImages which serve as
+    // a fallback when the DB fetch returns no refs — ensuring the frontend's already-loaded data
+    // is available to the pipeline even if the DB query misses.
+    const characterDbRefs = (character.reference_image_urls || []).filter(Boolean);
+    const callerRefs = (charRefs || []).filter(Boolean);
+    // Prefer DB refs from the character object; fall back to caller-passed refs
+    const candidateRefs = characterDbRefs.length > 0 ? characterDbRefs : callerRefs;
+
+    // Avatar fallback: only use CDN-hosted avatars (media.base44.com) — these are canonical portraits.
+    // Never use generated_image URLs or internal base44.app API URLs as identity references.
+    const avatarPublic = character.avatar_url ? toPublicCDN(character.avatar_url) : null;
+    const avatarIsCanonicalCDN = avatarPublic &&
+      avatarPublic.startsWith('https://media.base44.com/') &&
+      isProviderAccessible(avatarPublic);
+
+    const rawCharRefs = candidateRefs.length > 0
+      ? candidateRefs
+      : (avatarIsCanonicalCDN ? [avatarPublic] : []);
+
     const publicCharRefs = rawCharRefs.map(toPublicCDN).filter(isProviderAccessible);
     const publicUserRefs = (userRefImages || []).map(toPublicCDN).filter(isProviderAccessible);
 

@@ -1397,8 +1397,17 @@ Deno.serve(async (req) => {
       }
 
       if (charRefs.length === 0 && characterReferenceImages?.length > 0) {
-        charRefs = cdnFilter(characterReferenceImages).filter(u => !u.includes('generated_image')).slice(0, 2);
-        console.log(`[generateImageAsync] Using UI-provided charRefs: ${charRefs.length}`);
+        // Accept CDN-hosted avatars even if they contain "generated_image" in the URL.
+        // ChatImageDispatch now passes character.reference_image_urls first, falling back to
+        // the avatar only when it is CDN-hosted — these are canonical face portraits, not scene images.
+        // Non-CDN generated_image URLs are still excluded to prevent scene contamination.
+        charRefs = cdnFilter(characterReferenceImages).filter(u => {
+          if (u.includes('generated_image')) {
+            return u.startsWith('https://media.base44.com/'); // allow CDN-hosted generated avatars
+          }
+          return true;
+        }).slice(0, 4);
+        console.log(`[generateImageAsync] Using UI-provided charRefs (CDN-avatar-inclusive): ${charRefs.length}`);
       }
 
     if (charRefs.length === 0 && charRecord?.avatar_url) {
