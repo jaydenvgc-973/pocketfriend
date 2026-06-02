@@ -202,20 +202,47 @@ function resolveCharacterOutfitForPrompt(character, locationRecord) {
   const co = character.current_outfit;
 
   // ── STEP 2: ROTATION OFF — current_outfit is locked, always use it ───────────
+  // Rotation OFF means the selected outfit is locked. Period. The closet entry is
+  // always the source of truth — look it up by outfit_id even if the stub is empty.
+  // Only fall through if current_outfit is entirely absent (no outfit_id and no label).
   if (!rotationEnabled) {
     if (co?.outfit_id || co?.label) {
       let t = resolveOutfitText(co);
-      // If stub has no text, look up full data from closet by outfit_id
-      if (!t && co.outfit_id) {
+      let matchedName = co.label || co.outfit_id || 'active';
+      let matchedCategory = co.category || null;
+
+      // Always look up full closet entry — the stub may have only id/label with no text fields
+      if (co.outfit_id) {
         const closetMatch = (character.character_closet || []).find(item => item.outfit_id === co.outfit_id);
-        if (closetMatch) t = resolveOutfitText(closetMatch);
+        if (closetMatch) {
+          const closetText = resolveOutfitText(closetMatch);
+          if (closetText) {
+            t = closetText;
+            matchedName = closetMatch.label || matchedName;
+            matchedCategory = closetMatch.category || matchedCategory;
+          }
+        }
       }
+
       if (t) {
-        console.log(`[OutfitResolver] ✅ ROTATION_OFF lock: "${co.label || co.outfit_id}" → "${t.substring(0,120)}"`);
-        return { text: t, source: 'rotation_off_lock', name: co.label || 'active', category: co.category || null };
+        console.log(`[OutfitResolver] ✅ ROTATION_OFF lock: "${matchedName}" → "${t.substring(0,120)}"`);
+        return { text: t, source: 'rotation_off_lock', name: matchedName, category: matchedCategory };
+      }
+      // Stub present but no text found — try closet scan by label as last resort
+      if (co.label) {
+        const labelMatch = (character.character_closet || []).find(item =>
+          item.label && item.label.toLowerCase().trim() === co.label.toLowerCase().trim()
+        );
+        if (labelMatch) {
+          const t2 = resolveOutfitText(labelMatch);
+          if (t2) {
+            console.log(`[OutfitResolver] ✅ ROTATION_OFF label-match: "${co.label}" → "${t2.substring(0,120)}"`);
+            return { text: t2, source: 'rotation_off_lock', name: co.label, category: labelMatch.category || null };
+          }
+        }
       }
     }
-    console.warn(`[OutfitResolver] ⚠️ ROTATION_OFF but current_outfit has no usable text — falling to closet`);
+    console.warn(`[OutfitResolver] ⚠️ ROTATION_OFF but current_outfit has no usable text in stub or closet — falling to closet rotation`);
   }
 
   // ── STEP 3: ROTATION ON — current_outfit wins if it matches context category ──
@@ -1170,6 +1197,29 @@ Deno.serve(async (req) => {
         console.log(`[IdentityAudit] body_type:                ${charRecord.appearance_lock?.body_type || charRecord.appearance_lock?.overall_aesthetic || 'none'}`);
         console.log(`[IdentityAudit] ══════════════════════════════════════════════`);
 
+        // ── PRESENCE AUDIT — runtime proof of location authority ─────────────────
+        console.log(`[PresenceAudit] ══════════════════════════════════════════════`);
+        console.log(`[PresenceAudit] resolved_presence_status:        ${charRecord.resolved_presence_status || 'none'}`);
+        console.log(`[PresenceAudit] location_status:                 ${charRecord.location_status || 'none'}`);
+        console.log(`[PresenceAudit] resolved_current_location_id:    ${charRecord.resolved_current_location_id || 'none'}`);
+        console.log(`[PresenceAudit] resolved_current_location_name:  ${charRecord.resolved_current_location_name || 'none'}`);
+        console.log(`[PresenceAudit] current_home_location_id:        ${charRecord.current_home_location_id || 'none'}`);
+        console.log(`[PresenceAudit] current_work_location_id:        ${charRecord.current_work_location_id || charRecord.occupation_location_id || 'none'}`);
+        console.log(`[PresenceAudit] current_school_location_id:      ${charRecord.current_school_location_id || charRecord.education_location_id || 'none'}`);
+        console.log(`[PresenceAudit] temporary_housing_location_id:   ${charRecord.temporary_housing_location_id || 'none'}`);
+        console.log(`[PresenceAudit] incarceration_facility_id:       ${charRecord.incarceration_facility_id || 'none'}`);
+        console.log(`[PresenceAudit] manual_location_override:        ${manualLocationId || 'none'}`);
+        console.log(`[PresenceAudit] ══════════════════════════════════════════════`);
+
+        // ── OUTFIT AUDIT — runtime proof of outfit authority ─────────────────────
+        console.log(`[OutfitAudit] ══════════════════════════════════════════════`);
+        console.log(`[OutfitAudit] outfit_rotation_enabled:   ${charRecord.outfit_rotation_enabled !== false ? 'true (ON)' : 'false (OFF — locked)'}`);
+        console.log(`[OutfitAudit] current_outfit.outfit_id:  ${charRecord.current_outfit?.outfit_id || 'none'}`);
+        console.log(`[OutfitAudit] current_outfit.label:      ${charRecord.current_outfit?.label || 'none'}`);
+        console.log(`[OutfitAudit] current_outfit.category:   ${charRecord.current_outfit?.category || 'none'}`);
+        console.log(`[OutfitAudit] closet_size:               ${(charRecord.character_closet || []).filter(o => o.outfit_id).length} outfits`);
+        console.log(`[OutfitAudit] ══════════════════════════════════════════════`);
+
         // ── APPEARANCE AUTHORITY SEPARATION ──────────────────────────────────────
         // charDesc carries ONLY scene-neutral demographics (age range, gender).
         // It must NOT carry appearance_notes or avatar_description_text — those are
@@ -1253,6 +1303,10 @@ Deno.serve(async (req) => {
         } else {
           console.log(`[generateImageAsync] Outfit already in charDesc — skipping re-resolution`);
         }
+
+        // ── OUTFIT AUDIT CONCLUSION — final injected clothing block ──────────────
+        const _finalOutfitMatch = charDesc?.match(/Currently wearing:\s*(.+)/)?.[1]?.trim() || null;
+        console.log(`[OutfitAudit] FINAL outfit_injected=${!!_finalOutfitMatch} | text="${_finalOutfitMatch?.substring(0, 120) || 'NONE — no wardrobe constraint'}"`);
       }
 
       if (charRefs.length === 0 && characterReferenceImages?.length > 0) {
@@ -1355,8 +1409,51 @@ Deno.serve(async (req) => {
         const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house))\b/.test(_pl);
         const _work = /\b(at (my |his |her )?(work|job|office|workplace|store|restaurant|bar|studio)|on the job|during (my|his|her) (shift|work day)|busy day at work|work today|yesterday at work|busy at work|at the (office|store|restaurant|bar|studio|workplace)|his (job|office|shift)|her (job|office|shift))\b/.test(_pl);
         const _school = /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus))\b/.test(_pl);
-        locationId = _home ? (charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null) : _work ? (charRecord.current_work_location_id || charRecord.occupation_location_id || null) : _school ? (charRecord.current_school_location_id || charRecord.education_location_id || null) : null;
-        if (!locationId) locationId = charRecord.resolved_current_location_id || charRecord.current_home_location_id || charRecord.home_location_id || charRecord.current_work_location_id || charRecord.occupation_location_id || null;
+
+        if (_home) {
+          locationId = charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null;
+        } else if (_work) {
+          locationId = charRecord.current_work_location_id || charRecord.occupation_location_id || null;
+        } else if (_school) {
+          locationId = charRecord.current_school_location_id || charRecord.education_location_id || null;
+        }
+
+        // ── PRESENCE-FIRST AUTHORITY ─────────────────────────────────────────────
+        // When no explicit prompt keyword matched, use the character's current resolved
+        // presence as the source of truth — NOT a home fallback.
+        //
+        // resolved_current_location_id is the canonical "where they are right now" field.
+        // Only fall back to home if their actual presence IS home or sleeping.
+        // Never default to home for a character who is at a bar, park, school, or any
+        // other location just because no prompt keyword matched.
+        if (!locationId) {
+          const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || '';
+          const resolvedLocId = charRecord.resolved_current_location_id || null;
+
+          if (resolvedLocId) {
+            // Trust the resolved location — this is where the character actually is
+            locationId = resolvedLocId;
+            console.log(`[generateImageAsync] PRESENCE-AUTHORITY: using resolved_current_location_id="${resolvedLocId}" (presence="${presenceStatus}")`);
+          } else {
+            // resolved_current_location_id is empty — derive from presence status
+            if (presenceStatus === 'at_work') {
+              locationId = charRecord.current_work_location_id || charRecord.occupation_location_id || null;
+            } else if (presenceStatus === 'at_school') {
+              locationId = charRecord.current_school_location_id || charRecord.education_location_id || null;
+            } else if (presenceStatus === 'incarcerated') {
+              locationId = charRecord.incarceration_facility_id || null;
+            } else if (presenceStatus === 'home' || presenceStatus === 'sleeping' || presenceStatus === 'napping') {
+              locationId = charRecord.current_home_location_id || charRecord.home_location_id || null;
+            } else if (presenceStatus === 'temporary_housing') {
+              locationId = charRecord.temporary_housing_location_id || charRecord.current_home_location_id || null;
+            } else {
+              // Unknown/visiting presence — use home only as absolute last resort since
+              // we have no location data at all. Log clearly so this is traceable.
+              locationId = charRecord.current_home_location_id || charRecord.home_location_id || null;
+              if (locationId) console.warn(`[generateImageAsync] ⚠️ PRESENCE-AUTHORITY: presence="${presenceStatus}" has no resolved location — falling back to home as last resort. This may not match actual location.`);
+            }
+          }
+        }
       }
 
       console.log(`[generateImageAsync] Location ID: ${locationId || 'NOT FOUND'} (src: ${_locSrc})`);
@@ -1385,8 +1482,10 @@ Deno.serve(async (req) => {
           envRefs = images;
           resolvedZoneName = zoneName;
           console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" → zone "${zoneName || 'none'}" (preferred="${preferredZone || 'none'}", src="${useManualLocation ? 'manual_ui_dropdown' : 'auto'}") → ${envRefs.length} env refs`);
+          console.log(`[PresenceAudit] RESOLVED → location="${locRecord.name}" (id=${locRecord.id}) | zone="${zoneName || 'none'}" | env_refs=${images.length} | src="${useManualLocation ? 'manual_ui_dropdown' : 'presence_authority'}"`)
         } else {
           console.warn(`[generateImageAsync] ⚠️ Location ${locationId} not found or access denied — proceeding without environment`);
+          console.warn(`[PresenceAudit] RESOLVED → NO LOCATION (id=${locationId} not found or denied) | env_refs=0`);
         }
       } else {
         console.log(`[generateImageAsync] No location ID resolved — no env refs.`);
