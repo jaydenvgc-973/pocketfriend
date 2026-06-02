@@ -176,44 +176,99 @@ Return only the message text, nothing else.`,
       finalMessage = `Hey, thinking about you. We should catch up soon.`;
     }
 
-    // ── 4. FIND OR CREATE WORLD PHONE CONVERSATION ──────────────────────────
-    const stableTitle = npcConvoTitle(senderCharacterId, finalReceiverName, receiver?.id || null);
-    const legacyTitle  = npcConvoTitle(senderCharacterId, finalReceiverName, null);
-
-    const existingConvos = await base44.entities.Conversation.filter({
-      type: 'npc',
-      character_ids: [senderCharacterId],
-    });
+    // ── 4. FIND OR CREATE WORLD PHONE CONVERSATION (canonical format) ────────
+    // Use canonical World Phone key so this thread is findable by WorldContactsPopup.
+    // Old npcConvoTitle + type:'npc' threads are NOT found by WorldContactsPopup's
+    // canonical key lookup — they become invisible orphans.
+    const participantIds = receiver?.id ? [senderCharacterId, receiver.id].sort() : [senderCharacterId];
+    const canonicalKey = receiver?.id
+      ? `world_phone::${participantIds[0]}::${participantIds[1]}`
+      : null;
 
     let conversationId = null;
-    const existingMatch = existingConvos.find(c => c.title === stableTitle) ||
-                          existingConvos.find(c => c.title === legacyTitle);
 
-    if (existingMatch) {
-      conversationId = existingMatch.id;
+    if (canonicalKey) {
+      // Try canonical key first, then legacy title
+      const [byCanonical, byLegacy] = await Promise.all([
+        base44.entities.Conversation.filter({ shared_conversation_key: canonicalKey }, '-updated_date', 5).catch(() => []),
+        base44.entities.Conversation.filter({ character_ids: [senderCharacterId] }, '-updated_date', 100).catch(() => []),
+      ]);
+      const stableTitle = npcConvoTitle(senderCharacterId, finalReceiverName, receiver.id);
+      const legacyTitle = npcConvoTitle(senderCharacterId, finalReceiverName, null);
+      const existing =
+        byCanonical[0] ||
+        byLegacy.find(c => c.shared_conversation_key === canonicalKey) ||
+        byLegacy.find(c => Array.isArray(c.participant_character_ids) && participantIds.every(id => c.participant_character_ids.includes(id))) ||
+        byLegacy.find(c => c.title === stableTitle) ||
+        byLegacy.find(c => c.title === legacyTitle);
+
+      if (existing) {
+        conversationId = existing.id;
+        // Upgrade legacy thread to canonical if needed
+        if (existing.shared_conversation_key !== canonicalKey || existing.channel !== 'world_phone') {
+          base44.entities.Conversation.update(conversationId, {
+            shared_conversation_key: canonicalKey,
+            participant_character_ids: participantIds,
+            channel: 'world_phone',
+          }).catch(() => {});
+        }
+      } else {
+        const senderType = sender.character_type || null;
+        const recipientType = receiver.character_type || null;
+        const bothActiveCreated = senderType === 'active_created_character' && recipientType === 'active_created_character';
+        const newConvo = await base44.entities.Conversation.create({
+          title: `world_phone::${participantIds.join('::')}`,
+          type: bothActiveCreated ? 'direct' : 'npc',
+          character_ids: [senderCharacterId, receiver.id],
+          participant_character_ids: participantIds,
+          shared_conversation_key: canonicalKey,
+          owner_email: user.email,
+          channel: 'world_phone',
+          sync_status: 'pending',
+          world_contact_mode: bothActiveCreated ? 'active_created_to_active_created' : 'character_to_character',
+        });
+        conversationId = newConvo.id;
+      }
     } else {
-      // Create new thread — include both IDs when receiver is a real Character
-      const charIds = receiver?.id
-        ? [senderCharacterId, receiver.id]
-        : [senderCharacterId];
-
-      const newConvo = await base44.entities.Conversation.create({
-        title: stableTitle,
-        type: 'npc',
-        character_ids: charIds,
+      // No receiver Character record — fall back to name-only npc thread
+      const stableTitle = npcConvoTitle(senderCharacterId, finalReceiverName, null);
+      const existingConvos = await base44.entities.Conversation.filter({
+        character_ids: [senderCharacterId],
         owner_email: user.email,
-      });
-      conversationId = newConvo.id;
+      }).catch(() => []);
+      const existing = existingConvos.find(c => c.title === stableTitle);
+      if (existing) {
+        conversationId = existing.id;
+      } else {
+        const newConvo = await base44.entities.Conversation.create({
+          title: stableTitle,
+          type: 'npc',
+          character_ids: [senderCharacterId],
+          owner_email: user.email,
+          channel: 'world_phone',
+        });
+        conversationId = newConvo.id;
+      }
     }
 
-    // ── 5. CREATE THE MESSAGE ────────────────────────────────────────────────
+    // ── 5. CREATE THE MESSAGE (with canonical World Phone fields) ─────────────
     const savedMsg = await base44.entities.Message.create({
       conversation_id: conversationId,
       sender_type: 'character',
       character_id: senderCharacterId,
       character_name: sender.name,
+      // Canonical fields required for WorldContactsPopup to find/display this message
+      sender_character_id: senderCharacterId,
+      receiver_character_id: receiver?.id || null,
+      participant_character_ids: participantIds,
+      ...(canonicalKey ? { shared_conversation_key: canonicalKey } : {}),
+      channel: 'world_phone',
       content: finalMessage,
       timestamp: new Date().toISOString(),
+      is_read: true,   // outgoing — sender already knows they sent it
+      recovery_signal: false,
+      memory_eligible: true,
+      relationship_eligible: true,
       // Store trigger_source so daily cap queries can count autonomous contacts
       trigger_source: triggerSrc,
     });

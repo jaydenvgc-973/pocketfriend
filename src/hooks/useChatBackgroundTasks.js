@@ -250,7 +250,7 @@ export function useChatBackgroundTasks({
 The character's known contacts: ${knownNames || 'none listed'}
 
 Does this message explicitly instruct "${character.name}" to contact or reach out to a specific person?
-If YES: return JSON { "contact_requested": true, "target_name": "<exact name from message>", "topic": "<brief reason or topic>" }
+If YES: return JSON { "contact_requested": true, "target_name": "<exact name from message>", "message_content": "<what they should say, verbatim from the user message if present, otherwise null>" }
 If NO (casual mention, talking about a third party, no clear instruction): return JSON { "contact_requested": false }
 Return ONLY valid JSON, nothing else.`,
             response_json_schema: {
@@ -258,7 +258,7 @@ Return ONLY valid JSON, nothing else.`,
               properties: {
                 contact_requested: { type: 'boolean' },
                 target_name: { type: 'string' },
-                topic: { type: 'string' },
+                message_content: { type: 'string' },
               },
               required: ['contact_requested'],
             },
@@ -266,11 +266,17 @@ Return ONLY valid JSON, nothing else.`,
             if (result?.contact_requested && result?.target_name) {
               console.log(`[Governor] Contact intent confirmed by LLM: "${character.name}" → "${result.target_name}"`);
               markCooldown(characterId, 'contactIntent');
-              safeInvoke('triggerCharacterContact', {
-                senderCharacterId: characterId,
-                receiverCharacterName: result.target_name,
-                topic: result.topic || text.substring(0, 200),
-                trigger_source: 'user_requested',
+              // Route to sendWorldPhoneMessage — the canonical World Phone path.
+              // This creates a real, findable World Phone thread with all required fields.
+              // Do NOT use triggerCharacterContact here — it uses legacy npc-type convos
+              // without canonical shared_conversation_key or channel stamps.
+              safeInvoke('sendWorldPhoneMessage', {
+                sender_character_id: characterId,
+                recipient_identifier: result.target_name,
+                requested_message: result.message_content || text.substring(0, 300),
+                source: 'user_instruction',
+                current_conversation_id: convoId,
+                owner_email: currentUser?.email,
               }, characterId, 'contactIntent_exec');
             }
           }).catch(() => {}); // non-blocking — never interrupts chat
