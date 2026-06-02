@@ -28,8 +28,13 @@ Deno.serve(async (req) => {
   // ── Load character ────────────────────────────────────────────────────────────
   let char = null;
   if (characterId) {
-    const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
-    char = charList?.[0] || null;
+    // Try user-scoped first (respects RLS), then service role
+    const charListUser = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+    char = charListUser?.[0] || null;
+    if (!char) {
+      const charListSR = await base44.asServiceRole.entities.Character.list('-updated_date', 200).catch(() => []);
+      char = charListSR.find(c => c.id === characterId) || null;
+    }
   }
 
   if (!char) {
