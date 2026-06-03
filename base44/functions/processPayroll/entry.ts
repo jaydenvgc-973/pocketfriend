@@ -3,15 +3,15 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 /**
  * processPayroll
  *
- * Pays characters based on their ACTUAL scheduled hours, not a flat 40-hr week.
+ * SOURCE OF TRUTH: LocationReference.worker_pay_type[charId] and worker_pay_rates[charId]
+ * These fields are PROTECTED. This function reads them. It never writes them.
  *
- * Priority for shift data (per job location):
- *   1. LocationReference.worker_shifts[characterId] — specific shift set on the location
- *   2. Character.work_start_time / work_end_time / work_days — character-level fallback
- *   3. Nothing — skip that job (no hours = no pay)
+ * Pay type routing:
+ *   'annual'  → biweeklyPay = annualSalary / 26   (NEVER multiply by hours)
+ *   'hourly'  → biweeklyPay = hourlyRate * biweeklyHours (requires valid schedule)
+ *   default   → treated as 'hourly'
  *
- * Pay is bi-weekly (called every 2 weeks by automation).
- * Supports hourly pay (worker_pay_rates) and annual salary (income_sources).
+ * Pay is bi-weekly (automation calls every 2 weeks).
  */
 
 /** Parse "HH:MM" → total minutes from midnight */
@@ -65,13 +65,13 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    // owner_email is the sole ownership source of truth
     const characters = await base44.entities.Character.filter({
       owner_email: user.email,
       status: 'active',
     });
 
-    // Load all locations once
+    // Load all locations once — read-only, never written by this function
     const allLocations = await base44.asServiceRole.entities.LocationReference.list('-created_date', 500);
     const locationMap = Object.fromEntries(allLocations.map(l => [l.id, l]));
 
@@ -81,10 +81,7 @@ Deno.serve(async (req) => {
     const AVG_WEEKS_PER_MONTH = 4.33;
 
     for (const char of characters) {
-      // Get or create financial record.
-      // CANONICAL LOOKUP: filter by BOTH character_id AND owner_email to prevent
-      // writing to owner_email:null duplicate shells. Sort by created_date descending
-      // so the most recent owner-scoped record is selected if multiple exist.
+      // CANONICAL LOOKUP: filter by BOTH character_id AND owner_email
       const financials = await base44.entities.CharacterFinancial.filter(
         { character_id: char.id, owner_email: user.email },
         '-created_date',
@@ -95,6 +92,7 @@ Deno.serve(async (req) => {
         financial = await base44.entities.CharacterFinancial.create({
           character_id: char.id,
           character_name: char.name,
+          owner_email: user.email,
           current_balance: 6000,
           total_income: 0,
           total_expenses: 0,
@@ -148,39 +146,63 @@ Deno.serve(async (req) => {
         const loc = job.location;
         const charId = char.id;
 
-        // Check for annual salary override in existing income_sources
+        // Existing source is used ONLY to carry forward total_earned — never to determine pay type/rate
         const existingSource = existingSources.find(s => s.location_id === job.location_id);
-        if (existingSource?.pay_type === 'annual' && existingSource.pay_amount) {
-          const biweeklyPay = Math.round((existingSource.pay_amount / 26) * 100) / 100;
+
+        // SOURCE OF TRUTH: read pay_type and pay_rate from LocationReference
+        // worker_pay_type[charId] = 'annual' | 'hourly'
+        // worker_pay_rates[charId] = the rate value (annual amount OR hourly rate)
+        const locPayType = loc?.worker_pay_type?.[charId] || 'hourly';
+        const locPayRate = loc?.worker_pay_rates?.[charId] ?? null;
+
+        if (!locPayRate) {
+          // No rate on location — fall back to income_sources annual if present
+          if (existingSource?.pay_type === 'annual' && existingSource.pay_amount) {
+            const biweeklyPay = Math.round((existingSource.pay_amount / 26) * 100) / 100;
+            totalBiweeklyPay += biweeklyPay;
+            updatedSources.push({
+              ...existingSource,
+              total_earned: (existingSource.total_earned || 0) + biweeklyPay,
+              last_payment_date: today.toISOString(),
+            });
+          }
+          continue;
+        }
+
+        if (locPayType === 'annual') {
+          // ANNUAL SALARY: divide by 26 pay periods. NEVER multiply by hours.
+          // This is the fix that prevents a $60,000 annual salary being treated
+          // as a $60,000/hour rate × scheduled hours.
+          const biweeklyPay = Math.round((locPayRate / 26) * 100) / 100;
+          const monthlyEstimate = Math.round((locPayRate / 12) * 100) / 100;
           totalBiweeklyPay += biweeklyPay;
           updatedSources.push({
-            ...existingSource,
-            total_earned: (existingSource.total_earned || 0) + biweeklyPay,
+            location_id: job.location_id,
+            location_name: job.location_name,
+            pay_type: 'annual',
+            pay_amount: locPayRate,
+            monthly_estimate: monthlyEstimate,
+            total_earned: (existingSource?.total_earned || 0) + biweeklyPay,
             last_payment_date: today.toISOString(),
           });
           continue;
         }
 
-        // Hourly pay: rate from location worker_pay_rates
-        const hourlyRate = loc?.worker_pay_rates?.[charId] ?? financial.hourly_rates?.[job.location_id] ?? null;
-        if (!hourlyRate) continue; // No pay rate configured — skip
-
-        // Calculate actual scheduled hours for this job
+        // HOURLY: locPayRate is a true hourly wage. Requires a valid schedule.
         const schedule = calcWeeklyHours(char, loc);
-        if (!schedule) continue; // No schedule found — skip
+        if (!schedule) continue; // No schedule — cannot calculate hours
 
         const { weeklyHours, daysPerWeek } = schedule;
         const biweeklyHours = weeklyHours * WEEKS_PER_BIWEEKLY;
-        const biweeklyPay = Math.round(hourlyRate * biweeklyHours * 100) / 100;
-        const monthlyEstimate = Math.round(hourlyRate * weeklyHours * AVG_WEEKS_PER_MONTH * 100) / 100;
+        const biweeklyPay = Math.round(locPayRate * biweeklyHours * 100) / 100;
+        const monthlyEstimate = Math.round(locPayRate * weeklyHours * AVG_WEEKS_PER_MONTH * 100) / 100;
 
         totalBiweeklyPay += biweeklyPay;
-
         updatedSources.push({
           location_id: job.location_id,
           location_name: job.location_name,
           pay_type: 'hourly',
-          pay_amount: hourlyRate,
+          pay_amount: locPayRate,
           weekly_hours: Math.round(weeklyHours * 100) / 100,
           days_per_week: daysPerWeek,
           monthly_estimate: monthlyEstimate,
@@ -198,6 +220,7 @@ Deno.serve(async (req) => {
         current_balance: newBalance,
         total_income: newTotalIncome,
         income_sources: updatedSources,
+        last_updated: today.toISOString(),
       });
 
       // Write FinancialTransaction so payroll is visible in character awareness
@@ -213,7 +236,11 @@ Deno.serve(async (req) => {
         amount: totalBiweeklyPay,
         direction: 'income',
         transaction_type: 'payroll',
-        description: `Bi-weekly paycheck`,
+        description: updatedSources.map(s =>
+          s.pay_type === 'annual'
+            ? `Salary: ${s.location_name} (annual $${s.pay_amount.toLocaleString()})`
+            : `Hourly: ${s.location_name} ($${s.pay_amount}/hr × ${s.weekly_hours * WEEKS_PER_BIWEEKLY}hrs)`
+        ).join('; '),
         balance_after: newBalance,
         timestamp: today.toISOString(),
       }).catch(err => console.warn('[processPayroll] FinancialTransaction write failed:', err.message));
@@ -227,9 +254,9 @@ Deno.serve(async (req) => {
           location: s.location_name,
           pay_type: s.pay_type,
           rate: s.pay_amount,
-          weekly_hours: s.weekly_hours,
-          days_per_week: s.days_per_week,
-          biweekly_earned: s.total_earned,
+          weekly_hours: s.weekly_hours || null,
+          days_per_week: s.days_per_week || null,
+          biweekly_earned: totalBiweeklyPay,
         })),
         status: 'paid',
       });

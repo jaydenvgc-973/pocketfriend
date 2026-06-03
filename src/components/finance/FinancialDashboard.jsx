@@ -96,7 +96,13 @@ export default function FinancialDashboard({ characterId }) {
             <div key={idx} className="flex items-center justify-between text-sm bg-secondary/30 rounded-lg p-2">
               <div>
                 <p className="text-foreground font-medium">{source.location_name || 'Employment'}</p>
-                <p className="text-xs text-muted-foreground">Bi-weekly: {formatCurrency(source.pay_amount)}</p>
+                <p className="text-xs text-muted-foreground">
+                  {source.pay_type === 'annual'
+                    ? `Annual salary: ${formatCurrency(source.pay_amount)} (${formatCurrency((source.pay_amount || 0) / 12)}/mo)`
+                    : source.pay_type === 'hourly'
+                      ? `$${source.pay_amount}/hr · ${source.weekly_hours || '?'} hrs/wk`
+                      : `Bi-weekly: ${formatCurrency(source.pay_amount)}`}
+                </p>
               </div>
               <p className="text-emerald-400 font-semibold">{formatCurrency(source.total_earned || 0)}</p>
             </div>

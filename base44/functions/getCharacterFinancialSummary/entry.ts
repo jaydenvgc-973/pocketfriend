@@ -45,8 +45,18 @@ Deno.serve(async (req) => {
     const incomeSources = financial.income_sources || [];
     const recurringExpenses = financial.recurring_expenses || [];
 
-    // Calculate monthly metrics
-    const monthlyIncome = incomeSources.reduce((sum, source) => sum + (source.pay_amount || 0), 0) * 2; // Bi-weekly * 2
+    // Calculate monthly income — pay_type is the source of truth.
+    // annual:  annualSalary / 12
+    // hourly:  use stored monthly_estimate (hourlyRate * weeklyHours * 4.33) if available,
+    //          else fall back to biweeklyAmount * 2
+    // default: biweeklyAmount * 2
+    const monthlyIncome = incomeSources.reduce((sum, source) => {
+      if (source.pay_type === 'annual') {
+        return sum + (source.pay_amount || 0) / 12;
+      }
+      // hourly or unspecified: prefer stored monthly_estimate, else bi-weekly * 2
+      return sum + (source.monthly_estimate || (source.pay_amount || 0) * 2);
+    }, 0);
     const monthlyExpenses = recurringExpenses
       .filter(e => ['rent', 'utilities', 'groceries', 'gym', 'phone', 'streaming'].includes(e.expense_type))
       .reduce((sum, exp) => sum + (exp.monthly_cost || 0), 0);

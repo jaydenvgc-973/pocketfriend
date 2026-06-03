@@ -62,7 +62,7 @@ export default function ManualTransactionModal({ character, initialDirection = '
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 80, opacity: 0 }}
           onClick={e => e.stopPropagation()}
-          className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-5 space-y-4"
+          className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto"
         >
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground">
