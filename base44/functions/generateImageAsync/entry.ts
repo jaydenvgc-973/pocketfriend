@@ -1617,11 +1617,17 @@ Deno.serve(async (req) => {
           }
 
           // ── LAYER 2: SCHOOL SCHEDULE ──────────────────────────────────────────
-          if (!locationId && charRecord.student_status === 'enrolled') {
+          // CRITICAL: Only resolve to school when character is ACTUALLY at school.
+          // Enrollment status alone (student_status === 'enrolled') does NOT mean
+          // the character is currently at school. It means they are registered.
+          // Using enrollment as a location authority overrides the actual current
+          // presence (e.g. character at home gets university images).
+          // Must check resolved_presence_status === 'at_school' to confirm real presence.
+          if (!locationId && charRecord.student_status === 'enrolled' && presenceStatus === 'at_school') {
             const schoolLocId = charRecord.current_school_location_id || charRecord.education_location_id || null;
             if (schoolLocId) {
               locationId = schoolLocId;
-              console.log(`[generateImageAsync] SCHOOL-SCHEDULE-AUTHORITY: character is enrolled student → school location="${schoolLocId}"`);
+              console.log(`[generateImageAsync] SCHOOL-SCHEDULE-AUTHORITY: character is at_school + enrolled → school location="${schoolLocId}"`);
             }
           }
 

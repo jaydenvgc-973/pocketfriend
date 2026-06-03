@@ -77,13 +77,15 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
 
   const totalHousingCost = (location.rent_or_housing_cost || 0) + totalUtilities;
 
-  // Build worker IDs from worker_character_ids OR fall back to keys in worker_job_titles
-  // This ensures workers show even if worker_character_ids wasn't properly saved
+  // Build worker IDs from worker_character_ids OR fall back to keys in worker_job_titles/worker_shifts
+  // This ensures workers show even if worker_character_ids wasn't properly saved.
+  // worker_shifts keys are also a valid source — assignWorker writes there even when
+  // worker_character_ids is empty (legacy path from Ava Dei Park / Aurelian issue).
   const workerIdsFromArray = location.worker_character_ids || [];
   const workerIdsFromTitles = Object.keys(location.worker_job_titles || {});
-  const workerIds = workerIdsFromArray.length > 0
-    ? workerIdsFromArray
-    : workerIdsFromTitles;
+  const workerIdsFromShifts = Object.keys(location.worker_shifts || {});
+  const workerIdsMerged = Array.from(new Set([...workerIdsFromArray, ...workerIdsFromTitles, ...workerIdsFromShifts]));
+  const workerIds = workerIdsMerged;
 
   // Dynamic owner section label based on owner_role field
   const ownerSectionLabel = (() => {
@@ -212,7 +214,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
               <div className="space-y-1.5">
                 {workerIds.map(id => {
                     const char = characters.find(c => c.id === id);
-                    const displayName = char?.name || id;
+                    const displayName = char?.name || (id.length > 20 ? 'Unknown Employee' : id);
                     const jobTitle = location.worker_job_titles?.[id];
                     const payRate = location.worker_pay_rates?.[id];
                     const payType = location.worker_pay_type?.[id] || 'hourly';
@@ -341,17 +343,17 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                 return (
                   <div key={id} className="flex items-center gap-2 py-0.5">
                     <div className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                    <span className="text-xs text-foreground">{char?.name || id}</span>
+                    <span className="text-xs text-foreground">{char?.name || (id.length > 20 ? 'Unknown Employee' : id)}</span>
                     {location.worker_job_titles?.[id] && (
-                      <span className="text-[10px] text-muted-foreground ml-auto">{location.worker_job_titles[id]}</span>
+                     <span className="text-[10px] text-muted-foreground ml-auto">{location.worker_job_titles[id]}</span>
                     )}
-                  </div>
-                );
-              })}
-            </>
-          )}
+                    </div>
+                    );
+                    })}
+                    </>
+                    )}
 
-          {location.tuition_cost > 0 && (
+                    {location.tuition_cost > 0 && (
             <DetailRow label="Tuition" value={`$${location.tuition_cost} / ${location.tuition_frequency || 'annual'}`} highlight />
           )}
         </>
@@ -438,19 +440,19 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                 return (
                   <div key={id} className="flex items-center gap-2 py-0.5">
                     <div className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                    <span className="text-xs text-foreground">{char?.name || id}</span>
+                    <span className="text-xs text-foreground">{char?.name || (id.length > 20 ? 'Unknown Employee' : id)}</span>
                     {location.worker_job_titles?.[id] && (
-                      <span className="text-[10px] text-muted-foreground ml-auto">{location.worker_job_titles[id]}</span>
+                     <span className="text-[10px] text-muted-foreground ml-auto">{location.worker_job_titles[id]}</span>
                     )}
-                  </div>
-                );
-              })}
-            </>
-          )}
-        </>
-      )}
+                    </div>
+                    );
+                    })}
+                    </>
+                    )}
+                    </>
+                    )}
 
-      {cat === 'community' && (
+                    {cat === 'community' && (
         <>
           <SectionHeader icon={Users} label="Community Location" />
           {location.community_type && <DetailRow label="Type" value={location.community_type.replace(/_/g, ' ')} />}
