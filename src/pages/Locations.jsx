@@ -493,10 +493,14 @@ function getWorkerAvailabilityV2(character, allLocations, currentLocationId = nu
 function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null }) {
   const queryClient = useQueryClient();
   // Active characters via RLS
+  // LEGACY COMPATIBILITY: Do NOT filter by character_type here.
+  // Legacy characters (created before character_type was added) have no character_type field
+  // and would be invisible to the worker/resident selectors if filtered by type.
+  // The NPC query below separately fetches NPC types — active chars here includes all non-typed records.
   const { data: rlsActiveChars = [] } = useQuery({
     queryKey: ['locationFormActive', currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ owner_email: currentUser.email, status: "active", character_type: "active_created_character" })
+      ? base44.entities.Character.filter({ owner_email: currentUser.email, status: "active" })
       : [],
     enabled: !!currentUser?.email,
   });

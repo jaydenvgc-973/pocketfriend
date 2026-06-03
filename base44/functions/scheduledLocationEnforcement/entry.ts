@@ -751,6 +751,15 @@ Deno.serve(async (req) => {
               location_correction_corrected_at: timestamp,
             } : {};
 
+            // SLEEP ONSET STAMP: write last_sleep_start on the transition awake → sleeping.
+            // This is the canonical sleep onset write path. Only stamps when the character
+            // was NOT already sleeping in the DB (prevents overwriting a valid ongoing sleep start).
+            const wasAlreadySleeping = stored.resolved_presence_status === 'sleeping' || stored.resolved_presence_status === 'napping';
+            const isNowSleeping = resolved.resolved_presence_status === 'sleeping' || resolved.resolved_presence_status === 'napping';
+            const sleepOnsetFields = (isNowSleeping && !wasAlreadySleeping)
+              ? { last_sleep_start: timestamp }
+              : {};
+
             await base44.asServiceRole.entities.Character.update(character.id, {
               resolved_current_location_id: resolved.resolved_current_location_id,
               resolved_current_location_name: resolved.resolved_current_location_name,
@@ -761,6 +770,7 @@ Deno.serve(async (req) => {
               resolved_last_updated_at: timestamp,
               home_resolution_failed: resolved.home_resolution_failed,
               ...lockFields,
+              ...sleepOnsetFields,
             });
             updated++;
             entry.action = 'updated';
