@@ -51,11 +51,22 @@ Deno.serve(async (req) => {
     //          else fall back to biweeklyAmount * 2
     // default: biweeklyAmount * 2
     const monthlyIncome = incomeSources.reduce((sum, source) => {
-      if (source.pay_type === 'annual') {
+      const payType = (source.pay_type || '').trim().toLowerCase();
+      if (payType === 'annual') {
+        // Annual salary: divide by 12 for monthly display. NEVER multiply by hours.
         return sum + (source.pay_amount || 0) / 12;
       }
-      // hourly or unspecified: prefer stored monthly_estimate, else bi-weekly * 2
-      return sum + (source.monthly_estimate || (source.pay_amount || 0) * 2);
+      // hourly: use stored monthly_estimate if available (rate × weeklyHours × 4.33)
+      // otherwise fall back to rate × weekly_hours × 4.33, or monthly_estimate directly
+      if (source.monthly_estimate) {
+        return sum + source.monthly_estimate;
+      }
+      // Last resort: hourly rate × weekly hours × 4.33
+      const weeklyHours = source.weekly_hours || 0;
+      if (weeklyHours > 0) {
+        return sum + (source.pay_amount || 0) * weeklyHours * 4.33;
+      }
+      return sum;
     }, 0);
     const monthlyExpenses = recurringExpenses
       .filter(e => ['rent', 'utilities', 'groceries', 'gym', 'phone', 'streaming'].includes(e.expense_type))
