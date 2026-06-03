@@ -604,11 +604,15 @@ Deno.serve(async (req) => {
     const max_owners = typeof body.max_owners === 'number' ? body.max_owners : null;
     const max_chars = typeof body.max_characters_per_owner === 'number' ? body.max_characters_per_owner : null;
 
-    // STEP 1: Discover all active_created_character records (service role — sees all accounts)
+    // STEP 1: Discover all user-created active characters (service role — sees all accounts)
+    // LEGACY COMPATIBILITY: Do NOT filter by character_type here.
+    // Legacy characters created before character_type was introduced have character_type = null
+    // and must participate in sleep/schedule enforcement. The NPC filter below excludes NPC types.
     let allCharacters = [];
     try {
       allCharacters = await base44.asServiceRole.entities.Character.filter({
-        character_type: 'active_created_character'
+        status: 'active',
+        created_by_user: true,
       });
     } catch (err) {
       if (err?.status === 429) {
@@ -616,6 +620,10 @@ Deno.serve(async (req) => {
       }
       throw err;
     }
+    // Exclude NPC types — they have their own sleep enforcement path (npc_forced_default window).
+    // Include active_created_character AND legacy null/undefined character_type.
+    const NPC_TYPES = new Set(['npc_regular', 'npc_family_member', 'npc_fictitious', 'npc']);
+    allCharacters = allCharacters.filter(c => !NPC_TYPES.has(c.character_type));
 
     // STEP 2: Extract distinct owner_email values — skip records missing owner_email
     const ownerEmailSet = new Set();
@@ -649,12 +657,17 @@ Deno.serve(async (req) => {
       owners_checked++;
 
       // Load characters scoped to this owner only
+      // LEGACY COMPATIBILITY: Do NOT filter by character_type — legacy characters have null type
+      // and must participate in sleep/schedule enforcement same as active_created_character.
       let ownerChars = [];
       try {
         ownerChars = await base44.asServiceRole.entities.Character.filter({
           owner_email,
-          character_type: 'active_created_character'
+          status: 'active',
+          created_by_user: true,
         });
+        // Exclude NPC types — they use npc_forced_default sleep path, not schedule enforcement
+        ownerChars = ownerChars.filter(c => !NPC_TYPES.has(c.character_type));
       } catch (err) {
         if (err?.status === 429) {
           return Response.json({
