@@ -40,6 +40,7 @@ Deno.serve(async (req) => {
       image_analysis_is_transport_metadata, // true = description is routing metadata, not image analysis
       message_type,               // optional: 'text' | 'image' (default: 'text')
       source,                     // "user_instruction" | "character_action"
+      user_instruction_context,   // optional: the raw user command (e.g. "text him") — used when requested_message is null to generate content
       current_chat_message_id,    // source message ID in the active chat conversation
       current_conversation_id,    // active chat conversation ID (not the WP thread)
       owner_email,
@@ -63,7 +64,7 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    // Image sends must have image_url; text sends must have requested_message
+    // Image sends must have image_url; text sends must have requested_message OR user_instruction_context
     const isImageSend = message_type === 'image';
     if (isImageSend && !image_url) {
       return Response.json({
@@ -71,10 +72,10 @@ Deno.serve(async (req) => {
         error: 'Image send requires image_url',
       }, { status: 400 });
     }
-    if (!isImageSend && !requested_message) {
+    if (!isImageSend && !requested_message && !user_instruction_context) {
       return Response.json({
         success: false,
-        error: 'Text send requires requested_message',
+        error: 'Text send requires requested_message or user_instruction_context',
       }, { status: 400 });
     }
 
@@ -226,29 +227,65 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
       return Response.json({ success: false, error: 'Sender and recipient are the same character.' });
     }
 
-    // ── REWRITE MESSAGE IN SENDER'S VOICE (text only) ────────────────────────────
-    let rewrittenMessage = requested_message;
-    
-    if (!isImageSend && requested_message) {
+    // ── GENERATE MESSAGE IN SENDER'S VOICE (text only) ───────────────────────────
+    // Two modes:
+    // A) requested_message has actual content to relay → rewrite it in sender's voice
+    // B) requested_message is null (bare intent like "text him") → generate an appropriate
+    //    outreach message from scratch based on relationship, context, and instruction intent
+    let rewrittenMessage = requested_message || '';
+
+    if (!isImageSend) {
       const personalityHint = [sender.personality_summary, sender.communication_style, sender.archetype]
         .filter(Boolean).join(', ');
       const traitHints = ['dry_humor','blunt','flirty','oversharer','night_owl']
         .filter(t => sender[`trait_${t}`])
         .slice(0, 3).join(', ');
 
+      // Find the relationship context between sender and recipient
+      const relContext = (sender.fictional_relationships || []).find(r =>
+        r.related_character_id === recipient.id || r.person_name?.toLowerCase() === recipient.name?.toLowerCase()
+      );
+      const relLabel = relContext?.relationship_type || relContext?.label_from_source_perspective || 'known contact';
+
       try {
-        const rewriteRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `You are ${sender.name}.${personalityHint ? ` Personality: ${personalityHint}.` : ''}${traitHints ? ` Traits: ${traitHints}.` : ''}${sender.emotional_state ? ` Mood: ${sender.emotional_state}.` : ''}
+        let llmPrompt;
 
-Send this message to ${recipient.name}: "${requested_message}"
+        if (requested_message) {
+          // Mode A: relay actual content — rewrite in sender's voice, never output a meta-instruction
+          llmPrompt = `You are ${sender.name}.${personalityHint ? ` Personality: ${personalityHint}.` : ''}${traitHints ? ` Traits: ${traitHints}.` : ''}${sender.emotional_state ? ` Mood: ${sender.emotional_state}.` : ''}
 
-Rewrite it in your voice — same meaning, your style. 1–3 sentences max. No greetings or sign-offs unless they're genuinely your style. Return ONLY the rewritten message, no quotes, no explanation.`,
-        });
+You need to communicate the following to ${recipient.name} (your ${relLabel}): "${requested_message}"
+
+Write what you would actually TEXT to ${recipient.name}. Express the same meaning in your own natural voice.
+This must be an actual text message — not a command, not a description of what to say, not a prompt fragment.
+1–3 sentences max. Casual, authentic. Return ONLY the message text, no quotes, no labels.`;
+        } else {
+          // Mode B: bare intent (no message content) — generate a natural outreach
+          const instructionHint = user_instruction_context
+            ? `The user wanted you to reach out with this intent: "${user_instruction_context}"`
+            : `The user wanted you to reach out to ${recipient.name}.`;
+          llmPrompt = `You are ${sender.name}.${personalityHint ? ` Personality: ${personalityHint}.` : ''}${traitHints ? ` Traits: ${traitHints}.` : ''}${sender.emotional_state ? ` Mood: ${sender.emotional_state}.` : ''}
+
+${instructionHint}
+
+${recipient.name} is your ${relLabel}. Write a natural, brief text message to ${recipient.name} that fits your relationship and personality.
+This must be an actual text message, not a description or command.
+1–2 sentences. Return ONLY the message text, no quotes, no labels.`;
+        }
+
+        const rewriteRes = await base44.integrations.Core.InvokeLLM({ prompt: llmPrompt });
         if (typeof rewriteRes === 'string' && rewriteRes.trim().length > 0) {
           rewrittenMessage = rewriteRes.trim();
+        } else if (!requested_message) {
+          // Fallback if LLM returns nothing for bare intent
+          rewrittenMessage = `Hey, just reaching out.`;
         }
       } catch (e) {
-        warnings.push(`Voice rewrite failed (non-fatal), using original: ${e.message}`);
+        warnings.push(`Message generation failed (non-fatal): ${e.message}`);
+        // For bare intents with no fallback content, use a safe default
+        if (!requested_message) {
+          rewrittenMessage = `Hey, just checking in.`;
+        }
       }
     }
 
