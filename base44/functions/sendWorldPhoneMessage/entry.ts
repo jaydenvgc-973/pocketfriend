@@ -41,6 +41,7 @@ Deno.serve(async (req) => {
       message_type,               // optional: 'text' | 'image' (default: 'text')
       source,                     // "user_instruction" | "character_action"
       user_instruction_context,   // optional: the raw user command (e.g. "text him") — used when requested_message is null to generate content
+      recent_conversation_context, // optional: last N messages of the chat — used to recover pending intent (e.g. "send the message" after "I need the photos")
       current_chat_message_id,    // source message ID in the active chat conversation
       current_conversation_id,    // active chat conversation ID (not the WP thread)
       owner_email,
@@ -260,17 +261,28 @@ Write what you would actually TEXT to ${recipient.name}. Express the same meanin
 This must be an actual text message — not a command, not a description of what to say, not a prompt fragment.
 1–3 sentences max. Casual, authentic. Return ONLY the message text, no quotes, no labels.`;
         } else {
-          // Mode B: bare intent (no message content) — generate a natural outreach
+          // Mode B: bare intent (no message content) — generate a natural outreach.
+          // If recent_conversation_context is provided, scan it to recover the pending intent
+          // (e.g. user said "I need the photos" 2 messages ago, then said "send the message").
+          // This ensures "send the message" produces a photo-request text, not generic outreach.
+          const conversationHint = recent_conversation_context
+            ? `\n\nRecent conversation context (to understand what needs to be communicated):\n${recent_conversation_context}`
+            : '';
           const instructionHint = user_instruction_context
-            ? `The user wanted you to reach out with this intent: "${user_instruction_context}"`
-            : `The user wanted you to reach out to ${recipient.name}.`;
+            ? `The user just said: "${user_instruction_context}". This is a confirmation/command, not the message itself.`
+            : `The user wants you to reach out to ${recipient.name}.`;
           llmPrompt = `You are ${sender.name}.${personalityHint ? ` Personality: ${personalityHint}.` : ''}${traitHints ? ` Traits: ${traitHints}.` : ''}${sender.emotional_state ? ` Mood: ${sender.emotional_state}.` : ''}
+${conversationHint}
 
 ${instructionHint}
 
-${recipient.name} is your ${relLabel}. Write a natural, brief text message to ${recipient.name} that fits your relationship and personality.
-This must be an actual text message, not a description or command.
-1–2 sentences. Return ONLY the message text, no quotes, no labels.`;
+Based on the conversation context above, determine what specific thing needs to be communicated to ${recipient.name} (your ${relLabel}).
+If the conversation shows a specific pending request or topic (e.g. photos, an item, a task), that is what the message should be about.
+If there is no clear pending topic, write a brief natural check-in.
+
+Write the actual text message you would send to ${recipient.name}. Sound like yourself.
+This must be a real message — not a command, not a description, not a meta-instruction.
+1–2 sentences max. Return ONLY the message text, no quotes, no labels.`;
         }
 
         const rewriteRes = await base44.integrations.Core.InvokeLLM({ prompt: llmPrompt });

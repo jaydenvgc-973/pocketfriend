@@ -79,6 +79,7 @@ import { useChatTimingProof } from "@/hooks/useChatTimingProof";
 import ChatTimingOverlay from "@/components/chat/ChatTimingOverlay";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
+import { buildWorldPhonePayload } from "@/hooks/useWorldPhoneIntentSend";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -442,14 +443,15 @@ export default function Chat({ chatTypeOverride } = {}) {
     const worldPhoneIntent = detectWorldPhoneIntent(text);
     let worldPhoneSendResult = null;
     if (worldPhoneIntent) {
-      const wpPayload = { sender_character_id: characterId, requested_message: worldPhoneIntent.message || text, source: 'user_instruction', current_conversation_id: conversationIdRef.current || conversationId, owner_email: currentUser.email };
-      if (worldPhoneIntent.pronounIntent) {
-        // "text him/her/them" — pass recent convo for backend LLM pronoun resolution
-        wpPayload.pronoun_context = messages.slice(-15).map(m => `${m.sender_type === 'user' ? 'User' : character.name}: ${m.content || ''}`).join('\n') + `\nUser: ${text}`;
-        wpPayload.recipient_identifier = null;
-      } else {
-        wpPayload.recipient_identifier = worldPhoneIntent.recipient;
-      }
+      const wpPayload = buildWorldPhonePayload({
+        intent: worldPhoneIntent,
+        text,
+        characterId,
+        conversationId: conversationIdRef.current || conversationId,
+        currentUserEmail: currentUser.email,
+        recentMessages: messages,
+        characterName: character.name,
+      });
       worldPhoneSendResult = await base44.functions.invoke('sendWorldPhoneMessage', wpPayload).catch(err => ({ data: { success: false, error: err.message } }));
       console.log('[WorldPhone] send result:', worldPhoneSendResult?.data);
     }
