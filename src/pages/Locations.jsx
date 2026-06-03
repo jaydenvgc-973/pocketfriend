@@ -1396,11 +1396,14 @@ export default function Locations() {
     queryKey: ["characters", currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
+      // LEGACY COMPATIBILITY: Fetch ALL active characters owned by this user,
+      // without filtering by character_type. Legacy characters may have no character_type
+      // set (null/undefined) and would be invisible if we filter by character_type.
+      // The NPC query filters by type because NPCs are always explicitly typed.
       const [activeChars, npcCharsRaw] = await Promise.all([
         base44.entities.Character.filter({
           owner_email: currentUser.email,
           status: "active",
-          character_type: "active_created_character"
         }),
         base44.entities.Character.filter({
           owner_email: currentUser.email,
@@ -1408,12 +1411,12 @@ export default function Locations() {
         }),
       ]);
       const seen = new Set();
-      const npcChars = npcCharsRaw.filter(c => {
+      // Merge: active chars first, then NPCs not already in the active list
+      return [...activeChars, ...npcCharsRaw].filter(c => {
         if (seen.has(c.id)) return false;
         seen.add(c.id);
-        return c.status !== 'deleted' && c.status !== 'moved_away';
+        return c.status !== 'deleted' && c.status !== 'moved_away' && c.status !== 'merged';
       });
-      return [...activeChars, ...npcChars];
     },
     enabled: !!currentUser?.email,
   });

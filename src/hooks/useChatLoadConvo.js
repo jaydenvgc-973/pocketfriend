@@ -311,19 +311,32 @@ export function useChatLoadConvo({
             if (setHasOlderMessages) setHasOlderMessages(hasOlder);
 
             // CONTINUITY GUARD: never replace a larger visible set with a smaller server result.
-            // If the user has already seen N messages (from lfc cache), and the server returns
-            // fewer (e.g. archive ran, rate limit truncated), keep the existing visible set
-            // and only append genuinely new messages from the server result.
-            // This prevents conversation collapse when archive or partial fetches return less.
+            // RACE CONDITION FIX: When a user sends a message while history is still loading,
+            // the sent message is appended to `prev` immediately. When the server result arrives,
+            // `sorted` will NOT contain the just-sent message (DB hasn't indexed it yet).
+            // We must ALWAYS merge rather than replace — deduplicate by id, then sort by time.
             setMessages(prev => {
-              if (prev.length > sorted.length) {
-                // Server returned fewer — merge: keep everything already visible, add any new ones
-                const existingIds = new Set(prev.map(m => m.id));
-                const newFromServer = sorted.filter(m => !existingIds.has(m.id));
-                return newFromServer.length > 0 ? [...prev, ...newFromServer] : prev;
+              if (prev.length === 0) return sorted; // nothing to protect — fast path
+              const serverIds = new Set(sorted.map(m => m.id));
+              const prevIds = new Set(prev.map(m => m.id));
+              // Messages in prev that aren't in the server result yet (sent during this load,
+              // or from lfc cache that server didn't return due to archive/truncation)
+              const localOnly = prev.filter(m => !serverIds.has(m.id));
+              if (localOnly.length === 0) {
+                // Server has everything — use server result (normal fast path)
+                return sorted;
               }
-              // Server returned same or more — use server result (normal case)
-              return sorted;
+              // Merge: server result + any local-only messages, sort by creation time
+              const merged = [...sorted, ...localOnly].sort((a, b) =>
+                new Date(a.created_date || a.timestamp || 0) - new Date(b.created_date || b.timestamp || 0)
+              );
+              // Deduplicate in case of overlap
+              const seen = new Set();
+              return merged.filter(m => {
+                if (seen.has(m.id)) return false;
+                seen.add(m.id);
+                return true;
+              });
             });
             setConversationId(convoId);
             hasShownMessagesRef.current = true;
