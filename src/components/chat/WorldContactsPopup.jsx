@@ -2,6 +2,8 @@ import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
+import DateSeparator from "@/components/chat/DateSeparator";
+import { injectDateSeparators } from "@/lib/messageDateGrouping";
 import { base44 } from "@/api/base44Client";
 import { useWorldContactsUnread } from "@/hooks/useWorldContactsUnread";
 import { isCountableUnread } from "@/lib/canonicalUnreadResolver";
@@ -316,6 +318,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           content: m.content,
           image_url: m.image_url || null,
           message_type: m.message_type || null,
+          // Preserve timestamp for UI-rendered date dividers (injectDateSeparators reads this)
+          timestamp: m.timestamp || m.created_date || null,
         })));
 
         // Mark incoming as read — uses canonical isCountableUnread (same as CharacterCard and
@@ -564,6 +568,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
             content: d.content,
             image_url: d.image_url || null,
             message_type: d.message_type || null,
+            // Preserve timestamp so UI-rendered date dividers work for new messages too
+            timestamp: d.timestamp || d.created_date || new Date().toISOString(),
           }];
         });
 
@@ -718,7 +724,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     replyLockRef.current.add(replyLockKey);
 
     // Render on right side (sent) immediately — subscription will also fire, dedup is handled
-    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text, image_url: imageUrl || null };
+    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "sent", content: text, image_url: imageUrl || null, timestamp: new Date().toISOString() };
     setMessages(prev => prev.some(m => m.id === savedUserMsg.id) ? prev : [...prev, userMsg]);
 
     // ── IMAGE UNDERSTANDING PIPELINE ──────────────────────────────────────
@@ -1013,7 +1019,7 @@ Respond ONLY with valid JSON in this exact format:
 
     console.log(`[WorldPhone] Response message | from=${selectedContact.related_character_id} | to=${character.id} | msg_id=${savedNpcMsg.id.substring(0, 8)}`);
 
-    const npcMsg = { id: savedNpcMsg.id, dbId: savedNpcMsg.id, role: "npc", content: npcText };
+    const npcMsg = { id: savedNpcMsg.id, dbId: savedNpcMsg.id, role: "npc", content: npcText, timestamp: new Date().toISOString() };
     setMessages(prev => [...prev, npcMsg]);
 
     await base44.entities.Conversation.update(convoId, {
@@ -1296,19 +1302,16 @@ Respond ONLY with valid JSON in this exact format:
                 ) : null}
 
                 <AnimatePresence>
-                  {messages.map(msg => {
-                    // Date dividers must render as centered separators, never as bubbles
-                    if (isDateDividerMessage(msg)) {
-                      return (
-                        <div key={msg.id} className="flex items-center gap-3 my-3 px-2">
-                          <div className="flex-1 h-px bg-border" />
-                          <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                            {extractDateLabel(msg.content)}
-                          </span>
-                          <div className="flex-1 h-px bg-border" />
-                        </div>
-                      );
+                  {injectDateSeparators(messages).map(item => {
+                    // UI-rendered date divider — never a stored message, never a bubble
+                    if (item._isDateSeparator) {
+                      return <DateSeparator key={item.id} label={item.label} />;
                     }
+
+                    const msg = item;
+
+                    // Suppress any legacy stored date-divider messages — show nothing, not a bubble
+                    if (isDateDividerMessage(msg)) return null;
 
                     const isSent = msg.role === "user" || msg.role === "sent";
                     const hasImage = !!(msg.image_url || msg.message_type === "image");
