@@ -499,22 +499,22 @@ function buildOccupancyBlock(locCategory, locName, zoneName, scenePrompt, subjec
   const isCrowded = isPub && /\b(packed|crowded|busy|swamped|lively|people everywhere|full house|standing room|sold out|noisy|loud|dance floor is full|line at the bar|shoulder to shoulder|wall to wall)\b/.test(pLow);
 
   const _emptyCtx = /\b(empty|closed|after.?hours|alone in|nobody|no one here|private tutoring|one.?on.?one|abandoned)\b/.test(pLow);
-  const _cs = isCrowded ? ' HIGH density — many blurred figures.' : ' Moderate density — background figures required.';
   const _isClassroom = !_emptyCtx && (_schoolPub || /\b(classroom|lecture|seminar|tutorial)\b/.test(zn));
-  const _isBar = !_emptyCtx && (/\b(bar|nightclub|lounge|pub|tavern|sports bar)\b/.test(lnL) || /\b(bar area|main floor|vip)\b/.test(zn));
+  const _isBar = !_emptyCtx && (lcCat === 'social' || /\b(bar|nightclub|lounge|pub|tavern|sports bar|club)\b/.test(lnL) || /\b(bar area|main floor|vip|lounge)\b/.test(zn));
   const _isChurch = !_emptyCtx && (lcCat === 'religion');
-  const _isCafe = !_emptyCtx && (lcCat === 'food_drink' || /\b(cafeteria|dining hall|restaurant|diner|cafe)\b/.test(zn + ' ' + lnL));
+  const _isCafe = !_emptyCtx && (lcCat === 'food_drink' || /\b(cafeteria|dining hall|restaurant|diner|cafe|coffee shop)\b/.test(zn + ' ' + lnL));
   const _isGym = !_emptyCtx && lcCat === 'gym';
+  const _densityCs = isCrowded ? ' HIGH density — densely packed background crowd, many blurred figures visible throughout the space, the venue MUST look visually full and active.' : ' Moderate-to-busy density — multiple background figures clearly visible in the space, spread throughout. No large empty areas.';
   const _subtypeRule = _isClassroom
-    ? 'CLASSROOM — OCCUPIED BY DEFAULT: ✅ Other students MUST be visible in background seats. ⛔ DO NOT render empty rows. Active class session.' + _cs
+    ? 'CLASSROOM — OCCUPIED BY DEFAULT: ✅ Other students MUST be visible in background seats. ⛔ DO NOT render empty rows. Active class session.' + _densityCs
     : _isBar
-    ? 'BAR/VENUE — OCCUPIED BY DEFAULT: ✅ Patrons MUST be visible at bar and seating. ⛔ DO NOT render empty bar. Staff behind bar, customers in front.' + _cs
+    ? 'BAR/LOUNGE/NIGHTCLUB — OCCUPIED BY DEFAULT: ✅ Patrons MUST be visible at bar stools, tables, and throughout the space. Staff behind bar, customers in front. ⛔ DO NOT render an empty or sparse bar. ⛔ DO NOT place customers behind bar unless they work there. Background must show active nightlife activity.' + _densityCs
     : _isChurch
-    ? 'CHURCH — OCCUPIED BY DEFAULT: ✅ Congregation members MUST be visible in pews behind subject. ⛔ DO NOT render empty sanctuary.' + _cs
+    ? 'CHURCH — OCCUPIED BY DEFAULT: ✅ Congregation members MUST be visible in pews behind subject. ⛔ DO NOT render empty sanctuary.' + _densityCs
     : _isCafe
-    ? 'RESTAURANT/CAFETERIA — OCCUPIED BY DEFAULT: ✅ Other diners MUST be visible at surrounding tables. ⛔ DO NOT render empty dining room.' + _cs
+    ? 'RESTAURANT/CAFÉ — OCCUPIED BY DEFAULT: ✅ Other diners MUST be visible at surrounding tables, eating, drinking, or waiting. Background must show active dining activity. ⛔ DO NOT render empty dining room.' + _densityCs
     : _isGym
-    ? 'GYM — OCCUPIED BY DEFAULT: ✅ Other gym-goers MUST be visible on equipment in background. ⛔ DO NOT render empty gym.' + _cs
+    ? 'GYM — OCCUPIED BY DEFAULT: ✅ Other gym-goers MUST be visible on equipment in background. ⛔ DO NOT render empty gym.' + _densityCs
     : null;
 
   const expectedHumanCount = subjectType === 'joint' ? 2 : 1;
@@ -530,8 +530,8 @@ function buildOccupancyBlock(locCategory, locName, zoneName, scenePrompt, subjec
     ? 'STAFF-ONLY ZONE: Only appropriate staff/employees in background. ⛔ NO customers, patrons, or members of the public.'
     : isPub
     ? (_subtypeRule || (isCrowded
-        ? 'PUBLIC SOCIAL — ACTIVE CROWD: ✅ Background crowd IS part of scene reality — blurred, subordinate figures. ⛔ DO NOT erase the crowd.'
-        : 'PUBLIC SOCIAL — ACTIVE VENUE: ✅ Background people ARE REQUIRED as blurred, out-of-focus environmental texture. Active venue — it has other people in it. ⛔ DO NOT render empty. Background figures must be visibly present but blurred and subordinate.'))
+        ? 'PUBLIC SOCIAL — ACTIVE CROWD: ✅ Background crowd IS part of scene reality — densely packed blurred figures. ⛔ DO NOT erase the crowd. Many background people MUST be visible throughout the space.'
+        : 'PUBLIC SOCIAL — ACTIVE VENUE: ✅ Background people ARE REQUIRED as blurred, out-of-focus environmental texture. This is an active public venue — it has other people in it. ⛔ DO NOT render empty. Multiple background figures must be visibly present but blurred and subordinate.'))
     : 'CONTEXT-APPROPRIATE: Active public spaces may have background figures (blurred, subordinate). Private/quiet spaces: minimal or none.';
 
   return `\n\n════════════════════════════════════════════════════════════\n⛔⛔⛔ HUMAN PRESENCE PURITY LAW — ABSOLUTE OVERRIDE ⛔⛔⛔\n════════════════════════════════════════════════════════════\n\nEXPECTED FOREGROUND SUBJECTS: ${ec}\n${ec === 1 ? '→ EXACTLY ONE declared foreground subject. No undeclared foreground people.' : '→ EXACTLY TWO declared foreground subjects. No undeclared foreground people.'}\n\nFOREGROUND PURITY (applies always):\n⛔ No undeclared people in the foreground competing with the declared subject(s)\n⛔ No partial people — arms, legs, hands of undeclared persons in the foreground\n⛔ No POV photographer body parts\n⛔ Location owners/workers/residents may NOT appear as foreground subjects unless explicitly named\n\nBACKGROUND OCCUPANCY RULE FOR THIS SPECIFIC SCENE:\n${_occRule}\n\n⛔ THIS RULE IS VISUAL AND LITERAL — it describes what must be physically visible in the rendered image.\n⛔ "Background people required" means: human figures MUST be visible in the background of the image, blurred and out-of-focus, not erased.\n⛔ "Empty venue" = GENERATION FAILURE if the rule requires people to be present.\n\nGENERATION INVALID IF:\n🚫 Undeclared person appears in the foreground competing with declared subject(s)\n🚫 Venue/location appears visually empty when the occupancy rule requires background people\n🚫 An active bar, classroom, gym, restaurant, or church appears to have zero other people in it\n════════════════════════════════════════════════════════════`;
