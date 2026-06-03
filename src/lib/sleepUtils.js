@@ -448,23 +448,7 @@ export function isCharacterAsleep(character, locationMap) {
   }
 
   // Guard 2c: active travel commitment → awake
-  // STALE TRAVEL GUARD: travel_status is only a valid sleep blocker if the travel
-  // was initiated recently (within 4 hours). Stuck TravelSessions that never completed
-  // their Character.update() write leave travel_status stale for days, permanently
-  // blocking sleep for characters who have no actual active obligation.
-  // Root cause confirmed 2026-06-03: Nathan, Ethan, Melody, Andre all have
-  // arrival_due TravelSessions from work-schedule travel that never wrote arrival.
-  if (character.travel_status && character.travel_status !== 'not_traveling') {
-    // Check if the travel state is stale using last_location_update_time
-    // If the travel started more than 4 hours ago with no arrival, treat as stale
-    const travelSetAt = character.last_location_update_time
-      ? new Date(character.last_location_update_time).getTime()
-      : null;
-    const STALE_TRAVEL_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 hours
-    const travelIsStale = travelSetAt && (Date.now() - travelSetAt) > STALE_TRAVEL_THRESHOLD_MS;
-    if (!travelIsStale) return false;
-    // Stale travel: do NOT block sleep. Fall through to sleep window check.
-  }
+  if (character.travel_status && character.travel_status !== 'not_traveling') return false;
 
   // Guard 2d: confinement — jailed or house arrest characters follow facility schedule, not sleep
   if (character.is_jailed || character.house_arrest_active) return false;
