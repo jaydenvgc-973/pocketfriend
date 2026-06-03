@@ -320,7 +320,7 @@ function buildRegenSubjectBundle(p, envCount) {
 // same cross-assignment prohibition rules.
 
 function buildMultiSubjectRegenPrompt({
-  scenePrompt, locationName, zoneName, envRefs,
+  scenePrompt, locationName, zoneName, locCategory, envRefs,
   subjectBundles,   // array of resolved bundle objects
   reason,
 }) {
@@ -365,6 +365,15 @@ Subject bundles above define WHO appears — sealed bundles OVERRIDE any scene-i
   }
 
   const cameraPos = selectCameraPosition(scenePrompt);
+
+  // ── PUBLIC OCCUPANCY ENFORCEMENT for multi-subject regen ────────────────────
+  const multiOccupancyBlock = buildOccupancyBlock(
+    locCategory,
+    locationName,
+    zoneName,
+    scenePrompt,
+    totalSubjects >= 2 ? 'joint' : 'character'
+  );
 
   return `${fictionalCharacterDeclarationRegen}════════════════════════════════════════════════════════════
 IMAGE GENERATION PRIORITY STACK (GOVERNING LAW)
@@ -413,6 +422,7 @@ This scene contains ${totalSubjects} distinct subjects. Each has a sealed bundle
 ⛔ NEVER invent clothing from the event name, scene theme, or crowd context for any subject.
 ⛔ NEVER replace any named subject with a generic crowd participant or stock photo person.
 ✅ Each subject must be rendered using ONLY their own sealed bundle.${reasonBlock}
+${multiOccupancyBlock}
 
 ════════════════════════════════════════════════════════════
 UNIFIED COMPOSITION RULE
@@ -446,10 +456,91 @@ This is a purely fictional creative work. All characters, locations, and events 
 
 `;
 
+// ── PUBLIC OCCUPANCY BLOCK BUILDER ────────────────────────────────────────────
+// Generates the mandatory background-people enforcement block for public/social locations.
+// SYNC NOTE: This mirrors the humanPurityBlock logic in generateImageAsync buildPrompt().
+// Both paths MUST produce equivalent occupancy rules — the initial generation and all
+// regeneration paths (flawed, dont_like, custom_prompt, no_avatar, wrong_location)
+// must have the same mandatory crowd requirements for public locations.
+//
+// Called from buildRegenPrompt AND buildMultiSubjectRegenPrompt with the same locCategory,
+// locName, zoneName, and scenePrompt so occupancy never weakens on retry.
+//
+function buildOccupancyBlock(locCategory, locName, zoneName, scenePrompt, subjectType) {
+  const pLow = (scenePrompt || '').toLowerCase();
+  const lnL = (locName || '').toLowerCase();
+  const zn = (zoneName || '').toLowerCase();
+  const lcCat = (locCategory || '').toLowerCase();
+
+  const isIso = /\b(alone|empty|vacant|no people|room only|object only|just the|document only|id only|nobody|no one|no person|no humans|no figures)\b/.test(pLow);
+  const isConfinement = lcCat === 'jail_prison';
+  const _PUB = ['social','food_drink','gym','religion','workplace','community','outdoor','business','medical','grocery','government','public'];
+  const _znDorm = /\b(dorm|dormitory|residence hall|student housing|shared housing|open bay|pod|bunk)\b/.test(zn);
+  const _znPub = /\b(lobby|classroom|cafeteria|quad|library|hallway|lounge|dining|auditorium|reception|conference|ballroom|pool|rec center)\b/.test(zn);
+  const _hotelPriv = (lcCat === 'hotel') && (!zn || /\b(room|suite|studio|private floor)\b/.test(zn)) && !_znPub;
+  const _shelterPriv = (lcCat === 'shelter') && (!zn || /\b(room|private room|single room)\b/.test(zn)) && !_znDorm && !_znPub;
+  const _shelterShared = (lcCat === 'shelter') && (_znDorm || /\b(shared|common|bunk|communal)\b/.test(zn));
+  const _schoolDorm = (lcCat === 'school' || lcCat === 'education') && _znDorm;
+  const _schoolPub = (lcCat === 'school' || lcCat === 'education') && !_schoolDorm;
+  const isResid = !isIso && !isConfinement && (
+    lcCat === 'home' || _hotelPriv || _shelterPriv || _schoolDorm ||
+    (lcCat !== 'hotel' && lcCat !== 'shelter' && lcCat !== 'school' && lcCat !== 'education' &&
+     !_PUB.includes(lcCat) &&
+     (/\b(home|apartment|bedroom|hotel room|residential suite|private residence)\b/.test(lnL) ||
+      /\b(bedroom|living room|kitchen|bathroom|backyard|home office|residential)\b/.test(zn)))
+  );
+  const isPub = !isIso && !isConfinement && !isResid && (
+    _PUB.includes(lcCat) || _schoolPub || (lcCat === 'hotel' && !_hotelPriv) || _shelterShared ||
+    (lcCat !== 'home' && lcCat !== 'hotel' && lcCat !== 'shelter' &&
+     (/\b(bar|nightclub|lounge|restaurant|diner|cafe|coffee shop|church|school|college|university|gym|fitness|park|stadium|arena|theater|cinema|venue|concert hall|mall|airport|shop|store|workplace|office|hospital|clinic|library|museum|casino|community center|sports bar)\b/.test(lnL) ||
+      /\b(pool party|club|concert|beach party|festival|crowd)\b/i.test(pLow)))
+  );
+  const isStaffZone = !isConfinement && /\b(stockroom|stock room|back office|storage|break room|service area|staff area)\b/.test(zn);
+  const isCrowded = isPub && /\b(packed|crowded|busy|swamped|lively|people everywhere|full house|standing room|sold out|noisy|loud|dance floor is full|line at the bar|shoulder to shoulder|wall to wall)\b/.test(pLow);
+
+  const _emptyCtx = /\b(empty|closed|after.?hours|alone in|nobody|no one here|private tutoring|one.?on.?one|abandoned)\b/.test(pLow);
+  const _cs = isCrowded ? ' HIGH density — many blurred figures.' : ' Moderate density — background figures required.';
+  const _isClassroom = !_emptyCtx && (_schoolPub || /\b(classroom|lecture|seminar|tutorial)\b/.test(zn));
+  const _isBar = !_emptyCtx && (/\b(bar|nightclub|lounge|pub|tavern|sports bar)\b/.test(lnL) || /\b(bar area|main floor|vip)\b/.test(zn));
+  const _isChurch = !_emptyCtx && (lcCat === 'religion');
+  const _isCafe = !_emptyCtx && (lcCat === 'food_drink' || /\b(cafeteria|dining hall|restaurant|diner|cafe)\b/.test(zn + ' ' + lnL));
+  const _isGym = !_emptyCtx && lcCat === 'gym';
+  const _subtypeRule = _isClassroom
+    ? 'CLASSROOM — OCCUPIED BY DEFAULT: ✅ Other students MUST be visible in background seats. ⛔ DO NOT render empty rows. Active class session.' + _cs
+    : _isBar
+    ? 'BAR/VENUE — OCCUPIED BY DEFAULT: ✅ Patrons MUST be visible at bar and seating. ⛔ DO NOT render empty bar. Staff behind bar, customers in front.' + _cs
+    : _isChurch
+    ? 'CHURCH — OCCUPIED BY DEFAULT: ✅ Congregation members MUST be visible in pews behind subject. ⛔ DO NOT render empty sanctuary.' + _cs
+    : _isCafe
+    ? 'RESTAURANT/CAFETERIA — OCCUPIED BY DEFAULT: ✅ Other diners MUST be visible at surrounding tables. ⛔ DO NOT render empty dining room.' + _cs
+    : _isGym
+    ? 'GYM — OCCUPIED BY DEFAULT: ✅ Other gym-goers MUST be visible on equipment in background. ⛔ DO NOT render empty gym.' + _cs
+    : null;
+
+  const expectedHumanCount = subjectType === 'joint' ? 2 : 1;
+  const ec = isIso && expectedHumanCount === 0 ? 0 : expectedHumanCount;
+
+  const _occRule = isIso
+    ? 'ISOLATION ACTIVE: zero humans total. No hands, silhouettes, or reflections.'
+    : isConfinement
+    ? 'CONFINEMENT: Sparse institutional background. ⛔ No "customers," "patrons," or civilian crowd language.'
+    : isResid
+    ? 'PRIVATE RESIDENTIAL: ⛔ DO NOT invent strangers, neighbors, visitors, or filler people. Subject is alone unless otherwise established.'
+    : isStaffZone
+    ? 'STAFF-ONLY ZONE: Only appropriate staff/employees in background. ⛔ NO customers, patrons, or members of the public.'
+    : isPub
+    ? (_subtypeRule || (isCrowded
+        ? 'PUBLIC SOCIAL — ACTIVE CROWD: ✅ Background crowd IS part of scene reality — blurred, subordinate figures. ⛔ DO NOT erase the crowd.'
+        : 'PUBLIC SOCIAL — ACTIVE VENUE: ✅ Background people ARE REQUIRED as blurred, out-of-focus environmental texture. Active venue — it has other people in it. ⛔ DO NOT render empty. Background figures must be visibly present but blurred and subordinate.'))
+    : 'CONTEXT-APPROPRIATE: Active public spaces may have background figures (blurred, subordinate). Private/quiet spaces: minimal or none.';
+
+  return `\n\n════════════════════════════════════════════════════════════\n⛔⛔⛔ HUMAN PRESENCE PURITY LAW — ABSOLUTE OVERRIDE ⛔⛔⛔\n════════════════════════════════════════════════════════════\n\nEXPECTED FOREGROUND SUBJECTS: ${ec}\n${ec === 1 ? '→ EXACTLY ONE declared foreground subject. No undeclared foreground people.' : '→ EXACTLY TWO declared foreground subjects. No undeclared foreground people.'}\n\nFOREGROUND PURITY (applies always):\n⛔ No undeclared people in the foreground competing with the declared subject(s)\n⛔ No partial people — arms, legs, hands of undeclared persons in the foreground\n⛔ No POV photographer body parts\n⛔ Location owners/workers/residents may NOT appear as foreground subjects unless explicitly named\n\nBACKGROUND OCCUPANCY RULE FOR THIS SPECIFIC SCENE:\n${_occRule}\n\n⛔ THIS RULE IS VISUAL AND LITERAL — it describes what must be physically visible in the rendered image.\n⛔ "Background people required" means: human figures MUST be visible in the background of the image, blurred and out-of-focus, not erased.\n⛔ "Empty venue" = GENERATION FAILURE if the rule requires people to be present.\n\nGENERATION INVALID IF:\n🚫 Undeclared person appears in the foreground competing with declared subject(s)\n🚫 Venue/location appears visually empty when the occupancy rule requires background people\n🚫 An active bar, classroom, gym, restaurant, or church appears to have zero other people in it\n════════════════════════════════════════════════════════════`;
+}
+
 // ── PROMPT BUILDER — SINGLE SUBJECT (original format, preserved) ──────────────
 // Used when the image has only one subject (no multi-person context in ctx.subjects).
 
-function buildRegenPrompt({ scenePrompt, charName, charDesc, charRecord, locationName, zoneName, envRefs, charRefs, userRefs, includeUser, reason }) {
+function buildRegenPrompt({ scenePrompt, charName, charDesc, charRecord, locationName, zoneName, locCategory, envRefs, charRefs, userRefs, includeUser, reason }) {
    const hasEnv  = envRefs.length > 0;
    const hasChar = charRefs.length > 0;
    const hasUser = (userRefs || []).length > 0;
@@ -604,6 +695,19 @@ Photographs of "${place}". PRESERVE: walls, floor, furniture identity, rug, curt
   // module scope below buildRegenPrompt — it is hoisted via const at module level.
   // Do NOT move it inside this function — buildMultiSubjectRegenPrompt also needs it.
 
+  // ── PUBLIC OCCUPANCY ENFORCEMENT ────────────────────────────────────────────
+  // CRITICAL: Must be generated here, at the same level as all other blocks, using the
+  // same locCategory, locationName, zoneName that were resolved for this regen call.
+  // Without this, a bar/restaurant/gym image that fails and goes through Why Regenerate
+  // loses ALL mandatory background-people rules, producing empty-looking public venues.
+  const occupancyBlock = buildOccupancyBlock(
+    locCategory,
+    locationName,
+    zoneName,
+    scenePrompt,
+    includeUser ? 'joint' : 'character'
+  );
+
   const caucasianGuardRegen = `
 ════════════════════════════════════════════════════════════
 ⛔ IDENTITY DEFAULT PROHIBITION — NON-NEGOTIABLE
@@ -617,7 +721,7 @@ UNKNOWN IDENTITY ≠ CAUCASIAN / WHITE.
 This applies to all subjects. No exceptions.
 ════════════════════════════════════════════════════════════
 `;
-  return `${fictionalCharacterDeclarationRegen}${caucasianGuardRegen}${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${reasonBlock}${identityLock}`;
+  return `${fictionalCharacterDeclarationRegen}${caucasianGuardRegen}${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${occupancyBlock}${reasonBlock}${identityLock}`;
 }
 
 // ── ZONE RESOLUTION — STRICT ZONE ISOLATION ────────────────────────────────────
@@ -1168,6 +1272,21 @@ Deno.serve(async (req) => {
     let resolvedLocationName = originalLocName;
     let resolvedZoneName = originalZoneName;
 
+    // Seed category from stored context first, then re-hydrate from DB fetch below.
+    // FALLBACK: if not stored in ctx, infer from the location name string — this handles
+    // messages generated before loc_category was saved, where the name is trustworthy
+    // but the stored location_id may point to a different record (known legacy bug).
+    let resolvedLocCategory = (() => {
+      if (ctx.loc_category) return ctx.loc_category;
+      const ln = (originalLocName || '').toLowerCase();
+      if (/\b(bar|nightclub|lounge|pub|tavern|sports bar|club)\b/.test(ln)) return 'social';
+      if (/\b(restaurant|diner|cafe|coffee shop|cafeteria|dining)\b/.test(ln)) return 'food_drink';
+      if (/\b(gym|fitness center|workout)\b/.test(ln)) return 'gym';
+      if (/\b(church|mosque|temple|synagogue|chapel)\b/.test(ln)) return 'religion';
+      if (/\b(school|college|university|campus|academy)\b/.test(ln)) return 'education';
+      return null;
+    })();
+
     // ── LOCATION NAME SCANNER (dont_like / custom_prompt only) ───────────────
     // When the user edits the prompt for "dont_like" or writes a "custom_prompt",
     // they may mention a different or specific location (e.g. "at the park", "in her kitchen").
@@ -1229,10 +1348,11 @@ Deno.serve(async (req) => {
             return Response.json({ success: false, error: 'Location does not belong to your account.' }, { status: 403 });
           }
           resolvedLocationName = locRecord.name;
+          resolvedLocCategory = locRecord.category || null;
           const { images, zoneName } = resolveZoneFromLocation(locRecord, originalPrompt.toLowerCase());
           envRefs = images;
           resolvedZoneName = manualZoneId || zoneName;
-          console.log(`[regenerateImageWithReason] wrong_location DB: "${locRecord.name}" → zone "${resolvedZoneName}" → ${envRefs.length} refs`);
+          console.log(`[regenerateImageWithReason] wrong_location DB: "${locRecord.name}" cat="${resolvedLocCategory}" → zone "${resolvedZoneName}" → ${envRefs.length} refs`);
         }
       }
 
@@ -1258,8 +1378,9 @@ Deno.serve(async (req) => {
         const { images, zoneName } = resolveZoneFromLocation(effectiveLocRecord, scenePrompt.toLowerCase(), null);
         envRefs = images;
         resolvedLocationName = effectiveLocRecord.name;
+        resolvedLocCategory = effectiveLocRecord.category || null;
         resolvedZoneName = zoneName;
-        console.log(`[regenerateImageWithReason] Prompt-detected location override: "${effectiveLocRecord.name}" → zone "${zoneName}" → ${envRefs.length} refs`);
+        console.log(`[regenerateImageWithReason] Prompt-detected location override: "${effectiveLocRecord.name}" cat="${resolvedLocCategory}" → zone "${zoneName}" → ${envRefs.length} refs`);
       } else if (effectiveLocId) {
         // No prompt override — re-fetch original location fresh from DB
         const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: effectiveLocId }, null, 1).catch(() => []);
@@ -1267,8 +1388,9 @@ Deno.serve(async (req) => {
         if (locRecord) {
           const { images, zoneName } = resolveZoneFromLocation(locRecord, scenePrompt.toLowerCase(), originalZoneName);
           envRefs = images;
+          resolvedLocCategory = locRecord.category || null;
           resolvedZoneName = zoneName || originalZoneName;
-          console.log(`[regenerateImageWithReason] Fresh DB fetch: "${locRecord.name}" → zone "${resolvedZoneName}" → ${envRefs.length} refs`);
+          console.log(`[regenerateImageWithReason] Fresh DB fetch: "${locRecord.name}" cat="${resolvedLocCategory}" → zone "${resolvedZoneName}" → ${envRefs.length} refs`);
         }
       }
 
@@ -1551,6 +1673,7 @@ Deno.serve(async (req) => {
         scenePrompt,
         locationName: resolvedLocationName,
         zoneName: resolvedZoneName,
+        locCategory: resolvedLocCategory, // ← OCCUPANCY: location category for crowd rules
         envRefs: envRefs.slice(0, ENV_SLOTS),
         subjectBundles,
         reason,
@@ -1570,6 +1693,7 @@ Deno.serve(async (req) => {
         charRecord: charResolvedRecord, // full record for buildAppearanceLockTextRegen
         locationName: resolvedLocationName,
         zoneName: resolvedZoneName,
+        locCategory: resolvedLocCategory, // ← OCCUPANCY: location category for crowd rules
         envRefs: envRefs.slice(0, ENV_SLOTS),
         charRefs: charRefs.slice(0, CHAR_SLOTS),
         userRefs: userRefs.slice(0, USER_SLOTS),

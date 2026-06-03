@@ -1883,6 +1883,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       location_id: charRecord?.resolved_current_location_id || charRecord?.current_home_location_id || null,
       zone_name: resolvedZoneName,
       location_name: resolvedLocationName,
+      loc_category: resolvedLocCategory || null,
       location_reference_images: envRefs.slice(0, 4),
       subject_type: subjectType,
       generated_at: new Date().toISOString(),
