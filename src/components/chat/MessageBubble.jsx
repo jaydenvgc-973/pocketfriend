@@ -43,7 +43,11 @@ export default function MessageBubble({ message, character, showName = false, on
   // ── CORRUPTED METADATA DETECTION ─────────────────────────────────────────
   // genCtx: use localGenCtxOverride when present (set after wrong_location regen so tag updates
   // immediately without waiting for subscription push).
-  const genCtx = localGenCtxOverride || message.generation_context || {};
+  // CRITICAL: always merge localGenCtxOverride on TOP of message.generation_context so
+  // corrected location fields (location_id, location_name, zone_name) are used for the tag.
+  const genCtx = localGenCtxOverride
+    ? { ...(message.generation_context || {}), ...localGenCtxOverride }
+    : (message.generation_context || {});
   const declaredAsMulti = genCtx.image_type === 'multi' || genCtx.subject_type === 'multi' || (genCtx.subject_count && genCtx.subject_count > 1);
   const hasSubjectBundle = Array.isArray(genCtx.subjects) && genCtx.subjects.length >= 2;
   const isCorruptedMultiContext = declaredAsMulti && !hasSubjectBundle;
@@ -569,11 +573,19 @@ export default function MessageBubble({ message, character, showName = false, on
                           Generate Fresh Instead
                         </button>
                       </div>
-                    ) : (!isUser || message.generation_context) && (
+                    ) : (!isUser || message.generation_context) && message.id && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); setShowRegenModal(true); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Guard: do not open regen modal if message.id is missing (not yet persisted)
+                          // or if the image is still generating (content="" with no URL yet).
+                          // 404 from regenerateImageWithReason is caused by calling it before the message
+                          // record is available on the server.
+                          if (!message.id) return;
+                          setShowRegenModal(true);
+                        }}
                         className="p-2 rounded-full bg-white/20 text-white hover:bg-white/30 transition-colors"
-                        title="Regenerate"
+                        title="Why regenerate?"
                       >
                         {isRegenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                       </button>
@@ -589,11 +601,11 @@ export default function MessageBubble({ message, character, showName = false, on
                     )}
                   </div>
                 )}
-                {/* Image location label — always visible when location data exists, from the image's own generation context */}
-                {!isUser && (message.generation_context?.location_name || message.generation_context?.location_id) && (
+                {/* Image location label — reads from merged genCtx (includes wrong_location corrections) */}
+                {!isUser && (genCtx?.location_name || genCtx?.location_id) && (
                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5 rounded-b-2xl flex items-center gap-1">
                     <MapPin className="w-3 h-3 text-white flex-shrink-0" />
-                    <span className="text-xs text-white truncate">{message.generation_context?.location_name || 'Location'}</span>
+                    <span className="text-xs text-white truncate">{genCtx?.location_name || 'Location'}</span>
                   </div>
                 )}
               </div>

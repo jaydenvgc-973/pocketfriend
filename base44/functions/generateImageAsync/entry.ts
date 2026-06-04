@@ -1571,8 +1571,10 @@ Deno.serve(async (req) => {
         const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house))\b/.test(_pl);
         const _work = /\b(at (my |his |her )?(work|job|office|workplace|store|restaurant|bar|studio)|on the job|during (my|his|her) (shift|work day)|busy day at work|work today|yesterday at work|busy at work|at the (office|store|restaurant|bar|studio|workplace)|his (job|office|shift)|her (job|office|shift))\b/.test(_pl);
         // SCHOOL KEYWORD GUARD: enrollment alone ≠ current school presence. Only fire when at_school.
+        // ALSO fires when prompt contains school/class/lecture keywords — conversation context is evidence.
         const _presenceForKw = charRecord.resolved_presence_status || charRecord.location_status || '';
-        const _school = _presenceForKw === 'at_school' && /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus))\b/.test(_pl);
+        const _schoolKeywordInPrompt = /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus)|in the (classroom|lecture|auditorium|lab|library))\b/.test(_pl);
+        const _school = (_presenceForKw === 'at_school' || _schoolKeywordInPrompt) && (charRecord.current_school_location_id || charRecord.education_location_id);
 
         // Prompt keyword home only accepted when NOT on shift.
         // Work-shift schedule authority outranks prompt drift.

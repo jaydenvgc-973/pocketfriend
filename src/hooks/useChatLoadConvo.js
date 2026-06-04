@@ -110,13 +110,14 @@ export function useChatLoadConvo({
       lfcDelete(currentUser.email, `world_contacts_unread:${characterId}`);
     } catch (_) {}
 
-    const immediateCache = readCachedMessages(currentUser.email, characterId, chatType);
-    if (immediateCache && immediateCache.length > 0) {
-      setMessages(immediateCache);
-      hasShownMessagesRef.current = true;
-    } else {
-      setMessages([]);
-    }
+    // REPAIR: Do NOT seed from LFC cache as a usable state.
+    // LFC cache may be stale (from a previous session hours ago) and will cause the user to
+    // see an incomplete/old conversation while the server fetch is in flight.
+    // Instead: start with empty messages. The server fetch is the only authoritative source.
+    // LFC is only used to seed the RQ query-cache for Character lookups — NOT for messages.
+    // This eliminates the two-phase visible load (stale cache → then server merge).
+    const immediateCache = null; // Disabled: LFC message seed causes stale two-phase visible load
+    setMessages([]);
     setConversationId(null);
     setIsTyping(false);
     setConvoLoadError(null);
@@ -251,9 +252,12 @@ export function useChatLoadConvo({
           let loadedMsgs;
           let rawCountBeforeFilter = 0;
           try {
+            // REPAIR: Filter out archived messages SERVER-SIDE before the limit is applied.
+            // Without this, archived messages consume slots in the 200-message window, pushing
+            // recent active messages out of the returned set — causing them to appear missing on load.
             loadedMsgs = await retryAfter8s(() =>
               base44.entities.Message.filter(
-                { conversation_id: convoId },
+                { conversation_id: convoId, archived_date: { $exists: false } },
                 "-created_date",
                 MSG_WINDOW
               )
@@ -263,7 +267,7 @@ export function useChatLoadConvo({
             rawCountBeforeFilter = Array.isArray(loadedMsgs) ? loadedMsgs.length : 0;
             if (Array.isArray(loadedMsgs)) {
               loadedMsgs = loadedMsgs.filter(m => {
-                if (m.archived_date) return false;
+                // archived_date already excluded by server query — only filter system/date-dividers
                 if (m.sender_type === 'system') return false;
                 const c = (m.content || '').trim();
                 if (c && /^[-–—]{2,}/.test(c) && /[-–—]{2,}$/.test(c) && /\d{4}/.test(c)) return false;
@@ -372,14 +376,10 @@ export function useChatLoadConvo({
               blocking_stage: null,
             });
 
-            // Persist to localStorage for instant display on next open.
-            // CONTINUITY GUARD: only overwrite LFC if the server result is at least as large
-            // as what is currently cached. If archive ran and the server returns fewer messages,
-            // do NOT collapse the LFC cache — it preserves the last-known-good visible set.
-            const existingLFC = readCachedMessages(currentUser.email, characterId, chatType);
-            if (!existingLFC || sorted.length >= existingLFC.length) {
-              writeCachedMessages(currentUser.email, characterId, chatType, sorted);
-            }
+            // Persist to localStorage — used only as background cache for future re-opens.
+            // LFC message seed is disabled above, so this is write-only from server result.
+            // Always overwrite with latest server result — no stale-guard needed.
+            writeCachedMessages(currentUser.email, characterId, chatType, sorted);
 
             // Mark real unread messages as read (canonical filter: character sender, not system/date rows)
             const unread = loadedMsgs.filter(m =>
@@ -556,16 +556,14 @@ export function useChatLoadConvo({
     console.log(`[CHAT_LOAD] loadOlderMessages START cursor=${cursor} convoId=${convoId}`);
 
     try {
-      // Server-side $lt cursor — only fetches non-archived messages strictly before the cursor timestamp.
-      // Excludes archived messages (archived_date exists) — those are in long-term storage.
+      // Server-side $lt cursor + exclude archived server-side so archived records don't consume pagination slots.
       const olderRaw = await base44.entities.Message.filter(
-        { conversation_id: convoId, created_date: { $lt: cursor } },
+        { conversation_id: convoId, created_date: { $lt: cursor }, archived_date: { $exists: false } },
         "-created_date",
         PAGINATION_PAGE
       );
-      // Filter archived messages + legacy date-marker records (sender_type='system')
+      // Filter legacy date-marker records (sender_type='system') — archived already excluded server-side
       const older = Array.isArray(olderRaw) ? olderRaw.filter(m => {
-        if (m.archived_date) return false;
         if (m.sender_type === 'system') return false;
         const c = (m.content || '').trim();
         if (c && /^[-–—]{2,}/.test(c) && /[-–—]{2,}$/.test(c) && /\d{4}/.test(c)) return false;

@@ -49,13 +49,49 @@ function isOnShift(char, etTime) {
   return nowMin >= start && nowMin < end;
 }
 
+/**
+ * CANONICAL SLEEP WINDOW — mirrors computeAdaptiveSleepWindow in lib/sleepUtils.js.
+ * Priority: stored_schedule → work_derived → no_structured_timing (23:00–07:00).
+ * NO hardcoded school hours. NO local invention.
+ */
+function computeCanonicalSleepWindow(char) {
+  // Priority 1: Stored explicit schedule
+  if (char.sleep_start_time && char.wake_up_time) {
+    const s = toMin(char.sleep_start_time), w = toMin(char.wake_up_time);
+    if (s !== null && w !== null) return { s, w, source: 'stored_schedule' };
+  }
+  // Priority 2: Work-derived (only on selected work days or adjacent overnight)
+  if (char.work_start_time && char.work_end_time && Array.isArray(char.work_days) && char.work_days.length > 0) {
+    const startMin = toMin(char.work_start_time), endMin = toMin(char.work_end_time);
+    if (startMin !== null && endMin !== null) {
+      // Only applies on selected work days — non-work days fall to no_structured_timing
+      const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const today = nowET.getDay(), yesterday = (today + 6) % 7, tomorrow = (today + 1) % 7;
+      const isOvernight = endMin < startMin;
+      if (isOvernight) {
+        if (char.work_days.includes(yesterday) || char.work_days.includes(today)) {
+          const sleepStart = (endMin + 60) % 1440;
+          const wakeTime = (sleepStart + 7 * 60) % 1440;
+          return { s: sleepStart, w: wakeTime, source: 'overnight_work' };
+        }
+      } else {
+        if (char.work_days.includes(today) || char.work_days.includes(tomorrow)) {
+          const wakeMin = (startMin - 60 + 1440) % 1440;
+          const sleepStart = (wakeMin - 7 * 60 + 1440) % 1440;
+          return { s: sleepStart, w: wakeMin, source: 'work_schedule' };
+        }
+      }
+    }
+  }
+  // Priority 3: No structured timing — standard fallback
+  return { s: 23 * 60, w: 7 * 60, source: 'no_structured_timing' };
+}
+
 function isInSleepWindow(char, etTime) {
-  if (!char.sleep_start_time || !char.wake_up_time) return false;
-  const nowMin = etTime.getHours() * 60 + etTime.getMinutes();
-  const s = toMin(char.sleep_start_time);
-  const w = toMin(char.wake_up_time);
+  const { s, w } = computeCanonicalSleepWindow(char);
   if (s === null || w === null) return false;
-  // Overnight sleep (e.g. 23:00–07:00)
+  const nowMin = etTime.getHours() * 60 + etTime.getMinutes();
+  // Overnight (e.g. 23:00–07:00): s > w
   if (s > w) return nowMin >= s || nowMin < w;
   return nowMin >= s && nowMin < w;
 }
