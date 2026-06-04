@@ -3,6 +3,7 @@ import { AnimatePresence } from "framer-motion";
 import MessageBubble from "@/components/chat/MessageBubble";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import ArchiveNotice from "@/components/chat/ArchiveNotice";
+import MessageCountDisplay from "@/components/chat/MessageCountDisplay";
 import DateSeparator from "@/components/chat/DateSeparator";
 import { injectDateSeparators } from "@/lib/messageDateGrouping";
 import { ChevronUp, Loader2 } from "lucide-react";
@@ -122,13 +123,18 @@ export default function ChatMessageList({
         </div>
       )}
 
-      {/* ArchiveNotice is rendered inside ArchiveNotice itself only when archived messages exist */}
+      {/* ArchiveNotice — only shown when genuinely archived messages exist */}
       {conversationId && character && (
         <ArchiveNotice
           conversationId={conversationId}
           characterId={characterId}
           characterName={character?.name}
         />
+      )}
+
+      {/* MessageCountDisplay — shows active message count and limit info when approaching limit */}
+      {conversationId && (
+        <MessageCountDisplay conversationId={conversationId} />
       )}
 
       <AnimatePresence>

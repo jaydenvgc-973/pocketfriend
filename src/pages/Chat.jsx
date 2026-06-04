@@ -349,7 +349,7 @@ export default function Chat({ chatTypeOverride } = {}) {
 
   const [sendError, setSendError] = useState(null);
 
-  const { handleDeleteMessage, handleDeleteRemember, handleDeleteForget, handleDeleteImage } = useChatDeleteActions({
+  const { handleDeleteMessage, handleDeleteRemember, handleDeleteForget, handleDeleteImage, handleArchiveMessage } = useChatDeleteActions({
     messages, setMessages, deleteTarget, setDeleteTarget, conversationId, characterId, isPhone,
   });
 
@@ -1935,6 +1935,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         onCancel={() => setDeleteTarget(null)}
         onNonsense={() => { const t = deleteTarget; setDeleteTarget(null); handleNonsenseNarrative(t); }}
         onSleepViolation={() => { const t = deleteTarget; setDeleteTarget(null); handleSleepViolationNarrative(t); }}
+        onArchive={handleArchiveMessage}
         isRegenerating={isRegeneratingNarrative}
       />
       {forwardTarget && (

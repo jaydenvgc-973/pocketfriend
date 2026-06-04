@@ -52,5 +52,18 @@ export function useChatDeleteActions({
       .catch(err => console.warn('[DeleteActions] handleDeleteImage update failed:', err?.message));
   };
 
-  return { handleDeleteMessage, handleDeleteRemember, handleDeleteForget, handleDeleteImage };
+  const handleArchiveMessage = async () => {
+    const msg = deleteTarget;
+    setDeleteTarget(null);
+    if (!msg) return;
+    console.log(`[ARCHIVE] messageId=${msg.id} | threadId=${conversationId} | action=user_archive | removed_from_view=yes | preserved=yes`);
+    // Remove from the visible thread immediately
+    setMessages(prev => prev.filter(m => m.id !== msg.id));
+    // Set archived_date — this is the existing archive mechanism, now user-only
+    await base44.entities.Message.update(msg.id, {
+      archived_date: new Date().toISOString(),
+    }).catch(err => console.warn('[DeleteActions] handleArchiveMessage update failed:', err?.message));
+  };
+
+  return { handleDeleteMessage, handleDeleteRemember, handleDeleteForget, handleDeleteImage, handleArchiveMessage };
 }

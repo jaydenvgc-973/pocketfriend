@@ -1,8 +1,8 @@
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Brain, EyeOff, X, RefreshCw, Moon } from "lucide-react";
+import { Brain, EyeOff, X, RefreshCw, Moon, Archive } from "lucide-react";
 
-export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, onForget, onCancel, onNonsense, onSleepViolation, isRegenerating }) {
+export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, onForget, onCancel, onNonsense, onSleepViolation, onArchive, isRegenerating }) {
   if (!isOpen || !message) return null;
 
   const preview = message.content?.trim()
@@ -93,6 +93,19 @@ export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, o
                 <div>
                   <p className="text-sm font-semibold text-foreground">Violates sleep state</p>
                   <p className="text-xs text-muted-foreground">Waking actions while asleep</p>
+                </div>
+              </button>
+
+              <button
+                onClick={onArchive}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-secondary hover:bg-secondary/80 border border-border transition-colors text-left"
+              >
+                <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                  <Archive className="w-4 h-4 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Archive this</p>
+                  <p className="text-xs text-muted-foreground">Hidden from thread · preserved & retrievable</p>
                 </div>
               </button>
 
