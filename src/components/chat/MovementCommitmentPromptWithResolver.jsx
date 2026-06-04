@@ -37,29 +37,24 @@ export default function MovementCommitmentPromptWithResolver({
         setResolving(true);
         setError(null);
 
-        // Fetch user info and saved locations
-        const user = await base44.auth.me();
-        if (!user) {
-          setError('Not authenticated');
+        // Use owner_email from the already-loaded character object — no user fetch needed
+        const ownerEmail = currentCharacter?.owner_email;
+        if (!ownerEmail) {
+          setError('Character context unavailable');
           setResolving(false);
           return;
         }
 
-        // Fetch all saved locations scoped by owner_email
+        // Fetch saved locations scoped by owner_email — only what isn't already in context
         const locations = await base44.entities.LocationReference.filter({
-          owner_email: user.email,
+          owner_email: ownerEmail,
         }, null, 200);
 
-        // Fetch characters for disambiguation
-        const chars = await base44.entities.Character.filter({
-          owner_email: user.email,
-        }, null, 200);
-
-        // Call the resolver
+        // Call the resolver using the already-loaded character — no Character re-fetch
         const result = await resolveMovementDestination({
           destinationText: rawDestination,
           savedLocations: locations,
-          characters: chars,
+          characters: [currentCharacter],  // use the canonical active character, not a re-fetched list
           recentMessages,
           currentCharacter,
         });
@@ -99,6 +94,7 @@ export default function MovementCommitmentPromptWithResolver({
     if (!autoConfirmEligible) return;
     const timer = setTimeout(async () => {
       try {
+        // characterId comes directly from the active chat context — no lookup needed
         const response = await base44.functions.invoke('confirmMovementCommitment', {
           character_id: characterId,
           destination_location_id: resolutionResult.location_id,
