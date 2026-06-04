@@ -86,50 +86,28 @@ export default function MovementCommitmentPromptWithResolver({
     doResolve();
   }, [rawDestination, recentMessages, currentCharacter]);
 
-  // While resolving, show loading state
-  if (resolving) {
-    return (
-      <div className="mb-4 p-4 rounded-lg bg-secondary/40 border border-border animate-pulse">
-        <p className="text-xs text-muted-foreground">Resolving destination...</p>
-      </div>
-    );
-  }
-
-  // If error during resolution, don't show the card
-  if (error) {
-    console.error('[MOVEMENT_COMMITMENT] Cannot show commitment card:', error);
-    return null;
-  }
-
-  // If resolution failed or unresolvable, don't show the card
-  if (!resolutionResult?.location_id) {
-    return null;
-  }
-
-  // AUTO-CONFIRM when resolution is high-confidence and unambiguous.
+  // AUTO-CONFIRM eligibility — computed before hooks so the hook dependency is stable
   const autoConfirmEligible =
     !resolving &&
     !error &&
     !!resolutionResult?.location_id &&
-    resolutionResult.confidence >= 0.85 &&
-    !resolutionResult.requires_disambiguation;
+    resolutionResult?.confidence >= 0.85 &&
+    !resolutionResult?.requires_disambiguation;
 
-  // Must be called unconditionally (before any early returns below)
+  // ALL hooks must be declared before any early returns
   useEffect(() => {
     if (!autoConfirmEligible) return;
     const timer = setTimeout(async () => {
       try {
-        const response = await import('@/api/base44Client').then(({ base44: b44 }) =>
-          b44.functions.invoke('confirmMovementCommitment', {
-            character_id: characterId,
-            destination_location_id: resolutionResult.location_id,
-            destination_name: resolutionResult.location_name,
-            scheduled_arrival_time: scheduledTime,
-            conversation_id: conversationId,
-            message_id: messageId,
-            travel_reason: `${characterName} committed to arriving at ${resolutionResult.location_name}`,
-          })
-        );
+        const response = await base44.functions.invoke('confirmMovementCommitment', {
+          character_id: characterId,
+          destination_location_id: resolutionResult.location_id,
+          destination_name: resolutionResult.location_name,
+          scheduled_arrival_time: scheduledTime,
+          conversation_id: conversationId,
+          message_id: messageId,
+          travel_reason: `${characterName} committed to arriving at ${resolutionResult.location_name}`,
+        });
         if (response?.data?.success) {
           console.log('[MOVEMENT_COMMITMENT] Auto-confirmed:', response.data);
           onConfirm(response.data);
@@ -141,7 +119,17 @@ export default function MovementCommitmentPromptWithResolver({
     return () => clearTimeout(timer);
   }, [autoConfirmEligible]); // eslint-disable-line
 
-  // Auto-confirm is handling it — don't show the UI prompt
+  // Early returns AFTER all hooks
+  if (resolving) {
+    return (
+      <div className="mb-4 p-4 rounded-lg bg-secondary/40 border border-border animate-pulse">
+        <p className="text-xs text-muted-foreground">Resolving destination...</p>
+      </div>
+    );
+  }
+
+  if (error || !resolutionResult?.location_id) return null;
+
   if (autoConfirmEligible) return null;
 
   // Render the prompt with resolved location (for ambiguous or lower-confidence cases)

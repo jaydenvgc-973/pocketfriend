@@ -65,15 +65,26 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing required field: scheduled_arrival_time' }, { status: 400 });
     }
 
-    // Step 1: Get character and verify ownership
+    // Step 1: Get character by ID alone (service role bypasses RLS; verify ownership in code)
+    // CRITICAL: Compound filter { id, owner_email } is unreliable in Base44 asServiceRole queries.
+    // Fetch by ID only, then verify owner_email matches the authenticated user.
     const chars = await base44.asServiceRole.entities.Character.filter(
-      { id: character_id, owner_email: user.email },
+      { id: character_id },
       null,
       1
     );
     const character = chars?.[0];
     if (!character) {
-      return Response.json({ error: 'Character not found or not owned by user' }, { status: 404 });
+      return Response.json({ error: 'Character not found', character_id }, { status: 404 });
+    }
+    // Ownership check: character must belong to the authenticated user
+    if (character.owner_email && character.owner_email !== user.email) {
+      console.error('[confirmMovementCommitment] Ownership mismatch:', {
+        character_owner: character.owner_email,
+        user_email: user.email,
+        character_id,
+      });
+      return Response.json({ error: 'Character not owned by user' }, { status: 403 });
     }
 
     // Step 2: Resolve destination location — prefer ID over name
