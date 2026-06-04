@@ -1620,28 +1620,26 @@ Deno.serve(async (req) => {
             console.log(`[generateImageAsync] INCARCERATION-AUTHORITY: character is jailed → facility="${charRecord.incarceration_facility_id}"`);
           }
 
-          // ── LAYER 4: resolved_current_location_id — DB truth ─────────────────
-          // Campus residency guard: CANONICAL rule is in functions/campusResidencyGuard.
-          // This inline mirrors campusResidencyGuard.evaluateCampusResidency() exactly.
-          // If the rule changes, update: campusResidencyGuard + this inline + regenerateImageWithReason inline.
-          // RULE: school ID accepted only when presence=at_school AND lives_on_campus===true.
+          // ── LAYER 4: resolved_current_location_id — CANONICAL GUARD ────────────
+          // Routes through campusResidencyGuard (single source of truth).
+          // School IDs require: residential school_type + at_school presence + lives_on_campus===true.
+          // Unknown school types are DENIED (not proven residential).
           if (!locationId && resolvedLocId) {
             const _schoolLocId = charRecord.current_school_location_id || charRecord.education_location_id || null;
             if (_schoolLocId && resolvedLocId === _schoolLocId) {
-              // Apply the two-part campus residency guard (mirrors campusResidencyResolver.isExplicitCampusResident)
-              const _enrollments = charRecord.education_enrollments || [];
-              const _activeEnrollment = _enrollments.find(e =>
-                (e.location_id === _schoolLocId || e.in_person_location_id === _schoolLocId) &&
-                e.status !== 'dropped' && e.status !== 'graduated'
-              );
-              const _isCampusResident = _activeEnrollment?.lives_on_campus === true;
-              if (presenceStatus !== 'at_school') {
-                console.warn(`[generateImageAsync] ⛔ LAYER-4: school ID rejected — presence="${presenceStatus}" (campusResidencyResolver: school_id_rejected_presence_is_${presenceStatus})`);
-              } else if (!_isCampusResident) {
-                console.warn(`[generateImageAsync] ⛔ LAYER-4: school ID rejected — lives_on_campus not explicitly true (campusResidencyResolver: school_id_rejected_not_campus_resident)`);
-              } else {
-                locationId = resolvedLocId;
-                console.log(`[generateImageAsync] LAYER-4: school accepted — at_school AND campus_resident=true`);
+              const _homeLocId = charRecord.current_home_location_id || charRecord.home_location_id || null;
+              try {
+                const _guardRes = await base44.asServiceRole.functions.invoke('campusResidencyGuard', { mode: 'resolveLocationWithSchoolGuard', character_id: charRecord.id, candidate_location_id: resolvedLocId });
+                if (_guardRes?.rejected) {
+                  console.warn(`[generateImageAsync] ⛔ LAYER-4 CANONICAL GUARD rejected school ID — reason="${_guardRes.reason}" → home="${_homeLocId || 'none'}"`);
+                  locationId = _homeLocId;
+                } else {
+                  locationId = resolvedLocId;
+                  console.log(`[generateImageAsync] ✅ LAYER-4 CANONICAL GUARD accepted school — rule="${_guardRes?.rule}"`);
+                }
+              } catch (_ge) {
+                console.warn(`[generateImageAsync] LAYER-4 guard invoke failed (${_ge?.message}) — defaulting to home`);
+                locationId = _homeLocId;
               }
             } else {
               locationId = resolvedLocId;

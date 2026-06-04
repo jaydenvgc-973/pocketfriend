@@ -204,9 +204,9 @@ const RESIDENTIAL_SCHOOL_TYPES = ['college', 'university', 'trade_school', 'othe
 const NON_RESIDENTIAL_SCHOOL_TYPES = ['high_school', 'private_school', 'language_school', 'music_school', 'online_school'];
 
 function isResidentialSchoolType(schoolType) {
-  if (!schoolType) return true; // unknown type: apply lives_on_campus check normally
+  if (!schoolType) return false; // UNKNOWN TYPE: not proven residential — default DENY
   if (NON_RESIDENTIAL_SCHOOL_TYPES.includes(schoolType)) return false;
-  return RESIDENTIAL_SCHOOL_TYPES.includes(schoolType) || true; // default: allow (guard by lives_on_campus)
+  return RESIDENTIAL_SCHOOL_TYPES.includes(schoolType); // only explicitly listed types allowed
 }
 
 function evaluateCampusResidency(charRecord, schoolLocationId, schoolRecord) {
@@ -219,17 +219,21 @@ function evaluateCampusResidency(charRecord, schoolLocationId, schoolRecord) {
   }
 
   // SCHOOL TYPE GUARD — checked before enrollment data.
-  // Grammar/high school: never residential, regardless of any stored flag.
-  if (schoolRecord) {
-    const schoolType = schoolRecord.school_type || null;
-    if (NON_RESIDENTIAL_SCHOOL_TYPES.includes(schoolType)) {
-      return {
-        is_campus_resident: false,
-        reason: `school_type_is_non_residential:${schoolType}`,
-        enrollment: null,
-        school_type: schoolType,
-      };
-    }
+  // This guard runs whether or not schoolRecord was provided:
+  //   - If schoolRecord provided: check its school_type
+  //   - If schoolRecord is null (not fetched): DENY — cannot confirm residential type
+  //   - Non-residential types (grammar/high school): ALWAYS deny, no exception
+  //   - Unknown school_type (null/missing): DENY — not proven residential
+  const schoolType = schoolRecord?.school_type || null;
+  if (!isResidentialSchoolType(schoolType)) {
+    return {
+      is_campus_resident: false,
+      reason: schoolType
+        ? `school_type_is_non_residential:${schoolType}`
+        : 'school_type_unknown_not_proven_residential',
+      enrollment: null,
+      school_type: schoolType,
+    };
   }
 
   const enrollments = charRecord.education_enrollments || [];

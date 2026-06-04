@@ -1288,47 +1288,35 @@ Deno.serve(async (req) => {
     })();
 
     // ── CAMPUS RESIDENCY GUARD — REGEN PATH ──────────────────────────────────
-    // Re-validates stored ctx.location_id. School IDs valid only when:
-    //   1. school_type is residential (NOT high_school/private_school — non-residential types)
-    //   2. presence === at_school
-    //   3. enrollment.lives_on_campus === true (explicit, never inferred)
-    // Mirrors campusResidencyGuard.evaluateCampusResidency() (inlined — no local imports in Deno).
-    const _REGEN_NON_RES = ['high_school','private_school','language_school','music_school','online_school'];
+    // Routes through campusResidencyGuard — canonical single source of truth.
+    // No inline logic. No "must stay in sync". The guard function owns all rules:
+    //   residential school_type required + at_school presence + lives_on_campus===true
+    //   Unknown school types are DENIED (not proven residential).
     let sanitizedOriginalLocId = originalLocId;
     if (effectiveCharId && charResolvedRecord) {
       const charForGuard = charResolvedRecord;
       const schoolLocId = charForGuard.current_school_location_id || charForGuard.education_location_id || null;
-      const presenceForGuard = charForGuard.resolved_presence_status || charForGuard.location_status || '';
       const homeLocId = charForGuard.current_home_location_id || charForGuard.home_location_id || null;
 
-      // Guard 1: school ID — apply two-part campus residency guard
-      // (mirrors campusResidencyResolver.resolveLocationWithSchoolGuard)
       if (originalLocId && schoolLocId && originalLocId === schoolLocId) {
-        if (presenceForGuard !== 'at_school') {
-          console.warn(`[regenerateImageWithReason] ⛔ CAMPUS RESIDENCY GUARD: presence="${presenceForGuard}" — rejecting school ID, home="${homeLocId || 'none'}"`);
-          sanitizedOriginalLocId = homeLocId;
-          resolvedLocationName = null;
-          resolvedZoneName = null;
-        } else {
-          const _enrollments = charForGuard.education_enrollments || [];
-          const _ae = _enrollments.find(e =>
-            (e.location_id === schoolLocId || e.in_person_location_id === schoolLocId) &&
-            e.status !== 'dropped' && e.status !== 'graduated'
-          );
-          if (_ae?.lives_on_campus !== true) {
-            console.warn(`[regenerateImageWithReason] ⛔ CAMPUS RESIDENCY GUARD: at_school but lives_on_campus not true — rejecting, home="${homeLocId || 'none'}"`);
+        try {
+          const _guardRes = await base44.asServiceRole.functions.invoke('campusResidencyGuard', { mode: 'resolveLocationWithSchoolGuard', character_id: charForGuard.id, candidate_location_id: originalLocId });
+          if (_guardRes?.rejected) {
+            console.warn(`[regenerateImageWithReason] ⛔ CANONICAL GUARD rejected school ID — reason="${_guardRes.reason}" → home="${homeLocId || 'none'}"`);
             sanitizedOriginalLocId = homeLocId;
             resolvedLocationName = null;
             resolvedZoneName = null;
           } else {
-            // Also guard school type — grammar/high school never residential
-            const _sRec = (await base44.asServiceRole.entities.LocationReference.filter({id:schoolLocId},null,1).catch(()=>[]))?.[0]||null;
-            const _sType = _sRec?.school_type||null;
-            if (_sType && _REGEN_NON_RES.includes(_sType)) { console.warn(`[regenerateImageWithReason] ⛔ CAMPUS RESIDENCY GUARD: school_type="${_sType}" non-residential`); sanitizedOriginalLocId = homeLocId; resolvedLocationName = null; resolvedZoneName = null; }
-            else { console.log(`[regenerateImageWithReason] ✅ School accepted: at_school AND campus_resident=true AND school_type="${_sType||'unknown'}"`); }
+            console.log(`[regenerateImageWithReason] ✅ CANONICAL GUARD accepted school — rule="${_guardRes?.rule}"`);
           }
+        } catch (_ge) {
+          console.warn(`[regenerateImageWithReason] Canonical guard invoke failed (${_ge?.message}) — defaulting to home`);
+          sanitizedOriginalLocId = homeLocId;
+          resolvedLocationName = null;
+          resolvedZoneName = null;
         }
       }
+      const presenceForGuard = charForGuard.resolved_presence_status || charForGuard.location_status || '';
 
       // Guard 2: traveling_to_location_id points to school but character is not actively traveling to school
       // Enrollment ≠ residence. Active school travel requires travel_status="traveling_to_school".
