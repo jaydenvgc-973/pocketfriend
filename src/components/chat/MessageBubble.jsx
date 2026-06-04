@@ -10,6 +10,48 @@ import MusicPreviewPlayer from "@/components/chat/MusicPreviewPlayer";
 import VideoPreviewCard from "@/components/chat/VideoPreviewCard";
 import { clearImageRecoveryCooldown } from "@/lib/backgroundThrottle";
 
+/**
+ * Returns true only when a location marker adds meaningful context to an image.
+ *
+ * SUPPRESSED when:
+ * - No location name exists
+ * - Prompt indicates transit / movement context (driving, on the way, heading to, etc.)
+ * - Prompt indicates a portrait / selfie / reaction image
+ * - Image type is explicitly a close-up or character-focused shot
+ *
+ * SHOWN when:
+ * - Image has a named location AND the prompt/context is place-anchored
+ *   (e.g. at work, at school, at a bar, at home, at a store, at a park, etc.)
+ */
+function isLocationMarkerRelevant(genCtx) {
+  if (!genCtx?.location_name && !genCtx?.location_id) return false;
+
+  const prompt = (genCtx?.prompt || genCtx?.scene_prompt || genCtx?.original_raw_prompt || '').toLowerCase();
+
+  // Suppress for transit/movement context
+  const transitKeywords = [
+    'driving', 'on the way', 'heading to', 'heading over', 'on his way', 'on her way',
+    'in the car', 'in a car', 'behind the wheel', 'walking to', 'riding to',
+    'commuting', 'transit', 'traveling to', 'en route', 'leaving', 'just left',
+    'grabbing', 'stopping by', 'on my way', 'on his way', 'on her way',
+  ];
+  if (transitKeywords.some(kw => prompt.includes(kw))) return false;
+
+  // Suppress for portrait / selfie / reaction images
+  const portraitKeywords = [
+    'selfie', 'close-up', 'closeup', 'close up', 'portrait', 'headshot',
+    'reaction', 'face only', 'upper body', 'bust shot', 'looking at camera',
+    'filler', 'emoji', 'text image',
+  ];
+  if (portraitKeywords.some(kw => prompt.includes(kw))) return false;
+
+  // Suppress if image_type is explicitly character-focused
+  const imageType = (genCtx?.image_type || '').toLowerCase();
+  if (imageType === 'portrait' || imageType === 'selfie' || imageType === 'reaction') return false;
+
+  return true;
+}
+
 const emotionalColors = {
   calm: "bg-secondary",
   irritated: "bg-orange-950/40",
@@ -601,8 +643,10 @@ export default function MessageBubble({ message, character, showName = false, on
                     )}
                   </div>
                 )}
-                {/* Image location label — reads from merged genCtx (includes wrong_location corrections) */}
-                {!isUser && (genCtx?.location_name || genCtx?.location_id) && (
+                {/* Image location label — only shown when contextually meaningful.
+                    Suppressed for transit images (character in motion), portrait/selfie images,
+                    and images with no meaningful location to surface. */}
+                {!isUser && isLocationMarkerRelevant(genCtx) && (
                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5 rounded-b-2xl flex items-center gap-1">
                     <MapPin className="w-3 h-3 text-white flex-shrink-0" />
                     <span className="text-xs text-white truncate">{genCtx?.location_name || 'Location'}</span>
