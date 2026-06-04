@@ -1581,11 +1581,12 @@ Deno.serve(async (req) => {
         const _pl = (sanitizedPrompt || prompt || '').toLowerCase();
         const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house))\b/.test(_pl);
         const _work = /\b(at (my |his |her )?(work|job|office|workplace|store|restaurant|bar|studio)|on the job|during (my|his|her) (shift|work day)|busy day at work|work today|yesterday at work|busy at work|at the (office|store|restaurant|bar|studio|workplace)|his (job|office|shift)|her (job|office|shift))\b/.test(_pl);
-        const _school = /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus))\b/.test(_pl);
+        // SCHOOL KEYWORD GUARD: enrollment alone ≠ current school presence. Only fire when at_school.
+        const _presenceForKw = charRecord.resolved_presence_status || charRecord.location_status || '';
+        const _school = _presenceForKw === 'at_school' && /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus))\b/.test(_pl);
 
-        // Prompt keyword home is only accepted when character is NOT on shift.
-        // Work-shift schedule authority outranks prompt drift — an LLM-generated
-        // "living room" mention cannot route to home while the character is on shift.
+        // Prompt keyword home only accepted when NOT on shift.
+        // Work-shift schedule authority outranks prompt drift.
         if (_home && !_effectiveWorkLocId) {
           locationId = charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null;
           if (locationId) console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME (off shift) → ${locationId}`);
