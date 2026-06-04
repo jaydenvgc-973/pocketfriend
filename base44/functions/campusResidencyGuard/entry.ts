@@ -43,14 +43,18 @@ Deno.serve(async (req) => {
         return Response.json({ error: 'character_id and school_location_id required' }, { status: 400 });
       }
 
-      const charList = await base44.entities.Character.filter({ id: character_id }, null, 1).catch(() => []);
+      const [charList, schoolList] = await Promise.all([
+        base44.entities.Character.filter({ id: character_id }, null, 1).catch(() => []),
+        base44.asServiceRole.entities.LocationReference.filter({ id: school_location_id }, null, 1).catch(() => []),
+      ]);
       const char = charList?.[0];
       if (!char) {
         return Response.json({ error: 'Character not found', is_campus_resident: false }, { status: 404 });
       }
+      const schoolRecord = schoolList?.[0] || null;
 
-      const result = evaluateCampusResidency(char, school_location_id);
-      return Response.json(result);
+      const result = evaluateCampusResidency(char, school_location_id, schoolRecord);
+      return Response.json({ ...result, school_type: schoolRecord?.school_type || null });
     }
 
     // ── MODE: resolveLocationWithSchoolGuard ──────────────────────────────────
@@ -146,19 +150,33 @@ Deno.serve(async (req) => {
       const presenceStatus = char.resolved_presence_status || char.location_status || '';
       const enrollments = char.education_enrollments || [];
 
-      const residencyResult = schoolLocId ? evaluateCampusResidency(char, schoolLocId) : null;
+      // Fetch school location record to enforce school_type residency rule
+      let schoolRecord = null;
+      if (schoolLocId) {
+        const schoolList = await base44.asServiceRole.entities.LocationReference.filter({ id: schoolLocId }, null, 1).catch(() => []);
+        schoolRecord = schoolList?.[0] || null;
+      }
+
+      const residencyResult = schoolLocId ? evaluateCampusResidency(char, schoolLocId, schoolRecord) : null;
+      const schoolType = schoolRecord?.school_type || null;
+      const isNonResidential = schoolType && NON_RESIDENTIAL_SCHOOL_TYPES.includes(schoolType);
 
       return Response.json({
         character_id: char.id,
         character_name: char.name,
         student_status: char.student_status,
         school_location_id: schoolLocId,
+        school_type: schoolType,
+        is_non_residential_school_type: isNonResidential,
         home_location_id: homeLocId,
         presence_status: presenceStatus,
         enrollment_count: enrollments.length,
         active_enrollments: enrollments.filter(e => e.status !== 'dropped' && e.status !== 'graduated'),
         campus_residency_evaluation: residencyResult,
         canonical_rule: 'enrollment_does_not_equal_residence',
+        school_type_rule: isNonResidential
+          ? `BLOCKED: ${schoolType} is a non-residential school type. Campus residency is architecturally impossible.`
+          : 'school type supports campus residency (subject to lives_on_campus flag)',
         summary: residencyResult?.is_campus_resident
           ? `CAMPUS RESIDENT: ${char.name} has explicit lives_on_campus=true for school ${schoolLocId}`
           : `NOT CAMPUS RESIDENT: ${char.name} — home/sleep/image must resolve to ${homeLocId || 'assigned home'}, not school`,
@@ -178,13 +196,40 @@ Deno.serve(async (req) => {
 // The same logic is inlined in generateImageAsync and regenerateImageWithReason
 // (Deno functions cannot import local files — they call this via invoke instead).
 
-function evaluateCampusResidency(charRecord, schoolLocationId) {
+// SCHOOL TYPE RESIDENCY RULE — absolute architectural constant.
+// Grammar school and high school are NON-RESIDENTIAL. No campus residency is ever possible.
+// Only college/university/trade_school support campus housing.
+// This rule is checked BEFORE lives_on_campus — it cannot be overridden by any flag.
+const RESIDENTIAL_SCHOOL_TYPES = ['college', 'university', 'trade_school', 'other'];
+const NON_RESIDENTIAL_SCHOOL_TYPES = ['high_school', 'private_school', 'language_school', 'music_school', 'online_school'];
+
+function isResidentialSchoolType(schoolType) {
+  if (!schoolType) return true; // unknown type: apply lives_on_campus check normally
+  if (NON_RESIDENTIAL_SCHOOL_TYPES.includes(schoolType)) return false;
+  return RESIDENTIAL_SCHOOL_TYPES.includes(schoolType) || true; // default: allow (guard by lives_on_campus)
+}
+
+function evaluateCampusResidency(charRecord, schoolLocationId, schoolRecord) {
   if (!charRecord || !schoolLocationId) {
     return {
       is_campus_resident: false,
       reason: 'missing_character_or_school_id',
       enrollment: null,
     };
+  }
+
+  // SCHOOL TYPE GUARD — checked before enrollment data.
+  // Grammar/high school: never residential, regardless of any stored flag.
+  if (schoolRecord) {
+    const schoolType = schoolRecord.school_type || null;
+    if (NON_RESIDENTIAL_SCHOOL_TYPES.includes(schoolType)) {
+      return {
+        is_campus_resident: false,
+        reason: `school_type_is_non_residential:${schoolType}`,
+        enrollment: null,
+        school_type: schoolType,
+      };
+    }
   }
 
   const enrollments = charRecord.education_enrollments || [];

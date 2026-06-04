@@ -33,6 +33,8 @@ Deno.serve(async (req) => {
       // Cost (one-time for courses/certs; monthly for full_school)
       cost = 0,
       scholarship_enabled = false,
+      // Campus residency — only valid for college/university (residential school types)
+      lives_on_campus = false,
       // Duration
       start_date,
       expected_completion_date,
@@ -81,6 +83,17 @@ Deno.serve(async (req) => {
         else if (school.tuition_frequency === 'semester') tuitionAmount = tuitionAmount / 6;
       }
 
+      // SCHOOL TYPE RESIDENCY RULE:
+      // Grammar school and high school are NON-RESIDENTIAL. Campus residency is impossible.
+      // College/university may support campus residency when explicitly selected.
+      // Any other school type: campus residency not supported.
+      const RESIDENTIAL_SCHOOL_TYPES = ['college', 'university', 'trade_school', 'other'];
+      const isResidentialSchoolType = !school.school_type || RESIDENTIAL_SCHOOL_TYPES.includes(school.school_type);
+      const effectiveLivesOnCampus = isResidentialSchoolType && (body.lives_on_campus === true);
+      if (body.lives_on_campus === true && !isResidentialSchoolType) {
+        console.warn(`[enrollCharacterInSchool] ⛔ campus residency rejected: school_type="${school.school_type}" is non-residential. lives_on_campus forced to false.`);
+      }
+
       // Update school enrolled_students — include all date + program fields so location card stays in sync
       const enrollNow = new Date().toISOString();
       const updatedStudents = [
@@ -95,6 +108,7 @@ Deno.serve(async (req) => {
           end_date: expected_completion_date || null,
           course_name: course_name?.trim() || school.name,
           enrollment_type,
+          lives_on_campus: effectiveLivesOnCampus,
           status: 'active',
         }
       ];
@@ -105,9 +119,11 @@ Deno.serve(async (req) => {
         student_status: 'enrolled',
         education_location_id: location_id,
         education_location_name: school.name,
+        current_school_location_id: location_id,
       });
 
-      // Update education_enrollments (legacy array)
+      // Update education_enrollments — MUST include lives_on_campus so campusResidencyGuard reads it correctly.
+      // lives_on_campus is only ever true for college/university (residential school types).
       const updatedEnrollments = [
         ...(character.education_enrollments || []),
         {
@@ -116,6 +132,7 @@ Deno.serve(async (req) => {
           tuition_amount: tuitionAmount,
           scholarship_enabled,
           enroll_date: new Date().toISOString(),
+          lives_on_campus: effectiveLivesOnCampus,
           status: 'active',
         }
       ];

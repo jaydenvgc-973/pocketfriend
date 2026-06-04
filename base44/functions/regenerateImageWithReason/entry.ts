@@ -1288,9 +1288,12 @@ Deno.serve(async (req) => {
     })();
 
     // ── CAMPUS RESIDENCY GUARD — REGEN PATH ──────────────────────────────────
-    // Re-validates stored ctx.location_id: school IDs are only valid when
-    // presence=at_school AND lives_on_campus===true on the enrollment record.
-    // Uses same rule as campusResidencyResolver.js (inlined — no local imports in Deno).
+    // Re-validates stored ctx.location_id. School IDs valid only when:
+    //   1. school_type is residential (NOT high_school/private_school — non-residential types)
+    //   2. presence === at_school
+    //   3. enrollment.lives_on_campus === true (explicit, never inferred)
+    // Mirrors campusResidencyGuard.evaluateCampusResidency() (inlined — no local imports in Deno).
+    const _REGEN_NON_RES = ['high_school','private_school','language_school','music_school','online_school'];
     let sanitizedOriginalLocId = originalLocId;
     if (effectiveCharId && charResolvedRecord) {
       const charForGuard = charResolvedRecord;
@@ -1318,7 +1321,11 @@ Deno.serve(async (req) => {
             resolvedLocationName = null;
             resolvedZoneName = null;
           } else {
-            console.log(`[regenerateImageWithReason] ✅ School accepted: at_school AND campus_resident=true`);
+            // Also guard school type — grammar/high school never residential
+            const _sRec = (await base44.asServiceRole.entities.LocationReference.filter({id:schoolLocId},null,1).catch(()=>[]))?.[0]||null;
+            const _sType = _sRec?.school_type||null;
+            if (_sType && _REGEN_NON_RES.includes(_sType)) { console.warn(`[regenerateImageWithReason] ⛔ CAMPUS RESIDENCY GUARD: school_type="${_sType}" non-residential`); sanitizedOriginalLocId = homeLocId; resolvedLocationName = null; resolvedZoneName = null; }
+            else { console.log(`[regenerateImageWithReason] ✅ School accepted: at_school AND campus_resident=true AND school_type="${_sType||'unknown'}"`); }
           }
         }
       }

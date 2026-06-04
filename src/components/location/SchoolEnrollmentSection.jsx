@@ -18,6 +18,18 @@ import CharacterAvatar from '@/components/chat/CharacterAvatar';
  *
  * All queries use owner_email — never created_by.
  */
+// SCHOOL TYPE RESIDENCY RULE — mirrors campusResidencyResolver.js and campusResidencyGuard.
+// Grammar school and high school are NEVER residential. No campus residency UI is shown.
+// Only college/university/trade_school may ever support campus housing.
+const NON_RESIDENTIAL_SCHOOL_TYPES = ['high_school', 'private_school', 'language_school', 'music_school', 'online_school'];
+
+function schoolSupportsResidency(location) {
+  const t = location?.school_type;
+  if (!t) return false; // unknown type: no residency option unless explicitly a college/university
+  if (NON_RESIDENTIAL_SCHOOL_TYPES.includes(t)) return false;
+  return ['college', 'university', 'trade_school'].includes(t);
+}
+
 export default function SchoolEnrollmentSection({ location, onUpdate }) {
   const queryClient = useQueryClient();
   const [showAddStudent, setShowAddStudent] = useState(false);
@@ -315,6 +327,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
     cancelEdit();
   };
 
+  const supportsResidency = schoolSupportsResidency(location);
   const tuitionDisplay = location.tuition_cost || 0;
   const frequencyDisplay = location.tuition_frequency || 'annual';
 
@@ -446,36 +459,43 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                 <span className="text-sm text-foreground">Scholarship (free tuition) — applies to all selected</span>
               </label>
 
-              {/* Lives on Campus */}
-              <div className="p-3 rounded-xl border border-border bg-card space-y-2">
-                <div className="flex items-center gap-2">
-                  <Home className="w-4 h-4 text-blue-400" />
-                  <span className="text-sm font-medium text-foreground">Campus Residency</span>
+              {/* Lives on Campus — only shown for college/university (residential school types) */}
+              {supportsResidency ? (
+                <div className="p-3 rounded-xl border border-border bg-card space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Home className="w-4 h-4 text-blue-400" />
+                    <span className="text-sm font-medium text-foreground">Campus Residency</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setLivesOnCampus(true)}
+                      className={`flex-1 py-2 rounded-lg text-xs border transition-colors ${
+                        livesOnCampus ? 'bg-blue-500/10 border-blue-500/50 text-blue-400' : 'bg-card border-border text-muted-foreground hover:border-blue-500/30'
+                      }`}
+                    >
+                      🏠 Lives on campus
+                    </button>
+                    <button
+                      onClick={() => setLivesOnCampus(false)}
+                      className={`flex-1 py-2 rounded-lg text-xs border transition-colors ${
+                        !livesOnCampus ? 'bg-secondary border-border text-foreground' : 'bg-card border-border text-muted-foreground hover:border-border'
+                      }`}
+                    >
+                      🏘 Does not live on campus
+                    </button>
+                  </div>
+                  {livesOnCampus && (
+                    <p className="text-xs text-blue-400/80">
+                      Character will be added as a campus resident and their home location set to this school.
+                    </p>
+                  )}
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setLivesOnCampus(true)}
-                    className={`flex-1 py-2 rounded-lg text-xs border transition-colors ${
-                      livesOnCampus ? 'bg-blue-500/10 border-blue-500/50 text-blue-400' : 'bg-card border-border text-muted-foreground hover:border-blue-500/30'
-                    }`}
-                  >
-                    🏠 Lives on campus
-                  </button>
-                  <button
-                    onClick={() => setLivesOnCampus(false)}
-                    className={`flex-1 py-2 rounded-lg text-xs border transition-colors ${
-                      !livesOnCampus ? 'bg-secondary border-border text-foreground' : 'bg-card border-border text-muted-foreground hover:border-border'
-                    }`}
-                  >
-                    🏠 Does not live on campus
-                  </button>
+              ) : (
+                <div className="p-2.5 rounded-xl border border-border bg-secondary/30 flex items-center gap-2">
+                  <Home className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                  <p className="text-xs text-muted-foreground">Campus residency not available — this school type is non-residential. Students live at their own assigned home.</p>
                 </div>
-                {livesOnCampus && (
-                  <p className="text-xs text-blue-400/80">
-                    Character will be added as a campus resident and their home location set to this school.
-                  </p>
-                )}
-              </div>
+              )}
 
               {enrollError && (
                 <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">{enrollError}</p>
@@ -541,14 +561,19 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                             <span className="text-xs text-yellow-400">Scholarship</span>
                           </div>
                         )}
-                        {/* Campus residency — ALWAYS shown, never inferred from enrollment alone */}
+                        {/* Campus residency — shown for all school types.
+                            For non-residential types: always "Does not live on campus" (not editable).
+                            For residential types: shows actual saved value. */}
                         <span className={`text-xs flex items-center gap-1 px-1.5 py-0.5 rounded-md border ${
-                          isOnCampus
+                          supportsResidency && isOnCampus
                             ? 'text-blue-400 bg-blue-500/10 border-blue-500/30'
                             : 'text-muted-foreground bg-secondary/50 border-border'
                         }`}>
                           <Home className="w-3 h-3" />
-                          {isOnCampus ? 'Lives on campus' : 'Does not live on campus'}
+                          {supportsResidency
+                            ? (isOnCampus ? 'Lives on campus' : 'Does not live on campus')
+                            : 'Non-residential school'
+                          }
                         </span>
                       </div>
                     </div>
@@ -657,40 +682,47 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                         />
                         <span className="text-xs text-foreground">Scholarship (free tuition)</span>
                       </label>
-                      {/* Campus residency — editable, persisted, drives location logic */}
-                      <div className="space-y-1">
-                        <label className="text-xs text-muted-foreground uppercase tracking-wider block">Campus Residency</label>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setEditFields(p => ({ ...p, lives_on_campus: true }))}
-                            className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${
-                              editFields.lives_on_campus
-                                ? 'bg-blue-500/10 border-blue-500/50 text-blue-400'
-                                : 'bg-card border-border text-muted-foreground hover:border-blue-500/30'
-                            }`}
-                          >
-                            🏠 Lives on campus
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditFields(p => ({ ...p, lives_on_campus: false }))}
-                            className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${
-                              !editFields.lives_on_campus
-                                ? 'bg-secondary border-border text-foreground'
-                                : 'bg-card border-border text-muted-foreground hover:border-border'
-                            }`}
-                          >
-                            🏘 Does not live on campus
-                          </button>
+                      {/* Campus residency — only editable for college/university (residential school types) */}
+                      {supportsResidency ? (
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider block">Campus Residency</label>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditFields(p => ({ ...p, lives_on_campus: true }))}
+                              className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${
+                                editFields.lives_on_campus
+                                  ? 'bg-blue-500/10 border-blue-500/50 text-blue-400'
+                                  : 'bg-card border-border text-muted-foreground hover:border-blue-500/30'
+                              }`}
+                            >
+                              🏠 Lives on campus
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditFields(p => ({ ...p, lives_on_campus: false }))}
+                              className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${
+                                !editFields.lives_on_campus
+                                  ? 'bg-secondary border-border text-foreground'
+                                  : 'bg-card border-border text-muted-foreground hover:border-border'
+                              }`}
+                            >
+                              🏘 Does not live on campus
+                            </button>
+                          </div>
+                          {editFields.lives_on_campus && (
+                            <p className="text-xs text-blue-400/80">Character's home will be set to this campus.</p>
+                          )}
+                          {!editFields.lives_on_campus && (
+                            <p className="text-xs text-muted-foreground">Character sleeps at their own home, not on campus.</p>
+                          )}
                         </div>
-                        {editFields.lives_on_campus && (
-                          <p className="text-xs text-blue-400/80">Character's home will be set to this campus.</p>
-                        )}
-                        {!editFields.lives_on_campus && (
-                          <p className="text-xs text-muted-foreground">Character sleeps at their own home, not on campus.</p>
-                        )}
-                      </div>
+                      ) : (
+                        <div className="flex items-center gap-2 p-2 rounded-lg bg-secondary/30 border border-border">
+                          <Home className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                          <p className="text-xs text-muted-foreground">Non-residential school — students always live at their own home.</p>
+                        </div>
+                      )}
                       <div className="flex gap-2">
                         <Button size="sm" onClick={() => saveEdit(student)} className="flex-1 h-7 text-xs rounded-lg gap-1">
                           <Check className="w-3 h-3" /> Save

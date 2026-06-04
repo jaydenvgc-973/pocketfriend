@@ -25,6 +25,12 @@
  *   Missing, null, false, or undefined → NOT a campus resident.
  *   Enrollment alone → NOT a campus resident.
  *
+ * SCHOOL TYPE RULE (absolute — cannot be overridden):
+ *   Grammar school and high school are NON-RESIDENTIAL school types.
+ *   Campus residency is IMPOSSIBLE for high_school, private_school (K-12).
+ *   Only college/university/trade_school may ever have campus residents.
+ *   This is an architectural constant, not a configurable option.
+ *
  * SINGLE SOURCE OF TRUTH answering one question:
  *   "Can this school location be used as the character's home/sleep/image-home location?"
  *
@@ -49,16 +55,43 @@
  *   - at-home location resolution
  */
 
+// SCHOOL TYPE RESIDENCY RULE — architectural constant, enforced globally.
+// Grammar school and high school are NEVER residential. No campus residency is possible.
+// Only college/university/trade_school may have campus residents.
+const NON_RESIDENTIAL_SCHOOL_TYPES = ['high_school', 'private_school', 'language_school', 'music_school', 'online_school'];
+
+/**
+ * Returns true if this school type can ever support campus residency.
+ * Grammar/high school always returns false — no UI, no flag, no override possible.
+ *
+ * @param {string|null} schoolType - LocationReference.school_type
+ * @returns {boolean}
+ */
+export function isResidentialSchoolType(schoolType) {
+  if (!schoolType) return true; // unknown: fall through to lives_on_campus check
+  return !NON_RESIDENTIAL_SCHOOL_TYPES.includes(schoolType);
+}
+
 /**
  * Returns true ONLY when the character is an explicit, active campus resident
  * at the given school location.
  *
+ * Requires both:
+ *   1. School type supports residential housing (not grammar/high school)
+ *   2. enrollment record has lives_on_campus === true (explicit, never inferred)
+ *
  * @param {object} charRecord - Full Character DB record
  * @param {string} schoolLocationId - The school LocationReference ID to check
+ * @param {object|null} schoolLocationRecord - Optional LocationReference record for school_type check
  * @returns {boolean}
  */
-export function isExplicitCampusResident(charRecord, schoolLocationId) {
+export function isExplicitCampusResident(charRecord, schoolLocationId, schoolLocationRecord) {
   if (!charRecord || !schoolLocationId) return false;
+
+  // School type guard — grammar/high school: never residential
+  if (schoolLocationRecord) {
+    if (!isResidentialSchoolType(schoolLocationRecord.school_type)) return false;
+  }
 
   const enrollments = charRecord.education_enrollments || [];
   if (enrollments.length === 0) return false;
