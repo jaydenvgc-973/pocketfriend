@@ -5,7 +5,7 @@
  * When scheduled_move_time is reached, instantly move character.
  * Replaces processTravelArrivals.
  */
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 Deno.serve(async (req) => {
   try {
@@ -13,8 +13,8 @@ Deno.serve(async (req) => {
     const now = new Date();
     const nowIso = now.toISOString();
 
-    // Fetch all characters with pending relocations
-    const allChars = await base44.entities.Character.list(null, 1000);
+    // Use service role to see ALL characters across all accounts
+    const allChars = await base44.asServiceRole.entities.Character.list(null, 1000);
 
     const relocated = [];
     const processed = 0;
@@ -29,14 +29,13 @@ Deno.serve(async (req) => {
           const fromLocation = char.resolved_current_location_name || 'Home';
           const toLocation = char.next_location_name || 'Destination';
 
-          await base44.entities.Character.update(char.id, {
+          await base44.asServiceRole.entities.Character.update(char.id, {
             resolved_current_location_id: char.next_location_id,
             resolved_current_location_name: toLocation,
-            resolved_presence_status: 'at_location',
+            resolved_presence_status: 'visiting',
             resolved_location_type: 'visit',
             resolved_source_reason: 'scheduled_user_confirmed_relocation',
             resolved_last_updated_at: nowIso,
-            arrived_at: nowIso,
             // Clear all pending relocation fields
             pending_scheduled_relocation_at: null,
             pending_relocation_from: null,
@@ -51,7 +50,19 @@ Deno.serve(async (req) => {
             travel_destination_location_name: null,
             traveling_to_location_id: null,
             traveling_to_location_name: null,
-          }).catch(() => {});
+          }).catch(e => console.error(`[processScheduledRelocations] Character update failed for ${char.name}:`, e.message));
+
+          // Mark matching CharacterCommitment records as arrived
+          const commitments = await base44.asServiceRole.entities.CharacterCommitment.filter(
+            { character_id: char.id, status: 'active', destination_location_id: char.next_location_id },
+            null, 5
+          ).catch(() => []);
+          for (const c of commitments) {
+            await base44.asServiceRole.entities.CharacterCommitment.update(c.id, {
+              status: 'arrived',
+              completed_at: nowIso,
+            }).catch(() => {});
+          }
 
           relocated.push({
             character_name: char.name,
@@ -69,7 +80,7 @@ Deno.serve(async (req) => {
       // Clear stale traveling states
       if (char.travel_status === 'traveling' || ['traveling', 'in_transit'].includes(char.resolved_presence_status)) {
         console.warn(`[processScheduledRelocations] Character ${char.name} still marked as traveling. Clearing stale state.`);
-        await base44.entities.Character.update(char.id, {
+        await base44.asServiceRole.entities.Character.update(char.id, {
           travel_status: 'not_traveling',
           resolved_presence_status: 'home'
         }).catch(() => {});
@@ -77,7 +88,7 @@ Deno.serve(async (req) => {
       }
 
       // Instant relocation at scheduled time
-      const result = await base44.entities.Character.update(char.id, {
+      const result = await base44.asServiceRole.entities.Character.update(char.id, {
         resolved_current_location_id: char.travel_destination_location_id,
         resolved_current_location_name: char.travel_destination_location_name,
         resolved_presence_status: 'at_location',

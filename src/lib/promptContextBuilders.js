@@ -582,24 +582,34 @@ export async function buildCommitmentsContext(characterId) {
       '-created_at',
       5
     );
-    const inProgress = await base44.entities.CharacterCommitment.filter(
-      { character_id: characterId, status: 'in_progress' },
-      '-created_at',
-      5
-    );
-    const all = [...(active || []), ...(inProgress || [])];
+    const all = [...(active || [])];
     if (!all.length) return '';
 
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+
     const lines = all.map(c => {
-      const due = c.scheduled_execute_at ? new Date(c.scheduled_execute_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : c.promised_time_window || 'soon';
-      if (c.commitment_type === 'travel_directive') {
-        return `• ACTIVE TRAVEL DIRECTIVE: You said you are ON YOUR WAY / HEADING THERE RIGHT NOW. You are currently in transit. You cannot claim you are at the destination yet. You cannot claim you are still at home or elsewhere. Arrival expected: ${due}.`;
+      // Resolve ETA display from whichever field is populated
+      const etaSource = c.expected_arrival_time || c.scheduled_execute_at || null;
+      const due = etaSource
+        ? new Date(etaSource).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' })
+        : c.promised_time_window || 'soon';
+
+      const dest = c.destination_location_name || c.destination_name || 'the destination';
+      const isPast = etaSource && new Date(etaSource) < nowET;
+      const pastNote = isPast ? ' You are LATE — the arrival time has already passed. Do NOT pretend you are on time.' : '';
+
+      // 'arrival' is the type created by confirmMovementCommitment — treat it as a hard travel promise
+      if (c.commitment_type === 'arrival' || c.commitment_type === 'travel_promise') {
+        return `• ACTIVE ARRIVAL COMMITMENT: You promised to arrive at "${dest}" by ${due}.${pastNote} You MUST follow through. When the user shares their location at "${dest}" or says they are there, you KNOW they are waiting for you — respond like someone who is on their way or acknowledges the wait. Do NOT act like the destination is new or random.`;
       }
-      if (c.commitment_type === 'travel_promise') {
-        return `• ACTIVE TRAVEL PROMISE: You promised to come over / visit / meet up. Due: ${due} (${c.promised_time_window || ''}). You must follow through or explain why you cannot.`;
+      if (c.commitment_type === 'travel_directive') {
+        return `• ACTIVE TRAVEL DIRECTIVE: You said you are ON YOUR WAY to "${dest}". Arrival expected: ${due}.${pastNote} You cannot claim you are still at home or elsewhere.`;
+      }
+      if (c.commitment_type === 'meeting' || c.commitment_type === 'visit') {
+        return `• ACTIVE MEETING COMMITMENT: You agreed to meet at "${dest}" by ${due}.${pastNote} Honor it or explain a genuine reason why you cannot.`;
       }
       if (c.commitment_type === 'communication_promise') {
-        return `• ACTIVE COMMUNICATION PROMISE: You promised to ${c.promised_action || 'reach out'}. Due: ${due} (${c.promised_time_window || ''}). The system will send this automatically at the scheduled time.`;
+        return `• ACTIVE COMMUNICATION PROMISE: You promised to ${c.promised_action || 'reach out'} by ${due}. The system will execute this automatically.`;
       }
       return null;
     }).filter(Boolean);
@@ -609,21 +619,86 @@ export async function buildCommitmentsContext(characterId) {
     return `\n\n════════════════════════════════════
 ACTIVE COMMITMENTS — WORLD-STATE LAW
 These are real commitments you made that are currently active.
-You CANNOT contradict these. You CANNOT make excuses to avoid them unless you are jailed, under house arrest, or facing a genuine emergency that you must visibly acknowledge.
-"My head is spinning" or "I got confused" are NOT valid reasons to violate a commitment.
+You CANNOT contradict them. You CANNOT make excuses unless jailed, under house arrest, or facing a genuine emergency you must visibly acknowledge.
+"I forgot" or "I got confused" are NEVER valid reasons to violate a commitment.
 ════════════════════════════════════
 ${lines.join('\n')}
 
 COMMITMENT ENFORCEMENT RULES:
-1. If you have an ACTIVE TRAVEL DIRECTIVE, you are physically in transit. Do not claim you are somewhere you are not yet.
-2. If you have an ACTIVE TRAVEL PROMISE, acknowledge it naturally if it comes up. Do not pretend you never said it.
-3. If you have an ACTIVE COMMUNICATION PROMISE, the system will execute it automatically. You do not need to re-promise.
-4. If something genuinely blocks you (jail, emergency, medical), say it clearly. Do not make vague excuses.
-5. "Forced Travel" toggle being off does NOT block commitments — it only stops random wandering.
+1. ARRIVAL/TRAVEL commitments are OBLIGATIONS. The destination is KNOWN. Respond accordingly.
+2. If the user shares their location AT the committed destination, they are WAITING FOR YOU — not exploring a new topic. Respond like someone who knows the person is waiting: "I know, I'm on my way", "I'm almost there", "I see you're at [place] — give me a few more minutes."
+3. NEVER respond to a geo-share at the commitment destination as if it's a random or unexpected location share.
+4. If the committed arrival time has passed, acknowledge the delay: "I'm late, I know" or "I'm sorry, still heading there" — never pretend you were on time.
+5. If something genuinely blocks you (jail, emergency, medical), say it clearly. Do not make vague excuses.
+6. COMMUNICATION PROMISES are executed automatically by the system — you do not need to re-promise.
 ════════════════════════════════════`;
   } catch {
     return '';
   }
+}
+
+// ── COMMITMENT GEO-SHARE CONTINUITY CONTEXT ──────────────────────────────────
+
+/**
+ * buildCommitmentGeoShareContext
+ *
+ * When the user shares their location AND the character has an active arrival commitment
+ * to that same location, this injects a strong continuity override so the LLM does NOT
+ * treat the geo-share as a random new topic.
+ *
+ * Must be called after commitmentsContext is resolved and the most recent image message
+ * location is known. Called from sendMessage inside Chat.
+ *
+ * @param {string|null} activeCommitmentDest - destination_location_name from active commitment
+ * @param {string|null} sharedLocationName - location_name from the most recent image/geo message
+ * @returns {string}
+ */
+export function buildCommitmentGeoShareContext(activeCommitmentDest, sharedLocationName) {
+  if (!activeCommitmentDest || !sharedLocationName) return '';
+
+  const commitLower = activeCommitmentDest.toLowerCase();
+  const sharedLower = sharedLocationName.toLowerCase();
+
+  // Check if they refer to the same place (exact, contains, or major word overlap)
+  const commitWords = commitLower.split(/\s+/).filter(w => w.length > 3);
+  const sharedWords = sharedLower.split(/\s+/).filter(w => w.length > 3);
+  const overlap = commitWords.some(w => sharedLower.includes(w)) || sharedWords.some(w => commitLower.includes(w));
+  const match = commitLower === sharedLower ||
+    commitLower.includes(sharedLower) ||
+    sharedLower.includes(commitLower) ||
+    overlap;
+
+  if (!match) return '';
+
+  return `\n\n════════════════════════════════════
+GEO-SHARE CONTINUITY — COMMITMENT OVERRIDE
+════════════════════════════════════
+The user just shared their location at "${sharedLocationName}".
+You have an ACTIVE ARRIVAL COMMITMENT to be at this exact location.
+This means: THE USER IS WAITING FOR YOU THERE.
+
+This is NOT a random location share. This is NOT a new topic.
+This is the user telling you "I'm here — where are you?"
+
+YOU MUST respond as someone who:
+• Is on their way / almost there
+• Acknowledges the wait (especially if late)
+• Continues the existing arrival thread
+
+CORRECT response examples:
+• "I know, I'm on my way — almost there."
+• "I see you're at ${sharedLocationName}. I'm late, I'm sorry — still coming."
+• "Yeah I'm heading there now, give me a few more minutes."
+• "I know you're waiting. I'm coming."
+
+INCORRECT responses (FORBIDDEN):
+• "Oh, ${sharedLocationName}? Interesting place." ← acts like destination is new
+• "Why did you share your location?" ← ignores the commitment entirely
+• "Need some company?" ← treats it as unrelated small talk
+• Any response that acts like you have no idea why they are there
+
+The arrival commitment governs this response. Honor it.
+════════════════════════════════════`;
 }
 
 // ── HOUSEHOLD / CO-PRESENCE CONTEXT BUILDER ───────────────────────────────────

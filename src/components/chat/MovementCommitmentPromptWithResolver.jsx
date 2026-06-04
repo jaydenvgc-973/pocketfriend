@@ -106,7 +106,45 @@ export default function MovementCommitmentPromptWithResolver({
     return null;
   }
 
-  // Render the prompt with resolved location
+  // AUTO-CONFIRM when resolution is high-confidence and unambiguous.
+  const autoConfirmEligible =
+    !resolving &&
+    !error &&
+    !!resolutionResult?.location_id &&
+    resolutionResult.confidence >= 0.85 &&
+    !resolutionResult.requires_disambiguation;
+
+  // Must be called unconditionally (before any early returns below)
+  useEffect(() => {
+    if (!autoConfirmEligible) return;
+    const timer = setTimeout(async () => {
+      try {
+        const response = await import('@/api/base44Client').then(({ base44: b44 }) =>
+          b44.functions.invoke('confirmMovementCommitment', {
+            character_id: characterId,
+            destination_location_id: resolutionResult.location_id,
+            destination_name: resolutionResult.location_name,
+            scheduled_arrival_time: scheduledTime,
+            conversation_id: conversationId,
+            message_id: messageId,
+            travel_reason: `${characterName} committed to arriving at ${resolutionResult.location_name}`,
+          })
+        );
+        if (response?.data?.success) {
+          console.log('[MOVEMENT_COMMITMENT] Auto-confirmed:', response.data);
+          onConfirm(response.data);
+        }
+      } catch (err) {
+        console.warn('[MOVEMENT_COMMITMENT] Auto-confirm failed:', err.message);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [autoConfirmEligible]); // eslint-disable-line
+
+  // Auto-confirm is handling it — don't show the UI prompt
+  if (autoConfirmEligible) return null;
+
+  // Render the prompt with resolved location (for ambiguous or lower-confidence cases)
   return (
     <MovementCommitmentPrompt
       characterName={characterName}
