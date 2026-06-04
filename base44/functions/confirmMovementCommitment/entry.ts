@@ -35,7 +35,7 @@
  *   proof: {...}
  * }
  */
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 Deno.serve(async (req) => {
   try {
@@ -65,15 +65,8 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing required field: scheduled_arrival_time' }, { status: 400 });
     }
 
-    // Step 1: Get character by ID alone (service role bypasses RLS; verify ownership in code)
-    // CRITICAL: Compound filter { id, owner_email } is unreliable in Base44 asServiceRole queries.
-    // Fetch by ID only, then verify owner_email matches the authenticated user.
-    const chars = await base44.asServiceRole.entities.Character.filter(
-      { id: character_id },
-      null,
-      1
-    );
-    const character = chars?.[0];
+    // Step 1: Get character by primary key — .get(id) is the correct method, not .filter({ id })
+    const character = await base44.asServiceRole.entities.Character.get(character_id);
     if (!character) {
       return Response.json({ error: 'Character not found', character_id }, { status: 404 });
     }
@@ -91,14 +84,8 @@ Deno.serve(async (req) => {
     let destLocation = null;
 
     if (destination_location_id) {
-      // Prefer the explicit ID passed by the resolver
-      const locById = await base44.asServiceRole.entities.LocationReference.filter(
-        { id: destination_location_id },
-        null,
-        1
-      );
-      // Accept if owned by user OR shared scope
-      destLocation = locById?.[0];
+      // Prefer the explicit ID passed by the resolver — use .get(id), not .filter({ id })
+      destLocation = await base44.asServiceRole.entities.LocationReference.get(destination_location_id);
       if (!destLocation) {
         return Response.json({
           error: 'Destination location not found',
