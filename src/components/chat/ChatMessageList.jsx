@@ -41,14 +41,39 @@ export default function ChatMessageList({
   onLoadOlderMessages,
 }) {
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
-  const [dismissedCommitmentIds, setDismissedCommitmentIds] = useState(new Set());
+
+  // Persist dismissed commitment IDs in sessionStorage so they survive re-mounts
+  const [dismissedCommitmentIds, setDismissedCommitmentIds] = useState(() => {
+    try {
+      const stored = sessionStorage.getItem('dismissed_commitment_ids');
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch { return new Set(); }
+  });
+
+  const dismissCommitment = (id) => {
+    setDismissedCommitmentIds(prev => {
+      const next = new Set([...prev, id]);
+      try { sessionStorage.setItem('dismissed_commitment_ids', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
 
   // Detect movement commitment in latest character message
-  // Uses conversational entity resolver to match destinations against saved locations
+  // Only shows for messages sent within the last 30 minutes — prevents stale re-trigger on re-mount
   const detectedCommitment = useMemo(() => {
+    const COMMITMENT_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+    const now = Date.now();
+
     const latestCharMsg = [...messages]
       .reverse()
-      .find(m => m.sender_type === 'character' && !m.is_narrative && !dismissedCommitmentIds.has(m.id));
+      .find(m => {
+        if (m.sender_type !== 'character' || m.is_narrative) return false;
+        if (dismissedCommitmentIds.has(m.id)) return false;
+        // Reject messages older than 30 minutes — prevents stale cards on re-mount
+        const msgTime = m.timestamp ? new Date(m.timestamp).getTime() : 0;
+        if (msgTime && (now - msgTime) > COMMITMENT_MAX_AGE_MS) return false;
+        return true;
+      });
     
     if (!latestCharMsg?.content) return null;
 
@@ -81,15 +106,16 @@ export default function ChatMessageList({
     const rawMinutes = timeMatch?.[1] ? parseInt(timeMatch[1]) : null;
     const isHours = timeMatch?.[2]?.startsWith('h');
     const minutes = rawMinutes ? (isHours ? rawMinutes * 60 : rawMinutes) : 15;
-    const scheduledArrivalTime = new Date(Date.now() + minutes * 60000).toISOString();
+    // Anchor ETA to message send time, not current time — prevents ETA drift on re-mount
+    const msgTime = latestCharMsg.timestamp ? new Date(latestCharMsg.timestamp).getTime() : now;
+    const scheduledArrivalTime = new Date(msgTime + minutes * 60000).toISOString();
 
     return {
       messageId: latestCharMsg.id,
-      rawDestination,    // raw text from message (may be "there", "Aurelian State University", etc.)
+      rawDestination,
       etaMinutes: minutes,
       scheduledArrivalTime,
       characterName: character?.name || latestCharMsg.character_name,
-      // destinationLocationId and destinationLocationName are resolved async by the card
     };
   }, [messages, dismissedCommitmentIds, character]);
 
@@ -186,12 +212,8 @@ export default function ChatMessageList({
             recentMessages={messages.slice(-15)}
             conversationId={conversationId}
             messageId={detectedCommitment.messageId}
-            onConfirm={() => {
-              setDismissedCommitmentIds(prev => new Set([...prev, detectedCommitment.messageId]));
-            }}
-            onCancel={() => {
-              setDismissedCommitmentIds(prev => new Set([...prev, detectedCommitment.messageId]));
-            }}
+            onConfirm={() => dismissCommitment(detectedCommitment.messageId)}
+            onCancel={() => dismissCommitment(detectedCommitment.messageId)}
           />
         )}
       </AnimatePresence>
