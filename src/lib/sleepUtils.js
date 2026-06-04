@@ -284,16 +284,11 @@ function computeAdaptiveSleepWindow(character, locationMap) {
   }
 
   // PRIORITY 3: Derive from work schedule (active_created_character).
-  //
-  // CRITICAL DATE-AWARENESS RULE:
-  // A future work shift (tomorrow) may ONLY influence TONIGHT's sleep window,
-  // meaning the computed sleep period must start TONIGHT (after current time or
-  // after 6 PM ET) and end BEFORE the shift starts tomorrow.
-  // It must NEVER create a daytime sleep window on today's date.
-  //
-  // OBLIGATION GUARD: The computed window is REJECTED if it overlaps any active
-  // school attendance window (enrollment schedule → location hours → unresolved).
-  // Sleep may never override an active school or work obligation.
+  // Work-derived sleep timing ONLY applies on selected work days (and adjacent overnight logic).
+  // Non-selected work days are not "no schedule" — but they are also not work days.
+  // The system must NOT apply work sleep timing on days the character is not scheduled to work,
+  // except for one legitimate case: an overnight shift that began on a selected work day and
+  // ended after midnight into the next morning.
   if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.length > 0) {
     const startMin = toMin(character.work_start_time);
     const endMin   = toMin(character.work_end_time);
@@ -301,13 +296,9 @@ function computeAdaptiveSleepWindow(character, locationMap) {
       const nowET     = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
       const today     = nowET.getDay();
       const yesterday = (today + 6) % 7;
-      const tomorrow  = (today + 1) % 7;
       const isOvernightShift = endMin < startMin;
 
       if (isOvernightShift) {
-        // Overnight shift: post-shift sleep is valid ONLY if yesterday was a work day
-        // (shift crossed midnight from yesterday into today's early morning) OR
-        // tonight is a work night (shift starts tonight).
         const workedLastNight = character.work_days.includes(yesterday);
         const worksTonight    = character.work_days.includes(today);
         if (workedLastNight || worksTonight) {
@@ -316,57 +307,13 @@ function computeAdaptiveSleepWindow(character, locationMap) {
           return { sleepStartMin, wakeMin, source: 'overnight_work' };
         }
       } else {
-        // Day shift: only derive sleep from TODAY's shift.
-        // worksTomorrow is FORBIDDEN from computing a sleep window for today.
-        // A Friday shift cannot create a Thursday sleep window.
+        // Day shift: only derive sleep from TODAY's work day.
+        // REMOVED: worksTomorrow no longer influences today's sleep window.
         const worksToday = character.work_days.includes(today);
         if (worksToday) {
           const wakeMin       = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
           const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
-
-          // OBLIGATION GUARD: reject this window if it overlaps active school hours.
-          // Resolve school hours from enrollment override → location operating hours.
-          const schoolWindow = resolveSchoolWindowForSleepGuard(character, locationMap);
-          if (schoolWindow) {
-            const { schoolStartMin, schoolEndMin } = schoolWindow;
-            const overlapsSchool = windowsOverlap(sleepStartMin, wakeMin, schoolStartMin, schoolEndMin);
-            if (overlapsSchool) {
-              // Sleep window conflicts with school — fall through to school-derived sleep (PRIORITY 4)
-            } else {
-              return { sleepStartMin, wakeMin, source: 'work_schedule' };
-            }
-          } else {
-            return { sleepStartMin, wakeMin, source: 'work_schedule' };
-          }
-        }
-        // worksTomorrow only: derive an OVERNIGHT sleep window for TONIGHT that ends
-        // in time for tomorrow's shift. The sleep period must begin no earlier than
-        // 8 PM Eastern tonight (20 * 60) — never during the current daytime.
-        // This ensures a Friday 5 PM shift creates a Thursday-night sleep window,
-        // NOT a Thursday 9 AM–4 PM daytime window.
-        const worksTomorrow = character.work_days.includes(tomorrow);
-        if (worksTomorrow && !character.work_days.includes(today)) {
-          const wakeMin       = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
-          const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
-          const DAYTIME_CUTOFF = 20 * 60; // 8:00 PM Eastern — sleep cannot start before this tonight
-          // Only apply if sleep would start in the overnight zone (after 8 PM or before 6 AM)
-          const isOvernightWindow = sleepStartMin >= DAYTIME_CUTOFF || sleepStartMin < 6 * 60;
-          if (isOvernightWindow) {
-            // Obligation guard: reject if overlaps school
-            const schoolWindow = resolveSchoolWindowForSleepGuard(character, locationMap);
-            if (schoolWindow) {
-              const { schoolStartMin, schoolEndMin } = schoolWindow;
-              const overlapsSchool = windowsOverlap(sleepStartMin, wakeMin, schoolStartMin, schoolEndMin);
-              if (!overlapsSchool) {
-                return { sleepStartMin, wakeMin, source: 'work_schedule_tomorrow_prep' };
-              }
-              // Overlaps school — reject, fall through
-            } else {
-              return { sleepStartMin, wakeMin, source: 'work_schedule_tomorrow_prep' };
-            }
-          }
-          // Sleep would start during daytime — REJECT. Do not manufacture a daytime sleep window.
-          // Fall through to school (PRIORITY 4) or no_structured_timing (PRIORITY 5).
+          return { sleepStartMin, wakeMin, source: 'work_schedule' };
         }
       }
     }
@@ -415,77 +362,7 @@ function computeAdaptiveSleepWindow(character, locationMap) {
   return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, source: 'no_structured_timing' };
 }
 
-/**
- * Resolves a character's school attendance window (start/end in minutes-since-midnight ET)
- * for use as an obligation guard inside computeAdaptiveSleepWindow.
- *
- * Resolution order:
- *   1. Active enrollment record with explicit start_time + end_time
- *   2. School location operating hours from locationMap (day-specific → day-agnostic)
- *   3. Returns null if school hours genuinely cannot be resolved (marks as unresolved — never invents defaults)
- *
- * Only returns a window on weekdays (Mon–Fri). Weekends return null (school is not an obligation).
- *
- * @param {object} character
- * @param {object} [locationMap] — { [locationId]: LocationReference }
- * @returns {{ schoolStartMin: number, schoolEndMin: number } | null}
- */
-function resolveSchoolWindowForSleepGuard(character, locationMap) {
-  if (!character || character.student_status !== 'enrolled' || !character.education_location_id) return null;
 
-  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const dayOfWeek = nowET.getDay();
-  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
-  if (!isWeekday) return null;
-
-  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
-
-  // Priority 1: Active enrollment with explicit times
-  if (Array.isArray(character.education_enrollments) && character.education_enrollments.length > 0) {
-    const active = character.education_enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
-    if (active) {
-      const s = toMin(active.start_time);
-      const e = toMin(active.end_time);
-      if (s !== null && e !== null) return { schoolStartMin: s, schoolEndMin: e };
-    }
-  }
-
-  // Priority 2: School location operating hours
-  if (locationMap && locationMap[character.education_location_id]) {
-    const schoolLoc = locationMap[character.education_location_id];
-    if (Array.isArray(schoolLoc.operating_hours) && schoolLoc.operating_hours.length > 0) {
-      const todayEntries = schoolLoc.operating_hours.filter(h => h.day_of_week != null && h.day_of_week === dayOfWeek);
-      const dayAgnosticEntries = schoolLoc.operating_hours.filter(h => h.day_of_week == null);
-      const entry = todayEntries[0] || dayAgnosticEntries[0];
-      if (entry && entry.open_time && entry.close_time) {
-        const s = toMin(entry.open_time);
-        const e = toMin(entry.close_time);
-        if (s !== null && e !== null) return { schoolStartMin: s, schoolEndMin: e };
-      }
-    }
-  }
-
-  // Priority 3: Cannot resolve school hours — return null (unresolved, not defaulted)
-  return null;
-}
-
-/**
- * Returns true if two time windows (in minutes-since-midnight) overlap.
- * Handles overnight windows (where endMin < startMin).
- *
- * @param {number} aStart
- * @param {number} aEnd
- * @param {number} bStart
- * @param {number} bEnd
- * @returns {boolean}
- */
-function windowsOverlap(aStart, aEnd, bStart, bEnd) {
-  // Normalize both windows to [start, start+duration] in linear space
-  const aEndNorm = aEnd < aStart ? aEnd + 1440 : aEnd;
-  const bEndNorm = bEnd < bStart ? bEnd + 1440 : bEnd;
-  // Two intervals [aStart, aEndNorm) and [bStart, bEndNorm) overlap if:
-  return aStart < bEndNorm && bStart < aEndNorm;
-}
 
 /**
  * Determines if a character is currently asleep based on schedule only.
