@@ -66,11 +66,12 @@ const T = {
 
 function isOnShift(character) {
   if (!character.work_start_time || !character.work_end_time || !character.work_days) return false;
-  const now = new Date();
-  const cur = now.getHours() * 60 + now.getMinutes();
+  // CRITICAL: Always use America/New_York — UTC is forbidden for schedule logic
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const cur = nowET.getHours() * 60 + nowET.getMinutes();
   const [sh, sm = 0] = character.work_start_time.split(':').map(Number);
   const [eh, em = 0] = character.work_end_time.split(':').map(Number);
-  return character.work_days.includes(now.getDay()) && cur >= sh * 60 + sm && cur < eh * 60 + em;
+  return character.work_days.includes(nowET.getDay()) && cur >= sh * 60 + sm && cur < eh * 60 + em;
 }
 
 function getWorkContextFromLocation(loc) {
@@ -360,13 +361,39 @@ Deno.serve(async (req) => {
 
     let characters = [];
     if (characterId) {
-      const found = await writeSDK.entities.Character.filter({ id: characterId });
+      const found = await writeSDK.entities.Character.filter({ id: characterId }, null, 10);
       // Only simulate needs for active_created_character — NPCs do NOT use biological need simulation
       characters = found.filter(c => c.character_type === 'active_created_character' && c.status === 'active');
     } else {
-      const all = await writeSDK.entities.Character.list('-updated_date', 200);
-      // Only simulate needs for active_created_character — NPCs do NOT use biological need simulation
-      characters = all.filter(c => c.character_type === 'active_created_character' && c.status === 'active');
+      // CRITICAL: .list() returns 0 records in service-role context on this entity.
+      // Use .filter() with explicit character_type — the proven working pattern from autonomousCharacterMovement.
+      // Also try user-scoped read if service role returns 0 (mirrors autonomousCharacterMovement pattern).
+      let all = await writeSDK.entities.Character.filter(
+        { character_type: 'active_created_character', status: 'active' },
+        '-updated_date',
+        200
+      ).catch(() => []);
+      console.log(`[simulateNeeds] Service role filter returned ${all.length} active_created_character records`);
+
+      // Fallback: user-scoped read if available and service role returned 0
+      if (all.length === 0 && user) {
+        console.log(`[simulateNeeds] Service role returned 0 — trying user-scoped filter for ${user.email}`);
+        all = await base44.entities.Character.filter(
+          { character_type: 'active_created_character', status: 'active' },
+          '-updated_date',
+          200
+        ).catch(() => []);
+        console.log(`[simulateNeeds] User-scoped filter returned ${all.length} records`);
+      }
+
+      // Filter confirmed: only active_created_character with active status, has owner_email
+      characters = all.filter(c =>
+        c.character_type === 'active_created_character' &&
+        c.status === 'active' &&
+        c.owner_email &&
+        !c.is_test_character &&
+        !c.diagnostic_only
+      );
     }
 
     const now = new Date();
@@ -482,18 +509,27 @@ Deno.serve(async (req) => {
       });
     }
 
-    // RC6 FIX: All writes use writeSDK (asServiceRole) — never user-scoped
+    // Write character updates — user-scoped first (handles owner_email RLS), service role fallback
     const writeResults = await Promise.all(
       updates
         .filter(u => u.data !== null)
-        .map(u =>
-          writeSDK.entities.Character.update(u.id, u.data)
-            .then(() => ({ id: u.id, success: true }))
-            .catch(e => {
-              console.error(`[WRITE_FAILURE] ${u.name} id=${u.id}: ${e.message}`);
-              return { id: u.id, success: false, error: e.message };
-            })
-        )
+        .map(async u => {
+          // Try user-scoped write first (Character entity RLS restricts to owner_email)
+          const writeScope = user ? base44 : writeSDK;
+          try {
+            await writeScope.entities.Character.update(u.id, u.data);
+            return { id: u.id, success: true };
+          } catch (e1) {
+            // Fallback: service role
+            try {
+              await writeSDK.entities.Character.update(u.id, u.data);
+              return { id: u.id, success: true };
+            } catch (e2) {
+              console.error(`[WRITE_FAILURE] ${u.name} id=${u.id}: ${e2.message}`);
+              return { id: u.id, success: false, error: e2.message };
+            }
+          }
+        })
     );
 
     const writeFailures = writeResults.filter(r => !r.success);
