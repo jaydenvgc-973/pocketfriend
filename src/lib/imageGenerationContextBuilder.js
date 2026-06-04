@@ -208,26 +208,51 @@ export async function buildImageGenerationContext({
 
   // ── LOCATION RESOLUTION ──────────────────────────────────────────────────────
   // SCHOOL CONTAMINATION GUARD:
-  // Enrollment at a school/university is NOT residence.
+  // Enrollment at a school/university is NOT residence. Attendance is NOT residence.
   // A character is only "at school" when resolved_presence_status === "at_school".
   // If the passed locationId is the character's school location but the character
   // is not actually at_school, reject it and fall back to the home location.
+  //
+  // Additionally: traveling_to_location_id pointing to school while the character
+  // is not actively traveling to school (travel_status !== "traveling_to_school")
+  // is stale polluted state and must not influence image location resolution.
   let sanitizedLocationId = locationId;
-  if (locationId && effectiveCharacterRecord) {
+  if (effectiveCharacterRecord) {
     const schoolLocId = effectiveCharacterRecord.current_school_location_id
       || effectiveCharacterRecord.education_location_id || null;
     const presenceStatus = effectiveCharacterRecord.resolved_presence_status
       || effectiveCharacterRecord.location_status || '';
-    if (schoolLocId && locationId === schoolLocId && presenceStatus !== 'at_school') {
-      const homeLocId = effectiveCharacterRecord.current_home_location_id
-        || effectiveCharacterRecord.home_location_id || null;
-      console.warn(`[imageGenerationContextBuilder] ⛔ SCHOOL CONTAMINATION GUARD: locationId="${locationId}" is school but presence="${presenceStatus}" — rejected. Replacing with home="${homeLocId || 'none'}"`);
+    const homeLocId = effectiveCharacterRecord.current_home_location_id
+      || effectiveCharacterRecord.home_location_id || null;
+
+    // Guard 1: passed locationId is a school ID but character is not at_school
+    if (locationId && schoolLocId && locationId === schoolLocId && presenceStatus !== 'at_school') {
+      console.warn(`[imageGenerationContextBuilder] ⛔ SCHOOL CONTAMINATION GUARD (locationId): "${locationId}" is school but presence="${presenceStatus}" — rejected. Replacing with home="${homeLocId || 'none'}"`);
       sanitizedLocationId = homeLocId;
       audit.diagnostics.school_contamination_guard = {
         rejected_id: locationId,
         rejected_reason: `school_id_but_presence_is_${presenceStatus}`,
         replaced_with: homeLocId || null,
       };
+    }
+
+    // Guard 2: traveling_to_location_id is a school ID but not actively traveling to school
+    const travelingToLocId = effectiveCharacterRecord.traveling_to_location_id || null;
+    const travelStatus = effectiveCharacterRecord.travel_status || 'not_traveling';
+    if (travelingToLocId && schoolLocId && travelingToLocId === schoolLocId) {
+      const isActiveSchoolTravel = travelStatus === 'traveling_to_school' && presenceStatus !== 'home';
+      if (!isActiveSchoolTravel) {
+        console.warn(`[imageGenerationContextBuilder] ⛔ STALE SCHOOL TRAVEL GUARD: traveling_to_location_id="${travelingToLocId}" is school but travel_status="${travelStatus}" presence="${presenceStatus}" — stale pollution, suppressed`);
+        audit.diagnostics.stale_school_travel_guard = {
+          suppressed_id: travelingToLocId,
+          reason: `travel_status="${travelStatus}" presence="${presenceStatus}" — not active school travel`,
+        };
+        // If sanitizedLocationId somehow still points to school, force home
+        if (sanitizedLocationId && schoolLocId && sanitizedLocationId === schoolLocId) {
+          sanitizedLocationId = homeLocId;
+          audit.diagnostics.stale_school_travel_guard.forced_home = homeLocId || null;
+        }
+      }
     }
   }
 

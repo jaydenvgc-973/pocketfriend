@@ -1294,28 +1294,56 @@ Deno.serve(async (req) => {
     // current presence before reusing it, and replaces it with home if polluted.
     //
     // RULE: Enrollment at a school/university is NOT residence.
+    // Attendance at a school is NOT residence.
     // A character is only "at school" when resolved_presence_status === "at_school".
     // School location IDs must NEVER be used as environment refs unless the character
     // is actually at_school at generation time.
+    //
+    // This guard also clears traveling_to_location_id influence: if the character's
+    // traveling_to_location_id pointed to school but they are not actively traveling
+    // to school (travel_status !== "traveling_to_school" or presence is home), that
+    // travel field is stale pollution and must not affect image location resolution.
     let sanitizedOriginalLocId = originalLocId;
-    if (originalLocId && effectiveCharId && charResolvedRecord) {
+    if (effectiveCharId && charResolvedRecord) {
       const charForGuard = charResolvedRecord;
       const schoolLocId = charForGuard.current_school_location_id || charForGuard.education_location_id || null;
       const presenceForGuard = charForGuard.resolved_presence_status || charForGuard.location_status || '';
-      const isStoredLocASchool = schoolLocId && originalLocId === schoolLocId;
-      const isNotAtSchool = presenceForGuard !== 'at_school';
-      if (isStoredLocASchool && isNotAtSchool) {
-        const homeLocId = charForGuard.current_home_location_id || charForGuard.home_location_id || null;
-        console.warn(`[regenerateImageWithReason] ⛔ SCHOOL CONTAMINATION GUARD: stored location_id="${originalLocId}" is the school but presence="${presenceForGuard}" — REJECTING. Replacing with home="${homeLocId || 'none'}"`);
-        sanitizedOriginalLocId = homeLocId;
-        // Also clear the stored location name so it doesn't contaminate the prompt text
-        if (resolvedLocationName) {
-          console.warn(`[regenerateImageWithReason]   Cleared stale location_name="${resolvedLocationName}" — will re-resolve from home location`);
-          resolvedLocationName = null;
-          resolvedZoneName = null;
+      const homeLocId = charForGuard.current_home_location_id || charForGuard.home_location_id || null;
+
+      // Guard 1: stored ctx.location_id is a school ID but character is not at_school
+      if (originalLocId && schoolLocId) {
+        const isStoredLocASchool = originalLocId === schoolLocId;
+        const isNotAtSchool = presenceForGuard !== 'at_school';
+        if (isStoredLocASchool && isNotAtSchool) {
+          console.warn(`[regenerateImageWithReason] ⛔ SCHOOL CONTAMINATION GUARD (stored ctx): location_id="${originalLocId}" is school but presence="${presenceForGuard}" — REJECTING. Replacing with home="${homeLocId || 'none'}"`);
+          sanitizedOriginalLocId = homeLocId;
+          if (resolvedLocationName) {
+            console.warn(`[regenerateImageWithReason]   Cleared stale location_name="${resolvedLocationName}" — will re-resolve from home location`);
+            resolvedLocationName = null;
+            resolvedZoneName = null;
+          }
+        } else if (isStoredLocASchool && !isNotAtSchool) {
+          console.log(`[regenerateImageWithReason] ✅ School location accepted: presence="${presenceForGuard}" confirms character is actually at_school`);
         }
-      } else if (isStoredLocASchool && !isNotAtSchool) {
-        console.log(`[regenerateImageWithReason] ✅ School location accepted: presence="${presenceForGuard}" confirms character is actually at_school`);
+      }
+
+      // Guard 2: traveling_to_location_id points to school but character is not actively traveling to school
+      // Enrollment ≠ residence. Active school travel requires travel_status="traveling_to_school".
+      // Any other state means the field is stale. It must NOT influence image location resolution.
+      const travelingToLocId = charForGuard.traveling_to_location_id || null;
+      const travelStatus = charForGuard.travel_status || 'not_traveling';
+      if (travelingToLocId && schoolLocId && travelingToLocId === schoolLocId) {
+        const isActiveSchoolTravel = travelStatus === 'traveling_to_school' && presenceForGuard !== 'home';
+        if (!isActiveSchoolTravel) {
+          console.warn(`[regenerateImageWithReason] ⛔ STALE SCHOOL TRAVEL GUARD: traveling_to_location_id="${travelingToLocId}" is school but travel_status="${travelStatus}" presence="${presenceForGuard}" — this field is stale and will not influence location resolution`);
+          // If the sanitized location still points at school (somehow), force home
+          if (sanitizedOriginalLocId && schoolLocId && sanitizedOriginalLocId === schoolLocId) {
+            console.warn(`[regenerateImageWithReason]   sanitizedOriginalLocId was still school — forcing home="${homeLocId || 'none'}"`);
+            sanitizedOriginalLocId = homeLocId;
+            resolvedLocationName = null;
+            resolvedZoneName = null;
+          }
+        }
       }
     }
 
