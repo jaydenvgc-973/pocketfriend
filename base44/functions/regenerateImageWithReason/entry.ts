@@ -1287,22 +1287,10 @@ Deno.serve(async (req) => {
       return null;
     })();
 
-    // ── SCHOOL CONTAMINATION GUARD — REGEN PATH ──────────────────────────────
-    // The original generation_context.location_id may contain a stale/polluted school ID
-    // if the character was enrolled at school but NOT actually at_school when the image was
-    // generated. This guard re-validates the stored location_id against the character's
-    // current presence before reusing it, and replaces it with home if polluted.
-    //
-    // RULE: Enrollment at a school/university is NOT residence.
-    // Attendance at a school is NOT residence.
-    // A character is only "at school" when resolved_presence_status === "at_school".
-    // School location IDs must NEVER be used as environment refs unless the character
-    // is actually at_school at generation time.
-    //
-    // This guard also clears traveling_to_location_id influence: if the character's
-    // traveling_to_location_id pointed to school but they are not actively traveling
-    // to school (travel_status !== "traveling_to_school" or presence is home), that
-    // travel field is stale pollution and must not affect image location resolution.
+    // ── CAMPUS RESIDENCY GUARD — REGEN PATH ──────────────────────────────────
+    // Re-validates stored ctx.location_id: school IDs are only valid when
+    // presence=at_school AND lives_on_campus===true on the enrollment record.
+    // Uses same rule as campusResidencyResolver.js (inlined — no local imports in Deno).
     let sanitizedOriginalLocId = originalLocId;
     if (effectiveCharId && charResolvedRecord) {
       const charForGuard = charResolvedRecord;
@@ -1310,20 +1298,28 @@ Deno.serve(async (req) => {
       const presenceForGuard = charForGuard.resolved_presence_status || charForGuard.location_status || '';
       const homeLocId = charForGuard.current_home_location_id || charForGuard.home_location_id || null;
 
-      // Guard 1: stored ctx.location_id is a school ID but character is not at_school
-      if (originalLocId && schoolLocId) {
-        const isStoredLocASchool = originalLocId === schoolLocId;
-        const isNotAtSchool = presenceForGuard !== 'at_school';
-        if (isStoredLocASchool && isNotAtSchool) {
-          console.warn(`[regenerateImageWithReason] ⛔ SCHOOL CONTAMINATION GUARD (stored ctx): location_id="${originalLocId}" is school but presence="${presenceForGuard}" — REJECTING. Replacing with home="${homeLocId || 'none'}"`);
+      // Guard 1: school ID — apply two-part campus residency guard
+      // (mirrors campusResidencyResolver.resolveLocationWithSchoolGuard)
+      if (originalLocId && schoolLocId && originalLocId === schoolLocId) {
+        if (presenceForGuard !== 'at_school') {
+          console.warn(`[regenerateImageWithReason] ⛔ CAMPUS RESIDENCY GUARD: presence="${presenceForGuard}" — rejecting school ID, home="${homeLocId || 'none'}"`);
           sanitizedOriginalLocId = homeLocId;
-          if (resolvedLocationName) {
-            console.warn(`[regenerateImageWithReason]   Cleared stale location_name="${resolvedLocationName}" — will re-resolve from home location`);
+          resolvedLocationName = null;
+          resolvedZoneName = null;
+        } else {
+          const _enrollments = charForGuard.education_enrollments || [];
+          const _ae = _enrollments.find(e =>
+            (e.location_id === schoolLocId || e.in_person_location_id === schoolLocId) &&
+            e.status !== 'dropped' && e.status !== 'graduated'
+          );
+          if (_ae?.lives_on_campus !== true) {
+            console.warn(`[regenerateImageWithReason] ⛔ CAMPUS RESIDENCY GUARD: at_school but lives_on_campus not true — rejecting, home="${homeLocId || 'none'}"`);
+            sanitizedOriginalLocId = homeLocId;
             resolvedLocationName = null;
             resolvedZoneName = null;
+          } else {
+            console.log(`[regenerateImageWithReason] ✅ School accepted: at_school AND campus_resident=true`);
           }
-        } else if (isStoredLocASchool && !isNotAtSchool) {
-          console.log(`[regenerateImageWithReason] ✅ School location accepted: presence="${presenceForGuard}" confirms character is actually at_school`);
         }
       }
 

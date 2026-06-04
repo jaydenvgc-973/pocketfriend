@@ -1621,11 +1621,13 @@ Deno.serve(async (req) => {
           }
 
           // ── LAYER 4: resolved_current_location_id — DB truth ─────────────────
-          // HARD GUARD 1: school ID rejected when presence is NOT at_school (stale/polluted).
-          // HARD GUARD 2: school ID rejected when NOT a campus resident. Enrollment≠residence.
+          // Campus residency guard: uses the same logic as campusResidencyResolver.js.
+          // (Deno functions cannot import local lib — logic is inlined but must stay in sync.)
+          // RULE: school ID accepted only when presence=at_school AND lives_on_campus===true.
           if (!locationId && resolvedLocId) {
             const _schoolLocId = charRecord.current_school_location_id || charRecord.education_location_id || null;
             if (_schoolLocId && resolvedLocId === _schoolLocId) {
+              // Apply the two-part campus residency guard (mirrors campusResidencyResolver.isExplicitCampusResident)
               const _enrollments = charRecord.education_enrollments || [];
               const _activeEnrollment = _enrollments.find(e =>
                 (e.location_id === _schoolLocId || e.in_person_location_id === _schoolLocId) &&
@@ -1633,9 +1635,9 @@ Deno.serve(async (req) => {
               );
               const _isCampusResident = _activeEnrollment?.lives_on_campus === true;
               if (presenceStatus !== 'at_school') {
-                console.warn(`[generateImageAsync] ⛔ LAYER-4: school ID rejected — presence="${presenceStatus}"`);
+                console.warn(`[generateImageAsync] ⛔ LAYER-4: school ID rejected — presence="${presenceStatus}" (campusResidencyResolver: school_id_rejected_presence_is_${presenceStatus})`);
               } else if (!_isCampusResident) {
-                console.warn(`[generateImageAsync] ⛔ LAYER-4: school ID rejected — not a campus resident`);
+                console.warn(`[generateImageAsync] ⛔ LAYER-4: school ID rejected — lives_on_campus not explicitly true (campusResidencyResolver: school_id_rejected_not_campus_resident)`);
               } else {
                 locationId = resolvedLocId;
                 console.log(`[generateImageAsync] LAYER-4: school accepted — at_school AND campus_resident=true`);
