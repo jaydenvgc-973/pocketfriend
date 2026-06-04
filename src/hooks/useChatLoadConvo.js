@@ -255,9 +255,14 @@ export function useChatLoadConvo({
             // REPAIR: Filter out archived messages SERVER-SIDE before the limit is applied.
             // Without this, archived messages consume slots in the 200-message window, pushing
             // recent active messages out of the returned set — causing them to appear missing on load.
+            //
+            // CRITICAL: Use { archived_date: null } NOT { $exists: false }.
+            // Base44 stores archived_date as null (not absent) on non-archived messages.
+            // $exists:false matches only completely absent fields — returns 0 for most messages.
+            // { archived_date: null } correctly matches null values. PROVEN by proofArchivedDateFilter.
             loadedMsgs = await retryAfter8s(() =>
               base44.entities.Message.filter(
-                { conversation_id: convoId },
+                { conversation_id: convoId, archived_date: null },
                 "-created_date",
                 MSG_WINDOW
               )
@@ -556,9 +561,10 @@ export function useChatLoadConvo({
     console.log(`[CHAT_LOAD] loadOlderMessages START cursor=${cursor} convoId=${convoId}`);
 
     try {
-      // Server-side $lt cursor — exclude archived messages client-side (archived_date: { $exists: false } is not supported)
+      // Server-side $lt cursor + exclude archived server-side so archived records don't consume pagination slots.
+      // CRITICAL: Use { archived_date: null } NOT { $exists: false } — see proofArchivedDateFilter.
       const olderRaw = await base44.entities.Message.filter(
-        { conversation_id: convoId, created_date: { $lt: cursor } },
+        { conversation_id: convoId, created_date: { $lt: cursor }, archived_date: null },
         "-created_date",
         PAGINATION_PAGE
       );

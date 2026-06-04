@@ -808,12 +808,27 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'messageId and reason are required' }, { status: 400 });
     }
 
-    console.log(`[regenerateImageWithReason] ▶ messageId=${messageId} | reason=${reason} | manualLocationId=${manualLocationId || 'none'}`);
+    console.log(`[regenerateImageWithReason] ▶ messageId="${messageId}" | reason="${reason}" | manualLocationId=${manualLocationId || 'none'}`);
 
     // ── 1. LOAD MESSAGE AND CONTEXT ───────────────────────────────────────────
-    const msgList = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
-    const message = msgList?.[0];
-    if (!message) return Response.json({ error: 'Message not found' }, { status: 404 });
+    // REPAIR: Use get() as primary lookup (direct by ID, proven reliable).
+    // filter({ id }) is unreliable — throws ObjectNotFoundError instead of returning []
+    // for nonexistent IDs, and is slower. get() is the correct single-record lookup.
+    // Fallback to filter() only if get() throws (compatibility safety net).
+    if (!messageId || typeof messageId !== 'string' || messageId.trim().length < 4) {
+      console.error(`[regenerateImageWithReason] ⛔ Invalid messageId: "${messageId}"`);
+      return Response.json({ success: false, error: `Invalid messageId "${messageId}". Message must be fully persisted before regeneration.`, messageId_received: messageId }, { status: 400 });
+    }
+    let message = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
+    if (!message) {
+      // Fallback: filter() in case get() fails due to SDK version differences
+      const msgList = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
+      message = msgList?.[0] || null;
+    }
+    if (!message) {
+      console.error(`[regenerateImageWithReason] ⛔ Message not found: id="${messageId}" user="${user.email}"`);
+      return Response.json({ success: false, error: `Message not found (id="${messageId}"). It may not be persisted yet — wait for generation to complete before using Why Regenerate.`, messageId_received: messageId }, { status: 404 });
+    }
 
     // owner_email is the sole ownership source of truth — created_by is permanently forbidden
     const requestingUser = user.email;

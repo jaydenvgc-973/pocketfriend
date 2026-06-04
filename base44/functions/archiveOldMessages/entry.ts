@@ -93,8 +93,11 @@ Deno.serve(async (req) => {
 
       // STEP A: Fetch oldest ARCHIVE_THRESHOLD+50 messages to check eligibility AND get candidates
       // These are the messages we will actually archive (oldest end of the conversation).
+      // CRITICAL: Use { archived_date: null } NOT { $exists: false }.
+      // Base44 stores archived_date as null on non-archived messages (not field-absent).
+      // $exists:false returns 0 for null fields. Proven by proofArchivedDateFilter.
       const messages = await base44.asServiceRole.entities.Message.filter(
-        { conversation_id: convo.id, archived_date: { $exists: false } },
+        { conversation_id: convo.id, archived_date: null },
         'created_date',   // oldest first — archive from the bottom
         ARCHIVE_THRESHOLD + 50
       ).catch(() => null);
@@ -122,7 +125,7 @@ Deno.serve(async (req) => {
 
         while (keepPaging && pageNum < MAX_PAGES) {
           await new Promise(r => setTimeout(r, 150)); // pace paging to avoid 429
-          const filter = { conversation_id: convo.id, archived_date: { $exists: false } };
+          const filter = { conversation_id: convo.id, archived_date: null };
           const page = await base44.asServiceRole.entities.Message.filter(
             filter,
             '-created_date', // newest first — consistent walk direction
