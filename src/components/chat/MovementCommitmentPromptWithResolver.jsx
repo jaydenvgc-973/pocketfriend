@@ -94,9 +94,12 @@ export default function MovementCommitmentPromptWithResolver({
     if (!autoConfirmEligible) return;
     const timer = setTimeout(async () => {
       try {
-        // characterId comes directly from the active chat context — no lookup needed
+        // Pass all character fields from the already-loaded context — no backend lookup needed
         const response = await base44.functions.invoke('confirmMovementCommitment', {
           character_id: characterId,
+          character_name: currentCharacter?.name || characterName,
+          character_current_location_id: currentCharacter?.resolved_current_location_id || null,
+          character_current_location_name: currentCharacter?.resolved_current_location_name || null,
           destination_location_id: resolutionResult.location_id,
           destination_name: resolutionResult.location_name,
           scheduled_arrival_time: scheduledTime,
@@ -133,6 +136,7 @@ export default function MovementCommitmentPromptWithResolver({
     <MovementCommitmentPrompt
       characterName={characterName}
       characterId={characterId}
+      currentCharacter={currentCharacter}
       destination={resolutionResult.location_name}
       destinationLocationId={resolutionResult.location_id}
       etaMinutes={etaMinutes}

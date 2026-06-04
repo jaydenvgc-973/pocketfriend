@@ -15,6 +15,7 @@ import { base44 } from '@/api/base44Client';
 export default function MovementCommitmentPrompt({
   characterName,
   characterId,
+  currentCharacter,     // canonical character object already loaded by chat page
   destination,          // resolved location name from resolver
   destinationLocationId, // real LocationReference ID — required to enable submit
   etaMinutes,
@@ -52,8 +53,12 @@ export default function MovementCommitmentPrompt({
     setError(null);
 
     // Log the full payload before sending — proof of correct resolution
+    // Pass character fields from the already-loaded context — no backend character lookup
     const payload = {
       character_id: characterId,
+      character_name: currentCharacter?.name || characterName,
+      character_current_location_id: currentCharacter?.resolved_current_location_id || null,
+      character_current_location_name: currentCharacter?.resolved_current_location_name || null,
       destination_location_id: destinationLocationId,
       destination_name: destination,
       scheduled_arrival_time: scheduledTime,
