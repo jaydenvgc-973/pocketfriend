@@ -207,30 +207,40 @@ Deno.serve(async (req) => {
 
     const results = [];
 
-    // ── Step 1: Load characters — home AND college/university students ──────────────
-    // CRITICAL: Must include school-attending characters (presence=at_school) in proof.
-    // The original bug manifested as school-labeled images on home-attending characters.
-    // Proof is only meaningful if both home and school characters are tested.
+    // ── Step 1: Load characters — enrolled students + home characters ──────────────
+    // Always fetch all enrolled students (they are the school-contamination risk group).
+    // Always include home characters for baseline comparison.
+    const enrolledList = await base44.entities.Character.filter(
+      { student_status: 'enrolled' }, null, 20
+    ).catch(() => []);
     const homeList = await base44.entities.Character.filter(
       { resolved_presence_status: 'home' }, null, 3
     ).catch(() => []);
-    const schoolList = await base44.entities.Character.filter(
-      { resolved_presence_status: 'at_school' }, null, 3
-    ).catch(() => []);
-    // Also include enrolled students regardless of current presence
-    const enrolledList = await base44.entities.Character.filter(
-      { student_status: 'enrolled' }, null, 3
-    ).catch(() => []);
 
-    // Deduplicate by id — school/enrolled may overlap
+    // Deduplicate by id — enrolled first so school data takes priority
     const seen = new Set();
-    const combined = [...homeList, ...schoolList, ...enrolledList].filter(c => {
+    const combined = [...enrolledList, ...homeList].filter(c => {
       if (seen.has(c.id)) return false;
       seen.add(c.id);
       return true;
     });
 
-    const charList = combined.slice(0, 5);
+    // Fetch Ethan Thompson explicitly — he is the currently affected character
+    const ethanList = await base44.entities.Character.filter(
+      { name: 'Ethan Thompson', student_status: 'enrolled' }, null, 1
+    ).catch(() => []);
+
+    // Prioritize: Ethan first, then other school-attending, then home
+    const withSchool = combined.filter(c => c.education_location_id || c.current_school_location_id);
+    const withoutSchool = combined.filter(c => !c.education_location_id && !c.current_school_location_id);
+    const allCombined = [...ethanList, ...withSchool, ...withoutSchool];
+    // Deduplicate again after adding Ethan
+    const seen2 = new Set();
+    const charList = allCombined.filter(c => {
+      if (seen2.has(c.id)) return false;
+      seen2.add(c.id);
+      return true;
+    }).slice(0, 8);
 
     if (!charList || charList.length === 0) {
       return Response.json({ error: 'No characters found for this account', user: user.email });
