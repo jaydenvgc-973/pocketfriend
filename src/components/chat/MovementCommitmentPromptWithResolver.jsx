@@ -38,17 +38,14 @@ export default function MovementCommitmentPromptWithResolver({
         setError(null);
 
         // Use owner_email from the already-loaded character object — no user fetch needed
+        // Legacy characters may not have owner_email — fall back to user-scoped query
         const ownerEmail = currentCharacter?.owner_email;
-        if (!ownerEmail) {
-          setError('Character context unavailable');
-          setResolving(false);
-          return;
-        }
 
-        // Fetch saved locations scoped by owner_email — only what isn't already in context
-        const locations = await base44.entities.LocationReference.filter({
-          owner_email: ownerEmail,
-        }, null, 200);
+        // Fetch saved locations — use owner_email filter if available, otherwise get all user-visible locations
+        const locationFilter = ownerEmail ? { owner_email: ownerEmail } : {};
+        const locations = await base44.entities.LocationReference.filter(
+          locationFilter, null, 200
+        );
 
         // Call the resolver using the already-loaded character — no Character re-fetch
         const result = await resolveMovementDestination({
