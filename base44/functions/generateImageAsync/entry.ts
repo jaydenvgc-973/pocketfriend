@@ -1610,20 +1610,13 @@ Deno.serve(async (req) => {
           const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || '';
           const resolvedLocId = charRecord.resolved_current_location_id || null;
 
-          // ── LAYER 1: WORK SCHEDULE CHECK (PRIORITY — matches frontend Layer 1) ──
-          // Re-use pre-computed _effectiveIsOnWorkShift and _effectiveWorkLocId from above.
           if (_effectiveWorkLocId) {
             locationId = _effectiveWorkLocId;
             console.log(`[generateImageAsync] WORK-SCHEDULE-AUTHORITY: character is on shift → work location="${_effectiveWorkLocId}" (overrides presence="${presenceStatus}" resolved="${resolvedLocId || 'none'}")`);
           }
 
           // ── LAYER 2: SCHOOL SCHEDULE ──────────────────────────────────────────
-          // CRITICAL: Only resolve to school when character is ACTUALLY at school.
-          // Enrollment status alone (student_status === 'enrolled') does NOT mean
-          // the character is currently at school. It means they are registered.
-          // Using enrollment as a location authority overrides the actual current
-          // presence (e.g. character at home gets university images).
-          // Must check resolved_presence_status === 'at_school' to confirm real presence.
+          // Only resolve to school when presence is ACTUALLY at_school. Enrollment alone is not enough.
           if (!locationId && charRecord.student_status === 'enrolled' && presenceStatus === 'at_school') {
             const schoolLocId = charRecord.current_school_location_id || charRecord.education_location_id || null;
             if (schoolLocId) {
@@ -1689,7 +1682,7 @@ Deno.serve(async (req) => {
         }
 
         if (locRecord) {
-          resolvedLocationName = locRecord.name; resolvedLocationId = locRecord.id; // canonical resolved ID for marker
+          resolvedLocationName = locRecord.name; resolvedLocationId = locRecord.id;
           resolvedLocCategory = locRecord.category || null;
           const promptLower = (prompt || '').toLowerCase();
           // Zone priority: UI-selected zone > stored generation_context zone > keyword auto-resolve
@@ -1697,11 +1690,9 @@ Deno.serve(async (req) => {
           const { images, zoneName } = resolveZoneFromLocation(locRecord, promptLower, preferredZone);
           envRefs = images;
           resolvedZoneName = zoneName;
-          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" → zone "${zoneName || 'none'}" (preferred="${preferredZone || 'none'}", src="${useManualLocation ? 'manual_ui_dropdown' : 'auto'}") → ${envRefs.length} env refs`);
-          console.log(`[PresenceAudit] RESOLVED → location="${locRecord.name}" (id=${locRecord.id}) | zone="${zoneName || 'none'}" | env_refs=${images.length} | src="${useManualLocation ? 'manual_ui_dropdown' : 'presence_authority'}"`)
+          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" zone="${zoneName || 'none'}" env_refs=${envRefs.length}`);
         } else {
-          console.warn(`[generateImageAsync] ⚠️ Location ${locationId} not found or access denied — proceeding without environment`);
-          console.warn(`[PresenceAudit] RESOLVED → NO LOCATION (id=${locationId} not found or denied) | env_refs=0`);
+          console.warn(`[generateImageAsync] ⚠️ Location ${locationId} not found or access denied — no env refs.`);
         }
       } else {
         console.log(`[generateImageAsync] No location ID resolved — no env refs.`);
