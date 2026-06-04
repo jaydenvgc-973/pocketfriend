@@ -193,8 +193,9 @@ Deno.serve(async (req) => {
 
 // ── CORE EVALUATION LOGIC ─────────────────────────────────────────────────────
 // This is the canonical guard. All modes call this function.
-// The same logic is inlined in generateImageAsync and regenerateImageWithReason
-// (Deno functions cannot import local files — they call this via invoke instead).
+// generateImageAsync and regenerateImageWithReason both call this via:
+//   base44.asServiceRole.functions.invoke('campusResidencyGuard', { mode: 'resolveLocationWithSchoolGuard', ... })
+// NO inline logic exists elsewhere. This is the only copy of the rule.
 
 // SCHOOL TYPE RESIDENCY RULE — absolute architectural constant.
 // Grammar school and high school are NON-RESIDENTIAL. No campus residency is ever possible.
