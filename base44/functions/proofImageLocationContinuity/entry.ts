@@ -412,7 +412,8 @@ Deno.serve(async (req) => {
       results.push(charResult);
     }
 
-    const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    // Authoritative ET timestamp — format directly from UTC using America/New_York, never double-convert
+    const etNowStr = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 
     // Compact summary — strip zone_resolution_by_prompt details to avoid truncation
     const compactResults = results.map(r => ({
@@ -450,7 +451,7 @@ Deno.serve(async (req) => {
 
     return Response.json({
       proof_title: 'Image Location Continuity Proof',
-      run_at_et: etNow.toLocaleString('en-US', { timeZone: 'America/New_York' }),
+      run_at_et: etNowStr,
       account: user.email,
       characters_tested: results.length,
       all_pass: results.every(r => r.verdict?.overall?.startsWith('PASS')),
