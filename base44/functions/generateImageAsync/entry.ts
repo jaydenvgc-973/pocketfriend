@@ -1621,8 +1621,9 @@ Deno.serve(async (req) => {
           }
 
           // ── LAYER 4: resolved_current_location_id — DB truth ─────────────────
-          // Campus residency guard: uses the same logic as campusResidencyResolver.js.
-          // (Deno functions cannot import local lib — logic is inlined but must stay in sync.)
+          // Campus residency guard: CANONICAL rule is in functions/campusResidencyGuard.
+          // This inline mirrors campusResidencyGuard.evaluateCampusResidency() exactly.
+          // If the rule changes, update: campusResidencyGuard + this inline + regenerateImageWithReason inline.
           // RULE: school ID accepted only when presence=at_school AND lives_on_campus===true.
           if (!locationId && resolvedLocId) {
             const _schoolLocId = charRecord.current_school_location_id || charRecord.education_location_id || null;

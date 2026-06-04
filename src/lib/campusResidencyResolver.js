@@ -1,6 +1,30 @@
 /**
  * campusResidencyResolver — Canonical authority for campus residency logic.
  *
+ * FRONTEND / LIB USAGE: Import this file directly in frontend components and lib files.
+ *
+ * BACKEND FUNCTION USAGE: Deno functions cannot import local lib files.
+ * Backend functions (generateImageAsync, regenerateImageWithReason, simulateActiveCharacterNeeds, etc.)
+ * must use ONE of two approaches:
+ *
+ * Option A — Invoke the shared resolver function (preferred for new code):
+ *   const result = await base44.asServiceRole.functions.invoke('campusResidencyGuard', {
+ *     mode: 'isExplicitCampusResident',
+ *     character_id: charId,
+ *     school_location_id: schoolLocId,
+ *   });
+ *   const isCampusResident = result.is_campus_resident === true;
+ *
+ * Option B — Inline the guard (existing code in generateImageAsync, regenerateImageWithReason):
+ *   The inline logic MUST stay structurally identical to evaluateCampusResidency() in
+ *   functions/campusResidencyGuard. Any change to the canonical rule MUST be applied to
+ *   all three locations: this file, campusResidencyGuard, and the inlined guards.
+ *
+ * SINGLE CANONICAL RULE (enforced everywhere):
+ *   lives_on_campus must be EXPLICITLY true in the enrollment record.
+ *   Missing, null, false, or undefined → NOT a campus resident.
+ *   Enrollment alone → NOT a campus resident.
+ *
  * SINGLE SOURCE OF TRUTH answering one question:
  *   "Can this school location be used as the character's home/sleep/image-home location?"
  *

@@ -271,12 +271,16 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
     // 3. Sync dates back to Character.education_enrollments[] and Character.completed_education[]
     // This keeps the character profile education section in sync with the location page.
     if (char) {
+      // CRITICAL: lives_on_campus must be synced back to Character.education_enrollments[]
+      // so campusResidencyGuard reads the correct value from the Character record.
       const syncFields = {
         course_name: newCourseName,
         enroll_date: newEnrollDate,
         start_date: newStartDate,
         completion_date: newEndDate,
+        end_date: newEndDate,
         scholarship_enabled: newScholarship,
+        lives_on_campus: newLivesOnCampus,
       };
 
       // Helper: patch matching enrollment entry in an array
