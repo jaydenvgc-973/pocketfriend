@@ -58,13 +58,15 @@ Deno.serve(async (req) => {
       if (locs?.[0]) homeLocMap[locId] = locs[0].name;
     }
 
-    // 2. Load recent messages that have image data and a generation_context with location_name
-    // We can't filter by nested field directly — load in batches and filter client-side
-    const allMessages = await base44.asServiceRole.entities.Message.filter(
-      { sender_type: 'character' },
-      '-created_date',
-      500
+    // 2. Load messages in batches to cover older records
+    // The defective messages may be older than the top 500
+    const batch1 = await base44.asServiceRole.entities.Message.filter(
+      { sender_type: 'character' }, '-created_date', 500
     ).catch(() => []);
+    const batch2 = await base44.asServiceRole.entities.Message.filter(
+      { sender_type: 'character' }, '-created_date', 500, 500
+    ).catch(() => []);
+    const allMessages = [...batch1, ...batch2];
 
     const toRepair = [];
     const audited = [];
@@ -87,22 +89,23 @@ Deno.serve(async (req) => {
       const charInfo = charMap[charId];
       if (!charInfo) continue;
 
-      // Check: is the saved location a school location for this character?
-      const isSchoolMarker = charInfo.schoolIds.length > 0 && (
-        charInfo.schoolIds.includes(savedLocId) ||
-        // Name-based fallback if IDs not set
+      // Check: is the saved location_name a school name for this character?
+      // Also catch: location_id is home but location_name is wrong (name-only pollution)
+      const isSchoolNameInMarker = (
         savedLocName.toLowerCase().includes('university') ||
         savedLocName.toLowerCase().includes('college') ||
         savedLocName.toLowerCase().includes('campus') ||
         savedLocName.toLowerCase().includes('school') ||
         savedLocName.toLowerCase().includes('aurelian')
       );
+      const isSchoolIdInMarker = charInfo.schoolIds.includes(savedLocId);
+      const isSchoolMarker = isSchoolNameInMarker || isSchoolIdInMarker;
 
       if (!isSchoolMarker) continue;
 
-      // Check: is character currently home (not at_school)?
+      // Only skip repair if character is ACTUALLY at school right now
       const isAtSchool = charInfo.presenceStatus === 'at_school';
-      if (isAtSchool) continue; // Character IS at school right now — marker may be correct
+      if (isAtSchool) continue;
 
       // Character is home but marker says school — this is the defect
       const correctHomeId = charInfo.homeLocationId;

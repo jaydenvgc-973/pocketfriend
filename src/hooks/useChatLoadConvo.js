@@ -30,6 +30,28 @@ function writeCachedMessages(ownerEmail, characterId, chatType, msgs) {
   lfcWrite(ownerEmail, `chat_msgs:${chatType}:${characterId}`, recent);
 }
 
+// Sanitize a cached message before displaying it from LFC.
+// Strips stale school location_name from generation_context so it never renders
+// as a wrong image marker from cache.
+function sanitizeCachedMessage(msg) {
+  const gc = msg?.generation_context;
+  if (!gc?.location_name) return msg;
+  const locName = gc.location_name.toLowerCase();
+  const isSchoolName = locName.includes('university') || locName.includes('college') ||
+    locName.includes('campus') || locName.includes('school') || locName.includes('aurelian');
+  if (!isSchoolName) return msg;
+  // Clear the school location fields from the cached marker — server will provide correct data
+  return {
+    ...msg,
+    generation_context: {
+      ...gc,
+      location_name: null,
+      location_id: null,
+      loc_category: null,
+    },
+  };
+}
+
 /**
  * useChatLoadConvo
  *
@@ -110,7 +132,7 @@ export function useChatLoadConvo({
 
     const immediateCache = readCachedMessages(currentUser.email, characterId, chatType);
     if (immediateCache && immediateCache.length > 0) {
-      setMessages(immediateCache);
+      setMessages(immediateCache.map(sanitizeCachedMessage));
       hasShownMessagesRef.current = true;
     } else {
       setMessages([]);
