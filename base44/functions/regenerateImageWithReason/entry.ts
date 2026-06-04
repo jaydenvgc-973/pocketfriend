@@ -75,13 +75,7 @@ function selectCameraPosition(prompt = '') {
    return 'from a closer standing position';
  }
 
-// ── OUTFIT RESOLVER — inlined (Deno cannot import local lib files) ────────────
-// Source of truth: lib/outfitRotationEngine.js. Keep in sync with generateImageAsync.
-
 // ── AI PROMPT CONTAMINATION GUARD ────────────────────────────────────────────
-// Detects if a string is an AI image generation prompt rather than a real description.
-// These strings poison the identity descriptor and cause the model to render stock-photo
-// editorial imagery instead of matching the character's actual face from reference photos.
 function isAIGenerationPrompt(text) {
   if (!text || typeof text !== 'string') return false;
   return /\b(cinematic|chiaroscuro|dramatic lighting|editorial photography|fine art|low-key lighting|sculptural anatomy|artistic composition|museum.quality|photorealistic|ultra.detailed|high.resolution|bokeh|shallow depth of field|dramatic shadow|noir atmosphere|moody atmosphere|hyper.realistic|8k|4k resolution|studio lighting|professional photography|stock photo)\b/i.test(text);
@@ -143,25 +137,32 @@ function resolveOutfitCategoryRegen(character) {
   return 'daily_casual';
 }
 
+// CANONICAL OUTFIT RESOLVER — mirrors resolveCharacterOutfitForPrompt in generateImageAsync.
+// Priority: rotation_off → manual_selection_lock → P1 context match → P2 day-stable (NO skip of current).
 function resolveOutfitTextFromCharacterRegen(character) {
   if (!character) return null;
+  const rt = o => { if (!o) return null; const t = buildOutfitTextRegen(o); return t || o.label?.trim() || null; };
+  const co = character.current_outfit;
   const closet = character.character_closet || [];
-  const outfits = closet.filter(item => item.outfit_id);
-  if (outfits.length === 0) return buildOutfitTextRegen(character.current_outfit) || null;
-  const targetCategory = resolveOutfitCategoryRegen(character);
-  const chain = OUTFIT_FALLBACK_CHAINS_REGEN[targetCategory] || ['daily_casual', 'lounge'];
-  const currentOutfitId = character.current_outfit?.outfit_id || null;
-  for (const cat of chain) {
-    const pool = outfits.filter(o => o.category === cat);
-    if (pool.length === 0) continue;
-    if (pool.length === 1) return buildOutfitTextRegen(pool[0]);
-    const now = new Date();
-    const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
-    const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    let idx = (dayOfYear + idHash) % pool.length;
-    if (pool[idx]?.outfit_id === currentOutfitId && pool.length > 1) idx = (idx + 1) % pool.length;
-    return buildOutfitTextRegen(pool[idx]);
+  const full = id => closet.find(x => x.outfit_id === id) || null;
+  // ROTATION OFF or MANUAL SELECTION — locked selection wins unconditionally
+  if (character.outfit_rotation_enabled === false && (co?.outfit_id || co?.label)) {
+    return rt(co.outfit_id ? (full(co.outfit_id) || co) : co);
   }
+  if (co?.outfit_id && co?.change_reason === 'manual_selection') return rt(full(co.outfit_id) || co);
+  // P1: current_outfit if category matches scene context
+  if (co?.outfit_id || co?.label) {
+    const cat = co.category || null;
+    const chain = OUTFIT_FALLBACK_CHAINS_REGEN[resolveOutfitCategoryRegen(character)] || ['daily_casual', 'lounge'];
+    if (cat && chain.includes(cat)) return rt(co.outfit_id ? (full(co.outfit_id) || co) : co);
+  }
+  // P2: day-stable rotation (NO current-outfit skip — stable across calls)
+  const outfits = closet.filter(o => o.outfit_id);
+  if (!outfits.length) return rt(co) || null;
+  const chain = OUTFIT_FALLBACK_CHAINS_REGEN[resolveOutfitCategoryRegen(character)] || ['daily_casual', 'lounge'];
+  const si = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000)
+    + (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  for (const c of chain) { const p = outfits.filter(o => o.category === c); if (p.length) return rt(p[si % p.length]); }
   return null;
 }
 
@@ -218,11 +219,6 @@ function buildAppearanceLockTextRegen(rec, n) {
 }
 
 // ── SEALED SUBJECT BUNDLE BUILDER ────────────────────────────────────────────
-// Shared by buildMultiSubjectRegenPrompt. Builds one self-contained block per subject
-// with identity key, role declaration, reference image slots, appearance lock,
-// outfit lock, and explicit cross-assignment prohibition.
-// SYNC: keep in structural parity with mediaGridGenerate's buildSubjectBundle.
-
 function buildRegenSubjectBundle(p, envCount) {
   const startIdx = envCount + p.refStart;
   const endIdx   = envCount + p.refStart + p.refCount - 1;
@@ -724,9 +720,7 @@ This applies to all subjects. No exceptions.
   return `${fictionalCharacterDeclarationRegen}${caucasianGuardRegen}${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${occupancyBlock}${reasonBlock}${identityLock}`;
 }
 
-// ── ZONE RESOLUTION — STRICT ZONE ISOLATION ────────────────────────────────────
-// Only the exact matched zone's images are returned.
-// No cross-zone fallback. Multiple zones with no match → no images (prevents contamination).
+// ── ZONE RESOLUTION ──────────────────────────────────────────────────────────
 
 const ZONE_KEYWORD_MAP = [
   { keywords: ['bedroom', 'in bed', 'on the bed', 'sleeping', 'woke up', 'waking up', 'nightstand', 'duvet', 'pillow', 'mattress', 'my room', 'her room', 'his room'], zone: 'bedroom' },
@@ -788,15 +782,13 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
     }
   }
 
-  // 3. Only one zone — use it (unambiguous)
-  if (zones.length === 1) {
-    console.log(`[resolveZone] Single zone — using "${zones[0].zone_name}"`);
-    return { images: cdnFilter(zones[0].image_urls).slice(0, 4), zoneName: zones[0].zone_name };
+  if (zones.length === 1) return { images: cdnFilter(zones[0].image_urls).slice(0, 4), zoneName: zones[0].zone_name };
+  // Multiple zones, no match — prefer sensible default (matches generateImageAsync behavior)
+  for (const pref of ['living room','bedroom','main area','main floor','lounge']) {
+    const m = zones.find(z => z.zone_name?.toLowerCase().includes(pref));
+    if (m) { const imgs = cdnFilter(m.image_urls).slice(0,4); if (imgs.length) return { images: imgs, zoneName: m.zone_name }; }
   }
-
-  // 4. Multiple zones, no match — no images to avoid cross-zone contamination
-  console.warn(`[resolveZone] Multiple zones, no match — returning no env refs`);
-  return { images: [], zoneName: null };
+  return { images: cdnFilter(zones[0].image_urls).slice(0,4), zoneName: zones[0].zone_name };
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
@@ -1336,6 +1328,28 @@ Deno.serve(async (req) => {
           }
         }
       }
+    }
+
+    // ── LIVE LOCATION RE-RESOLVE — null ctx.location_id → character live state ──
+    // Matches generateImageAsync Layer 1-6 so both paths resolve identically.
+    if (!sanitizedOriginalLocId && charResolvedRecord) {
+      const chr = charResolvedRecord;
+      const pres = chr.resolved_presence_status || chr.location_status || '';
+      const wLoc = chr.current_work_location_id || chr.occupation_location_id || null;
+      const hLoc = chr.current_home_location_id || chr.home_location_id || null;
+      const sLoc = chr.current_school_location_id || chr.education_location_id || null;
+      let isOnShift = false;
+      if (wLoc && chr.work_start_time && chr.work_end_time && chr.work_days?.length) {
+        const et = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+        const nm=et.getHours()*60+et.getMinutes(),dow=et.getDay();
+        const [sh,sm]=chr.work_start_time.split(':').map(Number),[eh,em]=chr.work_end_time.split(':').map(Number);
+        const cross=(eh*60+em)<(sh*60+sm),prev=(dow+6)%7;
+        isOnShift=cross?((chr.work_days.includes(dow)&&nm>=sh*60+sm)||(chr.work_days.includes(prev)&&nm<eh*60+em)):(chr.work_days.includes(dow)&&nm>=sh*60+sm&&nm<eh*60+em);
+        const ds=`${et.getFullYear()}-${String(et.getMonth()+1).padStart(2,'0')}-${String(et.getDate()).padStart(2,'0')}`;
+        if(chr.work_exception_status==='called_out'&&chr.work_exception_date===ds)isOnShift=false;
+      }
+      sanitizedOriginalLocId=isOnShift&&wLoc?wLoc:chr.is_jailed&&chr.incarceration_facility_id?chr.incarceration_facility_id:chr.student_status==='enrolled'&&pres==='at_school'&&sLoc?sLoc:chr.resolved_current_location_id||(pres==='at_work'?wLoc:null)||(pres==='home'||pres==='sleeping'||pres==='napping'?hLoc:null)||hLoc||null;
+      if(sanitizedOriginalLocId)console.log(`[regen] LIVE RE-RESOLVE → loc="${sanitizedOriginalLocId}" pres="${pres}" shift=${isOnShift}`);
     }
 
     // ── LOCATION NAME SCANNER (dont_like / custom_prompt only) ───────────────
