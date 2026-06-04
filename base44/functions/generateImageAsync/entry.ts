@@ -1802,8 +1802,10 @@ All reference images (if any) are environment/location refs only — do NOT trea
 `;
     }
 
-    // CRITICAL: Use Eastern time for lighting — not UTC. At 03:00 UTC it is 23:00 ET.
+    // CRITICAL: Use Eastern time for all app-logic timestamps — not UTC.
+    // UTC is infrastructure metadata only. ET is the authoritative app timezone.
     const serverTime = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const nowETIso = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString();
     let finalPrompt = thirdPartyPreamble + buildPrompt({
       prompt: sanitizedPrompt,
       charName: isThirdPartyPhoto && !characterId ? 'the described person' : (charRecord?.name || characterName || 'the character'),
@@ -1868,7 +1870,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
     const baseGenerationContext = {
       generation_context_version: 2,
       context_origin: 'chat_image',
-      schema_written_at: new Date().toISOString(),
+      schema_written_at: nowETIso(),
       image_type: subjectType === 'joint' ? 'joint' : subjectType === 'user' ? 'user' : 'character',
       subject_count: structuredSubjectsWithFingerprints.length,
       subjects: structuredSubjectsWithFingerprints,
@@ -1889,7 +1891,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       loc_category: resolvedLocCategory || null,
       location_reference_images: envRefs.slice(0, 4),
       subject_type: subjectType,
-      generated_at: new Date().toISOString(),
+      generated_at: nowETIso(),
       camera_variables: null,
       attempts: [],
     };
@@ -1972,7 +1974,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       generation_context: {
         ...baseGenerationContext,
         camera_variables: cameraVars,
-        attempts: [{ attempt_index: 1, prompt: finalPrompt.slice(0, 500), generated_image_url: genRes.url, camera: cameraVars, status: 'accepted', created_at: new Date().toISOString() }],
+        attempts: [{ attempt_index: 1, prompt: finalPrompt.slice(0, 500), generated_image_url: genRes.url, camera: cameraVars, status: 'accepted', created_at: nowETIso() }],
         accepted_attempt_index: 1,
       },
       content: '',

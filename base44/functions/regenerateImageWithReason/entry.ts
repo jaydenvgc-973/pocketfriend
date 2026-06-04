@@ -1287,6 +1287,38 @@ Deno.serve(async (req) => {
       return null;
     })();
 
+    // ── SCHOOL CONTAMINATION GUARD — REGEN PATH ──────────────────────────────
+    // The original generation_context.location_id may contain a stale/polluted school ID
+    // if the character was enrolled at school but NOT actually at_school when the image was
+    // generated. This guard re-validates the stored location_id against the character's
+    // current presence before reusing it, and replaces it with home if polluted.
+    //
+    // RULE: Enrollment at a school/university is NOT residence.
+    // A character is only "at school" when resolved_presence_status === "at_school".
+    // School location IDs must NEVER be used as environment refs unless the character
+    // is actually at_school at generation time.
+    let sanitizedOriginalLocId = originalLocId;
+    if (originalLocId && effectiveCharId && charResolvedRecord) {
+      const charForGuard = charResolvedRecord;
+      const schoolLocId = charForGuard.current_school_location_id || charForGuard.education_location_id || null;
+      const presenceForGuard = charForGuard.resolved_presence_status || charForGuard.location_status || '';
+      const isStoredLocASchool = schoolLocId && originalLocId === schoolLocId;
+      const isNotAtSchool = presenceForGuard !== 'at_school';
+      if (isStoredLocASchool && isNotAtSchool) {
+        const homeLocId = charForGuard.current_home_location_id || charForGuard.home_location_id || null;
+        console.warn(`[regenerateImageWithReason] ⛔ SCHOOL CONTAMINATION GUARD: stored location_id="${originalLocId}" is the school but presence="${presenceForGuard}" — REJECTING. Replacing with home="${homeLocId || 'none'}"`);
+        sanitizedOriginalLocId = homeLocId;
+        // Also clear the stored location name so it doesn't contaminate the prompt text
+        if (resolvedLocationName) {
+          console.warn(`[regenerateImageWithReason]   Cleared stale location_name="${resolvedLocationName}" — will re-resolve from home location`);
+          resolvedLocationName = null;
+          resolvedZoneName = null;
+        }
+      } else if (isStoredLocASchool && !isNotAtSchool) {
+        console.log(`[regenerateImageWithReason] ✅ School location accepted: presence="${presenceForGuard}" confirms character is actually at_school`);
+      }
+    }
+
     // ── LOCATION NAME SCANNER (dont_like / custom_prompt only) ───────────────
     // When the user edits the prompt for "dont_like" or writes a "custom_prompt",
     // they may mention a different or specific location (e.g. "at the park", "in her kitchen").
@@ -1371,7 +1403,7 @@ Deno.serve(async (req) => {
       //   3. Stored refs from context as last resort
 
       const effectiveLocRecord = promptOverrideLocationRecord || null;
-      const effectiveLocId = promptOverrideLocationId || originalLocId;
+      const effectiveLocId = promptOverrideLocationId || sanitizedOriginalLocId;
 
       if (effectiveLocRecord) {
         // Prompt explicitly mentioned a known saved location — use its reference photos
@@ -1883,7 +1915,10 @@ Deno.serve(async (req) => {
       generation_context: updatedContext,
     });
 
-    console.log(`[regenerateImageWithReason] ✓ SUCCESS: ${messageId} | camera: ${acceptedCameraVars?.distance} ${acceptedCameraVars?.angle}`);
+    // PERMANENT RULE: log application times in Eastern Time, not UTC
+    const _successET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const _successETStr = `${_successET.getFullYear()}-${String(_successET.getMonth()+1).padStart(2,'0')}-${String(_successET.getDate()).padStart(2,'0')} ${String(_successET.getHours()).padStart(2,'0')}:${String(_successET.getMinutes()).padStart(2,'0')} ET`;
+    console.log(`[regenerateImageWithReason] ✓ SUCCESS at ${_successETStr}: ${messageId} | camera: ${acceptedCameraVars?.distance} ${acceptedCameraVars?.angle}`);
 
     // ── BUILD FINAL RESPONSE ──────────────────────────────────────────────────
     const selectedSubjectRoles = [

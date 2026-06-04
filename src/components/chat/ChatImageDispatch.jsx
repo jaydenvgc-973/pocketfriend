@@ -139,6 +139,7 @@ export async function dispatchImageGeneration({
     const imageUrl = rawImageUrl ? toPublicCDN(rawImageUrl) : null;
     if (imageUrl && imageUrl.startsWith('http') && isMountedRef.current) {
       setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, image_url: imageUrl } : m));
+      // Use ISO string for platform metadata only — this is a DB timestamp field, not app reasoning
       base44.entities.Conversation.update(convoId, {
         last_message_preview: "(photo)",
         last_message_date: new Date().toISOString(),

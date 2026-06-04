@@ -48,9 +48,12 @@ export async function buildImageGenerationContext({
   locationRefs = [],
   base44,
 }) {
+  // PERMANENT RULE: all app timestamps use Eastern Time — UTC is forbidden as app reasoning authority.
+  const _etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const _etStr = `${_etNow.getFullYear()}-${String(_etNow.getMonth()+1).padStart(2,'0')}-${String(_etNow.getDate()).padStart(2,'0')} ${String(_etNow.getHours()).padStart(2,'0')}:${String(_etNow.getMinutes()).padStart(2,'0')} ET`;
   const audit = {
     source_path: sourceType,
-    timestamp: new Date().toISOString(),
+    timestamp_et: _etStr,
     diagnostics: {},
   };
 
@@ -204,14 +207,38 @@ export async function buildImageGenerationContext({
   };
 
   // ── LOCATION RESOLUTION ──────────────────────────────────────────────────────
+  // SCHOOL CONTAMINATION GUARD:
+  // Enrollment at a school/university is NOT residence.
+  // A character is only "at school" when resolved_presence_status === "at_school".
+  // If the passed locationId is the character's school location but the character
+  // is not actually at_school, reject it and fall back to the home location.
+  let sanitizedLocationId = locationId;
+  if (locationId && effectiveCharacterRecord) {
+    const schoolLocId = effectiveCharacterRecord.current_school_location_id
+      || effectiveCharacterRecord.education_location_id || null;
+    const presenceStatus = effectiveCharacterRecord.resolved_presence_status
+      || effectiveCharacterRecord.location_status || '';
+    if (schoolLocId && locationId === schoolLocId && presenceStatus !== 'at_school') {
+      const homeLocId = effectiveCharacterRecord.current_home_location_id
+        || effectiveCharacterRecord.home_location_id || null;
+      console.warn(`[imageGenerationContextBuilder] ⛔ SCHOOL CONTAMINATION GUARD: locationId="${locationId}" is school but presence="${presenceStatus}" — rejected. Replacing with home="${homeLocId || 'none'}"`);
+      sanitizedLocationId = homeLocId;
+      audit.diagnostics.school_contamination_guard = {
+        rejected_id: locationId,
+        rejected_reason: `school_id_but_presence_is_${presenceStatus}`,
+        replaced_with: homeLocId || null,
+      };
+    }
+  }
+
   let locationRecord = null;
   let effectiveZoneName = zoneName;
   let zoneImages = [];
 
-  if (locationId) {
+  if (sanitizedLocationId) {
     try {
       const locList = await base44.asServiceRole.entities.LocationReference.filter(
-        { id: locationId }, null, 1
+        { id: sanitizedLocationId }, null, 1
       ).catch(() => []);
       locationRecord = locList?.[0] || null;
 
@@ -235,7 +262,8 @@ export async function buildImageGenerationContext({
   }
 
   audit.diagnostics.location = {
-    location_id: locationId || null,
+    location_id: sanitizedLocationId || null,
+    original_location_id: locationId !== sanitizedLocationId ? locationId : undefined,
     location_name: locationRecord?.name || null,
     zone_name: effectiveZoneName || null,
     zone_images_count: zoneImages.length,
@@ -255,7 +283,7 @@ export async function buildImageGenerationContext({
       precedence_reason: outfitPrecedenceReason,
     },
     location: {
-      location_id: locationId,
+      location_id: sanitizedLocationId,
       location_name: locationRecord?.name,
       zone_name: effectiveZoneName,
       zone_images: zoneImages,
