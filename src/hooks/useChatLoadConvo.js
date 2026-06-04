@@ -249,11 +249,8 @@ export function useChatLoadConvo({
           console.log(`[CHAT_LOAD] Message.filter START convoId=${convoId} window=${MSG_WINDOW} t=${Date.now()}`);
           traceRequest('Message.filter', { caller: 'useChatLoadConvo', page: getActiveContext().page, status: 'ALLOWED', detail: `convoId=${convoId} window=${MSG_WINDOW}` });
           let loadedMsgs;
+          let rawCountBeforeFilter = 0;
           try {
-            // CRITICAL: Exclude archived messages from the initial visible window.
-            // Archived messages have archived_date set — they were moved to long-term storage.
-            // The initial 200-message window should only show non-archived (live) messages.
-            // Archived messages are still stored in DB and restorable via ArchiveNotice.
             loadedMsgs = await retryAfter8s(() =>
               base44.entities.Message.filter(
                 { conversation_id: convoId },
@@ -261,24 +258,20 @@ export function useChatLoadConvo({
                 MSG_WINDOW
               )
             , 'Message.filter');
-            // Filter archived messages client-side — $exists: false can strip legacy messages
-            // that don't have archived_date in their schema (saved before the field was added)
-            // Also filter out date-divider records created by the now-archived createDailyDateMarker
-            // function. These have sender_type='system' and content like "—— Monday, June 1, 2026 ——".
-            // Date dividers are UI-only and derived from real message timestamps at render time.
+            // rawCountBeforeFilter: captured before client-side filtering so hasOlderMessages
+            // uses the server-returned count, not the post-filter count which may fall below MSG_WINDOW.
+            rawCountBeforeFilter = Array.isArray(loadedMsgs) ? loadedMsgs.length : 0;
             if (Array.isArray(loadedMsgs)) {
               loadedMsgs = loadedMsgs.filter(m => {
                 if (m.archived_date) return false;
-                // Exclude legacy date-marker records (sender_type='system' + date-like content)
                 if (m.sender_type === 'system') return false;
-                // Exclude any message whose content matches a date-divider pattern
                 const c = (m.content || '').trim();
                 if (c && /^[-–—]{2,}/.test(c) && /[-–—]{2,}$/.test(c) && /\d{4}/.test(c)) return false;
                 if (c && /^[-–—,.\s]{0,8}(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(c) && /\d{4}/.test(c)) return false;
                 return true;
               });
             }
-            console.log(`[CHAT_LOAD] Message.filter DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
+            console.log(`[CHAT_LOAD] Message.filter DONE raw=${rawCountBeforeFilter} filtered=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
           } catch (err) {
             if (is429(err)) {
               console.error(`[CHAT_LOAD] Message.filter EXHAUSTED after retry — showing soft warning t=${Date.now()}`);
@@ -308,8 +301,11 @@ export function useChatLoadConvo({
             // Pagination cursor = oldest timestamp currently in the visible window
             oldestMsgTimestampRef.current = sorted[0]?.created_date || sorted[0]?.timestamp || null;
 
-            // Signal UI to show "Load older messages" button only if we hit the window ceiling
-            const hasOlder = loadedMsgs.length >= MSG_WINDOW;
+            // Signal UI to show "Load older messages" button if we hit the window ceiling.
+            // Use rawCountBeforeFilter — if the server returned a full window, older messages
+            // likely exist even if client filtering reduced the visible count below MSG_WINDOW.
+            // Using filtered count would hide the button when system/archived records were stripped.
+            const hasOlder = rawCountBeforeFilter >= MSG_WINDOW;
             if (setHasOlderMessages) setHasOlderMessages(hasOlder);
 
             // CONTINUITY GUARD: never replace a larger visible set with a smaller server result.

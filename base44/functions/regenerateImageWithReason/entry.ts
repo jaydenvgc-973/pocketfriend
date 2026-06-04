@@ -1165,13 +1165,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── CLASSIFICATION-FIRST SANITIZER ────────────────────────────────────────
-    // SYNC NOTE: This sanitizer logic is intentionally identical to the one in
-    // generateImageAsync. Since Deno functions cannot share local imports, both
-    // functions inline this code. If you change one, you MUST change the other.
-    // The authoritative copy lives in generateImageAsync (classifySceneContext +
-    // sanitizePrompt). Any drift between the two is a bug.
-
+    // ── CLASSIFICATION-FIRST SANITIZER (mirrors generateImageAsync — keep in sync) ──────────────
     function classifySceneContext(p) {
       const lower = p.toLowerCase();
       const explicitSignals = [
@@ -1514,21 +1508,8 @@ Deno.serve(async (req) => {
     console.log(`[regenerateImageWithReason] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length} | reason=${reason} | includeUser=${!!includeUserSubject}`);
 
     // ── SAFEGUARD: NO SILENT DOWNGRADE RULE ──────────────────────────────────
-    // If the original image was a multi-subject image (image_type=multi OR subject_count>1
-    // OR subjects.length>1), we MUST NOT silently downgrade to single-subject regeneration.
-    //
-    // Downgrade happens when:
-    //   - ctx.subjects is missing (schema stripped it before fix)
-    //   - ctx.image_type is 'multi' but subjects array is empty
-    //   - subject_count > 1 but subjects array has < 2 entries
-    //
-    // If the sealed identity bundle is broken for a multi-subject image: FAIL VISIBLY.
-    // Do NOT improvise. Do NOT infer subjects from prompt text. Do NOT degrade to single-character.
-    // Identity drift from group → single is worse than a visible error.
-    //
-    // LEGACY CONTRACT: single-character images (no subjects array, image_type='character') are
-    // explicitly allowed to use the legacy single-subject path. This is not a downgrade — it is
-    // the correct path for images that were never multi-subject.
+    // Multi-subject image with broken/missing bundle → BLOCK (don't silently degrade to single).
+    // Single-character images (image_type='character') → always allowed on legacy single-subject path.
     const declaredAsMulti = ctx.image_type === 'multi' || ctx.subject_type === 'multi' || (ctx.subject_count && ctx.subject_count > 1);
     const hasSubjectBundle = Array.isArray(ctx.subjects) && ctx.subjects.length >= 2;
     const hasLegacySubjectBundle = Array.isArray(ctx.subjects) && ctx.subjects.length === 1;
@@ -1937,9 +1918,21 @@ Deno.serve(async (req) => {
       return Response.json({ success: false, error: 'Message ID mismatch — aborting write.' }, { status: 400 });
     }
 
-    // Persist updated camera variables so the NEXT regeneration can compare against this one
+    // Persist corrected location + camera. wrong_location MUST overwrite all location fields —
+    // stale ctx.location_name/id/zone_name must NOT survive after a successful location correction.
+    const locationContextPatch = (reason === 'wrong_location')
+      ? {
+          location_id:               manualLocationId || sanitizedOriginalLocId || ctx.location_id || null,
+          location_name:             resolvedLocationName   || ctx.location_name || null,
+          zone_name:                 resolvedZoneName       || ctx.zone_name || null,
+          loc_category:              resolvedLocCategory    || ctx.loc_category || null,
+          location_reference_images: envRefs.slice(0, 4),
+        }
+      : {};
+
     const updatedContext = {
       ...(ctx || {}),
+      ...locationContextPatch,
       camera_variables: acceptedCameraVars,
     };
 
@@ -1968,7 +1961,11 @@ Deno.serve(async (req) => {
       messageId,
       reason,
       cameraVariables: acceptedCameraVars,
-      // Identity proof fields — always included so the UI can show what refs were actually used
+      // Location fields — always included so UI can update tag/caption immediately after regen
+      location_id:   updatedContext.location_id   || null,
+      location_name: updatedContext.location_name || null,
+      zone_name:     updatedContext.zone_name     || null,
+      // Identity proof fields
       selected_subject_roles: selectedSubjectRoles,
       user_selected_as_subject: userSelectedAsSubject,
       user_ref_count: userRefs.length,

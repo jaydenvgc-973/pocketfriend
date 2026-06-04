@@ -36,13 +36,14 @@ export default function MessageBubble({ message, character, showName = false, on
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenError, setRegenError] = useState(null);
+  // Local override for generation_context — updated immediately on successful wrong_location regen
+  // so the location tag updates without waiting for subscription to push the DB write back.
+  const [localGenCtxOverride, setLocalGenCtxOverride] = useState(null);
 
   // ── CORRUPTED METADATA DETECTION ─────────────────────────────────────────
-  // A multi-subject image where subjects[] is missing/empty is UNSAFE to regenerate.
-  // Regenerating it would silently produce a single-character image — identity drift.
-  // Rule: if image_type/subject_type/subject_count declares multi but subjects[] is missing → corrupted.
-  // Legacy single-subject images (no image_type, no subjects[]) are SAFE — legacy_single_valid path.
-  const genCtx = message.generation_context || {};
+  // genCtx: use localGenCtxOverride when present (set after wrong_location regen so tag updates
+  // immediately without waiting for subscription push).
+  const genCtx = localGenCtxOverride || message.generation_context || {};
   const declaredAsMulti = genCtx.image_type === 'multi' || genCtx.subject_type === 'multi' || (genCtx.subject_count && genCtx.subject_count > 1);
   const hasSubjectBundle = Array.isArray(genCtx.subjects) && genCtx.subjects.length >= 2;
   const isCorruptedMultiContext = declaredAsMulti && !hasSubjectBundle;
@@ -275,6 +276,16 @@ export default function MessageBubble({ message, character, showName = false, on
           setImgLoadError(false);
           setImgRetryKey(0);
           onImageLoaded?.(message.id, returnedUrl);
+          // wrong_location: immediately update local genCtx override so the location tag
+          // reflects the corrected location without waiting for subscription push.
+          if (reason === 'wrong_location' && (res?.data?.location_name || res?.data?.location_id)) {
+            setLocalGenCtxOverride(prev => ({
+              ...(prev || message.generation_context || {}),
+              location_id:   res.data.location_id   || null,
+              location_name: res.data.location_name || null,
+              zone_name:     res.data.zone_name     || null,
+            }));
+          }
         }
       }
       setShowRegenModal(false);

@@ -207,25 +207,36 @@ Deno.serve(async (req) => {
 
     const results = [];
 
-    // ── Step 1: Load the character (Maria Vanessa Anderson — at home with real home) ─
-    // Using service role to bypass RLS for diagnostic
-    // Use user-scoped read (Character RLS enforces owner_email = user.email even for service role)
-    let charList = await base44.entities.Character.filter(
-      { resolved_presence_status: 'home' },
-      null, 5
+    // ── Step 1: Load characters — home AND college/university students ──────────────
+    // CRITICAL: Must include school-attending characters (presence=at_school) in proof.
+    // The original bug manifested as school-labeled images on home-attending characters.
+    // Proof is only meaningful if both home and school characters are tested.
+    const homeList = await base44.entities.Character.filter(
+      { resolved_presence_status: 'home' }, null, 3
     ).catch(() => []);
-    if (!charList || charList.length === 0) {
-      charList = await base44.entities.Character.filter(
-        { location_status: 'home' },
-        null, 5
-      ).catch(() => []);
-    }
+    const schoolList = await base44.entities.Character.filter(
+      { resolved_presence_status: 'at_school' }, null, 3
+    ).catch(() => []);
+    // Also include enrolled students regardless of current presence
+    const enrolledList = await base44.entities.Character.filter(
+      { student_status: 'enrolled' }, null, 3
+    ).catch(() => []);
+
+    // Deduplicate by id — school/enrolled may overlap
+    const seen = new Set();
+    const combined = [...homeList, ...schoolList, ...enrolledList].filter(c => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+
+    const charList = combined.slice(0, 5);
 
     if (!charList || charList.length === 0) {
-      return Response.json({ error: 'No active_created_character at home found for this account', user: user.email });
+      return Response.json({ error: 'No characters found for this account', user: user.email });
     }
 
-    for (const charRecord of charList.slice(0, 2)) {
+    for (const charRecord of charList) {
       const charResult = {
         character_id: charRecord.id,
         character_name: charRecord.name,
@@ -239,13 +250,18 @@ Deno.serve(async (req) => {
       // ── Step 2: Location resolution — mirrors generateImageAsync priority stack ───
       const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || '';
       const resolvedLocId = charRecord.resolved_current_location_id || null;
+      const wLoc = charRecord.current_work_location_id || charRecord.occupation_location_id || null;
+      const sLoc = charRecord.current_school_location_id || charRecord.education_location_id || null;
+      const hLoc = charRecord.current_home_location_id || charRecord.home_location_id || null;
 
       let locationId = null;
       let locationSource = null;
 
-      // Layer 1: work schedule (skip — no work shift for Maria)
-      // Layer 2: school schedule (skip — not enrolled)
-      // Layer 3: incarceration (skip — not jailed)
+      // Layer 3: incarceration
+      if (!locationId && charRecord.is_jailed && charRecord.incarceration_facility_id) {
+        locationId = charRecord.incarceration_facility_id;
+        locationSource = 'layer3_incarceration';
+      }
       // Layer 4: resolved_current_location_id
       if (!locationId && resolvedLocId) {
         locationId = resolvedLocId;
@@ -253,14 +269,20 @@ Deno.serve(async (req) => {
       }
       // Layer 5: presence-status-derived
       if (!locationId) {
-        if (presenceStatus === 'home' || presenceStatus === 'sleeping' || presenceStatus === 'napping') {
-          locationId = charRecord.current_home_location_id || null;
-          locationSource = locationId ? 'layer5_presence_home_to_current_home_location_id' : null;
+        if (presenceStatus === 'at_work') {
+          locationId = wLoc;
+          locationSource = locationId ? 'layer5_presence_at_work' : null;
+        } else if (presenceStatus === 'at_school') {
+          locationId = sLoc;
+          locationSource = locationId ? 'layer5_presence_at_school' : null;
+        } else if (presenceStatus === 'home' || presenceStatus === 'sleeping' || presenceStatus === 'napping') {
+          locationId = hLoc;
+          locationSource = locationId ? 'layer5_presence_home' : null;
         }
       }
       // Layer 6: absolute last resort
       if (!locationId) {
-        locationId = charRecord.current_home_location_id || null;
+        locationId = hLoc || null;
         locationSource = locationId ? 'layer6_last_resort_home' : 'no_location_found';
       }
 
@@ -353,15 +375,28 @@ Deno.serve(async (req) => {
       const hasCharRefs = charResult.char_refs.reference_image_count > 0 || charResult.char_refs.avatar_url_accessible;
       const pathsMatch = charResult.regenerate_path_simulation.divergence_check.paths_match;
 
+      // Correct expected location depends on presence
+      const expectedLocId = presenceStatus === 'at_school' ? sLoc
+        : presenceStatus === 'at_work' ? wLoc
+        : hLoc;
+      const locationMatchesExpected = !!(locationId && expectedLocId && locationId === expectedLocId);
       charResult.verdict = {
-        location_resolves_to_actual_home: locationId === charRecord.current_home_location_id,
-        home_has_real_zone_photos: hasRealEnvRefs,
+        presence_status: presenceStatus,
+        expected_location_id: expectedLocId || null,
+        expected_location_type: presenceStatus === 'at_school' ? 'school' : presenceStatus === 'at_work' ? 'work' : 'home',
+        location_resolves_to_expected: locationMatchesExpected,
+        location_resolves_to_actual_home: locationId === hLoc,
+        has_real_zone_photos: hasRealEnvRefs,
         char_refs_available: hasCharRefs,
         original_and_regen_paths_match: pathsMatch,
         outfit_resolved: !!outfitResult.text,
-        overall: (locationId === charRecord.current_home_location_id && hasRealEnvRefs && pathsMatch)
-          ? 'PASS — location resolves to actual home with real zone photos, paths match'
-          : 'FAIL — see above fields for details',
+        overall: (locationMatchesExpected && hasRealEnvRefs && pathsMatch)
+          ? `PASS — location resolves to ${presenceStatus === 'at_school' ? 'school' : presenceStatus === 'at_work' ? 'work' : 'home'} with real zone photos, paths match`
+          : !locationMatchesExpected
+          ? `FAIL — location mismatch: resolved="${locationId}" expected="${expectedLocId}" presence="${presenceStatus}"`
+          : !hasRealEnvRefs
+          ? 'FAIL — no real zone photos at resolved location'
+          : 'FAIL — paths diverge between generate and regen',
       };
 
       results.push(charResult);
@@ -372,13 +407,14 @@ Deno.serve(async (req) => {
     // Compact summary — strip zone_resolution_by_prompt details to avoid truncation
     const compactResults = results.map(r => ({
       character_name: r.character_name,
-      presence: r.resolved_presence_status,
+      presence: r.resolved_presence_status || r.location_status,
+      expected_location_type: r.verdict?.expected_location_type,
       resolved_location_id: r.resolved_location_id,
       location_resolution_source: r.location_resolution_source,
       location_name: r.location_name,
-      location_matches_home: r.verdict?.location_resolves_to_actual_home,
+      location_matches_expected: r.verdict?.location_resolves_to_expected,
       zones_with_real_photos: (r.location_zones_available || []).filter(z => z.has_real_uploaded_photos).map(z => z.zone_name),
-      home_has_real_zone_photos: r.verdict?.home_has_real_zone_photos,
+      has_real_zone_photos: r.verdict?.has_real_zone_photos,
       outfit_text: r.outfit_resolved?.text || null,
       outfit_source: r.outfit_resolved?.source,
       original_and_regen_paths_match: r.verdict?.original_and_regen_paths_match,
@@ -389,20 +425,27 @@ Deno.serve(async (req) => {
       divergence_check: r.regenerate_path_simulation?.divergence_check,
     }));
 
+    // Compact output to avoid response truncation
+    const miniResults = compactResults.map(r => ({
+      name: r.character_name,
+      presence: r.presence,
+      expected_type: r.expected_location_type,
+      location: r.location_name,
+      resolution: r.location_resolution_source,
+      match: r.location_matches_expected,
+      zone_photos: r.has_real_zone_photos,
+      paths_match: r.original_and_regen_paths_match,
+      verdict: r.verdict,
+    }));
+
     return Response.json({
       proof_title: 'Image Location Continuity Proof',
       run_at_et: etNow.toLocaleString('en-US', { timeZone: 'America/New_York' }),
       account: user.email,
       characters_tested: results.length,
-      results: compactResults,
-      summary: {
-        all_pass: results.every(r => r.verdict?.overall?.startsWith('PASS')),
-        failures: results.filter(r => r.verdict?.overall?.startsWith('FAIL')).map(r => ({
-          character: r.character_name,
-          reason: r.verdict?.overall,
-          location_source: r.location_resolution_source,
-        })),
-      },
+      all_pass: results.every(r => r.verdict?.overall?.startsWith('PASS')),
+      failures: results.filter(r => r.verdict?.overall?.startsWith('FAIL')).map(r => r.character_name + ': ' + r.verdict?.overall),
+      results: miniResults,
     });
 
   } catch (error) {
