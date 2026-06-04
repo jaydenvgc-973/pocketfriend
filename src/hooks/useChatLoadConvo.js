@@ -257,7 +257,7 @@ export function useChatLoadConvo({
             // recent active messages out of the returned set — causing them to appear missing on load.
             loadedMsgs = await retryAfter8s(() =>
               base44.entities.Message.filter(
-                { conversation_id: convoId, archived_date: { $exists: false } },
+                { conversation_id: convoId },
                 "-created_date",
                 MSG_WINDOW
               )
@@ -556,9 +556,9 @@ export function useChatLoadConvo({
     console.log(`[CHAT_LOAD] loadOlderMessages START cursor=${cursor} convoId=${convoId}`);
 
     try {
-      // Server-side $lt cursor + exclude archived server-side so archived records don't consume pagination slots.
+      // Server-side $lt cursor — exclude archived messages client-side (archived_date: { $exists: false } is not supported)
       const olderRaw = await base44.entities.Message.filter(
-        { conversation_id: convoId, created_date: { $lt: cursor }, archived_date: { $exists: false } },
+        { conversation_id: convoId, created_date: { $lt: cursor } },
         "-created_date",
         PAGINATION_PAGE
       );

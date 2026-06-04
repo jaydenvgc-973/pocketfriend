@@ -1570,14 +1570,11 @@ Deno.serve(async (req) => {
         const _pl = (sanitizedPrompt || prompt || '').toLowerCase();
         const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house))\b/.test(_pl);
         const _work = /\b(at (my |his |her )?(work|job|office|workplace|store|restaurant|bar|studio)|on the job|during (my|his|her) (shift|work day)|busy day at work|work today|yesterday at work|busy at work|at the (office|store|restaurant|bar|studio|workplace)|his (job|office|shift)|her (job|office|shift))\b/.test(_pl);
-        // SCHOOL KEYWORD GUARD: enrollment alone ≠ current school presence. Only fire when at_school.
-        // ALSO fires when prompt contains school/class/lecture keywords — conversation context is evidence.
+        // SCHOOL: canonical presence === 'at_school' is the SOLE authority. Prompt keywords must NOT override presence.
         const _presenceForKw = charRecord.resolved_presence_status || charRecord.location_status || '';
-        const _schoolKeywordInPrompt = /\b(at (my |his |her )?(school|campus|class|lecture|university|college)|on campus|in class|after (school|class)|his (school|campus)|her (school|campus)|in the (classroom|lecture|auditorium|lab|library))\b/.test(_pl);
-        const _school = (_presenceForKw === 'at_school' || _schoolKeywordInPrompt) && (charRecord.current_school_location_id || charRecord.education_location_id);
+        const _school = (_presenceForKw === 'at_school') && (charRecord.current_school_location_id || charRecord.education_location_id);
 
         // Prompt keyword home only accepted when NOT on shift.
-        // Work-shift schedule authority outranks prompt drift.
         if (_home && !_effectiveWorkLocId) {
           locationId = charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null;
           if (locationId) console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME (off shift) → ${locationId}`);
@@ -1589,14 +1586,7 @@ Deno.serve(async (req) => {
           locationId = charRecord.current_school_location_id || charRecord.education_location_id || null;
         }
 
-        // ── PRESENCE-FIRST AUTHORITY ─────────────────────────────────────────────
-        // PRIORITY ORDER:
-        //   1. Work schedule (if on shift) — schedule authority is highest
-        //   2. School schedule
-        //   3. Incarcerated
-        //   4. resolved_current_location_id (DB truth)
-        //   5. Presence-status-derived fallback
-        //   6. Home absolute last resort
+        // ── PRESENCE-FIRST AUTHORITY (work→school→jail→resolved→fallback→home) ─
         if (!locationId) {
           const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || '';
           const resolvedLocId = charRecord.resolved_current_location_id || null;
