@@ -1632,11 +1632,16 @@ Deno.serve(async (req) => {
           }
 
           // ── LAYER 4: resolved_current_location_id — DB truth ─────────────────
-          // Only trust this when it is a non-home location, OR when presence actually is home.
-          // Never silently fall to home when the character is visiting/traveling/at_work.
+          // HARD GUARD: if this ID equals the school location but presence is NOT at_school,
+          // it is stale/polluted — reject it so home fallback fires correctly.
           if (!locationId && resolvedLocId) {
-            locationId = resolvedLocId;
-            console.log(`[generateImageAsync] PRESENCE-AUTHORITY: using resolved_current_location_id="${resolvedLocId}" (presence="${presenceStatus}")`);
+            const _schoolLocId = charRecord.current_school_location_id || charRecord.education_location_id || null;
+            if (_schoolLocId && resolvedLocId === _schoolLocId && presenceStatus !== 'at_school') {
+              console.warn(`[generateImageAsync] ⛔ LAYER-4: school ID rejected from resolved_current_location_id — presence="${presenceStatus}"`);
+            } else {
+              locationId = resolvedLocId;
+              console.log(`[generateImageAsync] LAYER-4: resolved_current_location_id="${resolvedLocId}" presence="${presenceStatus}"`);
+            }
           }
 
           // ── LAYER 5: Presence-status-derived fallback ─────────────────────────
