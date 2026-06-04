@@ -1566,7 +1566,7 @@ Deno.serve(async (req) => {
     }
 
     let envRefs = [];
-    let resolvedLocationName=null,resolvedZoneName=null,resolvedLocCategory=null;
+    let resolvedLocationName=null,resolvedZoneName=null,resolvedLocCategory=null,resolvedLocationId=null;
 
     // ── LOCATION RESOLUTION PRIORITY ─────────────────────────────────────────
     // 1. manualLocationId (from Media Grid dropdown) — HIGHEST PRIORITY, UI is the authority
@@ -1689,7 +1689,7 @@ Deno.serve(async (req) => {
         }
 
         if (locRecord) {
-          resolvedLocationName = locRecord.name;
+          resolvedLocationName = locRecord.name; resolvedLocationId = locRecord.id; // canonical resolved ID for marker
           resolvedLocCategory = locRecord.category || null;
           const promptLower = (prompt || '').toLowerCase();
           // Zone priority: UI-selected zone > stored generation_context zone > keyword auto-resolve
@@ -1887,7 +1887,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       character_id: characterId || null,
       character_reference_images: charRefs,
       user_reference_images: userRefs,
-      location_id: charRecord?.resolved_current_location_id || charRecord?.current_home_location_id || null,
+      location_id: resolvedLocationId || charRecord?.resolved_current_location_id || charRecord?.current_home_location_id || null,
       zone_name: resolvedZoneName,
       location_name: resolvedLocationName,
       loc_category: resolvedLocCategory || null,
