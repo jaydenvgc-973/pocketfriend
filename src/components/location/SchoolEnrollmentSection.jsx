@@ -121,6 +121,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             enrollment_type: enrollmentType,
             scholarship_enabled: scholarshipEnabled,
             tuition_amount: scholarshipEnabled ? 0 : (location.tuition_cost || 0),
+            lives_on_campus: livesOnCampus,
             status: 'active',
           }));
 
@@ -214,6 +215,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
       start_date: student.start_date ? new Date(student.start_date).toISOString().slice(0, 10) : '',
       end_date: student.end_date ? new Date(student.end_date).toISOString().slice(0, 10) : '',
       scholarship_enabled: student.scholarship_enabled || false,
+      lives_on_campus: student.lives_on_campus || false,
     });
   };
 
@@ -225,8 +227,10 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
     const newStartDate = editFields.start_date ? new Date(editFields.start_date).toISOString() : student.start_date;
     const newEndDate = editFields.end_date ? new Date(editFields.end_date).toISOString() : student.end_date;
     const newScholarship = editFields.scholarship_enabled;
+    const newLivesOnCampus = editFields.lives_on_campus || false;
+    const prevLivesOnCampus = student.lives_on_campus || false;
 
-    // 1. Update LocationReference.enrolled_students
+    // 1. Update LocationReference.enrolled_students — always persist lives_on_campus
     const updatedStudents = (location.enrolled_students || []).map(s =>
       s.character_id === student.character_id
         ? {
@@ -237,14 +241,35 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             end_date: newEndDate,
             scholarship_enabled: newScholarship,
             tuition_amount: newScholarship ? 0 : (location.tuition_cost || 0),
+            lives_on_campus: newLivesOnCampus,
           }
         : s
     );
     await base44.entities.LocationReference.update(location.id, { enrolled_students: updatedStudents });
 
-    // 2. Sync dates back to Character.education_enrollments[] and Character.completed_education[]
-    // This keeps the character profile education section in sync with the location page.
+    // 2. Sync campus residency change to Location.residents and Character.current_home_location_id
     const char = characters.find(c => c.id === student.character_id);
+    if (char && newLivesOnCampus !== prevLivesOnCampus) {
+      let newResidents = [...(location.residents || [])];
+      if (newLivesOnCampus) {
+        // Adding to campus — set character home to school location
+        if (!newResidents.some(r => r.character_id === char.id)) {
+          newResidents.push({ character_id: char.id, character_name: char.name, moved_in_date: new Date().toISOString() });
+        }
+        await base44.entities.LocationReference.update(location.id, { residents: newResidents });
+        await base44.entities.Character.update(char.id, { current_home_location_id: location.id });
+      } else {
+        // Removing from campus — restore home only if currently pointing to this school
+        newResidents = newResidents.filter(r => r.character_id !== char.id);
+        await base44.entities.LocationReference.update(location.id, { residents: newResidents });
+        if (char.current_home_location_id === location.id) {
+          await base44.entities.Character.update(char.id, { current_home_location_id: null });
+        }
+      }
+    }
+
+    // 3. Sync dates back to Character.education_enrollments[] and Character.completed_education[]
+    // This keeps the character profile education section in sync with the location page.
     if (char) {
       const syncFields = {
         course_name: newCourseName,
@@ -491,7 +516,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             .filter(s => s.status === 'active')
             .map((student, idx) => {
               const char = characters.find(c => c.id === student.character_id);
-              const isOnCampus = (location.residents || []).some(r => r.character_id === student.character_id);
+              // Campus residency truth: read from saved enrollment record, not from residents array
+              // (residents array is a secondary sync; the enrollment record is the source of truth)
+              const isOnCampus = student.lives_on_campus === true;
               const isEditing = editingStudentId === student.character_id;
               return (
                 <div key={idx} className="bg-card border border-border rounded-xl p-3 space-y-2">
@@ -503,18 +530,22 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                     }
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-foreground">{student.character_name}</p>
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap mt-0.5">
                         {student.scholarship_enabled && (
                           <div className="flex items-center gap-1">
                             <Award className="w-3 h-3 text-yellow-400" />
                             <span className="text-xs text-yellow-400">Scholarship</span>
                           </div>
                         )}
-                        {isOnCampus && (
-                          <span className="text-xs text-blue-400 flex items-center gap-1">
-                            <Home className="w-3 h-3" /> On campus
-                          </span>
-                        )}
+                        {/* Campus residency — ALWAYS shown, never inferred from enrollment alone */}
+                        <span className={`text-xs flex items-center gap-1 px-1.5 py-0.5 rounded-md border ${
+                          isOnCampus
+                            ? 'text-blue-400 bg-blue-500/10 border-blue-500/30'
+                            : 'text-muted-foreground bg-secondary/50 border-border'
+                        }`}>
+                          <Home className="w-3 h-3" />
+                          {isOnCampus ? 'Lives on campus' : 'Does not live on campus'}
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
@@ -622,6 +653,40 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                         />
                         <span className="text-xs text-foreground">Scholarship (free tuition)</span>
                       </label>
+                      {/* Campus residency — editable, persisted, drives location logic */}
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground uppercase tracking-wider block">Campus Residency</label>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditFields(p => ({ ...p, lives_on_campus: true }))}
+                            className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${
+                              editFields.lives_on_campus
+                                ? 'bg-blue-500/10 border-blue-500/50 text-blue-400'
+                                : 'bg-card border-border text-muted-foreground hover:border-blue-500/30'
+                            }`}
+                          >
+                            🏠 Lives on campus
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditFields(p => ({ ...p, lives_on_campus: false }))}
+                            className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${
+                              !editFields.lives_on_campus
+                                ? 'bg-secondary border-border text-foreground'
+                                : 'bg-card border-border text-muted-foreground hover:border-border'
+                            }`}
+                          >
+                            🏘 Does not live on campus
+                          </button>
+                        </div>
+                        {editFields.lives_on_campus && (
+                          <p className="text-xs text-blue-400/80">Character's home will be set to this campus.</p>
+                        )}
+                        {!editFields.lives_on_campus && (
+                          <p className="text-xs text-muted-foreground">Character sleeps at their own home, not on campus.</p>
+                        )}
+                      </div>
                       <div className="flex gap-2">
                         <Button size="sm" onClick={() => saveEdit(student)} className="flex-1 h-7 text-xs rounded-lg gap-1">
                           <Check className="w-3 h-3" /> Save
@@ -648,9 +713,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                         size="sm"
                         variant="outline"
                         onClick={() => handleUnenroll(student.character_id, 'dropped')}
-                        className="h-7 px-2 rounded-lg text-destructive hover:text-destructive"
+                        className="flex-1 h-7 text-xs rounded-lg text-destructive hover:text-destructive gap-1"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-3 h-3" /> Dropout
                       </Button>
                     </div>
                   )}

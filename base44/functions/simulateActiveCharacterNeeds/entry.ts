@@ -28,9 +28,14 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 const clamp = (v) => Math.max(0, Math.min(100, v));
 
 // ── RATES ────────────────────────────────────────────────────────────────────
+// ENERGY CALIBRATION:
+//   sleeping/passed_out: +20/hr → 0→100 in ~5 hours (required by spec)
+//   default awake:       -4/hr  → 75→critical(12) in ~16 hours (realistic full waking day)
+//   active contexts:     -5 to -7/hr → fatigue builds faster during demanding activity
+//   resting at home:     +8/hr  → gentle recovery without full sleep
 const RATES = {
-  sleeping:        { hunger: -1,   energy: +12, social: -0.5, health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
-  passed_out:      { hunger: -0.5, energy: +8,  social: -0.5, health: +0.5, mental: +1,   hygiene: 0,    comfort: +1   },
+  sleeping:        { hunger: -1,   energy: +20, social: -0.5, health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
+  passed_out:      { hunger: -0.5, energy: +14, social: -0.5, health: +0.5, mental: +1,   hygiene: 0,    comfort: +1   },
   hospitalized:    { hunger: -0.5, energy: +4,  social: -1,   health: +5,   mental: -0.5, hygiene: +1,   comfort: +2   },
   at_work:         { hunger: -4,   energy: -5,  social: +1,   health: -0.5, mental: -2,   hygiene: -2,   comfort: -2   },
   at_work_medical: { hunger: -5,   energy: -7,  social: -1,   health: -0.5, mental: -4,   hygiene: -3,   comfort: -4   },
@@ -39,16 +44,16 @@ const RATES = {
   work_off_shift:  { hunger: -3,   energy: -3,  social: -1,   health: -0.5, mental: -3,   hygiene: -2,   comfort: -4   },
   at_school:       { hunger: -3,   energy: -4,  social: +2,   health: -0.5, mental: -1,   hygiene: -1,   comfort: -1   },
   gym:             { hunger: -6,   energy: -7,  social: +1,   health: +1,   mental: +1,   hygiene: -5,   comfort: -2   },
-  bar_club:        { hunger: -2,   energy: -4,  social: +5,   health: -1,   mental: +1,   hygiene: -1,   comfort: -1   },
-  home_resting:    { hunger: -1,   energy: +3,  social: -1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +3   },
-  home_active:     { hunger: -2,   energy: -1,  social: -1,   health: 0,    mental: 0,    hygiene: -0.5, comfort: +1   },
+  bar_club:        { hunger: -2,   energy: -5,  social: +5,   health: -1,   mental: +1,   hygiene: -1,   comfort: -1   },
+  home_resting:    { hunger: -1,   energy: +8,  social: -1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +3   },
+  home_active:     { hunger: -2,   energy: -3,  social: -1,   health: 0,    mental: 0,    hygiene: -0.5, comfort: +1   },
   hospital:        { hunger: -1,   energy: +2,  social: -1,   health: +3,   mental: -1,   hygiene: 0,    comfort: +1   },
   food_drink:      { hunger: +15,  energy: +2,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
-  social_out:      { hunger: -2,   energy: -3,  social: +4,   health: 0,    mental: +1,   hygiene: -1,   comfort: -0.5 },
-  traveling:       { hunger: -3,   energy: -3,  social: -1,   health: 0,    mental: -1,   hygiene: -2,   comfort: -3   },
+  social_out:      { hunger: -2,   energy: -4,  social: +4,   health: 0,    mental: +1,   hygiene: -1,   comfort: -0.5 },
+  traveling:       { hunger: -3,   energy: -4,  social: -1,   health: 0,    mental: -1,   hygiene: -2,   comfort: -3   },
   eating:          { hunger: +15,  energy: +2,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
-  resting:         { hunger: -1,   energy: +6,  social: -0.5, health: +1,   mental: +2,   hygiene: 0,    comfort: +3   },
-  default:         { hunger: -2,   energy: -2,  social: -1,   health: 0,    mental: -0.5, hygiene: -1,   comfort: -1   },
+  resting:         { hunger: -1,   energy: +8,  social: -0.5, health: +1,   mental: +2,   hygiene: 0,    comfort: +3   },
+  default:         { hunger: -2,   energy: -4,  social: -1,   health: 0,    mental: -0.5, hygiene: -1,   comfort: -1   },
 };
 
 // ── THRESHOLDS ────────────────────────────────────────────────────────────────

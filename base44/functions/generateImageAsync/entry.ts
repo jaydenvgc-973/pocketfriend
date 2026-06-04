@@ -1324,18 +1324,7 @@ Deno.serve(async (req) => {
         console.log(`[OutfitAudit] closet_size:               ${(charRecord.character_closet || []).filter(o => o.outfit_id).length} outfits`);
         console.log(`[OutfitAudit] ══════════════════════════════════════════════`);
 
-        // ── APPEARANCE AUTHORITY SEPARATION ──────────────────────────────────────
-        // charDesc carries ONLY scene-neutral demographics (age range, gender).
-        // It must NOT carry appearance_notes or avatar_description_text — those are
-        // free-text prose fields that may reinvent hair, skin, body, and face,
-        // creating a second competing appearance authority in the same prompt.
-        //
-        // The ONLY appearance authority is buildAppearanceLockText(charRecord),
-        // which reads structured fields (ethnicities, appearance_lock.*) directly.
-        // No prose field may override or supplement that structured lock.
-        //
-        // appearance_notes and avatar_description_text are intentionally excluded here.
-        // They are not injected into the prompt anywhere — the canonical lock handles all appearance.
+        // charDesc: demographics only (age/gender). Appearance lock handled by buildAppearanceLockText.
         const parts = [
           charRecord.age_range ? `${charRecord.age_range} years old` : null,
           charRecord.gender || null,
@@ -1632,12 +1621,25 @@ Deno.serve(async (req) => {
           }
 
           // ── LAYER 4: resolved_current_location_id — DB truth ─────────────────
-          // HARD GUARD: if this ID equals the school location but presence is NOT at_school,
-          // it is stale/polluted — reject it so home fallback fires correctly.
+          // HARD GUARD 1: school ID rejected when presence is NOT at_school (stale/polluted).
+          // HARD GUARD 2: school ID rejected when NOT a campus resident. Enrollment≠residence.
           if (!locationId && resolvedLocId) {
             const _schoolLocId = charRecord.current_school_location_id || charRecord.education_location_id || null;
-            if (_schoolLocId && resolvedLocId === _schoolLocId && presenceStatus !== 'at_school') {
-              console.warn(`[generateImageAsync] ⛔ LAYER-4: school ID rejected from resolved_current_location_id — presence="${presenceStatus}"`);
+            if (_schoolLocId && resolvedLocId === _schoolLocId) {
+              const _enrollments = charRecord.education_enrollments || [];
+              const _activeEnrollment = _enrollments.find(e =>
+                (e.location_id === _schoolLocId || e.in_person_location_id === _schoolLocId) &&
+                e.status !== 'dropped' && e.status !== 'graduated'
+              );
+              const _isCampusResident = _activeEnrollment?.lives_on_campus === true;
+              if (presenceStatus !== 'at_school') {
+                console.warn(`[generateImageAsync] ⛔ LAYER-4: school ID rejected — presence="${presenceStatus}"`);
+              } else if (!_isCampusResident) {
+                console.warn(`[generateImageAsync] ⛔ LAYER-4: school ID rejected — not a campus resident`);
+              } else {
+                locationId = resolvedLocId;
+                console.log(`[generateImageAsync] LAYER-4: school accepted — at_school AND campus_resident=true`);
+              }
             } else {
               locationId = resolvedLocId;
               console.log(`[generateImageAsync] LAYER-4: resolved_current_location_id="${resolvedLocId}" presence="${presenceStatus}"`);
@@ -1837,9 +1839,6 @@ All reference images (if any) are environment/location refs only — do NOT trea
         lens_style: /selfie|phone selfie/.test(lower) ? 'phone' : /wide-?angle|fisheye/.test(lower) ? 'wide-angle' : /cinematic/.test(lower) ? 'cinematic' : 'standard',
       };
     }
-
-
-
     const structuredSubjects = [];
     if (charRecord || characterId) {
       structuredSubjects.push({
