@@ -1,19 +1,5 @@
-/**
- * regenerateImageWithReason — "Why Regenerate" handler.
- *
- * PIPELINE:
- *   - Reads generation_context saved on the message (set by generateImageAsync / mediaGridGenerate)
- *   - Uses that context as the source of truth: same character, same location, same zone
- *   - User corrections (wrong_location) update ONLY the environment refs
- *   - User corrections (dont_like, custom_prompt) update ONLY the prompt
- *   - Identity is NEVER discarded unless there are no refs
- *
- * RULES:
- *   - Never generate a random person
- *   - Never redesign the room
- *   - Never cross accounts
- *   - Avatar background = 0% influence on environment
- */
+// regenerateImageWithReason — "Why Regenerate" handler.
+// Reads generation_context from message, re-resolves identity/location, guards school contamination.
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // ── URL UTILITIES ─────────────────────────────────────────────────────────────
@@ -1273,49 +1259,44 @@ Deno.serve(async (req) => {
       return null;
     })();
 
-    // ── CAMPUS RESIDENCY GUARD — REGEN PATH ──────────────────────────────────
-    // Routes through campusResidencyGuard — canonical single source of truth.
-    // No inline logic. No "must stay in sync". The guard function owns all rules:
-    //   residential school_type required + at_school presence + lives_on_campus===true
-    //   Unknown school types are DENIED (not proven residential).
+    // ── CAMPUS RESIDENCY + STALE LOCATION GUARDS — REGEN PATH ───────────────
+    // Fires against ANY candidate that equals the school location ID, regardless of
+    // whether ctx.location_id was null, stale, or explicitly set.
     let sanitizedOriginalLocId = originalLocId;
     if (effectiveCharId && charResolvedRecord) {
       const charForGuard = charResolvedRecord;
       const schoolLocId = charForGuard.current_school_location_id || charForGuard.education_location_id || null;
       const homeLocId = charForGuard.current_home_location_id || charForGuard.home_location_id || null;
+      const presenceForGuard = charForGuard.resolved_presence_status || charForGuard.location_status || '';
 
+      // Guard 1: stored ctx.location_id equals school ID — validate campus residency
       if (originalLocId && schoolLocId && originalLocId === schoolLocId) {
         try {
           const _guardRes = await base44.asServiceRole.functions.invoke('campusResidencyGuard', { mode: 'resolveLocationWithSchoolGuard', character_id: charForGuard.id, candidate_location_id: originalLocId });
           if (_guardRes?.rejected) {
-            console.warn(`[regenerateImageWithReason] ⛔ CANONICAL GUARD rejected school ID — reason="${_guardRes.reason}" → home="${homeLocId || 'none'}"`);
+            console.warn(`[regen] ⛔ GUARD rejected stored school ID="${originalLocId}" reason="${_guardRes.reason}" → home="${homeLocId}"`);
             sanitizedOriginalLocId = homeLocId;
             resolvedLocationName = null;
             resolvedZoneName = null;
           } else {
-            console.log(`[regenerateImageWithReason] ✅ CANONICAL GUARD accepted school — rule="${_guardRes?.rule}"`);
+            console.log(`[regen] ✅ GUARD accepted school rule="${_guardRes?.rule}"`);
           }
         } catch (_ge) {
-          console.warn(`[regenerateImageWithReason] Canonical guard invoke failed (${_ge?.message}) — defaulting to home`);
+          console.warn(`[regen] GUARD invoke failed (${_ge?.message}) — defaulting to home`);
           sanitizedOriginalLocId = homeLocId;
           resolvedLocationName = null;
           resolvedZoneName = null;
         }
       }
-      const presenceForGuard = charForGuard.resolved_presence_status || charForGuard.location_status || '';
 
-      // Guard 2: traveling_to_location_id points to school but character is not actively traveling to school
-      // Enrollment ≠ residence. Active school travel requires travel_status="traveling_to_school".
-      // Any other state means the field is stale. It must NOT influence image location resolution.
+      // Guard 2: traveling_to_location_id is school but not actively traveling there
       const travelingToLocId = charForGuard.traveling_to_location_id || null;
       const travelStatus = charForGuard.travel_status || 'not_traveling';
       if (travelingToLocId && schoolLocId && travelingToLocId === schoolLocId) {
         const isActiveSchoolTravel = travelStatus === 'traveling_to_school' && presenceForGuard !== 'home';
         if (!isActiveSchoolTravel) {
-          console.warn(`[regenerateImageWithReason] ⛔ STALE SCHOOL TRAVEL GUARD: traveling_to_location_id="${travelingToLocId}" is school but travel_status="${travelStatus}" presence="${presenceForGuard}" — this field is stale and will not influence location resolution`);
-          // If the sanitized location still points at school (somehow), force home
           if (sanitizedOriginalLocId && schoolLocId && sanitizedOriginalLocId === schoolLocId) {
-            console.warn(`[regenerateImageWithReason]   sanitizedOriginalLocId was still school — forcing home="${homeLocId || 'none'}"`);
+            console.warn(`[regen] ⛔ STALE TRAVEL GUARD: forcing home="${homeLocId}"`);
             sanitizedOriginalLocId = homeLocId;
             resolvedLocationName = null;
             resolvedZoneName = null;
@@ -1325,7 +1306,7 @@ Deno.serve(async (req) => {
     }
 
     // ── LIVE LOCATION RE-RESOLVE — null ctx.location_id → character live state ──
-    // Matches generateImageAsync Layer 1-6 so both paths resolve identically.
+    // America/New_York is authoritative for all schedule evaluation.
     if (!sanitizedOriginalLocId && charResolvedRecord) {
       const chr = charResolvedRecord;
       const pres = chr.resolved_presence_status || chr.location_status || '';
@@ -1334,6 +1315,7 @@ Deno.serve(async (req) => {
       const sLoc = chr.current_school_location_id || chr.education_location_id || null;
       let isOnShift = false;
       if (wLoc && chr.work_start_time && chr.work_end_time && chr.work_days?.length) {
+        // Authoritative timezone: America/New_York — never use raw UTC or server-local
         const et = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
         const nm=et.getHours()*60+et.getMinutes(),dow=et.getDay();
         const [sh,sm]=chr.work_start_time.split(':').map(Number),[eh,em]=chr.work_end_time.split(':').map(Number);
@@ -1342,7 +1324,12 @@ Deno.serve(async (req) => {
         const ds=`${et.getFullYear()}-${String(et.getMonth()+1).padStart(2,'0')}-${String(et.getDate()).padStart(2,'0')}`;
         if(chr.work_exception_status==='called_out'&&chr.work_exception_date===ds)isOnShift=false;
       }
-      sanitizedOriginalLocId=isOnShift&&wLoc?wLoc:chr.is_jailed&&chr.incarceration_facility_id?chr.incarceration_facility_id:chr.student_status==='enrolled'&&pres==='at_school'&&sLoc?sLoc:chr.resolved_current_location_id||(pres==='at_work'?wLoc:null)||(pres==='home'||pres==='sleeping'||pres==='napping'?hLoc:null)||hLoc||null;
+      // Guard: resolved_current_location_id may be stale school ID — only trust it if at_school
+      const rawResolved = chr.resolved_current_location_id || null;
+      const resolvedIsSchool = rawResolved && (chr.current_school_location_id||chr.education_location_id) && rawResolved===(chr.current_school_location_id||chr.education_location_id);
+      const safeResolved = resolvedIsSchool && pres!=='at_school' ? hLoc : rawResolved;
+      if(resolvedIsSchool&&pres!=='at_school') console.warn(`[regen] STALE resolved_loc is school but pres="${pres}" → using home`);
+      sanitizedOriginalLocId=isOnShift&&wLoc?wLoc:chr.is_jailed&&chr.incarceration_facility_id?chr.incarceration_facility_id:chr.student_status==='enrolled'&&pres==='at_school'&&sLoc?sLoc:safeResolved||(pres==='at_work'?wLoc:null)||(pres==='home'||pres==='sleeping'||pres==='napping'?hLoc:null)||hLoc||null;
       if(sanitizedOriginalLocId)console.log(`[regen] LIVE RE-RESOLVE → loc="${sanitizedOriginalLocId}" pres="${pres}" shift=${isOnShift}`);
     }
 
@@ -1920,12 +1907,13 @@ Deno.serve(async (req) => {
 
     // Persist corrected location + camera. wrong_location MUST overwrite all location fields —
     // stale ctx.location_name/id/zone_name must NOT survive after a successful location correction.
+    // wrong_location: manualLocationId is the user's explicit correction — never fall back to stale ctx.location_id
     const locationContextPatch = (reason === 'wrong_location')
       ? {
-          location_id:               manualLocationId || sanitizedOriginalLocId || ctx.location_id || null,
-          location_name:             resolvedLocationName   || ctx.location_name || null,
-          zone_name:                 resolvedZoneName       || ctx.zone_name || null,
-          loc_category:              resolvedLocCategory    || ctx.loc_category || null,
+          location_id:               manualLocationId || null,
+          location_name:             resolvedLocationName || null,
+          zone_name:                 resolvedZoneName || null,
+          loc_category:              resolvedLocCategory || null,
           location_reference_images: envRefs.slice(0, 4),
         }
       : {};
