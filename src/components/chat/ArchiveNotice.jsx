@@ -14,12 +14,17 @@ export default function ArchiveNotice({ conversationId, characterId, characterNa
   useEffect(() => {
     if (!conversationId) return;
     let cancelled = false;
+    // CRITICAL: Use { archived_date: { $ne: null } } to find messages that are genuinely archived
+    // (have a real date string, not null). $exists:true matches null values too, causing false positives.
     base44.entities.Message.filter(
-      { conversation_id: conversationId, archived_date: { $exists: true } },
+      { conversation_id: conversationId },
       "-created_date",
-      1  // we only need to know if at least 1 exists
+      200
     ).then(msgs => {
-      if (!cancelled) setHasArchived(msgs.length > 0);
+      if (!cancelled) {
+        const genuinelyArchived = msgs.filter(m => m.archived_date && m.archived_date !== null);
+        setHasArchived(genuinelyArchived.length > 0);
+      }
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [conversationId]);
