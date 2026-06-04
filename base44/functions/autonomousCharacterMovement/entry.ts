@@ -587,6 +587,72 @@ Deno.serve(async (req) => {
           activeSession = activeSessions?.[0] || null;
         } catch { /* non-fatal */ }
 
+        // ── ORPHANED TRAVELING PRESENCE GUARD (before session commitment check) ────
+        // If the character's resolved_presence_status is 'traveling' but no active TravelSession
+        // backs it, that is an orphaned state written by a previously-cancelled createTravelSession.
+        // Clear it now to the canonical home/work/sleep presence so subsequent tiers work correctly.
+        // This is the upstream fix for the root cause: createTravelSession writes 'traveling' to
+        // resolved_presence_status, and cancellation paths never reset it.
+        if (char.resolved_presence_status === 'traveling' && !activeSession) {
+          const homeId = char.current_home_location_id || char.home_location_id || null;
+          const isShift = (
+            Array.isArray(char.work_days) && char.work_days.length > 0 &&
+            char.work_start_time && char.work_end_time && char.occupation_location_id
+          ) ? (() => {
+            const nowMin2 = nowET.getHours() * 60 + nowET.getMinutes();
+            const s = toMin(char.work_start_time), e = toMin(char.work_end_time);
+            if (s === null || e === null || !char.work_days.includes(nowET.getDay())) return false;
+            return e < s ? (nowMin2 >= s || nowMin2 < e) : (nowMin2 >= s && nowMin2 < e);
+          })() : false;
+          const isSleep = (char.sleep_start_time && char.wake_up_time) ? (() => {
+            const nowMin2 = nowET.getHours() * 60 + nowET.getMinutes();
+            const s = toMin(char.sleep_start_time), w = toMin(char.wake_up_time);
+            if (s === null || w === null) return false;
+            return s > w ? (nowMin2 >= s || nowMin2 < w) : (nowMin2 >= s && nowMin2 < w);
+          })() : false;
+          const todayET2 = nowET.toISOString().slice(0, 10);
+          const hasCallout2 = char.work_exception_status === 'called_out' && char.work_exception_date === todayET2;
+          const canonicalStatus = (isShift && !hasCallout2 && char.occupation_location_id)
+            ? 'at_work'
+            : isSleep ? 'sleeping'
+            : 'home';
+          const canonicalLocId = (isShift && !hasCallout2 && char.occupation_location_id)
+            ? char.occupation_location_id
+            : homeId;
+          const canonicalLocType = canonicalStatus === 'at_work' ? 'work' : 'home';
+          console.warn(`[autonomousMovement] ${char.name}: ORPHANED 'traveling' with no active session — clearing to '${canonicalStatus}' (canonical repair)`);
+          try {
+            await base44.entities.Character.update(char.id, {
+              resolved_presence_status:       canonicalStatus,
+              resolved_location_type:         canonicalLocType,
+              resolved_source_reason:         'orphaned_travel_state_cleared',
+              resolved_current_location_id:   canonicalLocId,
+              resolved_last_updated_at:       nowET.toISOString(),
+              travel_status:                  'not_traveling',
+              travel_destination_location_id: null,
+              traveling_to_location_id:       null,
+              traveling_to_location_name:     null,
+            });
+          } catch {
+            await base44.asServiceRole.entities.Character.update(char.id, {
+              resolved_presence_status:       canonicalStatus,
+              resolved_location_type:         canonicalLocType,
+              resolved_source_reason:         'orphaned_travel_state_cleared',
+              resolved_current_location_id:   canonicalLocId,
+              resolved_last_updated_at:       nowET.toISOString(),
+              travel_status:                  'not_traveling',
+              travel_destination_location_id: null,
+              traveling_to_location_id:       null,
+              traveling_to_location_name:     null,
+            }).catch(() => {});
+          }
+          // Update in-memory char so subsequent tiers in this iteration see the cleared state
+          char.resolved_presence_status = canonicalStatus;
+          char.resolved_source_reason   = 'orphaned_travel_state_cleared';
+          char.travel_status            = 'not_traveling';
+          moveLog.push(`${char.name}: orphaned 'traveling' cleared → '${canonicalStatus}'`);
+        }
+
         if (activeSession) {
           // COMMITMENT PROTECTION: sessions with interruption_allowed=false are commitment-driven
           // (character said "I'm on my way", accepted a plan, made a verbal promise).
