@@ -62,14 +62,6 @@ function isInSleepWindow(char, etTime) {
 
 /**
  * Compute canonical presence for an active_created_character that has no active TravelSession.
- *
- * PRIORITY ORDER (mirrors autonomousCharacterMovement Tier 3 / scheduledLocationEnforcement):
- *   1. Confinement (jail / house arrest) — absolute
- *   2. Sleep window — character's stored schedule OR derived from work schedule
- *   3. Work shift — character's stored work_days / work_start_time / work_end_time
- *   4. School schedule — student_status=enrolled AND education_location_id AND school hours active
- *   5. Default → home (valid real presence)
- *
  * Returns { resolved_presence_status, resolved_location_type, resolved_source_reason,
  *           resolved_current_location_id, resolved_current_location_name }
  */
@@ -77,7 +69,7 @@ function resolveCanonicalPresence(char, etTime) {
   const homeId   = char.current_home_location_id || char.home_location_id || null;
   const homeName = char.resolved_current_location_name || null;
 
-  // 1. Confinement — absolute, never override
+  // Jailed / house_arrest: do not move them
   if (char.is_jailed === true) {
     return {
       resolved_presence_status:       'incarcerated',
@@ -97,7 +89,7 @@ function resolveCanonicalPresence(char, etTime) {
     };
   }
 
-  // 2. Sleep window — check stored schedule first, then derive from work if no stored schedule
+  // Sleep window — only if sleep_start_time is set
   if (isInSleepWindow(char, etTime) && homeId) {
     return {
       resolved_presence_status:       'sleeping',
@@ -108,8 +100,8 @@ function resolveCanonicalPresence(char, etTime) {
     };
   }
 
-  // 3. Work shift — only if today is a work day AND shift is active right now
-  const todayStr = etTime.toISOString().slice(0, 10); // YYYY-MM-DD in ET
+  // Work shift
+  const todayStr = etTime.toISOString().slice(0, 10);
   const hasCallout = char.work_exception_status === 'called_out' && char.work_exception_date === todayStr;
   if (!hasCallout && isOnShift(char, etTime) && char.occupation_location_id) {
     return {
@@ -121,26 +113,7 @@ function resolveCanonicalPresence(char, etTime) {
     };
   }
 
-  // 4. School schedule — enrolled student during school hours (08:00–15:00 ET)
-  if (
-    char.student_status === 'enrolled' &&
-    char.education_location_id
-  ) {
-    const nowMin = etTime.getHours() * 60 + etTime.getMinutes();
-    const SCHOOL_START = 8 * 60;  // 08:00
-    const SCHOOL_END   = 15 * 60; // 15:00
-    if (nowMin >= SCHOOL_START && nowMin < SCHOOL_END) {
-      return {
-        resolved_presence_status:       'at_school',
-        resolved_location_type:         'school',
-        resolved_source_reason:         'school_schedule_canonical_repair',
-        resolved_current_location_id:   char.education_location_id,
-        resolved_current_location_name: char.education_location_name || 'School',
-      };
-    }
-  }
-
-  // 5. Default: home — always a valid real presence
+  // Default: home
   return {
     resolved_presence_status:       'home',
     resolved_location_type:         'home',
