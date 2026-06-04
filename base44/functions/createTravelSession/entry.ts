@@ -509,8 +509,20 @@ Deno.serve(async (req) => {
     // processTravelArrivals will commit the destination when ETA passes.
     // Use user-scoped update when user session exists (asServiceRole.update blocked by Character RLS).
     const charUpdateApi = user ? base44.entities.Character : base44.asServiceRole.entities.Character;
-    await charUpdateApi.update(characterId, {
-      resolved_presence_status:        'traveling',
+
+    // ARCHITECTURE RULE — active_created_character ONLY:
+    // Travel is a process/session, NOT a canonical resolved presence state.
+    // resolved_presence_status MUST reflect actual physical location at all times.
+    // For active_created_character: NEVER write resolved_presence_status: 'traveling'.
+    //   - The character's actual presence (home, at_work, sleeping, visiting, etc.) is preserved.
+    //   - Travel state is expressed ONLY via travel_status + TravelSession record.
+    //   - If the session is cancelled, failed, or orphaned, the character already has a valid presence.
+    //   - resolved_presence_status: 'traveling' can NEVER be cleared to a valid state by cancellation
+    //     because there is no valid actual-presence equivalent of "was traveling but didn't arrive".
+    // NPC/VGC types: preserve existing behavior (resolved_presence_status: 'traveling') unchanged.
+    const isActiveCreated = (char.character_type === 'active_created_character');
+
+    const characterTravelUpdate = {
       resolved_source_reason:          `travel_session:${session.id}`,
       travel_status:                   'traveling_to_destination',
       travel_destination_location_id:  destinationLocationId,
@@ -518,7 +530,15 @@ Deno.serve(async (req) => {
       traveling_to_location_name:      destLoc.name,
       last_location_update_time:       now.toISOString(),
       // resolved_current_location_id deliberately NOT changed — stays at origin
-    });
+    };
+
+    if (!isActiveCreated) {
+      // NPC / VGC Towers types: write resolved_presence_status: 'traveling' as before.
+      // This preserves VGC travel display and NPC presence logic unchanged.
+      characterTravelUpdate.resolved_presence_status = 'traveling';
+    }
+
+    await charUpdateApi.update(characterId, characterTravelUpdate);
 
     console.log(`[createTravelSession] ✅ ${char.name} → ${destLoc.name} | ETA: ${eta.toISOString()} | ${Math.round(durationMinutes)}min | mode: ${positioningMode} | session: ${session.id}`);
 

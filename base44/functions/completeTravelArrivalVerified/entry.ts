@@ -360,6 +360,21 @@ Deno.serve(async (req) => {
           arrival_write_attempts:     attemptCount,
         }).catch(() => {});
 
+        // When retries exhausted → arrival_failed: clear Character travel fields.
+        // For active_created_character: resolved_presence_status was never set to 'traveling'
+        // so the character already has valid actual presence. We only need to clear the
+        // temporary action metadata (travel_status, traveling_to_*, destination).
+        // This prevents the UI from showing stale "Traveling to X" indefinitely.
+        if (nextStatus === 'arrival_failed' && char) {
+          await base44.entities.Character.update(char.id, {
+            travel_status:                  'not_traveling',
+            travel_destination_location_id: null,
+            traveling_to_location_id:       null,
+            traveling_to_location_name:     null,
+          }).catch(() => {});
+          console.warn(`[completeTravelArrivalVerified] ⚠️ ${char.name}: arrival_failed after ${attemptCount} attempts — travel fields cleared`);
+        }
+
         results.push({
           session_id:       session.id,
           character_name:   char.name,

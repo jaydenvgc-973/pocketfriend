@@ -681,6 +681,15 @@ Deno.serve(async (req) => {
               route_status: 'cancelled',
               blocker_reason: 'overridden_by_confinement',
             }).catch(() => {});
+            // Clear Character travel fields — session cancelled, travel metadata must not remain.
+            // For active_created_character: resolved_presence_status was never set to 'traveling',
+            // so only the travel action fields need clearing.
+            base44.asServiceRole.entities.Character.update(char.id, {
+              travel_status:                  'not_traveling',
+              travel_destination_location_id: null,
+              traveling_to_location_id:       null,
+              traveling_to_location_name:     null,
+            }).catch(() => {});
             activeSession = null;
           } else {
             // Non-commitment session: only proceed if an overriding hard condition is present.
@@ -702,6 +711,13 @@ Deno.serve(async (req) => {
             await base44.asServiceRole.entities.TravelSession.update(activeSession.id, {
               route_status: 'cancelled',
               blocker_reason: 'overridden_by_hard_condition',
+            }).catch(() => {});
+            // Clear Character travel fields — session cancelled, travel metadata must not remain.
+            base44.asServiceRole.entities.Character.update(char.id, {
+              travel_status:                  'not_traveling',
+              travel_destination_location_id: null,
+              traveling_to_location_id:       null,
+              traveling_to_location_name:     null,
             }).catch(() => {});
             activeSession = null;
           }
