@@ -1,16 +1,13 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * VGC TOWERS TRAVEL SYSTEM — LOAD-SAFE BATCH MOVEMENT
+ * CANONICAL VGC TOWERS TRAVEL SYSTEM
  *
- * Runs every 2 hours (10 AM – 10 PM ET active window, 1–10 AM lockdown).
- * Moves a SMALL BATCH (max 5) of eligible VGC Towers NPC residents per run.
- * Residents are prioritized by longest time since last VGC travel (last_vgc_travel_at).
- * Remaining eligible residents are deferred to the next 2-hour run.
- *
- * BATCH LIMIT: 5 outgoing moves per run — never moves all residents at once.
+ * Runs every hour (10 AM – 1 AM ET active window, 1–10 AM lockdown).
+ * Processes ALL eligible VGC Towers NPC residents every run — no batch cap that abandons residents.
+ * Residents are processed sequentially to avoid write storms.
  * ROTATION THRESHOLD: 90 minutes — resident must have been at current location
- *   for at least 90 min before being re-moved. This keeps them stable between runs.
+ *   for at least 90 min before being re-moved.
  *
  * VALID BLOCKERS (only these block travel):
  *   - is_jailed / incarceration_status active / house_arrest_active
@@ -21,9 +18,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  *   - presence_state: 'hospitalized' | 'supervised'
  *
  * ownership: owner_email ONLY. No created_by.
+ * Uses user-scoped Character reads (only confirmed working path for this app).
  */
-
-const BATCH_LIMIT = 12;
 const ROTATION_THRESHOLD_MS = 90 * 60 * 1000; // 90 minutes
 
 const NPC_ELIGIBLE_TYPES = [
@@ -224,9 +220,10 @@ Deno.serve(async (req) => {
       return aTime - bTime; // ascending: oldest travel time first
     });
 
-    // ── BATCH CAP: process at most BATCH_LIMIT residents per run ──────────────
-    const thisBatch = eligible.slice(0, BATCH_LIMIT);
-    const deferred = eligible.slice(BATCH_LIMIT);
+    // ── PROCESS ALL ELIGIBLE RESIDENTS — no cap that abandons residents ────────
+    // All eligible residents are processed in this run, sequentially to avoid write storms.
+    const thisBatch = eligible;
+    const deferred = []; // Nothing is ever deferred — all eligible residents are processed now.
 
     const updates = [];
     const occupancyMap = new Map();
@@ -347,8 +344,7 @@ Deno.serve(async (req) => {
       deferred_to_next_run: deferred.length,
       deferred_names: deferred.map(d => d.name),
       blocked_with_reasons,
-      batch_limit_used: BATCH_LIMIT,
-      next_safe_batch_window: nextWindowLabel,
+      next_window: nextWindowLabel,
       social_destinations_available: socialLocations.length,
       proof_check: proofCheck,
       log,
