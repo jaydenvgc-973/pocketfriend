@@ -77,13 +77,29 @@ Deno.serve(async (req) => {
       // PRIORITY 2: Legacy travel_destination (fallback)
       if (!char.travel_destination_location_id) continue;
 
-      // Clear stale traveling states
+      // Clear stale traveling states — but NEVER overwrite a sleeping/napping character.
+      // Sleep is a valid presence state that must not be clobbered by travel cleanup.
       if (char.travel_status === 'traveling' || ['traveling', 'in_transit'].includes(char.resolved_presence_status)) {
-        console.warn(`[processScheduledRelocations] Character ${char.name} still marked as traveling. Clearing stale state.`);
-        await base44.asServiceRole.entities.Character.update(char.id, {
-          travel_status: 'not_traveling',
-          resolved_presence_status: 'home'
-        }).catch(() => {});
+        const isSleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+        if (isSleeping) {
+          // Only clear the travel debris fields — do NOT touch resolved_presence_status
+          await base44.asServiceRole.entities.Character.update(char.id, {
+            travel_status: 'not_traveling',
+            travel_destination_location_id: null,
+            traveling_to_location_id: null,
+            traveling_to_location_name: null,
+          }).catch(() => {});
+          console.warn(`[processScheduledRelocations] ${char.name} sleeping with stale travel_status — cleared travel debris only, preserved sleep state`);
+        } else {
+          console.warn(`[processScheduledRelocations] Character ${char.name} still marked as traveling. Clearing stale state.`);
+          await base44.asServiceRole.entities.Character.update(char.id, {
+            travel_status: 'not_traveling',
+            resolved_presence_status: 'home',
+            travel_destination_location_id: null,
+            traveling_to_location_id: null,
+            traveling_to_location_name: null,
+          }).catch(() => {});
+        }
         continue;
       }
 
