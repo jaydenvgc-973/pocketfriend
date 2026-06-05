@@ -8,32 +8,15 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Fetch ALL NPC characters for this user across multiple methods to ensure complete visibility:
-    // 1. Try owner_email filter (preferred source of truth)
-    // 2. Also fetch by owner_user_id to catch orphaned/legacy records
-    // 3. Deduplicate and return union of both results
-    
-    const chars1 = await base44.asServiceRole.entities.Character.filter(
-      { owner_email: user.email },
+    // Fetch ALL NPC characters for this user via user-scoped SDK (service-role cannot bypass Character RLS)
+    const chars1 = await base44.entities.Character.filter(
+      {},
       '-created_date',
       500
     ).catch(() => []);
 
-    const chars2 = await base44.asServiceRole.entities.Character.filter(
-      { owner_user_id: user.id },
-      '-created_date',
-      500
-    ).catch(() => []);
-
-    // Deduplicate by ID
-    const seen = new Set();
-    const allChars = [];
-    [...chars1, ...chars2].forEach(c => {
-      if (!seen.has(c.id)) {
-        allChars.push(c);
-        seen.add(c.id);
-      }
-    });
+    // No deduplication needed — single user-scoped query
+    const allChars = chars1;
 
     // Filter to NPC types (exclude active_created_character and deleted)
     const all = allChars.filter(c => {
