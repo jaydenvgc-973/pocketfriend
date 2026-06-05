@@ -126,15 +126,44 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
           }
         }
 
-        // CRITICAL: Sync avatar_url between family_members[] entry and linked Character
-        // This ensures the SAME avatar resolves in Family Editor and Settings NPC FAMILY list
-        if (linkedCharId && m.photo_url) {
+        // Sync avatar_url, age, gender, and age_range to the linked Character record
+        if (linkedCharId) {
           try {
-            await base44.entities.Character.update(linkedCharId, {
-              avatar_url: m.photo_url,
-            });
+            const FEMALE_ROLES = new Set(['mother', 'mom', 'grandmother', 'grandma', 'great-grandmother',
+              'aunt', 'niece', 'sister', 'half-sister', 'step-mother', 'stepmother', 'stepsister', 'step-sister',
+              'daughter', 'mother-in-law', 'sister-in-law']);
+            const MALE_ROLES = new Set(['father', 'dad', 'grandfather', 'grandpa', 'great-grandfather',
+              'uncle', 'nephew', 'brother', 'half-brother', 'step-father', 'stepfather', 'stepbrother', 'step-brother',
+              'son', 'father-in-law', 'brother-in-law']);
+            const inferGender = (rel) => {
+              const r = (rel || '').toLowerCase();
+              if (FEMALE_ROLES.has(r)) return 'female';
+              if (MALE_ROLES.has(r)) return 'male';
+              return null;
+            };
+            const inferAgeRange = (age) => {
+              if (age == null) return null;
+              if (age <= 3) return 'toddler';
+              if (age <= 12) return 'child';
+              if (age <= 17) return 'teenager';
+              if (age <= 25) return 'young adult';
+              if (age <= 40) return 'adult';
+              if (age <= 60) return 'middle aged';
+              return 'senior';
+            };
+            const currentAge = m.age_at_creation != null ? calcFamilyMemberAge(m, character.created_date, 0) : null;
+            const syncUpdates = {};
+            if (m.photo_url) syncUpdates.avatar_url = m.photo_url;
+            if (currentAge != null) syncUpdates.age = currentAge;
+            const gender = inferGender(m.relationship_type);
+            if (gender) syncUpdates.gender = gender;
+            const ageRange = inferAgeRange(currentAge);
+            if (ageRange) syncUpdates.age_range = ageRange;
+            if (Object.keys(syncUpdates).length > 0) {
+              await base44.entities.Character.update(linkedCharId, syncUpdates);
+            }
           } catch (err) {
-            console.warn('[FamilyEditor] Failed to sync photo to Character avatar:', err.message);
+            console.warn('[FamilyEditor] Failed to sync profile to Character:', err.message);
           }
         }
 

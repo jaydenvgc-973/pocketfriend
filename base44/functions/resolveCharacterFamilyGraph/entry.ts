@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
     const allChars = [...ownedChars, ...npcs.filter(n => !ownedIds.has(n.id))];
     const charById = new Map(allChars.map(c => [c.id, c]));
 
-    const ownAge = resolveAge(targetChar);
+    const ownAge = resolveAge(targetChar); // from character's own record (pre-step-2 value, used initially)
     const familyMembers = targetChar.family_members || [];
 
     // ── STEP 1: Identify explicit family members by type ─────────────────────
@@ -195,6 +195,35 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── STEP 2b: Resolve ownAge from parent's family_members entry ───────────
+    // Many family NPC characters have age: null on their own record.
+    // The parent's family_members[] entry is the authoritative age source.
+    // Check each resolved parent's family_members for an entry that links to characterId.
+    let ownAgeFromParent = null;
+    let ownGenderFromParent = null;
+    if (!resolveAge(targetChar)) {
+      for (const parent of resolvedParents) {
+        const parentChar = parent.character_id ? charById.get(parent.character_id) : null;
+        if (!parentChar) continue;
+        const entry = (parentChar.family_members || []).find(m => {
+          const mLinkId = m._linked_character_id || m.character_id || null;
+          return mLinkId === characterId;
+        });
+        if (entry) {
+          if (entry.age != null) ownAgeFromParent = entry.age;
+          // Infer gender from relationship_type (son/daughter) if character's own gender is missing/wrong
+          const relLower = (entry.relationship_type || '').toLowerCase();
+          if (relLower === 'daughter' || relLower === 'stepdaughter' || relLower === 'foster daughter') ownGenderFromParent = 'female';
+          else if (relLower === 'son' || relLower === 'stepson' || relLower === 'foster son') ownGenderFromParent = 'male';
+          break;
+        }
+      }
+    }
+
+    // Effective age and gender — prefer own record, fall back to parent-derived values
+    const effectiveAge = resolveAge(targetChar) || ownAgeFromParent;
+    const effectiveGender = (targetChar.gender && targetChar.gender !== 'other') ? targetChar.gender : (ownGenderFromParent || targetChar.gender);
+
     // ── STEP 3: DERIVE siblings from shared parents ───────────────────────────
     // Two derivation paths — both must be tried:
     //
@@ -261,9 +290,16 @@ Deno.serve(async (req) => {
           // Resolve the child character record for accurate name/gender/age
           const sibChar = charById.get(childLinkId);
           const sibName = sibChar?.display_name || sibChar?.name || m.name || 'Unknown';
-          const sibAge = sibChar ? resolveAge(sibChar) : (m.age || null);
-          const sibGender = sibChar?.gender || null;
+          const sibAge = sibChar ? (resolveAge(sibChar) || m.age || null) : (m.age || null);
+          // Prefer character's stored gender; fall back to relationship_type in parent's entry (son→male, daughter→female)
+          let sibGender = (sibChar?.gender && sibChar.gender !== 'other') ? sibChar.gender : null;
+          if (!sibGender) {
+            const mRel = (m.relationship_type || '').toLowerCase();
+            if (mRel === 'son' || mRel === 'stepson' || mRel === 'foster son') sibGender = 'male';
+            else if (mRel === 'daughter' || mRel === 'stepdaughter' || mRel === 'foster daughter') sibGender = 'female';
+          }
           seenSiblingIds.add(childLinkId);
+          // Use effectiveAge for the current character (may not be set yet — use ownAge fallback here)
           derivedSiblings.push({
             name: sibName,
             character_id: childLinkId,
@@ -333,10 +369,13 @@ Deno.serve(async (req) => {
 
     // ── STEP 6: Build the authoritative prompt block ──────────────────────────
     const hasAnyFamily = resolvedParents.length > 0 || allSiblings.length > 0 || allChildren.length > 0;
+    // Use effectiveAge (parent-derived if own record missing), effectiveGender similarly
+    const finalAge = effectiveAge;
+    const finalGender = effectiveGender;
 
     let promptBlock = '';
 
-    if (hasAnyFamily || ownAge) {
+    if (hasAnyFamily || finalAge) {
       const lines = [];
       lines.push('════════════════════════════════════');
       lines.push('AUTHORITATIVE FAMILY KNOWLEDGE — DERIVED FROM FAMILY GRAPH');
@@ -344,9 +383,9 @@ Deno.serve(async (req) => {
       lines.push('════════════════════════════════════');
 
       // Age
-      if (ownAge) {
-        const ageGroup = ownAge <= 3 ? 'toddler' : ownAge <= 12 ? 'child' : ownAge <= 17 ? 'teenager' : ownAge <= 25 ? 'young adult' : 'adult';
-        lines.push(`YOUR AGE: You are ${ownAge} years old (${ageGroup}). This is a fact — never express uncertainty about your own age.`);
+      if (finalAge) {
+        const ageGroup = finalAge <= 3 ? 'toddler' : finalAge <= 12 ? 'child' : finalAge <= 17 ? 'teenager' : finalAge <= 25 ? 'young adult' : 'adult';
+        lines.push(`YOUR AGE: You are ${finalAge} years old (${ageGroup}). This is a fact — never express uncertainty about your own age.`);
       }
 
       // Parents
@@ -406,7 +445,8 @@ Deno.serve(async (req) => {
 
     console.log(
       `[resolveCharacterFamilyGraph] char=${targetChar.name} (${characterId})` +
-      ` | ownAge=${ownAge}` +
+      ` | ownAge=${finalAge} (effective)` +
+      ` | gender=${finalGender}` +
       ` | parents=${resolvedParents.length}` +
       ` | explicitSiblings=${explicitSiblings.length}` +
       ` | derivedSiblings=${derivedSiblings.length}` +
@@ -418,7 +458,8 @@ Deno.serve(async (req) => {
     return Response.json({
       success: true,
       characterId,
-      ownAge,
+      ownAge: finalAge,
+      ownGender: finalGender,
       parents: resolvedParents,
       siblings: allSiblings,
       children: allChildren,

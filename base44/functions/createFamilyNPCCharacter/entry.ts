@@ -23,6 +23,37 @@ Deno.serve(async (req) => {
 
     const { name, relationship_type, active_character_id, photo_url, age_at_creation } = await req.json();
 
+    // ── Derive gender from relationship type ──────────────────────────────────
+    const FEMALE_ROLES = new Set(['mother', 'mom', 'mommy', 'grandmother', 'grandma', 'great-grandmother',
+      'aunt', 'niece', 'sister', 'half-sister', 'step-mother', 'stepmother', 'stepsister', 'step-sister',
+      'daughter', 'mother-in-law', 'sister-in-law', 'birth mother', 'biological mother',
+      'adoptive mother', 'foster mother', 'maternal grandmother', 'paternal grandmother']);
+    const MALE_ROLES = new Set(['father', 'dad', 'daddy', 'grandfather', 'grandpa', 'great-grandfather',
+      'uncle', 'nephew', 'brother', 'half-brother', 'step-father', 'stepfather', 'stepbrother', 'step-brother',
+      'son', 'father-in-law', 'brother-in-law', 'birth father', 'biological father',
+      'adoptive father', 'foster father', 'maternal grandfather', 'paternal grandfather']);
+
+    function inferGender(relType) {
+      const r = (relType || '').toLowerCase();
+      if (FEMALE_ROLES.has(r)) return 'female';
+      if (MALE_ROLES.has(r)) return 'male';
+      return null;
+    }
+
+    function inferAgeRange(age) {
+      if (age == null) return null;
+      if (age <= 3) return 'toddler';
+      if (age <= 12) return 'child';
+      if (age <= 17) return 'teenager';
+      if (age <= 25) return 'young adult';
+      if (age <= 40) return 'adult';
+      if (age <= 60) return 'middle aged';
+      return 'senior';
+    }
+
+    const inferredGender = inferGender(relationship_type);
+    const inferredAgeRange = inferAgeRange(age_at_creation);
+
     if (!name?.trim() || !relationship_type || !active_character_id) {
       return Response.json({ error: 'name, relationship_type, and active_character_id are required' }, { status: 400 });
     }
@@ -37,11 +68,13 @@ Deno.serve(async (req) => {
     let npc;
 
     if (existing.length > 0) {
-      // Use existing record — update photo/age if we have better data
+      // Use existing record — update photo/age/gender/age_range if we have better data
       npc = existing[0];
       const updates = {};
       if (photo_url && !npc.avatar_url) updates.avatar_url = photo_url;
       if (age_at_creation != null && !npc.age) updates.age = age_at_creation;
+      if (inferredGender && (!npc.gender || npc.gender === 'other')) updates.gender = inferredGender;
+      if (inferredAgeRange && (!npc.age_range || npc.age_range === 'adult')) updates.age_range = inferredAgeRange;
 
       // CRITICAL: character_type is IMMUTABLE from this function.
       // npc_fictitious records must NEVER be silently converted to npc_family_member
@@ -99,6 +132,10 @@ Deno.serve(async (req) => {
       // Profile
       avatar_url: photo_url || null,
       age: age_at_creation || null,
+      gender: inferredGender || null,
+      age_range: inferredAgeRange || null,
+      personality_summary: `${name.trim()} — ${relationship_type || 'family member'}.`,
+      profile_summary: `${name.trim()} — ${relationship_type || 'family member'}.`,
 
       // Flags
       exclude_from_homepage: true,
