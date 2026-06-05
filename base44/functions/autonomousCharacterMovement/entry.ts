@@ -56,6 +56,10 @@ function computeCommitmentReliabilityScore(char) {
   return score;
 }
 
+// ── SHARED TIME HELPER ────────────────────────────────────────────────────────
+// Used by multiple helpers throughout this file (orphaned travel guard, work schedule check, etc.)
+function toMin(t) { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); }
+
 // Check if location is currently open based on operating hours
 function toMinutes(timeStr) {
   if (!timeStr) return null;
@@ -124,7 +128,6 @@ const PRE_SLEEP_WINDOW_MINUTES = 60;
 function computeAdaptiveSleepWindow(character, etTime) {
   const SLEEP_DURATION_MIN = 7 * 60;
   const PRE_SHIFT_BUFFER   = 60;
-  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
   const dayOfWeek = etTime.getDay();
 
   // PRIORITY 1: Stored schedule is the CANONICAL source of truth — always wins if present.
@@ -258,7 +261,6 @@ function computeNightlifePenalty(char, nowET) {
   }
 
   // WORK/SCHOOL TOMORROW BLOCK: if character has work or school before 10am tomorrow, penalize heavily
-  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
   const tomorrowDow = (dowNow + 1) % 7;
   const hasWorkTomorrow = Array.isArray(char.work_days) &&
     char.work_days.includes(tomorrowDow) &&
@@ -1050,7 +1052,6 @@ Deno.serve(async (req) => {
             const isWorkDay = char.work_days.includes(dowNow);
 
             if (isWorkDay) {
-              const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
               const shiftStart = toMin(char.work_start_time);
               const shiftEnd   = toMin(char.work_end_time);
               // Overnight shift support (e.g. 22:00–06:00)
