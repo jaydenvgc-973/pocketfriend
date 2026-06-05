@@ -752,10 +752,13 @@ Deno.serve(async (req) => {
           // Wake conditions (in priority order):
           // 1. Active work obligation right now → wake for work
           // 2. Active school obligation right now → wake for school
-          // 3. Energy fully recovered (>= 70) AND slept >= 5 hours AND not health-recovering → natural wake
+          // 3. Energy recovered (>= 70) AND slept >= 4 hours AND not health-recovering → natural wake
+          //    (at +12/hr from energy=20, reaching 70 takes ~4.2 hours — minimum realistic sleep)
+          //    Characters who slept more will have higher energy and wake more easily.
+          //    Characters who are sick/recovering stay asleep until health improves.
           // Otherwise → keep sleeping, no action
           const shouldWake = hasActiveWorkObligation || hasActiveSchoolObligation ||
-            (energyNow >= 70 && sleepDurationHours >= 5 && !isHealthRecovering);
+            (energyNow >= 70 && sleepDurationHours >= 4 && !isHealthRecovering);
 
           if (!shouldWake) {
             console.log(`[autonomousMovement] ${char.name}: sleeping (energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h, obligation=${hasActiveWorkObligation || hasActiveSchoolObligation})`);
@@ -786,29 +789,30 @@ Deno.serve(async (req) => {
         }
 
         // ── AUTONOMOUS ENERGY-BASED SLEEP ONSET ─────────────────────────────
-        // This is the ONLY correct path for autonomous sleep for active_created_characters.
-        // It requires NO sleep_start_time. It requires NO derived schedule window.
-        // It fires when the character is tired enough AND at a valid sleep location.
-        // It is entirely character-state driven, not clock driven.
+        // The ONLY correct sleep path for active_created_characters.
+        // NO clock windows. NO sleep_start_time. NO derived schedule.
+        // Driven entirely by energy value — the character's body decides.
         //
-        // THRESHOLDS (deliberate — not crisis-only):
-        //   energy < 35 AND at home: character is tired enough to sleep autonomously.
-        //   energy < 20 AND not at home: character should return home to sleep.
-        //   energy < 50 AND nighttime (9 PM–6 AM ET): character may choose sleep.
-        // These are voluntary thresholds, not forced triggers. The character must also
-        // have no active work/school obligation (already blocked by Tier 3.5 above).
+        // THRESHOLDS:
+        //   energy < 30 AND at home → sleep onset (character is tired enough at any time of day)
+        //   energy < 20 AND not at home → return home to sleep (critically tired, going home)
+        //
+        // These are voluntary body-state thresholds. A character with energy=35 who is out
+        // socializing will NOT be forced home — they are still functional. Once they reach 30
+        // at home, their body naturally transitions to sleep.
+        //
+        // Context matters: if a character's activity context already shows them as active
+        // (bar, social, gym, food), the needs system won't put them to sleep mid-activity —
+        // they have to get home first. Case B handles that: once energy < 20, they go home.
         {
           const homeId = char.current_home_location_id;
           const atHome = homeId && char.resolved_current_location_id === homeId;
           const alreadySleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
-          const nowHour = nowET.getHours();
-          const isNightWindow = nowHour >= 21 || nowHour < 6; // 9 PM – 6 AM ET
           const energyVal = char.energy_value ?? 75;
 
           if (!alreadySleeping && homeId) {
-            // Case A: already home and tired — sleep onset
-            const tirednessThreshold = isNightWindow ? 50 : 35;
-            if (atHome && energyVal < tirednessThreshold) {
+            // Case A: already home and tired — sleep onset (pure energy threshold, no clock)
+            if (atHome && energyVal < 30) {
               const sleepOnsetPayload = {
                 resolved_presence_status:   'sleeping',
                 resolved_location_type:     'home',
@@ -822,13 +826,14 @@ Deno.serve(async (req) => {
               } catch {
                 await base44.asServiceRole.entities.Character.update(char.id, sleepOnsetPayload);
               }
-              moveLog.push(`${char.name}: AUTONOMOUS SLEEP ONSET (energy=${Math.round(energyVal)}, nightWindow=${isNightWindow})`);
+              moveLog.push(`${char.name}: AUTONOMOUS SLEEP ONSET (energy=${Math.round(energyVal)})`);
               console.log(`[autonomousMovement] ✓ ${char.name}: autonomous sleep at home (energy=${Math.round(energyVal)})`);
               continue;
             }
 
-            // Case B: not at home, critically tired at night — return home to sleep
-            if (!atHome && energyVal < 20 && isNightWindow) {
+            // Case B: not at home, critically tired — return home to sleep
+            // Threshold 20: below this, character cannot realistically stay out. Go home.
+            if (!atHome && energyVal < 20) {
               const sleepHome = userLocations.find(loc => loc.id === homeId);
               if (sleepHome && char.resolved_current_location_id !== sleepHome.id) {
                 const travelHomeRes = await base44.functions.invoke('createTravelSession', {

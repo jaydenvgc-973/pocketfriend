@@ -29,13 +29,23 @@ const clamp = (v) => Math.max(0, Math.min(100, v));
 
 // ── RATES ────────────────────────────────────────────────────────────────────
 // ENERGY CALIBRATION:
-//   sleeping/passed_out: +20/hr → 0→100 in ~5 hours (required by spec)
-//   default awake:       -4/hr  → 75→critical(12) in ~16 hours (realistic full waking day)
-//   active contexts:     -5 to -7/hr → fatigue builds faster during demanding activity
-//   resting at home:     +8/hr  → gentle recovery without full sleep
+//   sleeping:    +12/hr → starting at ~20 energy → reaches ~70 (natural wake) in ~4.2 hours
+//                       → reaches ~90 (fully rested) in ~5.8 hours
+//                       → normal sleep cycle: 6–8 hours naturally
+//   passed_out:  +8/hr  → slower recovery — emergency sleep, not restful
+//   default awake: -4/hr → 75→low(35) in ~10 hours, →critical(15) in ~15 hours
+//   active contexts: -5 to -7/hr → fatigue builds faster during demanding activity
+//   resting at home: +3/hr → gentle recovery without full sleep (reading, lounging)
+//
+// SLEEP MATH CHECK (starting at energy=20, sleeping at +12/hr):
+//   At 3h: energy ≈ 56 — still tired, character stays asleep (< 70 wake threshold)
+//   At 4h: energy ≈ 68 — close to wake threshold
+//   At 4.2h: energy ≈ 70 — natural wake possible if no obligations missed or health recovering
+//   At 6h: energy ≈ 92 — well rested, almost always awake unless sick/recovering
+//   At 8h: energy = 100 (clamped) — full recovery
 const RATES = {
-  sleeping:        { hunger: -1,   energy: +20, social: -0.5, health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
-  passed_out:      { hunger: -0.5, energy: +14, social: -0.5, health: +0.5, mental: +1,   hygiene: 0,    comfort: +1   },
+  sleeping:        { hunger: -1,   energy: +12, social: -0.5, health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
+  passed_out:      { hunger: -0.5, energy: +8,  social: -0.5, health: +0.5, mental: +1,   hygiene: 0,    comfort: +1   },
   hospitalized:    { hunger: -0.5, energy: +4,  social: -1,   health: +5,   mental: -0.5, hygiene: +1,   comfort: +2   },
   at_work:         { hunger: -4,   energy: -5,  social: +1,   health: -0.5, mental: -2,   hygiene: -2,   comfort: -2   },
   at_work_medical: { hunger: -5,   energy: -7,  social: -1,   health: -0.5, mental: -4,   hygiene: -3,   comfort: -4   },
@@ -45,14 +55,14 @@ const RATES = {
   at_school:       { hunger: -3,   energy: -4,  social: +2,   health: -0.5, mental: -1,   hygiene: -1,   comfort: -1   },
   gym:             { hunger: -6,   energy: -7,  social: +1,   health: +1,   mental: +1,   hygiene: -5,   comfort: -2   },
   bar_club:        { hunger: -2,   energy: -5,  social: +5,   health: -1,   mental: +1,   hygiene: -1,   comfort: -1   },
-  home_resting:    { hunger: -1,   energy: +8,  social: -1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +3   },
+  home_resting:    { hunger: -1,   energy: +3,  social: -1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +3   },
   home_active:     { hunger: -2,   energy: -3,  social: -1,   health: 0,    mental: 0,    hygiene: -0.5, comfort: +1   },
   hospital:        { hunger: -1,   energy: +2,  social: -1,   health: +3,   mental: -1,   hygiene: 0,    comfort: +1   },
   food_drink:      { hunger: +15,  energy: +2,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
   social_out:      { hunger: -2,   energy: -4,  social: +4,   health: 0,    mental: +1,   hygiene: -1,   comfort: -0.5 },
   traveling:       { hunger: -3,   energy: -4,  social: -1,   health: 0,    mental: -1,   hygiene: -2,   comfort: -3   },
   eating:          { hunger: +15,  energy: +2,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
-  resting:         { hunger: -1,   energy: +8,  social: -0.5, health: +1,   mental: +2,   hygiene: 0,    comfort: +3   },
+  resting:         { hunger: -1,   energy: +3,  social: -0.5, health: +1,   mental: +2,   hygiene: 0,    comfort: +3   },
   default:         { hunger: -2,   energy: -4,  social: -1,   health: 0,    mental: -0.5, hygiene: -1,   comfort: -1   },
 };
 
@@ -62,8 +72,8 @@ const T = {
   HUNGER_CRITICAL:  20,
   HUNGER_LOW:       35,
   ENERGY_PASSOUT:    0,
-  ENERGY_CRITICAL:  12,
-  ENERGY_LOW:       28,
+  ENERGY_CRITICAL:  20,  // auto-sleep trigger — tired enough to sleep, not just near-collapse
+  ENERGY_LOW:       35,  // character is noticeably tired, starts wanting to go home
   HEALTH_ER:        15,
   HEALTH_CRITICAL:  20,
   COMPOUND_CRISIS:   3,   // number of needs below 20 to trigger compound handling
@@ -207,12 +217,56 @@ function detectCriticalEscalations(oldNeeds, newNeeds, characterName) {
   if (oldNeeds.hunger >= 20 && newNeeds.hunger < 20) events.push({ title: 'Reached critical hunger', description: `${characterName} was starving — hunger became critical.`, memory_tag: 'hunger_critical' });
   if (oldNeeds.hunger >= 10 && newNeeds.hunger < 10) events.push({ title: 'Severe hunger — near collapse', description: `${characterName} was extremely hungry, feeling dizzy and unable to focus.`, memory_tag: 'hunger_severe' });
   if (newNeeds.hunger <= 0 && oldNeeds.hunger > 0) events.push({ title: 'Hunger at zero — survival mode', description: `${characterName} had no food energy at all.`, memory_tag: 'hunger_zero' });
-  if (oldNeeds.energy >= 15 && newNeeds.energy < 15) events.push({ title: 'Extreme exhaustion', description: `${characterName} was running on empty and could barely function.`, memory_tag: 'energy_critical' });
+  // Energy escalation thresholds updated to match new ENERGY_CRITICAL=20 threshold
+  if (oldNeeds.energy >= 25 && newNeeds.energy < 25) events.push({ title: 'Running on empty', description: `${characterName} was exhausted and struggling to stay awake.`, memory_tag: 'energy_critical' });
   if (newNeeds.energy <= 0 && oldNeeds.energy > 0) events.push({ title: 'Passed out from exhaustion', description: `${characterName} collapsed from complete energy depletion.`, memory_tag: 'energy_zero' });
   if (oldNeeds.health >= 20 && newNeeds.health < 20) events.push({ title: 'Health reached critical level', description: `${characterName}'s health deteriorated to a critical state.`, memory_tag: 'health_critical' });
   if (oldNeeds.social >= 15 && newNeeds.social < 15) events.push({ title: 'Deep social isolation', description: `${characterName} felt completely alone and isolated.`, memory_tag: 'social_critical' });
   if (oldNeeds.mental >= 15 && newNeeds.mental < 15) events.push({ title: 'Mental breakdown threshold reached', description: `${characterName} reached a mental breaking point.`, memory_tag: 'mental_critical' });
   return events;
+}
+
+// ── SLEEP MISS CONSEQUENCE DETECTION ─────────────────────────────────────────
+// Called when a character is awake during late hours (11 PM–4 AM ET) with low energy.
+// Writes a memory about consequences — exhaustion, poor choices, guilt, lateness.
+// This memory influences future behavior through the canonical prompt system.
+function detectSleepMissConsequences(char, newNeeds, context, now) {
+  const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hour = nowET.getHours();
+  // Only relevant during late-night hours when character should typically be asleep
+  const isLateNight = hour >= 23 || hour < 4;
+  if (!isLateNight) return null;
+
+  const energy = newNeeds.energy;
+  const isAwakeContext = !['sleeping', 'passed_out', 'hospitalized', 'napping'].includes(
+    char.resolved_presence_status || ''
+  );
+  if (!isAwakeContext) return null;
+
+  // Only fire if energy is noticeably low (character is tired but still up)
+  if (energy >= 45) return null;
+
+  const hasWorkTomorrow = Array.isArray(char.work_days) && char.work_days.length > 0 && char.work_start_time;
+  const hasSchoolTomorrow = char.student_status === 'enrolled' && char.education_location_id;
+  const hasObligation = hasWorkTomorrow || hasSchoolTomorrow;
+
+  const consequenceDescriptions = [
+    `${char.name} stayed up too late and was running low on energy. They'd regret it in the morning.`,
+    `${char.name} was exhausted but still awake during the late-night hours — their body was telling them to sleep.`,
+    `${char.name} pushed through tiredness and stayed up later than they should have.`,
+  ];
+  const baseDescription = consequenceDescriptions[Math.floor(Math.random() * consequenceDescriptions.length)];
+  const obligationSuffix = hasObligation
+    ? ` They had ${hasWorkTomorrow ? 'work' : 'school'} the next day, which would make the tiredness worse.`
+    : '';
+
+  return {
+    title: 'Stayed up too late — exhausted',
+    description: baseDescription + obligationSuffix,
+    memory_tag: 'sleep_miss_consequence',
+    energy_at_event: Math.round(energy),
+    had_obligation: hasObligation,
+  };
 }
 
 function deriveFinancialNeed(character) {
@@ -469,6 +523,31 @@ Deno.serve(async (req) => {
           }).catch(() => {})
         ));
         console.warn(`[NEEDS-ESCALATION] ${char.name}: ${escalationEvents.map(e => e.memory_tag).join(', ')}`);
+      }
+
+      // ── SLEEP MISS CONSEQUENCES — written at most once per 6 hours per character ──
+      // Only fires during late-night hours when character is awake and tired.
+      // The memory is injected into canonical context so future behavior reflects the consequence.
+      const sleepMissEvt = detectSleepMissConsequences(char, newNeeds, context, now);
+      if (sleepMissEvt) {
+        // Throttle: check last_sleep_miss_memory_at to avoid spam (once per 6h)
+        const lastMissAt = char.last_sleep_miss_memory_at ? new Date(char.last_sleep_miss_memory_at).getTime() : 0;
+        const sixHoursMs = 6 * 3600 * 1000;
+        if (now.getTime() - lastMissAt >= sixHoursMs) {
+          writeSDK.entities.Memory.create({
+            character_id: char.id,
+            title: sleepMissEvt.title,
+            description: sleepMissEvt.description,
+            emotional_impact: sleepMissEvt.had_obligation ? 'negative' : 'neutral',
+            timestamp: now.toISOString(),
+            source_context: 'needs_simulation_sleep_miss',
+          }).catch(() => {});
+          // Track last write time — write to character record non-blockingly
+          writeSDK.entities.Character.update(char.id, {
+            last_sleep_miss_memory_at: now.toISOString(),
+          }).catch(() => {});
+          console.log(`[SLEEP-MISS] ${char.name}: consequence memory written (energy=${sleepMissEvt.energy_at_event}, obligation=${sleepMissEvt.had_obligation})`);
+        }
       }
 
       // ── RC1+RC2+RC3+RC4: CORRECTIVE STATE WRITES ─────────────────────────
