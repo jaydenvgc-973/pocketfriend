@@ -70,10 +70,10 @@ function computeAdaptiveSleepWindow(character, etTime) {
   }
 
   // PRIORITY 2: No stored schedule — derive from work/school.
+  // Only TODAY's work day drives sleep timing. Tomorrow is not authority.
   if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
-    const isWorkDayToday    = character.work_days.includes(dayOfWeek);
-    const isWorkDayTomorrow = character.work_days.includes((dayOfWeek + 1) % 7);
-    if (isWorkDayToday || isWorkDayTomorrow) {
+    const isWorkDayToday = character.work_days.includes(dayOfWeek);
+    if (isWorkDayToday) {
       nextShiftStartMin = toMin(character.work_start_time);
       nextShiftEndMin   = toMin(character.work_end_time);
     }
@@ -407,8 +407,10 @@ function computeResolvedLocation(character, locationMap, etTime) {
         resolved_zone: null,
         home_resolution_failed: false
       };
-    } else if (isUserInitiatedVisit && visitLoc && !isNearSleepWindow(character, etTime, 120)) {
-      // User-initiated visit at a non-sleep location, far from sleep — allow
+    } else if (isUserInitiatedVisit && visitLoc) {
+      // User-initiated visit at non-sleep location — preserve while location is open.
+      // Sleep windows are context only, not authority. Do NOT evict based on clock-derived sleep window.
+      // Character will return home when energy drives it (autonomousCharacterMovement).
       return {
         resolved_current_location_id: resolvedLocIdForVisit,
         resolved_current_location_name: visitLoc.name || character.resolved_current_location_name || 'Visiting',

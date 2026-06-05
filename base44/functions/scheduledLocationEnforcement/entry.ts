@@ -220,91 +220,14 @@ function isNapTime(etTime) {
   return h >= 13 && h < 16;
 }
 
-function hasSleepDebt(character) {
-  return character.sleep_debt_hours && character.sleep_debt_hours > 0;
-}
 
-function classifySleepStateInline(character, etTime) {
-  // Inline version of sleepUtils.js classifySleepState() — no local imports in Deno.
-  // Returns { isStale, isValid, reason, consequence_tags }
-  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
-  const STALE_GRACE = 20; // minutes past wake_up_time before stale classification
-
+function classifySleepStateInline(character) {
+  // For active_created_characters: sleep state is always valid if DB says sleeping.
+  // The energy system wrote it. It is never stale. Clock windows are NOT used.
   const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
   if (!dbSleeping) return { isStale: false, isValid: false, reason: 'not_sleeping_in_db' };
-
-  if (isSleeping(character, etTime)) {
-    return { isStale: false, isValid: true, reason: 'within_canonical_sleep_window' };
-  }
-
-  // Past canonical sleep window — check valid reasons before clearing
-  if (character.decided_to_stay_up_until) {
-    const stayUntil = new Date(character.decided_to_stay_up_until);
-    if (stayUntil > new Date(Date.now() - 8 * 3600 * 1000)) {
-      return { isStale: false, isValid: true, reason: 'shifted_sleep_stay_up', consequence_tags: ['tired'] };
-    }
-  }
-
-  const sleepSource = character.resolved_source_reason || '';
-  if (sleepSource === 'user_directed_nap' || sleepSource.includes('nap')) {
-    return { isStale: false, isValid: true, reason: 'user_directed_nap' };
-  }
-
-  if ((character.sleep_debt_hours || 0) > 0 && character.resolved_presence_status === 'napping') {
-    return { isStale: false, isValid: true, reason: 'recovery_nap' };
-  }
-
-  if ((character.health_value || 100) < 30) {
-    return { isStale: false, isValid: true, reason: 'illness_sleep' };
-  }
-
-  if ((character.mental_value || 100) < 25) {
-    return { isStale: false, isValid: true, reason: 'emotional_crash_sleep' };
-  }
-
-  if ((character.sleep_debt_hours || 0) >= 2) {
-    return { isStale: false, isValid: true, reason: 'oversleeping_sleep_debt' };
-  }
-
-  if (character.sleep_interrupted_at) {
-    const hoursSince = (Date.now() - new Date(character.sleep_interrupted_at).getTime()) / 3600000;
-    if (hoursSince < 4) {
-      return { isStale: false, isValid: true, reason: 'interrupted_sleep_recovery' };
-    }
-  }
-
-  // Grace period check
-  const wakeMin = toMin(character.wake_up_time);
-  if (wakeMin !== null) {
-    const currentMin = etTime.getHours() * 60 + etTime.getMinutes();
-    let minutesPastWake = currentMin - wakeMin;
-    if (minutesPastWake < 0) minutesPastWake += 1440;
-    if (minutesPastWake < STALE_GRACE) {
-      return { isStale: false, isValid: true, reason: 'within_wake_grace_period' };
-    }
-  }
-
-  // Stale — build consequence tags by personality
-  const consequenceTags = [];
-  const dayOfWeek = etTime.getDay();
-  const currentMin = etTime.getHours() * 60 + etTime.getMinutes();
-  const hasWork = character.work_start_time && character.work_end_time &&
-    Array.isArray(character.work_days) && character.work_days.includes(dayOfWeek);
-  if (hasWork) {
-    const workStart = toMin(character.work_start_time);
-    if (workStart !== null && currentMin > workStart) {
-      consequenceTags.push('late_for_work');
-    }
-  }
-  if (character.trait_anxious || (character.emotional_state || '').includes('anxious')) {
-    consequenceTags.push('spiraling', 'rushing');
-  } else if (character.trait_lazy || character.archetype === 'slacker') {
-    consequenceTags.push('dismissive', 'may_call_out');
-  } else if (character.trait_workaholic) {
-    consequenceTags.push('panicking', 'guilty');
-  }
-
-  return { isStale: true, isValid: false, reason: 'stale_system_sleep', consequence_tags: consequenceTags };
+  // DB says sleeping — it is energy-driven and always valid.
+  return { isStale: false, isValid: true, reason: 'energy_driven_sleep', consequence_tags: [] };
 }
 
 const NPC_CHAR_TYPES_SET = new Set(['npc_fictitious', 'npc_family_member', 'npc_regular']);
@@ -503,8 +426,10 @@ function computeResolved(character, locationMap, etTime) {
         resolved_zone: null,
         home_resolution_failed: false,
       };
-    } else if (isUserInitiatedVisit && visitLoc && !isNearSleepWindow(character, etTime, 120)) {
-      // User-initiated visit at non-sleep location, far from sleep, and location is open — allow
+    } else if (isUserInitiatedVisit && visitLoc) {
+      // User-initiated visit at non-sleep location — preserve while location is open.
+      // Sleep windows are context only, not authority. Do NOT evict based on clock-derived sleep window.
+      // Character will return home when their energy drives it (autonomousCharacterMovement).
       return {
         resolved_current_location_id: resolvedLocId,
         resolved_current_location_name: visitLoc.name || character.resolved_current_location_name || 'Visiting',

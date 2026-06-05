@@ -367,19 +367,60 @@ function computeCorrectiveState(char, newNeeds, currentContext, now) {
     return { stateWrites, scheduledEvents, logs };
   }
 
+  // ── VALID SLEEP LOCATION CHECK ────────────────────────────────────────────
+  // Normal sleep may only be written when the character is at a recognized sleep location.
+  // Valid sleep categories: home, hotel, shelter, generic (and confinement — handled above).
+  // If they are not at a valid sleep location, they may be critically tired but cannot
+  // casually fall asleep there. They must go home first (autonomousCharacterMovement handles this).
+  // EXCEPTION: passed_out is always written regardless of location — it is an emergency state.
+  const VALID_SLEEP_CATS = new Set(['home', 'hotel', 'shelter', 'generic']);
+  const currentLocId = char.resolved_current_location_id;
+  // We don't have full locationMap here, but we can use presence status and resolved_location_type
+  // as the proxy: home/sleeping/napping/passed_out/hospitalized are all valid sleep contexts.
+  // Any other resolved_location_type (work, school, gym, bar, social, etc.) is not a valid sleep location.
+  const currentLocType = (char.resolved_location_type || '').toLowerCase();
+  const currentPresence = char.resolved_presence_status || '';
+  const atValidSleepLocation = (
+    currentLocType === 'home' ||
+    currentLocType === 'hotel' ||
+    currentLocType === 'shelter' ||
+    currentLocType === 'generic' ||
+    currentLocType === 'temporary_housing' ||
+    currentLocType === 'recovery_nap' ||
+    currentLocType === 'incarcerated' ||
+    currentLocType === 'house_arrest' ||
+    currentPresence === 'home' ||
+    currentPresence === 'sleeping' ||
+    currentPresence === 'napping' ||
+    currentPresence === 'passed_out' ||
+    !currentLocType  // no location type = home/unresolved = safe to sleep
+  );
+
   // ── RC4 FIX: COMPOUND CRISIS FORCED REST ─────────────────────────────────
+  // Only write sleeping if character is already at a valid sleep location.
+  // If they're out somewhere, autonomousCharacterMovement will route them home.
   if (criticalCount >= T.COMPOUND_CRISIS && !alreadySleeping && !onShift) {
-    stateWrites.resolved_presence_status = 'sleeping';
-    stateWrites.current_activity = 'forced rest — multiple critical needs';
-    logs.push(`[CORRECTIVE] ${char.name}: compound crisis (${criticalCount} needs critical) → forced sleeping`);
-    // No scheduled event needed — next tick will see sleeping context and apply recovery rates
+    if (atValidSleepLocation) {
+      stateWrites.resolved_presence_status = 'sleeping';
+      stateWrites.current_activity = 'forced rest — multiple critical needs';
+      logs.push(`[CORRECTIVE] ${char.name}: compound crisis (${criticalCount} needs critical) → forced sleeping at valid location`);
+    } else {
+      logs.push(`[CORRECTIVE] ${char.name}: compound crisis (${criticalCount} needs critical) — NOT at valid sleep location (${currentLocType}/${currentPresence}), autonomousMovement must route home`);
+    }
   }
 
   // ── RC1 FIX: AUTO-SLEEP when energy critically low ────────────────────────
+  // Only write sleeping if character is at a valid sleep location.
+  // If they are at work, school, a bar, gym, etc. — they cannot casually fall asleep.
+  // They are tired; the autonomous movement system will route them home.
   else if (energy <= T.ENERGY_CRITICAL && !alreadySleeping && !onShift && !stateWrites.resolved_presence_status) {
-    stateWrites.resolved_presence_status = 'sleeping';
-    stateWrites.current_activity = 'sleeping — exhausted';
-    logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} → auto-sleep triggered`);
+    if (atValidSleepLocation) {
+      stateWrites.resolved_presence_status = 'sleeping';
+      stateWrites.current_activity = 'sleeping — exhausted';
+      logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} → auto-sleep at valid location`);
+    } else {
+      logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} critical — NOT at valid sleep location (${currentLocType}/${currentPresence}), autonomousMovement must route home`);
+    }
   }
 
   // ── RC1 FIX: AUTO-EAT when hunger critically low ──────────────────────────
