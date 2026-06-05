@@ -180,13 +180,14 @@ function App() {
 
   return (
     <AuthProvider>
-      <ForegroundPriorityProvider>
         <ActiveCharacterProvider>
           <LocationEditProvider>
             <QueryClientProvider client={queryClientInstance}>
               <Router>
+                <ForegroundPriorityProvider>
                 <PlayAsCharacterBanner />
                 <AuthenticatedApp holidaysEnabled={holidaysEnabled} />
+                </ForegroundPriorityProvider>
               </Router>
             <HolidayPopup isEnabled={holidaysEnabled} />
             <AchievementUnlockModal />
@@ -194,7 +195,6 @@ function App() {
             </QueryClientProvider>
           </LocationEditProvider>
         </ActiveCharacterProvider>
-      </ForegroundPriorityProvider>
     </AuthProvider>
   )
 }
