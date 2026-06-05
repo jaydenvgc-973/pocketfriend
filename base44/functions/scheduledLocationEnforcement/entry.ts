@@ -241,6 +241,17 @@ function classifySleepStateInline(character, etTime) {
     return { isStale: false, isValid: true, reason: 'user_directed_nap' };
   }
 
+  // sleep_interrupted_at: character was woken early (alarm, message, emergency).
+  // If interrupted within the last 3 hours, they are still in recovery — sleep is valid.
+  // This is NOT sleep debt. It is a record that normal sleep was cut short.
+  if (character.sleep_interrupted_at) {
+    const interruptedAt = new Date(character.sleep_interrupted_at);
+    const hoursSinceInterrupt = (Date.now() - interruptedAt.getTime()) / 3600000;
+    if (hoursSinceInterrupt < 3) {
+      return { isStale: false, isValid: true, reason: 'interrupted_sleep_recovery', consequence_tags: ['tired', 'groggy'] };
+    }
+  }
+
   if ((character.health_value || 100) < 30) {
     return { isStale: false, isValid: true, reason: 'illness_sleep' };
   }
