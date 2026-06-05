@@ -89,7 +89,7 @@ export default function ChatMessageList({
 
     const content = latestCharMsg.content.toLowerCase();
 
-    // Exact phrase list per system spec
+    // Movement-intent phrase list
     const commitmentPhrases = [
       /\bi'?m\s+on\s+my\s+way\b/i,
       /\bi'?m\s+leaving\s+(now|right\s+now)?\b/i,
@@ -98,24 +98,43 @@ export default function ChatMessageList({
       /\bi\s+need\s+to\s+(go|leave|head\s+out)\b/i,
       /\bi'?ll\s+meet\s+you\s+there\b/i,
       /\bi'?m\s+coming\b/i,
-      /\bi'?ll\s+be\s+there\s+in\s+\d+/i,
+      /\bi'?ll\s+be\s+there\s+in\s+(\d+|a\s+few|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty)/i,
       /\bheading\s+out\s+now\b/i,
       /\bjust\s+left\b/i,
-      /\bsee\s+you\s+(in\s+\d+|soon|there)\b/i,
+      /\bsee\s+you\s+(in\s+(\d+|a\s+few|five|ten|fifteen|twenty)|soon|there)\b/i,
       /\bi'?ll\s+(come|head|stop|swing|drop)\s+(over|by|there)\b/i,
+      /\bi'?m\s+heading\s+to\b/i,
+      /\bwalking\s+(toward|to)\b/i,
+      /\bi'?ll\s+be\s+there\s+soon\b/i,
+      /\bon\s+my\s+way\s+to\b/i,
+      /\bheading\s+over\s+to\b/i,
+      /\bjust\s+(walked\s+(in|through|over)|pulled\s+up|arrived|got\s+here|got\s+there|came\s+through)\b/i,
+      /\bi'?m\s+(here|outside|downstairs|at\s+the\s+door|at\s+your\s+door)\b/i,
+      /\bi\s+just\s+walk(ed)?\s+(through|in)\b/i,
     ];
 
     const matched = commitmentPhrases.some(p => p.test(content));
     if (!matched) return null;
 
-    // Extract raw destination text from message (may be vague or proper name)
-    const destMatch = latestCharMsg.content.match(/(?:to|at|heading\s+to|going\s+to|meet\s+(?:you\s+)?at)\s+([A-Za-z0-9][^.!?,\n]{2,40}?)(?:\s+in\s+\d|\s+at\s+\d|[.!?,]|$)/i);
-    const timeMatch = content.match(/in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)/i);
+    // Extract destination — only from explicit directional prepositions, not bare "to"
+    // Require capital-letter start to avoid matching verb phrases as locations
+    const destMatch = latestCharMsg.content.match(/(?:heading\s+to|going\s+to|on\s+my\s+way\s+to|walking\s+to|heading\s+over\s+to|driving\s+to|meet\s+(?:you\s+)?at)\s+([A-Z][A-Za-z0-9\s']{2,35}?)(?:\s+in\s+\d|\s*[.!?,]|$)/);
+    const DEST_BLOCKLIST = /^(the|a|an|it|that|this|you|me|us|him|her|them|there|here|now|up|down|out|in|over|by|away|back|around|through|inside|outside|home|work|school)\b/i;
+    const rawDestText = destMatch?.[1]?.trim() || null;
+    const rawDestination = (rawDestText && !DEST_BLOCKLIST.test(rawDestText)) ? rawDestText : null;
 
-    const rawDestination = destMatch?.[1]?.trim() || null;
-    const rawMinutes = timeMatch?.[1] ? parseInt(timeMatch[1]) : null;
-    const isHours = timeMatch?.[2]?.startsWith('h');
-    const minutes = rawMinutes ? (isHours ? rawMinutes * 60 : rawMinutes) : 15;
+    const WORD_MINUTES = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30 };
+    const timeMatchNum = content.match(/in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)/i);
+    const timeMatchWord = content.match(/in\s+(a\s+few|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty)\s+(minutes?|mins?|hours?|hrs?)/i);
+    let minutes = 15;
+    if (timeMatchNum) {
+      const isHours = timeMatchNum[2].startsWith('h');
+      minutes = isHours ? parseInt(timeMatchNum[1]) * 60 : parseInt(timeMatchNum[1]);
+    } else if (timeMatchWord) {
+      const word = timeMatchWord[1].replace('a few', 'three').trim();
+      const isHours = timeMatchWord[2].startsWith('h');
+      minutes = isHours ? (WORD_MINUTES[word] || 5) * 60 : (WORD_MINUTES[word] || 5);
+    }
     // Anchor ETA to message send time, not current time — prevents ETA drift on re-mount
     const msgTime = latestCharMsg.timestamp ? new Date(latestCharMsg.timestamp).getTime() : now;
     const scheduledArrivalTime = new Date(msgTime + minutes * 60000).toISOString();
@@ -141,10 +160,7 @@ export default function ChatMessageList({
   const itemsWithSeparators = injectDateSeparators(messages);
   if (messages.length > 0) console.log(`[CHAT_TIMING] ChatMessageList_RENDER n=${messages.length} at=${Date.now()}`);
 
-  const activeCommitment = pinTriggeredCommitment || detectedCommitment;
-
   return (
-    <div className="flex-1 relative flex flex-col min-h-0">
     <div className="flex-1 overflow-y-auto py-4 space-y-4 px-4" data-chat-container="true">
       {/* Load older messages button — only shown when more history exists */}
       {hasOlderMessages && onLoadOlderMessages && (
@@ -216,32 +232,33 @@ export default function ChatMessageList({
       {/* sendError intentionally removed from conversation stream — errors are handled
           via character fallback responses or silent retry. No system banners in chat. */}
 
-      <div ref={bottomRef} />
-    </div>
-
-    {/* Movement Commitment Prompt — fixed overlay, always visible regardless of scroll position.
-        Priority: pin-triggered (user clicked a specific message) > auto-detected (latest message). */}
-    <AnimatePresence>
-      {activeCommitment && (
-        <div className="absolute bottom-0 left-0 right-0 z-40 px-4 pb-2 bg-gradient-to-t from-background via-background/95 to-transparent pt-6 pointer-events-none">
-          <div className="pointer-events-auto">
+      {/* Movement Commitment Prompt — with async destination resolution.
+          Priority: pin-triggered (user clicked a specific message) > auto-detected (latest message). */}
+      <AnimatePresence>
+        {(pinTriggeredCommitment || detectedCommitment) && (() => {
+          const c = pinTriggeredCommitment || detectedCommitment;
+          return (
             <MovementCommitmentPromptWithResolver
-              rawDestination={activeCommitment.rawDestination}
-              characterName={activeCommitment.characterName || character?.name}
+              rawDestination={c.rawDestination}
+              characterName={c.characterName || character?.name}
               characterId={characterId}
               currentCharacter={character}
-              etaMinutes={activeCommitment.etaMinutes}
-              scheduledTime={activeCommitment.scheduledArrivalTime}
+              etaMinutes={c.etaMinutes}
+              scheduledTime={c.scheduledArrivalTime}
               recentMessages={messages.slice(-15)}
               conversationId={conversationId}
-              messageId={activeCommitment.messageId}
-              onConfirm={() => dismissCommitment(activeCommitment.messageId)}
-              onCancel={() => dismissCommitment(activeCommitment.messageId)}
+              messageId={c.messageId}
+              onConfirm={() => dismissCommitment(c.messageId)}
+              onCancel={() => dismissCommitment(c.messageId)}
             />
-          </div>
-        </div>
-      )}
-    </AnimatePresence>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* sendError intentionally removed from conversation stream — errors are handled
+          via character fallback responses or silent retry. No system banners in chat. */}
+
+      <div ref={bottomRef} />
     </div>
   );
 }

@@ -938,16 +938,20 @@ const MOVEMENT_COMMITMENT_PATTERNS = [
   /\bi\s+need\s+to\s+(go|leave|head\s+out)\b/i,
   /\bi'?ll\s+meet\s+you\s+there\b/i,
   /\bi'?m\s+coming\b/i,
-  /\bi'?ll\s+be\s+there\s+in\s+\d+/i,
+  /\bi'?ll\s+be\s+there\s+in\s+(\d+|a\s+few|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty)/i,
   /\bheading\s+out\s+now\b/i,
   /\bjust\s+left\b/i,
-  /\bsee\s+you\s+(in\s+\d+|soon|there)\b/i,
+  /\bsee\s+you\s+(in\s+(\d+|a\s+few|five|ten|fifteen|twenty)|soon|there)\b/i,
   /\bi'?ll\s+(come|head|stop|swing|drop)\s+(over|by|there)\b/i,
   /\bi'?m\s+heading\s+to\b/i,
   /\bwalking\s+(toward|to)\b/i,
   /\bi'?ll\s+be\s+there\s+soon\b/i,
   /\bon\s+my\s+way\s+to\b/i,
   /\bheading\s+over\s+to\b/i,
+  // Arrival confirmations
+  /\bjust\s+(walked\s+(in|through|over)|pulled\s+up|arrived|got\s+here|got\s+there|came\s+through)\b/i,
+  /\bi'?m\s+(here|outside|downstairs|at\s+the\s+door|at\s+your\s+door)\b/i,
+  /\bi\s+just\s+walk(ed)?\s+(through|in)\b/i,
 ];
 
 function detectMovementIntent(content) {
@@ -955,17 +959,36 @@ function detectMovementIntent(content) {
   return MOVEMENT_COMMITMENT_PATTERNS.some(p => p.test(content));
 }
 
+// Words that prove the match is NOT a location — verb/preposition traps
+const DESTINATION_BLOCKLIST = /^(the|a|an|it|that|this|you|me|us|him|her|them|there|here|now|up|down|out|in|over|by|away|back|around|through|inside|outside|home|work|school)\b/i;
+
 function extractCommitmentFromMessage(message) {
   const content = message.content || '';
-  const destMatch = content.match(/(?:to|at|heading\s+to|going\s+to|meet\s+(?:you\s+)?at)\s+([A-Za-z0-9][^.!?,\n]{2,40}?)(?:\s+in\s+\d|\s+at\s+\d|[.!?,]|$)/i);
-  const timeMatch = content.toLowerCase().match(/in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)/i);
+  // Only match destinations following explicit directional prepositions, not bare "to"
+  // Requires the destination to start with a capitalized word or a known place marker
+  const destMatch = content.match(/(?:heading\s+to|going\s+to|on\s+my\s+way\s+to|walking\s+to|heading\s+over\s+to|driving\s+to|meet\s+(?:you\s+)?at)\s+([A-Z][A-Za-z0-9\s']{2,35}?)(?:\s+in\s+\d|\s*[.!?,]|$)/);
   const rawDestination = destMatch?.[1]?.trim() || null;
-  const rawMinutes = timeMatch?.[1] ? parseInt(timeMatch[1]) : null;
-  const isHours = timeMatch?.[2]?.startsWith('h');
-  const minutes = rawMinutes ? (isHours ? rawMinutes * 60 : rawMinutes) : 15;
+  // Reject if destination starts with a blocklisted word (it's a verb phrase, not a place)
+  const cleanDestination = (rawDestination && !DESTINATION_BLOCKLIST.test(rawDestination)) ? rawDestination : null;
+
+  // Support word numbers in ETA extraction
+  const WORD_MINUTES = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30 };
+  const timeMatchNum = content.toLowerCase().match(/in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)/i);
+  const timeMatchWord = content.toLowerCase().match(/in\s+(a\s+few|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty)\s+(minutes?|mins?|hours?|hrs?)/i);
+  let minutes = 15;
+  if (timeMatchNum) {
+    const isHours = timeMatchNum[2].startsWith('h');
+    minutes = isHours ? parseInt(timeMatchNum[1]) * 60 : parseInt(timeMatchNum[1]);
+  } else if (timeMatchWord) {
+    const word = timeMatchWord[1].replace('a few', 'three').trim();
+    const isHours = timeMatchWord[2].startsWith('h');
+    const val = WORD_MINUTES[word] || 5;
+    minutes = isHours ? val * 60 : val;
+  }
+
   const msgTime = message.timestamp ? new Date(message.timestamp).getTime() : Date.now();
   const scheduledArrivalTime = new Date(msgTime + minutes * 60000).toISOString();
-  return { rawDestination, etaMinutes: minutes, scheduledArrivalTime };
+  return { rawDestination: cleanDestination, etaMinutes: minutes, scheduledArrivalTime };
 }
 
 function LocationSignalButton({ message, onLocationSignal, onMovementCommitment, isImageOnly = false }) {
