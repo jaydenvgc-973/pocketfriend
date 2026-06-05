@@ -79,14 +79,46 @@ const T = {
   COMPOUND_CRISIS:   3,   // number of needs below 20 to trigger compound handling
 };
 
-function isOnShift(character) {
-  if (!character.work_start_time || !character.work_end_time || !character.work_days) return false;
+function isOnShift(character, locationMap) {
   // CRITICAL: Always use America/New_York — UTC is forbidden for schedule logic
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const cur = nowET.getHours() * 60 + nowET.getMinutes();
-  const [sh, sm = 0] = character.work_start_time.split(':').map(Number);
-  const [eh, em = 0] = character.work_end_time.split(':').map(Number);
-  return character.work_days.includes(nowET.getDay()) && cur >= sh * 60 + sm && cur < eh * 60 + em;
+  const dow = nowET.getDay();
+
+  // SOURCE 1: Character-level work_days/work_start_time/work_end_time (primary job fields)
+  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.includes(dow)) {
+    const [sh, sm = 0] = character.work_start_time.split(':').map(Number);
+    const [eh, em = 0] = character.work_end_time.split(':').map(Number);
+    if (cur >= sh * 60 + sm && cur < eh * 60 + em) return true;
+  }
+
+  // SOURCE 2: additional_occupation_locations — check location-side worker_shifts[char.id]
+  // This is the fix for characters whose primary job is stored on the location record,
+  // not on character-level fields (e.g. Andre's Hyacinth Foundation Mon–Fri 9–5 job).
+  if (Array.isArray(character.additional_occupation_locations) && locationMap) {
+    for (const entry of character.additional_occupation_locations) {
+      if (!entry.location_id) continue;
+      const loc = locationMap[entry.location_id];
+      if (!loc) continue;
+      // Check location-side shift for this character
+      const shift = loc.worker_shifts?.[character.id];
+      if (shift?.start && shift?.end) {
+        const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
+        if (shiftDays && !shiftDays.includes(dow)) continue;
+        const [sh, sm = 0] = shift.start.split(':').map(Number);
+        const [eh, em = 0] = shift.end.split(':').map(Number);
+        if (cur >= sh * 60 + sm && cur < eh * 60 + em) return true;
+      }
+      // Also check entry-level schedule fields if no location-side shift
+      if (!loc.worker_shifts?.[character.id] && entry.work_start_time && entry.work_end_time && Array.isArray(entry.work_days) && entry.work_days.includes(dow)) {
+        const [sh, sm = 0] = entry.work_start_time.split(':').map(Number);
+        const [eh, em = 0] = entry.work_end_time.split(':').map(Number);
+        if (cur >= sh * 60 + sm && cur < eh * 60 + em) return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function getWorkContextFromLocation(loc) {
@@ -310,7 +342,7 @@ function computeCorrectiveState(char, newNeeds, currentContext, now) {
   const health = newNeeds.health;
   const mental = newNeeds.mental;
   const presence = char.resolved_presence_status || '';
-  const onShift = isOnShift(char);
+  const onShift = isOnShift(char, locationMap);
 
   // Count how many needs are in crisis
   const criticalCount = [hunger, energy, newNeeds.mental, newNeeds.hygiene, health]
