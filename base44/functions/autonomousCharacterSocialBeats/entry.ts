@@ -160,6 +160,30 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const proofEventPath = body?.proofEventPath === true;
 
+    // ── FOREGROUND YIELD CHECK ────────────────────────────────────────────────────
+    // autonomousCharacterSocialBeats is Priority 6 (non-essential background).
+    // It makes up to 1 LLM call per character pair and creates messages during the run.
+    // Running during user sessions competes directly with chat response generation.
+    // Must yield entirely when the user is active.
+    try {
+      const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
+        { key: 'user_active_session' }, null, 1
+      );
+      if (activeFlag?.[0]?.value) {
+        const activeUntil = new Date(activeFlag[0].value).getTime();
+        if (now.getTime() < activeUntil) {
+          console.log(`[autonomousSocialBeats] YIELD — user active session until ${new Date(activeUntil).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} Eastern. Skipping social beat LLM generation.`);
+          return Response.json({
+            success: true,
+            yielded: true,
+            reason: 'foreground_user_active',
+            beats_generated: 0,
+            users_processed: 0,
+          });
+        }
+      }
+    } catch { /* non-fatal — proceed */ }
+
     // ── STEP 1: LOAD ALL ACTIVE CHARACTERS ────────────────────────────────────
     // QUERY STRATEGY:
     // Service role + { character_type, status } filter = the proven pattern from enforceCharacterWorkSchedule.
