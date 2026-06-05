@@ -25,44 +25,44 @@ Deno.serve(async (req) => {
     }
 
     // Verify ownership — owner_email is source of truth. Never use created_by.
-    // DIAGNOSTIC: capture exactly what lookup was attempted so 404s are traceable.
+    //
+    // LOOKUP STRATEGY: Character entity RLS is scoped by owner_email.
+    // Service-role filter({ id }) alone returns empty on this entity — must include owner_email.
+    // Primary path: user-scoped client (already carries user.email context).
+    // Fallback path: service-role with explicit owner_email + id compound filter.
     let character = null;
-    let lookupMethod = 'filter_by_id';
-    let lookupError = null;
+    let lookupMethod = 'user_scoped';
+
     try {
-      const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
+      const charList = await base44.entities.Character.filter({ id: characterId }, null, 1);
       character = charList?.[0] || null;
-    } catch (e) {
-      lookupError = e.message;
-      lookupMethod = 'filter_by_id_FAILED';
+      lookupMethod = 'user_scoped';
+    } catch (_e1) {
+      // Primary path failed — try service-role with owner_email compound filter
+      lookupMethod = 'service_role_owner_scoped';
     }
 
     if (!character) {
-      // Diagnostic: try direct get as fallback to distinguish "not found" from "RLS block"
-      let directLookupResult = null;
-      let directLookupError = null;
       try {
-        const directList = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email, id: characterId }, null, 1);
-        directLookupResult = directList?.[0] || null;
-      } catch (e2) {
-        directLookupError = e2.message;
+        const charList2 = await base44.asServiceRole.entities.Character.filter(
+          { owner_email: user.email, id: characterId }, null, 1
+        );
+        character = charList2?.[0] || null;
+        lookupMethod = 'service_role_owner_scoped';
+      } catch (_e2) {
+        // Both paths failed
       }
+    }
 
+    if (!character) {
       return Response.json({
-        error: 'Character not found',
+        error: 'Character not found or lookup failed',
         diagnostic: {
           character_id: characterId,
           caller_email: user.email,
           lookup_method: lookupMethod,
-          lookup_error: lookupError,
-          filter_by_id_result: 'null',
-          owner_scoped_filter_result: directLookupResult ? `found: ${directLookupResult.name}` : 'null',
-          owner_scoped_filter_error: directLookupError,
-          possible_cause: lookupError
-            ? 'service-role filter threw — possible SDK or DB error'
-            : directLookupResult
-            ? 'character exists but ID filter returned empty — possible RLS or index mismatch'
-            : 'character not found under either scope — may belong to different account or be deleted',
+          resolution: 'Both user-scoped and service-role owner-scoped lookups returned empty. ' +
+            'The character may belong to a different account, be deleted, or the ID may be stale.',
         }
       }, { status: 404 });
     }
@@ -162,29 +162,100 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Calculate sleep debt impact
+      // Determine wake context from actual obligations — NOT from wake_up_time clock field.
+      // wake_up_time is a stored preference / metadata. It has no authority here.
+      // The alarm fires when it fires. What matters is: does the character have an active
+      // obligation right now (work shift, school), and how long did they sleep?
       const sleepStart = character.last_sleep_start ? new Date(character.last_sleep_start).getTime() : null;
-      const wakeTime = character.wake_up_time || '07:00';
-      const [wh, wm] = wakeTime.split(':').map(Number);
-      const scheduledWake = new Date(now);
-      scheduledWake.setHours(wh, wm, 0, 0);
-      if (scheduledWake < now) scheduledWake.setDate(scheduledWake.getDate() + 1);
+      const hoursSlept = sleepStart ? (Date.now() - sleepStart) / 3600000 : 0;
 
-      const minutesEarly = scheduledWake > now ? Math.round((scheduledWake - now) / 60000) : 0;
-      const isEarlyWake = minutesEarly > 30;
+      // Determine if there is an active work obligation RIGHT NOW that the character missed.
+      // This is the correct source of "late wake" context — not wake_up_time comparison.
+      const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+      const dowNow = nowET.getDay();
+      const todayET = nowET.toISOString().slice(0, 10);
 
-      let sleepDebtHours = character.sleep_debt_hours || 0;
-      if (sleepStart) {
-        const hoursSlept = (Date.now() - sleepStart) / 3600000;
-        const neededHours = 7.5;
-        if (hoursSlept < neededHours) {
-          sleepDebtHours = Math.min(sleepDebtHours + (neededHours - hoursSlept), 24);
+      const toMinLocal = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+
+      // Check if character has an active work obligation RIGHT NOW.
+      // TWO sources must both be checked — the work resolver reads BOTH:
+      //   1. Character-level fields: work_days, work_start_time, work_end_time, occupation_location_id
+      //   2. Location-side worker_shifts[character.id] on the work location record
+      // Checking only character-level fields is the global bug: if the job is stored on the
+      // location side (worker_shifts), character-level fields may be empty or stale.
+      const hasCallout = character.work_exception_status === 'called_out' && character.work_exception_date === todayET;
+
+      // Source 1: Character-level work schedule
+      const hasWorkNowCharLevel = (() => {
+        if (hasCallout) return false;
+        if (!Array.isArray(character.work_days) || character.work_days.length === 0) return false;
+        if (!character.work_start_time || !character.work_end_time || !character.occupation_location_id) return false;
+        if (!character.work_days.includes(dowNow)) return false;
+        const s = toMinLocal(character.work_start_time);
+        const e = toMinLocal(character.work_end_time);
+        if (s === null || e === null) return false;
+        return e < s ? (nowMin >= s || nowMin < e) : (nowMin >= s && nowMin < e);
+      })();
+
+      // Source 2: Location-side worker_shifts — load work locations and check shifts
+      let hasWorkNowLocationLevel = false;
+      if (!hasCallout) {
+        const workLocIds = [];
+        if (character.occupation_location_id) workLocIds.push(character.occupation_location_id);
+        if (character.current_work_location_id && !workLocIds.includes(character.current_work_location_id)) {
+          workLocIds.push(character.current_work_location_id);
+        }
+        if (Array.isArray(character.additional_occupation_locations)) {
+          for (const entry of character.additional_occupation_locations) {
+            if (entry.location_id && !workLocIds.includes(entry.location_id)) {
+              workLocIds.push(entry.location_id);
+            }
+          }
+        }
+        if (workLocIds.length > 0) {
+          try {
+            const workLocs = await base44.asServiceRole.entities.LocationReference.filter(
+              { owner_email: user.email },
+              null,
+              100
+            );
+            for (const loc of (workLocs || [])) {
+              if (!workLocIds.includes(loc.id)) continue;
+              const shift = loc.worker_shifts?.[character.id];
+              if (!shift?.start || !shift?.end) continue;
+              const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
+              if (shiftDays && !shiftDays.includes(dowNow)) continue;
+              const s = toMinLocal(shift.start);
+              const e = toMinLocal(shift.end);
+              if (s === null || e === null) continue;
+              const onShift = e < s ? (nowMin >= s || nowMin < e) : (nowMin >= s && nowMin < e);
+              if (onShift) { hasWorkNowLocationLevel = true; break; }
+            }
+          } catch { /* non-fatal — fall back to character-level only */ }
         }
       }
 
-      const newEmotionalState = isEarlyWake || sleepDebtHours > 2 ? 'tired' : 'calm';
-      const activityNote = isEarlyWake
-        ? 'just woke up (alarm, earlier than usual)'
+      const hasWorkNow = hasWorkNowCharLevel || hasWorkNowLocationLevel;
+
+      // Check school obligation
+      const hasSchoolNow = (() => {
+        if (character.student_status !== 'enrolled' || !character.education_location_id) return false;
+        if (![1, 2, 3, 4, 5].includes(dowNow)) return false;
+        return nowMin >= 8 * 60 && nowMin < 15 * 60;
+      })();
+
+      // isLateWake: character has an active obligation they should be at right now
+      const isLateWake = hasWorkNow || hasSchoolNow;
+      // isShortSleep: slept less than 5 hours — genuinely tired wake
+      const isShortSleep = hoursSlept < 5 && hoursSlept > 0;
+
+      // Emotional state from actual circumstances, not from clock-field comparison
+      const newEmotionalState = (isLateWake || isShortSleep) ? 'tired' : 'calm';
+      const activityNote = isLateWake
+        ? 'just woke up (alarm, running late)'
+        : isShortSleep
+        ? 'just woke up (alarm, short sleep)'
         : 'just woke up (alarm)';
 
       await base44.asServiceRole.entities.Character.update(characterId, {
@@ -192,10 +263,14 @@ Deno.serve(async (req) => {
         location_status: 'home',
         current_activity: activityNote,
         emotional_state: newEmotionalState,
-        sleep_debt_hours: Math.round(sleepDebtHours * 10) / 10,
+        // sleep_interrupted_at: records that this sleep was cut short by an alarm.
+        // This is NOT sleep debt. It allows consequence systems (classifySleepState)
+        // to recognize reduced recovery and extended tiredness for up to 3 hours.
         sleep_interrupted_at: nowIso,
         pending_alarm_time: null, // clear any pending alarm after firing
         resolved_last_updated_at: nowIso,
+        // last_sleep_start preserved — do not clear it. It's the timer for sleep duration
+        // and consequence calculations. Clearing it would break natural wake detection.
       });
 
       const timeLabel = now.toLocaleTimeString('en-US', {
@@ -203,32 +278,49 @@ Deno.serve(async (req) => {
       });
 
       // LifeEvent continuity — framed as character's own alarm, not user action
+      const lifeEventDesc = isLateWake
+        ? `${character.name}'s alarm went off. They were supposed to be at work or school — they're running late.`
+        : isShortSleep
+        ? `${character.name}'s alarm went off after a short sleep. They're tired but awake.`
+        : `${character.name}'s alarm went off and they woke up to start their day.`;
+
+      const lifeEventImpact = isLateWake
+        ? 'Stressed, rushing — running late for obligation'
+        : isShortSleep
+        ? 'Tired, groggy from short sleep'
+        : 'Awake and starting their routine';
+
       base44.asServiceRole.entities.LifeEvent.create({
         character_id: characterId,
         character_name: character.name,
         event_type: 'routine_positive_event',
-        valence: isEarlyWake ? 'mixed' : 'neutral',
+        valence: (isLateWake || isShortSleep) ? 'mixed' : 'neutral',
         severity: 'minor',
         title: `Alarm went off at ${timeLabel}`,
-        description: isEarlyWake
-          ? `${character.name}'s alarm woke them up earlier than their usual schedule. They got up feeling groggy.`
-          : `${character.name}'s alarm went off and they woke up to start their day.`,
-        emotional_impact: isEarlyWake ? 'Tired, slightly disoriented from early wake' : 'Awake and starting their routine',
+        description: lifeEventDesc,
+        emotional_impact: lifeEventImpact,
         triggered_by: 'scheduled_event',
         timestamp: nowIso,
         systems_updated: ['memory'],
-        context_tags: ['alarm', 'wake_up', isEarlyWake ? 'early_wake' : 'on_schedule'],
+        context_tags: [
+          'alarm', 'wake_up',
+          isLateWake ? 'late_for_obligation' : 'on_schedule',
+          isShortSleep ? 'short_sleep' : 'adequate_sleep',
+        ],
       }).catch(() => {});
 
-      const message = isEarlyWake
-        ? `${firstName}'s alarm went off early. They're awake but tired.`
+      const message = isLateWake
+        ? `${firstName}'s alarm went off. They're awake but running late.`
+        : isShortSleep
+        ? `${firstName}'s alarm went off. They're up but tired — short sleep.`
         : `${firstName}'s alarm went off. They're up and starting their day.`;
 
       return Response.json({
         success: true,
         woke_up: true,
-        is_early: isEarlyWake,
-        minutes_early: minutesEarly,
+        is_late_wake: isLateWake,
+        is_short_sleep: isShortSleep,
+        hours_slept: Math.round(hoursSlept * 10) / 10,
         new_emotional_state: newEmotionalState,
         message,
       });

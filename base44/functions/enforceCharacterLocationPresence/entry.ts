@@ -103,7 +103,19 @@ function computeAdaptiveSleepWindow(character, etTime) {
   return null;
 }
 
-// Returns true if within `bufferMinutes` of adaptive sleep start
+/**
+ * isNearSleepWindow — VALID HELPER, CONTEXT-ONLY
+ *
+ * Classification: Valid Helper, previously Misused.
+ * Original purpose: parameterized pre-sleep proximity check for unwind/slowdown context.
+ * Misuse that was removed: used as a visit-eviction gate (blocking character visits 2h before sleep).
+ *
+ * PERMITTED USE: location scoring context — nudge scores, not hard blocks.
+ *   Correct: score home +2, gym -1, nightlife -2 when within bufferMinutes of sleep start.
+ *   Forbidden: blocking movement, evicting visits, forcing returns, overriding user actions.
+ *
+ * NOT called here (enforcement file). Kept for documentation and future scoring-context reconnection.
+ */
 function isNearSleepWindow(character, etTime, bufferMinutes) {
   const window = computeAdaptiveSleepWindow(character, etTime);
   if (!window) return false;

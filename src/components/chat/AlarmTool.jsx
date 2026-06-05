@@ -202,12 +202,12 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
             </div>
           )}
 
-          {/* Sleep debt warning */}
-          {isAsleep && (character.sleep_debt_hours || 0) > 1.5 && (
+          {/* Short sleep warning — based on energy level, not forbidden sleep_debt_hours */}
+          {isAsleep && (character.energy_value ?? 75) < 40 && (
             <div className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-2">
               <BatteryLow className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
               <p className="text-xs text-amber-400">
-                {firstName} is carrying sleep debt — early wake may leave them exhausted.
+                {firstName} has low energy — waking them now may leave them exhausted.
               </p>
             </div>
           )}
