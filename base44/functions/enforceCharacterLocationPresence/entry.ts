@@ -247,64 +247,40 @@ function computeResolvedLocation(character, locationMap, etTime) {
     };
   }
 
-  // ── LAYER 0: SLEEP HARD LOCK (HIGHEST PRIORITY — runs before everything) ───
-  // active_created_character inside their sleep window must be locked to their
-  // valid sleep location. This overrides work, school, travel, visits, and
-  // all stale resolved_source_reason / autonomous / needs-driven fields.
+  // ── LAYER 0: SLEEP STATE LOCK — DB truth only for active_created_character ──
+  // Sleep for active_created_characters is driven by the energy/needs system.
+  // This function does NOT force sleep via clock windows.
+  // If the DB says sleeping → preserve location at home.
+  // If the DB says awake   → do NOT force sleep.
+  // Clock windows (isCharacterSleeping, isInPreSleepWindow) are NOT used here.
   const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
   const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
+  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
 
-  if (isCharacterSleeping(character, etTime)) {
+  if (dbSleeping) {
     if (sleepHomeId) {
       return {
         resolved_current_location_id: sleepHomeId,
         resolved_current_location_name: sleepHomeLoc?.name || 'Home',
         resolved_location_type: 'home',
-        resolved_presence_status: 'sleeping',
-        resolved_source_reason: 'adaptive_sleep_location_lock',
+        resolved_presence_status: character.resolved_presence_status,
+        resolved_source_reason: 'energy_driven_sleep_preserved',
         resolved_zone: null,
         home_resolution_failed: false
       };
     }
-    // No valid mapped home — this is a VALID state (rabbit hole, shelter, transitional housing, etc.)
-    // Do NOT mark as error. Character is sleeping wherever they are.
+    // No valid mapped home — character is sleeping off-screen, preserve it
     return {
       resolved_current_location_id: character.resolved_current_location_id || null,
       resolved_current_location_name: character.resolved_current_location_name || 'Off-screen',
-      resolved_location_type: character.resolved_location_type || 'rabbit_hole',
-      resolved_presence_status: 'sleeping',
-      resolved_source_reason: 'sleeping_no_mapped_home',
+      resolved_location_type: character.resolved_location_type || 'home',
+      resolved_presence_status: character.resolved_presence_status,
+      resolved_source_reason: 'energy_driven_sleep_no_mapped_home',
       resolved_zone: null,
       home_resolution_failed: false
     };
   }
-
-  // ── LAYER 0B: RECOVERY NAP LOCK ──────────────────────────────────────────
-  if (hasUnpaidSleepDebt(character) && isNapTime(etTime) && sleepHomeId) {
-    return {
-      resolved_current_location_id: sleepHomeId,
-      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
-      resolved_location_type: 'recovery_nap',
-      resolved_presence_status: 'napping',
-      resolved_source_reason: 'recovery_nap',
-      resolved_zone: null,
-      home_resolution_failed: !sleepHomeLoc
-    };
-  }
-
-  // ── LAYER 0C: PRE-SLEEP RETURN WINDOW (60 min before sleep) ─────────────
-  // Cancels stale visits/autonomous/travel destinations — returns character home.
-  if (isInPreSleepWindow(character, etTime) && sleepHomeId) {
-    return {
-      resolved_current_location_id: sleepHomeId,
-      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
-      resolved_location_type: 'home',
-      resolved_presence_status: 'returning_home_for_sleep',
-      resolved_source_reason: 'adaptive_pre_sleep_return',
-      resolved_zone: null,
-      home_resolution_failed: !sleepHomeLoc
-    };
-  }
+  // DB says awake — fall through to obligation/location resolution. Do NOT force sleep.
 
   // ── LAYERS 1+: Normal schedule logic (only reached when NOT sleeping) ─────
   const hasValidCallout =

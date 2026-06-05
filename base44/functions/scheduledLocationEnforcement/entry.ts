@@ -326,52 +326,40 @@ function computeResolved(character, locationMap, etTime) {
   const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
 
   const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
-  const canonicallyAsleep = !isNPCChar && isSleeping(character, etTime);
 
-  if (!isNPCChar && canonicallyAsleep) {
-    // Unambiguously within sleep window — hard lock at home
-    if (sleepHomeId) {
-      return {
-        resolved_current_location_id: sleepHomeId,
-        resolved_current_location_name: sleepHomeLoc?.name || 'Home',
-        resolved_location_type: 'home',
-        resolved_presence_status: 'sleeping',
-        resolved_source_reason: 'adaptive_sleep_location_lock',
-        resolved_zone: null,
-        home_resolution_failed: !sleepHomeLoc,
-      };
-    }
-    return {
-      resolved_current_location_id: null,
-      resolved_current_location_name: 'Unresolved',
-      resolved_location_type: 'sleep_unresolved',
-      resolved_presence_status: 'sleeping',
-      resolved_source_reason: 'no_valid_sleep_location',
-      resolved_zone: null,
-      home_resolution_failed: true,
-    };
-  }
-
-  // Past canonical sleep window — check DB + valid reasons (active_created_character only)
-  if (!isNPCChar && dbSleeping) {
-    const sleepClassification = classifySleepStateInline(character, etTime);
-    if (sleepClassification.isValid) {
-      // Character-driven valid sleep (oversleeping, recovery, illness, etc.) — preserve at home
+  // ── ACTIVE_CREATED_CHARACTER: sleep state is DB truth, not clock window ──────
+  // For active_created_characters, sleep is driven by the energy/needs system
+  // (simulateActiveCharacterNeeds + autonomousCharacterMovement). The clock window
+  // is NOT an authority. We only lock location if the DB already says sleeping.
+  // If DB says sleeping → preserve at valid sleep location (protect the state the energy system wrote).
+  // If DB says awake   → do NOT force sleep based on any clock window.
+  if (!isNPCChar) {
+    if (dbSleeping) {
+      // DB says sleeping — preserve the state at a valid sleep location.
+      // This protects what the energy system already wrote. Do not clear it via schedule.
       if (sleepHomeId) {
         return {
           resolved_current_location_id: sleepHomeId,
           resolved_current_location_name: sleepHomeLoc?.name || 'Home',
           resolved_location_type: 'home',
           resolved_presence_status: character.resolved_presence_status, // preserve sleeping/napping
-          resolved_source_reason: `valid_${sleepClassification.reason}`,
+          resolved_source_reason: 'energy_driven_sleep_preserved',
           resolved_zone: null,
           home_resolution_failed: !sleepHomeLoc,
         };
       }
+      // No valid sleep location — character is sleeping somewhere off-screen, preserve it
+      return {
+        resolved_current_location_id: character.resolved_current_location_id || null,
+        resolved_current_location_name: character.resolved_current_location_name || 'Home',
+        resolved_location_type: character.resolved_location_type || 'home',
+        resolved_presence_status: character.resolved_presence_status,
+        resolved_source_reason: 'energy_driven_sleep_no_mapped_home',
+        resolved_zone: null,
+        home_resolution_failed: true,
+      };
     }
-    // isStale === true — fall through to normal resolution (do NOT re-lock as sleeping)
-    // The character will resolve to home/work/school as normal — stale sleep is cleared.
-    console.log && console.log(`[scheduledEnforcement] ${character.name}: stale sleep cleared (${sleepClassification.reason}) — resolving normally`);
+    // DB says awake — fall through to obligation/location resolution. Do NOT force sleep.
   }
 
   // ── LAYER 0B: RECOVERY NAP LOCK — DISABLED GLOBALLY ──

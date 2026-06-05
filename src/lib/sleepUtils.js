@@ -26,18 +26,28 @@ export const STALE_SLEEP_GRACE_MINUTES = 20;
  * Only explicit story/schedule sleep is valid now.
  */
 export function classifySleepState(character) {
+  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+
+  // For active_created_characters: sleep state is always valid if DB says sleeping.
+  // The energy system wrote it. It is never "stale". Only NPCs use clock-window stale detection.
+  if (!isNPCCharacterType(character)) {
+    if (dbSleeping) {
+      return { isStale: false, isValid: true, reason: 'energy_driven_sleep', consequence_tags: [] };
+    }
+    return { isStale: false, isValid: false, reason: 'not_sleeping_in_db', consequence_tags: [] };
+  }
+
+  // ── NPC: original clock-window stale detection (unchanged) ───────────────
   const canonicalAsleep = isCharacterAsleep(character);
 
   if (canonicalAsleep) {
     return { isStale: false, isValid: true, reason: 'within_canonical_sleep_window', consequence_tags: [] };
   }
 
-  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
   if (!dbSleeping) {
     return { isStale: false, isValid: false, reason: 'not_sleeping_in_db', consequence_tags: [] };
   }
 
-  // Past canonical wake time — only story-based stay-up decisions keep sleep valid
   if (character.decided_to_stay_up_until) {
     const stayUntil = new Date(character.decided_to_stay_up_until);
     if (stayUntil > new Date(Date.now() - 8 * 3600 * 1000)) {
@@ -50,17 +60,14 @@ export function classifySleepState(character) {
     return { isStale: false, isValid: true, reason: 'user_directed_nap', consequence_tags: [] };
   }
 
-  // Illness sleep
   if ((character.health_value || 100) < 30) {
     return { isStale: false, isValid: true, reason: 'illness_sleep', consequence_tags: ['sick', 'tired'] };
   }
 
-  // Emotional crash sleep
   if ((character.mental_value || 100) < 25) {
     return { isStale: false, isValid: true, reason: 'emotional_crash_sleep', consequence_tags: ['emotional', 'exhausted'] };
   }
 
-  // Check grace period
   const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const currentMin = nowET.getHours() * 60 + nowET.getMinutes();
@@ -73,7 +80,6 @@ export function classifySleepState(character) {
     }
   }
 
-  // Stale — no valid story reason
   return { isStale: true, isValid: false, reason: 'stale_system_sleep', consequence_tags: ['groggy'] };
 }
 
@@ -160,9 +166,8 @@ export function buildSleepInterruptionUpdate(character) {
   const sleptHours = sleepStart ? (now.getTime() - sleepStart.getTime()) / 3600000 : 0;
 
   return {
-    // REMOVED: no sleep_debt_hours, no sleep_interrupted_at
-    // Energy recovery only
-    energy_value: Math.min(100, (character.energy_value || 50) + Math.round(sleptHours * 8)),
+    // Energy recovery: +12/hr (matches simulateActiveCharacterNeeds sleeping rate)
+    energy_value: Math.min(100, (character.energy_value || 50) + Math.round(sleptHours * 12)),
   };
 }
 
@@ -359,6 +364,13 @@ function computeAdaptiveSleepWindow(character, locationMap) {
   }
 
   // PRIORITY 5: No structured timing at all.
+  // For active_created_character: return null — no clock window can be assumed.
+  // Sleep for these characters is driven by energy/needs (simulateActiveCharacterNeeds + autonomousCharacterMovement).
+  // Returning a clock window here would create a hidden schedule-based sleep controller.
+  if (!isNPCCharacterType(character)) {
+    return { sleepStartMin: null, wakeMin: null, source: 'no_structured_timing' };
+  }
+  // NPCs with no structured timing: fallback 11 PM–7 AM (unchanged)
   return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, source: 'no_structured_timing' };
 }
 
@@ -386,6 +398,19 @@ function computeAdaptiveSleepWindow(character, locationMap) {
  */
 export function isCharacterAsleep(character, locationMap) {
   if (!character) return false;
+
+  // ── ACTIVE_CREATED_CHARACTER: use DB status, not clock window ──────────────
+  // Sleep for active_created_characters is driven by the energy/needs system.
+  // The authoritative answer is the stored resolved_presence_status.
+  // Clock windows must NOT be used to determine sleep state for these characters —
+  // doing so creates a hidden schedule-based sleep controller.
+  if (!isNPCCharacterType(character)) {
+    return character.resolved_presence_status === 'sleeping' ||
+           character.resolved_presence_status === 'napping' ||
+           character.resolved_presence_status === 'passed_out';
+  }
+
+  // ── NPC types: evaluate clock window as before ────────────────────────────
 
   // Guard 1: explicit stay-up override
   if (character.decided_to_stay_up_until) {
