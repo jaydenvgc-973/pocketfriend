@@ -849,22 +849,18 @@ Deno.serve(async (req) => {
           // Do NOT continue — fall through to work/school dispatch (Tier 3.5+)
         }
 
-        // ── AUTONOMOUS ENERGY-BASED SLEEP ONSET ─────────────────────────────
-        // The ONLY correct sleep path for active_created_characters.
-        // NO clock windows. NO sleep_start_time. NO derived schedule.
-        // Driven entirely by energy value — the character's body decides.
+        // ── ENERGY-BASED HOME ROUTING (travel only — no direct sleep writes) ───
+        // SINGLE SLEEP AUTHORITY RULE (permanent):
+        //   Only simulateActiveCharacterNeeds may write resolved_presence_status = 'sleeping'.
+        //   It does so at energy ≤ 20 only, at a valid sleep location, with alarm/shift guards.
+        //   autonomousCharacterMovement may only route characters home via TravelSession.
         //
         // THRESHOLDS:
-        //   energy < 30 AND at home → sleep onset (character is tired enough at any time of day)
-        //   energy < 20 AND not at home → return home to sleep (critically tired, going home)
+        //   energy < 20 AND not at home → return home via TravelSession (critically tired)
+        //   energy < 30 AND at home     → no action needed (scorer keeps them home; simulateNeeds writes sleep)
         //
-        // These are voluntary body-state thresholds. A character with energy=35 who is out
-        // socializing will NOT be forced home — they are still functional. Once they reach 30
-        // at home, their body naturally transitions to sleep.
-        //
-        // Context matters: if a character's activity context already shows them as active
-        // (bar, social, gym, food), the needs system won't put them to sleep mid-activity —
-        // they have to get home first. Case B handles that: once energy < 20, they go home.
+        // Case A (energy < 30 at home → write sleeping) was removed — it was a duplicate sleep
+        // authority that fired at energy=28, ignored alarms/work/school, and bypassed foreground yield.
         {
           const homeId = char.current_home_location_id;
           const atHome = homeId && char.resolved_current_location_id === homeId;
@@ -872,28 +868,19 @@ Deno.serve(async (req) => {
           const energyVal = char.energy_value ?? 75;
 
           if (!alreadySleeping && homeId) {
-            // Case A: already home and tired — sleep onset (pure energy threshold, no clock)
-            if (atHome && energyVal < 30) {
-              const sleepOnsetPayload = {
-                resolved_presence_status:   'sleeping',
-                resolved_location_type:     'home',
-                resolved_source_reason:     'autonomous_sleep_onset_energy',
-                location_status:            'home',
-                last_sleep_start:           new Date().toISOString(),
-                resolved_last_updated_at:   nowET.toISOString(),
-              };
-              try {
-                await base44.entities.Character.update(char.id, sleepOnsetPayload);
-              } catch {
-                await base44.asServiceRole.entities.Character.update(char.id, sleepOnsetPayload);
-              }
-              moveLog.push(`${char.name}: AUTONOMOUS SLEEP ONSET (energy=${Math.round(energyVal)})`);
-              console.log(`[autonomousMovement] ✓ ${char.name}: autonomous sleep at home (energy=${Math.round(energyVal)})`);
-              continue;
-            }
+            // ARCHITECTURE RULE (permanent):
+            // autonomousCharacterMovement MUST NOT write resolved_presence_status = 'sleeping'.
+            // Sleep onset is exclusively owned by simulateActiveCharacterNeeds at energy ≤ 20.
+            // Case A (energy < 30 at home → write sleeping directly) was removed because:
+            //   1. It conflicted with simulateActiveCharacterNeeds threshold (20 vs 30 = duplicate authority)
+            //   2. It ran BEFORE Tier 3.5 work/school dispatch — sleeping a character before their shift check
+            //   3. It bypassed the foreground yield gate entirely
+            //   4. It ignored pending_alarm_time, active commitments, and user intent
+            // The location scorer already nudges home high when energy < 30, so the character
+            // stays home naturally. simulateActiveCharacterNeeds writes sleep at energy ≤ 20.
 
-            // Case B: not at home, critically tired — return home to sleep
-            // Threshold 20: below this, character cannot realistically stay out. Go home.
+            // Case B: not at home, critically tired — return home via TravelSession.
+            // simulateActiveCharacterNeeds will write sleep once they arrive and energy ≤ 20.
             if (!atHome && energyVal < 20) {
               const sleepHome = userLocations.find(loc => loc.id === homeId);
               if (sleepHome && char.resolved_current_location_id !== sleepHome.id) {
