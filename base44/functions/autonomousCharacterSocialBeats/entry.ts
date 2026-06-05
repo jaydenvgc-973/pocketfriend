@@ -155,6 +155,33 @@ Deno.serve(async (req) => {
     } catch { /* scheduled run — no user session */ }
     console.log(`[autonomousSocialBeats] Run start | caller=${callerEmail || 'scheduled_no_session'} | time=${nowIso}`);
 
+    // ── CHECK IF USER IS ACTIVELY USING THE APP ─────────────────────────────────
+    // Frontend writes to AppWorldState.user_active_session when in foreground pages
+    let isForegroundActive = false;
+    try {
+      const sessions = await base44.asServiceRole.entities.AppWorldState.filter({ key: 'user_active_session' });
+      if (sessions.length > 0) {
+        const lastUpdate = sessions[0].value ? new Date(sessions[0].value).getTime() : 0;
+        const currentTime = Date.now();
+        const thirtySeconds = 30 * 1000;
+        isForegroundActive = (currentTime - lastUpdate) < thirtySeconds;
+      }
+    } catch (_) {
+      // If we can't read the flag, assume no foreground activity
+    }
+
+    // If user is actively using the app, defer social beat generation
+    if (isForegroundActive) {
+      console.log(`[autonomousSocialBeats] User active — deferring social beat LLM generation`);
+      return Response.json({
+        success: true,
+        yielded: true,
+        reason: 'foreground_user_active',
+        beats_generated: 0,
+        users_processed: 0,
+      });
+    }
+
     // ── PROOF MODE: pin community_event pairs first for live path validation ──
     // Only active when proofEventPath=true in payload. No effect on normal runs.
     const body = await req.json().catch(() => ({}));

@@ -432,9 +432,23 @@ function selectBestLocation(locations, char, vals, nowET) {
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    try { await base44.auth.me(); } catch { /* scheduled — no session */ }
 
+    // Check if user has an active foreground session
+    // Frontend writes to AppWorldState.user_active_session when in Chat/Travel/Profile/etc.
+    // This allows background work to yield gracefully if user is actively using the app
     let isForegroundActive = false;
+    try {
+      const sessions = await base44.asServiceRole.entities.AppWorldState.filter({ key: 'user_active_session' });
+      if (sessions.length > 0) {
+        const lastUpdate = sessions[0].value ? new Date(sessions[0].value).getTime() : 0;
+        const now = Date.now();
+        const thirtySeconds = 30 * 1000;
+        // If the flag was updated within the last 30 seconds, user is active
+        isForegroundActive = (now - lastUpdate) < thirtySeconds;
+      }
+    } catch (_) {
+      // If we can't read the flag, assume no foreground activity — proceed with background work
+    }
 
     // ── LOAD active_created_character — FILTERED, not full list ──────────────
     // Cap at 100 (was 500 via unfiltered .list()). Sorted by most-recently-updated

@@ -10,6 +10,7 @@ import { ActiveCharacterProvider } from '@/lib/ActiveCharacterContext';
 import PlayAsCharacterBanner from '@/components/chat/PlayAsCharacterBanner';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { useRoutePreservation } from '@/lib/useRoutePreservation';
+import { useForegroundSessionTracking } from '@/hooks/useForegroundSessionTracking';
 
 import Onboarding from './pages/Onboarding';
 import CommunityEventsDemo from './pages/CommunityEventsDemo';
@@ -86,6 +87,9 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
 
   // Preserve current route across orientation changes and remounts (read-only — no navigate)
   useRoutePreservation();
+
+  // Track foreground session state for background function gating
+  useForegroundSessionTracking();
 
   // PRIORITY ARCHITECTURE: ensureUserVGCTowers removed from App startup.
   // Infrastructure maintenance does not belong in the startup sequence.

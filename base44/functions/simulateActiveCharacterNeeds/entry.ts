@@ -487,7 +487,7 @@ Deno.serve(async (req) => {
     try { payload = await req.json(); } catch (_) {}
     const { characterId } = payload;
 
-    // Determine auth context
+    // Determine auth context for ownership scoping
     let user = null;
     try { user = await base44.auth.me(); } catch (_) {}
 

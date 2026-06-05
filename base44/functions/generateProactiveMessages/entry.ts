@@ -305,6 +305,33 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
+    // Check if user has an active foreground session
+    // Frontend writes to AppWorldState.user_active_session when in Chat/Travel/Profile/etc.
+    let isForegroundActive = false;
+    try {
+      const sessions = await base44.asServiceRole.entities.AppWorldState.filter({ key: 'user_active_session' });
+      if (sessions.length > 0) {
+        const lastUpdate = sessions[0].value ? new Date(sessions[0].value).getTime() : 0;
+        const now = Date.now();
+        const thirtySeconds = 30 * 1000;
+        isForegroundActive = (now - lastUpdate) < thirtySeconds;
+      }
+    } catch (_) {
+      // If we can't read the flag, assume no foreground activity
+    }
+
+    // If user is actively using the app, defer proactive message generation
+    if (isForegroundActive) {
+      console.log(`[generateProactiveMessages] User active — deferring message generation`);
+      return Response.json({
+        success: true,
+        yielded: true,
+        reason: 'foreground_user_active',
+        messagesGenerated: 0,
+        results: [],
+      });
+    }
+
     // Get all active characters scoped to the authenticated user only
     // CRITICAL: must use owner_email — unscoped filter returns characters from all accounts
     const characters = await base44.entities.Character.filter({

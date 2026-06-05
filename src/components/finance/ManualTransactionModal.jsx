@@ -62,7 +62,7 @@ export default function ManualTransactionModal({ character, initialDirection = '
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 80, opacity: 0 }}
           onClick={e => e.stopPropagation()}
-          className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto"
+          className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-5 space-y-4 max-h-[85vh] overflow-y-auto flex flex-col"
         >
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground">
@@ -101,7 +101,7 @@ export default function ManualTransactionModal({ character, initialDirection = '
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-3">
+          <form onSubmit={handleSubmit} className="space-y-3 flex-1 overflow-y-auto">
             {/* Amount */}
             <div className="relative">
               <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -140,16 +140,20 @@ export default function ManualTransactionModal({ character, initialDirection = '
             {error && (
               <p className="text-xs text-destructive">{error}</p>
             )}
+          </form>
 
+          {/* Button footer — pinned to bottom, always reachable */}
+          <div className="sticky bottom-0 left-0 right-0 pt-3 border-t border-border bg-card">
             <Button
               type="submit"
+              onClick={handleSubmit}
               disabled={saving}
               className={`w-full rounded-xl gap-2 ${direction === 'income' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
             >
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : direction === 'income' ? <PlusCircle className="w-4 h-4" /> : <MinusCircle className="w-4 h-4" />}
               {saving ? 'Processing...' : direction === 'income' ? `Add $${amount || '0'}` : `Subtract $${amount || '0'}`}
             </Button>
-          </form>
+          </div>
         </motion.div>
       </motion.div>
     </AnimatePresence>
