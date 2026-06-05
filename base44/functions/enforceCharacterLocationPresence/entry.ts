@@ -114,30 +114,6 @@ function isNearSleepWindow(character, etTime, bufferMinutes) {
   return now >= windowStart && now < sleepStartMin;
 }
 
-// Returns true if within 60 minutes before adaptive sleep start
-const PRE_SLEEP_WINDOW_MINUTES = 60;
-
-function isCharacterSleeping(character, etTime) {
-  const window = computeAdaptiveSleepWindow(character, etTime);
-  // No determinable sleep schedule — cannot assume sleep. Return false.
-  if (!window) return false;
-  const now = etTime.getHours() * 60 + etTime.getMinutes();
-  const { sleepStartMin, wakeMin } = window;
-  if (sleepStartMin > wakeMin) return now >= sleepStartMin || now < wakeMin;
-  return now >= sleepStartMin && now < wakeMin;
-}
-
-function isInPreSleepWindow(character, etTime) {
-  const window = computeAdaptiveSleepWindow(character, etTime);
-  // No determinable sleep schedule — cannot assume pre-sleep window. Return false.
-  if (!window) return false;
-  const now = etTime.getHours() * 60 + etTime.getMinutes();
-  const { sleepStartMin } = window;
-  const windowStart = (sleepStartMin - PRE_SLEEP_WINDOW_MINUTES + 1440) % 1440;
-  if (windowStart > sleepStartMin) return now >= windowStart || now < sleepStartMin;
-  return now >= windowStart && now < sleepStartMin;
-}
-
 // Confinement categories — treated as valid sleep/residence locations for routing purposes.
 // Note: autonomous movement is still fully blocked for incarcerated characters regardless.
 const CONFINEMENT_CATEGORIES = new Set([
@@ -189,17 +165,6 @@ function resolveValidSleepLocationId(character, locationMap) {
     return character.home_location_id;
   }
   return null;
-}
-
-// HELPER: Check if nap time (1-3pm)
-function isNapTime(etTime) {
-  const hour = etTime.getHours();
-  return hour >= 13 && hour < 16;
-}
-
-// HELPER: Check if has unpaid sleep debt
-function hasUnpaidSleepDebt(character) {
-  return character.sleep_debt_hours && character.sleep_debt_hours > 0;
 }
 
 // MINIMAL INLINE RESOLVER: Compute ONE resolved location object

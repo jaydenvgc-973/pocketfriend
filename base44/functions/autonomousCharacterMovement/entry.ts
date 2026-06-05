@@ -687,8 +687,10 @@ Deno.serve(async (req) => {
         }
 
         // ── TIER 2: ALREADY PASSED OUT — RECOVERY ────────────────────────────
-        // Character is passed out but energy > 10 (has recovered enough).
-        // Route to home for full recovery. Overrides toggle.
+        // Character is passed out but energy > 10 (has recovered enough to move).
+        // Route to home. Write presence as 'home' — NOT 'sleeping'.
+        // passed_out and sleeping are separate states. Once home, the energy-based
+        // sleep onset block below will write 'sleeping' if energy still warrants it.
         if (status === 'passed_out') {
           if (energyUrgency < 4 && char.current_home_location_id) {
             const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
@@ -696,7 +698,7 @@ Deno.serve(async (req) => {
               const recoveryPayload = {
                 resolved_current_location_id:   ownHome.id,
                 resolved_current_location_name: ownHome.name,
-                resolved_presence_status:       'sleeping',
+                resolved_presence_status:       'home',
                 resolved_location_type:         'home',
                 resolved_source_reason:         'pass_out_recovery',
                 last_arrived_time:              new Date().toISOString(),
