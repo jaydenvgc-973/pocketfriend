@@ -146,15 +146,15 @@ function getLocationContext(character, locationMap) {
   if (activity.includes('at work') || activity.includes('working') || activity.includes('on shift')) {
     const workLocId = character.current_work_location_id || character.occupation_location_id;
     const workLoc = workLocId ? locationMap[workLocId] : null;
-    if (workLoc) return isOnShift(character) ? getWorkContextFromLocation(workLoc) : 'work_off_shift';
-    return isOnShift(character) ? 'at_work' : 'work_off_shift';
+    if (workLoc) return isOnShift(character, locationMap) ? getWorkContextFromLocation(workLoc) : 'work_off_shift';
+    return isOnShift(character, locationMap) ? 'at_work' : 'work_off_shift';
   }
 
   if (presenceStatus === 'at_work') {
     const workLocId = character.current_work_location_id || character.occupation_location_id;
     const workLoc = workLocId ? locationMap[workLocId] : null;
-    if (workLoc) return isOnShift(character) ? getWorkContextFromLocation(workLoc) : 'work_off_shift';
-    return isOnShift(character) ? 'at_work' : 'work_off_shift';
+    if (workLoc) return isOnShift(character, locationMap) ? getWorkContextFromLocation(workLoc) : 'work_off_shift';
+    return isOnShift(character, locationMap) ? 'at_work' : 'work_off_shift';
   }
   if (presenceStatus === 'at_school') return 'at_school';
 
@@ -167,7 +167,7 @@ function getLocationContext(character, locationMap) {
   if (!loc) return 'home_resting';
 
   const workLocId = character.current_work_location_id || character.occupation_location_id;
-  if (locId === workLocId) return isOnShift(character) ? getWorkContextFromLocation(loc) : 'work_off_shift';
+  if (locId === workLocId) return isOnShift(character, locationMap) ? getWorkContextFromLocation(loc) : 'work_off_shift';
 
   const cat = (loc.category || '').toLowerCase();
   const name = (loc.name || '').toLowerCase();
@@ -332,7 +332,7 @@ function needsAreUninitialized(needs) {
  *  3. Auto-sleep (energy critical, not on shift)
  *  4. Auto-eat (hunger critical, not sleeping, not hospitalized)
  */
-function computeCorrectiveState(char, newNeeds, currentContext, now) {
+function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap) {
   const stateWrites = {};
   const scheduledEvents = [];
   const logs = [];
@@ -624,7 +624,7 @@ Deno.serve(async (req) => {
       }
 
       // ── RC1+RC2+RC3+RC4: CORRECTIVE STATE WRITES ─────────────────────────
-      const corrective = computeCorrectiveState(char, newNeeds, context, now);
+      const corrective = computeCorrectiveState(char, newNeeds, context, now, locationMap);
       allCorrectiveLogs.push(...corrective.logs);
 
       // Fire-and-forget: create ScheduledEvents for ER discharge and pass-out wake
