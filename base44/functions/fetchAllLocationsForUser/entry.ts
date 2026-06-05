@@ -149,21 +149,27 @@ Deno.serve(async (req) => {
     }
 
     // ── LAYER: character-specific locations (scope === 'character_specific') ───
-    // Only apply character ownership checks to character-specific locations.
-    // Account-global locations (including jail/prison) are ALWAYS kept if they passed Query 1+2.
+    // RULE: owner_email === user.email is the absolute ownership authority.
+    // Any location owned by this user (owner_email match) is ALWAYS kept — regardless of
+    // location_type, scope, category (including 'home'), or whether character IDs match.
+    // Character-specific filtering ONLY applies to locations NOT owned by this user
+    // (e.g. cross-account shared entries that happen to be typed character_specific).
     const charSpecificInCombined = combined.filter(loc => {
+      // ABSOLUTE RULE: user-owned locations are never filtered out
+      if (loc.owner_email === user.email) return true;
+
       const isCharSpecific = loc.location_type === 'character_specific' || loc.scope === 'character_specific';
       
-      // Account-global and shared locations: always keep (they passed ownership checks in Query 1+2)
+      // Account-global and shared locations not owned by user: always keep (passed Query 2)
       if (!isCharSpecific) return true;
       
-      // Character-specific: only keep if it belongs to one of this user's characters
+      // Character-specific and not owned by this user: only keep if linked to one of this user's characters
       if (loc.owner_character_id && userCharacterIds.has(loc.owner_character_id)) return true;
       if (loc.assigned_character_id && userCharacterIds.has(loc.assigned_character_id)) return true;
       if (loc.character_id && userCharacterIds.has(loc.character_id)) return true;
       if (loc.resident_character_ids?.some(id => userCharacterIds.has(id))) return true;
       
-      // char-specific but not linked to this user's characters — exclude
+      // char-specific, not owned by this user, not linked to this user's characters — exclude
       return false;
     });
 
