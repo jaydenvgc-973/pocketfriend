@@ -234,10 +234,12 @@ function applyStatInfection(needs, elapsedHours) {
   }
 
   // ── MULTI-CRITICAL COMPOUND DAMAGE ──
-  const criticalCount = [needs.hunger, needs.energy, needs.mental, needs.hygiene, needs.health]
+  // Only energy, hunger, and health count toward compound body stress.
+  // Hygiene, social, mental, comfort are NOT body-failure needs and must not accelerate physical collapse.
+  const bodyCriticalCount = [needs.hunger, needs.energy, needs.health]
     .filter(v => v < 20).length;
-  if (criticalCount >= T.COMPOUND_CRISIS) {
-    // Slow the compound damage to prevent instant collapse — max 0.5/hr
+  if (bodyCriticalCount >= 2) {
+    // Slow compound damage to prevent instant collapse — max 0.5/hr
     needs.health = clamp(needs.health - 0.5 * elapsedHours);
   }
 
@@ -322,42 +324,62 @@ function needsAreUninitialized(needs) {
 }
 
 /**
- * RC1+RC2+RC3+RC4 FIX: Determine corrective state writes needed.
- * Returns an object of fields to merge into the character update payload,
- * plus optional ScheduledEvent objects to create.
+ * CORRECTIVE STATE RESOLVER — Need-Specific Behavior
  *
- * Priority (highest wins):
- *  1. Hospitalization (health ER or compound crisis with low health)
- *  2. Pass-out (energy = 0)
- *  3. Auto-sleep (energy critical, not on shift)
- *  4. Auto-eat (hunger critical, not sleeping, not hospitalized)
+ * ARCHITECTURE RULE (permanent):
+ *   Sleep may ONLY be written when ENERGY is the critical driver.
+ *   No other need — hygiene, social, mental, comfort — may trigger sleep.
+ *   Each need routes to its own correct corrective behavior:
+ *
+ *   energy   → sleep / pass-out (the ONLY need that drives sleep)
+ *   health   → hospitalization / medical rest
+ *   hunger   → eating / food-seeking
+ *   hygiene  → hygiene correction (shower, wash, change) — NEVER sleep
+ *   social   → social activity nudge — NEVER sleep
+ *   mental   → decompression / rest nudge — NEVER forced sleep
+ *   comfort  → comfort adjustment / home nudge — NEVER sleep
+ *
+ * Compound crisis (multiple needs low) does NOT default to sleeping
+ * unless energy is itself critically low (≤ ENERGY_CRITICAL).
+ * A character with energy=83 and hygiene=0 is tired-looking, not sleepy.
  */
 function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap) {
   const stateWrites = {};
   const scheduledEvents = [];
   const logs = [];
 
-  const hunger = newNeeds.hunger;
-  const energy = newNeeds.energy;
-  const health = newNeeds.health;
-  const mental = newNeeds.mental;
+  const hunger  = newNeeds.hunger;
+  const energy  = newNeeds.energy;
+  const health  = newNeeds.health;
+  const hygiene = newNeeds.hygiene;
+  const social  = newNeeds.social;
+  const mental  = newNeeds.mental;
   const presence = char.resolved_presence_status || '';
-  const onShift = isOnShift(char, locationMap);
-
-  // Count how many needs are in crisis
-  const criticalCount = [hunger, energy, newNeeds.mental, newNeeds.hygiene, health]
-    .filter(v => v < 20).length;
+  const onShift  = isOnShift(char, locationMap);
 
   const alreadyHospitalized = presence === 'hospitalized' || (char.current_activity || '').toLowerCase().includes('hospital');
   const alreadySleeping = presence === 'sleeping' || presence === 'napping' || presence === 'passed_out';
 
-  // ── RC3 FIX: HEALTH ER ESCALATION ────────────────────────────────────────
-  // Trigger if health ≤ 15 OR compound crisis with health ≤ 20
-  const healthERThreshold = criticalCount >= T.COMPOUND_CRISIS ? T.HEALTH_CRITICAL : T.HEALTH_ER;
+  // ALARM WAKE GUARD: if character was woken by an alarm within the last 30 minutes,
+  // do NOT write sleeping back — the alarm system owns this wake state.
+  const recentlyWokenByAlarm = (() => {
+    if (!char.sleep_interrupted_at) return false;
+    const wokenAt = new Date(char.sleep_interrupted_at).getTime();
+    return (now.getTime() - wokenAt) < 30 * 60 * 1000;
+  })();
+  if (recentlyWokenByAlarm) {
+    logs.push(`[CORRECTIVE] ${char.name}: alarm wake guard active (sleep_interrupted_at within 30min) — all sleep writes blocked`);
+    // Still allow non-sleep corrections (hunger, hygiene) below — do NOT return early yet
+  }
+
+  // ── PRIORITY 1: HEALTH ER (health-only trigger — never hygiene/social/comfort) ──
+  // Fires only when health itself is critically low (≤ 15 standalone, ≤ 20 with health+energy both low).
+  // Hygiene=0 does NOT lower the health ER threshold.
+  const healthAndEnergyBothLow = health <= T.HEALTH_CRITICAL && energy <= T.ENERGY_CRITICAL;
+  const healthERThreshold = healthAndEnergyBothLow ? T.HEALTH_CRITICAL : T.HEALTH_ER;
   if (health <= healthERThreshold && !alreadyHospitalized && !onShift) {
     stateWrites.resolved_presence_status = 'hospitalized';
     stateWrites.current_activity = 'receiving emergency medical care';
-    // Schedule discharge in 4–6 hours
     const dischargeTime = new Date(now.getTime() + (4 + Math.random() * 2) * 3600000);
     scheduledEvents.push({
       type: 'health_er',
@@ -372,16 +394,15 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         primary_character_id: char.id,
       },
     });
-    logs.push(`[CORRECTIVE] ${char.name}: health=${Math.round(health)} → hospitalized. Discharge scheduled ${dischargeTime.toISOString()}`);
-    return { stateWrites, scheduledEvents, logs }; // hospitalization overrides all other corrections
+    logs.push(`[CORRECTIVE] ${char.name}: health=${Math.round(health)} → hospitalized`);
+    return { stateWrites, scheduledEvents, logs };
   }
 
-  // ── RC2 FIX: PASS-OUT STATE WRITER ───────────────────────────────────────
-  if (energy <= T.ENERGY_PASSOUT && !alreadySleeping) {
+  // ── PRIORITY 2: PASS-OUT (energy = 0, only energy drives this) ──
+  if (energy <= T.ENERGY_PASSOUT && !alreadySleeping && !recentlyWokenByAlarm) {
     stateWrites.resolved_presence_status = 'passed_out';
     stateWrites.current_activity = 'passed out — recovering';
-    // Schedule wake-up once energy recovers (at passed_out rate ~8/hr, need ~20 to wake)
-    const wakeTime = new Date(now.getTime() + 2.5 * 3600000); // ~2.5h minimum
+    const wakeTime = new Date(now.getTime() + 2.5 * 3600000);
     scheduledEvents.push({
       type: 'passout_recovery',
       data: {
@@ -395,21 +416,14 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         primary_character_id: char.id,
       },
     });
-    logs.push(`[CORRECTIVE] ${char.name}: energy=0 → passed_out. Wake scheduled ${wakeTime.toISOString()}`);
+    logs.push(`[CORRECTIVE] ${char.name}: energy=0 → passed_out`);
     return { stateWrites, scheduledEvents, logs };
   }
 
-  // ── VALID SLEEP LOCATION CHECK ────────────────────────────────────────────
-  // Normal sleep may only be written when the character is at a recognized sleep location.
-  // Valid sleep categories: home, hotel, shelter, generic (and confinement — handled above).
-  // If they are not at a valid sleep location, they may be critically tired but cannot
-  // casually fall asleep there. They must go home first (autonomousCharacterMovement handles this).
-  // EXCEPTION: passed_out is always written regardless of location — it is an emergency state.
-  const VALID_SLEEP_CATS = new Set(['home', 'hotel', 'shelter', 'generic']);
-  const currentLocId = char.resolved_current_location_id;
-  // We don't have full locationMap here, but we can use presence status and resolved_location_type
-  // as the proxy: home/sleeping/napping/passed_out/hospitalized are all valid sleep contexts.
-  // Any other resolved_location_type (work, school, gym, bar, social, etc.) is not a valid sleep location.
+  // ── PRIORITY 3: AUTO-SLEEP (ENERGY ONLY — no other need may trigger this) ──
+  // Sleep is ONLY written when energy is the critical driver (≤ ENERGY_CRITICAL = 20).
+  // hygiene=0, social=0, mental=0, comfort=0 — NONE of these may trigger sleep.
+  // Character must also be at a valid sleep location (home/hotel/shelter).
   const currentLocType = (char.resolved_location_type || '').toLowerCase();
   const currentPresence = char.resolved_presence_status || '';
   const atValidSleepLocation = (
@@ -425,45 +439,41 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
     currentPresence === 'sleeping' ||
     currentPresence === 'napping' ||
     currentPresence === 'passed_out' ||
-    !currentLocType  // no location type = home/unresolved = safe to sleep
+    !currentLocType
   );
 
-  // ── RC4 FIX: COMPOUND CRISIS FORCED REST ─────────────────────────────────
-  // Only write sleeping if character is already at a valid sleep location.
-  // If they're out somewhere, autonomousCharacterMovement will route them home.
-  if (criticalCount >= T.COMPOUND_CRISIS && !alreadySleeping && !onShift) {
-    if (atValidSleepLocation) {
-      stateWrites.resolved_presence_status = 'sleeping';
-      stateWrites.current_activity = 'forced rest — multiple critical needs';
-      logs.push(`[CORRECTIVE] ${char.name}: compound crisis (${criticalCount} needs critical) → forced sleeping at valid location`);
-    } else {
-      logs.push(`[CORRECTIVE] ${char.name}: compound crisis (${criticalCount} needs critical) — NOT at valid sleep location (${currentLocType}/${currentPresence}), autonomousMovement must route home`);
-    }
-  }
-
-  // ── RC1 FIX: AUTO-SLEEP when energy critically low ────────────────────────
-  // Only write sleeping if character is at a valid sleep location.
-  // If they are at work, school, a bar, gym, etc. — they cannot casually fall asleep.
-  // They are tired; the autonomous movement system will route them home.
-  else if (energy <= T.ENERGY_CRITICAL && !alreadySleeping && !onShift && !stateWrites.resolved_presence_status) {
+  if (energy <= T.ENERGY_CRITICAL && !alreadySleeping && !onShift && !recentlyWokenByAlarm) {
     if (atValidSleepLocation) {
       stateWrites.resolved_presence_status = 'sleeping';
       stateWrites.current_activity = 'sleeping — exhausted';
-      logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} → auto-sleep at valid location`);
+      logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} (critical) → auto-sleep at valid location`);
     } else {
-      logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} critical — NOT at valid sleep location (${currentLocType}/${currentPresence}), autonomousMovement must route home`);
+      logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} critical — not at valid sleep location (${currentLocType}/${currentPresence}), autonomousMovement routes home`);
     }
   }
 
-  // ── RC1 FIX: AUTO-EAT when hunger critically low ──────────────────────────
+  // ── PRIORITY 4: HUNGER → EATING (food-seeking, not sleep) ──
   if (hunger <= T.HUNGER_CRITICAL && !alreadySleeping && !alreadyHospitalized) {
-    // Only inject eating if not already sleeping (can't eat while sleeping)
-    // Check financial need — if too broke, they can't eat out but can find free food
     const financial = char.financial_need_value ?? 60;
     const eatActivity = financial > 15 ? 'eating — addressing hunger' : 'finding food — hunger critical';
     stateWrites.current_activity = eatActivity;
-    logs.push(`[CORRECTIVE] ${char.name}: hunger=${Math.round(hunger)} → auto-eat injected: "${eatActivity}"`);
-    // Next tick context will be 'eating' → hunger +15/hr
+    logs.push(`[CORRECTIVE] ${char.name}: hunger=${Math.round(hunger)} → auto-eat: "${eatActivity}"`);
+  }
+
+  // ── PRIORITY 5: HYGIENE → HYGIENE CORRECTION (NOT sleep) ──
+  // hygiene=0 means the character is unwashed, uncomfortable, self-conscious.
+  // They need to shower/wash/change. They do NOT need to sleep.
+  // Inject a hygiene-correction activity note that the context system will pick up.
+  if (hygiene <= 10 && !alreadySleeping && !alreadyHospitalized && !stateWrites.current_activity) {
+    stateWrites.current_activity = 'needs to wash up — hygiene critical';
+    stateWrites.emotional_state = 'uncomfortable';
+    logs.push(`[CORRECTIVE] ${char.name}: hygiene=${Math.round(hygiene)} → hygiene correction nudge (NOT sleep)`);
+  }
+
+  // ── PRIORITY 6: MENTAL → DECOMPRESSION NUDGE (NOT sleep unless energy also low) ──
+  if (mental <= 15 && !alreadySleeping && !alreadyHospitalized && !stateWrites.current_activity) {
+    stateWrites.current_activity = 'decompressing — mental health critical';
+    logs.push(`[CORRECTIVE] ${char.name}: mental=${Math.round(mental)} → decompression nudge`);
   }
 
   return { stateWrites, scheduledEvents, logs };

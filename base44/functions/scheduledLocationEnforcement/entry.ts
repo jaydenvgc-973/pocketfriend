@@ -32,6 +32,30 @@ function isOnWorkSchedule(character, etTime) {
   return now >= startMin && now < endMin;
 }
 
+// Check if character is on any location-side worker_shift right now
+// Covers additional_occupation_locations whose schedule lives on the LocationReference record
+function isOnLocationSideShift(character, locationMap, etTime) {
+  if (!Array.isArray(character.additional_occupation_locations)) return false;
+  const cur = etTime.getHours() * 60 + etTime.getMinutes();
+  const dow = etTime.getDay();
+  for (const entry of character.additional_occupation_locations) {
+    if (!entry.location_id) continue;
+    const loc = locationMap ? locationMap[entry.location_id] : null;
+    if (!loc) continue;
+    const shift = loc.worker_shifts?.[character.id];
+    if (!shift?.start || !shift?.end) continue;
+    const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
+    if (shiftDays && !shiftDays.includes(dow)) continue;
+    const [sh, sm = 0] = shift.start.split(':').map(Number);
+    const [eh, em = 0] = shift.end.split(':').map(Number);
+    const startMin = sh * 60 + sm;
+    const endMin = eh * 60 + em;
+    const onShift = endMin < startMin ? (cur >= startMin || cur < endMin) : (cur >= startMin && cur < endMin);
+    if (onShift) return { locationId: entry.location_id, locationName: loc.name || 'Work' };
+  }
+  return null;
+}
+
 /**
  * ADAPTIVE SLEEP WINDOW — active_created_character only.
  *
@@ -427,6 +451,20 @@ function computeResolved(character, locationMap, etTime) {
           home_resolution_failed: false,
         };
       }
+    }
+
+    // Also check additional_occupation_locations for location-side shifts not in allWorkLocIds
+    const locationSideShift = isOnLocationSideShift(character, locationMap, etTime);
+    if (locationSideShift && !hasValidCallout) {
+      return {
+        resolved_current_location_id: locationSideShift.locationId,
+        resolved_current_location_name: locationSideShift.locationName,
+        resolved_location_type: 'work',
+        resolved_presence_status: 'at_work',
+        resolved_source_reason: 'work_schedule',
+        resolved_zone: null,
+        home_resolution_failed: false,
+      };
     }
   }
 
