@@ -47,10 +47,11 @@
         "active_created_character",
         "npc_regular",
         "npc_family_member",
-        "npc_fictitious"
+        "npc_fictitious",
+        "npc_world_service"
       ],
       "default": "active_created_character",
-      "description": "World-behavior and system-routing class."
+      "description": "World-behavior and system-routing class. npc_world_service = permanent seeded world-service characters like Vick Servicio. They are protected from deletion, archival, merging, and cleanup targeting."
     },
     "status": {
       "type": "string",
@@ -125,6 +126,11 @@
     "exclude_from_roster": {
       "type": "boolean",
       "default": false
+    },
+    "is_world_service": {
+      "type": "boolean",
+      "default": false,
+      "description": "True for permanent world-service characters (e.g. Vick Servicio). Blocks deletion, archival, merging, and cleanup targeting."
     },
     "aliases": {
       "type": "array",

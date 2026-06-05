@@ -25,6 +25,9 @@ Deno.serve(async (req) => {
     // ─────────────────────────────────────────────────────────
     // DELETION CONSTRAINTS
     // ─────────────────────────────────────────────────────────
+    if (char.character_type === 'npc_world_service' || char.is_world_service === true) {
+      return Response.json({ error: 'World-service characters cannot be deleted. Vick Servicio is a permanent world operator.' }, { status: 403 });
+    }
     if (char.is_protected) {
       return Response.json({ error: 'Cannot delete protected character' }, { status: 403 });
     }

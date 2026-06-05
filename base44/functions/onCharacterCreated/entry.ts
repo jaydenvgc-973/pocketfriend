@@ -139,6 +139,20 @@ Deno.serve(async (req) => {
       console.error('[onCharacterCreated] Failed to ensure CharacterFinancial:', finErr.message);
     }
 
+    // ── WORLD SERVICE INIT: Ensure Vick Servicio + VGC Recovery Yard exist ──────
+    // Fires on every new character creation but is idempotent — safe to call repeatedly.
+    // npc_world_service characters are excluded from this path to prevent recursion.
+    const isWorldService = character.character_type === 'npc_world_service' || character.is_world_service === true;
+    if (!isWorldService && ownerEmail) {
+      try {
+        await base44.asServiceRole.functions.invoke('ensureVickServicio', { ownerEmail });
+        console.log(`[onCharacterCreated] World service init triggered for ${ownerEmail}`);
+      } catch (wsErr) {
+        // Non-fatal — world service init failures must not block character creation
+        console.warn(`[onCharacterCreated] World service init non-fatal error for ${ownerEmail}:`, wsErr.message);
+      }
+    }
+
     // Skip billing for NPCs — financial record is now ensured above
     if (!isActive || character.status !== 'active') {
       return Response.json({ success: true, skipped: true, reason: isNPC ? 'NPC financial record ensured, no billing' : 'Not an active character' });
