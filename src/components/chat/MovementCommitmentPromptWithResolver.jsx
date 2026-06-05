@@ -124,18 +124,19 @@ export default function MovementCommitmentPromptWithResolver({
     );
   }
 
-  if (error || !resolutionResult?.location_id) return null;
+  // If resolution completely failed (error, not just low confidence), hide the card
+  if (error) return null;
 
   if (autoConfirmEligible) return null;
 
-  // Render the prompt with resolved location (for ambiguous or lower-confidence cases)
+  // Render the prompt — even when no location_id resolved, show editable picker so user can select manually
   return (
     <MovementCommitmentPrompt
       characterName={characterName}
       characterId={characterId}
       currentCharacter={currentCharacter}
-      destination={resolutionResult.location_name}
-      destinationLocationId={resolutionResult.location_id}
+      destination={resolutionResult?.location_name || rawDestination || ''}
+      destinationLocationId={resolutionResult?.location_id || null}
       etaMinutes={etaMinutes}
       scheduledTime={scheduledTime}
       conversationId={conversationId}
