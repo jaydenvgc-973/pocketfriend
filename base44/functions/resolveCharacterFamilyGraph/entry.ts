@@ -196,7 +196,16 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 3: DERIVE siblings from shared parents ───────────────────────────
-    // Any character who shares a linked parent character_id with targetChar is a sibling.
+    // Two derivation paths — both must be tried:
+    //
+    // PATH A (child-side): Other characters whose family_members[] lists the same parent.
+    //   Works when children store their own parent references.
+    //
+    // PATH B (parent-side): Look up each resolved parent's own family_members[].
+    //   Works when ONLY the parent stores the child list (common pattern).
+    //   E.g. Ethan lists Sarah, Larry, Thomas, Stephanie as children — the kids list nothing.
+    //   Stephanie's siblings = Ethan's other children from his family_members[].
+
     const linkedParentIds = new Set(
       resolvedParents.filter(p => p.character_id).map(p => p.character_id)
     );
@@ -210,18 +219,16 @@ Deno.serve(async (req) => {
     });
 
     if (linkedParentIds.size > 0) {
+      // PATH A: Scan all chars whose family_members[] reference a shared parent
       for (const otherChar of allChars) {
         if (seenSiblingIds.has(otherChar.id)) continue;
-
         const otherFamily = otherChar.family_members || [];
         const sharedParentEntry = otherFamily.find(m => {
-          // Check both field names: _linked_character_id (actual) and character_id (legacy)
           const mLinkId = m._linked_character_id || m.character_id || null;
           return mLinkId &&
             linkedParentIds.has(mLinkId) &&
             PARENT_TYPES.has((m.relationship_type || '').toLowerCase());
         });
-
         if (sharedParentEntry) {
           seenSiblingIds.add(otherChar.id);
           const sharedId = sharedParentEntry._linked_character_id || sharedParentEntry.character_id;
@@ -234,6 +241,38 @@ Deno.serve(async (req) => {
             relationship_type: deriveSiblingLabel(otherChar, ownAge),
             shared_parent_name: parentRecord?.name || 'shared parent',
             shared_parent_id: sharedId,
+            derivation_path: 'child_side',
+          });
+        }
+      }
+
+      // PATH B: For each resolved parent, read their family_members[] to find other children.
+      // This handles the pattern where the parent is the ONLY one who stores child relationships.
+      for (const parentId of linkedParentIds) {
+        const parentChar = charById.get(parentId);
+        if (!parentChar) continue;
+        const parentFamily = parentChar.family_members || [];
+        for (const m of parentFamily) {
+          const childLinkId = m._linked_character_id || m.character_id || null;
+          if (!childLinkId) continue;
+          if (childLinkId === characterId) continue; // skip self
+          if (!CHILD_TYPES.has((m.relationship_type || '').toLowerCase())) continue;
+          if (seenSiblingIds.has(childLinkId)) continue;
+          // Resolve the child character record for accurate name/gender/age
+          const sibChar = charById.get(childLinkId);
+          const sibName = sibChar?.display_name || sibChar?.name || m.name || 'Unknown';
+          const sibAge = sibChar ? resolveAge(sibChar) : (m.age || null);
+          const sibGender = sibChar?.gender || null;
+          seenSiblingIds.add(childLinkId);
+          derivedSiblings.push({
+            name: sibName,
+            character_id: childLinkId,
+            age: sibAge,
+            gender: sibGender,
+            relationship_type: deriveSiblingLabel({ age: sibAge, gender: sibGender }, ownAge),
+            shared_parent_name: parentChar.name || 'shared parent',
+            shared_parent_id: parentId,
+            derivation_path: 'parent_side',
           });
         }
       }
