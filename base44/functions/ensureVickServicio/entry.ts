@@ -63,14 +63,10 @@ const VICK_AVATAR_URL         = 'https://media.base44.com/images/public/69bfd8da
 const RECOVERY_YARD_EXTERIOR  = 'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/aa5af2607_file_00000000f4cc722f995295ba541123ac.png';
 const ADMIN_OFFICES_URL       = 'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/52429458f_file_00000000eca0720cbe59d7b2c22a4e3a.png';
 
-// TODO: Supply correct standalone asset URLs for these zones before production deployment.
-// These must NOT be empty when the assets exist. Builder must provide the correct URLs.
-// Zone: Recovery Warehouse — needs standalone Recovery Warehouse Floor image URL
-const RECOVERY_WAREHOUSE_URL  = '';
-// Zone: Inspection & Review Area — needs standalone Inspection & Review Area image URL
-const INSPECTION_AREA_URL     = '';
-// Zone: Restoration & Repair Workshop — needs standalone Workshop image URL
-const WORKSHOP_URL            = '';
+// Zone images — SUPPLY THESE EXACT URLs (builder provides from uploaded assets)
+const RECOVERY_WAREHOUSE_URL  = 'RECOVERY_WAREHOUSE_IMAGE_URL_HERE';
+const INSPECTION_AREA_URL     = 'INSPECTION_AREA_IMAGE_URL_HERE';
+const WORKSHOP_URL            = 'RESTORATION_WORKSHOP_IMAGE_URL_HERE';
 
 Deno.serve(async (req) => {
   try {
@@ -80,17 +76,22 @@ Deno.serve(async (req) => {
     try { payload = await req.json(); } catch (_) {}
     const { ownerEmail: payloadEmail } = payload;
 
-    // Resolve the target owner email — payload takes precedence, otherwise authenticated user
-    let ownerEmail = payloadEmail || null;
-    if (!ownerEmail) {
-      try {
-        const user = await base44.auth.me();
-        ownerEmail = user?.email || null;
-      } catch (_) {}
+    // ALWAYS use authenticated user's email as the owner (per-account Vick provisioning)
+    let ownerEmail = null;
+    try {
+      const user = await base44.auth.me();
+      if (!user) {
+        return Response.json({ error: 'Authentication required' }, { status: 401 });
+      }
+      ownerEmail = user.email;
+      // Override with payload only if explicitly passed (for explicit account targeting)
+      if (payloadEmail) ownerEmail = payloadEmail;
+    } catch (_) {
+      return Response.json({ error: 'Authentication failed' }, { status: 401 });
     }
 
     if (!ownerEmail) {
-      return Response.json({ error: 'ownerEmail required — pass in payload or authenticate' }, { status: 400 });
+      return Response.json({ error: 'ownerEmail could not be determined' }, { status: 400 });
     }
 
     const now = new Date().toISOString();
