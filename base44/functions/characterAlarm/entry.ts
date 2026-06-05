@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
 
     // ── CANCEL ──────────────────────────────────────────────────────────────
     if (action === 'cancel') {
-      await base44.asServiceRole.entities.Character.update(characterId, {
+      await base44.entities.Character.update(characterId, {
         pending_alarm_time: null,
         resolved_last_updated_at: nowIso,
       });
@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
         return Response.json({ error: 'scheduled_time required for schedule action' }, { status: 400 });
       }
 
-      await base44.asServiceRole.entities.Character.update(characterId, {
+      await base44.entities.Character.update(characterId, {
         pending_alarm_time: scheduled_time,
         resolved_last_updated_at: nowIso,
       });
@@ -258,19 +258,16 @@ Deno.serve(async (req) => {
         ? 'just woke up (alarm, short sleep)'
         : 'just woke up (alarm)';
 
-      await base44.asServiceRole.entities.Character.update(characterId, {
+      // Character RLS is scoped by owner_email — user-scoped client is required for writes.
+      // asServiceRole is forbidden here: it returns 403 on Character.update due to data.owner_email RLS.
+      await base44.entities.Character.update(characterId, {
         resolved_presence_status: 'home',
         location_status: 'home',
         current_activity: activityNote,
         emotional_state: newEmotionalState,
-        // sleep_interrupted_at: records that this sleep was cut short by an alarm.
-        // This is NOT sleep debt. It allows consequence systems (classifySleepState)
-        // to recognize reduced recovery and extended tiredness for up to 3 hours.
         sleep_interrupted_at: nowIso,
-        pending_alarm_time: null, // clear any pending alarm after firing
+        pending_alarm_time: null,
         resolved_last_updated_at: nowIso,
-        // last_sleep_start preserved — do not clear it. It's the timer for sleep duration
-        // and consequence calculations. Clearing it would break natural wake detection.
       });
 
       const timeLabel = now.toLocaleTimeString('en-US', {
