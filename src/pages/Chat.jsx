@@ -673,11 +673,7 @@ export default function Chat({ chatTypeOverride } = {}) {
 
       const educationContext = buildEducationContext(character);
       const songsContext = buildSongsContext(character);
-      // ── CRITICAL/NONCRITICAL SPLIT ────────────────────────────────────────────
-      // NONCRITICAL (weather, finance, commitments) run in background.
-      // They are given a 2500ms window — if they resolve in time they are included.
-      // If they time out they are skipped and the LLM call proceeds without them.
-      // This guarantees pre_llm_blocking_ms stays under 3000ms even on cold starts.
+      // Noncritical context (weather, finance, commitments) run in background with 2500ms timeout
       const t_send_start = Date.now();
       const noncriticalPromise = Promise.all([
         buildDynamicContexts(text, character, recentMsgs).catch(() => ({ weatherContext: '', recentEventsContext: '', culturalContext: '' })),
@@ -708,7 +704,7 @@ export default function Chat({ chatTypeOverride } = {}) {
         skippedNoncriticalStages = true;
         console.warn(`[Chat] PRE_LLM_BLOCKING_MS=${pre_llm_blocking_ms} — noncritical stages timed out, skipped`);
       }
-      console.log(`[SEND_TIMING_PROOF] pre_llm_blocking_ms=${pre_llm_blocking_ms} | skipped_noncritical=${skippedNoncriticalStages} | weather_loaded=${!!weatherContext} | finance_loaded=${!!financialContext} | commitments_loaded=${!!commitmentsContext}`);
+
 
       // ── QR CODE DETECTION (when user uploads an image) ────────────────────
       let qrContext = "";
@@ -797,10 +793,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         }, 5000);
       }
 
-      // ── OPTIONAL CONTEXT LOADING (non-blocking parallel fetch) ──────────────
-      // Memory, progression, research, and spatial context are fetched in parallel
-      // but do NOT block the LLM response. If these are still loading when the LLM
-      // call completes, empty fallbacks are used instead.
+      // Optional context loading (non-blocking parallel fetch)
       const needsLocationFetch = !!(character.occupation_location_id || character.current_activity ||
         character.additional_occupation_locations?.length > 0);
       let allLocationsForContext = [];
@@ -932,10 +925,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       const userDisplayName = userSettings.fictional_world_name || null;
       const outfitHint = buildOutfitNarrativeHint(resolveCharacterOutfit(character, {}), character);
 
-      // ── WORLD-STATE RECONCILIATION — runs before canonical/prompt assembly ─────
-      // Resolves authoritative world state: current location, shift phase, elapsed time,
-      // co-presence, user location, and transitional state expiry.
-      // This OVERRIDES stale conversational anchors in all layers below it.
+      // World-state reconciliation — resolves current location, co-presence, elapsed time
       const allCachedCharsForWorldState = queryClient.getQueryData(["characters", currentUser?.email]) || [];
       let worldStateLocationMap = {};
       try {
@@ -1153,6 +1143,7 @@ Respond to ${worldName} naturally as you normally would.`;
       const explicitImageRequest = /\b(send|show|give|share|post).{0,20}(pic|photo|picture|image|selfie|shot)\b|\b(pic|photo|picture|selfie|image)\b.{0,10}(of you|of me|please|now|quick|real quick)\b/i.test(text);
       const quantityMatch = text.match(/\b(\d+)\s+(pic|photo|picture|image|selfie|shot)s?\b/i);
       const requestedQuantity = quantityMatch ? parseInt(quantityMatch[1]) : (explicitImageRequest ? 1 : 0);
+      let ficRels = [];
 
       const mediaRatioLimit = isPhotogenic ? (2 / 10) : (3 / 20);
       const currentRatio = totalMsgsInConvo > 0 ? mediaSentInConvo / totalMsgsInConvo : 0;
@@ -1213,10 +1204,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • Only include information that DIRECTLY solves the current task. Do NOT inject unrelated memory or topics.
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
-      // Use employment-scoped locations fetched with short timeout (3s).
-      // buildEmploymentPromptBlock needs worker_shifts from locations — this is the only
-      // place locations are critical for schedule accuracy. Everything else (spatial, awareness)
-      // is optional and uses fallback if timeout.
+      // Employment context with locations (employment-scoped, not full fetch)
       const employmentPresenceSeparation = buildEmploymentPromptBlock(character, employmentLocations);
 
       // Build location share context for the prompt
@@ -1362,7 +1350,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           : [];
       }
 
-      console.log(`[MSG-TYPE] message_type="${msgType}" | hasText=${hasText} | hasImage=${hasImage} | imagePrompts=${imagePrompts.length} | textLength=${responseText.length}`);
+
 
       if (responseObj.scheduled_events?.length > 0 && convoId) {
         for (const ev of responseObj.scheduled_events) {
