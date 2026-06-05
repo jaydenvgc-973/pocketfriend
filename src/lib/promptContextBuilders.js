@@ -1220,14 +1220,15 @@ const FAMILY_DENIAL_PATTERNS = [
  * Returns true if the given character message text contains a family denial
  * that contradicts the known family graph.
  *
+ * Exported so Chat can use it for post-generation validation.
+ *
  * @param {string} text - Message content
  * @param {boolean} hasFamilyGraph - Whether the character has a resolved family graph
  * @returns {boolean}
  */
-function containsFamilyDenial(text, hasFamilyGraph) {
+export function containsFamilyDenial(text, hasFamilyGraph = true) {
   if (!hasFamilyGraph || !text) return false;
-  const lower = text.toLowerCase();
-  return FAMILY_DENIAL_PATTERNS.some(p => p.test(lower));
+  return FAMILY_DENIAL_PATTERNS.some(p => p.test(text));
 }
 
 // ── CONVERSATION LOG BUILDER ──────────────────────────────────────────────────

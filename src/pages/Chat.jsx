@@ -29,7 +29,7 @@ import { dispatchImageGeneration } from "@/components/chat/ChatImageDispatch";
 import ChatApprovals from "@/components/chat/ChatApprovals";
 import LogHousingChangeModal from "@/components/housing/LogHousingChangeModal";
 import { callLLMWithRetry } from "@/lib/llmUtils";
-import { buildEducationContext, buildSongsContext, buildDynamicContexts, buildImageRule, validateLocationInResponse, buildLinkContext, buildFinancialContext, buildCommitmentsContext, buildHouseholdCoPresenceContext, buildConfinementImageOverride, buildJailConfinementContext, buildReceivedImageContext, buildConversationLog } from "@/lib/promptContextBuilders";
+import { buildEducationContext, buildSongsContext, buildDynamicContexts, buildImageRule, validateLocationInResponse, buildLinkContext, buildFinancialContext, buildCommitmentsContext, buildHouseholdCoPresenceContext, buildConfinementImageOverride, buildJailConfinementContext, buildReceivedImageContext, buildConversationLog, containsFamilyDenial } from "@/lib/promptContextBuilders";
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
 import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
 import { useApprovalEvents } from "@/hooks/useApprovalEvents";
@@ -80,6 +80,7 @@ import ChatTimingOverlay from "@/components/chat/ChatTimingOverlay";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
 import { buildWorldPhonePayload } from "@/hooks/useWorldPhoneIntentSend";
+import { enforceFamilyTruth } from "@/lib/familyTruthGuard";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -658,17 +659,6 @@ export default function Chat({ chatTypeOverride } = {}) {
       }
 
       recentMsgs = [...messages.slice(-50), userMsg];
-      // Each message carries its own speaker identity at send time.
-      // For user messages: use the stored played_as_character_name if it exists (historical accuracy),
-      // otherwise fall back to the user's world name or "User".
-      // Do NOT use the current activeCharacter to label all historical messages — that causes identity bleeding.
-      const chatHistory = recentMsgs.map(m => ({
-        role: m.sender_type === "user" ? "user" : "assistant",
-        content: m.content,
-        _speakerName: m.sender_type === "user"
-          ? (m.played_as_character_name || userSettings.fictional_world_name || "User")
-          : character.name,
-      }));
 
       const toneFromBehaviour = behaviour?.tone || 'neutral';
       const lengthInstruction = { short: "Keep responses to 1-2 sentences max.", medium: "Keep responses natural length, 1-4 sentences.", long: "You can elaborate more, up to a paragraph." }[userSettings.response_length || "medium"];
@@ -919,15 +909,20 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         : '';
       const spatialContext = spatialResult ? `\n\nSPATIAL AWARENESS: ${spatialResult} If the conversation naturally touches on being somewhere or running into someone, you can acknowledge this shared presence.` : '';
 
-      // LIVE family graph — NEVER cached. Runs every send for EVERY character.
-      // Authoritative override: explicitly prohibits LLM from contradicting verified family data
-      // regardless of what any cached canonical prompt says about family.
+      // LIVE family graph — fetched every send, never cached. Evicts canonical cache on resolve.
       try {
         const famRes = await base44.functions.invoke('resolveCharacterFamilyGraph', { characterId });
         const famBlock = famRes?.data?.promptBlock || '';
         if (famBlock) {
-          // Prepend a hard override directive so this BEATS any conflicting cached prompt content
-          liveFamilyGraphBlock = `\n\n🔴 LIVE FAMILY OVERRIDE — THIS SUPERSEDES ALL PRIOR FAMILY CLAIMS IN THIS PROMPT:\nThe following family data is verified live from the database RIGHT NOW. It OVERRIDES any earlier section of this prompt that claimed you have no family, are an only child, or don't know these people. Any prior conflicting claim is WRONG. This data is correct.\n${famBlock}\nCRITICAL: If you said anything above about having no family, no siblings, or being alone — that was a cached error. The LIVE DATA ABOVE is the truth. Use it.\n`;
+          liveFamilyGraphBlock = famBlock;
+          // Evict canonical cache — it may encode stale "only child" identity.
+          // Next send re-fetches a canonical prompt built with correct family data.
+          delete systemPromptCacheRef.current[canonicalCacheKey];
+          if (currentUser?.email) {
+            import('@/lib/characterRuntimeCache.js').then(({ invalidateCharacterCache }) => {
+              invalidateCharacterCache(currentUser.email, characterId);
+            }).catch(() => {});
+          }
         }
         console.log(`[Chat] family_graph=LIVE | char=${character.name} | has_block=${!!liveFamilyGraphBlock}`);
       } catch (famErr) {
@@ -1201,9 +1196,7 @@ Respond to ${worldName} naturally as you normally would.`;
         lastImagePromptSnippet,
       });
 
-      // conversationLog — uses buildConversationLog which surfaces image messages correctly.
-      // FAMILY TRUTH FILTER: hasFamilyGraph=true suppresses prior character messages containing
-      // false family denial claims so the LLM cannot anchor to stale hallucinated "only child" state.
+      // Family denial messages are suppressed from the log when a live family graph exists.
       const hasFamilyGraph = !!liveFamilyGraphBlock;
       const conversationLog = buildConversationLog(recentMsgs, character.name, userSettings.fictional_world_name, hasFamilyGraph);
 
@@ -1244,7 +1237,12 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       const worldStateTruthBlock = worldStateReconciliation?.world_state_truth || '';
 
-      fullPrompt = `${systemPrompt}${frontendCoPresenceBlock}${householdCoPresenceContext}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${catchupContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\n${liveFamilyGraphBlock ? liveFamilyGraphBlock : ''}Write your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
+      // Family graph injected BEFORE conversation log — LLM reads truth before history.
+      const familyTruthBlock = liveFamilyGraphBlock
+        ? `\n\n════════════════════════════════════\nFAMILY IDENTITY — AUTHORITATIVE STATE (READ BEFORE CONVERSATION LOG)\nThis is verified live data from the database. It supersedes any claim in this prompt or conversation that contradicts it.\n${liveFamilyGraphBlock}\nCRITICAL: You are NOT an only child. You DO have family. Any prior message where you claimed otherwise was wrong. Your active state now reflects the truth above.\n════════════════════════════════════`
+        : '';
+
+      fullPrompt = `${systemPrompt}${familyTruthBlock}${frontendCoPresenceBlock}${householdCoPresenceContext}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${catchupContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
   "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
 
 
@@ -1325,6 +1323,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       responseText = filterDashes(responseText);
       responseText = stripCharacterNamePrefix(responseText, character.name);
+
+      // FAMILY TRUTH SAVE GUARD: block + regenerate if response contradicts resolved family graph.
+      if (responseText && liveFamilyGraphBlock) {
+        responseText = await enforceFamilyTruth(responseText, liveFamilyGraphBlock, fullPrompt, character.name);
+      }
 
       // SAVE GUARD: Reject date-divider shaped LLM output before it reaches the DB.
       if (responseText && isDateDividerContent(responseText)) {
