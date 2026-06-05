@@ -857,11 +857,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       // These promises are already running in parallel — we do NOT await them
       // before calling the LLM. Instead, use timeouts to grab them if ready,
       // otherwise proceed with empty context.
-      let memoryResult = null;
-      let progressionResult = null;
-      let pastLookupsResult = [];
-      let spatialResult = null;
-
+      let memoryResult = null, progressionResult = null, pastLookupsResult = [], spatialResult = null, liveFamilyGraphBlock = '';
       // Try to grab optional context if it resolves within 2s, otherwise use fallback
       try {
         memoryResult = await Promise.race([
@@ -903,37 +899,27 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         spatialResult = null;
       }
 
-      let memoryContext = "";
       const memData = memoryResult?.data;
-      if (memData?._fallback) {
-        const mems = memData.memories || [];
-        if (mems.length > 0) {
-          memoryContext = `\n\nLONG-TERM MEMORY BANK (things that happened that you remember — reference naturally when relevant):\n${mems.map(m => `- ${m.title}: ${m.description}`).join("\n")}`;
-        }
-      } else {
-        const activeMemories = memData?.memories || [];
-        if (activeMemories.length > 0) {
-          const totalStored = memData?.total || activeMemories.length;
-          memoryContext = `\n\nLONG-TERM MEMORY BANK (${activeMemories.length} most relevant from ${totalStored} total stored memories — reference naturally when relevant, don't force it):\n${activeMemories.map(m => `- ${m.title}: ${m.description}`).join("\n")}`;
-        }
-      }
-
-      let lifeEventContext = "";
+      const _activeMems = memData?.memories || [];
+      const memoryContext = _activeMems.length > 0
+        ? `\n\nLONG-TERM MEMORY BANK (${_activeMems.length} most relevant — reference naturally when relevant, don't force it):\n${_activeMems.map(m => `- ${m.title}: ${m.description}`).join("\n")}`
+        : '';
       const progressionData = progressionResult?.data;
-      if (progressionData?.progressionContext) {
-        lifeEventContext = `\n\n${progressionData.progressionContext}`;
-      }
-
-      let researchContext = "";
+      const lifeEventContext = progressionData?.progressionContext ? `\n\n${progressionData.progressionContext}` : '';
       const pastLookups = Array.isArray(pastLookupsResult) ? pastLookupsResult : [];
-      if (pastLookups.length > 0) {
-        const researchInfo = pastLookups.map(l => `"${l.search_query}" - Found: "${l.title}" by ${l.author_source}. Key info: ${l.summary}`).join("\n");
-        researchContext = `\n\nTHINGS YOU'VE LOOKED UP:\n${researchInfo}`;
-      }
+      const researchContext = pastLookups.length > 0
+        ? `\n\nTHINGS YOU'VE LOOKED UP:\n${pastLookups.map(l => `"${l.search_query}" - Found: "${l.title}" by ${l.author_source}. Key info: ${l.summary}`).join("\n")}`
+        : '';
+      const spatialContext = spatialResult ? `\n\nSPATIAL AWARENESS: ${spatialResult} If the conversation naturally touches on being somewhere or running into someone, you can acknowledge this shared presence.` : '';
 
-      let spatialContext = "";
-      if (spatialResult) {
-        spatialContext = `\n\nSPATIAL AWARENESS: ${spatialResult} If the conversation naturally touches on being somewhere or running into someone, you can acknowledge this shared presence.`;
+      // LIVE family graph — NEVER cached. Runs every send so siblings/parents/children
+      // are always authoritative regardless of canonical prompt cache state.
+      try {
+        const famRes = await base44.functions.invoke('resolveCharacterFamilyGraph', { characterId });
+        liveFamilyGraphBlock = famRes?.data?.promptBlock || '';
+        console.log(`[Chat] family_graph=LIVE | char=${character.name} | has_block=${!!liveFamilyGraphBlock}`);
+      } catch (famErr) {
+        console.warn(`[Chat] family_graph failed (non-blocking): ${famErr.message}`);
       }
 
       const userDisplayName = userSettings.fictional_world_name || null;
@@ -1246,7 +1232,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       const worldStateTruthBlock = worldStateReconciliation?.world_state_truth || '';
 
-      fullPrompt = `${systemPrompt}${frontendCoPresenceBlock}${householdCoPresenceContext}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${catchupContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
+      fullPrompt = `${systemPrompt}${liveFamilyGraphBlock}${frontendCoPresenceBlock}${householdCoPresenceContext}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${catchupContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
   "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
 
 
