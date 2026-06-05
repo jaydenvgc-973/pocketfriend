@@ -55,6 +55,14 @@ Deno.serve(async (req) => {
           error: `Character ${id} not found or does not belong to owner_email "${effectiveOwnerEmail}". Merge aborted.`
         }, { status: 403 });
       }
+      // WORLD SERVICE GUARD: npc_world_service characters (e.g. Vick Servicio) are permanently
+      // protected from merging. They cannot be merged as either primary or secondary.
+      const c = charMap[id];
+      if (c.character_type === 'npc_world_service' || c.is_world_service === true) {
+        return Response.json({
+          error: `Character "${c.name}" (${id}) is a protected world-service character and cannot be merged. Merge aborted.`
+        }, { status: 403 });
+      }
     }
 
     // SELECT PRIMARY — must exist and be the designated master

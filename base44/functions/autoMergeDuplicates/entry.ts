@@ -26,11 +26,14 @@ Deno.serve(async (req) => {
       500
     ).catch(() => []);
 
-    // Exclude already-removed records
+    // Exclude already-removed records and world-service characters
+    // npc_world_service characters (e.g. Vick Servicio) are permanently protected from merging.
     const activeChars = userChars.filter(c =>
       c.status !== 'deleted' &&
       c.status !== 'soft_deleted' &&
-      c.status !== 'merged'
+      c.status !== 'merged' &&
+      c.character_type !== 'npc_world_service' &&
+      c.is_world_service !== true
     );
 
     // Group by normalized name
