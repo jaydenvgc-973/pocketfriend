@@ -840,10 +840,51 @@ Deno.serve(async (req) => {
           })();
 
           if (!stillSleeping && !hasValidOversleepReason && (status === 'sleeping' || status === 'napping')) {
-            // Confirmed stale sleep — safe to clear
+            // ── OBLIGATION CHECK BEFORE WAKING ─────────────────────────────────
+            // wake_up_time and sleep_start_time are METADATA, not mandatory wake obligations.
+            // Passing the stored wake_up_time clock value alone is NOT sufficient reason to wake.
+            // A character may sleep in freely when they have no real obligation.
+            //
+            // Only wake if the character has a PROVEN active obligation RIGHT NOW:
+            //   1. Work shift currently active (work_days + work_start_time + work_end_time)
+            //   2. School currently in session (enrolled + education_location_id + 08:00–15:00)
+            //   3. Confinement rule (jail/house_arrest — handled above in Tier 0, never reaches here)
+            //
+            // If none of these are true, the character has no reason to be awake. Leave them sleeping.
+            const nowMin3 = nowET.getHours() * 60 + nowET.getMinutes();
+            const dowNow3 = nowET.getDay();
+            const todayET3 = nowET.toISOString().slice(0, 10);
+
+            const hasActiveWorkObligation = (() => {
+              if (!Array.isArray(char.work_days) || char.work_days.length === 0) return false;
+              if (!char.work_start_time || !char.work_end_time || !char.occupation_location_id) return false;
+              if (!char.work_days.includes(dowNow3)) return false;
+              const hasCallout3 = char.work_exception_status === 'called_out' && char.work_exception_date === todayET3;
+              if (hasCallout3) return false;
+              const s3 = toMin(char.work_start_time);
+              const e3 = toMin(char.work_end_time);
+              if (s3 === null || e3 === null) return false;
+              const isOvernight3 = e3 < s3;
+              return isOvernight3 ? (nowMin3 >= s3 || nowMin3 < e3) : (nowMin3 >= s3 && nowMin3 < e3);
+            })();
+
+            const hasActiveSchoolObligation = (() => {
+              if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
+              return nowMin3 >= 8 * 60 && nowMin3 < 15 * 60;
+            })();
+
+            const hasRealWakeObligation = hasActiveWorkObligation || hasActiveSchoolObligation;
+
+            if (!hasRealWakeObligation) {
+              // No active obligation — character may sleep in. Do not wake solely because clock passed wake_up_time.
+              console.log(`[autonomousMovement] ${char.name}: sleep window ended but NO active obligation — preserving sleep (sleeping in)`);
+              continue;
+            }
+
+            // Confirmed: active obligation exists AND sleep window has ended — safe to wake
             const wakePayload = {
               resolved_presence_status:   'home',
-              resolved_source_reason:     'adaptive_sleep_ended_wake',
+              resolved_source_reason:     'obligation_wake',
               resolved_last_updated_at:   nowET.toISOString(),
             };
             try {
@@ -851,11 +892,12 @@ Deno.serve(async (req) => {
             } catch {
               await base44.asServiceRole.entities.Character.update(char.id, wakePayload);
             }
-            console.log(`[autonomousMovement] ✓ ${char.name}: STALE SLEEP CLEARED — window ended, no valid oversleep reason, released to schedule/movement`);
+            const obligationLabel = hasActiveWorkObligation ? 'work_shift_active' : 'school_in_session';
+            console.log(`[autonomousMovement] ✓ ${char.name}: WOKEN FOR OBLIGATION — ${obligationLabel}, released to schedule/movement`);
             // Update char in memory so the rest of this loop iteration sees the new status
             char.resolved_presence_status = 'home';
-            char.resolved_source_reason = 'adaptive_sleep_ended_wake';
-            // Do NOT continue — fall through to schedule, work, travel, and movement evaluation
+            char.resolved_source_reason = 'obligation_wake';
+            // Do NOT continue — fall through to work/school dispatch (Tier 3.5)
           } else if (!stillSleeping && hasValidOversleepReason && (status === 'sleeping' || status === 'napping')) {
             // Valid character-driven oversleeping — preserve. Do not wake them automatically.
             console.log(`[autonomousMovement] ${char.name}: VALID OVERSLEEP preserved (${sleepSource || 'no source'}) — not waking automatically`);
