@@ -97,6 +97,29 @@ Deno.serve(async (req) => {
 
     console.log(`[runAutomaticNarrativesForAllCharacters] ▶ Starting scheduled narrative run`);
 
+    // ── FOREGROUND YIELD CHECK ────────────────────────────────────────────────────
+    // CRITICAL: This automation makes ONE LLM call per character (300 chars = 300 LLM calls).
+    // Running during user sessions competes directly with chat response generation.
+    // Priority 6 (Non-essential background). Must yield to any user activity.
+    try {
+      const NOW_CHECK = new Date();
+      const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
+        { key: 'user_active_session' }, null, 1
+      );
+      if (activeFlag?.[0]?.value) {
+        const activeUntil = new Date(activeFlag[0].value).getTime();
+        if (NOW_CHECK.getTime() < activeUntil) {
+          console.log(`[runAutomaticNarrativesForAllCharacters] YIELD — user active session until ${new Date(activeUntil).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} Eastern. Skipping LLM narrative batch to protect chat.`);
+          return Response.json({
+            success: true,
+            yielded: true,
+            reason: 'foreground_user_active',
+            results: { total: 0, generated: 0, skipped: 0, errors: 0, details: [] },
+          });
+        }
+      }
+    } catch { /* non-fatal — proceed */ }
+
     // ── FETCH ALL CHARACTERS (service role — no user token in scheduled context) ──
     // CRITICAL: asServiceRole.filter({ character_type }) has a platform-level visibility gap
     // that returns 0 active_created_character records. Must list all then filter in-memory.

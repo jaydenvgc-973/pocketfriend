@@ -631,6 +631,29 @@ Deno.serve(async (req) => {
     const max_owners = typeof body.max_owners === 'number' ? body.max_owners : null;
     const max_chars = typeof body.max_characters_per_owner === 'number' ? body.max_characters_per_owner : null;
 
+    // ── FOREGROUND YIELD CHECK ────────────────────────────────────────────────────
+    // Location enforcement is Priority 5 (Maintenance). During user active sessions,
+    // defer to prioritize user-facing systems.
+    const now = new Date();
+    try {
+      const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
+        { key: 'user_active_session' }, null, 1
+      );
+      if (activeFlag?.[0]?.value) {
+        const activeUntil = new Date(activeFlag[0].value).getTime();
+        if (now.getTime() < activeUntil) {
+          console.log(`[scheduledLocationEnforcement] YIELD — user active session until ${new Date(activeUntil).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} Eastern. Skipping to prioritize user actions.`);
+          return Response.json({
+            success: true,
+            yielded: true,
+            reason: 'foreground_user_active',
+            active_until_et: new Date(activeUntil).toLocaleTimeString('en-US', { timeZone: 'America/New_York' }),
+            processed: 0,
+          });
+        }
+      }
+    } catch { /* non-fatal — proceed without yield check */ }
+
     // STEP 1: Discover all user-created active characters (service role — sees all accounts)
     // LEGACY COMPATIBILITY: Do NOT filter by character_type here.
     // Legacy characters created before character_type was introduced have character_type = null

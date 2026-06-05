@@ -305,6 +305,30 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
+    // ── FOREGROUND YIELD CHECK ────────────────────────────────────────────────────
+    // CRITICAL: This automation makes up to 3 LLM calls per run (one per candidate character).
+    // Running during user sessions directly competes with chat response generation.
+    // Priority 6 (Non-essential background). Must yield to any user activity.
+    try {
+      const now = new Date();
+      const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
+        { key: 'user_active_session' }, null, 1
+      );
+      if (activeFlag?.[0]?.value) {
+        const activeUntil = new Date(activeFlag[0].value).getTime();
+        if (now.getTime() < activeUntil) {
+          console.log(`[generateProactiveMessages] YIELD — user active session until ${new Date(activeUntil).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} Eastern. Skipping proactive LLM generation.`);
+          return Response.json({
+            success: true,
+            yielded: true,
+            reason: 'foreground_user_active',
+            messagesGenerated: 0,
+            results: [],
+          });
+        }
+      }
+    } catch { /* non-fatal — proceed */ }
+
     // Get all active characters scoped to the authenticated user only
     // CRITICAL: must use owner_email — unscoped filter returns characters from all accounts
     const characters = await base44.entities.Character.filter({
