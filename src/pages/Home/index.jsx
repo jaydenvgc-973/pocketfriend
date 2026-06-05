@@ -257,6 +257,23 @@ export default function Home() {
   const { allConversations: homeConversations, getConversationsForCharacter } = useHomeConversations(currentUser?.email);
   const { getUnreadForCharacter } = useHomeUnreadCounts(currentUser?.email, homeConversations);
 
+  // Auto-sanitize stale default_character_id:
+  // If UserSettings.default_character_id points to a character not in the loaded list,
+  // clear it silently — once per session — so it doesn't keep triggering recovery checks.
+  const staleDefaultClearedRef = useRef(false);
+  useEffect(() => {
+    const defaultId = userSettings?.default_character_id;
+    if (!defaultId || staleDefaultClearedRef.current) return;
+    if (!userSettings?.id || allCharacters.length === 0) return;
+    const exists = allCharacters.some(c => c.id === defaultId);
+    if (!exists) {
+      staleDefaultClearedRef.current = true;
+      console.log(`[Home] Stale default_character_id=${defaultId} — clearing from UserSettings`);
+      base44.entities.UserSettings.update(userSettings.id, { default_character_id: null }).catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userSettings?.default_character_id, userSettings?.id, allCharacters.length]);
+
   const defaultChar = allCharacters.find(c => c.is_default);
   const customChars = allCharacters.filter(c => !c.is_default && c.status !== "deleted");
   

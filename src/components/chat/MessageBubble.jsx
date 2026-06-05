@@ -60,7 +60,7 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, character, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded, onLocationSignal, onShareNarrative }) {
+export default function MessageBubble({ message, character, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded, onLocationSignal, onMovementCommitment, onShareNarrative }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
   const playingAsLabel = isUser && message.played_as_character_name ? message.played_as_character_name : null;
@@ -715,7 +715,12 @@ export default function MessageBubble({ message, character, showName = false, on
                 <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
               )}
               {onLocationSignal && (message.content || localImageUrl) && (
-                <LocationSignalButton message={message} onLocationSignal={onLocationSignal} isImageOnly={!message.content && localImageUrl} />
+                <LocationSignalButton
+                  message={message}
+                  onLocationSignal={onLocationSignal}
+                  onMovementCommitment={onMovementCommitment}
+                  isImageOnly={!message.content && !!localImageUrl}
+                />
               )}
               {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
             </div>
@@ -923,14 +928,73 @@ function ReactionAddButton({ messageId, isUser, onReact }) {
   );
 }
 
-function LocationSignalButton({ message, onLocationSignal, isImageOnly = false }) {
+// Movement commitment phrase detection — mirrors ChatMessageList commitmentPhrases
+// Used here to route the pin/signal action correctly per-message.
+const MOVEMENT_COMMITMENT_PATTERNS = [
+  /\bi'?m\s+on\s+my\s+way\b/i,
+  /\bi'?m\s+leaving\s+(now|right\s+now)?\b/i,
+  /\bi'?m\s+(heading|coming|going)\s+(there|over|out|to\s+you)\b/i,
+  /\bi'?m\s+about\s+to\s+(leave|head\s+out|go)\b/i,
+  /\bi\s+need\s+to\s+(go|leave|head\s+out)\b/i,
+  /\bi'?ll\s+meet\s+you\s+there\b/i,
+  /\bi'?m\s+coming\b/i,
+  /\bi'?ll\s+be\s+there\s+in\s+\d+/i,
+  /\bheading\s+out\s+now\b/i,
+  /\bjust\s+left\b/i,
+  /\bsee\s+you\s+(in\s+\d+|soon|there)\b/i,
+  /\bi'?ll\s+(come|head|stop|swing|drop)\s+(over|by|there)\b/i,
+  /\bi'?m\s+heading\s+to\b/i,
+  /\bwalking\s+(toward|to)\b/i,
+  /\bi'?ll\s+be\s+there\s+soon\b/i,
+  /\bon\s+my\s+way\s+to\b/i,
+  /\bheading\s+over\s+to\b/i,
+];
+
+function detectMovementIntent(content) {
+  if (!content || typeof content !== 'string') return false;
+  return MOVEMENT_COMMITMENT_PATTERNS.some(p => p.test(content));
+}
+
+function extractCommitmentFromMessage(message) {
+  const content = message.content || '';
+  const destMatch = content.match(/(?:to|at|heading\s+to|going\s+to|meet\s+(?:you\s+)?at)\s+([A-Za-z0-9][^.!?,\n]{2,40}?)(?:\s+in\s+\d|\s+at\s+\d|[.!?,]|$)/i);
+  const timeMatch = content.toLowerCase().match(/in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)/i);
+  const rawDestination = destMatch?.[1]?.trim() || null;
+  const rawMinutes = timeMatch?.[1] ? parseInt(timeMatch[1]) : null;
+  const isHours = timeMatch?.[2]?.startsWith('h');
+  const minutes = rawMinutes ? (isHours ? rawMinutes * 60 : rawMinutes) : 15;
+  const msgTime = message.timestamp ? new Date(message.timestamp).getTime() : Date.now();
+  const scheduledArrivalTime = new Date(msgTime + minutes * 60000).toISOString();
+  return { rawDestination, etaMinutes: minutes, scheduledArrivalTime };
+}
+
+function LocationSignalButton({ message, onLocationSignal, onMovementCommitment, isImageOnly = false }) {
   const [open, setOpen] = useState(false);
   const [signaling, setSignaling] = useState(false);
   const [done, setDone] = useState(false);
 
+  // Detect if this specific message contains movement intent
+  const isMovementMessage = !isImageOnly && detectMovementIntent(message.content);
+
+  const handleClick = () => {
+    if (isMovementMessage && onMovementCommitment) {
+      // Route directly into the movement commitment card flow — do not open the static popover
+      const commitment = extractCommitmentFromMessage(message);
+      onMovementCommitment({
+        messageId: message.id,
+        characterName: message.character_name,
+        rawDestination: commitment.rawDestination,
+        etaMinutes: commitment.etaMinutes,
+        scheduledArrivalTime: commitment.scheduledArrivalTime,
+      });
+      return;
+    }
+    // Current-location message or image — show static signal popover
+    setOpen(v => !v);
+  };
+
   const handleSignal = async () => {
     setSignaling(true);
-    // For image-only messages, use the location ID from generation context; otherwise use the text content
     const signalData = isImageOnly && message.generation_context?.location_id
       ? message.generation_context.location_id
       : message.content;
@@ -944,9 +1008,9 @@ function LocationSignalButton({ message, onLocationSignal, isImageOnly = false }
   return (
     <div className="relative">
       <button
-        onClick={() => setOpen(v => !v)}
-        className={`opacity-0 group-hover:opacity-100 transition-opacity bg-card border rounded-full w-5 h-5 flex items-center justify-center shadow-md ${done ? "border-primary text-primary opacity-100" : "border-border text-muted-foreground hover:text-primary hover:border-primary"}`}
-        title="Signal location from this message"
+        onClick={handleClick}
+        className={`opacity-0 group-hover:opacity-100 transition-opacity bg-card border rounded-full w-5 h-5 flex items-center justify-center shadow-md ${done ? "border-primary text-primary opacity-100" : isMovementMessage ? "border-primary/50 text-primary/70 hover:text-primary hover:border-primary" : "border-border text-muted-foreground hover:text-primary hover:border-primary"}`}
+        title={isMovementMessage ? "Schedule this movement commitment" : "Signal location from this message"}
       >
         <MapPin className="w-2.5 h-2.5" />
       </button>
@@ -961,7 +1025,9 @@ function LocationSignalButton({ message, onLocationSignal, isImageOnly = false }
           >
             <p className="text-xs font-semibold text-foreground mb-1">📍 Signal Location</p>
             <p className="text-[10px] text-muted-foreground mb-2 leading-relaxed">
-              {isImageOnly ? `Update where this character is based on the photo location (${message.generation_context?.location_name || 'detected location'}).` : 'Update where this character is based on what they said in this message.'}
+              {isImageOnly
+                ? `Update where this character is based on the photo location (${message.generation_context?.location_name || 'detected location'}).`
+                : 'Update where this character is based on what they said in this message.'}
             </p>
             <div className="flex gap-2">
               <button

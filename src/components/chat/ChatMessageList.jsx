@@ -50,12 +50,22 @@ export default function ChatMessageList({
     } catch { return new Set(); }
   });
 
+  // Override commitment: set when the user taps the pin on a specific older message
+  // that contains movement intent (bypasses the auto-detected latestCharMsg restriction).
+  const [pinTriggeredCommitment, setPinTriggeredCommitment] = useState(null);
+
   const dismissCommitment = (id) => {
     setDismissedCommitmentIds(prev => {
       const next = new Set([...prev, id]);
       try { sessionStorage.setItem('dismissed_commitment_ids', JSON.stringify([...next])); } catch {}
       return next;
     });
+    setPinTriggeredCommitment(null);
+  };
+
+  const handleMovementCommitmentFromPin = (commitmentData) => {
+    // User clicked pin on a movement-intent message — show card for that specific message
+    setPinTriggeredCommitment(commitmentData);
   };
 
   // Detect movement commitment in latest character message
@@ -187,6 +197,7 @@ export default function ChatMessageList({
                onForward={!msg.is_narrative ? (m) => onForward(m) : null}
                onImageLoaded={onImageLoaded}
                onLocationSignal={msg.sender_type === "character" && !msg.is_narrative && onLocationSignal ? onLocationSignal : null}
+               onMovementCommitment={msg.sender_type === "character" && !msg.is_narrative ? handleMovementCommitmentFromPin : null}
                onShareNarrative={msg.is_narrative && onShareNarrative ? (m) => onShareNarrative(m) : null}
              />
           );
@@ -199,23 +210,27 @@ export default function ChatMessageList({
         )}
       </AnimatePresence>
 
-      {/* Movement Commitment Prompt — with async destination resolution */}
+      {/* Movement Commitment Prompt — with async destination resolution.
+          Priority: pin-triggered (user clicked a specific message) > auto-detected (latest message). */}
       <AnimatePresence>
-        {detectedCommitment && (
-          <MovementCommitmentPromptWithResolver
-            rawDestination={detectedCommitment.rawDestination}
-            characterName={detectedCommitment.characterName}
-            characterId={characterId}
-            currentCharacter={character}
-            etaMinutes={detectedCommitment.etaMinutes}
-            scheduledTime={detectedCommitment.scheduledArrivalTime}
-            recentMessages={messages.slice(-15)}
-            conversationId={conversationId}
-            messageId={detectedCommitment.messageId}
-            onConfirm={() => dismissCommitment(detectedCommitment.messageId)}
-            onCancel={() => dismissCommitment(detectedCommitment.messageId)}
-          />
-        )}
+        {(pinTriggeredCommitment || detectedCommitment) && (() => {
+          const c = pinTriggeredCommitment || detectedCommitment;
+          return (
+            <MovementCommitmentPromptWithResolver
+              rawDestination={c.rawDestination}
+              characterName={c.characterName || character?.name}
+              characterId={characterId}
+              currentCharacter={character}
+              etaMinutes={c.etaMinutes}
+              scheduledTime={c.scheduledArrivalTime}
+              recentMessages={messages.slice(-15)}
+              conversationId={conversationId}
+              messageId={c.messageId}
+              onConfirm={() => dismissCommitment(c.messageId)}
+              onCancel={() => dismissCommitment(c.messageId)}
+            />
+          );
+        })()}
       </AnimatePresence>
 
       {/* sendError intentionally removed from conversation stream — errors are handled

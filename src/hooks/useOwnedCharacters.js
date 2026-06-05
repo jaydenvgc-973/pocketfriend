@@ -361,8 +361,19 @@ export function useOwnedCharacters(
       );
     }
 
-    const needsRecovery = isEmpty || isPartialVsPrior || isSuspectFirstFetch ||
-      isDefaultMissing || isAnchorMissing;
+    // isDefaultMissing is intentionally excluded from needsRecovery.
+    // A stale optional default_character_id (UserSettings.default_character_id pointing to a
+    // deleted/inaccessible character) must NEVER trigger a full refetch or recovery loop.
+    // The character roster loaded successfully. The consumer handles missing default by
+    // falling back to the first active character. Only a data integrity issue warrants a refetch.
+    if (isDefaultMissing) {
+      console.log(
+        `[useOwnedCharacters] defaultMissing=true: default_character_id=${expectedDefaultCharacterId} ` +
+        `is not in loaded characters. This is a stale optional preference — NOT a recovery trigger. ` +
+        `merged=${mergedCount}. Consumer should clear stale default_character_id automatically.`
+      );
+    }
+    const needsRecovery = isEmpty || isPartialVsPrior || isSuspectFirstFetch || isAnchorMissing;
 
     if (!needsRecovery) {
       writeBootstrapMeta(email, mergedCount);
