@@ -487,6 +487,23 @@ Deno.serve(async (req) => {
     try { payload = await req.json(); } catch (_) {}
     const { characterId } = payload;
 
+    // ── FOREGROUND YIELD CHECK ────────────────────────────────────────────────
+    // Batch simulation must yield while user is actively using the app.
+    // Single-character/user-triggered simulation (characterId present) always runs.
+    if (!characterId) {
+      try {
+        const sessions = await base44.asServiceRole.entities.AppWorldState.filter({ key: 'user_active_session' });
+        if (sessions.length > 0) {
+          const lastUpdate = sessions[0].value ? new Date(sessions[0].value).getTime() : 0;
+          const isForegroundActive = (Date.now() - lastUpdate) < 30 * 1000;
+          if (isForegroundActive) {
+            console.log(`[simulateActiveCharacterNeeds] User active — deferring batch simulation to protect foreground`);
+            return Response.json({ success: true, yielded: true, reason: 'foreground_user_active', processed: 0 });
+          }
+        }
+      } catch (_) { /* non-fatal — proceed */ }
+    }
+
     // Determine auth context for ownership scoping
     let user = null;
     try { user = await base44.auth.me(); } catch (_) {}

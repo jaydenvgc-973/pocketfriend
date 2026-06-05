@@ -188,6 +188,20 @@ Deno.serve(async (req) => {
     }
 
     // --- GLOBAL SCHEDULER MODE (no session) ---
+    // FOREGROUND YIELD CHECK: batch enforcement must yield while user is active.
+    // Single-character mode (characterId path above) already ran — this guard covers the bulk scan only.
+    try {
+      const sessions = await base44.asServiceRole.entities.AppWorldState.filter({ key: 'user_active_session' });
+      if (sessions.length > 0) {
+        const lastUpdate = sessions[0].value ? new Date(sessions[0].value).getTime() : 0;
+        const isForegroundActive = (Date.now() - lastUpdate) < 30 * 1000;
+        if (isForegroundActive) {
+          console.log(`[enforceCharacterWorkSchedule] User active — deferring batch enforcement to protect foreground`);
+          return Response.json({ summary: 'Yielded — foreground user active', issues_found: [], fixes_applied: [], owners_processed: 0, blockedCharacters: [] });
+        }
+      }
+    } catch (_) { /* non-fatal — proceed */ }
+
     // OWNERSHIP ENFORCEMENT: Group by owner_email, process each in isolation
     const allCharacters = await base44.asServiceRole.entities.Character.filter({
       character_type: 'active_created_character',
