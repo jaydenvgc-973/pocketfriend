@@ -372,6 +372,35 @@ function scoreLocation(location, char, vals, nowET) {
     score -= penalty;
   }
 
+  // ── PRE-SLEEP UNWIND CONTEXT ─────────────────────────────────────────────
+  // If the character is within ~60 minutes of their natural sleep window,
+  // gently nudge them toward quieter choices. This is CONTEXT, not authority.
+  // It does NOT force sleep. It does NOT block movement. It does NOT evict visits.
+  // It simply makes home score a bit higher and demanding new activities score lower.
+  // Characters who are night owls, have obligations, or have overridden their schedule
+  // are unaffected — the energy system handles their actual sleep onset.
+  if (nowET && char.sleep_start_time) {
+    const toMinLocal = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+    const sleepStartMin = toMinLocal(char.sleep_start_time);
+    if (sleepStartMin !== null) {
+      const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+      const preWindMin = (sleepStartMin - 60 + 1440) % 1440;
+      const inUnwindWindow = preWindMin > sleepStartMin
+        ? (nowMin >= preWindMin || nowMin < sleepStartMin)
+        : (nowMin >= preWindMin && nowMin < sleepStartMin);
+      // Only apply if not night owl, not already overriding schedule, not critically needing something else
+      const isNightOwl = char.trait_night_owl === true;
+      const hasAwakeOverride = char.decided_to_stay_up_until &&
+        new Date(char.decided_to_stay_up_until) > nowET;
+      if (inUnwindWindow && !isNightOwl && !hasAwakeOverride) {
+        // Nudge home up, nudge demanding activities down — gentle, proportional
+        if (cat === 'home' || cat === 'generic') score += 2;
+        if (cat === 'gym') score -= 1;
+        if (isNightlifeVenue(location)) score -= 2;
+      }
+    }
+  }
+
   return score;
 }
 

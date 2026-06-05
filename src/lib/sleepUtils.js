@@ -1,18 +1,18 @@
 /**
- * SLEEP UTILITIES - DEBT SYSTEM REMOVED
+ * SLEEP UTILITIES
  *
- * CRITICAL: Sleep debt has been completely removed as an active system.
- * - No debt calculation
- * - No debt storage
- * - No debt-driven availability logic
- * - No debt-driven napping or forced returns
- * - No sleep_debt_hours reads or writes
- * - No sleep_interrupted_at writes
+ * Sleep debt has been removed. The following remain valid and active:
+ * - sleep_interrupted_at: READ-ONLY flag. Records when sleep was cut short by alarm/message/emergency.
+ *   Used to classify ongoing sleep as valid (recovery) and to reduce energy recovery on interrupted rest.
+ *   Never written here. Written by alarm/wake systems when they interrupt sleep.
+ * - sleep_debt_hours: REMOVED. Do not restore.
  *
- * Sleep now operates through:
- * - Explicit schedule (sleep_start_time + wake_up_time)
- * - Adaptive schedule (derived from work/school)
- * - Chat interruption (energy recovery only, no debt accrual)
+ * Sleep operates through:
+ * - Energy/needs system (simulateActiveCharacterNeeds) — primary sleep driver for active_created_character
+ * - Explicit schedule (sleep_start_time + wake_up_time) — stored preference, context only
+ * - Adaptive schedule (derived from work/school) — context only, not authority
+ * - Interrupted sleep recovery (sleep_interrupted_at) — valid recovery reason
+ * - Chat interruption (energy recovery calculated from last_sleep_start duration)
  * - Story/presence logic (user-controlled or schedule-controlled, never debt)
  */
 
@@ -58,6 +58,17 @@ export function classifySleepState(character) {
   const sleepSource = character.resolved_source_reason || '';
   if (sleepSource === 'user_directed_nap' || sleepSource.includes('nap')) {
     return { isStale: false, isValid: true, reason: 'user_directed_nap', consequence_tags: [] };
+  }
+
+  // sleep_interrupted_at: if character was woken early (alarm, message, emergency) within
+  // the last 3 hours, their sleep is still valid — they are in interrupted-sleep recovery.
+  // This is NOT sleep debt. It is a record that normal rest was cut short.
+  if (character.sleep_interrupted_at) {
+    const interruptedAt = new Date(character.sleep_interrupted_at);
+    const hoursSinceInterrupt = (Date.now() - interruptedAt.getTime()) / 3600000;
+    if (hoursSinceInterrupt < 3) {
+      return { isStale: false, isValid: true, reason: 'interrupted_sleep_recovery', consequence_tags: ['tired', 'groggy'] };
+    }
   }
 
   if ((character.health_value || 100) < 30) {
@@ -155,8 +166,14 @@ export function getSleepState(character) {
 }
 
 /**
- * Call this when a user sends a message to a sleeping character.
- * REMOVED: Sleep debt completely. Energy recovery only.
+ * Call this when a user sends a message to a sleeping character (alarm, chat interrupt, emergency).
+ * Calculates partial energy recovery from the sleep session so far.
+ * Writes sleep_interrupted_at so subsequent systems know this rest was cut short.
+ *
+ * IMPORTANT: sleep_interrupted_at is NOT sleep debt. It is a flag that says:
+ *   "this character did not finish their sleep cycle — they may still be tired."
+ * Consequence systems (classifySleepState, classifySleepStateInline) read it
+ * to keep the character in valid-recovery sleep for up to 3 hours after interruption.
  */
 export function buildSleepInterruptionUpdate(character) {
   const now = new Date();
@@ -165,9 +182,16 @@ export function buildSleepInterruptionUpdate(character) {
   const sleepStart = character.last_sleep_start ? new Date(character.last_sleep_start) : null;
   const sleptHours = sleepStart ? (now.getTime() - sleepStart.getTime()) / 3600000 : 0;
 
+  // Was this sleep itself already interrupted? If so, recovery rate is reduced (groggy from prior interrupt)
+  const wasAlreadyInterrupted = character.sleep_interrupted_at &&
+    (now.getTime() - new Date(character.sleep_interrupted_at).getTime()) < 6 * 3600000;
+  const recoveryRate = wasAlreadyInterrupted ? 8 : 12; // +8/hr if already interrupted, +12/hr normal
+
   return {
-    // Energy recovery: +12/hr (matches simulateActiveCharacterNeeds sleeping rate)
-    energy_value: Math.min(100, (character.energy_value || 50) + Math.round(sleptHours * 12)),
+    // Partial energy recovery from however long they slept
+    energy_value: Math.min(100, (character.energy_value || 50) + Math.round(sleptHours * recoveryRate)),
+    // Record that this sleep was interrupted — read by classifySleepState for up to 3h
+    sleep_interrupted_at: now.toISOString(),
   };
 }
 
