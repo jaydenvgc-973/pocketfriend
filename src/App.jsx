@@ -48,6 +48,7 @@ import SchoolContaminationProof from './pages/SchoolContaminationProof';
 import EditCharacterReligion from './pages/EditCharacterReligion';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 import { LocationEditProvider } from '@/components/location/LocationEditConflictManager';
+import { ForegroundPriorityProvider } from '@/lib/ForegroundPriorityContext';
 import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 
@@ -179,19 +180,21 @@ function App() {
 
   return (
     <AuthProvider>
-      <ActiveCharacterProvider>
-        <LocationEditProvider>
-          <QueryClientProvider client={queryClientInstance}>
-            <Router>
-              <PlayAsCharacterBanner />
-              <AuthenticatedApp holidaysEnabled={holidaysEnabled} />
-            </Router>
+      <ForegroundPriorityProvider>
+        <ActiveCharacterProvider>
+          <LocationEditProvider>
+            <QueryClientProvider client={queryClientInstance}>
+              <Router>
+                <PlayAsCharacterBanner />
+                <AuthenticatedApp holidaysEnabled={holidaysEnabled} />
+              </Router>
             <HolidayPopup isEnabled={holidaysEnabled} />
             <AchievementUnlockModal />
             <Toaster />
-          </QueryClientProvider>
-        </LocationEditProvider>
-      </ActiveCharacterProvider>
+            </QueryClientProvider>
+          </LocationEditProvider>
+        </ActiveCharacterProvider>
+      </ForegroundPriorityProvider>
     </AuthProvider>
   )
 }
