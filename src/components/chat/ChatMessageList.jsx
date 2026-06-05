@@ -141,7 +141,10 @@ export default function ChatMessageList({
   const itemsWithSeparators = injectDateSeparators(messages);
   if (messages.length > 0) console.log(`[CHAT_TIMING] ChatMessageList_RENDER n=${messages.length} at=${Date.now()}`);
 
+  const activeCommitment = pinTriggeredCommitment || detectedCommitment;
+
   return (
+    <div className="flex-1 relative flex flex-col min-h-0">
     <div className="flex-1 overflow-y-auto py-4 space-y-4 px-4" data-chat-container="true">
       {/* Load older messages button — only shown when more history exists */}
       {hasOlderMessages && onLoadOlderMessages && (
@@ -210,33 +213,35 @@ export default function ChatMessageList({
         )}
       </AnimatePresence>
 
-      {/* Movement Commitment Prompt — with async destination resolution.
-          Priority: pin-triggered (user clicked a specific message) > auto-detected (latest message). */}
-      <AnimatePresence>
-        {(pinTriggeredCommitment || detectedCommitment) && (() => {
-          const c = pinTriggeredCommitment || detectedCommitment;
-          return (
-            <MovementCommitmentPromptWithResolver
-              rawDestination={c.rawDestination}
-              characterName={c.characterName || character?.name}
-              characterId={characterId}
-              currentCharacter={character}
-              etaMinutes={c.etaMinutes}
-              scheduledTime={c.scheduledArrivalTime}
-              recentMessages={messages.slice(-15)}
-              conversationId={conversationId}
-              messageId={c.messageId}
-              onConfirm={() => dismissCommitment(c.messageId)}
-              onCancel={() => dismissCommitment(c.messageId)}
-            />
-          );
-        })()}
-      </AnimatePresence>
-
       {/* sendError intentionally removed from conversation stream — errors are handled
           via character fallback responses or silent retry. No system banners in chat. */}
 
       <div ref={bottomRef} />
+    </div>
+
+    {/* Movement Commitment Prompt — fixed overlay, always visible regardless of scroll position.
+        Priority: pin-triggered (user clicked a specific message) > auto-detected (latest message). */}
+    <AnimatePresence>
+      {activeCommitment && (
+        <div className="absolute bottom-0 left-0 right-0 z-40 px-4 pb-2 bg-gradient-to-t from-background via-background/95 to-transparent pt-6 pointer-events-none">
+          <div className="pointer-events-auto">
+            <MovementCommitmentPromptWithResolver
+              rawDestination={activeCommitment.rawDestination}
+              characterName={activeCommitment.characterName || character?.name}
+              characterId={characterId}
+              currentCharacter={character}
+              etaMinutes={activeCommitment.etaMinutes}
+              scheduledTime={activeCommitment.scheduledArrivalTime}
+              recentMessages={messages.slice(-15)}
+              conversationId={conversationId}
+              messageId={activeCommitment.messageId}
+              onConfirm={() => dismissCommitment(activeCommitment.messageId)}
+              onCancel={() => dismissCommitment(activeCommitment.messageId)}
+            />
+          </div>
+        </div>
+      )}
+    </AnimatePresence>
     </div>
   );
 }
