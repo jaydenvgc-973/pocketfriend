@@ -101,9 +101,13 @@ function buildFamilySection(character) {
       const term = familialTermMap[m.relationship_type?.toLowerCase()] || `my ${m.relationship_type}`;
       return `- ${m.name} — your ${m.relationship_type}. When talking about them, call them "${term}" (e.g. "Mom told me..." or "I talked to my sister Vanessa"). Use their actual name only for context.`;
     }).join('\n');
-    return `\nYOUR FAMILY — THE ONLY FAMILY YOU HAVE:\n${lines}\nCRITICAL: These are the ONLY family members you have. Never invent or reference family members not listed here.\nIMPORTANT — Always use familiar terms (Mom, Dad, Grandma, my sister, etc.) in natural conversation.\n`;
+    return `\nYOUR FAMILY MEMBERS (known relationships):\n${lines}\nIMPORTANT: Always use familiar terms (Mom, Dad, Grandma, my sister, etc.) in natural conversation.\nNOTE: Additional siblings or children may be listed in the AUTHORITATIVE FAMILY KNOWLEDGE block below — always consult that block before claiming you have no family.\n`;
   }
-  return `\nYOUR FAMILY: You have no family members in your life. You are on your own. Never invent or reference family members.\n`;
+  // CRITICAL: Do NOT say "you are alone" or "you have no family" here.
+  // The resolveCharacterFamilyGraph function derives siblings from shared parents and
+  // children from reverse parent lookup. Family may exist even when family_members[] is empty.
+  // The AUTHORITATIVE FAMILY KNOWLEDGE block (injected separately) is the final word.
+  return '';
 }
 
 function buildRelationshipsContext(character) {
@@ -618,7 +622,7 @@ function buildWorldStateContinuityBlock(character) {
 }
 
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
-function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '', worshipLocation = null) {
+function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '', worshipLocation = null, familyGraphBlock = '') {
   const userNameLabel = character.nickname_for_user || worldName || null;
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
@@ -747,6 +751,7 @@ ${!isDefaultChar ? `CRITICAL — ABUELA SOPHIA IS NOT YOUR GRANDMOTHER:\nAbuela 
 
 ${educationBlock}${todayLocationBlock}${religionBlock}
 ${internalFamilyTruth}
+${familyGraphBlock}
 ${relationshipsContext}
 ${soapOperaContext}
 ${memoryBlock}
@@ -1329,6 +1334,39 @@ Reference the passage of time naturally in your response.
       contextLog.push({ step: 'worship_location', status: 'error', error: wlErr.message });
     }
 
+    // ── Step 10a: Resolve authoritative family graph ─────────────────────────
+    // Derives siblings from shared parents, children from reverse parent lookup.
+    // This is the AUTHORITATIVE family knowledge — prevents "I'm an only child" when siblings exist.
+    let familyGraphBlock = '';
+    try {
+      const famRes = await base44.functions.invoke('resolveCharacterFamilyGraph', { characterId });
+      const famData = famRes?.data || famRes;
+      if (famData?.promptBlock && famData.promptBlock.length > 0) {
+        familyGraphBlock = `\n${famData.promptBlock}\n`;
+        contextLog.push({
+          step: 'family_graph',
+          loaded: true,
+          parents: famData.parents?.length || 0,
+          siblings: famData.siblings?.length || 0,
+          derivedSiblings: famData.derivedSiblingsCount || 0,
+          children: famData.children?.length || 0,
+          ownAge: famData.ownAge,
+        });
+        console.log(
+          `[buildCanonicalCharacterContext] family_graph | char=${character.name}` +
+          ` | parents=${famData.parents?.length || 0}` +
+          ` | siblings=${famData.siblings?.length || 0} (${famData.derivedSiblingsCount || 0} derived)` +
+          ` | children=${famData.children?.length || 0}` +
+          ` | ownAge=${famData.ownAge}`
+        );
+      } else {
+        contextLog.push({ step: 'family_graph', loaded: false, reason: 'no_block' });
+      }
+    } catch (famErr) {
+      contextLog.push({ step: 'family_graph', status: 'error', error: famErr.message });
+      console.warn(`[buildCanonicalCharacterContext] family_graph error (non-blocking): ${famErr.message}`);
+    }
+
     // ── Step 10b: Fetch last-24h travel context from LocationHistory ─────────
     // This feeds the "what did you do today?" awareness for all characters.
     let travelContextBlock = '';
@@ -1358,7 +1396,7 @@ Reference the passage of time naturally in your response.
     const educationBlock = buildEducationBlock(character);
     const todayLocationBlock = buildTodayLocationBlock(character);
     // travelContextBlock is injected alongside todayLocationBlock for "what did I do today"
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock);
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
 
     const totalMs = Date.now() - startTime;
