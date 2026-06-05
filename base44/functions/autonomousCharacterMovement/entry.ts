@@ -119,91 +119,9 @@ function isLocationOpen(location) {
  *   destination.owner_email === character.owner_email
  */
 
-// ── ADAPTIVE SLEEP HELPERS (active_created_character only) ────────────────────
-// Mirrors the same logic in scheduledLocationEnforcement / enforceCharacterLocationPresence.
-// Sleep is planned around the character's NEXT work/school obligation, not static fields.
-// Overnight workers sleep during the day; daytime workers sleep at night.
-const PRE_SLEEP_WINDOW_MINUTES = 60;
-
-function computeAdaptiveSleepWindow(character, etTime) {
-  const SLEEP_DURATION_MIN = 7 * 60;
-  const PRE_SHIFT_BUFFER   = 60;
-  const dayOfWeek = etTime.getDay();
-
-  // PRIORITY 1: Stored schedule is the CANONICAL source of truth — always wins if present.
-  // This matches sleepUtils.js priority order. Do NOT override stored schedule with derived logic.
-  // A character with sleep_start_time="23:00" and wake_up_time="07:00" sleeps 23:00–07:00
-  // regardless of their work schedule — derived logic was causing priority inversion (root cause confirmed).
-  if (character.sleep_start_time && character.wake_up_time) {
-    const s = toMin(character.sleep_start_time);
-    const w = toMin(character.wake_up_time);
-    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
-  }
-
-  // PRIORITY 2: No stored schedule — derive from work/school obligation only.
-  let nextShiftStartMin = null;
-  let nextShiftEndMin   = null;
-
-  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
-    const isWorkDayToday    = character.work_days.includes(dayOfWeek);
-    const isWorkDayTomorrow = character.work_days.includes((dayOfWeek + 1) % 7);
-    if (isWorkDayToday || isWorkDayTomorrow) {
-      nextShiftStartMin = toMin(character.work_start_time);
-      nextShiftEndMin   = toMin(character.work_end_time);
-    }
-  }
-
-  if (!nextShiftStartMin && character.student_status === 'enrolled' && character.education_location_id) {
-    nextShiftStartMin = 8 * 60;
-    nextShiftEndMin   = 15 * 60;
-  }
-
-  const isOvernightShift = nextShiftStartMin !== null && nextShiftEndMin !== null && nextShiftEndMin < nextShiftStartMin;
-
-  if (nextShiftStartMin !== null) {
-    if (isOvernightShift) {
-      return {
-        sleepStartMin: (nextShiftEndMin + 60) % 1440,
-        wakeMin: (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440,
-        isOvernightWorker: true,
-      };
-    } else {
-      const wakeTime = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
-      return {
-        sleepStartMin: (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440,
-        wakeMin: wakeTime,
-        isOvernightWorker: false,
-      };
-    }
-  }
-
-  // PRIORITY 3: No stored schedule AND no work/school obligation.
-  // Return null — no fixed sleep window can be determined from schedule alone.
-  // Sleep for these characters is handled by the energy-based autonomous path below (Tier 4+),
-  // NOT by a derived or default schedule window.
-  return null;
-}
-
-function isScheduledSleeping(character, etTime) {
-  const window = computeAdaptiveSleepWindow(character, etTime);
-  // No determinable sleep schedule — cannot assume sleep. Return false.
-  if (!window) return false;
-  const now = etTime.getHours() * 60 + etTime.getMinutes();
-  const { sleepStartMin, wakeMin } = window;
-  if (sleepStartMin > wakeMin) return now >= sleepStartMin || now < wakeMin;
-  return now >= sleepStartMin && now < wakeMin;
-}
-
-function isInPreSleepWindow(character, etTime) {
-  const window = computeAdaptiveSleepWindow(character, etTime);
-  // No determinable sleep schedule — cannot assume pre-sleep window. Return false.
-  if (!window) return false;
-  const now = etTime.getHours() * 60 + etTime.getMinutes();
-  const { sleepStartMin } = window;
-  const windowStart = (sleepStartMin - PRE_SLEEP_WINDOW_MINUTES + 1440) % 1440;
-  if (windowStart > sleepStartMin) return now >= windowStart || now < sleepStartMin;
-  return now >= windowStart && now < sleepStartMin;
-}
+// sleep_start_time and wake_up_time are METADATA only.
+// They are NOT used to enforce sleep or wake for active_created_characters.
+// Sleep onset is driven by energy levels. Wake is driven by energy recovery and real obligations.
 
 // ── RAW NEED VALUES ────────────────────────────────────────────────────────────
 function needValues(char) {
@@ -609,17 +527,12 @@ Deno.serve(async (req) => {
             if (s === null || e === null || !char.work_days.includes(nowET.getDay())) return false;
             return e < s ? (nowMin2 >= s || nowMin2 < e) : (nowMin2 >= s && nowMin2 < e);
           })() : false;
-          const isSleep = (char.sleep_start_time && char.wake_up_time) ? (() => {
-            const nowMin2 = nowET.getHours() * 60 + nowET.getMinutes();
-            const s = toMin(char.sleep_start_time), w = toMin(char.wake_up_time);
-            if (s === null || w === null) return false;
-            return s > w ? (nowMin2 >= s || nowMin2 < w) : (nowMin2 >= s && nowMin2 < w);
-          })() : false;
           const todayET2 = nowET.toISOString().slice(0, 10);
           const hasCallout2 = char.work_exception_status === 'called_out' && char.work_exception_date === todayET2;
+          // Canonical status: at_work if shift is active, otherwise home.
+          // Do NOT use sleep_start_time/wake_up_time to derive sleeping — sleep status comes from energy only.
           const canonicalStatus = (isShift && !hasCallout2 && char.occupation_location_id)
             ? 'at_work'
-            : isSleep ? 'sleeping'
             : 'home';
           const canonicalLocId = (isShift && !hasCallout2 && char.occupation_location_id)
             ? char.occupation_location_id
@@ -704,8 +617,7 @@ Deno.serve(async (req) => {
               char.resolved_presence_status === 'incarcerated' ||
               char.resolved_presence_status === 'confined' ||
               char.resolved_presence_status === 'house_arrest' ||
-              urgencyLevel(needValues(char).energy) >= 4 ||   // pass-out
-              isScheduledSleeping(char, nowET)                // sleep window
+              urgencyLevel(needValues(char).energy) >= 4       // pass-out only — no clock-based sleep window
             );
             if (!overridingHardCondition) {
               console.log(`[autonomousMovement] ${char.name}: IN_TRANSIT (session ${activeSession.id} → ${activeSession.destination_location_name}) — skip autonomous move`);
@@ -801,216 +713,76 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── TIER 3: SLEEP WINDOW ENFORCEMENT ────────────────────────────────
-        // Character is in their sleep window. If already at the right sleep location → block further movement.
-        // If NOT at a valid sleep location → FORCE return home. This overrides toggle, stay-lock, personality.
-        const sleeping = isScheduledSleeping(char, nowET);
-        const inPreSleep = isInPreSleepWindow(char, nowET);
+        // ── TIER 3: SLEEPING/NAPPING STATUS HANDLER ─────────────────────────
+        // No clock windows. No sleep_start_time authority. No wake_up_time authority.
+        // If the character IS sleeping (as a current status fact), handle their state.
+        // Sleep onset is driven entirely by energy levels (below, in energy-based onset block).
+        // Wake is driven by energy recovery and real active obligations.
+        if (status === 'sleeping' || status === 'napping') {
+          // Check if a real obligation is currently active (work shift or school in session).
+          const nowMin3 = nowET.getHours() * 60 + nowET.getMinutes();
+          const dowNow3 = nowET.getDay();
+          const todayET3 = nowET.toISOString().slice(0, 10);
 
-        if (
-          status === 'sleeping'                   ||
-          status === 'napping'                     ||
-          status === 'returning_home_for_sleep'    ||
-          reason === 'sleep_return_home'           ||
-          reason === 'sleep_location_correction'   ||
-          reason === 'adaptive_sleep_location_lock' ||
-          reason === 'adaptive_sleep_location_correction' ||
-          reason === 'adaptive_pre_sleep_return'   ||
-          reason === 'no_valid_sleep_location'
-        ) {
-          // ── WAKE CHECK: Recalculate adaptive sleep window right now ───────────
-          // Do NOT trust the stored status as permanent. If the sleep window has ended,
-          // wake the character — BUT only if no valid character-driven reason still applies.
-          //
-          // Valid reasons to stay sleeping past wake_up_time (NOT stale):
-          //   illness, emotional crash, high sleep debt, interrupted sleep recovery,
-          //   shifted sleep (decided_to_stay_up_until), user-directed nap
-          // Stale sleep: system artifact with none of the above — safe to clear.
-          const stillSleeping = isScheduledSleeping(char, nowET);
-          const sleepSource = char.resolved_source_reason || '';
-          const hasValidOversleepReason = (() => {
-            if (char.decided_to_stay_up_until && new Date(char.decided_to_stay_up_until) > new Date(Date.now() - 8 * 3600 * 1000)) return true;
-            if (sleepSource === 'user_directed_nap' || sleepSource.includes('nap')) return true;
-            if ((char.sleep_debt_hours || 0) > 0 && status === 'napping') return true;
-            if ((char.health_value || 100) < 30) return true;
-            if ((char.mental_value || 100) < 25) return true;
-            if ((char.sleep_debt_hours || 0) >= 2) return true;
-            if (char.sleep_interrupted_at && (Date.now() - new Date(char.sleep_interrupted_at).getTime()) / 3600000 < 4) return true;
-            return false;
+          const hasActiveWorkObligation = (() => {
+            if (!Array.isArray(char.work_days) || char.work_days.length === 0) return false;
+            if (!char.work_start_time || !char.work_end_time || !char.occupation_location_id) return false;
+            if (!char.work_days.includes(dowNow3)) return false;
+            const hasCallout3 = char.work_exception_status === 'called_out' && char.work_exception_date === todayET3;
+            if (hasCallout3) return false;
+            const s3 = toMin(char.work_start_time);
+            const e3 = toMin(char.work_end_time);
+            if (s3 === null || e3 === null) return false;
+            const isOvernight3 = e3 < s3;
+            return isOvernight3 ? (nowMin3 >= s3 || nowMin3 < e3) : (nowMin3 >= s3 && nowMin3 < e3);
           })();
 
-          if (!stillSleeping && !hasValidOversleepReason && (status === 'sleeping' || status === 'napping')) {
-            // ── OBLIGATION CHECK BEFORE WAKING ─────────────────────────────────
-            // wake_up_time and sleep_start_time are METADATA, not mandatory wake obligations.
-            // Passing the stored wake_up_time clock value alone is NOT sufficient reason to wake.
-            // A character may sleep in freely when they have no real obligation.
-            //
-            // Only wake if the character has a PROVEN active obligation RIGHT NOW:
-            //   1. Work shift currently active (work_days + work_start_time + work_end_time)
-            //   2. School currently in session (enrolled + education_location_id + 08:00–15:00)
-            //   3. Confinement rule (jail/house_arrest — handled above in Tier 0, never reaches here)
-            //
-            // If none of these are true, the character has no reason to be awake. Leave them sleeping.
-            const nowMin3 = nowET.getHours() * 60 + nowET.getMinutes();
-            const dowNow3 = nowET.getDay();
-            const todayET3 = nowET.toISOString().slice(0, 10);
+          const hasActiveSchoolObligation = (() => {
+            if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
+            return nowMin3 >= 8 * 60 && nowMin3 < 15 * 60;
+          })();
 
-            const hasActiveWorkObligation = (() => {
-              if (!Array.isArray(char.work_days) || char.work_days.length === 0) return false;
-              if (!char.work_start_time || !char.work_end_time || !char.occupation_location_id) return false;
-              if (!char.work_days.includes(dowNow3)) return false;
-              const hasCallout3 = char.work_exception_status === 'called_out' && char.work_exception_date === todayET3;
-              if (hasCallout3) return false;
-              const s3 = toMin(char.work_start_time);
-              const e3 = toMin(char.work_end_time);
-              if (s3 === null || e3 === null) return false;
-              const isOvernight3 = e3 < s3;
-              return isOvernight3 ? (nowMin3 >= s3 || nowMin3 < e3) : (nowMin3 >= s3 && nowMin3 < e3);
-            })();
+          const energyNow = char.energy_value ?? 0;
+          const sleepStartedAt = char.last_sleep_start ? new Date(char.last_sleep_start) : null;
+          const sleepDurationHours = sleepStartedAt
+            ? (Date.now() - sleepStartedAt.getTime()) / 3600000
+            : 0;
+          const isHealthRecovering = (char.health_value ?? 100) < 30 || (char.mental_value ?? 100) < 25;
 
-            const hasActiveSchoolObligation = (() => {
-              if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
-              return nowMin3 >= 8 * 60 && nowMin3 < 15 * 60;
-            })();
+          // Wake conditions (in priority order):
+          // 1. Active work obligation right now → wake for work
+          // 2. Active school obligation right now → wake for school
+          // 3. Energy fully recovered (>= 70) AND slept >= 5 hours AND not health-recovering → natural wake
+          // Otherwise → keep sleeping, no action
+          const shouldWake = hasActiveWorkObligation || hasActiveSchoolObligation ||
+            (energyNow >= 70 && sleepDurationHours >= 5 && !isHealthRecovering);
 
-            const hasRealWakeObligation = hasActiveWorkObligation || hasActiveSchoolObligation;
+          if (!shouldWake) {
+            console.log(`[autonomousMovement] ${char.name}: sleeping (energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h, obligation=${hasActiveWorkObligation || hasActiveSchoolObligation})`);
+            continue;
+          }
 
-            if (!hasRealWakeObligation) {
-              // No active obligation right now.
-              // A character may wake naturally only when they have genuinely recovered:
-              //   - energy has meaningfully recovered (>= 70)
-              //   - they have slept at least 5 hours
-              //   - they are not in illness/mental crisis (health < 30 or mental < 25)
-              // If none of these are met, preserve sleep. No forced wake.
-              const energyNow = char.energy_value ?? 0;
-              const sleepStartedAt = char.last_sleep_start ? new Date(char.last_sleep_start) : null;
-              const sleepDurationHours = sleepStartedAt
-                ? (Date.now() - sleepStartedAt.getTime()) / 3600000
-                : 0;
-              const isWellRested = energyNow >= 70;
-              const hasSleptLongEnough = sleepDurationHours >= 5;
-              const isRecovering = (char.health_value ?? 100) < 30 || (char.mental_value ?? 100) < 25;
-
-              if (!isWellRested || !hasSleptLongEnough || isRecovering) {
-                console.log(`[autonomousMovement] ${char.name}: no obligation, sleeping in (energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h, recovering=${isRecovering})`);
-                continue;
-              }
-
-              // Character is well-rested, no obligation, sufficient sleep duration — natural wake.
-              // Fall through to wake write below.
-            }
-
-            // Wake: obligation-driven or natural recovery
-            const wakeReason = hasRealWakeObligation
-              ? (hasActiveWorkObligation ? 'obligation_wake_work' : 'obligation_wake_school')
-              : 'natural_wake_rested';
-            const wakePayload = {
+          // Wake the character — write presence back to home, then fall through to obligation dispatch
+          const wakeReason = hasActiveWorkObligation ? 'obligation_wake_work'
+            : hasActiveSchoolObligation ? 'obligation_wake_school'
+            : 'natural_wake_rested';
+          try {
+            await base44.entities.Character.update(char.id, {
               resolved_presence_status:   'home',
               resolved_source_reason:     wakeReason,
               resolved_last_updated_at:   nowET.toISOString(),
-            };
-            try {
-              await base44.entities.Character.update(char.id, wakePayload);
-            } catch {
-              await base44.asServiceRole.entities.Character.update(char.id, wakePayload);
-            }
-            console.log(`[autonomousMovement] ✓ ${char.name}: WOKEN — reason=${wakeReason}, released to schedule/movement`);
-            // Update char in memory so the rest of this loop iteration sees the new status
-            char.resolved_presence_status = 'home';
-            char.resolved_source_reason = wakeReason;
-            // Do NOT continue — fall through to work/school dispatch and needs evaluation (Tier 3.5+)
-          } else if (!stillSleeping && hasValidOversleepReason && (status === 'sleeping' || status === 'napping')) {
-            // Valid character-driven oversleeping — preserve. Do not wake them automatically.
-            console.log(`[autonomousMovement] ${char.name}: VALID OVERSLEEP preserved (${sleepSource || 'no source'}) — not waking automatically`);
-            continue;
-          } else {
-            // Sleep window is still active (or it's a non-sleeping sleep-adjacent state) —
-            // validate sleep location and hold.
-            // Valid = current_home_location_id OR temporary_housing_location_id (explicit alternate sleep).
-            // MUST NOT write home fields, residence fields, or location ownership. Presence fields only.
-            const assignedHomeId     = char.current_home_location_id;
-            const assignedSleepAltId = char.temporary_housing_location_id;
-            const currentLocId       = char.resolved_current_location_id;
-
-            const isAtHome     = assignedHomeId     && currentLocId === assignedHomeId;
-            const isAtSleepAlt = assignedSleepAltId && currentLocId === assignedSleepAltId;
-
-            if (isAtHome || isAtSleepAlt) {
-              console.log(`[autonomousMovement] ${char.name}: SLEEP STATE valid (${reason || status})`);
-              continue;
-            }
-
-            // Invalid sleep location — correct presence to assigned home or sleep alternate.
-            const validSleepLocId = assignedHomeId || assignedSleepAltId;
-            const validSleepLoc   = validSleepLocId ? userLocations.find(loc => loc.id === validSleepLocId) : null;
-
-            if (!validSleepLoc) {
-              const failMsg = `${char.name}: SLEEP_LOCATION_INVALID — current=${currentLocId || 'none'}, assigned_home=${assignedHomeId || 'MISSING'}, sleep_alt=${assignedSleepAltId || 'MISSING'} — needs housing assignment`;
-              blockedLog.push(failMsg);
-              console.warn(`[autonomousMovement] ⚠️ SLEEP_INVALID: ${failMsg}`);
-              await base44.entities.Character.update(char.id, {
-                resolved_source_reason:   'no_valid_sleep_location',
-                resolved_presence_status: 'sleeping',
-              }).catch(() => base44.asServiceRole.entities.Character.update(char.id, {
-                resolved_source_reason: 'no_valid_sleep_location',
-              }).catch(() => {}));
-              continue;
-            }
-
-            const sleepCorrectionPayload = {
-              resolved_current_location_id:   validSleepLoc.id,
-              resolved_current_location_name: validSleepLoc.name,
-              resolved_presence_status:       'sleeping',
-              resolved_location_type:         validSleepLoc.id === assignedHomeId ? 'home' : 'temporary_housing',
-              resolved_source_reason:         'sleep_location_correction',
-              last_arrived_time:              new Date().toISOString(),
-            };
-            try {
-              await base44.entities.Character.update(char.id, sleepCorrectionPayload);
-            } catch {
-              await base44.asServiceRole.entities.Character.update(char.id, sleepCorrectionPayload);
-            }
-            totalMoved++;
-            moveLog.push(`${char.name} → ${validSleepLoc.name} [SLEEP_LOCATION_CORRECTION] was at invalid: ${currentLocId}`);
-            console.log(`[autonomousMovement] ✓ ${char.name}: sleep correction → ${validSleepLoc.name} (was at invalid ${currentLocId})`);
-            continue;
+            });
+          } catch {
+            await base44.asServiceRole.entities.Character.update(char.id, {
+              resolved_presence_status:   'home',
+              resolved_source_reason:     wakeReason,
+              resolved_last_updated_at:   nowET.toISOString(),
+            });
           }
-        }
-
-        if (sleeping || inPreSleep) {
-          // Sleep window is active. Character must be at home or a valid sleep location.
-          const homeId = char.current_home_location_id;
-          const alreadyHome = homeId && char.resolved_current_location_id === homeId;
-          if (!alreadyHome && homeId) {
-            // Force return to sleep location — overrides toggle, stay-lock, wandering
-            const sleepHome = userLocations.find(loc => loc.id === homeId);
-            if (sleepHome) {
-              const sleepReturnPayload = {
-                resolved_current_location_id:   sleepHome.id,
-                resolved_current_location_name: sleepHome.name,
-                resolved_presence_status:       sleeping ? 'sleeping' : 'returning_home_for_sleep',
-                resolved_location_type:         'home',
-                resolved_source_reason:         sleeping ? 'adaptive_sleep_location_lock' : 'adaptive_pre_sleep_return',
-                last_arrived_time:              new Date().toISOString(),
-                presence_stay_lock:             false,
-                presence_stay_lock_location_id: null,
-                location_status:                sleeping ? 'home' : 'home',
-              };
-              try {
-                await base44.entities.Character.update(char.id, sleepReturnPayload);
-              } catch {
-                await base44.asServiceRole.entities.Character.update(char.id, sleepReturnPayload);
-              }
-              totalMoved++;
-              moveLog.push(`${char.name} → ${sleepHome.name} [SLEEP_ENFORCEMENT${sleeping ? '' : '_PRE_SLEEP'}]`);
-              console.log(`[autonomousMovement] ✓ ${char.name}: sleep return → ${sleepHome.name}`);
-            } else {
-              blockedLog.push(`${char.name}: sleep time but home location not found (id=${homeId})`);
-            }
-          } else {
-            console.log(`[autonomousMovement] ${char.name}: sleep window — already sleeping or no home`);
-          }
-          continue;
+          char.resolved_presence_status = 'home';
+          char.resolved_source_reason = wakeReason;
+          console.log(`[autonomousMovement] ✓ ${char.name}: woke — reason=${wakeReason}, energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h`);
+          // Do NOT continue — fall through to work/school dispatch (Tier 3.5+)
         }
 
         // ── AUTONOMOUS ENERGY-BASED SLEEP ONSET ─────────────────────────────
