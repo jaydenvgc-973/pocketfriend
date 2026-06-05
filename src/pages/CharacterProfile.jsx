@@ -231,7 +231,7 @@ export default function CharacterProfile() {
     queryKey: ['characterFinancial', characterId],
     queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: characterId })
       .then(r => r[0] || null),
-    enabled: !!characterId,
+    enabled: !!characterId && !!character, // wait for character to load first, prevents burst
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
   });
@@ -271,23 +271,15 @@ export default function CharacterProfile() {
       const byWorkerList = await base44.entities.LocationReference.filter({ worker_character_ids: characterId }).catch(() => []);
       byWorkerList.forEach(loc => addLoc(loc));
 
-      // SOURCE 3: Scan shared and owner-email-matched locations for characterId in
+      // SOURCE 3: Scan owner-email-matched and shared-scope locations for characterId in
       // worker_job_titles / worker_shifts / worker_pay_rates object keys.
-      // This catches locations assigned via the location editor (Workers & Employees panel)
-      // where worker_character_ids may not have been populated, and where the location
-      // scope is "shared" (admin/seeded) rather than owner-email-scoped.
-      // We run TWO queries:
-      //   (a) owner-email-matched (account-private locations)
-      //   (b) shared-scope (global/admin locations like gyms, workplaces)
+      // Run the owner-email query first, then follow with shared/account_global in parallel.
       const scanLocs = [];
       if (character.owner_email) {
         const ownerLocs = await base44.entities.LocationReference.filter({ owner_email: character.owner_email }).catch(() => []);
         ownerLocs.forEach(l => { if (!seen.has(l.id)) scanLocs.push(l); });
       }
-      // Also scan shared-scope and account_global-scope locations.
-      // "shared" locations are admin/system-seeded with no owner_email.
-      // "account_global" locations are user-created but readable by all (e.g. schools, businesses).
-      // Both can have worker dicts with character IDs that won't be found by the owner-email query.
+      // shared + account_global — merged into one parallel batch (was 3 separate requests above)
       const [sharedLocs, accountGlobalLocs] = await Promise.all([
         base44.entities.LocationReference.filter({ scope: 'shared' }).catch(() => []),
         base44.entities.LocationReference.filter({ scope: 'account_global' }).catch(() => []),
@@ -313,9 +305,7 @@ export default function CharacterProfile() {
       return combined;
     },
     enabled: !!characterId && !!character,
-    // staleTime: 0 — always fetch fresh on profile navigation.
-    // A stale 2-min cache from before the account_global scope fix would serve empty results.
-    staleTime: 0,
+    staleTime: 2 * 60 * 1000, // 2 minutes — prevents re-bursting rate limit on every profile open
   });
 
   const getWorkLocationName = (locationId) => {
