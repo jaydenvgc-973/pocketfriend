@@ -487,6 +487,33 @@ Deno.serve(async (req) => {
     try { payload = await req.json(); } catch (_) {}
     const { characterId } = payload;
 
+    // ── FOREGROUND YIELD CHECK (server-side) ──────────────────────────────────
+    // Needs simulation is Priority 5 (maintenance). When the user is actively in the app,
+    // skip batch simulation to avoid competing with user-facing requests.
+    // Single-character calls (characterId provided) bypass this check — they are user-triggered.
+    if (!characterId) {
+      try {
+        const now = new Date();
+        const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
+          { key: 'user_active_session' }, null, 1
+        );
+        if (activeFlag?.[0]?.value) {
+          const activeUntil = new Date(activeFlag[0].value).getTime();
+          if (now.getTime() < activeUntil) {
+            const activeUntilET = new Date(activeFlag[0].value).toLocaleString('en-US', { timeZone: 'America/New_York' });
+            console.log(`[simulateNeeds] YIELD — user active session detected until ${activeUntilET} Eastern. Skipping batch simulation to protect foreground.`);
+            return Response.json({
+              success: true,
+              yielded: true,
+              reason: 'foreground_user_active',
+              active_until_et: activeUntilET,
+              processed: 0,
+            });
+          }
+        }
+      } catch { /* non-fatal — proceed with simulation */ }
+    }
+
     // Determine auth context
     let user = null;
     try { user = await base44.auth.me(); } catch (_) {}

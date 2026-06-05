@@ -17,7 +17,8 @@
 
 import { useEffect } from 'react';
 import { setActiveContext, clearActiveContext, activateChatSafeMode } from '@/lib/simulationGate';
-import { registerForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from '@/lib/foregroundPriority';
+import { registerForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS, signalUserActiveSession } from '@/lib/foregroundPriority';
+import { base44 } from '@/api/base44Client';
 
 const PAGE_SAFE_MODE_DURATION = {
   chat:    60000,
@@ -57,6 +58,15 @@ export function usePageContext({ page, characterId = null, locationId = null }) 
     //    all other pages get at least 15s so they can load without background competition.
     const safeModeDuration = PAGE_SAFE_MODE_DURATION[page] ?? PAGE_SAFE_MODE_DURATION.default;
     activateChatSafeMode(safeModeDuration);
+
+    // 2a. SERVER-SIDE YIELD TOKEN: Write to AppWorldState so background automations
+    //     (simulateActiveCharacterNeeds, autonomousCharacterMovement) yield during active sessions.
+    //     This bridges the browser→server priority gap that foregroundPriority.js cannot cover alone.
+    //     Fire-and-forget — non-blocking, non-fatal.
+    // High-priority pages (chat, scene, travel) get a full 3-minute server yield window.
+    // Other pages get a shorter 90-second window since they don't generate ongoing API calls.
+    const serverYieldMs = ['chat', 'scene', 'travel'].includes(page) ? 180000 : 90000;
+    signalUserActiveSession(base44, serverYieldMs).catch(() => {});
 
     // 3. Register a foreground priority task for this page so background hooks
     //    that check isForegroundActive() / shouldYieldToForeground() also yield.

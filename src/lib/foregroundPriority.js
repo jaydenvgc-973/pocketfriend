@@ -401,6 +401,55 @@ export async function withForegroundPriority(taskType, fn, options = {}) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SERVER-SIDE YIELD TOKEN — write to AppWorldState when user enters foreground
+// Background automations (simulateActiveCharacterNeeds, autonomousCharacterMovement,
+// processScheduledRelocations) check AppWorldState key='user_active_session' before
+// doing bulk work. This bridges the browser→server priority gap.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _sessionWriteTimer = null;
+let _sessionWriteBase44 = null;
+
+/**
+ * Signal to server-side automations that the user is actively using the app.
+ * Called when a user opens chat, travel, profile, or settings.
+ * Writes a short-lived token to AppWorldState with a TTL of `durationMs`.
+ *
+ * @param {object} base44Client - initialized base44 SDK client
+ * @param {number} durationMs - how long to hold the yield token (default 3 minutes)
+ */
+export async function signalUserActiveSession(base44Client, durationMs = 180000) {
+  if (!base44Client) return;
+  _sessionWriteBase44 = base44Client;
+  const expiresAt = new Date(Date.now() + durationMs).toISOString();
+  try {
+    // Try to update existing record first, create if not found
+    const existing = await base44Client.entities.AppWorldState.filter({ key: 'user_active_session' }, null, 1).catch(() => []);
+    if (existing?.[0]) {
+      await base44Client.entities.AppWorldState.update(existing[0].id, { value: expiresAt }).catch(() => {});
+    } else {
+      await base44Client.entities.AppWorldState.create({ key: 'user_active_session', value: expiresAt }).catch(() => {});
+    }
+    console.log(`[ForegroundPriority] Server yield token written — automations will yield until ${new Date(expiresAt).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} ET`);
+  } catch { /* non-fatal */ }
+}
+
+/**
+ * Clear the server-side yield token when the user navigates away or the session ends.
+ */
+export async function clearUserActiveSession(base44Client) {
+  const client = base44Client || _sessionWriteBase44;
+  if (!client) return;
+  try {
+    const existing = await client.entities.AppWorldState.filter({ key: 'user_active_session' }, null, 1).catch(() => []);
+    if (existing?.[0]) {
+      await client.entities.AppWorldState.update(existing[0].id, { value: null }).catch(() => {});
+    }
+    console.log('[ForegroundPriority] Server yield token cleared — automations resuming');
+  } catch { /* non-fatal */ }
+}
+
 /**
  * Debug: get all active tasks (global + owner-scoped).
  */

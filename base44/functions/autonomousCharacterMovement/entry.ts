@@ -434,6 +434,28 @@ Deno.serve(async (req) => {
     const base44 = createClientFromRequest(req);
     try { await base44.auth.me(); } catch { /* scheduled — no session */ }
 
+    // ── FOREGROUND YIELD CHECK (server-side) ──────────────────────────────────
+    // Autonomous movement is Priority 5 (maintenance). When the user is actively in the app,
+    // yield entirely — do NOT compete with foreground user actions.
+    // Critical tiers (pass-out, confinement, commitment dispatch) still run.
+    // Commitment travel and work/school dispatch are time-sensitive (Priority 4) — they run
+    // even during active sessions. Pure needs-based wandering (Tier 6+) is suppressed.
+    let isForegroundActive = false;
+    try {
+      const now = new Date();
+      const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
+        { key: 'user_active_session' }, null, 1
+      );
+      if (activeFlag?.[0]?.value) {
+        const activeUntil = new Date(activeFlag[0].value).getTime();
+        if (now.getTime() < activeUntil) {
+          isForegroundActive = true;
+          const activeUntilET = new Date(activeFlag[0].value).toLocaleString('en-US', { timeZone: 'America/New_York' });
+          console.log(`[autonomousMovement] Foreground active until ${activeUntilET} Eastern — suppressing optional needs-based movement (commitments and obligations still run).`);
+        }
+      }
+    } catch { /* non-fatal — proceed normally */ }
+
     // ── LOAD active_created_character — FILTERED, not full list ──────────────
     // Cap at 100 (was 500 via unfiltered .list()). Sorted by most-recently-updated
     // so the most active characters are processed first within the MAX_MOVES_PER_RUN cap.
@@ -1140,10 +1162,15 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── TIER 6: AUTONOMOUS TRAVEL TOGGLE ─────────────────────────────────
-        // When OFF, only energy urgency >= 2 (< 50) or above triggers movement.
-        // Sleep, pass-out, and critical energy are already handled above.
+        // ── TIER 6: AUTONOMOUS TRAVEL TOGGLE + FOREGROUND YIELD ──────────────
+        // When foreground is active, suppress optional needs-based wandering entirely.
+        // Mandatory needs (urgency >= 2) still run — character won't starve because user is chatting.
+        // When autonomous travel is OFF, same rule applies.
         const topNeedCheck = highestUrgencyEntry(vals);
+        if (isForegroundActive && topNeedCheck.urgency < 2) {
+          skippedLog.push(`${char.name}: foreground active, optional needs suppressed`);
+          continue;
+        }
         if (!autonomousTravelEnabled && topNeedCheck.urgency < 2) {
           skippedLog.push(`${char.name}: autonomous travel OFF, needs not urgent enough`);
           continue;

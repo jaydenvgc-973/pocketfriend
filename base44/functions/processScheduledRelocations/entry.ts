@@ -13,8 +13,58 @@ Deno.serve(async (req) => {
     const now = new Date();
     const nowIso = now.toISOString();
 
-    // Use service role to see ALL characters across all accounts
-    const allChars = await base44.asServiceRole.entities.Character.list(null, 1000);
+    // ── FOREGROUND YIELD CHECK (server-side) ──────────────────────────────────
+    // The browser writes key='user_active_session' to AppWorldState when the user is
+    // actively using the app. Bulk maintenance automations check this before doing
+    // expensive full-table work to avoid competing with foreground user actions.
+    // processScheduledRelocations is time-sensitive (Priority 4) — it DOES process
+    // user-confirmed movement commitments even during active sessions.
+    // It SKIPS the legacy full-table scan (Priority 5) during active sessions.
+    let userActiveSessionUntil = 0;
+    try {
+      const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
+        { key: 'user_active_session' }, null, 1
+      );
+      if (activeFlag?.[0]?.value) {
+        userActiveSessionUntil = new Date(activeFlag[0].value).getTime();
+      }
+    } catch { /* non-fatal — proceed without yield check */ }
+    const isForegroundActive = now.getTime() < userActiveSessionUntil;
+    if (isForegroundActive) {
+      console.log(`[processScheduledRelocations] YIELD — user active session until ${new Date(userActiveSessionUntil).toLocaleString('en-US', { timeZone: 'America/New_York' })} Eastern. Processing user commitments only.`);
+    }
+
+    // ── CHARACTER LOAD: filter to only those with pending relocations ─────────
+    // CRITICAL FIX: was .list(null, 1000) — a full table scan every 5 minutes.
+    // Changed to filter for characters that actually have pending_scheduled_relocation_at set.
+    // This reduces the query from 1000 records to only those with work to do.
+    let commitmentChars = [];
+    try {
+      // Priority 1 chars: have a confirmed pending scheduled relocation
+      commitmentChars = await base44.asServiceRole.entities.Character.filter(
+        { status: 'active' },
+        '-updated_date',
+        200
+      );
+      // Only keep chars that actually have pending relocation data
+      commitmentChars = commitmentChars.filter(c =>
+        c.owner_email && (
+          (c.pending_scheduled_relocation_at && c.next_location_id) ||
+          (!isForegroundActive && c.travel_destination_location_id) // legacy only when idle
+        )
+      );
+    } catch (e) {
+      console.error('[processScheduledRelocations] Character fetch failed:', e.message);
+      return Response.json({ error: e.message }, { status: 500 });
+    }
+
+    // During foreground activity, ONLY process user-confirmed commitments (pending_scheduled_relocation_at)
+    // not the legacy travel_destination_location_id path (which is maintenance, not time-critical)
+    const allChars = isForegroundActive
+      ? commitmentChars.filter(c => c.pending_scheduled_relocation_at && c.next_location_id)
+      : commitmentChars;
+
+    console.log(`[processScheduledRelocations] Processing ${allChars.length} characters (foreground=${isForegroundActive})`);
 
     const relocated = [];
     const processed = 0;
