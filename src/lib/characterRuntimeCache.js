@@ -29,7 +29,11 @@
  */
 
 const _cache = new Map(); // key → entry
-const CANONICAL_TTL_MS = 10 * 60 * 1000; // 10 min
+// FAMILY AWARENESS FIX: Reduced from 10 min to 3 min so that family graph changes
+// (new siblings, children, parents) propagate to all characters within one session.
+// The live family graph block in Chat.jsx is the authoritative override on every send,
+// but this shorter TTL ensures the base canonical prompt also reflects current family state.
+const CANONICAL_TTL_MS = 3 * 60 * 1000; // 3 min
 const MEMORY_TTL_MS    =  5 * 60 * 1000; // 5 min
 const _prewarmInFlight = new Set(); // prevents duplicate concurrent prewarming
 

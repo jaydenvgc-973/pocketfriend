@@ -134,7 +134,14 @@ export default function Chat({ chatTypeOverride } = {}) {
     // location data is shared across characters and stable for the session.
     // (Only clear this character's entry, not others)
     if (characterId) {
+      // Clear mount cache for this character — forces fresh canonical fetch on first send.
+      // This is global (runs for every characterId) so stale family data never persists
+      // across character switches regardless of which character the user opens.
       delete systemPromptCacheRef.current[`canonical::${characterId}`];
+      // Also evict from global runtime cache so prewarm doesn't re-serve stale family context
+      import('@/lib/characterRuntimeCache.js').then(({ invalidateCharacterCache }) => {
+        if (currentUser?.email) invalidateCharacterCache(currentUser.email, characterId);
+      }).catch(() => {});
     }
   }, [characterId]);
 
@@ -912,11 +919,16 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         : '';
       const spatialContext = spatialResult ? `\n\nSPATIAL AWARENESS: ${spatialResult} If the conversation naturally touches on being somewhere or running into someone, you can acknowledge this shared presence.` : '';
 
-      // LIVE family graph — NEVER cached. Runs every send so siblings/parents/children
-      // are always authoritative regardless of canonical prompt cache state.
+      // LIVE family graph — NEVER cached. Runs every send for EVERY character.
+      // Authoritative override: explicitly prohibits LLM from contradicting verified family data
+      // regardless of what any cached canonical prompt says about family.
       try {
         const famRes = await base44.functions.invoke('resolveCharacterFamilyGraph', { characterId });
-        liveFamilyGraphBlock = famRes?.data?.promptBlock || '';
+        const famBlock = famRes?.data?.promptBlock || '';
+        if (famBlock) {
+          // Prepend a hard override directive so this BEATS any conflicting cached prompt content
+          liveFamilyGraphBlock = `\n\n🔴 LIVE FAMILY OVERRIDE — THIS SUPERSEDES ALL PRIOR FAMILY CLAIMS IN THIS PROMPT:\nThe following family data is verified live from the database RIGHT NOW. It OVERRIDES any earlier section of this prompt that claimed you have no family, are an only child, or don't know these people. Any prior conflicting claim is WRONG. This data is correct.\n${famBlock}\nCRITICAL: If you said anything above about having no family, no siblings, or being alone — that was a cached error. The LIVE DATA ABOVE is the truth. Use it.\n`;
+        }
         console.log(`[Chat] family_graph=LIVE | char=${character.name} | has_block=${!!liveFamilyGraphBlock}`);
       } catch (famErr) {
         console.warn(`[Chat] family_graph failed (non-blocking): ${famErr.message}`);
