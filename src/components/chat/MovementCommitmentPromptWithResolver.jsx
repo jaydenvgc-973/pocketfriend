@@ -108,7 +108,7 @@ export default function MovementCommitmentPromptWithResolver({
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [autoConfirmEligible]); // eslint-disable-line
+  }, [resolving, error, resolutionResult]); // eslint-disable-line
 
   // Early returns AFTER all hooks
   if (resolving) {
