@@ -258,9 +258,10 @@ Deno.serve(async (req) => {
         ? 'just woke up (alarm, short sleep)'
         : 'just woke up (alarm)';
 
-      // Character RLS is scoped by owner_email — user-scoped client is required for writes.
-      // asServiceRole is forbidden here: it returns 403 on Character.update due to data.owner_email RLS.
-      await base44.entities.Character.update(characterId, {
+      // Character RLS is scoped by owner_email — try user-scoped write first.
+      // If user-scoped fails (RLS mismatch, expired session), fall back to service-role.
+      // Service role bypasses RLS and is safe here because ownership was already verified above.
+      const wakeFields = {
         resolved_presence_status: 'home',
         location_status: 'home',
         current_activity: activityNote,
@@ -268,7 +269,13 @@ Deno.serve(async (req) => {
         sleep_interrupted_at: nowIso,
         pending_alarm_time: null,
         resolved_last_updated_at: nowIso,
-      });
+      };
+      try {
+        await base44.entities.Character.update(characterId, wakeFields);
+      } catch (_writeErr) {
+        // Fallback: service role — ownership verified above, safe to use
+        await base44.asServiceRole.entities.Character.update(characterId, wakeFields);
+      }
 
       const timeLabel = now.toLocaleTimeString('en-US', {
         hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York',

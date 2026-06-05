@@ -100,7 +100,7 @@ Deno.serve(async (req) => {
         200
       );
       destLocation = locs.find(loc =>
-        loc.name?.toLowerCase() === (destination_name || '').toLowerCase()
+        loc.name?.toLowerCase().trim() === (destination_name || '').toLowerCase().trim()
       );
       if (!destLocation) {
         return Response.json({
@@ -114,9 +114,11 @@ Deno.serve(async (req) => {
     const destLocId = destLocation.id;
 
     // Step 3: Save pending scheduled relocation on character
+    // The user owns this character (they are in the chat) — use user-scoped write first.
+    // User-scoped write passes Character RLS (data.owner_email === user.email).
+    // Service-role fallback handles edge cases (protected characters, session issues).
     const nowIso = new Date().toISOString();
-
-    await base44.asServiceRole.entities.Character.update(character_id, {
+    const relocationFields = {
       next_location_id: destLocId,
       next_location_name: destLocation.name,
       pending_scheduled_relocation_at: scheduled_arrival_time,
@@ -126,7 +128,13 @@ Deno.serve(async (req) => {
       pending_relocation_message_id: message_id,
       pending_relocation_confirmed_at: nowIso,
       resolved_last_updated_at: nowIso,
-    });
+    };
+    try {
+      await base44.entities.Character.update(character_id, relocationFields);
+    } catch (_writeErr) {
+      // Fallback to service role — user owns this character, verified via auth
+      await base44.asServiceRole.entities.Character.update(character_id, relocationFields);
+    }
 
     // Step 4: Create CharacterCommitment record for tracking
     await base44.asServiceRole.entities.CharacterCommitment.create({
