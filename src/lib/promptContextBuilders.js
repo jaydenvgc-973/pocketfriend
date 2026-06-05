@@ -1189,6 +1189,47 @@ export function buildReceivedImageContext(recentMessages, receivingCharacterId, 
   return lines.join('\n');
 }
 
+// ── FAMILY DENIAL FILTER ──────────────────────────────────────────────────────
+
+/**
+ * Returns true if the message content contains a false family denial statement.
+ * Used to neutralize stale prior assistant messages that contradict current family truth.
+ * Only applies to character (assistant) messages, never user messages.
+ *
+ * These patterns match statements the LLM may have previously hallucinated when
+ * the canonical family data was not yet available or was ignored.
+ */
+const FAMILY_DENIAL_PATTERNS = [
+  /\b(i('m| am) an? only child)\b/i,
+  /\bi (don'?t|do not) have (any )?(siblings?|brothers?|sisters?|family)\b/i,
+  /\b(no siblings?|no brothers?|no sisters?)\b/i,
+  /\bit('s| is) just me\b/i,
+  /\bi('m| am) on my own\b/i,
+  /\bi don'?t know (who |a? ?)sarah is\b/i,
+  /\bi don'?t know (who |a? ?)larry is\b/i,
+  /\bi don'?t know (who |a? ?)thomas is\b/i,
+  /\bi don'?t know (who |a? ?)ethan is\b/i,
+  /\bi (don'?t|do not) have (a |any )?sister\b/i,
+  /\bi (don'?t|do not) have (a |any )?brother\b/i,
+  /\bi have no (siblings?|brothers?|sisters?|family members?)\b/i,
+  /\bno one? in my family\b/i,
+  /\bi(('m)|( am)) the only (one|child|kid)\b/i,
+];
+
+/**
+ * Returns true if the given character message text contains a family denial
+ * that contradicts the known family graph.
+ *
+ * @param {string} text - Message content
+ * @param {boolean} hasFamilyGraph - Whether the character has a resolved family graph
+ * @returns {boolean}
+ */
+function containsFamilyDenial(text, hasFamilyGraph) {
+  if (!hasFamilyGraph || !text) return false;
+  const lower = text.toLowerCase();
+  return FAMILY_DENIAL_PATTERNS.some(p => p.test(lower));
+}
+
 // ── CONVERSATION LOG BUILDER ──────────────────────────────────────────────────
 
 /**
@@ -1207,13 +1248,17 @@ export function buildReceivedImageContext(recentMessages, receivingCharacterId, 
  * - If message has NO text but HAS image_url → synthesize [IMAGE SENT] entry with metadata
  * - The synthesized entry matches the image_description, prompt, subjects, and location
  *   already injected by buildReceivedImageContext — both must be consistent
+ * - Character messages containing family denial statements are SUPPRESSED when a live
+ *   family graph is present — they are replaced with a neutral placeholder so the LLM
+ *   cannot anchor to the false prior claim.
  *
  * @param {object[]} recentMsgs - Recent messages in the conversation (raw Message records)
  * @param {string} characterName - Name of the character for speaker labeling
  * @param {string|null} userWorldName - User's fictional world name
+ * @param {boolean} hasFamilyGraph - Whether the character has resolved family members (suppresses denials)
  * @returns {string} - Ready-to-inject conversation log string
  */
-export function buildConversationLog(recentMsgs, characterName, userWorldName) {
+export function buildConversationLog(recentMsgs, characterName, userWorldName, hasFamilyGraph = false) {
   if (!recentMsgs || recentMsgs.length === 0) return '';
 
   return recentMsgs.map(m => {
@@ -1263,6 +1308,16 @@ export function buildConversationLog(recentMsgs, characterName, userWorldName) {
     if (!txt) {
       // Narrative or system message with no content — skip entirely to avoid "User: " clutter
       return null;
+    }
+
+    // FAMILY TRUTH FILTER: If the character previously said something like "I have no sister"
+    // but the live family graph says otherwise, SUPPRESS that message from the conversation log.
+    // This prevents the LLM from anchoring to the stale false claim as "established character truth."
+    // The suppressed message is replaced with a neutral placeholder — conversation flow is preserved
+    // but the false family claim is NOT visible to the LLM.
+    if (m.sender_type === 'character' && hasFamilyGraph && containsFamilyDenial(txt, hasFamilyGraph)) {
+      console.log(`[buildConversationLog] FAMILY_DENIAL_SUPPRESSED msgId=${m.id?.substring(0, 8)} content="${txt.substring(0, 80)}"`);
+      return `${speakerName}: [message]`;
     }
 
     return `${speakerName}: ${txt}`;
