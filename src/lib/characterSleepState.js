@@ -465,6 +465,14 @@ export function getCharacterSleepState(character, locationMap) {
   const hasValidOversleep = (() => {
     if (character.decided_to_stay_up_until && new Date(character.decided_to_stay_up_until) > nowET) return false;
     if (validOversleepReasons.some(r => reason.includes(r))) return true;
+    // sleep_interrupted_at: if the character's sleep was cut short by an alarm, message, or
+    // emergency within the last 3 hours, their ongoing sleep is still valid recovery rest.
+    // This is NOT sleep debt — it is a record that their normal rest cycle was interrupted.
+    // The 3-hour window allows them to fall back asleep and complete partial recovery.
+    if (character.sleep_interrupted_at) {
+      const hoursSinceInterrupt = (nowET.getTime() - new Date(character.sleep_interrupted_at).getTime()) / 3600000;
+      if (hoursSinceInterrupt < 3) return true;
+    }
     if (character.health_value !== undefined && character.health_value < 30) return true;
     if (character.mental_value !== undefined && character.mental_value < 25) return true;
     return false;

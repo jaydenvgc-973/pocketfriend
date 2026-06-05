@@ -720,6 +720,11 @@ Deno.serve(async (req) => {
         // Route to home. Write presence as 'home' — NOT 'sleeping'.
         // passed_out and sleeping are separate states. Once home, the energy-based
         // sleep onset block below will write 'sleeping' if energy still warrants it.
+        //
+        // IMPORTANT: Write last_sleep_start now so the subsequent sleep onset (Case A)
+        // starts the sleep duration timer correctly. Without it, sleepDurationHours is always 0
+        // and the natural wake condition (sleepDurationHours >= 4) can never be satisfied,
+        // causing the character to sleep indefinitely after pass-out recovery.
         if (status === 'passed_out') {
           if (energyUrgency < 4 && char.current_home_location_id) {
             const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
@@ -731,6 +736,9 @@ Deno.serve(async (req) => {
                 resolved_location_type:         'home',
                 resolved_source_reason:         'pass_out_recovery',
                 last_arrived_time:              new Date().toISOString(),
+                // Stamp last_sleep_start so the sleep onset timer starts on next run.
+                // This is the pass-out recovery sleep — not a new independent sleep cycle.
+                last_sleep_start:               new Date().toISOString(),
               };
               try {
                 await base44.entities.Character.update(char.id, recoveryPayload);
