@@ -62,9 +62,10 @@ export default function NPCContactPanel() {
     });
   })();
 
-  // Show ONLY npc_fictitious characters in the contact panel dropdown
+  // Show npc_fictitious AND npc_world_service characters in the contact panel dropdown
+  // npc_world_service = permanent world-service operators (e.g. Vick Servicio) — always contactable
   const npcCharacters = allNPCs.filter(
-    c => c.character_type === 'npc_fictitious' && c.status !== 'deleted'
+    c => (c.character_type === 'npc_fictitious' || c.character_type === 'npc_world_service') && c.status !== 'deleted'
   );
 
   // Sort by name

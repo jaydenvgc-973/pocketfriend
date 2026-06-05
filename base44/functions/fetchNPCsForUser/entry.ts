@@ -39,6 +39,8 @@ Deno.serve(async (req) => {
     const all = allChars.filter(c => {
       if (c.status === 'deleted' || c.status === 'soft_deleted') return false;
       if (c.character_type === 'active_created_character') return false;
+      // npc_world_service (e.g. Vick Servicio) — permanently included so they appear in contact panels and chat
+      if (c.character_type === 'npc_world_service') return true;
       // INCLUDE records with missing/null character_type (legacy compatibility)
       return !c.character_type || ['npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type);
     });
