@@ -94,31 +94,23 @@ function getTimeOfDay(hour) {
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
+    let userContext = null;
+    try { userContext = await base44.auth.me(); } catch { /* scheduled task — no session */ }
 
     console.log(`[runAutomaticNarrativesForAllCharacters] ▶ Starting scheduled narrative run`);
 
-    // ── FOREGROUND YIELD CHECK ────────────────────────────────────────────────────
-    // CRITICAL: This automation makes ONE LLM call per character (300 chars = 300 LLM calls).
-    // Running during user sessions competes directly with chat response generation.
-    // Priority 6 (Non-essential background). Must yield to any user activity.
-    try {
-      const NOW_CHECK = new Date();
-      const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
-        { key: 'user_active_session' }, null, 1
-      );
-      if (activeFlag?.[0]?.value) {
-        const activeUntil = new Date(activeFlag[0].value).getTime();
-        if (NOW_CHECK.getTime() < activeUntil) {
-          console.log(`[runAutomaticNarrativesForAllCharacters] YIELD — user active session until ${new Date(activeUntil).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} Eastern. Skipping LLM narrative batch to protect chat.`);
-          return Response.json({
-            success: true,
-            yielded: true,
-            reason: 'foreground_user_active',
-            results: { total: 0, generated: 0, skipped: 0, errors: 0, details: [] },
-          });
-        }
-      }
-    } catch { /* non-fatal — proceed */ }
+    // If an authenticated user exists, they are active on the app.
+    // This automation makes ONE LLM call per character (up to 300 calls per run).
+    // Direct competition with chat. Return immediately.
+    if (userContext?.email) {
+      console.log(`[runAutomaticNarrativesForAllCharacters] User active: ${userContext.email} — deferring LLM narrative batch to protect chat`);
+      return Response.json({
+        success: true,
+        yielded: true,
+        reason: 'foreground_user_active',
+        results: { total: 0, generated: 0, skipped: 0, errors: 0, details: [] },
+      });
+    }
 
     // ── FETCH ALL CHARACTERS (service role — no user token in scheduled context) ──
     // CRITICAL: asServiceRole.filter({ character_type }) has a platform-level visibility gap

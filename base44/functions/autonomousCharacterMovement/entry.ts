@@ -432,29 +432,19 @@ function selectBestLocation(locations, char, vals, nowET) {
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    try { await base44.auth.me(); } catch { /* scheduled — no session */ }
+    let userContext = null;
+    try { userContext = await base44.auth.me(); } catch { /* scheduled — no session */ }
 
-    // ── FOREGROUND YIELD CHECK (server-side) ──────────────────────────────────
-    // Autonomous movement is Priority 5 (maintenance). When the user is actively in the app,
-    // yield entirely — do NOT compete with foreground user actions.
-    // Critical tiers (pass-out, confinement, commitment dispatch) still run.
-    // Commitment travel and work/school dispatch are time-sensitive (Priority 4) — they run
-    // even during active sessions. Pure needs-based wandering (Tier 6+) is suppressed.
+    // If an authenticated user exists in the request context, they are active on the app.
+    // Do NOT compete with their foreground requests for resources.
+    // Return immediately without making API calls.
+    if (userContext?.email) {
+      console.log(`[autonomousMovement] User active: ${userContext.email} — deferring background movement`);
+      return Response.json({ success: true, skipped: true, reason: 'user_active', timestamp: new Date().toISOString() });
+    }
+
+    // No user context = scheduled task or background automation. Safe to proceed.
     let isForegroundActive = false;
-    try {
-      const now = new Date();
-      const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
-        { key: 'user_active_session' }, null, 1
-      );
-      if (activeFlag?.[0]?.value) {
-        const activeUntil = new Date(activeFlag[0].value).getTime();
-        if (now.getTime() < activeUntil) {
-          isForegroundActive = true;
-          const activeUntilET = new Date(activeFlag[0].value).toLocaleString('en-US', { timeZone: 'America/New_York' });
-          console.log(`[autonomousMovement] Foreground active until ${activeUntilET} Eastern — suppressing optional needs-based movement (commitments and obligations still run).`);
-        }
-      }
-    } catch { /* non-fatal — proceed normally */ }
 
     // ── LOAD active_created_character — FILTERED, not full list ──────────────
     // Cap at 100 (was 500 via unfiltered .list()). Sorted by most-recently-updated
