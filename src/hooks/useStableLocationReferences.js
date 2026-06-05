@@ -81,26 +81,29 @@ export function useStableLocationReferences(ownerEmail) {
 
       // ── PARTIAL: incoming < 70% of last confirmed → suspect rate-limit / truncation ──
       // Deletions do NOT trigger this path: one deleted location = 97%+ of prior count.
+      // NEVER block incoming if it has MORE locations than cache — restorations must propagate.
       if (lastConfirmed > 0 && locs.length < lastConfirmed * 0.7) {
         const cached = lfcRead(ownerEmail, 'locations');
-        if (cached?.data?.length > 0) {
+        if (cached?.data?.length > 0 && cached.data.length > locs.length) {
           console.warn(`[useStableLocationReferences] Partial fetch (${locs.length} vs confirmed ${lastConfirmed}) — LKG preserved:`, cached.data.length);
           return cached.data;
         }
       }
 
       // ── CONFIRMED FULL: accept, update LKG, deletions propagate here ────────
+      // Also accept if incoming > cached (restored/newly visible locations must propagate).
       lastConfirmedCountRef.current = locs.length;
       if (ownerEmail) lfcWrite(ownerEmail, 'locations', locs);
+      console.log(`[useStableLocationReferences] Accepted ${locs.length} locations from fresh fetch`);
       return locs;
     },
 
     enabled: !!ownerEmail,
-    staleTime: 10 * 60 * 1000,   // 10 min — location data is very stable
+    staleTime: 0,                 // Always refetch on mount — ensures newly visible locations appear immediately
     gcTime:    30 * 60 * 1000,
-    refetchOnMount: false,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
+    refetchOnReconnect: true,
     retry: 2,
     retryDelay: (attempt) => attempt * 2000,
     placeholderData: (prev) => prev,
