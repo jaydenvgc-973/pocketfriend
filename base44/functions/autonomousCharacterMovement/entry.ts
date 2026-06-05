@@ -876,157 +876,34 @@ Deno.serve(async (req) => {
             const hasRealWakeObligation = hasActiveWorkObligation || hasActiveSchoolObligation;
 
             if (!hasRealWakeObligation) {
-              // ── NATURAL WAKE ELIGIBILITY ──────────────────────────────────────
-              // No active obligation right now. Character may wake naturally, but this
-              // is a WEIGHTED AUTONOMOUS DECISION — not a forced threshold flip.
-              //
-              // MINIMUM ELIGIBILITY (hard gates — must pass ALL to even consider waking):
-              //   1. Energy >= 55 (meaningfully recovered — not just above critical)
-              //   2. Sleep duration >= 4 hours (minimum real sleep cycle)
-              //   3. Not in health/mental crisis recovery (health < 30 or mental < 25)
-              //
-              // If minimum eligibility fails → still sleeping, no decision made.
-              //
-              // If eligible → compute a PERSONALITY-WEIGHTED WAKE PROBABILITY.
-              // The character may still choose to keep sleeping even if eligible.
-              // Probability is never 100%. No character is force-woken by energy alone.
-              const energyNow  = char.energy_value  ?? 0;
-              const healthNow  = char.health_value  ?? 100;
-              const mentalNow  = char.mental_value  ?? 100;
-              const hungerNow  = char.hunger_value  ?? 70;
-              const socialNow  = char.social_value  ?? 65;
+              // No active obligation right now.
+              // A character may wake naturally only when they have genuinely recovered:
+              //   - energy has meaningfully recovered (>= 70)
+              //   - they have slept at least 5 hours
+              //   - they are not in illness/mental crisis (health < 30 or mental < 25)
+              // If none of these are met, preserve sleep. No forced wake.
+              const energyNow = char.energy_value ?? 0;
               const sleepStartedAt = char.last_sleep_start ? new Date(char.last_sleep_start) : null;
               const sleepDurationHours = sleepStartedAt
                 ? (Date.now() - sleepStartedAt.getTime()) / 3600000
                 : 0;
+              const isWellRested = energyNow >= 70;
+              const hasSleptLongEnough = sleepDurationHours >= 5;
+              const isRecovering = (char.health_value ?? 100) < 30 || (char.mental_value ?? 100) < 25;
 
-              // Hard gates
-              const isMinRested   = energyNow >= 55;
-              const isMinDuration = sleepDurationHours >= 4;
-              const isRecovering  = healthNow < 30 || mentalNow < 25;
-
-              if (!isMinRested || !isMinDuration || isRecovering) {
-                console.log(`[autonomousMovement] ${char.name}: still sleeping (energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h, recovering=${isRecovering})`);
+              if (!isWellRested || !hasSleptLongEnough || isRecovering) {
+                console.log(`[autonomousMovement] ${char.name}: no obligation, sleeping in (energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h, recovering=${isRecovering})`);
                 continue;
               }
 
-              // ── COMPUTE PERSONALITY-WEIGHTED WAKE PROBABILITY ─────────────────
-              // Base probability scales with energy recovery and sleep duration.
-              // Personality traits, context, and needs push it up or down.
-              // Result is a probability 0.0–1.0. A random roll must beat it to wake.
-              // This means even a well-rested character might choose to stay in bed.
-              const nowHourET = nowET.getHours();
-
-              // Base: energy 55→1.0 is a gradient. At 55 → ~15% base. At 85 → ~50% base.
-              // Duration beyond 6h adds additional readiness.
-              let wakeProb = Math.min(0.50, Math.max(0.05,
-                ((energyNow - 55) / 40) * 0.45 +           // energy contribution: 0–45%
-                (Math.min(sleepDurationHours, 10) / 10) * 0.20  // duration contribution: 0–20%
-              ));
-
-              // ── TRAIT MODIFIERS ──────────────────────────────────────────────
-              if (char.trait_morning_person) wakeProb += 0.25; // morning people get up easily
-              if (char.trait_night_owl)      wakeProb -= 0.20; // night owls resist morning wake
-              if (char.trait_conscientious)  wakeProb += 0.15; // disciplined people self-start
-              if (char.trait_stubborn)       wakeProb -= 0.10; // stubborn = won't be rushed
-              if (char.trait_adaptable)      wakeProb += 0.05; // flexible, roll with it
-              if (char.trait_lazy)           wakeProb -= 0.15; // lazy characters sleep in
-              if (char.trait_risk_taker)     wakeProb += 0.05; // impulsive, gets moving
-
-              // ── HOUR OF DAY MODIFIERS ────────────────────────────────────────
-              // Very early (before 6 AM ET): even well-rested characters rarely wake voluntarily
-              if (nowHourET < 6)                          wakeProb -= 0.30;
-              // Morning window (6–10 AM): natural wake zone
-              else if (nowHourET >= 6 && nowHourET < 10)  wakeProb += 0.10;
-              // Late morning (10 AM+): staying in bed becomes socially/personally unusual
-              else if (nowHourET >= 10 && nowHourET < 13) wakeProb += 0.20;
-              // Afternoon sleep (13–18): this is likely a nap or illness — be conservative
-              else if (nowHourET >= 13 && nowHourET < 18) wakeProb -= 0.10;
-              // Evening (18–21): if sleeping now it's unusual — probably exhaustion recovery
-              else if (nowHourET >= 18 && nowHourET < 21) wakeProb -= 0.05;
-
-              // ── NEED-BASED PUSH FACTORS ──────────────────────────────────────
-              // Hunger: if very hungry, body wakes naturally
-              if (hungerNow < 30) wakeProb += 0.20;
-              else if (hungerNow < 50) wakeProb += 0.10;
-
-              // Social: extroverts with low social value are restless in bed
-              const isExtrovert = ['extrovert', 'mostly_extrovert'].includes(char.social_energy || '');
-              if (isExtrovert && socialNow < 40) wakeProb += 0.10;
-
-              // ── OBLIGATION LATER TODAY ────────────────────────────────────────
-              // If character has work or school later today (not currently active,
-              // but within the next 4 hours), that creates a readiness pull.
-              const upcomingObligation = (() => {
-                if (!Array.isArray(char.work_days) || !char.work_days.includes(nowET.getDay())) return false;
-                if (!char.work_start_time || !char.occupation_location_id) return false;
-                const workStartMin = toMin(char.work_start_time);
-                if (workStartMin === null) return false;
-                const nowMinET = nowET.getHours() * 60 + nowET.getMinutes();
-                // Work starts within 4 hours
-                return workStartMin > nowMinET && workStartMin <= nowMinET + 240;
-              })();
-              if (upcomingObligation) wakeProb += 0.25; // obligation approaching → readiness pull
-
-              // ── OVERSLEEP TRAP PREVENTION ─────────────────────────────────────
-              // Characters should not sleep indefinitely. Beyond 10 hours, probability
-              // climbs toward near-certain wake regardless of personality or time.
-              // This is the anti-trap floor: no character stays sleeping >12 hours without
-              // active recovery (illness/mental crisis — already blocked above).
-              if (sleepDurationHours >= 10) wakeProb = Math.max(wakeProb, 0.70);
-              if (sleepDurationHours >= 12) wakeProb = Math.max(wakeProb, 0.90);
-
-              // Clamp final probability
-              wakeProb = Math.max(0.02, Math.min(0.95, wakeProb));
-
-              // ── ROLL THE DECISION ─────────────────────────────────────────────
-              const wakeRoll = Math.random();
-              if (wakeRoll > wakeProb) {
-                // Character chose to keep sleeping this cycle
-                console.log(`[autonomousMovement] ${char.name}: chose to keep sleeping (prob=${wakeProb.toFixed(2)}, roll=${wakeRoll.toFixed(2)}, energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h)`);
-                continue;
-              }
-
-              // Character decided to wake — check for oversleep consequence
-              // If work/school obligation was active (not just upcoming) AND character is
-              // now waking AFTER the shift started, record an oversleep memory/consequence.
-              const nowMinForConseq = nowET.getHours() * 60 + nowET.getMinutes();
-              const hasOversleepConsequence = (() => {
-                if (!Array.isArray(char.work_days) || !char.work_days.includes(nowET.getDay())) return false;
-                if (!char.work_start_time || !char.occupation_location_id) return false;
-                const todayStr3 = nowET.toISOString().slice(0, 10);
-                const hasCalloutToday = char.work_exception_status === 'called_out' && char.work_exception_date === todayStr3;
-                if (hasCalloutToday) return false;
-                const ws = toMin(char.work_start_time);
-                if (ws === null) return false;
-                // Waking after shift start = overslept work
-                return nowMinForConseq > ws;
-              })();
-
-              if (hasOversleepConsequence) {
-                // Character overslept their work shift. Record consequence as memory.
-                // This is NOT a penalty write to presence — it's a narrative/memory event.
-                // The character wakes feeling stressed, guilty, or embarrassed.
-                const oversleptBy = Math.round(nowMinForConseq - toMin(char.work_start_time));
-                base44.asServiceRole.entities.CharacterMemory.create({
-                  character_id:   char.id,
-                  memory_type:    'event',
-                  memory_text:    `Overslept and missed the start of their ${char.work_details?.job_title || 'work'} shift at ${char.occupation_location_name || 'work'} by approximately ${oversleptBy} minutes. Felt stressed and embarrassed waking up late. Should have gone to bed earlier.`,
-                  memory_summary: `Overslept work by ~${oversleptBy} min`,
-                  importance_score: 6,
-                  permanence:     'long_term',
-                }).catch(() => {});
-                console.log(`[autonomousMovement] ${char.name}: OVERSLEPT — waking ${oversleptBy}min late for work — consequence recorded`);
-              }
-
-              // Natural wake: fall through to wake below
-              console.log(`[autonomousMovement] ${char.name}: natural wake decision (prob=${wakeProb.toFixed(2)}, roll=${wakeRoll.toFixed(2)}, energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h${hasOversleepConsequence ? ', OVERSLEPT' : ''})`);
+              // Character is well-rested, no obligation, sufficient sleep duration — natural wake.
+              // Fall through to wake write below.
             }
 
-            // Wake: obligation-driven, natural, or overslept
+            // Wake: obligation-driven or natural recovery
             const wakeReason = hasRealWakeObligation
               ? (hasActiveWorkObligation ? 'obligation_wake_work' : 'obligation_wake_school')
-              : (hasOversleepConsequence ? 'natural_wake_overslept' : 'natural_wake_rested');
+              : 'natural_wake_rested';
             const wakePayload = {
               resolved_presence_status:   'home',
               resolved_source_reason:     wakeReason,
