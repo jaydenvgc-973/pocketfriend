@@ -175,21 +175,10 @@ function computeAdaptiveSleepWindow(character, etTime) {
   }
 
   // PRIORITY 3: No stored schedule AND no work/school obligation.
-  // Fall back to a default civil-night window so characters can sleep autonomously.
-  // This is NOT forced sleep — it defines the window where energy-based sleep is allowed.
-  // Actual sleep onset is still gated by energy level and blocking obligations below.
-  // Default: sleep 23:00–07:00 (11 PM–7 AM Eastern).
-  // wake_up_time alone (without sleep_start_time) is respected: if character has only
-  // wake_up_time, use that as wake and derive sleep start from 8 hours prior.
-  if (character.wake_up_time) {
-    const w = toMin(character.wake_up_time);
-    if (w !== null) {
-      const s = (w - SLEEP_DURATION_MIN + 1440) % 1440;
-      return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
-    }
-  }
-  // Absolute default — no schedule of any kind
-  return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, isOvernightWorker: false };
+  // Return null — no fixed sleep window can be determined from schedule alone.
+  // Sleep for these characters is handled by the energy-based autonomous path below (Tier 4+),
+  // NOT by a derived or default schedule window.
+  return null;
 }
 
 function isScheduledSleeping(character, etTime) {
@@ -953,16 +942,40 @@ Deno.serve(async (req) => {
             } else {
               blockedLog.push(`${char.name}: sleep time but home location not found (id=${homeId})`);
             }
-          } else if (alreadyHome && sleeping) {
-            // ── ALREADY HOME + IN SLEEP WINDOW → write sleeping if not already ──────────
-            // Previously this was a silent no-op. A character home during their sleep window
-            // MUST have resolved_presence_status = 'sleeping'. Being home does not mean awake.
-            // This is the exact gap that caused all 11 characters to stay awake all night.
-            if (char.resolved_presence_status !== 'sleeping' && char.resolved_presence_status !== 'napping') {
+          } else {
+            console.log(`[autonomousMovement] ${char.name}: sleep window — already sleeping or no home`);
+          }
+          continue;
+        }
+
+        // ── AUTONOMOUS ENERGY-BASED SLEEP ONSET ─────────────────────────────
+        // This is the ONLY correct path for autonomous sleep for active_created_characters.
+        // It requires NO sleep_start_time. It requires NO derived schedule window.
+        // It fires when the character is tired enough AND at a valid sleep location.
+        // It is entirely character-state driven, not clock driven.
+        //
+        // THRESHOLDS (deliberate — not crisis-only):
+        //   energy < 35 AND at home: character is tired enough to sleep autonomously.
+        //   energy < 20 AND not at home: character should return home to sleep.
+        //   energy < 50 AND nighttime (9 PM–6 AM ET): character may choose sleep.
+        // These are voluntary thresholds, not forced triggers. The character must also
+        // have no active work/school obligation (already blocked by Tier 3.5 above).
+        {
+          const homeId = char.current_home_location_id;
+          const atHome = homeId && char.resolved_current_location_id === homeId;
+          const alreadySleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+          const nowHour = nowET.getHours();
+          const isNightWindow = nowHour >= 21 || nowHour < 6; // 9 PM – 6 AM ET
+          const energyVal = char.energy_value ?? 75;
+
+          if (!alreadySleeping && homeId) {
+            // Case A: already home and tired — sleep onset
+            const tirednessThreshold = isNightWindow ? 50 : 35;
+            if (atHome && energyVal < tirednessThreshold) {
               const sleepOnsetPayload = {
                 resolved_presence_status:   'sleeping',
                 resolved_location_type:     'home',
-                resolved_source_reason:     'autonomous_sleep_onset',
+                resolved_source_reason:     'autonomous_sleep_onset_energy',
                 location_status:            'home',
                 last_sleep_start:           new Date().toISOString(),
                 resolved_last_updated_at:   nowET.toISOString(),
@@ -972,18 +985,34 @@ Deno.serve(async (req) => {
               } catch {
                 await base44.asServiceRole.entities.Character.update(char.id, sleepOnsetPayload);
               }
-              moveLog.push(`${char.name}: SLEEP ONSET (already home, window active) — was '${char.resolved_presence_status}'`);
-              console.log(`[autonomousMovement] ✓ ${char.name}: autonomous sleep onset at home`);
-            } else {
-              console.log(`[autonomousMovement] ${char.name}: sleep window — already sleeping at home`);
+              moveLog.push(`${char.name}: AUTONOMOUS SLEEP ONSET (energy=${Math.round(energyVal)}, nightWindow=${isNightWindow})`);
+              console.log(`[autonomousMovement] ✓ ${char.name}: autonomous sleep at home (energy=${Math.round(energyVal)})`);
+              continue;
             }
-          } else if (alreadyHome && inPreSleep) {
-            // Pre-sleep window + already home: do not force sleep yet but do not trigger movement
-            console.log(`[autonomousMovement] ${char.name}: pre-sleep window — already home, holding`);
-          } else {
-            console.log(`[autonomousMovement] ${char.name}: sleep window — no home location, cannot sleep`);
+
+            // Case B: not at home, critically tired at night — return home to sleep
+            if (!atHome && energyVal < 20 && isNightWindow) {
+              const sleepHome = userLocations.find(loc => loc.id === homeId);
+              if (sleepHome && char.resolved_current_location_id !== sleepHome.id) {
+                const travelHomeRes = await base44.functions.invoke('createTravelSession', {
+                  characterId:           char.id,
+                  destinationLocationId: sleepHome.id,
+                  travelReason:          `energy_low_return_home_sleep energy(${Math.round(energyVal)})`,
+                  travelSource:          'autonomous_need',
+                  ownerEmail:            char.owner_email,
+                }).catch(e => ({ data: { success: false, error: e.message } }));
+                const rtd = travelHomeRes?.data || {};
+                if (rtd.success) {
+                  totalMoved++;
+                  moveLog.push(`${char.name} → ${sleepHome.name} [TIRED_RETURN_HOME energy=${Math.round(energyVal)}]`);
+                  console.log(`[autonomousMovement] ✓ ${char.name}: tired, returning home to sleep (energy=${Math.round(energyVal)})`);
+                } else {
+                  blockedLog.push(`${char.name}: tired home return blocked — ${rtd.blocker_reason || rtd.error}`);
+                }
+                continue;
+              }
+            }
           }
-          continue;
         }
 
         // ── TIER 3.5: ACTIVE WORK / SCHOOL DISPATCH ─────────────────────────
