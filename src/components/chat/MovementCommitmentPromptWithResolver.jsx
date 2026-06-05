@@ -78,17 +78,12 @@ export default function MovementCommitmentPromptWithResolver({
     doResolve();
   }, [rawDestination, recentMessages, currentCharacter]);
 
-  // AUTO-CONFIRM eligibility — computed before hooks so the hook dependency is stable
-  const autoConfirmEligible =
-    !resolving &&
-    !error &&
-    !!resolutionResult?.location_id &&
-    resolutionResult?.confidence >= 0.85 &&
-    !resolutionResult?.requires_disambiguation;
-
   // ALL hooks must be declared before any early returns
   useEffect(() => {
-    if (!autoConfirmEligible) return;
+    if (resolving || error) return;
+    if (!resolutionResult?.location_id) return;
+    if (resolutionResult?.confidence < 0.85) return;
+    if (resolutionResult?.requires_disambiguation) return;
     const timer = setTimeout(async () => {
       try {
         // Pass all character fields from the already-loaded context — no backend lookup needed
@@ -124,12 +119,11 @@ export default function MovementCommitmentPromptWithResolver({
     );
   }
 
-  // If resolution completely failed (error, not just low confidence), hide the card
+  // If resolution had a critical error (not just uncertainty), hide the card
   if (error) return null;
 
-  if (autoConfirmEligible) return null;
-
-  // Render the prompt — even when no location_id resolved, show editable picker so user can select manually
+  // Always render the prompt — destination resolver uncertainty does NOT block the flow
+  // User picker and ETA editor are always available
   return (
     <MovementCommitmentPrompt
       characterName={characterName}
