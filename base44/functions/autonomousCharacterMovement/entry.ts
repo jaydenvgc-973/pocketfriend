@@ -876,15 +876,43 @@ Deno.serve(async (req) => {
             const hasRealWakeObligation = hasActiveWorkObligation || hasActiveSchoolObligation;
 
             if (!hasRealWakeObligation) {
-              // No active obligation — character may sleep in. Do not wake solely because clock passed wake_up_time.
-              console.log(`[autonomousMovement] ${char.name}: sleep window ended but NO active obligation — preserving sleep (sleeping in)`);
-              continue;
+              // No active obligation right now.
+              // The character may still wake naturally if they have had enough rest AND
+              // their energy has meaningfully recovered — this mirrors real autonomy:
+              // a rested person without obligations eventually gets up on their own.
+              //
+              // Natural wake requires ALL of:
+              //   1. Energy has recovered to at least 70 (well-rested, not just minimally better)
+              //   2. Sleep duration is at least 5 hours (not a micro-nap — real sleep cycle)
+              //   3. Not in illness/injury recovery (health < 30 or mental < 25 still forces rest)
+              //
+              // If these are NOT met, preserve sleep — character is still resting.
+              const energyNow = char.energy_value ?? 0;
+              const sleepStartedAt = char.last_sleep_start ? new Date(char.last_sleep_start) : null;
+              const sleepDurationHours = sleepStartedAt
+                ? (Date.now() - sleepStartedAt.getTime()) / 3600000
+                : 0;
+              const isWellRested = energyNow >= 70;
+              const hasSleptLongEnough = sleepDurationHours >= 5;
+              const isRecovering = (char.health_value ?? 100) < 30 || (char.mental_value ?? 100) < 25;
+
+              if (!isWellRested || !hasSleptLongEnough || isRecovering) {
+                // Still needs rest — keep sleeping
+                console.log(`[autonomousMovement] ${char.name}: no obligation, sleeping in (energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h, wellRested=${isWellRested}, recovering=${isRecovering})`);
+                continue;
+              }
+
+              // Natural wake: well-rested, no obligation, enough hours slept
+              // Fall through to wake below
             }
 
-            // Confirmed: active obligation exists AND sleep window has ended — safe to wake
+            // Wake: either active obligation OR natural wake after sufficient rest
+            const wakeReason = hasRealWakeObligation
+              ? (hasActiveWorkObligation ? 'obligation_wake_work' : 'obligation_wake_school')
+              : 'natural_wake_rested';
             const wakePayload = {
               resolved_presence_status:   'home',
-              resolved_source_reason:     'obligation_wake',
+              resolved_source_reason:     wakeReason,
               resolved_last_updated_at:   nowET.toISOString(),
             };
             try {
@@ -892,12 +920,11 @@ Deno.serve(async (req) => {
             } catch {
               await base44.asServiceRole.entities.Character.update(char.id, wakePayload);
             }
-            const obligationLabel = hasActiveWorkObligation ? 'work_shift_active' : 'school_in_session';
-            console.log(`[autonomousMovement] ✓ ${char.name}: WOKEN FOR OBLIGATION — ${obligationLabel}, released to schedule/movement`);
+            console.log(`[autonomousMovement] ✓ ${char.name}: WOKEN — reason=${wakeReason}, released to schedule/movement`);
             // Update char in memory so the rest of this loop iteration sees the new status
             char.resolved_presence_status = 'home';
-            char.resolved_source_reason = 'obligation_wake';
-            // Do NOT continue — fall through to work/school dispatch (Tier 3.5)
+            char.resolved_source_reason = wakeReason;
+            // Do NOT continue — fall through to work/school dispatch and needs evaluation (Tier 3.5+)
           } else if (!stillSleeping && hasValidOversleepReason && (status === 'sleeping' || status === 'napping')) {
             // Valid character-driven oversleeping — preserve. Do not wake them automatically.
             console.log(`[autonomousMovement] ${char.name}: VALID OVERSLEEP preserved (${sleepSource || 'no source'}) — not waking automatically`);
