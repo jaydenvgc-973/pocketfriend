@@ -94,23 +94,8 @@ function getTimeOfDay(hour) {
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    let userContext = null;
-    try { userContext = await base44.auth.me(); } catch { /* scheduled task — no session */ }
 
     console.log(`[runAutomaticNarrativesForAllCharacters] ▶ Starting scheduled narrative run`);
-
-    // If an authenticated user exists, they are active on the app.
-    // This automation makes ONE LLM call per character (up to 300 calls per run).
-    // Direct competition with chat. Return immediately.
-    if (userContext?.email) {
-      console.log(`[runAutomaticNarrativesForAllCharacters] User active: ${userContext.email} — deferring LLM narrative batch to protect chat`);
-      return Response.json({
-        success: true,
-        yielded: true,
-        reason: 'foreground_user_active',
-        results: { total: 0, generated: 0, skipped: 0, errors: 0, details: [] },
-      });
-    }
 
     // ── FETCH ALL CHARACTERS (service role — no user token in scheduled context) ──
     // CRITICAL: asServiceRole.filter({ character_type }) has a platform-level visibility gap

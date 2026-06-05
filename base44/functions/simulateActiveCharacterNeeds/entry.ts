@@ -491,19 +491,6 @@ Deno.serve(async (req) => {
     let user = null;
     try { user = await base44.auth.me(); } catch (_) {}
 
-    // Batch runs: if a user is active in the request context, they are using the app.
-    // Competing with their chat/foreground requests causes 429s. Defer.
-    // Single-character calls (characterId provided) are user-triggered — let them through.
-    if (!characterId && user?.email) {
-      console.log(`[simulateNeeds] User active: ${user.email} — deferring batch simulation to protect foreground`);
-      return Response.json({
-        success: true,
-        yielded: true,
-        reason: 'foreground_user_active',
-        processed: 0,
-      });
-    }
-
     // RC6 FIX: Always use asServiceRole for ALL writes to prevent silent RLS failures
     // from is_protected, protected_active, or is_default flags.
     const writeSDK = base44.asServiceRole;

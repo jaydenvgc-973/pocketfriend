@@ -432,18 +432,8 @@ function selectBestLocation(locations, char, vals, nowET) {
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    let userContext = null;
-    try { userContext = await base44.auth.me(); } catch { /* scheduled — no session */ }
+    try { await base44.auth.me(); } catch { /* scheduled — no session */ }
 
-    // If an authenticated user exists in the request context, they are active on the app.
-    // Do NOT compete with their foreground requests for resources.
-    // Return immediately without making API calls.
-    if (userContext?.email) {
-      console.log(`[autonomousMovement] User active: ${userContext.email} — deferring background movement`);
-      return Response.json({ success: true, skipped: true, reason: 'user_active', timestamp: new Date().toISOString() });
-    }
-
-    // No user context = scheduled task or background automation. Safe to proceed.
     let isForegroundActive = false;
 
     // ── LOAD active_created_character — FILTERED, not full list ──────────────

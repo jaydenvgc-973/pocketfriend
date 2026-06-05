@@ -305,18 +305,6 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // If an authenticated user exists in the request context, they are active on the app.
-    // This automation makes up to 3 LLM calls per run — direct competition with Chat.
-    // Return immediately without making requests.
-    console.log(`[generateProactiveMessages] User active: ${user.email} — deferring proactive message generation`);
-    return Response.json({
-      success: true,
-      yielded: true,
-      reason: 'foreground_user_active',
-      messagesGenerated: 0,
-      results: [],
-    });
-
     // Get all active characters scoped to the authenticated user only
     // CRITICAL: must use owner_email — unscoped filter returns characters from all accounts
     const characters = await base44.entities.Character.filter({

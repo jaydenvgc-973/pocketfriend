@@ -160,19 +160,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const proofEventPath = body?.proofEventPath === true;
 
-    // If a user is active in the request context, they are using the app.
-    // This function makes up to 1 LLM call per character pair — direct competition with chat.
-    // Return immediately without making API calls.
-    if (callerEmail) {
-      console.log(`[autonomousSocialBeats] User active: ${callerEmail} — deferring social beat LLM generation`);
-      return Response.json({
-        success: true,
-        yielded: true,
-        reason: 'foreground_user_active',
-        beats_generated: 0,
-        users_processed: 0,
-      });
-    }
+
 
     // ── STEP 1: LOAD ALL ACTIVE CHARACTERS ────────────────────────────────────
     // QUERY STRATEGY:
