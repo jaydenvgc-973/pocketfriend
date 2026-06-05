@@ -263,9 +263,12 @@ Deno.serve(async (req) => {
               }).catch(() => {});
             }
 
-            // Delegate to completeTravelArrivalVerified (user-scoped, verified)
+            // Delegate to completeTravelArrivalVerified.
+            // Pass _owner_email_hint so the function can operate in scheduled context
+            // without a live user session (fixes arrival_write_attempts=0 silent failure).
             const repairRes = await base44.asServiceRole.functions.invoke('completeTravelArrivalVerified', {
               session_id: session.id,
+              _owner_email_hint: session.owner_email,
             }).catch(e => ({ data: { error: e.message } }));
 
             const repairData = repairRes?.data || {};

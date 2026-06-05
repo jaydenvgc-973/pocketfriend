@@ -174,8 +174,22 @@ function computeAdaptiveSleepWindow(character, etTime) {
     }
   }
 
-  // PRIORITY 3: No obligation — cannot assume sleep.
-  return null;
+  // PRIORITY 3: No stored schedule AND no work/school obligation.
+  // Fall back to a default civil-night window so characters can sleep autonomously.
+  // This is NOT forced sleep — it defines the window where energy-based sleep is allowed.
+  // Actual sleep onset is still gated by energy level and blocking obligations below.
+  // Default: sleep 23:00–07:00 (11 PM–7 AM Eastern).
+  // wake_up_time alone (without sleep_start_time) is respected: if character has only
+  // wake_up_time, use that as wake and derive sleep start from 8 hours prior.
+  if (character.wake_up_time) {
+    const w = toMin(character.wake_up_time);
+    if (w !== null) {
+      const s = (w - SLEEP_DURATION_MIN + 1440) % 1440;
+      return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
+    }
+  }
+  // Absolute default — no schedule of any kind
+  return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, isOvernightWorker: false };
 }
 
 function isScheduledSleeping(character, etTime) {
@@ -926,6 +940,7 @@ Deno.serve(async (req) => {
                 last_arrived_time:              new Date().toISOString(),
                 presence_stay_lock:             false,
                 presence_stay_lock_location_id: null,
+                location_status:                sleeping ? 'home' : 'home',
               };
               try {
                 await base44.entities.Character.update(char.id, sleepReturnPayload);
@@ -938,8 +953,35 @@ Deno.serve(async (req) => {
             } else {
               blockedLog.push(`${char.name}: sleep time but home location not found (id=${homeId})`);
             }
+          } else if (alreadyHome && sleeping) {
+            // ── ALREADY HOME + IN SLEEP WINDOW → write sleeping if not already ──────────
+            // Previously this was a silent no-op. A character home during their sleep window
+            // MUST have resolved_presence_status = 'sleeping'. Being home does not mean awake.
+            // This is the exact gap that caused all 11 characters to stay awake all night.
+            if (char.resolved_presence_status !== 'sleeping' && char.resolved_presence_status !== 'napping') {
+              const sleepOnsetPayload = {
+                resolved_presence_status:   'sleeping',
+                resolved_location_type:     'home',
+                resolved_source_reason:     'autonomous_sleep_onset',
+                location_status:            'home',
+                last_sleep_start:           new Date().toISOString(),
+                resolved_last_updated_at:   nowET.toISOString(),
+              };
+              try {
+                await base44.entities.Character.update(char.id, sleepOnsetPayload);
+              } catch {
+                await base44.asServiceRole.entities.Character.update(char.id, sleepOnsetPayload);
+              }
+              moveLog.push(`${char.name}: SLEEP ONSET (already home, window active) — was '${char.resolved_presence_status}'`);
+              console.log(`[autonomousMovement] ✓ ${char.name}: autonomous sleep onset at home`);
+            } else {
+              console.log(`[autonomousMovement] ${char.name}: sleep window — already sleeping at home`);
+            }
+          } else if (alreadyHome && inPreSleep) {
+            // Pre-sleep window + already home: do not force sleep yet but do not trigger movement
+            console.log(`[autonomousMovement] ${char.name}: pre-sleep window — already home, holding`);
           } else {
-            console.log(`[autonomousMovement] ${char.name}: sleep window — already home`);
+            console.log(`[autonomousMovement] ${char.name}: sleep window — no home location, cannot sleep`);
           }
           continue;
         }
