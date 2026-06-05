@@ -12,28 +12,11 @@ Deno.serve(async (req) => {
     const now = new Date();
     const nowIso = now.toISOString();
 
-    // ── FOREGROUND YIELD CHECK ────────────────────────────────────────────────────
-    // processScheduledEvents is Priority 4/5 depending on event type.
-    // communication_promise and travel_arrival events are time-sensitive (Priority 4).
-    // During user active sessions, we still yield to prevent LLM calls from competing with chat.
-    // Events will execute on the next scheduled run (15-minute window).
-    try {
-      const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
-        { key: 'user_active_session' }, null, 1
-      );
-      if (activeFlag?.[0]?.value) {
-        const activeUntil = new Date(activeFlag[0].value).getTime();
-        if (now.getTime() < activeUntil) {
-          console.log(`[processScheduledEvents] YIELD — user active session until ${new Date(activeUntil).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} Eastern. Deferring to avoid LLM contention.`);
-          return Response.json({
-            success: true,
-            yielded: true,
-            reason: 'foreground_user_active',
-            processed: 0,
-          });
-        }
-      }
-    } catch { /* non-fatal — proceed */ }
+    // PRIORITY RULE: processScheduledEvents must NOT yield during foreground activity.
+    // Due events include communication_promise (user-facing message delivery) and
+    // travel_arrival (character location commitment). These are Priority 4 — time-sensitive.
+    // The user may be in chat specifically waiting for a promised message or arrival.
+    // No foreground yield check here. Due events always run.
 
     const pendingEvents = await base44.asServiceRole.entities.ScheduledEvent.filter({ status: 'pending' });
     const dueEvents = pendingEvents.filter(e => e.trigger_time && e.trigger_time <= now);

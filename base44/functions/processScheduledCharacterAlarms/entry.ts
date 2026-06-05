@@ -35,26 +35,10 @@ Deno.serve(async (req) => {
     console.log(`[processScheduledCharacterAlarms] UTC now:  ${nowIso}`);
     console.log(`[processScheduledCharacterAlarms] EST now:  ${estDisplay}`);
 
-    // ── FOREGROUND YIELD CHECK ────────────────────────────────────────────────────
-    // Alarms are Priority 4 (Time-sensitive) but can yield to peak user activity.
-    // A few seconds of alarm deferral is acceptable during heavy user sessions.
-    try {
-      const activeFlag = await base44.asServiceRole.entities.AppWorldState.filter(
-        { key: 'user_active_session' }, null, 1
-      );
-      if (activeFlag?.[0]?.value) {
-        const activeUntil = new Date(activeFlag[0].value).getTime();
-        if (nowUtc.getTime() < activeUntil) {
-          console.log(`[processScheduledCharacterAlarms] YIELD — user active session until ${new Date(activeUntil).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} Eastern. Deferring alarm processing.`);
-          return Response.json({
-            success: true,
-            yielded: true,
-            reason: 'foreground_user_active',
-            processed: 0,
-          });
-        }
-      }
-    } catch { /* non-fatal — proceed without yield check */ }
+    // PRIORITY RULE: Alarms MUST NOT yield to foreground activity.
+    // A due alarm is Priority 4 — time-sensitive and user-facing.
+    // The user may be actively using the app precisely because they are expecting the alarm to fire.
+    // No foreground yield check here. Alarms always run.
 
     // ── FETCH CANDIDATES ──────────────────────────────────────────────────────
     // Pull characters with a pending_alarm_time field set.
