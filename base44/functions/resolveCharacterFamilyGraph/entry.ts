@@ -125,9 +125,50 @@ Deno.serve(async (req) => {
       CHILD_TYPES.has((m.relationship_type || '').toLowerCase())
     );
 
+    // ── STEP 1b: REVERSE PARENT LOOKUP ───────────────────────────────────────
+    // If this character has no parents listed in their OWN family_members[],
+    // scan ALL other characters to find any that list THIS character as their child
+    // via _linked_character_id. Those characters are this character's parents.
+    // This handles the common case where parents store the relationship, not children.
+    const reverseParents = [];
+    if (explicitParents.length === 0) {
+      for (const otherChar of allChars) {
+        if (otherChar.id === characterId) continue;
+        const otherFamily = otherChar.family_members || [];
+        const childEntry = otherFamily.find(m => {
+          const mLinkId = m._linked_character_id || m.character_id || null;
+          return mLinkId === characterId &&
+            CHILD_TYPES.has((m.relationship_type || '').toLowerCase());
+        });
+        if (childEntry) {
+          // otherChar is a parent of this character.
+          // Determine mother/father: prefer explicit gender, fall back to name heuristic,
+          // then default to 'parent' if indeterminate.
+          const genderLower = (otherChar.gender || '').toLowerCase();
+          const nameLower = (otherChar.display_name || otherChar.name || '').toLowerCase();
+          // Female name heuristics for common cases where gender field is null
+          const looksLikeFemaleName = /\b(lila|melody|maria|vanessa|linda|marisol|nancy|ava|sarah|jessica|jennifer|ashley|amanda|brittany|tiffany|michelle|stephanie|rachel|diana|patricia|barbara|lisa|donna|karen|sandra|margaret|helen|betty|dorothy|gloria|anna|grace|lily|rose|violet|ivy|ruby|pearl|claire|emma|olivia|sophia|isabella|mia|charlotte|amelia|evelyn|abigail|emily|elizabeth|jennifer|helen|dorothy|mia|natalie|zoe|hannah|addison|aubrey|brooklyn|leah)\b/.test(nameLower);
+          const isMother = genderLower === 'female' || (genderLower !== 'male' && looksLikeFemaleName);
+          const relType = genderLower === 'female' ? 'mother' : genderLower === 'male' ? 'father' : looksLikeFemaleName ? 'mother' : 'parent';
+          reverseParents.push({
+            name: otherChar.display_name || otherChar.name,
+            relationship_type: relType,
+            character_id: otherChar.id,
+            age: resolveAge(otherChar),
+            is_mother: isMother,
+            source: 'reverse_lookup',
+          });
+        }
+      }
+    }
+
     // ── STEP 2: Resolve parent character records ──────────────────────────────
+    // FIELD NOTE: family_members use _linked_character_id (not character_id).
+    // Also fall back to name-based lookup for entries without a link.
     const resolvedParents = explicitParents.map(p => {
-      const linked = p.character_id ? charById.get(p.character_id) : null;
+      // Try _linked_character_id first (actual schema field), then character_id (legacy)
+      const linkId = p._linked_character_id || p.character_id || null;
+      const linked = linkId ? charById.get(linkId) : null;
       const byName = !linked && p.name
         ? allChars.find(c =>
             c.id !== characterId &&
@@ -139,11 +180,20 @@ Deno.serve(async (req) => {
       return {
         name: p.name || record?.name || 'Unknown',
         relationship_type: p.relationship_type || 'parent',
-        character_id: p.character_id || record?.id || null,
-        age: p.age || resolveAge(record) || null,
+        character_id: linkId || record?.id || null,
+        age: p.age || p.age_at_creation || resolveAge(record) || null,
         is_mother: MOTHER_TYPES.has((p.relationship_type || '').toLowerCase()),
       };
     });
+
+    // Merge reverse-looked-up parents into resolvedParents (deduplicated by character_id)
+    const resolvedParentIds = new Set(resolvedParents.map(p => p.character_id).filter(Boolean));
+    for (const rp of reverseParents) {
+      if (!resolvedParentIds.has(rp.character_id)) {
+        resolvedParents.push(rp);
+        resolvedParentIds.add(rp.character_id);
+      }
+    }
 
     // ── STEP 3: DERIVE siblings from shared parents ───────────────────────────
     // Any character who shares a linked parent character_id with targetChar is a sibling.
@@ -154,22 +204,28 @@ Deno.serve(async (req) => {
     const derivedSiblings = [];
     const seenSiblingIds = new Set([characterId]);
     // Pre-seed with explicitly listed siblings so we don't duplicate
-    explicitSiblings.forEach(s => { if (s.character_id) seenSiblingIds.add(s.character_id); });
+    explicitSiblings.forEach(s => {
+      const sid = s._linked_character_id || s.character_id;
+      if (sid) seenSiblingIds.add(sid);
+    });
 
     if (linkedParentIds.size > 0) {
       for (const otherChar of allChars) {
         if (seenSiblingIds.has(otherChar.id)) continue;
 
         const otherFamily = otherChar.family_members || [];
-        const sharedParentEntry = otherFamily.find(m =>
-          m.character_id &&
-          linkedParentIds.has(m.character_id) &&
-          PARENT_TYPES.has((m.relationship_type || '').toLowerCase())
-        );
+        const sharedParentEntry = otherFamily.find(m => {
+          // Check both field names: _linked_character_id (actual) and character_id (legacy)
+          const mLinkId = m._linked_character_id || m.character_id || null;
+          return mLinkId &&
+            linkedParentIds.has(mLinkId) &&
+            PARENT_TYPES.has((m.relationship_type || '').toLowerCase());
+        });
 
         if (sharedParentEntry) {
           seenSiblingIds.add(otherChar.id);
-          const parentRecord = charById.get(sharedParentEntry.character_id);
+          const sharedId = sharedParentEntry._linked_character_id || sharedParentEntry.character_id;
+          const parentRecord = charById.get(sharedId);
           derivedSiblings.push({
             name: otherChar.display_name || otherChar.name,
             character_id: otherChar.id,
@@ -177,7 +233,7 @@ Deno.serve(async (req) => {
             gender: otherChar.gender,
             relationship_type: deriveSiblingLabel(otherChar, ownAge),
             shared_parent_name: parentRecord?.name || 'shared parent',
-            shared_parent_id: sharedParentEntry.character_id,
+            shared_parent_id: sharedId,
           });
         }
       }
@@ -186,16 +242,20 @@ Deno.serve(async (req) => {
     // ── STEP 4: DERIVE children ───────────────────────────────────────────────
     // Any character whose family_members[] lists characterId as a parent is a child.
     const derivedChildren = [];
-    const seenChildIds = new Set(explicitChildren.map(c => c.character_id).filter(Boolean));
+    const seenChildIds = new Set(
+      explicitChildren.map(c => c._linked_character_id || c.character_id).filter(Boolean)
+    );
 
     for (const otherChar of allChars) {
       if (otherChar.id === characterId) continue;
 
       const otherFamily = otherChar.family_members || [];
-      const listsAsParent = otherFamily.some(m =>
-        m.character_id === characterId &&
-        PARENT_TYPES.has((m.relationship_type || '').toLowerCase())
-      );
+      const listsAsParent = otherFamily.some(m => {
+        // Check both field names
+        const mLinkId = m._linked_character_id || m.character_id || null;
+        return mLinkId === characterId &&
+          PARENT_TYPES.has((m.relationship_type || '').toLowerCase());
+      });
 
       if (listsAsParent && !seenChildIds.has(otherChar.id)) {
         seenChildIds.add(otherChar.id);
@@ -214,8 +274,8 @@ Deno.serve(async (req) => {
       ...explicitSiblings.map(s => ({
         name: s.name,
         relationship_type: s.relationship_type || 'sibling',
-        character_id: s.character_id || null,
-        age: s.age || null,
+        character_id: s._linked_character_id || s.character_id || null,
+        age: s.age || s.age_at_creation || null,
         source: 'explicit',
       })),
       ...derivedSiblings.map(s => ({ ...s, source: 'derived' })),
@@ -225,8 +285,8 @@ Deno.serve(async (req) => {
       ...explicitChildren.map(c => ({
         name: c.name,
         relationship_type: c.relationship_type || 'child',
-        character_id: c.character_id || null,
-        age: c.age || null,
+        character_id: c._linked_character_id || c.character_id || null,
+        age: c.age || c.age_at_creation || null,
         source: 'explicit',
       })),
       ...derivedChildren.map(c => ({ ...c, source: 'derived' })),
