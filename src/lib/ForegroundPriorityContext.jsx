@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { setForegroundPriority } from '@/lib/backgroundTaskThrottle';
+import { getRequestPriorityManager } from '@/lib/requestPriorityManager';
 
 const ForegroundPriorityContext = createContext(null);
 
@@ -44,6 +45,14 @@ export function ForegroundPriorityProvider({ children }) {
     try {
       sessionStorage.setItem('foregroundPriority', isUserFacingPage ? 'true' : 'false');
     } catch {}
+
+    // Manage request priority — cancel background requests when user-facing page activates
+    const manager = getRequestPriorityManager();
+    if (isUserFacingPage) {
+      manager.activateForeground();
+    } else {
+      manager.deactivateForeground();
+    }
   }, [location.pathname]);
 
   return (
