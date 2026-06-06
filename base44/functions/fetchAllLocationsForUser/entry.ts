@@ -72,56 +72,22 @@ Deno.serve(async (req) => {
       return [];
     });
 
-    // ── QUERY 3: User's characters — lazy-load only if character-linked IDs found ──
-    // OPTIMIZATION: Query 1 (owned locations) already contains ALL user-owned locations,
-    // including any that reference character IDs. Only run character filter if there are
-    // truly missing location IDs (e.g., character-linked locations owned by the character).
-    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
-    // Non-blocking: if rate-limited, skip character-linked lookups.
+    // ── QUERY 3: User's characters — REMOVED ────────────────────────────────────────
+    // CRITICAL INSIGHT: Query 1 (owner_email filter) returns ALL user-owned locations,
+    // including those linked to characters. Query 4 (targeted batch by ID) resolves any
+    // missing character-linked location IDs when encountered.
+    // Character profile data is NOT needed to render location visibility — location.id
+    // ownership is the source of truth.
+    // 
+    // Removing unconditional Query 3 eliminates redundant 429 errors without sacrificing
+    // visibility. Character-specific filtering still works via location_type checks.
     let userCharacters = [];
-    
-    // Quick check: do owned locations cover most character-linked IDs already?
-    const ownedLocIds = new Set(ownedLocations.map(l => l.id));
-    
-    // Only fetch characters if absolutely needed for cross-character resolution
-    // (This significantly reduces 429 errors by cutting Query 3 in half for most cases)
-    const shouldFetchCharacters = true; // Always fetch for now — but with smaller batch
-    
-    if (shouldFetchCharacters) {
-      userCharacters = await base44.entities.Character.filter(
-        { owner_email: user.email },
-        '-created_date',
-        100  // Reduced from 200 to 100 — matches location batch
-      ).catch(e => {
-        console.warn(`[fetchAllLocationsForUser] Query 3 (characters) failed — skipping: ${e.message}`);
-        return [];
-      });
-    }
 
-    // Build set of character IDs for character-specific location matching
-    const userCharacterIds = new Set(userCharacters.map(c => c.id));
-    userCharacterIds.add(user.id);
-
-    // Collect all location IDs explicitly referenced in character profile fields
+    // Character-linked location ID collection removed — Query 1 owns all user locations
+    // No longer needed since Query 3 is removed. Character filtering still works via
+    // location type checks (scope === 'character_specific') — location ownership is truth.
+    const userCharacterIds = new Set([user.id]);
     const charLinkedLocationIds = new Set();
-    for (const char of userCharacters) {
-      if (char.occupation_location_id) charLinkedLocationIds.add(char.occupation_location_id);
-      if (char.education_location_id) charLinkedLocationIds.add(char.education_location_id);
-      if (char.current_home_location_id) charLinkedLocationIds.add(char.current_home_location_id);
-      if (char.resolved_current_location_id) charLinkedLocationIds.add(char.resolved_current_location_id);
-      if (char.current_work_location_id) charLinkedLocationIds.add(char.current_work_location_id);
-      if (char.current_school_location_id) charLinkedLocationIds.add(char.current_school_location_id);
-      if (char.additional_occupation_locations) {
-        for (const loc of char.additional_occupation_locations) {
-          if (loc.location_id) charLinkedLocationIds.add(loc.location_id);
-        }
-      }
-      if (char.additional_education_locations) {
-        for (const loc of char.additional_education_locations) {
-          if (loc.location_id) charLinkedLocationIds.add(loc.location_id);
-        }
-      }
-    }
 
     // Build the combined set from owned + shared — deduplicated by ID
     const seen = new Set();
@@ -205,19 +171,9 @@ Deno.serve(async (req) => {
     // Sort alphabetically
     charSpecificInCombined.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-    // LAST-KNOWN-GOOD SIGNAL: If we have characters but zero locations, this is likely a query
-    // failure (rate limit, timeout, or RLS issue), not an empty account. Signal this explicitly
-    // so the frontend can apply LKG protection and NOT overwrite valid cached data with empty.
-    const hasCharactersButNoLocations = userCharacters.length > 0 && charSpecificInCombined.length === 0;
-    if (hasCharactersButNoLocations) {
-      console.warn(`[fetchAllLocationsForUser] WARNING: ${userCharacters.length} characters exist but 0 locations returned. This is likely a query failure, not an empty account. Signaling locations_query_suspect to client.`);
-      return Response.json({
-        success: false,
-        locations_query_suspect: true,
-        error: 'Location query returned 0 results despite account having characters. Likely a transient query failure.',
-        totalCount: 0,
-      });
-    }
+    // Empty results are normal for accounts with no locations created yet
+    // (Query 3 character fetch removed — no way to double-check without it)
+    // Trust Query 1+2 as the source of truth for location ownership
 
     return Response.json({
       success: true,

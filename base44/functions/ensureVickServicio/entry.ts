@@ -63,10 +63,11 @@ const VICK_AVATAR_URL         = 'https://media.base44.com/images/public/69bfd8da
 const RECOVERY_YARD_EXTERIOR  = 'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/aa5af2607_file_00000000f4cc722f995295ba541123ac.png';
 const ADMIN_OFFICES_URL       = 'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/52429458f_file_00000000eca0720cbe59d7b2c22a4e3a.png';
 
-// Zone images — SUPPLY THESE EXACT URLs (builder provides from uploaded assets)
-const RECOVERY_WAREHOUSE_URL  = 'RECOVERY_WAREHOUSE_IMAGE_URL_HERE';
-const INSPECTION_AREA_URL     = 'INSPECTION_AREA_IMAGE_URL_HERE';
-const WORKSHOP_URL            = 'RESTORATION_WORKSHOP_IMAGE_URL_HERE';
+// Zone images — sourced from confirmed live Recovery Yard record (ID: 6a23580e6c67852d1b87d01e)
+// Each URL is a real uploaded or generated asset. First URL per zone is the canonical primary image.
+const RECOVERY_WAREHOUSE_URL  = 'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/a438c5749_generated_image.png';
+const INSPECTION_AREA_URL     = 'https://base44.app/api/apps/69bfd8da2f47364437a2deaa/files/mp/public/69bfd8da2f47364437a2deaa/cdd90b9bc_1000030585.png';
+const WORKSHOP_URL            = 'https://base44.app/api/apps/69bfd8da2f47364437a2deaa/files/mp/public/69bfd8da2f47364437a2deaa/30f191342_1000030586.png';
 
 Deno.serve(async (req) => {
   try {
@@ -76,18 +77,35 @@ Deno.serve(async (req) => {
     try { payload = await req.json(); } catch (_) {}
     const { ownerEmail: payloadEmail } = payload;
 
-    // ALWAYS use authenticated user's email as the owner (per-account Vick provisioning)
+    // ── AUTHENTICATION & ACCOUNT SCOPE CONTROL ──────────────────────────────
+    // RULE: Only admin users may pass ownerEmail override (backfill/repair).
+    // Regular users MUST provision for their own account only (authenticated user email).
+    // Non-admins cannot create/repair Vick for another account.
+    
     let ownerEmail = null;
+    let user = null;
+    
     try {
-      const user = await base44.auth.me();
+      user = await base44.auth.me();
       if (!user) {
         return Response.json({ error: 'Authentication required' }, { status: 401 });
       }
-      ownerEmail = user.email;
-      // Override with payload only if explicitly passed (for explicit account targeting)
-      if (payloadEmail) ownerEmail = payloadEmail;
     } catch (_) {
       return Response.json({ error: 'Authentication failed' }, { status: 401 });
+    }
+
+    // Determine which account to provision for
+    if (payloadEmail) {
+      // Payload override requested — only admin may do this
+      if (user.role !== 'admin') {
+        return Response.json({ 
+          error: 'Non-admin users cannot provision Vick for other accounts' 
+        }, { status: 403 });
+      }
+      ownerEmail = payloadEmail;
+    } else {
+      // Normal path: use authenticated user's email only
+      ownerEmail = user.email;
     }
 
     if (!ownerEmail) {
