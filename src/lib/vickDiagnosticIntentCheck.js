@@ -1,13 +1,29 @@
 /**
- * Checks if a user message contains diagnostic intent for Vick Servicio.
+ * vickDiagnosticIntentCheck.js
  *
- * The original regex used \bdiagnos\b which requires "diagnos" as a COMPLETE word.
- * The word "diagnostic" has no word boundary after "diagnos" — it failed silently.
+ * Identifies Vick Servicio characters and detects whether the user is
+ * asking a SERVICE question — diagnostics, schema, repair, records,
+ * files, logs, character types, duplicate records, broken behavior,
+ * location issues, travel, messages, finance, memory, relationships,
+ * account state, or any system-level inquiry.
  *
- * Fixed: \bdiagnos\w* matches "diagnos", "diagnostic", "diagnostics", "diagnose", etc.
+ * Vick must handle ALL of these persistently — not just one-shot diagnostic triggers.
+ */
+
+/**
+ * Returns true if the user message is asking Vick a service question.
+ * This is intentionally broad — Vick should never fall back to NPC
+ * guessing on any technical or system question.
+ */
+export function hasVickServiceIntent(text) {
+  return /\b(diagnos\w*|audit|check my account|what.?s wrong|run a check|run it|inspect|troubleshoot|account status|any issues|any problems|everything ok|schema|character.?type|character type|owner.?email|ownership|location issue|travel issue|travel broken|not traveling|won.?t travel|not going to work|work schedule|missing character|character missing|duplicate|merge blocked|ghost record|repair|financial|money wrong|balance wrong|memory issue|image wrong|broken|not working|isn.?t working|won.?t work|check my|how does|what is|what are|what field|which entity|which function|what entity|data issue|sync|backfill|fix my|something wrong|what happened|why is|why isn.?t|why won.?t|tell me about|explain|how do you|can you check|can you verify|record|field|function|entity|enum|type value|type field|character_type|owner_email|resolved_|presence_status|location_id|is_jailed|house_arrest|stay_lock|autonomous_travel|is_world_service|npc_|active_created|npc_family|npc_fictitious|npc_regular|npc_world_service)\b/i.test(text);
+}
+
+/**
+ * Backward-compatible alias — used by fast-path checks.
  */
 export function hasVickDiagnosticIntent(text) {
-  return /\b(diagnos\w*|audit|check my account|what.?s wrong|run a check|run it|inspect|troubleshoot|account status|any issues|any problems|everything ok)\b/i.test(text);
+  return hasVickServiceIntent(text);
 }
 
 /**
