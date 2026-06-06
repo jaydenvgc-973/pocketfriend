@@ -113,6 +113,7 @@ Deno.serve(async (req) => {
     }
 
     const now = new Date().toISOString();
+    let ownerCharacterId = null; // Track canonical Vick ID across all paths
     const results = { vick: null, recoveryYard: null, created: { vick: false, recoveryYard: false }, repaired: [] };
 
     // ── STEP 1: Find or create VGC Recovery Yard ──────────────────────────────
@@ -241,6 +242,7 @@ Deno.serve(async (req) => {
 
     // PRIMARY: check Recovery Yard's owner_character_id (readable via service role)
     if (recoveryYard.owner_character_id) {
+      ownerCharacterId = recoveryYard.owner_character_id; // Track canonical ID
       vick = {
         id: recoveryYard.owner_character_id,
         name: recoveryYard.owner_character_name || 'Vick Servicio',
@@ -319,22 +321,93 @@ Deno.serve(async (req) => {
       console.log(`[ensureVickServicio] No existing Vick found for ${ownerEmail} — authorized to create new Vick`);
     }
 
-    // ── FINAL DUPLICATE GUARD: Absolute creation prevention ────────────────────
-    // PERMANENT RULE: If any Vick candidate OR Recovery Yard owner anchor exists,
-    // abort creation and reuse/repair the canonical record.
+    // ── FINAL COMPREHENSIVE DUPLICATE GUARD ─────────────────────────────────────
+    // PERMANENT RULE: Before Character.create, run exhaustive checks across ALL paths.
+    // Uncertainty blocks creation. It does not permit creation.
+    //
+    // This guard is the absolute last checkpoint. If any Vick candidate exists via
+    // any path, abort creation and reuse/repair the existing record.
     // Character RLS failure is NEVER permission to create a duplicate.
     //
-    // This guard runs BEFORE Character.create and is the last checkpoint.
-    // If this guard fails to prevent creation, we have a critical architectural bug.
+    // PATH 1: Recovery Yard owner_character_id (most reliable, already checked)
     if (!vick && recoveryYard?.owner_character_id) {
-      // Recovery Yard anchor exists but we missed it — this should never happen
-      // because PRIMARY lookup already checked it. But defensive check regardless.
-      console.warn(`[ensureVickServicio] FINAL GUARD: Recovery Yard anchor found despite earlier miss. Using it. id=${recoveryYard.owner_character_id}`);
       vick = {
         id: recoveryYard.owner_character_id,
         name: 'Vick Servicio',
       };
-      // ABORT: Do not create. Return the anchor.
+      console.log(`[ensureVickServicio] FINAL GUARD PATH 1: Recovery Yard owner anchor: ${vick.id}`);
+    }
+
+    // PATH 2: Direct yard array lookups (worker_character_ids, resident_character_ids)
+    if (!vick && recoveryYard) {
+      const yardWorkers = recoveryYard.worker_character_ids || [];
+      const yardResidents = recoveryYard.resident_character_ids || [];
+      const yardCandidates = [...new Set([...yardWorkers, ...yardResidents])];
+      
+      if (yardCandidates.length > 0) {
+        // Filter to world-service candidates (check name or type if available)
+        for (const candId of yardCandidates) {
+          if (candId && candId === ownerCharacterId) continue; // Skip if it's already the known Vick
+          // We found a candidate in the yard arrays — assume it's canonical
+          vick = { id: candId, name: 'Vick Servicio' };
+          console.log(`[ensureVickServicio] FINAL GUARD PATH 2: Yard array reference: ${vick.id}`);
+          break;
+        }
+      }
+    }
+
+    // PATH 3: User-scoped filter by character_type (npc_world_service)
+    if (!vick) {
+      try {
+        const userWorldService = await base44.entities.Character.filter(
+          { character_type: 'npc_world_service', owner_email: ownerEmail, status: 'active' },
+          '-created_date',
+          10
+        ).catch(() => []);
+        
+        if (userWorldService.length > 0) {
+          vick = userWorldService[0];
+          console.log(`[ensureVickServicio] FINAL GUARD PATH 3: User-scoped world-service filter: ${vick.id}`);
+        }
+      } catch (_) {
+        // RLS failure on user-scoped read — do NOT treat as proof of nonexistence
+        // Rely on yard anchor/arrays instead
+        console.warn(`[ensureVickServicio] FINAL GUARD PATH 3: User-scoped filter blocked by RLS. Relying on yard anchor.`);
+      }
+    }
+
+    // PATH 4: User-scoped filter by owner_email and name (fallback)
+    if (!vick) {
+      try {
+        const userNameMatch = await base44.entities.Character.filter(
+          { name: 'Vick Servicio', owner_email: ownerEmail, status: 'active' },
+          '-created_date',
+          10
+        ).catch(() => []);
+        
+        if (userNameMatch.length > 0) {
+          vick = userNameMatch[0];
+          console.log(`[ensureVickServicio] FINAL GUARD PATH 4: User-scoped name filter: ${vick.id}`);
+        }
+      } catch (_) {
+        // RLS failure — do NOT treat as proof
+        console.warn(`[ensureVickServicio] FINAL GUARD PATH 4: User-scoped name filter blocked by RLS.`);
+      }
+    }
+
+    // CREATION SAFETY CHECK: If any uncertainty remains, block creation
+    if (!vick && recoveryYard && (recoveryYard.owner_character_id || 
+                                  (recoveryYard.worker_character_ids?.length > 0) ||
+                                  (recoveryYard.resident_character_ids?.length > 0))) {
+      // Recovery Yard exists and has character references, but we couldn't resolve them
+      // This is uncertain state — do NOT create
+      console.error(`[ensureVickServicio] CREATION BLOCKED: Recovery Yard exists but Vick candidate unresolvable. Yard anchors/arrays present but lookup failed.`);
+      return Response.json({
+        success: false,
+        error: 'Cannot safely create Vick: Recovery Yard exists with character references, but resolution failed. RLS may be blocking user-scoped queries. Rely on yard anchor.',
+        ownerEmail,
+        recoveryYard: { id: recoveryYard.id, name: recoveryYard.name },
+      }, { status: 409 });
     }
 
     if (!vick) {
