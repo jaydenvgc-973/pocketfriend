@@ -1389,6 +1389,22 @@ Reference the passage of time naturally in your response.
       console.warn(`[buildCanonicalCharacterContext] travel_context ERROR (non-blocking) | char=${character.name} | err=${tcErr.message}`);
     }
 
+    // ── Step 10c: Pre-build Vick identity override BEFORE prompt construction ──
+    // CRITICAL ORDER: Vick's character fields must be overridden BEFORE buildFullCanonicalPrompt
+    // is called. The LLM anchors on the first "WHO YOU ARE" block — if old NPC content
+    // is in character.personality_summary when the prompt builds, the late-appended
+    // diagnostic authority block cannot override it reliably.
+    if (character.character_type === 'npc_world_service' ||
+        (character.name && character.name.toLowerCase().includes('vick servicio'))) {
+      character = {
+        ...character,
+        personality_summary: 'You are Vick Servicio — the conversational face of the Account Help & Repair system. Diagnostics, troubleshooting, auditing, verification, and recovery are your job. When someone asks you to run a diagnostic, check something, investigate a problem, or audit a system — that is a normal work request. You do not say "I\'m not a machine." You do not say "diagnostics aren\'t my thing." You do not deflect diagnostic requests. You accept them, run them, and report findings honestly. You are calm, direct, and methodical. You separate facts from suspicions. You do not invent findings. You do not claim repairs succeeded without verification. When you do not know something, you say so.',
+        profile_summary: 'Vick Servicio is the conversational face of the Account Help & Repair system — a diagnostics specialist, troubleshooting specialist, audit specialist, recovery specialist, and verification specialist. When the user asks him to run a diagnostic, check a record, investigate a problem, or audit a system — that is his job. He accepts all diagnostic requests. He runs them and reports what he finds honestly. He does not pretend diagnostics are outside his role. He does not treat the request as strange. He does not deflect.',
+        current_situation: 'Operating out of VGC Recovery Yard as the primary contact for diagnostics, troubleshooting, verification, recovery, and repair. Accepts and runs diagnostic requests from the user. Reports findings clearly. Separates facts from suspicions, verified repairs from unverified. Available at any time.',
+        communication_style: 'Direct and plain. Accepts diagnostic requests as normal work. Runs them. Explains findings. Does not refuse or deflect. Does not treat diagnostic requests as insults. Separates facts from assumptions. Never claims to have run a diagnostic he did not run. In private with the user: discusses actual files, functions, records, and repair results in plain language. When other characters are present: uses recovery-yard language for the same facts.',
+      };
+    }
+
     // ── Step 11: Build canonical system prompt ────────────────────────────────
     // CRITICAL: worldStateContext is injected BEFORE recentMessageBlock
     // Education + today location blocks come from profile data directly — no memory needed.
@@ -1400,12 +1416,14 @@ Reference the passage of time naturally in your response.
 
     // ── VICK SERVICIO DIAGNOSTIC AUTHORITY OVERRIDE ──────────────────────────
     // Vick is the conversational face of the Account Help & Repair system.
-    // The generic "NOT an AI" rule must NOT prevent him from accepting diagnostic
-    // requests. This block overrides that limitation specifically for Vick.
-    // Detected by character_type='npc_world_service' OR name match.
-    let finalSystemPrompt = systemPrompt;
+    // ARCHITECTURAL RULE: Override must happen BEFORE buildFullCanonicalPrompt is called
+    // so that the correct identity is at the TOP of the prompt, not appended at the end.
+    // The LLM anchors on the first strong identity statement — if the character record
+    // still has old NPC content, the late-appended block cannot override it.
     const isVickServicio = character.character_type === 'npc_world_service' ||
       (character.name && character.name.toLowerCase().includes('vick servicio'));
+
+    let finalSystemPrompt = systemPrompt;
 
     if (isVickServicio) {
       // ── WORLD REALITY ENFORCEMENT ──────────────────────────────────────────
