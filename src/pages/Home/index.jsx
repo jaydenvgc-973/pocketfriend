@@ -294,7 +294,14 @@ export default function Home() {
     (!c.character_type && (c.personality_summary || c.personality_traits?.length > 0 || c.backstory));
 
   const activeCustomChars = activeCharacters
-    .filter(c => (c.status === "active" || !c.status) && c.name !== "Leo Parker" && isActiveCreated(c))
+    .filter(c => 
+      (c.status === "active" || !c.status) && 
+      c.name !== "Leo Parker" && 
+      isActiveCreated(c) &&
+      c.character_type !== "npc_world_service" &&
+      !c.is_world_service &&
+      !c.exclude_from_homepage
+    )
     .sort((a, b) => {
       const aAnchorIdx = anchorCharacterIds.indexOf(a.id);
       const bAnchorIdx = anchorCharacterIds.indexOf(b.id);
