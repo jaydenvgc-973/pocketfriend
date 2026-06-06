@@ -83,7 +83,7 @@ import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
 import { buildWorldPhonePayload } from "@/hooks/useWorldPhoneIntentSend";
 import { enforceFamilyTruth } from "@/lib/familyTruthGuard";
 import { hasVickDiagnosticIntent, isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
-import { runVickDiagnosticIfNeeded } from "@/lib/vickDiagnosticRunner";
+import { runVickDiagnosticIfNeeded, shouldUseVickFastPath, buildVickFastPathPrompt, executeVickDiagnosticFastPath } from "@/lib/vickDiagnosticRunner";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -663,6 +663,8 @@ export default function Chat({ chatTypeOverride } = {}) {
       }
 
       recentMsgs = [...messages.slice(-50), userMsg];
+      // ── VICK FAST PATH: run diagnostic + LLM in isolation, skip all optional context ──
+      if (shouldUseVickFastPath(character, text)) { const fp = await executeVickDiagnosticFastPath({ character, characterId, text, convoId, userMsg, callLLMWithRetry, parseCharacterResponse, filterDashes, stripCharacterNamePrefix, base44, setMessages, setIsTyping, releaseFgTask, isMountedRef }); if (fp.handled) return; }
 
       const toneFromBehaviour = behaviour?.tone || 'neutral';
       const lengthInstruction = { short: "Keep responses to 1-2 sentences max.", medium: "Keep responses natural length, 1-4 sentences.", long: "You can elaborate more, up to a paragraph." }[userSettings.response_length || "medium"];
@@ -1206,10 +1208,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // Build location share context for the prompt
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";
 
-      // ── VICK SERVICIO: detect diagnostic intent and fetch real results ────────
-      // All steps are instrumented in vickDiagnosticRunner.js with [VICK_DIAG_STEP*] logs.
-      vickDiagnosticResults = await runVickDiagnosticIfNeeded(character, characterId, text);
-
       // Build received image context (for gallery sends, forwards, user-uploaded images)
       const receivedImageContext = buildReceivedImageContext(
         recentMsgs.slice(-8), characterId, character.name
@@ -1223,7 +1221,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       const vickDiagnosticBlock = vickDiagnosticResults
         ? `\n\n════════════════════════════════════\nLIVE DIAGNOSTIC RESULTS — REAL DATA (just ran ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} ET)\n════════════════════════════════════\n${vickDiagnosticResults.plainSummary}\n\nFunctions executed: ${(vickDiagnosticResults.functionsExecuted || []).join(', ') || 'none'}\nVerdict: ${vickDiagnosticResults.verdict || 'unknown'}\nErrors found: ${vickDiagnosticResults.errorCount ?? 'unknown'}\nWarnings found: ${vickDiagnosticResults.warningCount ?? 'unknown'}\n\nIMPORTANT: Use these EXACT results in your response. Do NOT invent findings. Do NOT claim you ran diagnostics that are not listed above. Report what the diagnostic actually found — no more, no less.\n════════════════════════════════════`
         : '';
-      // Step 6 proof log — block injection status
       console.log(`[VICK_DIAG_STEP6_PROMPT] diagnostic_block_injected=${!!vickDiagnosticResults} block_length=${vickDiagnosticBlock.length}`);
 
       // Family graph injected BEFORE conversation log — LLM reads truth before history.
