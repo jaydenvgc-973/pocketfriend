@@ -115,9 +115,13 @@ Deno.serve(async (req) => {
     const now = new Date().toISOString();
     const results = { vick: null, recoveryYard: null, created: { vick: false, recoveryYard: false }, repaired: [] };
 
-    // ── STEP 1: Ensure VGC Recovery Yard exists ───────────────────────────────
-    // Check by name + owner_email to prevent duplicates.
+    // ── STEP 1: Find or create VGC Recovery Yard ──────────────────────────────
+    // SEARCH EXHAUSTIVELY before creating any Recovery Yard.
+    // Truth source: Recovery Yard for this owner_email
+    
     let recoveryYard = null;
+    
+    // PRIMARY: query by owner_email + name
     try {
       const existing = await base44.asServiceRole.entities.LocationReference.filter({
         owner_email: ownerEmail,
@@ -125,6 +129,16 @@ Deno.serve(async (req) => {
       });
       recoveryYard = existing[0] || null;
     } catch (_) {}
+    
+    // SECONDARY: if not found, query all yards for this owner and find Recovery Yard
+    if (!recoveryYard) {
+      try {
+        const allYards = await base44.asServiceRole.entities.LocationReference.filter({
+          owner_email: ownerEmail,
+        }, '-created_date', 100);
+        recoveryYard = allYards.find(y => y.name === 'VGC Recovery Yard') || null;
+      } catch (_) {}
+    }
 
     if (!recoveryYard) {
       // Build zone list with correct images per zone
@@ -254,42 +268,55 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // TERTIARY: service-role query for any npc_world_service with this owner_email (fallback)
+    // TERTIARY: service-role exhaustive search for ANY active npc_world_service
     if (!vick) {
       try {
-        const serviceChars = await base44.asServiceRole.entities.Character.filter(
+        const allWorldService = await base44.asServiceRole.entities.Character.filter(
           { character_type: 'npc_world_service', owner_email: ownerEmail, status: 'active' },
-          '-created_date',
-          50
-        ).catch(() => []);
-        
-        if (serviceChars.length > 0) {
-          vick = serviceChars[0]; // Use oldest (most canonical)
-          console.log(`[ensureVickServicio] Found existing Vick via service-role query: id=${vick.id} for ${ownerEmail}`);
-        }
-      } catch (_) {}
-    }
-
-    // HARD DUPLICATE GUARD: Before creating, verify no Vick exists
-    if (!vick) {
-      try {
-        const doubleCheckService = await base44.asServiceRole.entities.Character.filter(
-          { character_type: 'npc_world_service', owner_email: ownerEmail },
           '-created_date',
           100
         ).catch(() => []);
         
-        const activeExisting = doubleCheckService.filter(c => c.status === 'active');
-        if (activeExisting.length > 0) {
-          // Found existing Vick despite all prior searches — use it
-          vick = activeExisting[0];
-          console.log(`[ensureVickServicio] DUPLICATE GUARD: Found existing Vick via final check: id=${vick.id} for ${ownerEmail}`);
+        if (allWorldService.length > 0) {
+          vick = allWorldService[0]; // Use oldest (most canonical by creation order)
+          console.log(`[ensureVickServicio] Found existing Vick via service-role exhaustive search: id=${vick.id} for ${ownerEmail}`);
+        }
+      } catch (_) {}
+    }
+
+    // QUATERNARY: final duplicate check - ALL Vick candidates regardless of status
+    if (!vick) {
+      try {
+        const allVicks = await base44.asServiceRole.entities.Character.filter(
+          { name: 'Vick Servicio', owner_email: ownerEmail },
+          '-created_date',
+          100
+        ).catch(() => []);
+        
+        const activeVicks = allVicks.filter(c => c.status === 'active');
+        if (activeVicks.length > 0) {
+          vick = activeVicks[0];
+          console.log(`[ensureVickServicio] DUPLICATE GUARD (Stage 4): Found existing active Vick: id=${vick.id} for ${ownerEmail}`);
+        }
+      } catch (_) {}
+    }
+
+    // FINAL GUARD: Absolute duplicate prevention before creation
+    if (!vick) {
+      try {
+        // Last-resort search: if Recovery Yard anchor exists but we haven't found the Vick yet, something is inconsistent
+        if (recoveryYard?.owner_character_id) {
+          console.log(`[ensureVickServicio] Recovery Yard has owner_character_id=${recoveryYard.owner_character_id}, using that as canonical Vick`);
+          vick = {
+            id: recoveryYard.owner_character_id,
+            name: 'Vick Servicio',
+          };
         }
       } catch (_) {}
     }
 
     if (!vick) {
-      console.log(`[ensureVickServicio] No existing Vick found for ${ownerEmail} — will create new one`);
+      console.log(`[ensureVickServicio] No existing Vick found for ${ownerEmail} — authorized to create new Vick`);
     }
 
     if (!vick) {
