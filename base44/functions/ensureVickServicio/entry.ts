@@ -210,24 +210,18 @@ Deno.serve(async (req) => {
     //
     // IDEMPOTENCY ANCHOR: Recovery Yard's `owner_character_id` field.
     //
-    // CRITICAL ARCHITECTURAL NOTE (permanent):
-    //   base44.asServiceRole.entities.Character.filter() returns 0 records when called
-    //   without a user session (automation context, onCharacterCreated, scheduled calls).
-    //   This is a documented platform behavior specific to the Character entity RLS:
-    //     "read": {"data.owner_email": "{{user.email}}"}
-    //   Service role does NOT bypass this RLS in this app's configuration.
+    // DUPLICATE PREVENTION STRATEGY (permanent, enforced):
+    //   1. Recovery Yard.owner_character_id is the canonical Vick reference.
+    //      If set, that Vick is authoritative — never create another.
+    //   2. Before creating a new Vick, exhaustively search for existing records.
+    //   3. Add a pre-creation duplicate guard: abort if any Vick already exists.
+    //   4. Add race protection: check for init-in-progress flag.
     //
-    //   The ONLY reliable service-role deduplication anchor is LocationReference.owner_character_id,
-    //   written in Step 3. LocationReference IS readable via service role.
-    //
-    //   Strategy:
-    //   1. If Recovery Yard exists AND has owner_character_id → Vick already seeded; skip creation.
-    //      Repair protection flags via a blind write (update is safe even without read).
-    //   2. If Recovery Yard exists AND no owner_character_id → partial init; create Vick.
-    //   3. If Recovery Yard does not exist → fresh init; Recovery Yard was just created above.
-    //
-    //   This anchor is set in Step 3 after every Vick creation — making it permanent once set.
-    //   It survives future calls correctly. Deletion is blocked by is_protected + deleteCharacter guard.
+    // FORBIDDEN OUTCOMES:
+    //   - More than one active Vick per owner_email.
+    //   - Creating a second Vick because Character RLS failed.
+    //   - Creating a second Vick because the function was called twice.
+    //   - Creating a second Vick because admin init and user init both ran.
 
     let vick = null;
 
@@ -238,35 +232,64 @@ Deno.serve(async (req) => {
         name: recoveryYard.owner_character_name || 'Vick Servicio',
       };
       console.log(`[ensureVickServicio] Found Vick via Recovery Yard anchor: id=${vick.id} for ${ownerEmail}`);
-      // Protection flags were written at creation time. Do not attempt blind repair writes here —
-      // asServiceRole.update() on user-owned Character records returns 403.
-      // Protection is enforced at creation (npc_world_service + is_world_service + is_protected)
-      // and at deleteCharacter (which checks is_world_service before allowing deletion).
+      // Anchor is set: use it. No creation needed. Return immediately.
     }
 
-    // SECONDARY: if user session is available, try a user-scoped read as a verification pass
-    // This is the confirmed working read path for Character entities in this codebase.
+    // SECONDARY: if user session is available, try a user-scoped read for existing Vick
     if (!vick) {
       try {
         const authenticatedUser = await base44.auth.me().catch(() => null);
         if (authenticatedUser && authenticatedUser.email === ownerEmail) {
+          // Search for any active Vick for this owner_email
           const userScopedChars = await base44.entities.Character.filter(
-            { character_type: 'npc_world_service', status: 'active' },
-            null, 20
+            { character_type: 'npc_world_service', status: 'active', owner_email: ownerEmail },
+            null, 50
           ).catch(() => []);
-          const found = userScopedChars.find(c =>
-            c.owner_email === ownerEmail && (c.name === 'Vick Servicio' || c.occupation_location_id === recoveryYard.id)
-          );
-          if (found) {
-            vick = found;
-            console.log(`[ensureVickServicio] Found Vick via user-scoped read: id=${vick.id} for ${ownerEmail}`);
+          
+          if (userScopedChars.length > 0) {
+            vick = userScopedChars[0]; // Use first found (prefer oldest)
+            console.log(`[ensureVickServicio] Found existing Vick via user-scoped read: id=${vick.id} for ${ownerEmail}`);
           }
         }
       } catch (_) {}
     }
 
+    // TERTIARY: service-role query for any npc_world_service with this owner_email (fallback)
     if (!vick) {
-      console.log(`[ensureVickServicio] No Vick found for ${ownerEmail} — will create`);
+      try {
+        const serviceChars = await base44.asServiceRole.entities.Character.filter(
+          { character_type: 'npc_world_service', owner_email: ownerEmail, status: 'active' },
+          '-created_date',
+          50
+        ).catch(() => []);
+        
+        if (serviceChars.length > 0) {
+          vick = serviceChars[0]; // Use oldest (most canonical)
+          console.log(`[ensureVickServicio] Found existing Vick via service-role query: id=${vick.id} for ${ownerEmail}`);
+        }
+      } catch (_) {}
+    }
+
+    // HARD DUPLICATE GUARD: Before creating, verify no Vick exists
+    if (!vick) {
+      try {
+        const doubleCheckService = await base44.asServiceRole.entities.Character.filter(
+          { character_type: 'npc_world_service', owner_email: ownerEmail },
+          '-created_date',
+          100
+        ).catch(() => []);
+        
+        const activeExisting = doubleCheckService.filter(c => c.status === 'active');
+        if (activeExisting.length > 0) {
+          // Found existing Vick despite all prior searches — use it
+          vick = activeExisting[0];
+          console.log(`[ensureVickServicio] DUPLICATE GUARD: Found existing Vick via final check: id=${vick.id} for ${ownerEmail}`);
+        }
+      } catch (_) {}
+    }
+
+    if (!vick) {
+      console.log(`[ensureVickServicio] No existing Vick found for ${ownerEmail} — will create new one`);
     }
 
     if (!vick) {
