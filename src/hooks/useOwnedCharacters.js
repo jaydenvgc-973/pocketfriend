@@ -441,32 +441,6 @@ export function useOwnedCharacters(
   }, [email, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc, allCharacters.length,
       expectedDefaultCharacterId, JSON.stringify(anchorCharacterIds), backendNpcs.length]);
 
-  // ── Real-time Character patch subscription ───────────────────────────────────
-  // When the energy/needs system writes resolved_presence_status='sleeping' (or any
-  // other field change) to a Character record, patch the React Query cache immediately
-  // so Home and Travel always reflect the live DB state — no stale cache lag.
-  // Only patches characters belonging to the current user. Never replaces the full list.
-  useEffect(() => {
-    if (!email) return;
-    const unsubscribe = base44.entities.Character.subscribe((event) => {
-      if (event.type !== 'update') return;
-      const updated = event.data;
-      if (!updated?.id) return;
-      // Only patch if this character belongs to the current user
-      if (updated.owner_email && updated.owner_email !== email) return;
-      queryClient.setQueryData(["characters", email], (prev) => {
-        if (!Array.isArray(prev)) return prev;
-        // Only patch if character is already in the list (never adds new records here)
-        const idx = prev.findIndex(c => c.id === updated.id);
-        if (idx === -1) return prev;
-        const next = [...prev];
-        next[idx] = { ...next[idx], ...updated };
-        return next;
-      });
-    });
-    return () => unsubscribe();
-  }, [email, queryClient]);
-
   // ── Derived slices ────────────────────────────────────────────────────────────
   // LEGACY COMPATIBILITY: character_type may be null/missing on older records.
   // A character without character_type that has profile data must not be excluded.
