@@ -82,6 +82,7 @@ import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
 import { buildWorldPhonePayload } from "@/hooks/useWorldPhoneIntentSend";
 import { enforceFamilyTruth } from "@/lib/familyTruthGuard";
 import { hasVickDiagnosticIntent, isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
+import { runVickDiagnosticIfNeeded } from "@/lib/vickDiagnosticRunner";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -1205,21 +1206,8 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";
 
       // ── VICK SERVICIO: detect diagnostic intent and fetch real results ────────
-      // FIX: old regex \bdiagnos\b never matched "diagnostic" (no word boundary after s in diagnostic).
-      // hasVickDiagnosticIntent uses \bdiagnos\w* which correctly matches "diagnose/diagnostic/diagnostics".
-      if (isVickServicioCharacter(character) && hasVickDiagnosticIntent(text)) {
-        console.log(`[Vick] Diagnostic intent — invoking vickRunDiagnostic`);
-        const dr = await base44.functions.invoke('vickRunDiagnostic', { diagnosticType: 'account_overview' }).catch(err => {
-          console.error(`[Vick] vickRunDiagnostic failed: ${err?.message}`);
-          return null;
-        });
-        if (dr?.data?.success) {
-          vickDiagnosticResults = dr.data;
-          console.log(`[Vick] Diagnostic complete: verdict=${dr.data.verdict} | errors=${dr.data.errorCount} | warnings=${dr.data.warningCount}`);
-        } else {
-          console.error(`[Vick] Diagnostic returned no success:`, dr?.data);
-        }
-      }
+      // All steps are instrumented in vickDiagnosticRunner.js with [VICK_DIAG_STEP*] logs.
+      vickDiagnosticResults = await runVickDiagnosticIfNeeded(character, characterId, text);
 
       // Build received image context (for gallery sends, forwards, user-uploaded images)
       const receivedImageContext = buildReceivedImageContext(
@@ -1234,6 +1222,8 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       const vickDiagnosticBlock = vickDiagnosticResults
         ? `\n\n════════════════════════════════════\nLIVE DIAGNOSTIC RESULTS — REAL DATA (just ran ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} ET)\n════════════════════════════════════\n${vickDiagnosticResults.plainSummary}\n\nFunctions executed: ${(vickDiagnosticResults.functionsExecuted || []).join(', ') || 'none'}\nVerdict: ${vickDiagnosticResults.verdict || 'unknown'}\nErrors found: ${vickDiagnosticResults.errorCount ?? 'unknown'}\nWarnings found: ${vickDiagnosticResults.warningCount ?? 'unknown'}\n\nIMPORTANT: Use these EXACT results in your response. Do NOT invent findings. Do NOT claim you ran diagnostics that are not listed above. Report what the diagnostic actually found — no more, no less.\n════════════════════════════════════`
         : '';
+      // Step 6 proof log — block injection status
+      console.log(`[VICK_DIAG_STEP6_PROMPT] diagnostic_block_injected=${!!vickDiagnosticResults} block_length=${vickDiagnosticBlock.length}`);
 
       // Family graph injected BEFORE conversation log — LLM reads truth before history.
       const familyTruthBlock = liveFamilyGraphBlock
@@ -1273,6 +1263,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       response = await callLLMWithRetry(fullPrompt);
       const t_llm_end = Date.now();
       console.log(`[SEND_TIMING_PROOF] llm_call_ms=${t_llm_end - t_llm_start} | llm_start_ms=${t_llm_start - t_send_start}`);
+      // Step 7 — Vick final response (only logged when diagnostic was used)
+      if (vickDiagnosticResults) {
+        const _previewLen = Math.min((response || '').length, 300);
+        console.log(`[VICK_DIAG_STEP7_RESPONSE] Vick LLM responded. First 300 chars: ${(response || '').substring(0, _previewLen)}`);
+      }
 
       // Apply response lag AFTER LLM response (not before) — keeps typing indicator visible
       // without blocking the actual LLM call. Skip lag if total time already exceeds threshold.
