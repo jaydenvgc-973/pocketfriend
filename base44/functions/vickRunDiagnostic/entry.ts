@@ -27,13 +27,14 @@ Deno.serve(async (req) => {
     const ran = [];
 
     // ── CHARACTER AUDIT ────────────────────────────────────────────────────────
+    // Character RLS blocks service-role reads — must use user-scoped read
     if (diagnosticType === 'account_overview' || diagnosticType === 'characters' || diagnosticType === 'duplicates') {
       try {
-        const allChars = await base44.asServiceRole.entities.Character.filter(
-          { owner_email: ownerEmail },
+        const allChars = await base44.entities.Character.filter(
+          {},
           '-created_date',
-          200
-        );
+          500
+        ).catch(() => []);
         ran.push('character_scan');
 
         const active = allChars.filter(c => c.status === 'active');
