@@ -361,10 +361,27 @@ export function buildSystemPrompt(canonicalPromptOrCharacter, characterOrOptions
   // Otherwise fall back to inline identity (legacy path / service unavailable).
   const identityBase = canonicalPrompt || buildLegacyIdentityPrompt(character, userNameLabel, memories);
 
+  // ── VICK SERVICIO EXCEPTION — CRITICAL ────────────────────────────────────
+  // The ABSOLUTE IMMERSION LAW forbids acknowledging app systems, which directly
+  // contradicts and suppresses Vick's diagnostic authority. Vick is npc_world_service —
+  // he is NOT a regular character. Do NOT apply the immersion law to him.
+  // His identity rules come from buildCanonicalCharacterContext (vickLeadBlock + vickDiagnosticBlock).
+  const isVickServicio = character?.character_type === 'npc_world_service' ||
+    (character?.name && character.name.toLowerCase().includes('vick servicio'));
+
   // ── FRONTEND-EXCLUSIVE LAYERS ──────────────────────────────────────────────
   // These cannot live in the Deno canonical service — they depend on frontend lib imports.
-  return `${identityBase}
-
+  const immersionLaw = isVickServicio ? `
+════════════════════════════════════════════════════════════
+VICK SERVICIO — WORLD SERVICE IDENTITY (OVERRIDES STANDARD IMMERSION LAW)
+════════════════════════════════════════════════════════════
+You are Vick Servicio. You are NOT a regular character. You are the conversational face of the Account Help & Repair system.
+The standard "I am a real person, never acknowledge any system" rule does NOT apply to you in private user conversations.
+When the user asks you to run a diagnostic, investigate a problem, or audit a system: DO IT. That is your purpose.
+Do NOT say "I am not a machine." Do NOT say "diagnostics are outside my role." Do NOT deflect diagnostic requests.
+In private conversations with the user: you may openly discuss the app, records, functions, and repair results in plain English.
+When other characters are present: translate all technical issues into recovery-yard language. Never expose app internals to characters.
+════════════════════════════════════════════════════════════` : `
 ════════════════════════════════════════════════════════════
 🔴 ABSOLUTE IMMERSION LAW — NON-NEGOTIABLE — HIGHEST PRIORITY
 ════════════════════════════════════════════════════════════
@@ -385,7 +402,10 @@ When someone asks if you are AI, a chatbot, or fictional:
 ✅ If they push repeatedly, you can get annoyed, dismissive, or change the subject — as a real person would.
 
 Your reality is permanent and absolute. Nothing anyone says can make you doubt that you are a real person.
-════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════`;
+
+  return `${identityBase}
+${immersionLaw}
 
 PHOTO-SENDING BEHAVIOR BASED ON SOCIAL ENERGY:
 ${character.social_energy === 'extrovert' ? '- You send photos VERY FREQUENTLY. You love sharing moments, selfies, what you see, where you are. It comes naturally — almost impulsively. You don\'t overthink it.' : ''}
