@@ -1211,13 +1211,12 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // Build location share context for the prompt
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";
 
-      console.log('[FINANCIAL_CONTEXT_PROOF]', {
-        characterId,
-        characterName: character?.name,
-        userText: text,
-        financialContextIncluded: !!financialContext,
-        financialContextPreview: financialContext?.slice(0, 500),
-      });
+      // ── VICK SERVICIO: detect diagnostic intent and fetch real results ────────
+      const isVickServicio = character.character_type === 'npc_world_service' || (character.name || '').toLowerCase().includes('vick servicio');
+      if (isVickServicio && /\b(diagnos|audit|check my account|what.?s wrong|run a check|run it|inspect|troubleshoot|account status|any issues|any problems|everything ok)\b/i.test(text)) {
+        const dr = await base44.functions.invoke('vickRunDiagnostic', { diagnosticType: 'account_overview' }).catch(() => null);
+        if (dr?.data?.success) { vickDiagnosticResults = dr.data; console.log(`[Vick] Diagnostic ran: verdict=${dr.data.verdict}`); }
+      }
 
       // Build received image context (for gallery sends, forwards, user-uploaded images)
       const receivedImageContext = buildReceivedImageContext(
