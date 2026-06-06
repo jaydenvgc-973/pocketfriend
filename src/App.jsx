@@ -26,6 +26,7 @@ import Settings from './pages/Settings';
 import CharacterProfile from './pages/CharacterProfile';
 import DiagnosticChecklist from './pages/DiagnosticChecklist';
 import AdminVerification from './pages/AdminVerification';
+import VickDiagnosticProof from './pages/VickDiagnosticProof';
 import EditDefaultCharacter from './pages/EditDefaultCharacter';
 import EditCharacterStory from './pages/EditCharacterStory';
 import EditCharacterPhotos from './pages/EditCharacterPhotos';
@@ -145,6 +146,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/finance" element={<Finance />} />
       <Route path="/diagnostic" element={<DiagnosticChecklist />} />
       <Route path="/admin-verification" element={<AdminVerification />} />
+      <Route path="/vick-diagnostic-proof" element={<VickDiagnosticProof />} />
       <Route path="/travel" element={<Travel />} />
       <Route path="/scene" element={<Scene />} />
       <Route path="/image-diagnostics" element={<ImageGenerationDiagnostics />} />

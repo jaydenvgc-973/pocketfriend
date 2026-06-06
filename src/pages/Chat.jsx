@@ -78,6 +78,7 @@ import { isCharacterConfined, canCharacterRespond, getConfinementNotice } from "
 import { useChatTimingProof } from "@/hooks/useChatTimingProof";
 import ChatTimingOverlay from "@/components/chat/ChatTimingOverlay";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
+import VickDiagnosticProofButton from "@/components/chat/VickDiagnosticProofButton";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
 import { buildWorldPhonePayload } from "@/hooks/useWorldPhoneIntentSend";
 import { enforceFamilyTruth } from "@/lib/familyTruthGuard";
@@ -1987,6 +1988,12 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           onDone={() => { setNewPeopleDetected(null); queryClient.invalidateQueries({ queryKey: ["character", characterId] }); }}
         />
       )}
+      <VickDiagnosticProofButton
+        character={character}
+        isTyping={isTyping}
+        onSendMessage={sendMessage}
+        isPhone={isPhone}
+      />
       <ChatTimingOverlay timingRecord={timingRecord} />
     </div>
   );
