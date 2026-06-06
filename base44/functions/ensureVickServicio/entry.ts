@@ -319,6 +319,24 @@ Deno.serve(async (req) => {
       console.log(`[ensureVickServicio] No existing Vick found for ${ownerEmail} — authorized to create new Vick`);
     }
 
+    // ── FINAL DUPLICATE GUARD: Absolute creation prevention ────────────────────
+    // PERMANENT RULE: If any Vick candidate OR Recovery Yard owner anchor exists,
+    // abort creation and reuse/repair the canonical record.
+    // Character RLS failure is NEVER permission to create a duplicate.
+    //
+    // This guard runs BEFORE Character.create and is the last checkpoint.
+    // If this guard fails to prevent creation, we have a critical architectural bug.
+    if (!vick && recoveryYard?.owner_character_id) {
+      // Recovery Yard anchor exists but we missed it — this should never happen
+      // because PRIMARY lookup already checked it. But defensive check regardless.
+      console.warn(`[ensureVickServicio] FINAL GUARD: Recovery Yard anchor found despite earlier miss. Using it. id=${recoveryYard.owner_character_id}`);
+      vick = {
+        id: recoveryYard.owner_character_id,
+        name: 'Vick Servicio',
+      };
+      // ABORT: Do not create. Return the anchor.
+    }
+
     if (!vick) {
       vick = await base44.asServiceRole.entities.Character.create({
         name: 'Vick Servicio',
