@@ -119,60 +119,9 @@ export default function Home() {
   // - checkAndTriggerInvites → Priority 7: idle processing, triggered after user is settled
   // - checkLifecycleEvents → Priority 6: server-side automation owns this, not the client
 
-  // Real-time: patch individual character records in the cache without re-fetching the whole list.
-  // CRITICAL: Never call invalidateQueries for character updates — it triggers a full 300-record
-  // re-fetch on every automation write (dozens per minute), causing card flicker + 429 pressure.
-  // Instead: surgically update the existing cache entry by id (create/update) or filter it out (delete).
-  // For creates: invalidate once with a 10s debounce (new character must be fetched, can't patch from event alone).
-  const charCreateTimerRef = useRef(null);
-  useEffect(() => {
-    if (!currentUser?.email) return;
-    const email = currentUser.email;
-    const unsubscribe = base44.entities.Character.subscribe((event) => {
-      if (!event.data) return;
-
-      if (event.type === "update") {
-        // Surgical patch: update only the changed character in the existing cache, no re-fetch.
-        queryClient.setQueryData(["characters", email], (prev) => {
-          if (!Array.isArray(prev)) return prev;
-          const idx = prev.findIndex(c => c.id === event.data.id);
-          if (idx === -1) return prev; // not in list — skip (e.g. another user's character)
-          const next = [...prev];
-          next[idx] = { ...prev[idx], ...event.data };
-          return next;
-        });
-
-      } else if (event.type === "delete") {
-        // Surgical remove — only if the deleted record belonged to this user.
-        // CRITICAL: never remove a character from cache based solely on an id match
-        // without confirming ownership. A delete event for another user's character
-        // must not corrupt the current user's visible list.
-        queryClient.setQueryData(["characters", email], (prev) => {
-          if (!Array.isArray(prev)) return prev;
-          // Only remove if the record was actually in this user's list by id
-          const exists = prev.some(c => c.id === event.data.id);
-          if (!exists) return prev; // not ours — ignore
-          return prev.filter(c => c.id !== event.data.id);
-        });
-
-      } else if (event.type === "create") {
-        // New character: can't patch from event alone (may be missing fields).
-        // Debounce a single full invalidation — 10s to absorb rapid sequential creates.
-        if (charCreateTimerRef.current) clearTimeout(charCreateTimerRef.current);
-        charCreateTimerRef.current = setTimeout(() => {
-          charCreateTimerRef.current = null;
-          queryClient.invalidateQueries({ queryKey: ["characters", email] });
-        }, 10000);
-      }
-    });
-    return () => {
-      unsubscribe();
-      if (charCreateTimerRef.current) {
-        clearTimeout(charCreateTimerRef.current);
-        charCreateTimerRef.current = null;
-      }
-    };
-  }, [currentUser?.email, queryClient]);
+  // Real-time character cache sync has been moved into useOwnedCharacters.js.
+  // It is now active on every page that mounts the hook (Home, Travel, Map),
+  // not only when Home is mounted. No duplicate subscription here.
 
   const deleteMutation = useMutation({
     mutationFn: async ({ id, cause, closeness }) => {

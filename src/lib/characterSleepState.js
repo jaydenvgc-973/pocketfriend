@@ -315,63 +315,12 @@ export function getCharacterSleepState(character, locationMap) {
         const hasAwakeOverride = character.decided_to_stay_up_until &&
           new Date(character.decided_to_stay_up_until) > nowET;
 
-        // PRIORITY: If character has an explicit sleep schedule, use it — this is the same
-        // source Travel page uses. A character whose sleep_start_time/wake_up_time puts them
-        // in the sleep window IS asleep, regardless of what the DB resolved_presence_status says.
-        if (!hasAwakeOverride) {
-          const scheduleAsleep = isScheduledSleeping(character, nowET, locationMap);
-          if (scheduleAsleep) {
-            const window = computeAdaptiveSleepWindow(character, nowET, locationMap);
-            const wakeMin = window?.wakeMin ?? null;
-            const wakeHour = wakeMin !== null ? Math.floor(wakeMin / 60) : null;
-            const wakeMinPart = wakeMin !== null ? wakeMin % 60 : null;
-            const wakeLabel = wakeHour !== null
-              ? `${wakeHour % 12 || 12}:${String(wakeMinPart).padStart(2, '0')} ${wakeHour >= 12 ? 'PM' : 'AM'}`
-              : null;
-            return {
-              isSleeping: true,
-              isNapping: false,
-              displayLabel: 'sleeping',
-              contextLabel: 'Asleep',
-              visible_label: 'Asleep',
-              wake_label: wakeLabel,
-              confirmed_reason: 'scheduled_sleep_window_active_created',
-              evidence_source: `schedule_window_source:${window?.source || 'unknown'}`,
-              confidence: 0.9,
-              stale_risk: false,
-              isLikelyStale: false,
-              blockingCondition: null,
-              stale_db_detected: true,
-            };
-          }
-        }
-
-        // LOWEST PRIORITY: energy support signal — only when there is genuinely no schedule.
-        // Energy does NOT override any schedule-derived window. It only applies when
-        // computeAdaptiveSleepWindow returned 'default_no_schedule' (no work, no school,
-        // no explicit fields). This prevents characters with no schedule from appearing
-        // fully awake at 3 AM when their energy is critically low.
-        if (!hasAwakeOverride) {
-          const window = computeAdaptiveSleepWindow(character, nowET, locationMap);
-          if (window?.source === 'no_structured_timing') {
-            const energyCritical = character.energy_value !== undefined && character.energy_value < 20;
-            if (energyCritical) {
-              return {
-                isSleeping: true,
-                isNapping: false,
-                displayLabel: 'sleeping',
-                contextLabel: 'Asleep',
-                visible_label: 'Asleep',
-                confirmed_reason: 'energy_critical_no_schedule',
-                evidence_source: 'energy_value',
-                confidence: 0.6,
-                stale_risk: false,
-                isLikelyStale: false,
-                blockingCondition: null,
-              };
-            }
-          }
-        }
+        // ACTIVE CREATED CHARACTERS: DB truth is authoritative (checked above).
+        // Schedule windows and energy values are NOT used to invent isSleeping=true
+        // for active_created_characters when the DB does not say sleeping.
+        // The backend (simulateActiveCharacterNeeds) writes resolved_presence_status
+        // based on energy thresholds — that is the single source of truth.
+        // Local clock-window inference is removed to prevent Chat/Home/Travel divergence.
 
         // Awake — no schedule window, no energy evidence
         return {

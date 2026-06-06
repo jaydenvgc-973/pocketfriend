@@ -408,6 +408,21 @@ export default function CharacterProfile() {
     }
   };
 
+  // Patch ["character", characterId] when backend writes sleep/presence/needs state.
+  // Profile uses a separate singular query key not covered by useOwnedCharacters.
+  // This ensures the profile display reflects backend truth without waiting for 60s staleTime.
+  useEffect(() => {
+    if (!characterId) return;
+    const unsubscribe = base44.entities.Character.subscribe((event) => {
+      if (event.type === 'update' && event.data?.id === characterId) {
+        queryClient.setQueryData(['character', characterId], (prev) =>
+          prev ? { ...prev, ...event.data } : prev
+        );
+      }
+    });
+    return unsubscribe;
+  }, [characterId, queryClient]);
+
   // Clear the escape-hatch timeout the moment the character query settles.
   // Fast path: if character is already in React Query cache (navigated from Home/Chat),
   // this fires immediately — no spinner at all, no timeout needed.

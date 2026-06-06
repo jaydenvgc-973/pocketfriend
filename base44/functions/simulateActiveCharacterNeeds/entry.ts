@@ -71,9 +71,10 @@ const T = {
   HUNGER_ER:         5,
   HUNGER_CRITICAL:  20,
   HUNGER_LOW:       35,
-  ENERGY_PASSOUT:    0,
-  ENERGY_CRITICAL:  20,  // auto-sleep trigger — tired enough to sleep, not just near-collapse
-  ENERGY_LOW:       35,  // character is noticeably tired, starts wanting to go home
+  ENERGY_MEDICAL:    5,   // hospitalization — sustained energy collapse requiring medical intervention
+  ENERGY_PASSOUT:   10,   // character collapses from exhaustion
+  ENERGY_CRITICAL:  25,   // auto-sleep trigger — energy critically low, character forces sleep
+  ENERGY_LOW:       35,   // character is noticeably tired, starts wanting to go home
   HEALTH_ER:        15,
   HEALTH_CRITICAL:  20,
   COMPOUND_CRISIS:   3,   // number of needs below 20 to trigger compound handling
@@ -260,48 +261,10 @@ function detectCriticalEscalations(oldNeeds, newNeeds, characterName) {
   return events;
 }
 
-// ── SLEEP MISS CONSEQUENCE DETECTION ─────────────────────────────────────────
-// Called when a character is awake during late hours (11 PM–4 AM ET) with low energy.
-// Writes a memory about consequences — exhaustion, poor choices, guilt, lateness.
-// This memory influences future behavior through the canonical prompt system.
-function detectSleepMissConsequences(char, newNeeds, context, now) {
-  const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const hour = nowET.getHours();
-  // Only relevant during late-night hours when character should typically be asleep
-  const isLateNight = hour >= 23 || hour < 4;
-  if (!isLateNight) return null;
-
-  const energy = newNeeds.energy;
-  const isAwakeContext = !['sleeping', 'passed_out', 'hospitalized', 'napping'].includes(
-    char.resolved_presence_status || ''
-  );
-  if (!isAwakeContext) return null;
-
-  // Only fire if energy is noticeably low (character is tired but still up)
-  if (energy >= 45) return null;
-
-  const hasWorkTomorrow = Array.isArray(char.work_days) && char.work_days.length > 0 && char.work_start_time;
-  const hasSchoolTomorrow = char.student_status === 'enrolled' && char.education_location_id;
-  const hasObligation = hasWorkTomorrow || hasSchoolTomorrow;
-
-  const consequenceDescriptions = [
-    `${char.name} stayed up too late and was running low on energy. They'd regret it in the morning.`,
-    `${char.name} was exhausted but still awake during the late-night hours — their body was telling them to sleep.`,
-    `${char.name} pushed through tiredness and stayed up later than they should have.`,
-  ];
-  const baseDescription = consequenceDescriptions[Math.floor(Math.random() * consequenceDescriptions.length)];
-  const obligationSuffix = hasObligation
-    ? ` They had ${hasWorkTomorrow ? 'work' : 'school'} the next day, which would make the tiredness worse.`
-    : '';
-
-  return {
-    title: 'Stayed up too late — exhausted',
-    description: baseDescription + obligationSuffix,
-    memory_tag: 'sleep_miss_consequence',
-    energy_at_event: Math.round(energy),
-    had_obligation: hasObligation,
-  };
-}
+// detectSleepMissConsequences REMOVED — clock-based bedtime reminders and
+// late-night consequence loops have been eliminated. Sleep is driven by energy
+// thresholds only (ENERGY_CRITICAL=25, ENERGY_PASSOUT=10, ENERGY_MEDICAL=5).
+// No recurring memory nudges, no sleep-window lockout, no five-minute reminders.
 
 function deriveFinancialNeed(character) {
   return character.financial_need_value ?? 60;
@@ -398,7 +361,29 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
     return { stateWrites, scheduledEvents, logs };
   }
 
-  // ── PRIORITY 2: PASS-OUT (energy = 0, only energy drives this) ──
+  // ── PRIORITY 1b: ENERGY MEDICAL (energy ≤ 5 — sustained collapse, medical intervention) ──
+  if (energy <= T.ENERGY_MEDICAL && !alreadyHospitalized && !alreadySleeping && !recentlyWokenByAlarm) {
+    stateWrites.resolved_presence_status = 'hospitalized';
+    stateWrites.current_activity = 'hospitalized — energy collapse, medical stabilization';
+    const dischargeTime = new Date(now.getTime() + (6 + Math.random() * 2) * 3600000);
+    scheduledEvents.push({
+      type: 'energy_medical',
+      data: {
+        character_ids: [char.id],
+        character_names: [char.name],
+        description: `${char.name} was discharged after medical stabilization from complete energy collapse.`,
+        trigger_time: dischargeTime.toISOString(),
+        status: 'pending',
+        type: 'internal',
+        source: 'simulation',
+        primary_character_id: char.id,
+      },
+    });
+    logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} (≤5 medical) → hospitalized`);
+    return { stateWrites, scheduledEvents, logs };
+  }
+
+  // ── PRIORITY 2: PASS-OUT (energy ≤ 10, only energy drives this) ──
   if (energy <= T.ENERGY_PASSOUT && !alreadySleeping && !recentlyWokenByAlarm) {
     stateWrites.resolved_presence_status = 'passed_out';
     stateWrites.current_activity = 'passed out — recovering';
@@ -448,7 +433,10 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
       stateWrites.current_activity = 'sleeping — exhausted';
       logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} (critical) → auto-sleep at valid location`);
     } else {
-      logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} critical — not at valid sleep location (${currentLocType}/${currentPresence}), autonomousMovement routes home`);
+      // Not at a valid sleep location but energy is critical — write a home-routing signal
+      // so autonomousCharacterMovement knows to send them home on the next tick.
+      stateWrites.current_activity = 'exhausted — returning home to sleep';
+      logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} critical — not at valid sleep location (${currentLocType}/${currentPresence}), writing home-routing signal`);
     }
   }
 
@@ -623,31 +611,6 @@ Deno.serve(async (req) => {
           }).catch(() => {})
         ));
         console.warn(`[NEEDS-ESCALATION] ${char.name}: ${escalationEvents.map(e => e.memory_tag).join(', ')}`);
-      }
-
-      // ── SLEEP MISS CONSEQUENCES — written at most once per 6 hours per character ──
-      // Only fires during late-night hours when character is awake and tired.
-      // The memory is injected into canonical context so future behavior reflects the consequence.
-      const sleepMissEvt = detectSleepMissConsequences(char, newNeeds, context, now);
-      if (sleepMissEvt) {
-        // Throttle: check last_sleep_miss_memory_at to avoid spam (once per 6h)
-        const lastMissAt = char.last_sleep_miss_memory_at ? new Date(char.last_sleep_miss_memory_at).getTime() : 0;
-        const sixHoursMs = 6 * 3600 * 1000;
-        if (now.getTime() - lastMissAt >= sixHoursMs) {
-          writeSDK.entities.Memory.create({
-            character_id: char.id,
-            title: sleepMissEvt.title,
-            description: sleepMissEvt.description,
-            emotional_impact: sleepMissEvt.had_obligation ? 'negative' : 'neutral',
-            timestamp: now.toISOString(),
-            source_context: 'needs_simulation_sleep_miss',
-          }).catch(() => {});
-          // Track last write time — write to character record non-blockingly
-          writeSDK.entities.Character.update(char.id, {
-            last_sleep_miss_memory_at: now.toISOString(),
-          }).catch(() => {});
-          console.log(`[SLEEP-MISS] ${char.name}: consequence memory written (energy=${sleepMissEvt.energy_at_event}, obligation=${sleepMissEvt.had_obligation})`);
-        }
       }
 
       // ── RC1+RC2+RC3+RC4: CORRECTIVE STATE WRITES ─────────────────────────

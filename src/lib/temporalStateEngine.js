@@ -144,10 +144,18 @@ export function buildTemporalState(character, lastMsgTimestamp = null) {
   const daypart = getDaypart(hourET);
 
   // ── SLEEP STATE ──────────────────────────────────────────────────────────
+  // ACTIVE CREATED CHARACTERS: DB resolved_presence_status is the ONLY authority.
+  // sleep_start_time/wake_up_time are stored preferences used for context only.
+  // They must NOT be used to derive isAsleep for active_created_character —
+  // doing so creates a local sleep override that diverges from the backend truth.
+  // For NPC types, schedule windows remain valid (they don't use energy-driven sleep).
   const isAsleep = (() => {
     if (!character) return false;
     const rp = character.resolved_presence_status;
-    if (rp === 'sleeping' || rp === 'napping') return true;
+    if (rp === 'sleeping' || rp === 'napping' || rp === 'passed_out') return true;
+    // For active_created_character: DB is the only source. No clock-window inference.
+    if (!character.character_type || character.character_type === 'active_created_character') return false;
+    // NPC types: fall back to schedule window check
     if (!character.sleep_start_time || !character.wake_up_time) return false;
     const sleepH = parseInt(character.sleep_start_time.split(':')[0], 10);
     const wakeH  = parseInt(character.wake_up_time.split(':')[0], 10);

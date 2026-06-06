@@ -441,6 +441,59 @@ export function useOwnedCharacters(
   }, [email, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc, allCharacters.length,
       expectedDefaultCharacterId, JSON.stringify(anchorCharacterIds), backendNpcs.length]);
 
+  // ── Real-time character cache sync — active on every page using this hook ────
+  // Moves the Character.subscribe logic here from pages/Home/index so it remains
+  // active on Home, Travel, Map, and any other page that mounts useOwnedCharacters.
+  // On update: patches both ["characters", email] (list) AND ["character", id] (singular).
+  // The singular patch covers Chat and Profile if they have that key loaded.
+  // On delete: surgically removes from the list. On create: debounce-invalidates the list.
+  useEffect(() => {
+    if (!email) return;
+    const charCreateTimerRef = { current: null };
+
+    const unsubscribe = base44.entities.Character.subscribe((event) => {
+      if (!event.data) return;
+
+      if (event.type === 'update') {
+        // Patch the list cache — covers Home Cards, Travel, Map
+        queryClient.setQueryData(['characters', email], (prev) => {
+          if (!Array.isArray(prev)) return prev;
+          const idx = prev.findIndex(c => c.id === event.data.id);
+          if (idx === -1) return prev;
+          const next = [...prev];
+          next[idx] = { ...prev[idx], ...event.data };
+          return next;
+        });
+        // Also patch the singular cache key — covers Chat and Profile when mounted
+        // No-op if that key is not currently in the React Query cache.
+        queryClient.setQueryData(['character', event.data.id], (prev) => {
+          if (!prev) return prev;
+          return { ...prev, ...event.data };
+        });
+
+      } else if (event.type === 'delete') {
+        queryClient.setQueryData(['characters', email], (prev) => {
+          if (!Array.isArray(prev)) return prev;
+          const exists = prev.some(c => c.id === event.data.id);
+          if (!exists) return prev;
+          return prev.filter(c => c.id !== event.data.id);
+        });
+
+      } else if (event.type === 'create') {
+        if (charCreateTimerRef.current) clearTimeout(charCreateTimerRef.current);
+        charCreateTimerRef.current = setTimeout(() => {
+          charCreateTimerRef.current = null;
+          queryClient.invalidateQueries({ queryKey: ['characters', email] });
+        }, 10000);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      if (charCreateTimerRef.current) clearTimeout(charCreateTimerRef.current);
+    };
+  }, [email, queryClient]);
+
   // ── Derived slices ────────────────────────────────────────────────────────────
   // LEGACY COMPATIBILITY: character_type may be null/missing on older records.
   // A character without character_type that has profile data must not be excluded.
