@@ -12,13 +12,16 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
  * 3. Verify canonical Vick and yard are intact.
  */
 
-const CANONICAL_VICK_ID = '6a2350666c880e0049e4236c';
+const CANONICAL_VICK_ID = '6a2467b9a07bd221ece6abe2';
 const DUPLICATE_IDS = [
+  // Old deleted/stale IDs that should never be re-activated
+  '6a2350666c880e0049e4236c',
   '6a234ddf57ff381d546ed436',
   '6a234de69b76b4eb689f6410',
   '6a23505f9da5f366f3401a35',
+  '6a2462532d4beb65aa7a3024',
 ];
-const YARD_ID = '6a234ddfd4c07b0a36aaf43d';
+const YARD_ID = '6a2467b9ddf176aa4ec640c6';
 const OWNER_EMAIL = 'adobevgc@gmail.com';
 
 Deno.serve(async (req) => {
