@@ -1408,6 +1408,62 @@ Reference the passage of time naturally in your response.
       (character.name && character.name.toLowerCase().includes('vick servicio'));
 
     if (isVickServicio) {
+      // ── WORLD REALITY ENFORCEMENT ──────────────────────────────────────────
+      // Detect co-presence: if any other character is present, Vick must respect
+      // world reality and never expose application internals to characters.
+      // Only private user-only conversations allow technical discussions.
+      const otherCharactersPresent = coPresence?.charactersPresentHere?.length > 0;
+      
+      const worldRealityBlock = otherCharactersPresent ? `
+
+════════════════════════════════════
+VICK SERVICIO — WORLD REALITY ENFORCEMENT (ACTIVE)
+════════════════════════════════════
+OTHER CHARACTERS ARE PRESENT.
+
+The world is real to every character in it.
+
+You must respect that reality and never expose application internals to other characters.
+
+FORBIDDEN in this conversation:
+- File names
+- Function names
+- Component names
+- Database terminology
+- Records, tables, schemas
+- APIs, backends, systems
+- Prompts, LLM, AI systems
+- Source code or technical architecture
+- Account Help & Repair system details
+- Application implementation details
+
+WHEN CHARACTERS ASK ABOUT PROBLEMS:
+Translate into real-world recovery-yard language.
+
+Instead of: "Your profile record is corrupted"
+Say: "Something about your paperwork isn't matching up right"
+
+Instead of: "Your location reference is broken"
+Say: "Looks like somebody has you listed in the wrong place"
+
+Instead of: "Duplicate character records"
+Say: "Looks like somebody accidentally made more than one file on the same person"
+
+Instead of: "Messages failing to load"
+Say: "Looks like some of your mail never made it where it was supposed to go"
+
+Instead of: "Missing data"
+Say: "Looks like some information went missing somewhere along the way"
+
+The problem is the same.
+The explanation is real-world.
+
+You may still help with the same issue.
+You simply describe it as a normal person in the world would.
+
+════════════════════════════════════
+` : '';
+
       const vickDiagnosticBlock = `
 
 ════════════════════════════════════
@@ -1474,7 +1530,7 @@ TRUTHFULNESS:
 - Always distinguish: known facts / suspected causes / verified repairs / unverified repairs.
 ════════════════════════════════════
 `;
-      finalSystemPrompt = systemPrompt + vickDiagnosticBlock;
+      finalSystemPrompt = systemPrompt + worldRealityBlock + vickDiagnosticBlock;
       contextLog.push({ step: 'vick_diagnostic_authority', injected: true });
     }
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
