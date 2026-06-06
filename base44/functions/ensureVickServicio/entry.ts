@@ -339,20 +339,32 @@ Deno.serve(async (req) => {
     }
 
     // PATH 2: Direct yard array lookups (worker_character_ids, resident_character_ids)
+    // CRITICAL RULE: Known canonical references MUST be reused, never skipped.
     if (!vick && recoveryYard) {
       const yardWorkers = recoveryYard.worker_character_ids || [];
       const yardResidents = recoveryYard.resident_character_ids || [];
-      const yardCandidates = [...new Set([...yardWorkers, ...yardResidents])];
+      const yardCandidates = [...new Set([...yardWorkers, ...yardResidents])].filter(Boolean);
       
-      if (yardCandidates.length > 0) {
-        // Filter to world-service candidates (check name or type if available)
-        for (const candId of yardCandidates) {
-          if (candId && candId === ownerCharacterId) continue; // Skip if it's already the known Vick
-          // We found a candidate in the yard arrays — assume it's canonical
-          vick = { id: candId, name: 'Vick Servicio' };
-          console.log(`[ensureVickServicio] FINAL GUARD PATH 2: Yard array reference: ${vick.id}`);
-          break;
-        }
+      // If canonical ownerCharacterId exists and is in yard arrays, use it immediately
+      if (ownerCharacterId && yardCandidates.includes(ownerCharacterId)) {
+        vick = { id: ownerCharacterId, name: 'Vick Servicio' };
+        console.log(`[ensureVickServicio] FINAL GUARD PATH 2: Canonical Vick from yard arrays: ${vick.id}`);
+      }
+      // Else if exactly one candidate in yard arrays, use it
+      else if (yardCandidates.length === 1) {
+        vick = { id: yardCandidates[0], name: 'Vick Servicio' };
+        console.log(`[ensureVickServicio] FINAL GUARD PATH 2: Single yard candidate: ${vick.id}`);
+      }
+      // Else if multiple candidates in yard arrays, state is unsafe — block creation
+      else if (yardCandidates.length > 1) {
+        console.error(`[ensureVickServicio] CREATION BLOCKED: Recovery Yard has ${yardCandidates.length} conflicting character references. Duplicate cleanup required.`);
+        return Response.json({
+          success: false,
+          error: `Duplicate Vick candidates detected in Recovery Yard (${yardCandidates.length} IDs). Cleanup required before new creation.`,
+          ownerEmail,
+          recoveryYard: { id: recoveryYard.id, name: recoveryYard.name },
+          duplicateCandidates: yardCandidates,
+        }, { status: 409 });
       }
     }
 
