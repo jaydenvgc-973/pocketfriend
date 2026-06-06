@@ -81,6 +81,7 @@ import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
 import { buildWorldPhonePayload } from "@/hooks/useWorldPhoneIntentSend";
 import { enforceFamilyTruth } from "@/lib/familyTruthGuard";
+import { hasVickDiagnosticIntent, isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -959,15 +960,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         worldStateReconciliation.elapsed_time_minutes = elapsedMinutes;
       }
 
-      // ── CANONICAL CONTEXT — single identity source of truth ───────────────
-      // Fetch canonical prompt from backend service. This owns: identity, hard facts,
-      // memory, Life Journal, relationships, soap opera threads.
-      // buildSystemPrompt then wraps it with frontend-only layers (image rules, narration, etc.)
-      //
-      // CACHING RULE: Only identity/memory/relationship data is cached.
-      // Co-presence is LIVE STATE — it must NOT be cached. It is injected separately below
-      // via the frontend authoritative co-presence override block, which reads fresh
-      // UserSettings on every message send.
+      // ── CANONICAL CONTEXT — identity/memory/relationship source of truth (co-presence is LIVE, never cached) ──
       let canonicalPrompt = null;
       let canonicalContextLoaded = false;
       let canonicalMemoryCount = 0;
@@ -1212,10 +1205,20 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";
 
       // ── VICK SERVICIO: detect diagnostic intent and fetch real results ────────
-      const isVickServicio = character.character_type === 'npc_world_service' || (character.name || '').toLowerCase().includes('vick servicio');
-      if (isVickServicio && /\b(diagnos|audit|check my account|what.?s wrong|run a check|run it|inspect|troubleshoot|account status|any issues|any problems|everything ok)\b/i.test(text)) {
-        const dr = await base44.functions.invoke('vickRunDiagnostic', { diagnosticType: 'account_overview' }).catch(() => null);
-        if (dr?.data?.success) { vickDiagnosticResults = dr.data; console.log(`[Vick] Diagnostic ran: verdict=${dr.data.verdict}`); }
+      // FIX: old regex \bdiagnos\b never matched "diagnostic" (no word boundary after s in diagnostic).
+      // hasVickDiagnosticIntent uses \bdiagnos\w* which correctly matches "diagnose/diagnostic/diagnostics".
+      if (isVickServicioCharacter(character) && hasVickDiagnosticIntent(text)) {
+        console.log(`[Vick] Diagnostic intent — invoking vickRunDiagnostic`);
+        const dr = await base44.functions.invoke('vickRunDiagnostic', { diagnosticType: 'account_overview' }).catch(err => {
+          console.error(`[Vick] vickRunDiagnostic failed: ${err?.message}`);
+          return null;
+        });
+        if (dr?.data?.success) {
+          vickDiagnosticResults = dr.data;
+          console.log(`[Vick] Diagnostic complete: verdict=${dr.data.verdict} | errors=${dr.data.errorCount} | warnings=${dr.data.warningCount}`);
+        } else {
+          console.error(`[Vick] Diagnostic returned no success:`, dr?.data);
+        }
       }
 
       // Build received image context (for gallery sends, forwards, user-uploaded images)
