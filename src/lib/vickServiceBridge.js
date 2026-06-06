@@ -75,16 +75,55 @@ function wantsDiagnosticRun(text) {
 }
 
 // ── Detect character-list questions ──────────────────────────────────────────
-// Any question about who exists, character names, character counts, character types,
-// character IDs, or character groupings must go through the live Settings pipeline.
 function wantsCharacterList(text) {
   return /list.*characters?|show.*characters?|who.*characters?|characters?.*on.*account|my characters?|which characters?|all characters?|character.*count|how many characters?|character.*names?|show me.*people|list.*people|active.*characters?|npc.*family|npc.*fictitious|character.*type|character.*id|which.*character.*belong|who is.*id|what.*id.*belong|id.*name|name.*id|character.*lookup|acquaintance|relationship.*candidates?|people.*world|who.*exist|characters?.*exist/i.test(text);
+}
+
+// ── Detect reverse/indirect investigation queries ────────────────────────────
+// When user asks where someone goes to school, works, lives, or is enrolled —
+// AND the question cannot be answered from the Character record alone.
+function wantsReverseLocationLookup(text) {
+  return /school|enrolled|enrollment|class|campus|college|university|workplace|works? (at|for)|job|roster|who.*attend|attend.*who|religion|church|congregation|worship|member.*of|lives? (at|with|in)|resident|assigned.*to/i.test(text);
+}
+
+// ── Detect location roster queries ───────────────────────────────────────────
+function wantsLocationRoster(text) {
+  return /who.*at.*location|location.*roster|workers? at|residents? at|students? at|members? at|enrolled at|who works? (at|in)|who lives? (at|in)|who (goes|attend)/i.test(text);
+}
+
+// ── Detect conversation/anchor queries ───────────────────────────────────────
+function wantsAnchorScan(text) {
+  return /conversation.*with|chat.*with|messages.*from|anchored.*to|reference.*id|still.*point|routing.*to|thread.*with/i.test(text);
+}
+
+// ── Extract a character ID from text if the user pastes one ─────────────────
+function extractCharacterId(text) {
+  const match = text.match(/\b([a-f0-9]{24})\b/);
+  return match ? match[1] : null;
+}
+
+// ── Run reverse location lookup via vickRunDiagnostic ───────────────────────
+async function runReverseLocationLookup(characterId, ownerEmail) {
+  const res = await base44.functions.invoke('vickRunDiagnostic', {
+    diagnosticType: 'reverse_location_lookup',
+    characterId,
+  });
+  return res?.data;
+}
+
+// ── Run conversation anchor scan via vickRunDiagnostic ───────────────────────
+async function runConversationAnchorScan(characterId) {
+  const res = await base44.functions.invoke('vickRunDiagnostic', {
+    diagnosticType: 'conversation_anchor',
+    characterId,
+  });
+  return res?.data;
 }
 
 // ── The full architecture-map prompt ─────────────────────────────────────────
 // This is the SAME architecture knowledge as SupportAssistant's LLM prompt.
 // Vick delivers the answer in plain human language — not robotic output.
-function buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, text, isPrivate }) {
+function buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, investigationContext, text, isPrivate }) {
 
   const speechRule = isPrivate
     ? `You are speaking privately with the user. Speak directly about the app, its records, schemas, fields, functions, and systems by their real names. You are the Account Help & Repair specialist.`
@@ -189,11 +228,42 @@ ENTITIES (source-of-truth map):
 - IssueReport → support tickets
 
 CAPABILITY BOUNDARIES — be honest:
-CAN VERIFY: character records, ownership states, presence fields, type values, diagnostic results, financial records, location records
+CAN VERIFY: character records, ownership states, presence fields, type values, diagnostic results, financial records, location records, location rosters (enrolled_students, worker_character_ids, resident_character_ids, religious_members), conversation anchors, CharacterMemory records, screenshots/images sent by the user
 CANNOT VERIFY: source code logic, runtime logs, architectural pipeline gaps (require code changes), another user's data
 
 If you cannot verify → say it: "I'd need to run the diagnostic to confirm that."
 If it's a code-level question → say it: "That's an architectural question — I can't answer it from account data alone."
+
+INVESTIGATION RULES — MULTI-PATH (permanent, non-negotiable):
+When a direct lookup returns nothing, you must NOT stop and claim the answer is "not found."
+You must check alternate paths before concluding.
+
+Example: user asks what school a character attends.
+Step 1: Check Character.education_location_id and education_location_name.
+Step 2: If missing, check REVERSE LOCATION LOOKUP data below (enrolled_students rosters across all LocationReferences).
+Step 3: If still not found, check CharacterMemory records for location-type memories.
+Step 4: Only after all paths are exhausted, say: "I checked the character record, enrolled_students rosters across all locations, and memory records. I do not have proof of a school enrollment."
+
+SCREENSHOT / IMAGE RULES:
+If the user sends a screenshot or image, you must:
+1. Identify which page or section of the app is shown (Home, Travel, Locations, Settings, Chat, Moments, Dashboard, etc.)
+2. Read the visible character names, location names, roster entries, or data shown.
+3. Use what is visible as evidence — treat it as a live report from the user.
+4. Cross-reference it with your diagnostic data when possible.
+5. Never ignore visible evidence in an image. Never say "I can't see the screenshot."
+6. If the image shows a character in a roster, that is proof of enrollment/assignment.
+7. If the image shows a location name, use it — do not invent a different name.
+
+ACCOUNT SCOPE — ABSOLUTE:
+Every finding must be qualified by account.
+murqart@gmail.com data must never be mixed with adobevgc@gmail.com data.
+If a record's owner_email does not match ${ownerEmail}, flag it as cross-account and do not use it.
+
+EVIDENCE LABELING — required in all responses:
+- Verified fact: supported by direct data (roster, record, query result, screenshot)
+- Likely finding: supported by indirect evidence (reverse lookup, memory, related record)
+- Unresolved gap: searched all available paths, no result found
+- Unsupported claim: mentioned but not checked — clearly marked as such
 
 ════════════════════════════════════════
 CHARACTER LOOKUP — ABSOLUTE RULES (permanent, non-negotiable)
@@ -225,6 +295,7 @@ Settings page character groupings (exact hierarchy):
 
 ${characterListContext ? `════════════════════════════════════════\nLIVE CHARACTER LIST (Settings pipeline — authoritative):\n${characterListContext}\n════════════════════════════════════════\n` : ''}
 ${diagContext ? `════════════════════════════════════════\nDIAGNOSTIC DATA:\n${diagContext}\n════════════════════════════════════════\n` : ''}
+${investigationContext ? `════════════════════════════════════════\nINVESTIGATION DATA (reverse lookups, roster scans, anchor checks):\n${investigationContext}\n════════════════════════════════════════\n` : ''}
 
 Recent conversation:
 ${recentHistory || '(start of session)'}
@@ -245,9 +316,10 @@ Respond as Vick. Direct, clear, honest. Use real data when available. Admit what
  * @param {string} opts.ownerEmail - The authenticated user's email
  * @param {object} opts.character - The character record (must be Vick)
  * @param {boolean} [opts.isPrivate=true] - Whether Vick is alone with user (vs other characters present)
+ * @param {string[]} [opts.imageUrls=[]] - Any image/screenshot URLs sent with this message
  * @returns {Promise<{ handled: boolean, responseText?: string }>}
  */
-export async function handleVickMessage({ text, conversationId, ownerEmail, character, isPrivate = true }) {
+export async function handleVickMessage({ text, conversationId, ownerEmail, character, isPrivate = true, imageUrls = [] }) {
   if (!isVickServicioCharacter(character)) return { handled: false };
   if (!ownerEmail) return { handled: false };
 
@@ -275,50 +347,80 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
       diagContext = `Diagnostic unavailable right now: ${err.message}`;
     }
   } else if (ctx.lastDiagData) {
-    // Use cached diagnostic from this conversation for follow-up questions
     diagContext = buildDiagContext(ctx.lastDiagData, ownerEmail, false);
     console.log(`[VICK_BRIDGE] Using cached diagnostic data from this conversation`);
   }
 
-  // ── Live character list — fetched whenever user asks about characters ────────
-  // Uses the Settings-pipeline resolver (same source as the Settings page).
-  // Cached per conversation so follow-up character questions don't re-fetch.
-  // CRITICAL: never uses random name pools — always fetches from live account records.
+  // ── Live character list ────────────────────────────────────────────────────
   let characterListContext = '';
   const needsCharacterList = wantsCharacterList(text) || wantsDiagnosticRun(text);
 
   if (needsCharacterList) {
     if (ctx.lastCharacterList && !wantsCharacterList(text)) {
-      // Use cached list for follow-up general diagnostics
       characterListContext = ctx.lastCharacterList;
-      console.log(`[VICK_BRIDGE] Using cached character list`);
     } else {
       try {
-        console.log(`[VICK_BRIDGE] Fetching live character list via Settings pipeline`);
         const charResult = await fetchLiveCharacterList();
         characterListContext = charResult.characterSummaryText;
         ctx.lastCharacterList = characterListContext;
         console.log(`[VICK_BRIDGE] Character list fetched: ${charResult.total} characters`);
       } catch (err) {
-        console.warn(`[VICK_BRIDGE] Character list fetch failed (non-blocking): ${err.message}`);
+        console.warn(`[VICK_BRIDGE] Character list fetch failed: ${err.message}`);
         characterListContext = `Character list temporarily unavailable: ${err.message}`;
       }
     }
   } else if (ctx.lastCharacterList) {
-    // Always inject the character list if we have it — prevents stale name guessing
     characterListContext = ctx.lastCharacterList;
+  }
+
+  // ── Multi-path investigation: reverse location lookup ─────────────────────
+  // Triggered when user asks about school/work/residence/enrollment and we
+  // cannot answer from the character record alone. Check location rosters first.
+  let investigationContext = '';
+  const mentionedId = extractCharacterId(text);
+
+  if (wantsReverseLocationLookup(text) && mentionedId) {
+    try {
+      console.log(`[VICK_BRIDGE] Running reverse location lookup for ID ${mentionedId}`);
+      const revData = await runReverseLocationLookup(mentionedId, ownerEmail);
+      if (revData?.findings?.length > 0) {
+        investigationContext += `\n\nREVERSE LOCATION LOOKUP for ${mentionedId}:\n${revData.findings.join('\n')}`;
+        console.log(`[VICK_BRIDGE] Reverse lookup found: ${revData.schoolMatches?.length || 0} schools, ${revData.workMatches?.length || 0} workplaces`);
+      }
+    } catch (err) {
+      console.warn(`[VICK_BRIDGE] Reverse lookup failed (non-blocking): ${err.message}`);
+    }
+  }
+
+  // ── Multi-path investigation: conversation/anchor scan ────────────────────
+  if (wantsAnchorScan(text) && mentionedId) {
+    try {
+      console.log(`[VICK_BRIDGE] Running conversation anchor scan for ID ${mentionedId}`);
+      const anchorData = await runConversationAnchorScan(mentionedId);
+      if (anchorData?.findings?.length > 0) {
+        investigationContext += `\n\nCONVERSATION ANCHOR SCAN for ${mentionedId}:\n${anchorData.findings.join('\n')}`;
+      }
+    } catch (err) {
+      console.warn(`[VICK_BRIDGE] Anchor scan failed (non-blocking): ${err.message}`);
+    }
   }
 
   // Add user message to persistent history
   ctx.history.push({ role: 'user', content: text });
 
-  const prompt = buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, text, isPrivate });
+  const prompt = buildVickIntelligencePrompt({
+    ownerEmail, recentHistory, diagContext, characterListContext,
+    investigationContext, text, isPrivate,
+  });
 
   let responseText = '';
   try {
+    // If the user sent a screenshot/image, pass it to the LLM for visual inspection
+    const hasImages = Array.isArray(imageUrls) && imageUrls.length > 0;
     const raw = await base44.integrations.Core.InvokeLLM({
       prompt,
       model: 'gemini_3_flash',
+      ...(hasImages ? { file_urls: imageUrls } : {}),
     });
     responseText = (typeof raw === 'string' ? raw : '').trim();
     console.log(`[VICK_BRIDGE] Response received. Length: ${responseText.length}. Preview: "${responseText.substring(0, 120)}"`);
@@ -331,7 +433,6 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
     responseText = "I'm not getting a response from the diagnostic system right now. Try again in a moment.";
   }
 
-  // Store in persistent history for follow-up questions
   ctx.history.push({ role: 'ai', content: responseText });
 
   return { handled: true, responseText };

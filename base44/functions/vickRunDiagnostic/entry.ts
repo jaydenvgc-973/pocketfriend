@@ -280,6 +280,119 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── REVERSE LOCATION LOOKUP (find character via roster/enrollment when direct lookup fails) ──
+    // Used when: user says "where does X go to school / work?" and character record lacks the field.
+    // Instead of stopping, we search LocationReference rosters for the character's ID or name.
+    if (diagnosticType === 'reverse_location_lookup' && characterId) {
+      try {
+        ran.push('reverse_location_lookup');
+
+        // Fetch all location records for this account
+        const allLocs = await base44.asServiceRole.entities.LocationReference.filter(
+          { owner_email: ownerEmail }, '-created_date', 200
+        ).catch(() => []);
+
+        const schoolMatches = [];
+        const workMatches = [];
+        const residenceMatches = [];
+        const membershipMatches = [];
+
+        for (const loc of allLocs) {
+          const workerIds = loc.worker_character_ids || [];
+          const residentIds = loc.resident_character_ids || [];
+          const enrolled = (loc.enrolled_students || []).map(s => s.character_id);
+          const members = (loc.religious_members || []).map(m => m.character_id);
+
+          const isWorker   = workerIds.includes(characterId);
+          const isResident = residentIds.includes(characterId);
+          const isStudent  = enrolled.includes(characterId);
+          const isMember   = members.includes(characterId);
+
+          if (isStudent)  schoolMatches.push({ id: loc.id, name: loc.name, category: loc.category, school_type: loc.school_type });
+          if (isWorker && (loc.category === 'workplace' || loc.category === 'business')) workMatches.push({ id: loc.id, name: loc.name, category: loc.category });
+          if (isResident) residenceMatches.push({ id: loc.id, name: loc.name, category: loc.category });
+          if (isMember)   membershipMatches.push({ id: loc.id, name: loc.name });
+        }
+
+        findings.push(`Reverse location lookup for character ${characterId}:`);
+        if (schoolMatches.length > 0)     findings.push(`  Schools (via enrolled_students roster): ${schoolMatches.map(l => l.name).join(', ')}`);
+        else                              findings.push(`  Schools: not found in any enrolled_students roster`);
+        if (workMatches.length > 0)       findings.push(`  Workplaces (via worker_character_ids): ${workMatches.map(l => l.name).join(', ')}`);
+        else                              findings.push(`  Workplaces: not found in any worker_character_ids roster`);
+        if (residenceMatches.length > 0)  findings.push(`  Residences (via resident_character_ids): ${residenceMatches.map(l => l.name).join(', ')}`);
+        else                              findings.push(`  Residences: not found in any resident_character_ids roster`);
+        if (membershipMatches.length > 0) findings.push(`  Memberships (via religious_members): ${membershipMatches.map(l => l.name).join(', ')}`);
+
+        // Also check CharacterMemory for location references
+        const locationMemories = await base44.asServiceRole.entities.CharacterMemory.filter(
+          { character_id: characterId, memory_type: 'location' }, '-created_date', 20
+        ).catch(() => []);
+        if (locationMemories.length > 0) {
+          findings.push(`  Location memories: ${locationMemories.map(m => m.memory_summary || m.memory_text?.slice(0, 60)).join(' | ')}`);
+        }
+
+        return Response.json({
+          success: true, ownerEmail, diagnosticType, verdict: 'clean',
+          functionsRan: ran.length, errorCount: 0, warningCount: 0,
+          findings, warnings, errors, functionsExecuted: ran,
+          schoolMatches, workMatches, residenceMatches, membershipMatches, locationMemories,
+          plainSummary: findings.join('\n'),
+          characterList: null, characterSummaryText: '',
+        });
+      } catch (e) {
+        errors.push(`Reverse location lookup failed: ${e.message}`);
+      }
+    }
+
+    // ── LOCATION ROSTER SCAN (full detail on a specific location) ──────────────
+    // Used when user shares a screenshot or asks about who is at/enrolled in a location.
+    if (diagnosticType === 'location_roster' && characterId) {
+      // characterId here is used as locationId for this diagnostic type
+      try {
+        ran.push('location_roster_scan');
+        const loc = await base44.asServiceRole.entities.LocationReference.filter(
+          { id: characterId }, '-created_date', 1
+        ).catch(() => []);
+        const l = loc[0];
+        if (!l) {
+          errors.push(`Location ${characterId} not found`);
+        } else {
+          findings.push(`Location: ${l.name} (${l.category})`);
+          findings.push(`Owner email: ${l.owner_email}`);
+          findings.push(`Workers (${(l.worker_character_ids || []).length}): ${Object.entries(l.worker_job_titles || {}).map(([id, title]) => `${title} (${id})`).join(', ') || 'none'}`);
+          findings.push(`Residents (${(l.resident_character_ids || []).length}): ${(l.resident_character_names || []).join(', ') || 'none'}`);
+          findings.push(`Enrolled students (${(l.enrolled_students || []).length}): ${(l.enrolled_students || []).map(s => `${s.character_name} (${s.status})`).join(', ') || 'none'}`);
+          findings.push(`Religious members (${(l.religious_members || []).length}): ${(l.religious_members || []).map(m => m.character_name).join(', ') || 'none'}`);
+          findings.push(`Zones (${(l.zones || []).length}): ${(l.zones || []).map(z => z.zone_name).join(', ') || 'none'}`);
+        }
+      } catch (e) {
+        errors.push(`Location roster scan failed: ${e.message}`);
+      }
+    }
+
+    // ── CONVERSATION ANCHOR SCAN (what conversations reference a character/ID) ──
+    if (diagnosticType === 'conversation_anchor' && characterId) {
+      try {
+        ran.push('conversation_anchor_scan');
+        const convos = await base44.asServiceRole.entities.Conversation.filter(
+          { owner_email: ownerEmail }, '-updated_date', 100
+        ).catch(() => []);
+
+        const anchored = convos.filter(c => (c.character_ids || []).includes(characterId));
+        findings.push(`Conversations anchoring to ${characterId}: ${anchored.length}`);
+        anchored.forEach(c => {
+          findings.push(`  • ${c.title || 'Untitled'} (id: ${c.id}, last: ${c.last_message_date ? new Date(c.last_message_date).toLocaleString('en-US', { timeZone: 'America/New_York' }) : 'never'} Eastern)`);
+        });
+
+        const memories = await base44.asServiceRole.entities.CharacterMemory.filter(
+          { character_id: characterId }, '-created_date', 5
+        ).catch(() => []);
+        findings.push(`CharacterMemory records anchoring to ${characterId}: ${memories.length}`);
+      } catch (e) {
+        errors.push(`Conversation anchor scan failed: ${e.message}`);
+      }
+    }
+
     // ── FINANCIAL AUDIT ────────────────────────────────────────────────────────
     if (diagnosticType === 'finance' || diagnosticType === 'account_overview') {
       try {

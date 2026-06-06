@@ -40,8 +40,9 @@ export async function executeVickDiagnosticFastPath({
   callLLMWithRetry, parseCharacterResponse, filterDashes, stripCharacterNamePrefix,
   base44: _base44, setMessages, setIsTyping, releaseFgTask, isMountedRef,
   ownerEmail, isPrivate = true,
+  imageUrls = [],
 }) {
-  console.log(`[VICK_BRIDGE] executeVickDiagnosticFastPath START char=${character.name} private=${isPrivate}`);
+  console.log(`[VICK_BRIDGE] executeVickDiagnosticFastPath START char=${character.name} private=${isPrivate} images=${imageUrls.length}`);
 
   const result = await handleVickMessage({
     text,
@@ -49,6 +50,7 @@ export async function executeVickDiagnosticFastPath({
     ownerEmail: ownerEmail || userMsg?.owner_email,
     character,
     isPrivate,
+    imageUrls,
   });
 
   if (!result.handled || !result.responseText) {
