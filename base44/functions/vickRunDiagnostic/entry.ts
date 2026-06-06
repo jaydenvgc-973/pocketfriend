@@ -26,49 +26,146 @@ Deno.serve(async (req) => {
     const errors = [];
     const ran = [];
 
-    // ── CHARACTER AUDIT ────────────────────────────────────────────────────────
-    // Character RLS blocks service-role reads — must use user-scoped read
-    if (diagnosticType === 'account_overview' || diagnosticType === 'characters' || diagnosticType === 'duplicates') {
+    // ── SETTINGS-PIPELINE CHARACTER RESOLUTION ─────────────────────────────────
+    // Mirrors the exact two-source merge used by useSettingsCharacters + characterEditableListResolver.
+    // Source 1: RLS characters (owner_email scoped — catches active_created + family NPCs with owner_email set)
+    // Source 2: fetchNPCsForUser backend (catches service-created NPC fictitious records not visible via user RLS)
+    // Merge → deduplicate → resolve type → group by type hierarchy → sort alpha within group.
+    // This is the canonical Settings page character list. Vick MUST use this for all name/type/ID lookups.
+
+    let settingsCharacterList = null; // populated below, available to all diagnostic branches
+
+    const resolveDisplayNameLocal = (c) =>
+      c.display_name || c.primary_name || c.full_name || c.name || 'Unknown';
+
+    const resolveCharacterTypeLocal = (c) => {
+      const validTypes = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'];
+      if (c.character_type && validTypes.includes(c.character_type)) return c.character_type;
+      if (c.is_world_service) return 'npc_world_service';
+      if (c.is_family_member || c.relationship_type === 'family') return 'npc_family_member';
+      const hasProfile = c.backstory || c.personality_traits || c.emotional_state;
+      const hasSchedule = c.wake_up_time || c.sleep_start_time;
+      const hasNeeds = c.hunger_value !== undefined;
+      if (hasProfile && (hasSchedule || hasNeeds)) return 'active_created_character';
+      if ((c.fictional_relationships || []).length > 0 && !c.is_family_member) return 'npc_fictitious';
+      return 'active_created_character';
+    };
+
+    // Always resolve the full Settings character list — needed by all diagnostic types
+    try {
+      // Source 1: RLS-scoped characters (owner_email filter — same as useSettingsCharacters)
+      const rlsChars = await base44.entities.Character.filter(
+        { owner_email: ownerEmail },
+        'created_date', // oldest first — foundational characters come first
+        300
+      ).catch(() => []);
+
+      // Source 2: NPC fictitious via service role (catches records not visible via user RLS)
+      let npcFictitious = [];
       try {
-        const allChars = await base44.entities.Character.filter(
-          {},
-          '-created_date',
-          500
-        ).catch(() => []);
+        const npcRes = await base44.asServiceRole.functions.invoke('fetchNPCsForUser', {});
+        npcFictitious = npcRes?.npcs || [];
+      } catch (_) {
+        // Non-fatal — RLS pass is the primary source
+      }
+
+      // Merge + deduplicate (RLS has priority; NPC source fills gaps)
+      const seen = new Set();
+      const merged = [];
+      for (const c of [...rlsChars, ...npcFictitious]) {
+        if (!c.id || seen.has(c.id)) continue;
+        seen.add(c.id);
+        merged.push(c);
+      }
+
+      // Filter out terminal statuses (same as resolveSettingsCharacterLists)
+      const live = merged.filter(c => !['deleted', 'soft_deleted', 'merged'].includes(c.status));
+
+      // Resolve type + display name for each character
+      const resolved = live.map(c => ({
+        id: c.id,
+        name: resolveDisplayNameLocal(c),
+        rawName: c.name,
+        character_type: resolveCharacterTypeLocal(c),
+        status: c.status || 'active',
+        occupation: c.occupation || null,
+        gender: c.gender || null,
+        age: c.age || null,
+      }));
+
+      // Group by type hierarchy (same order as Settings page)
+      const TYPE_ORDER = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'];
+      const groups = {};
+      TYPE_ORDER.forEach(t => { groups[t] = []; });
+      for (const c of resolved) {
+        const t = c.character_type;
+        if (!groups[t]) groups[t] = [];
+        groups[t].push(c);
+      }
+
+      // Alpha sort within each group (same as resolveSettingsCharacterLists)
+      TYPE_ORDER.forEach(t => {
+        groups[t].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      });
+
+      settingsCharacterList = { groups, total: resolved.length, rlsCount: rlsChars.length, npcCount: npcFictitious.length };
+
+    } catch (e) {
+      errors.push(`Settings character list resolution failed: ${e.message}`);
+    }
+
+    // ── CHARACTER AUDIT ────────────────────────────────────────────────────────
+    if (diagnosticType === 'account_overview' || diagnosticType === 'characters' || diagnosticType === 'duplicates' || diagnosticType === 'list_characters') {
+      try {
         ran.push('character_scan');
 
-        const active = allChars.filter(c => c.status === 'active');
-        const softDeleted = allChars.filter(c => c.status === 'soft_deleted');
-        const merged = allChars.filter(c => c.status === 'merged');
-        const missingType = active.filter(c => !c.character_type);
-        const missingHome = active.filter(c =>
-          c.character_type === 'active_created_character' && !c.current_home_location_id
-        );
-
-        findings.push(`Total character records: ${allChars.length} (active: ${active.length}, soft_deleted: ${softDeleted.length}, merged: ${merged.length})`);
-
-        // Duplicate name detection
-        const nameCounts = {};
-        active.forEach(c => {
-          const key = (c.name || '').toLowerCase().trim();
-          if (!key) return;
-          nameCounts[key] = (nameCounts[key] || []);
-          nameCounts[key].push(c.id);
-        });
-        const dupGroups = Object.entries(nameCounts).filter(([, ids]) => ids.length > 1);
-        if (dupGroups.length > 0) {
-          dupGroups.forEach(([name, ids]) => {
-            errors.push(`Duplicate active character name "${name}": ${ids.length} records (${ids.join(', ')})`);
-          });
+        if (!settingsCharacterList) {
+          errors.push('Character list could not be resolved — settings pipeline returned no data.');
         } else {
-          findings.push('No duplicate character names detected.');
-        }
+          const { groups, total, rlsCount, npcCount } = settingsCharacterList;
 
-        if (missingType.length > 0) {
-          warnings.push(`${missingType.length} active character(s) missing character_type field — may affect routing`);
-        }
-        if (missingHome.length > 0) {
-          warnings.push(`${missingHome.length} active_created_character(s) missing home location — housing unresolved`);
+          const activeCreated = groups['active_created_character'] || [];
+          const npcFict       = groups['npc_fictitious'] || [];
+          const npcFamily     = groups['npc_family_member'] || [];
+          const npcRegular    = groups['npc_regular'] || [];
+          const worldService  = groups['npc_world_service'] || [];
+
+          findings.push(`Total character records (Settings pipeline): ${total} (RLS source: ${rlsCount}, NPC source: ${npcCount})`);
+          findings.push(`Active created characters (${activeCreated.length}): ${activeCreated.map(c => c.name).join(', ') || 'none'}`);
+          if (npcFict.length > 0)    findings.push(`NPC fictitious (${npcFict.length}): ${npcFict.map(c => c.name).join(', ')}`);
+          if (npcFamily.length > 0)  findings.push(`NPC family members (${npcFamily.length}): ${npcFamily.map(c => c.name).join(', ')}`);
+          if (npcRegular.length > 0) findings.push(`NPC regular (${npcRegular.length}): ${npcRegular.map(c => c.name).join(', ')}`);
+          if (worldService.length > 0) findings.push(`World service (${worldService.length}): ${worldService.map(c => c.name).join(', ')}`);
+
+          // Duplicate name detection
+          const allResolved = [...activeCreated, ...npcFict, ...npcFamily, ...npcRegular, ...worldService];
+          const nameCounts = {};
+          allResolved.forEach(c => {
+            const key = (c.name || '').toLowerCase().trim();
+            if (!key) return;
+            nameCounts[key] = (nameCounts[key] || []);
+            nameCounts[key].push(c.id);
+          });
+          const dupGroups = Object.entries(nameCounts).filter(([, ids]) => ids.length > 1);
+          if (dupGroups.length > 0) {
+            dupGroups.forEach(([name, ids]) => {
+              errors.push(`Duplicate character name "${name}": ${ids.length} records`);
+            });
+          } else {
+            findings.push('No duplicate character names detected.');
+          }
+
+          // Build structured character list for Vick's response
+          const structuredList = {
+            active_created_character: activeCreated,
+            npc_fictitious: npcFict,
+            npc_family_member: npcFamily,
+            npc_regular: npcRegular,
+            npc_world_service: worldService,
+          };
+
+          // Attach to response payload (available to caller / Vick agent)
+          Object.assign(findings, { _characterList: structuredList });
         }
       } catch (e) {
         errors.push(`Character scan failed: ${e.message}`);
@@ -235,6 +332,50 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Build structured character list for Vick's response (name → ID and ID → name mapping)
+    let characterList = null;
+    if (settingsCharacterList) {
+      const { groups } = settingsCharacterList;
+      characterList = {
+        active_created_character: (groups['active_created_character'] || []).map(c => ({ id: c.id, name: c.name, character_type: 'active_created_character' })),
+        npc_fictitious:           (groups['npc_fictitious'] || []).map(c => ({ id: c.id, name: c.name, character_type: 'npc_fictitious' })),
+        npc_family_member:        (groups['npc_family_member'] || []).map(c => ({ id: c.id, name: c.name, character_type: 'npc_family_member' })),
+        npc_regular:              (groups['npc_regular'] || []).map(c => ({ id: c.id, name: c.name, character_type: 'npc_regular' })),
+        npc_world_service:        (groups['npc_world_service'] || []).map(c => ({ id: c.id, name: c.name, character_type: 'npc_world_service' })),
+      };
+    }
+
+    // Build plain-language character summary for list_characters diagnostic type
+    let characterSummaryText = '';
+    if ((diagnosticType === 'list_characters' || diagnosticType === 'characters') && characterList) {
+      const lines = [];
+      if (characterList.active_created_character.length > 0) {
+        lines.push(`Active Created Characters (${characterList.active_created_character.length}):`);
+        characterList.active_created_character.forEach(c => lines.push(`  • ${c.name}`));
+      }
+      if (characterList.npc_fictitious.length > 0) {
+        lines.push(`NPC Fictitious (${characterList.npc_fictitious.length}):`);
+        characterList.npc_fictitious.forEach(c => lines.push(`  • ${c.name}`));
+      }
+      if (characterList.npc_family_member.length > 0) {
+        lines.push(`NPC Family Members (${characterList.npc_family_member.length}):`);
+        characterList.npc_family_member.forEach(c => lines.push(`  • ${c.name}`));
+      }
+      if (characterList.npc_regular.length > 0) {
+        lines.push(`NPC Regular (${characterList.npc_regular.length}):`);
+        characterList.npc_regular.forEach(c => lines.push(`  • ${c.name}`));
+      }
+      if (characterList.npc_world_service.length > 0) {
+        lines.push(`World Service (${characterList.npc_world_service.length}):`);
+        characterList.npc_world_service.forEach(c => lines.push(`  • ${c.name}`));
+      }
+      characterSummaryText = lines.join('\n');
+    }
+
+    if (diagnosticType === 'list_characters' && characterSummaryText) {
+      plainSummary = `Here are all characters on this account, organized the same way as the Settings page:\n\n${characterSummaryText}`;
+    }
+
     console.log(`[vickRunDiagnostic] owner=${ownerEmail} | type=${diagnosticType} | ran=${ran.join(',')} | errors=${errorCount} | warnings=${warningCount}`);
 
     return Response.json({
@@ -251,6 +392,8 @@ Deno.serve(async (req) => {
       errors,
       functionsExecuted: ran,
       plainSummary,
+      characterList,          // structured { active_created_character[], npc_fictitious[], npc_family_member[], ... }
+      characterSummaryText,   // plain-text formatted list for Vick to present directly
     });
 
   } catch (error) {
