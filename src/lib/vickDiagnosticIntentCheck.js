@@ -16,6 +16,11 @@
  * guessing on any technical or system question.
  */
 export function hasVickServiceIntent(text) {
+  // Character-list and identity questions must always route through the service bridge
+  // so Vick uses the live Settings-pipeline resolver instead of guessing names.
+  const characterListPattern = /list.*characters?|show.*characters?|who.*characters?|characters?.*on.*account|my characters?|which characters?|all characters?|character.*count|how many characters?|character.*names?|show me.*people|list.*people|active.*characters?|npc.*family|npc.*fictitious|character.*type|character.*id|which.*character.*belong|who is.*id|what.*id.*belong|id.*name|name.*id|character.*lookup|acquaintance|relationship.*candidates?|people.*world|who.*exist|characters?.*exist/i;
+  if (characterListPattern.test(text)) return true;
+
   return /\b(diagnos\w*|audit|check my account|what.?s wrong|run a check|run it|inspect|troubleshoot|account status|any issues|any problems|everything ok|schema|character.?type|character type|owner.?email|ownership|location issue|travel issue|travel broken|not traveling|won.?t travel|not going to work|work schedule|missing character|character missing|duplicate|merge blocked|ghost record|repair|financial|money wrong|balance wrong|memory issue|image wrong|broken|not working|isn.?t working|won.?t work|check my|how does|what is|what are|what field|which entity|which function|what entity|data issue|sync|backfill|fix my|something wrong|what happened|why is|why isn.?t|why won.?t|tell me about|explain|how do you|can you check|can you verify|record|field|function|entity|enum|type value|type field|character_type|owner_email|resolved_|presence_status|location_id|is_jailed|house_arrest|stay_lock|autonomous_travel|is_world_service|npc_|active_created|npc_family|npc_fictitious|npc_regular|npc_world_service)\b/i.test(text);
 }
 

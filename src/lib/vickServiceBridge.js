@@ -42,6 +42,21 @@ async function runFullDiagnostic() {
   return diagData;
 }
 
+// ── Live Settings-pipeline character list (same source as Settings page) ──────
+// Returns the resolved character list exactly as the Settings page displays it.
+// Uses vickRunDiagnostic with diagnosticType='list_characters' which runs the
+// dual-source merge: RLS owner_email + fetchNPCsForUser → dedup → type resolve → group → alpha sort.
+async function fetchLiveCharacterList() {
+  const res = await base44.functions.invoke('vickRunDiagnostic', { diagnosticType: 'list_characters' });
+  const data = res?.data;
+  if (!data?.characterList) throw new Error('Character list not returned from Settings pipeline');
+  return {
+    characterList: data.characterList,     // { active_created_character[], npc_fictitious[], npc_family_member[], ... }
+    characterSummaryText: data.characterSummaryText || '', // plain-text formatted list
+    total: Object.values(data.characterList).reduce((sum, arr) => sum + arr.length, 0),
+  };
+}
+
 // ── Build diagnostic context string from live or cached data ─────────────────
 function buildDiagContext(diagData, ownerEmail, isLive) {
   if (!diagData) return '';
@@ -59,10 +74,17 @@ function wantsDiagnosticRun(text) {
   return /run diagnostic|check.*account|full check|what.*wrong|diagnose|scan|audit|check everything|something.*broken|broken|not working|isn't working|won't work|check my|any issues|any problems|everything ok|account status|account health/i.test(text);
 }
 
+// ── Detect character-list questions ──────────────────────────────────────────
+// Any question about who exists, character names, character counts, character types,
+// character IDs, or character groupings must go through the live Settings pipeline.
+function wantsCharacterList(text) {
+  return /list.*characters?|show.*characters?|who.*characters?|characters?.*on.*account|my characters?|which characters?|all characters?|character.*count|how many characters?|character.*names?|show me.*people|list.*people|active.*characters?|npc.*family|npc.*fictitious|character.*type|character.*id|which.*character.*belong|who is.*id|what.*id.*belong|id.*name|name.*id|character.*lookup|acquaintance|relationship.*candidates?|people.*world|who.*exist|characters?.*exist/i.test(text);
+}
+
 // ── The full architecture-map prompt ─────────────────────────────────────────
 // This is the SAME architecture knowledge as SupportAssistant's LLM prompt.
 // Vick delivers the answer in plain human language — not robotic output.
-function buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, text, isPrivate }) {
+function buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, text, isPrivate }) {
 
   const speechRule = isPrivate
     ? `You are speaking privately with the user. Speak directly about the app, its records, schemas, fields, functions, and systems by their real names. You are the Account Help & Repair specialist.`
@@ -173,6 +195,35 @@ CANNOT VERIFY: source code logic, runtime logs, architectural pipeline gaps (req
 If you cannot verify → say it: "I'd need to run the diagnostic to confirm that."
 If it's a code-level question → say it: "That's an architectural question — I can't answer it from account data alone."
 
+════════════════════════════════════════
+CHARACTER LOOKUP — ABSOLUTE RULES (permanent, non-negotiable)
+════════════════════════════════════════
+When answering ANY question about existing characters — names, IDs, types, counts, lists, relationships, acquaintances, or who exists on this account — you MUST use ONLY the data in the CHARACTER LIST section below (if present).
+
+FORBIDDEN sources for character identity:
+- Random character-name generation pools
+- Seed or default name lists
+- Placeholder names
+- Example names
+- Names you invented or inferred
+- Partial database IDs as user-facing identifiers
+
+REQUIRED format when describing characters to the user:
+- ALWAYS lead with the display name: "Khalil Carter — active created character"
+- IDs are secondary and only shown when the user specifically asks: "Khalil Carter — active_created_character — ID: abc123"
+- NEVER say "Character 9f8a…" or "ID 83b…" or "unknown character"
+- A character count without names is NOT a successful lookup — you must list the actual names
+
+If the character list below is empty or missing, say: "I need to pull a live character list — one moment." Do NOT guess or invent names.
+
+Settings page character groupings (exact hierarchy):
+1. active_created_character — Full simulation: Home, Chat, Travel, Scene
+2. npc_fictitious — World Contacts, not on Home
+3. npc_family_member — World Contacts, not on Home
+4. npc_regular — Background world presence
+5. npc_world_service — Permanent service characters (like you), protected
+
+${characterListContext ? `════════════════════════════════════════\nLIVE CHARACTER LIST (Settings pipeline — authoritative):\n${characterListContext}\n════════════════════════════════════════\n` : ''}
 ${diagContext ? `════════════════════════════════════════\nDIAGNOSTIC DATA:\n${diagContext}\n════════════════════════════════════════\n` : ''}
 
 Recent conversation:
@@ -229,10 +280,39 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
     console.log(`[VICK_BRIDGE] Using cached diagnostic data from this conversation`);
   }
 
+  // ── Live character list — fetched whenever user asks about characters ────────
+  // Uses the Settings-pipeline resolver (same source as the Settings page).
+  // Cached per conversation so follow-up character questions don't re-fetch.
+  // CRITICAL: never uses random name pools — always fetches from live account records.
+  let characterListContext = '';
+  const needsCharacterList = wantsCharacterList(text) || wantsDiagnosticRun(text);
+
+  if (needsCharacterList) {
+    if (ctx.lastCharacterList && !wantsCharacterList(text)) {
+      // Use cached list for follow-up general diagnostics
+      characterListContext = ctx.lastCharacterList;
+      console.log(`[VICK_BRIDGE] Using cached character list`);
+    } else {
+      try {
+        console.log(`[VICK_BRIDGE] Fetching live character list via Settings pipeline`);
+        const charResult = await fetchLiveCharacterList();
+        characterListContext = charResult.characterSummaryText;
+        ctx.lastCharacterList = characterListContext;
+        console.log(`[VICK_BRIDGE] Character list fetched: ${charResult.total} characters`);
+      } catch (err) {
+        console.warn(`[VICK_BRIDGE] Character list fetch failed (non-blocking): ${err.message}`);
+        characterListContext = `Character list temporarily unavailable: ${err.message}`;
+      }
+    }
+  } else if (ctx.lastCharacterList) {
+    // Always inject the character list if we have it — prevents stale name guessing
+    characterListContext = ctx.lastCharacterList;
+  }
+
   // Add user message to persistent history
   ctx.history.push({ role: 'user', content: text });
 
-  const prompt = buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, text, isPrivate });
+  const prompt = buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, text, isPrivate });
 
   let responseText = '';
   try {
