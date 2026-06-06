@@ -43,8 +43,14 @@ Deno.serve(async (req) => {
       if (c.character_type === 'active_created_character') return false;
       // Strict owner-email guard — prevents cross-account Vick bleed
       if (c.owner_email && c.owner_email !== ownerEmail) return false;
-      // npc_world_service (e.g. Vick Servicio) — included only when owner matches
+      // npc_world_service — included only when owner matches
       if (c.character_type === 'npc_world_service') return true;
+      // DUPLICATE VICK GUARD: if a record is named Vick Servicio but does NOT have
+      // character_type='npc_world_service', it is a stale/corrupt duplicate from a previous
+      // creation attempt that failed to set the type field. Exclude it — the canonical Vick
+      // already passed through the npc_world_service path above.
+      const nameKey = (c.name || '').toLowerCase().trim();
+      if (nameKey === 'vick servicio' || nameKey === 'victor servicio') return false;
       // INCLUDE records with missing/null character_type (legacy compatibility)
       return !c.character_type || ['npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type);
     });
