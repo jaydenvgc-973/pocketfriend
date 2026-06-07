@@ -23,7 +23,7 @@ export default function VickServiceCard({ ownerEmail }) {
   const [conversationId, setConversationId] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [latestMessage, setLatestMessage] = useState(null);
-  const [status, setStatus] = useState("available");
+  const [messageStatus, setMessageStatus] = useState("available");
   const [investigations, setInvestigations] = useState([]);
   const [showQueue, setShowQueue] = useState(false);
 
@@ -52,13 +52,9 @@ export default function VickServiceCard({ ownerEmail }) {
       20
     ).then(invs => {
       setInvestigations(invs);
-      // Determine card status from investigation states
-      const hasCritical = invs.some(i => i.priority === "critical" && i.status === "findings_ready" && !i.findings_read);
-      const hasReady = invs.some(i => i.status === "findings_ready" && !i.findings_read);
-      const hasActive = invs.some(i => ["investigating", "monitoring", "queued"].includes(i.status));
-      if (hasCritical) setStatus("critical_alert");
-      else if (hasReady) setStatus("findings_ready");
-      else if (hasActive) setStatus("investigating");
+      // Auto-expand queue if there are unread findings or active investigations
+      const hasUnreadFindings = invs.some(i => i.status === "findings_ready" && !i.findings_read);
+      if (hasUnreadFindings) setShowQueue(true);
     }).catch(() => {});
   }, [ownerEmail]);
 
@@ -98,14 +94,12 @@ export default function VickServiceCard({ ownerEmail }) {
         if (vickMsgs.length > 0) {
           setLatestMessage(vickMsgs[0]);
           const content = vickMsgs[0].content?.toLowerCase() || "";
-          if (!["critical_alert", "findings_ready", "investigating"].includes(status)) {
-            if (content.includes("critical") || content.includes("corruption") || content.includes("data loss")) {
-              setStatus("critical_alert");
-            } else if (content.includes("complete") || content.includes("findings") || content.includes("results")) {
-              setStatus("findings_ready");
-            } else {
-              setStatus("message_waiting");
-            }
+          if (content.includes("critical") || content.includes("corruption") || content.includes("data loss")) {
+            setMessageStatus("critical_alert");
+          } else if (content.includes("complete") || content.includes("findings") || content.includes("results")) {
+            setMessageStatus("findings_ready");
+          } else {
+            setMessageStatus("message_waiting");
           }
         }
       }).catch(() => {});
@@ -121,9 +115,9 @@ export default function VickServiceCard({ ownerEmail }) {
         setUnreadCount(prev => prev + 1);
         setLatestMessage(event.data);
         const content = event.data.content?.toLowerCase() || "";
-        if (content.includes("critical") || content.includes("corruption")) setStatus("critical_alert");
-        else if (content.includes("complete") || content.includes("findings")) setStatus("findings_ready");
-        else setStatus("message_waiting");
+        if (content.includes("critical") || content.includes("corruption")) setMessageStatus("critical_alert");
+        else if (content.includes("complete") || content.includes("findings")) setMessageStatus("findings_ready");
+        else setMessageStatus("message_waiting");
       }
     });
     return () => unsubscribe();
@@ -141,12 +135,22 @@ export default function VickServiceCard({ ownerEmail }) {
 
   if (!vick) return null;
 
+  // Derive status from investigation state first, fall back to message state
+  const activeInvCount = investigations.filter(i => ["queued", "investigating", "monitoring", "awaiting_evidence"].includes(i.status)).length;
+  const unreadFindingsCount = investigations.filter(i => i.status === "findings_ready" && !i.findings_read).length;
+  const hasCriticalInv = investigations.some(i => i.priority === "critical" && i.status === "findings_ready" && !i.findings_read);
+
+  const status = hasCriticalInv ? "critical_alert"
+    : unreadFindingsCount > 0 ? "findings_ready"
+    : activeInvCount > 0 ? "investigating"
+    : messageStatus;
+
   const statusConfig = {
-    available:       { label: "Available",        icon: <Shield className="w-3.5 h-3.5" />,       color: "text-emerald-400",        bg: "bg-emerald-500/10",  border: "border-emerald-500/20" },
-    message_waiting: { label: "Message waiting",  icon: <MessageSquare className="w-3.5 h-3.5" />, color: "text-blue-400",           bg: "bg-blue-500/10",     border: "border-blue-500/20" },
-    findings_ready:  { label: "Findings ready",   icon: <CheckCircle2 className="w-3.5 h-3.5" />,  color: "text-primary",            bg: "bg-primary/10",      border: "border-primary/20" },
-    critical_alert:  { label: "Critical alert",   icon: <AlertTriangle className="w-3.5 h-3.5" />, color: "text-red-400",            bg: "bg-red-500/10",      border: "border-red-500/20" },
-    investigating:   { label: "Investigating",    icon: <Activity className="w-3.5 h-3.5" />,      color: "text-amber-400",          bg: "bg-amber-500/10",    border: "border-amber-500/20" },
+    available:       { label: "Available",        icon: <Shield className="w-3.5 h-3.5" />,       color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+    message_waiting: { label: "Message waiting",  icon: <MessageSquare className="w-3.5 h-3.5" />, color: "text-blue-400",    bg: "bg-blue-500/10",    border: "border-blue-500/20" },
+    findings_ready:  { label: "Findings ready",   icon: <CheckCircle2 className="w-3.5 h-3.5" />,  color: "text-primary",     bg: "bg-primary/10",     border: "border-primary/20" },
+    critical_alert:  { label: "Critical alert",   icon: <AlertTriangle className="w-3.5 h-3.5" />, color: "text-red-400",     bg: "bg-red-500/10",     border: "border-red-500/20" },
+    investigating:   { label: "Investigating",    icon: <Activity className="w-3.5 h-3.5" />,      color: "text-amber-400",   bg: "bg-amber-500/10",   border: "border-amber-500/20" },
   };
 
   const cfg = statusConfig[status] || statusConfig.available;
@@ -154,8 +158,6 @@ export default function VickServiceCard({ ownerEmail }) {
   const displayName = vick.display_name || vick.primary_name || vick.name || "Vick Servicio";
   const hasCriticalAlert = status === "critical_alert";
   const hasUnread = unreadCount > 0;
-  const activeInvCount = investigations.filter(i => ["queued", "investigating", "monitoring", "awaiting_evidence"].includes(i.status)).length;
-  const unreadFindingsCount = investigations.filter(i => i.status === "findings_ready" && !i.findings_read).length;
   const hasQueue = investigations.length > 0;
 
   return (
@@ -236,7 +238,14 @@ export default function VickServiceCard({ ownerEmail }) {
               onClick={() => setShowQueue(v => !v)}
               className="w-full flex items-center justify-between px-4 py-2 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
             >
-              <span>Investigation queue ({investigations.length})</span>
+              <span>
+                Investigation queue ({investigations.length})
+                {unreadFindingsCount > 0 && (
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">
+                    {unreadFindingsCount} ready
+                  </span>
+                )}
+              </span>
               {showQueue ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
 
