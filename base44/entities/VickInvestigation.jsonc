@@ -22,11 +22,24 @@
         "awaiting_evidence",
         "monitoring",
         "findings_ready",
-        "completed",
-        "closed"
+        "delivered",
+        "archived"
       ],
       "default": "queued",
-      "description": "Current state of this investigation."
+      "description": "Lifecycle state. Progresses: queued \u2192 investigating \u2192 findings_ready \u2192 delivered \u2192 archived. Critical issues stop at delivered until user dismisses. Non-critical auto-archive after delivery."
+    },
+    "resolution": {
+      "type": "string",
+      "enum": [
+        "resolved",
+        "confirmed_defect",
+        "confirmed_data_issue",
+        "confirmed_system_issue",
+        "user_action_required",
+        "monitoring_required",
+        "unable_to_verify"
+      ],
+      "description": "Final classification. Required before archiving. Set by Vick when delivering findings."
     },
     "priority": {
       "type": "string",
@@ -37,11 +50,11 @@
         "low"
       ],
       "default": "normal",
-      "description": "Priority level. Critical investigations trigger immediate notifications."
+      "description": "Priority level. Critical investigations remain in active queue until user dismisses."
     },
     "findings": {
       "type": "string",
-      "description": "Full findings text when investigation completes. Delivered to user as a message."
+      "description": "Full findings text. Written at the same moment the message is delivered."
     },
     "findings_read": {
       "type": "boolean",
@@ -52,6 +65,16 @@
       "type": "boolean",
       "default": false,
       "description": "True once a message containing findings has been saved to the Vick conversation."
+    },
+    "dismissed": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when user explicitly dismisses a critical investigation. Allows it to archive."
+    },
+    "dismissed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the user dismissed this investigation."
     },
     "conversation_id": {
       "type": "string",
@@ -65,20 +88,20 @@
       "type": "string",
       "description": "ID of the user message that triggered this investigation."
     },
-    "estimated_completion": {
-      "type": "string",
-      "format": "date-time",
-      "description": "Estimated time the investigation will complete (informational only)."
-    },
     "started_at": {
       "type": "string",
       "format": "date-time",
       "description": "When Vick began actively working on this."
     },
-    "completed_at": {
+    "delivered_at": {
       "type": "string",
       "format": "date-time",
-      "description": "When findings were finalized."
+      "description": "When findings message was written to the conversation."
+    },
+    "archived_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this investigation was moved to archive."
     },
     "requires_user_input": {
       "type": "boolean",

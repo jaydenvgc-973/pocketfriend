@@ -594,47 +594,6 @@ async function deliverFindingsAsMessage({ ownerEmail, conversationId, vickCharac
   }
 }
 
-// ── Track an in-progress investigation (lightweight — only when work is async) ─
-// Do NOT create records for investigations that complete synchronously.
-// Only use this when work spans multiple turns or may be interrupted.
-async function createInvestigationRecord({ ownerEmail, title, vickCharacterId, conversationId, sourceMessageId }) {
-  try {
-    const created = await base44.entities.VickInvestigation.create({
-      owner_email: ownerEmail,
-      title,
-      description: title,
-      status: 'investigating',
-      priority: 'normal',
-      vick_character_id: vickCharacterId || null,
-      conversation_id: conversationId || null,
-      source_message_id: sourceMessageId || null,
-      started_at: new Date().toISOString(),
-    });
-    console.log(`[VICK_BRIDGE] Investigation record created id=${created?.id}`);
-    return created;
-  } catch (err) {
-    console.warn(`[VICK_BRIDGE] Failed to create investigation record: ${err.message}`);
-    return null;
-  }
-}
-
-// ── Close an investigation record after delivery ──────────────────────────────
-async function closeInvestigationRecord(investigationId, findings, priority = 'normal') {
-  if (!investigationId) return;
-  try {
-    await base44.entities.VickInvestigation.update(investigationId, {
-      findings,
-      status: 'closed',
-      priority,
-      findings_delivered: true,
-      findings_read: false,
-      completed_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.warn(`[VICK_BRIDGE] Failed to close investigation record: ${err.message}`);
-  }
-}
-
 // ── Main entry point ──────────────────────────────────────────────────────────
 /**
  * Handles ALL Vick Servicio messages by routing through Account Help & Repair intelligence.
@@ -666,19 +625,10 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   // Determine if a fresh diagnostic is needed
   let diagData = null;
   let diagContext = '';
-  let activeInvestigationId = null;
 
   if (wantsDiagnosticRun(text)) {
-    // Only create a tracking record when the work is actually diagnostic (async/heavy).
-    // Lightweight Q&A does not need a record.
-    const inv = await createInvestigationRecord({
-      ownerEmail,
-      title: 'Account diagnostic',
-      vickCharacterId: character?.id || null,
-      conversationId,
-    });
-    activeInvestigationId = inv?.id || null;
-
+    // Chat diagnostics complete synchronously — no investigation record needed.
+    // The LLM response IS the delivery. Records are only created by backend-originated proactive findings.
     try {
       console.log(`[VICK_BRIDGE] Running userAccountDiagnostic for ${ownerEmail}`);
       diagData = await runFullDiagnostic();
@@ -791,13 +741,6 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   }
 
   ctx.history.push({ role: 'ai', content: responseText });
-
-  // Event-driven: close the investigation record immediately — no polling scanner needed.
-  // The response IS the delivery; the record just tracks that work was done.
-  if (activeInvestigationId && responseText) {
-    const isCritical = /critical|corruption|data loss|missing records|broken|failed.*maintenance|widespread/i.test(responseText);
-    closeInvestigationRecord(activeInvestigationId, responseText, isCritical ? 'critical' : 'normal').catch(() => {});
-  }
 
   return { handled: true, responseText };
 }

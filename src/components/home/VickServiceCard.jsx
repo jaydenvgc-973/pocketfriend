@@ -43,7 +43,10 @@ export default function VickServiceCard({ ownerEmail }) {
     }).catch(() => {});
   }, [ownerEmail]);
 
-  // Load investigations for this account
+  // Load investigations for this account.
+  // Only surface backend-originated proactive findings — not chat-echo records.
+  // A proactive finding is one that was NOT delivered inline (findings_delivered=false)
+  // OR is critical and unacknowledged (findings_read=false, priority=critical).
   const loadInvestigations = useCallback(() => {
     if (!ownerEmail) return;
     base44.entities.VickInvestigation.filter(
@@ -51,9 +54,16 @@ export default function VickServiceCard({ ownerEmail }) {
       "-created_date",
       20
     ).then(invs => {
-      setInvestigations(invs);
-      // Auto-expand queue if there are unread findings or active investigations
-      const hasUnreadFindings = invs.some(i => i.status === "findings_ready" && !i.findings_read);
+      // Only show records that are active, undelivered, or critical+unread.
+      // Closed/delivered non-critical records are historical noise — hide them.
+      const meaningful = invs.filter(i => {
+        if (["queued", "investigating", "awaiting_evidence", "monitoring"].includes(i.status)) return true;
+        if (i.status === "findings_ready" && !i.findings_read) return true;
+        if (i.priority === "critical" && !i.findings_read) return true;
+        return false;
+      });
+      setInvestigations(meaningful);
+      const hasUnreadFindings = meaningful.some(i => i.status === "findings_ready" && !i.findings_read);
       if (hasUnreadFindings) setShowQueue(true);
     }).catch(() => {});
   }, [ownerEmail]);
