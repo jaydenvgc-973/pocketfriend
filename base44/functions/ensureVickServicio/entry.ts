@@ -31,8 +31,20 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
  *   - murqart@gmail.com's Yard (ID: 6a23580e6c67852d1b87d01e) is account-private
  *   - Editing murqart@gmail.com's personal Vick does NOT change this blueprint
  *   - Changing this blueprint does NOT modify murqart@gmail.com's existing records
- *   - No explicit authorization from murqart@gmail.com is required to update the
- *     blueprint constants — these are independent of the personal Vick record
+ *   - Blueprint constants are independent from murqart@gmail.com's personal Vick and
+ *     Yard records. Updating the blueprint does not require editing or authorizing
+ *     changes to the personal Vick/Yard records, but blueprint updates still require
+ *     an intentional approved implementation change by the app owner/admin. The
+ *     blueprint must not be automatically updated from any live account record.
+ *
+ * BLUEPRINT UPDATE RULES (permanent):
+ *   - Blueprint updates are manual/intentional implementation changes only.
+ *   - No user's live Vick record can auto-update the blueprint.
+ *   - No account's live Yard record can auto-update the Yard blueprint.
+ *   - The blueprint is not self-learning from account instances.
+ *   - Other accounts' Vicks retain the same service abilities through shared service
+ *     code (vickServiceBridge.js, vickRunDiagnostic, userAccountDiagnostic) and
+ *     authenticated account scope — not through any live record inheritance.
  *
  * ACCOUNT ISOLATION (permanent rule):
  *   Every account receives its own isolated Vick instance with:
