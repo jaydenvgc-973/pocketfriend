@@ -542,7 +542,9 @@ Respond as Vick. Direct, clear, honest. Use real data when available. Admit what
 }
 
 // ── Write a Vick message directly to the conversation (event-driven delivery) ─
-// Called immediately when findings are ready — no polling scanner needed.
+// Used ONLY by backend-originated proactive findings (e.g. a nightly audit function
+// that discovers a real system problem and needs to notify the user via Vick's voice).
+// Chat diagnostics do NOT use this — they deliver inline through handleVickMessage.
 // If conversationId is not yet known, looks it up from Conversation records.
 async function deliverFindingsAsMessage({ ownerEmail, conversationId, vickCharacterId, title, findings, priority, sourceMessageId }) {
   try {

@@ -43,7 +43,9 @@ export default function VickServiceCard({ ownerEmail }) {
     }).catch(() => {});
   }, [ownerEmail]);
 
-  // Load investigations for this account
+  // Load investigations for this account.
+  // Only surface records that need user attention — active, undelivered, or critical+unread.
+  // Delivered non-critical records are not shown (they already appeared as messages in chat).
   const loadInvestigations = useCallback(() => {
     if (!ownerEmail) return;
     base44.entities.VickInvestigation.filter(
@@ -51,9 +53,14 @@ export default function VickServiceCard({ ownerEmail }) {
       "-created_date",
       20
     ).then(invs => {
-      setInvestigations(invs);
-      // Auto-expand queue if there are unread findings or active investigations
-      const hasUnreadFindings = invs.some(i => i.status === "findings_ready" && !i.findings_read);
+      const meaningful = invs.filter(i => {
+        if (["queued", "investigating", "awaiting_evidence", "monitoring"].includes(i.status)) return true;
+        if (i.status === "findings_ready" && !i.findings_read) return true;
+        if (i.priority === "critical" && !i.dismissed && !i.findings_read) return true;
+        return false;
+      });
+      setInvestigations(meaningful);
+      const hasUnreadFindings = meaningful.some(i => i.status === "findings_ready" && !i.findings_read);
       if (hasUnreadFindings) setShowQueue(true);
     }).catch(() => {});
   }, [ownerEmail]);
