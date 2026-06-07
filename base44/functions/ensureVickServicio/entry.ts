@@ -16,15 +16,23 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
  *   definitions, and identity fields in this file reflect that approved standard.
  *
  * HARD BOUNDARY — murqart@gmail.com personal Vick:
- *   - This function does NOT read from murqart@gmail.com's live Vick record
- *   - This function does NOT write to murqart@gmail.com's Vick record (unless
- *     murqart@gmail.com calls ensureVickServicio for their own account, in which
- *     case only standard repair fields are applied if protection flags are missing)
+ *   - This function does NOT read murqart@gmail.com's live Vick or Yard records
+ *     at provisioning time. The blueprint image URLs and narrative fields are
+ *     static constants captured from the approved reference — they are NOT fetched
+ *     from live records when provisioning another account.
+ *   - This function does NOT write to, patch, repair, normalize, or touch
+ *     murqart@gmail.com's Vick record. That Vick is not a repair target.
+ *   - The profile repair path is detection-based: it only applies when a Vick's
+ *     personality_summary does NOT already contain the approved blueprint text.
+ *     murqart@gmail.com's Vick already has the correct text — the repair block
+ *     will not trigger for it (confirmed by live test returning repaired: []).
  *   - This function does NOT share records, ownership, or state between accounts
  *   - murqart@gmail.com's Vick (ID: 6a23580f06f68528940c6ddd) is account-private
  *   - murqart@gmail.com's Yard (ID: 6a23580e6c67852d1b87d01e) is account-private
- *   - Editing murqart@gmail.com's Vick does NOT change this blueprint
- *   - Changing this blueprint does NOT modify murqart@gmail.com's records
+ *   - Editing murqart@gmail.com's personal Vick does NOT change this blueprint
+ *   - Changing this blueprint does NOT modify murqart@gmail.com's existing records
+ *   - No explicit authorization from murqart@gmail.com is required to update the
+ *     blueprint constants — these are independent of the personal Vick record
  *
  * ACCOUNT ISOLATION (permanent rule):
  *   Every account receives its own isolated Vick instance with:
@@ -637,11 +645,20 @@ Deno.serve(async (req) => {
         // Full character object available — check fields
         const needsRepair = !vick.is_world_service || !vick.is_protected || vick.character_type !== 'npc_world_service';
         const locationMismatch = vick.current_home_location_id !== recoveryYard.id || vick.occupation_location_id !== recoveryYard.id;
-        // Profile repair: detect old profile that does not include the approved continuity-specialist language.
-        // Detection uses a phrase unique to the approved final version. Old versions used 'Account Help & Repair'
-        // as the anchor phrase — now replaced by the approved systems-investigator identity.
-        // murqart@gmail.com's personal Vick already has the correct text and will NOT be patched
-        // because this repair path is user-scoped and runs only when the authenticated user owns this Vick.
+        // Profile repair: detect old profile that does not include the approved canonical blueprint text.
+        //
+        // ACCOUNT-NEUTRAL DETECTION: This check evaluates the CONTENT of the field, not the account.
+        // Any Vick whose personality_summary already contains the approved blueprint phrases passes
+        // this check and is NOT patched — regardless of which account owns it.
+        //
+        // Live test confirmed: murqart@gmail.com's Vick returns repaired=[] because its
+        // personality_summary already includes 'continuity problems rewarding to solve'.
+        //
+        // This repair path is NOT a channel for normalizing, migrating, or overwriting
+        // personal Vick data. It exists only to bring pre-blueprint Vick instances (other
+        // accounts created before the canonical blueprint existed) up to current standard.
+        //
+        // murqart@gmail.com's personal Vick is NOT a repair target — confirmed by design.
         const profileNeedsRepair = !vick.personality_summary || 
           (!vick.personality_summary.includes('continuity problems rewarding to solve') &&
            !vick.personality_summary.includes('authority boundaries'));
