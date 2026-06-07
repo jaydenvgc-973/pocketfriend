@@ -541,6 +541,52 @@ User: ${text}
 Respond as Vick. Direct, clear, honest. Use real data when available. Admit what you cannot verify. Never guess.`;
 }
 
+// ── Create or update a VickInvestigation record ──────────────────────────────
+// Called when Vick begins an investigation in chat.
+// This persists the investigation so findings can be delivered even if user is offline.
+async function upsertInvestigation({ ownerEmail, title, description, status, priority, vickCharacterId, conversationId, sourceMessageId, findings }) {
+  try {
+    const record = {
+      owner_email: ownerEmail,
+      title,
+      description: description || title,
+      status: status || 'investigating',
+      priority: priority || 'normal',
+      vick_character_id: vickCharacterId || null,
+      conversation_id: conversationId || null,
+      source_message_id: sourceMessageId || null,
+      started_at: new Date().toISOString(),
+    };
+    if (findings) {
+      record.findings = findings;
+      record.status = 'findings_ready';
+    }
+    const created = await base44.entities.VickInvestigation.create(record);
+    console.log(`[VICK_BRIDGE] Investigation created id=${created?.id} title="${title}" status=${record.status}`);
+    return created;
+  } catch (err) {
+    console.warn(`[VICK_BRIDGE] Failed to create investigation record: ${err.message}`);
+    return null;
+  }
+}
+
+// ── Mark an investigation complete with findings ──────────────────────────────
+async function completeInvestigation(investigationId, findings, priority = 'normal') {
+  if (!investigationId) return;
+  try {
+    await base44.entities.VickInvestigation.update(investigationId, {
+      findings,
+      status: 'findings_ready',
+      priority,
+      completed_at: new Date().toISOString(),
+      findings_delivered: false,
+    });
+    console.log(`[VICK_BRIDGE] Investigation ${investigationId} marked findings_ready`);
+  } catch (err) {
+    console.warn(`[VICK_BRIDGE] Failed to complete investigation: ${err.message}`);
+  }
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 /**
  * Handles ALL Vick Servicio messages by routing through Account Help & Repair intelligence.
@@ -570,8 +616,21 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   // Determine if a fresh diagnostic is needed
   let diagData = null;
   let diagContext = '';
+  let activeInvestigationId = null;
 
   if (wantsDiagnosticRun(text)) {
+    // Create a persistent investigation record so findings survive if user goes offline
+    const inv = await upsertInvestigation({
+      ownerEmail,
+      title: 'Account diagnostic',
+      description: `User request: "${text.slice(0, 120)}"`,
+      status: 'investigating',
+      priority: 'normal',
+      vickCharacterId: character?.id || null,
+      conversationId,
+    });
+    activeInvestigationId = inv?.id || null;
+
     try {
       console.log(`[VICK_BRIDGE] Running userAccountDiagnostic for ${ownerEmail}`);
       diagData = await runFullDiagnostic();
@@ -684,6 +743,17 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   }
 
   ctx.history.push({ role: 'ai', content: responseText });
+
+  // Mark investigation complete with findings so delivery automation can persist them
+  if (activeInvestigationId && responseText) {
+    const isCritical = /critical|corruption|data loss|missing records|broken|failed.*maintenance|widespread/i.test(responseText);
+    await completeInvestigation(activeInvestigationId, responseText, isCritical ? 'critical' : 'normal');
+    // Mark immediately delivered since Vick just said it in chat
+    base44.entities.VickInvestigation.update(activeInvestigationId, {
+      findings_delivered: true,
+      findings_read: false,
+    }).catch(() => {});
+  }
 
   return { handled: true, responseText };
 }

@@ -1,0 +1,106 @@
+{
+  "name": "VickInvestigation",
+  "type": "object",
+  "properties": {
+    "owner_email": {
+      "type": "string",
+      "description": "Account this investigation belongs to. Primary ownership field. Required."
+    },
+    "title": {
+      "type": "string",
+      "description": "Short human-readable description of what is being investigated."
+    },
+    "description": {
+      "type": "string",
+      "description": "Full description of the investigation scope, evidence sources, and systems being reviewed."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "investigating",
+        "awaiting_evidence",
+        "monitoring",
+        "findings_ready",
+        "completed",
+        "closed"
+      ],
+      "default": "queued",
+      "description": "Current state of this investigation."
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "critical",
+        "high",
+        "normal",
+        "low"
+      ],
+      "default": "normal",
+      "description": "Priority level. Critical investigations trigger immediate notifications."
+    },
+    "findings": {
+      "type": "string",
+      "description": "Full findings text when investigation completes. Delivered to user as a message."
+    },
+    "findings_read": {
+      "type": "boolean",
+      "default": false,
+      "description": "True once the user has opened and reviewed the findings."
+    },
+    "findings_delivered": {
+      "type": "boolean",
+      "default": false,
+      "description": "True once a message containing findings has been saved to the Vick conversation."
+    },
+    "conversation_id": {
+      "type": "string",
+      "description": "Vick conversation ID findings were delivered to."
+    },
+    "vick_character_id": {
+      "type": "string",
+      "description": "Vick's character ID \u2014 used to route finding messages."
+    },
+    "source_message_id": {
+      "type": "string",
+      "description": "ID of the user message that triggered this investigation."
+    },
+    "estimated_completion": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Estimated time the investigation will complete (informational only)."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When Vick began actively working on this."
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When findings were finalized."
+    },
+    "requires_user_input": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when Vick is blocked and needs more information from the user."
+    },
+    "user_input_prompt": {
+      "type": "string",
+      "description": "What Vick needs the user to provide or clarify."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Classification tags: travel, sleep, location, financial, character, memory, etc."
+    }
+  },
+  "required": [
+    "owner_email",
+    "title",
+    "status"
+  ]
+}
