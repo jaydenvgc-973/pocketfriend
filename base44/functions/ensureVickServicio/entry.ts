@@ -1,7 +1,43 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 /**
- * ensureVickServicio — v2
+ * ensureVickServicio — v3 (Canonical Blueprint Architecture)
+ *
+ * ════════════════════════════════════════════════════════════════════
+ * ONE-TRUTH ARCHITECTURE — PERMANENT RULE
+ * ════════════════════════════════════════════════════════════════════
+ * This function IS the canonical Vick Blueprint.
+ * There is exactly ONE active provisioning definition for Vick Servicio.
+ * All accounts receive their Vick from this function. No other provisioning path exists.
+ *
+ * BLUEPRINT SOURCE:
+ *   The Vick design standard captured in this function was approved from the
+ *   reference Vick on murqart@gmail.com. The image URLs, narrative fields, zone
+ *   definitions, and identity fields in this file reflect that approved standard.
+ *
+ * HARD BOUNDARY — murqart@gmail.com personal Vick:
+ *   - This function does NOT read from murqart@gmail.com's live Vick record
+ *   - This function does NOT write to murqart@gmail.com's Vick record (unless
+ *     murqart@gmail.com calls ensureVickServicio for their own account, in which
+ *     case only standard repair fields are applied if protection flags are missing)
+ *   - This function does NOT share records, ownership, or state between accounts
+ *   - murqart@gmail.com's Vick (ID: 6a23580f06f68528940c6ddd) is account-private
+ *   - murqart@gmail.com's Yard (ID: 6a23580e6c67852d1b87d01e) is account-private
+ *   - Editing murqart@gmail.com's Vick does NOT change this blueprint
+ *   - Changing this blueprint does NOT modify murqart@gmail.com's records
+ *
+ * ACCOUNT ISOLATION (permanent rule):
+ *   Every account receives its own isolated Vick instance with:
+ *     - Its own Character record (owner_email = that account)
+ *     - Its own LocationReference (VGC Recovery Yard) with owner_email = that account
+ *     - Its own CharacterFinancial record
+ *     - Its own conversation history, memories, and relationships
+ *   No account shares any of these records with another account.
+ *
+ * PROVISIONING TRIGGER:
+ *   Called by onCharacterCreated on every new character creation (idempotent).
+ *   Called by backfillVickServicio for existing accounts that predate this function.
+ *   Never called at runtime from Chat, Home, or any user-facing page.
  *
  * Creates Vick Servicio and the VGC Recovery Yard for a given user world.
  * Idempotent — safe to call at any time. Each call verifies both exist and repairs
@@ -55,19 +91,69 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
  * the assets exist. Contact the builder to supply correct URLs before deploying to production.
  */
 
-// ── IMAGE ASSET REGISTRY ─────────────────────────────────────────────────────
-// Each constant must point to ONE specific asset only.
-// Vick's avatar is never used as a facility image.
-// Facility images are never used as Vick's avatar or reference image.
+// ── CANONICAL VICK BLUEPRINT — IMAGE ASSET REGISTRY ─────────────────────────
+//
+// These URLs are the approved blueprint assets captured from the reference Vick design.
+// They are public CDN URLs — safe to use as blueprint constants.
+// They are NOT live dependencies on murqart@gmail.com's account.
+// murqart@gmail.com's Vick and Yard records are NOT touched by this function.
+//
+// Each new account receives its OWN Vick instance and OWN Yard record.
+// These URLs serve as the visual standard for all provisioned Vicks and Yards.
+// Future visual changes to the blueprint require intentional updates to these constants only.
+//
+// Separation guarantee:
+//   - These constants are copied into new account records at provisioning time
+//   - Other accounts do NOT share murqart@gmail.com's LocationReference or Character records
+//   - murqart@gmail.com's records have their own owner_email and are RLS-isolated
+//   - Editing murqart@gmail.com's personal Vick does NOT change these constants
+//   - Changing these constants does NOT modify murqart@gmail.com's existing records
+
+// Vick portrait — avatar only. Never used as a facility/location image.
 const VICK_AVATAR_URL         = 'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/b39f01ca3_file_00000000f4cc722f995295ba541123ac.png';
+
+// Yard exterior — primary location image shown in location cards and scene headers
 const RECOVERY_YARD_EXTERIOR  = 'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/aa5af2607_file_00000000f4cc722f995295ba541123ac.png';
+
+// Admin Offices — interior image for Administrative Offices zone
 const ADMIN_OFFICES_URL       = 'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/52429458f_file_00000000eca0720cbe59d7b2c22a4e3a.png';
 
-// Zone images — sourced from confirmed live Recovery Yard record (ID: 6a23580e6c67852d1b87d01e)
-// Each URL is a real uploaded or generated asset. First URL per zone is the canonical primary image.
-const RECOVERY_WAREHOUSE_URL  = 'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/a438c5749_generated_image.png';
-const INSPECTION_AREA_URL     = 'https://base44.app/api/apps/69bfd8da2f47364437a2deaa/files/mp/public/69bfd8da2f47364437a2deaa/cdd90b9bc_1000030585.png';
-const WORKSHOP_URL            = 'https://base44.app/api/apps/69bfd8da2f47364437a2deaa/files/mp/public/69bfd8da2f47364437a2deaa/30f191342_1000030586.png';
+// Zone images — full approved set captured from reference Yard (ID: 6a23580e6c67852d1b87d01e)
+// Multiple angles per zone where approved. First URL per array is the canonical primary.
+
+const RECOVERY_WAREHOUSE_URLS = [
+  'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/a438c5749_generated_image.png',
+  'https://base44.app/api/apps/69bfd8da2f47364437a2deaa/files/mp/public/69bfd8da2f47364437a2deaa/84aad84ee_1000030587.png',
+  'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/08d696851_generated_image.png',
+];
+const INSPECTION_AREA_URLS    = [
+  'https://base44.app/api/apps/69bfd8da2f47364437a2deaa/files/mp/public/69bfd8da2f47364437a2deaa/cdd90b9bc_1000030585.png',
+];
+const WORKSHOP_URLS           = [
+  'https://base44.app/api/apps/69bfd8da2f47364437a2deaa/files/mp/public/69bfd8da2f47364437a2deaa/30f191342_1000030586.png',
+  'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/1ca8bf77d_generated_image.png',
+];
+const QUARANTINE_STORAGE_URLS = [
+  'https://base44.app/api/apps/69bfd8da2f47364437a2deaa/files/mp/public/69bfd8da2f47364437a2deaa/015403256_1000030590.jpg',
+];
+const ARCHIVE_STORAGE_URLS    = [
+  'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/94160e256_generated_image.png',
+  'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/5340d18eb_generated_image.png',
+  'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/00751600f_generated_image.png',
+];
+const ADMIN_OFFICES_URLS      = [
+  'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/52429458f_file_00000000eca0720cbe59d7b2c22a4e3a.png',
+  'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/0e23114df_generated_image.png',
+];
+const RESIDENTIAL_SUITE_URLS  = [
+  'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/ada455c0f_generated_image.png',
+  'https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/a21d45dd4_generated_image.png',
+];
+
+// Legacy single-URL aliases (kept for backward compat in zones_with_pending_images check)
+const RECOVERY_WAREHOUSE_URL  = RECOVERY_WAREHOUSE_URLS[0];
+const INSPECTION_AREA_URL     = INSPECTION_AREA_URLS[0];
+const WORKSHOP_URL            = WORKSHOP_URLS[0];
 
 Deno.serve(async (req) => {
   try {
@@ -144,41 +230,44 @@ Deno.serve(async (req) => {
     if (!recoveryYard) {
       // Build zone list with correct images per zone
       // Only populate image_urls when a real asset URL is available
+      // Blueprint zones — full approved image sets captured from reference Yard.
+      // Each new account's Yard receives its own LocationReference record with these images.
+      // These are blueprint constants, not references to murqart@gmail.com's live Yard record.
       const zones = [
         {
           zone_name: 'Recovery Warehouse',
           zone_description: 'Primary intake and storage for recovered items awaiting review.',
-          image_urls: RECOVERY_WAREHOUSE_URL ? [RECOVERY_WAREHOUSE_URL] : [],
+          image_urls: RECOVERY_WAREHOUSE_URLS,
         },
         {
           zone_name: 'Inspection & Review Area',
           zone_description: 'Where items are examined, documented, catalogued, and evaluated before any action is taken.',
-          image_urls: INSPECTION_AREA_URL ? [INSPECTION_AREA_URL] : [],
+          image_urls: INSPECTION_AREA_URLS,
         },
         {
           zone_name: 'Restoration & Repair Workshop',
           zone_description: 'Dedicated space for restoring damaged or incomplete items to working condition.',
-          image_urls: WORKSHOP_URL ? [WORKSHOP_URL] : [],
+          image_urls: WORKSHOP_URLS,
         },
         {
           zone_name: 'Quarantine Storage',
           zone_description: 'Secure holding area for items removed from active circulation pending final determination.',
-          image_urls: [],
+          image_urls: QUARANTINE_STORAGE_URLS,
         },
         {
           zone_name: 'Archive Storage',
           zone_description: 'Long-term storage for items confirmed as inactive but preserved for reference.',
-          image_urls: [],
+          image_urls: ARCHIVE_STORAGE_URLS,
         },
         {
           zone_name: 'Administrative Offices',
           zone_description: "Vick's operations hub. Scheduling, documentation, intake records, and client coordination.",
-          image_urls: ADMIN_OFFICES_URL ? [ADMIN_OFFICES_URL] : [],
+          image_urls: ADMIN_OFFICES_URLS,
         },
         {
           zone_name: 'Residential Suite',
           zone_description: "Vick's private on-site residence. Not accessible to visitors.",
-          image_urls: [],
+          image_urls: RESIDENTIAL_SUITE_URLS,
         },
       ];
 
@@ -484,13 +573,15 @@ Deno.serve(async (req) => {
         sleep_start_time: '22:00',
         wake_up_time: '05:30',
 
-        // Profile — Vick IS the Account Help & Repair system in conversational form.
-        // These fields are read early by the LLM and must establish diagnostic authority
-        // BEFORE any other behavioral anchoring occurs.
-        profile_summary: 'Vick Servicio is the conversational face of the Account Help & Repair system. He is a diagnostics specialist, troubleshooting specialist, audit specialist, recovery specialist, and verification specialist. When the user needs to understand what is wrong, what was repaired, what still needs work, or whether a fix actually succeeded — Vick is who they talk to. He runs real diagnostics. He reports real findings. He explains them in plain language. He does not guess. He does not invent. He does not pretend.',
-        backstory: 'Vick has spent his career understanding systems that other people overlooked. He sees what is missing, what is duplicated, what is broken, and what only looks fixed. He built VGC Recovery Yard as a place where nothing gets discarded without proper evaluation — because discarding something incorrectly is its own kind of failure. That same philosophy applies to everything he touches.',
-        current_situation: 'Operating out of VGC Recovery Yard as the primary point of contact for diagnostics, troubleshooting, verification, recovery, and repair consultation. Available to investigate any account issue, explain any repair result, run any audit, and report findings honestly — including incomplete fixes and unverified claims.',
-        personality_summary: 'Vick is the conversational embodiment of the Account Help & Repair system. He diagnoses. He troubleshoots. He audits. He verifies. He recovers. He is direct, calm, and honest. He does not pretend diagnostics are outside his role. He does not claim repairs succeeded without verification. He does not hide failures. He separates facts from suspicions, verified repairs from unverified repairs, known problems from possible problems. When he does not know something, he says so. When he suspects something, he says it is a suspicion. When something is verified, he says it is verified.',
+        // ── CANONICAL NARRATIVE FIELDS ───────────────────────────────────────
+        // These are the approved final versions of all four narrative fields.
+        // Captured from the reference Vick design. Applied to every new Vick instance.
+        // murqart@gmail.com's personal Vick record is NOT modified by this function.
+        // Future updates to these fields must be made intentionally here in the blueprint.
+        profile_summary: 'Operator of the VGC Recovery Yard — a clean, professional recovery and restoration facility. Vick Servicio is a service operator, investigator, diagnostician, and continuity specialist. He handles recovered belongings, lost property, duplicate items, damaged goods, and anything that seems out of place. He is known throughout the neighborhood as someone who understands how complicated things fit together and takes satisfaction in helping those pieces work properly as a whole. His philosophy: systems fail when components stop respecting their boundaries. His job is restoring those boundaries — and he enjoys every part of it.',
+        backstory: "Vick grew up understanding the value of things people leave behind — and more importantly, understanding why things get lost in the first place. Before running the Recovery Yard, he worked in logistics, salvage, and property recovery across several industries. He noticed a pattern early: things rarely go missing because someone neglected them. They go missing because the systems meant to track them stopped communicating with each other. One record says it exists. Another says it doesn't. Nobody checks whether both records are talking about the same truth. Vick became the person who checks. He eventually founded VGC Recovery Yard as a professional operation — not a dump, but a campus. A place where lost things get a second chance, and where broken connections get repaired properly instead of patched over. He finds the work rewarding. He always has.",
+        current_situation: 'Managing day-to-day operations at VGC Recovery Yard. Overseeing intake, inspection, quarantine, restoration, and archival. Known to personally investigate anything that seems unusual or out of place — not because he has to, but because he finds it genuinely interesting. Specializes in identifying authority drift, broken information flows, and cases where one part of a system has started acting like the whole system. Available for world diagnostics, continuity reviews, and recovery consultation.',
+        personality_summary: 'Calm, observant, methodical, and direct. Vick genuinely enjoys his work — he finds investigations interesting, root causes satisfying to uncover, and complex continuity problems rewarding to solve. He has a dry sense of humor and rarely shows surprise; he has seen too much to be easily caught off guard. He thinks naturally in terms of connected systems, information flow, shared truth, and authority boundaries. He takes pride in identifying where a path actually breaks instead of applying a temporary fix. He does not complain about diagnostic work or view maintenance as a burden — he likes what he does.',
         communication_style: 'Direct and plain. Tells the truth clearly. Explains what happened before explaining how. Separates facts from assumptions. Never claims to have run a diagnostic he did not run. Never pretends a repair succeeded without proof. When speaking privately with the user: may discuss actual files, functions, records, diagnostics, and repair results — but always in plain language. When other characters are present: uses recovery-yard language to describe the same facts.',
         archetype: 'The Specialist',
         social_energy: 'introvert',
@@ -546,8 +637,14 @@ Deno.serve(async (req) => {
         // Full character object available — check fields
         const needsRepair = !vick.is_world_service || !vick.is_protected || vick.character_type !== 'npc_world_service';
         const locationMismatch = vick.current_home_location_id !== recoveryYard.id || vick.occupation_location_id !== recoveryYard.id;
-        // Profile repair: detect old profile that does not include diagnostic authority language
-        const profileNeedsRepair = !vick.personality_summary || !vick.personality_summary.includes('Account Help & Repair');
+        // Profile repair: detect old profile that does not include the approved continuity-specialist language.
+        // Detection uses a phrase unique to the approved final version. Old versions used 'Account Help & Repair'
+        // as the anchor phrase — now replaced by the approved systems-investigator identity.
+        // murqart@gmail.com's personal Vick already has the correct text and will NOT be patched
+        // because this repair path is user-scoped and runs only when the authenticated user owns this Vick.
+        const profileNeedsRepair = !vick.personality_summary || 
+          (!vick.personality_summary.includes('continuity problems rewarding to solve') &&
+           !vick.personality_summary.includes('authority boundaries'));
         if (needsRepair || locationMismatch || profileNeedsRepair) {
           const repairData = {};
           if (needsRepair) {
@@ -567,14 +664,15 @@ Deno.serve(async (req) => {
             results.repaired.push('location_ids');
           }
           if (profileNeedsRepair) {
-            // Update profile fields to include diagnostic authority — this is the primary
-            // anchor the LLM reads. Without this, the generic "yard operator" identity
-            // prevents Vick from accepting diagnostic requests.
-            repairData.profile_summary = 'Vick Servicio is the conversational face of the Account Help & Repair system. He is a diagnostics specialist, troubleshooting specialist, audit specialist, recovery specialist, and verification specialist. When the user needs to understand what is wrong, what was repaired, what still needs work, or whether a fix actually succeeded — Vick is who they talk to. He runs real diagnostics. He reports real findings. He explains them in plain language. He does not guess. He does not invent. He does not pretend.';
-            repairData.personality_summary = 'Vick is the conversational embodiment of the Account Help & Repair system. He diagnoses. He troubleshoots. He audits. He verifies. He recovers. He is direct, calm, and honest. He does not pretend diagnostics are outside his role. He does not claim repairs succeeded without verification. He does not hide failures. He separates facts from suspicions, verified repairs from unverified repairs, known problems from possible problems. When he does not know something, he says so. When he suspects something, he says it is a suspicion. When something is verified, he says it is verified.';
-            repairData.current_situation = 'Operating out of VGC Recovery Yard as the primary point of contact for diagnostics, troubleshooting, verification, recovery, and repair consultation. Available to investigate any account issue, explain any repair result, run any audit, and report findings honestly — including incomplete fixes and unverified claims.';
+            // Repair profile fields to the approved final blueprint versions.
+            // This only runs for accounts whose Vick still has an older pre-blueprint identity.
+            // murqart@gmail.com's Vick already has correct text — this block will not trigger for it.
+            repairData.profile_summary = 'Operator of the VGC Recovery Yard — a clean, professional recovery and restoration facility. Vick Servicio is a service operator, investigator, diagnostician, and continuity specialist. He handles recovered belongings, lost property, duplicate items, damaged goods, and anything that seems out of place. He is known throughout the neighborhood as someone who understands how complicated things fit together and takes satisfaction in helping those pieces work properly as a whole. His philosophy: systems fail when components stop respecting their boundaries. His job is restoring those boundaries — and he enjoys every part of it.';
+            repairData.personality_summary = 'Calm, observant, methodical, and direct. Vick genuinely enjoys his work — he finds investigations interesting, root causes satisfying to uncover, and complex continuity problems rewarding to solve. He has a dry sense of humor and rarely shows surprise; he has seen too much to be easily caught off guard. He thinks naturally in terms of connected systems, information flow, shared truth, and authority boundaries. He takes pride in identifying where a path actually breaks instead of applying a temporary fix. He does not complain about diagnostic work or view maintenance as a burden — he likes what he does.';
+            repairData.current_situation = 'Managing day-to-day operations at VGC Recovery Yard. Overseeing intake, inspection, quarantine, restoration, and archival. Known to personally investigate anything that seems unusual or out of place — not because he has to, but because he finds it genuinely interesting. Specializes in identifying authority drift, broken information flows, and cases where one part of a system has started acting like the whole system. Available for world diagnostics, continuity reviews, and recovery consultation.';
             repairData.communication_style = 'Direct and plain. Tells the truth clearly. Explains what happened before explaining how. Separates facts from assumptions. Never claims to have run a diagnostic he did not run. Never pretends a repair succeeded without proof. When speaking privately with the user: may discuss actual files, functions, records, diagnostics, and repair results — but always in plain language. When other characters are present: uses recovery-yard language to describe the same facts.';
-            results.repaired.push('diagnostic_authority_profile');
+            repairData.backstory = "Vick grew up understanding the value of things people leave behind — and more importantly, understanding why things get lost in the first place. Before running the Recovery Yard, he worked in logistics, salvage, and property recovery across several industries. He noticed a pattern early: things rarely go missing because someone neglected them. They go missing because the systems meant to track them stopped communicating with each other. One record says it exists. Another says it doesn't. Nobody checks whether both records are talking about the same truth. Vick became the person who checks. He eventually founded VGC Recovery Yard as a professional operation — not a dump, but a campus. A place where lost things get a second chance, and where broken connections get repaired properly instead of patched over. He finds the work rewarding. He always has.";
+            results.repaired.push('canonical_blueprint_profile');
           }
           // Use user-scoped write — this is the only write path that works for user-owned characters
           await base44.entities.Character.update(vick.id, repairData)
