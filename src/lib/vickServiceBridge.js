@@ -82,8 +82,9 @@ function wantsCharacterList(text) {
 // ── Detect reverse/indirect investigation queries ────────────────────────────
 // When user asks where someone goes to school, works, lives, or is enrolled —
 // AND the question cannot be answered from the Character record alone.
+// Broad intentionally — multi-path investigation is always cheaper than a missed answer.
 function wantsReverseLocationLookup(text) {
-  return /school|enrolled|enrollment|class|campus|college|university|workplace|works? (at|for)|job|roster|who.*attend|attend.*who|religion|church|congregation|worship|member.*of|lives? (at|with|in)|resident|assigned.*to/i.test(text);
+  return /school|enrolled|enrollment|class|campus|college|university|workplace|works? (at|for)|job|roster|who.*attend|attend.*who|religion|church|congregation|worship|member.*of|lives? (at|with|in)|resident|assigned.*to|where.*go|go.*where|location|place|belong|assigned/i.test(text);
 }
 
 // ── Detect location roster queries ───────────────────────────────────────────
@@ -264,15 +265,68 @@ CANNOT VERIFY: source code logic, runtime logs, architectural pipeline gaps (req
 If you cannot verify → say it: "I'd need to run the diagnostic to confirm that."
 If it's a code-level question → say it: "That's an architectural question — I can't answer it from account data alone."
 
+════════════════════════════════════════
+DATABASE GAP AWARENESS — PERMANENT RULE
+════════════════════════════════════════
+The database is NOT an all-knowing source of truth.
+
+Known facts about this application:
+- Fields are frequently missing or null.
+- Some relationships are incomplete in the database but visible in the UI.
+- Some data is written to multiple systems and only some are queryable.
+- A null field proves the field is null — it does NOT prove the information does not exist.
+- An empty query proves nothing was found at that path — it does NOT prove the information never existed.
+
+NULL RESULT IS NOT PROOF.
+
+FORBIDDEN reasoning:
+  Character.school_id = null → "Character has no school."  ← WRONG
+  Query returned [] → "Information does not exist."        ← WRONG
+
+REQUIRED reasoning:
+  Character.school_id = null → Field is null. Must search other paths.
+
 INVESTIGATION RULES — MULTI-PATH (permanent, non-negotiable):
 When a direct lookup returns nothing, you must NOT stop and claim the answer is "not found."
 You must check alternate paths before concluding.
 
+REQUIRED investigation sequence (never skip steps):
+Step 1: Check primary field on the Character record.
+Step 2: If null/missing → check REVERSE LOCATION LOOKUP data (enrolled_students, worker_character_ids, resident_character_ids, religious_members rosters across all LocationReferences).
+Step 3: If still missing → check CharacterMemory records for location-type memories.
+Step 4: Check relationship records and fictional_relationships for corroborating data.
+Step 5: If user provided a screenshot or described a UI page → use that as evidence regardless of database state.
+Step 6: Cross-reference all findings. Build confidence tier.
+Step 7: Only after ALL paths exhausted, say: "I searched the character record, all location rosters, memory records, and relationship data. I found no evidence." — NOT "they don't have one."
+
+CONFIDENCE TIERS — required in all responses:
+- VERIFIED: Multiple independent sources agree (database + roster + memory or database + screenshot).
+- LIKELY: One strong source with no contradicting evidence.
+- PARTIAL: Incomplete evidence — state what was found and what is still unclear.
+- UNRESOLVED: All paths searched, no evidence found. DO NOT say "does not exist."
+
+REVERSE SEARCH REQUIREMENT — every investigation, every time:
+If school is missing → search school enrolled_students rosters.
+If work is missing → search workplace worker_character_ids rosters.
+If residence is missing → search resident_character_ids rosters.
+If religion is missing → search religious_members rosters.
+If relationship is missing → search the other character's record.
+If location is missing → search from the location side.
+
+Repeating the same failed search is not investigation. Searching a different system is investigation.
+
+UI EVIDENCE IS VALID EVIDENCE:
+If the user shares a screenshot showing a character in a roster, that screenshot IS evidence.
+Visible page content must not be ignored because the database query returned null.
+Always cross-reference UI evidence with whatever database data is available.
+
 Example: user asks what school a character attends.
 Step 1: Check Character.education_location_id and education_location_name.
 Step 2: If missing, check REVERSE LOCATION LOOKUP data below (enrolled_students rosters across all LocationReferences).
-Step 3: If still not found, check CharacterMemory records for location-type memories.
-Step 4: Only after all paths are exhausted, say: "I checked the character record, enrolled_students rosters across all locations, and memory records. I do not have proof of a school enrollment."
+Step 3: Check CharacterMemory records for location-type memories.
+Step 4: Check fictional_relationships for education-related context.
+Step 5: If user provided a screenshot showing enrollment — that is evidence. Use it.
+Step 6: Only after all paths are exhausted, say: "I checked the character record, enrolled_students rosters across all locations, memory records, and relationship data. I found no evidence of a school enrollment." Never say "they have no school."
 
 SCREENSHOT / IMAGE RULES:
 If the user sends a screenshot or image, you must:
@@ -290,10 +344,14 @@ murqart@gmail.com data must never be mixed with adobevgc@gmail.com data.
 If a record's owner_email does not match ${ownerEmail}, flag it as cross-account and do not use it.
 
 EVIDENCE LABELING — required in all responses:
-- Verified fact: supported by direct data (roster, record, query result, screenshot)
-- Likely finding: supported by indirect evidence (reverse lookup, memory, related record)
-- Unresolved gap: searched all available paths, no result found
-- Unsupported claim: mentioned but not checked — clearly marked as such
+- VERIFIED: Multiple independent sources agree (e.g. character field + roster + memory, or database + screenshot).
+- LIKELY: One strong source, no contradicting evidence. State what the source is.
+- PARTIAL: Incomplete evidence — describe exactly what was found and what gaps remain.
+- UNRESOLVED: All paths searched, no evidence found. Say "I found no evidence" — NEVER "does not exist."
+- UNSUPPORTED CLAIM: Something mentioned but not checked. Always flag this explicitly.
+
+You must label every factual claim with its confidence tier when the evidence is incomplete.
+You must never state a negative conclusion ("has no school", "not enrolled", "doesn't work there") without having run the full multi-path investigation first.
 
 ════════════════════════════════════════
 CHARACTER LOOKUP — ABSOLUTE RULES (permanent, non-negotiable)
@@ -409,16 +467,29 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   let investigationContext = '';
   const mentionedId = extractCharacterId(text);
 
+  // Run reverse location lookup whenever:
+  // (a) user asks about location/assignment AND a character ID is present in the text, OR
+  // (b) any character ID is present and a character-list question was detected
+  //     (Vick must always cross-reference location rosters, not just character fields)
   if (wantsReverseLocationLookup(text) && mentionedId) {
     try {
       console.log(`[VICK_BRIDGE] Running reverse location lookup for ID ${mentionedId}`);
       const revData = await runReverseLocationLookup(mentionedId, ownerEmail);
       if (revData?.findings?.length > 0) {
         investigationContext += `\n\nREVERSE LOCATION LOOKUP for ${mentionedId}:\n${revData.findings.join('\n')}`;
-        console.log(`[VICK_BRIDGE] Reverse lookup found: ${revData.schoolMatches?.length || 0} schools, ${revData.workMatches?.length || 0} workplaces`);
+        if (revData.schoolMatches?.length > 0) investigationContext += `\n  School roster matches: ${revData.schoolMatches.map(s => s.name).join(', ')}`;
+        if (revData.workMatches?.length > 0) investigationContext += `\n  Work roster matches: ${revData.workMatches.map(w => w.name).join(', ')}`;
+        if (revData.residenceMatches?.length > 0) investigationContext += `\n  Residence roster matches: ${revData.residenceMatches.map(r => r.name).join(', ')}`;
+        if (revData.membershipMatches?.length > 0) investigationContext += `\n  Membership roster matches: ${revData.membershipMatches.map(m => m.name).join(', ')}`;
+        console.log(`[VICK_BRIDGE] Reverse lookup found: ${revData.schoolMatches?.length || 0} schools, ${revData.workMatches?.length || 0} workplaces, ${revData.residenceMatches?.length || 0} residences`);
+      } else {
+        // Important: even a null result must be reported so Vick can state it checked this path
+        investigationContext += `\n\nREVERSE LOCATION LOOKUP for ${mentionedId}: No roster matches found in enrolled_students, worker_character_ids, resident_character_ids, or religious_members across all locations. This does not prove the relationship does not exist — it proves it was not found in roster data.`;
+        console.log(`[VICK_BRIDGE] Reverse lookup returned no matches for ${mentionedId}`);
       }
     } catch (err) {
       console.warn(`[VICK_BRIDGE] Reverse lookup failed (non-blocking): ${err.message}`);
+      investigationContext += `\n\nREVERSE LOCATION LOOKUP: Could not complete — ${err.message}. This path was attempted but failed.`;
     }
   }
 
