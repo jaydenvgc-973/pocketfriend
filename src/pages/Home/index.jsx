@@ -19,6 +19,7 @@ import GraduationEventModal from "@/components/home/GraduationEventModal";
 
 import InviteOutModal from "@/components/home/InviteOutModal";
 import NPCContactPanel from "@/components/home/NPCContactPanel";
+import VickServiceCard from "@/components/home/VickServiceCard";
 import CommunityEventsStrip from "@/components/home/CommunityEventsStrip.jsx";
 import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
@@ -370,6 +371,10 @@ export default function Home() {
             />
           )}
           
+          {currentUser?.email && (
+            <VickServiceCard ownerEmail={currentUser.email} />
+          )}
+
           <div>
             {showPerformanceWarning && (
               <div className="mb-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
