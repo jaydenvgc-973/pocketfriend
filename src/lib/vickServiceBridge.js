@@ -123,7 +123,37 @@ async function runConversationAnchorScan(characterId) {
 // ── The full architecture-map prompt ─────────────────────────────────────────
 // This is the SAME architecture knowledge as SupportAssistant's LLM prompt.
 // Vick delivers the answer in plain human language — not robotic output.
-function buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, investigationContext, text, isPrivate }) {
+function buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, investigationContext, text, isPrivate, hasImages = false }) {
+
+  // When an image is attached, front-load the image analysis directive so the model
+  // prioritizes visual reading BEFORE any architecture context or database logic.
+  const imageAnalysisDirective = hasImages ? `
+════════════════════════════════════════
+IMAGE / SCREENSHOT ANALYSIS — READ FIRST
+════════════════════════════════════════
+The user has sent an image or screenshot with this message.
+
+YOUR FIRST TASK IS TO READ THE IMAGE.
+
+Before doing anything else:
+1. Identify what page or section of the app is shown (Home, Travel, Locations, Settings, Chat, School page, Location detail page, etc.)
+2. Read ALL visible text in the image — headings, labels, names, roster entries, statuses, IDs, dates, anything legible.
+3. Describe what you can see clearly, partially see, and cannot see.
+4. Use what is visible as your primary evidence source for answering the user's question.
+
+RULES FOR IMAGE READING:
+- If text is clearly visible: read it exactly as shown.
+- If text is partially visible or blurry: say it is partially visible and give your best reading.
+- If a section is obscured or cropped out: say it is not visible in this screenshot.
+- NEVER report visible text as unreadable.
+- NEVER report readable sections as blank or loading.
+- NEVER claim information is missing when it is visibly present in the image.
+- NEVER invent text, names, locations, or roster entries that are not visible.
+- The screenshot is live evidence. Treat it as the highest-priority source of truth for this turn.
+
+After reading the image, THEN use your architecture knowledge and diagnostic data to provide context or cross-reference if relevant.
+════════════════════════════════════════
+` : '';
 
   const speechRule = isPrivate
     ? `You are speaking privately with the user. Speak directly about the app, its records, schemas, fields, functions, and systems by their real names. You are the Account Help & Repair specialist.`
@@ -408,15 +438,16 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   // Add user message to persistent history
   ctx.history.push({ role: 'user', content: text });
 
+  const hasImages = Array.isArray(imageUrls) && imageUrls.length > 0;
+
   const prompt = buildVickIntelligencePrompt({
     ownerEmail, recentHistory, diagContext, characterListContext,
-    investigationContext, text, isPrivate,
+    investigationContext, text, isPrivate, hasImages,
   });
 
   let responseText = '';
   try {
     // If the user sent a screenshot/image, pass it to the LLM for visual inspection
-    const hasImages = Array.isArray(imageUrls) && imageUrls.length > 0;
     const raw = await base44.integrations.Core.InvokeLLM({
       prompt,
       model: 'gemini_3_flash',

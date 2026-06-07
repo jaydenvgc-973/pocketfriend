@@ -19,12 +19,17 @@ import { base44 } from '@/api/base44Client';
 
 /**
  * Returns true if this Vick message should be routed through the service bridge.
- * Vick routes through the bridge whenever the user asks a service question.
+ * Vick routes through the bridge whenever:
+ *   - the user asks a service question, OR
+ *   - the user sent an image (Vick always needs vision for screenshots)
  * Normal conversational messages (greetings, non-system topics) still use the
  * standard NPC path so Vick can have personality outside diagnostic conversations.
  */
-export function shouldUseVickFastPath(character, text) {
-  return isVickServicioCharacter(character) && hasVickServiceIntent(text);
+export function shouldUseVickFastPath(character, text, hasImage = false) {
+  if (!isVickServicioCharacter(character)) return false;
+  // Always route through service bridge when user sent an image — Vick must analyze it
+  if (hasImage) return true;
+  return hasVickServiceIntent(text);
 }
 
 // Re-export for backward compat
