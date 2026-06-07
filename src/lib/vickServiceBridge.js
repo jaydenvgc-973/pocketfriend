@@ -541,28 +541,76 @@ User: ${text}
 Respond as Vick. Direct, clear, honest. Use real data when available. Admit what you cannot verify. Never guess.`;
 }
 
-// ── Create or update a VickInvestigation record ──────────────────────────────
-// Called when Vick begins an investigation in chat.
-// This persists the investigation so findings can be delivered even if user is offline.
-async function upsertInvestigation({ ownerEmail, title, description, status, priority, vickCharacterId, conversationId, sourceMessageId, findings }) {
+// ── Write a Vick message directly to the conversation (event-driven delivery) ─
+// Called immediately when findings are ready — no polling scanner needed.
+// If conversationId is not yet known, looks it up from Conversation records.
+async function deliverFindingsAsMessage({ ownerEmail, conversationId, vickCharacterId, title, findings, priority, sourceMessageId }) {
   try {
-    const record = {
+    let resolvedConvoId = conversationId;
+
+    if (!resolvedConvoId && vickCharacterId) {
+      // Look up Vick's conversation for this account
+      const convos = await base44.entities.Conversation.filter({ owner_email: ownerEmail });
+      const vickConvo = convos.find(c =>
+        (c.character_ids || []).includes(vickCharacterId) &&
+        (c.type === 'direct' || c.type === 'npc')
+      );
+      resolvedConvoId = vickConvo?.id || null;
+    }
+
+    if (!resolvedConvoId) {
+      console.warn('[VICK_BRIDGE] Cannot deliver findings — no conversation found');
+      return false;
+    }
+
+    const prefix = priority === 'critical' ? '🔴 CRITICAL: ' : priority === 'high' ? '🟡 ' : '';
+    const content = prefix + findings;
+
+    await base44.entities.Message.create({
+      conversation_id: resolvedConvoId,
+      sender_type: 'character',
+      character_id: vickCharacterId || null,
+      character_name: 'Vick Servicio',
+      content,
+      is_read: false,
+      timestamp: new Date().toISOString(),
+      channel: 'direct',
+      recovery_signal: false,
+      memory_eligible: false,
+      relationship_eligible: false,
+      source_message_id: sourceMessageId || null,
+    });
+
+    await base44.entities.Conversation.update(resolvedConvoId, {
+      last_message_preview: content.substring(0, 100),
+      last_message_date: new Date().toISOString(),
+    });
+
+    console.log(`[VICK_BRIDGE] Findings delivered inline for "${title}"`);
+    return true;
+  } catch (err) {
+    console.warn(`[VICK_BRIDGE] Inline delivery failed: ${err.message}`);
+    return false;
+  }
+}
+
+// ── Track an in-progress investigation (lightweight — only when work is async) ─
+// Do NOT create records for investigations that complete synchronously.
+// Only use this when work spans multiple turns or may be interrupted.
+async function createInvestigationRecord({ ownerEmail, title, vickCharacterId, conversationId, sourceMessageId }) {
+  try {
+    const created = await base44.entities.VickInvestigation.create({
       owner_email: ownerEmail,
       title,
-      description: description || title,
-      status: status || 'investigating',
-      priority: priority || 'normal',
+      description: title,
+      status: 'investigating',
+      priority: 'normal',
       vick_character_id: vickCharacterId || null,
       conversation_id: conversationId || null,
       source_message_id: sourceMessageId || null,
       started_at: new Date().toISOString(),
-    };
-    if (findings) {
-      record.findings = findings;
-      record.status = 'findings_ready';
-    }
-    const created = await base44.entities.VickInvestigation.create(record);
-    console.log(`[VICK_BRIDGE] Investigation created id=${created?.id} title="${title}" status=${record.status}`);
+    });
+    console.log(`[VICK_BRIDGE] Investigation record created id=${created?.id}`);
     return created;
   } catch (err) {
     console.warn(`[VICK_BRIDGE] Failed to create investigation record: ${err.message}`);
@@ -570,20 +618,20 @@ async function upsertInvestigation({ ownerEmail, title, description, status, pri
   }
 }
 
-// ── Mark an investigation complete with findings ──────────────────────────────
-async function completeInvestigation(investigationId, findings, priority = 'normal') {
+// ── Close an investigation record after delivery ──────────────────────────────
+async function closeInvestigationRecord(investigationId, findings, priority = 'normal') {
   if (!investigationId) return;
   try {
     await base44.entities.VickInvestigation.update(investigationId, {
       findings,
-      status: 'findings_ready',
+      status: 'closed',
       priority,
+      findings_delivered: true,
+      findings_read: false,
       completed_at: new Date().toISOString(),
-      findings_delivered: false,
     });
-    console.log(`[VICK_BRIDGE] Investigation ${investigationId} marked findings_ready`);
   } catch (err) {
-    console.warn(`[VICK_BRIDGE] Failed to complete investigation: ${err.message}`);
+    console.warn(`[VICK_BRIDGE] Failed to close investigation record: ${err.message}`);
   }
 }
 
@@ -601,6 +649,8 @@ async function completeInvestigation(investigationId, findings, priority = 'norm
  * @param {string[]} [opts.imageUrls=[]] - Any image/screenshot URLs sent with this message
  * @returns {Promise<{ handled: boolean, responseText?: string }>}
  */
+export { deliverFindingsAsMessage };
+
 export async function handleVickMessage({ text, conversationId, ownerEmail, character, isPrivate = true, imageUrls = [] }) {
   if (!isVickServicioCharacter(character)) return { handled: false };
   if (!ownerEmail) return { handled: false };
@@ -619,13 +669,11 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   let activeInvestigationId = null;
 
   if (wantsDiagnosticRun(text)) {
-    // Create a persistent investigation record so findings survive if user goes offline
-    const inv = await upsertInvestigation({
+    // Only create a tracking record when the work is actually diagnostic (async/heavy).
+    // Lightweight Q&A does not need a record.
+    const inv = await createInvestigationRecord({
       ownerEmail,
       title: 'Account diagnostic',
-      description: `User request: "${text.slice(0, 120)}"`,
-      status: 'investigating',
-      priority: 'normal',
       vickCharacterId: character?.id || null,
       conversationId,
     });
@@ -744,15 +792,11 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
 
   ctx.history.push({ role: 'ai', content: responseText });
 
-  // Mark investigation complete with findings so delivery automation can persist them
+  // Event-driven: close the investigation record immediately — no polling scanner needed.
+  // The response IS the delivery; the record just tracks that work was done.
   if (activeInvestigationId && responseText) {
     const isCritical = /critical|corruption|data loss|missing records|broken|failed.*maintenance|widespread/i.test(responseText);
-    await completeInvestigation(activeInvestigationId, responseText, isCritical ? 'critical' : 'normal');
-    // Mark immediately delivered since Vick just said it in chat
-    base44.entities.VickInvestigation.update(activeInvestigationId, {
-      findings_delivered: true,
-      findings_read: false,
-    }).catch(() => {});
+    closeInvestigationRecord(activeInvestigationId, responseText, isCritical ? 'critical' : 'normal').catch(() => {});
   }
 
   return { handled: true, responseText };
