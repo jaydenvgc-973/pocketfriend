@@ -1,7 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
+import WorldContactMessageMenu from "@/components/chat/WorldContactMessageMenu";
+import { enforceCanonIntegrity } from "@/lib/canonIntegrityFilter";
 import DateSeparator from "@/components/chat/DateSeparator";
 import { injectDateSeparators } from "@/lib/messageDateGrouping";
 import { base44 } from "@/api/base44Client";
@@ -78,6 +80,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [contacts, setContacts] = useState([]);
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const [ownerEmail, setOwnerEmail] = useState(null);
+  // Per-message context menu state
+  const [messageMenu, setMessageMenu] = useState(null); // { message, anchorRect } | null
 
   // Unread counts per contact — green badge source of truth
   const { unreadByContact, previewByContact } = useWorldContactsUnread(character?.id, contacts, ownerEmail);
@@ -937,6 +941,47 @@ Respond ONLY with valid JSON in this exact format:
       npcText = filterDashes(npcText);
       npcText = stripCharacterNamePrefix(npcText, selectedContact.person_name);
       if (!npcText || npcText.startsWith("{") || npcText.startsWith("```")) npcText = "...";
+
+      // ── FOURTH-WALL INTEGRITY GUARD ────────────────────────────────────────
+      // Characters must never reference memory records, deleted files, databases,
+      // system data, prompts, AI architecture, or any implementation-layer construct.
+      // Guard attempts an in-world rewrite first; rejects and regenerates if unclean.
+      if (npcText && npcText !== "...") {
+        const canonCheck = enforceCanonIntegrity(npcText, {
+          characterName: selectedContact.person_name,
+          channel: 'world_phone',
+        });
+        if (canonCheck.action === 'rejected') {
+          // Rewrite failed — attempt one regeneration with an explicit in-world constraint injected
+          console.warn(`[WorldContacts] Canon integrity: attempting regeneration for ${selectedContact.person_name}`);
+          const cleanPrompt = fullPrompt + `\n\nCRITICAL IMMERSION RULE: You are a real person in a real world. You must NEVER reference memory records, deleted files, file headers, databases, metadata, character profiles, AI systems, backend services, or any technical construct. If you are describing something suspicious or missing, describe it the way a real person would — through physical evidence, rumors, inconsistent stories, photographs, missing years, people who avoid a subject, or things that simply don't add up. Do NOT use technical language. Rewrite your response now, staying entirely in-world.`;
+          try {
+            const regenRaw = await callLLMWithRetry(cleanPrompt);
+            const regenParsed = parseCharacterResponse(regenRaw);
+            let regenText = regenParsed.text_content?.trim() || regenRaw?.trim() || null;
+            if (regenText) {
+              regenText = filterDashes(regenText);
+              regenText = stripCharacterNamePrefix(regenText, selectedContact.person_name);
+              const regenCheck = enforceCanonIntegrity(regenText, { characterName: selectedContact.person_name, channel: 'world_phone' });
+              if (regenCheck.safe) {
+                npcText = regenCheck.text;
+                console.log(`[WorldContacts] Canon regeneration succeeded | character=${selectedContact.person_name}`);
+              } else {
+                // Both attempts violated canon — suppress entirely
+                npcText = null;
+                console.error(`[WorldContacts] Canon regeneration also violated — response suppressed | character=${selectedContact.person_name}`);
+              }
+            } else {
+              npcText = null;
+            }
+          } catch {
+            npcText = null;
+          }
+        } else {
+          // Passed or rewritten — use the clean version
+          npcText = canonCheck.text;
+        }
+      }
     } catch (e) {
       console.error(`[WorldContacts] LLM call failed: ${e.message}`);
       
@@ -1090,6 +1135,7 @@ Respond ONLY with valid JSON in this exact format:
         messageContent: fullExchangeContent,
         context: 'world_phone',
         conversationId: convoId,
+        receiverMessageId: savedNpcMsg.id,
       }).then(() => {
         console.log(`[WORLD_CONTACT_BILATERAL_MEMORY_WRITTEN] sender=${character.id} | receiver=${selectedContact.related_character_id} | convo=${convoId}`);
       }).catch(err => {
@@ -1107,9 +1153,57 @@ Respond ONLY with valid JSON in this exact format:
     }
   };
 
+  // ── MESSAGE LONG-PRESS / CONTEXT MENU ─────────────────────────────────────
+  const longPressTimerRef = useRef(null);
+  const handleMessageLongPress = useCallback((msg, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.currentTarget || e.target;
+    const rect = target.getBoundingClientRect();
+    setMessageMenu({ message: msg, anchorRect: rect });
+  }, []);
+
+  const handleMessageContextMenu = useCallback((msg, e) => {
+    e.preventDefault();
+    const rect = e.currentTarget?.getBoundingClientRect?.() || null;
+    setMessageMenu({ message: msg, anchorRect: rect });
+  }, []);
+
+  const handleMessageTouchStart = useCallback((msg, e) => {
+    longPressTimerRef.current = setTimeout(() => {
+      const touch = e.touches?.[0];
+      const target = e.currentTarget;
+      const rect = target?.getBoundingClientRect?.() || null;
+      setMessageMenu({ message: msg, anchorRect: rect });
+    }, 500);
+  }, []);
+
+  const handleMessageTouchEnd = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  // Remove deleted message from local state
+  const handleMessageDeleted = useCallback((deletedId) => {
+    setMessages(prev => prev.filter(m => m.id !== deletedId));
+  }, []);
+
   if (!isOpen) return null;
 
-  return createPortal(
+  return (<>
+    {/* Per-message context menu */}
+    {messageMenu && (
+      <WorldContactMessageMenu
+        message={messageMenu.message}
+        conversationId={conversationId}
+        anchorRect={messageMenu.anchorRect}
+        onDeleted={handleMessageDeleted}
+        onClose={() => setMessageMenu(null)}
+      />
+    )}
+  {createPortal(
     <AnimatePresence>
       <motion.div
         key="world-contacts-overlay"
@@ -1329,11 +1423,17 @@ Respond ONLY with valid JSON in this exact format:
                             {selectedContact.person_name}
                           </p>
                         )}
-                        <div className={`max-w-[78%] rounded-2xl overflow-hidden text-sm ${
-                          isSent
-                            ? "bg-primary text-primary-foreground rounded-br-sm"
-                            : "bg-secondary text-foreground rounded-bl-sm"
-                        }`}>
+                        <div
+                          className={`max-w-[78%] rounded-2xl overflow-hidden text-sm select-none ${
+                            isSent
+                              ? "bg-primary text-primary-foreground rounded-br-sm"
+                              : "bg-secondary text-foreground rounded-bl-sm"
+                          }`}
+                          onContextMenu={(e) => handleMessageContextMenu(msg, e)}
+                          onTouchStart={(e) => handleMessageTouchStart(msg, e)}
+                          onTouchEnd={handleMessageTouchEnd}
+                          onTouchMove={handleMessageTouchEnd}
+                        >
                           {hasImage && msg.image_url ? (
                             <div>
                               <img
@@ -1399,5 +1499,5 @@ Respond ONLY with valid JSON in this exact format:
       </motion.div>
     </AnimatePresence>,
     document.body
-  );
+  )}</>);
 }

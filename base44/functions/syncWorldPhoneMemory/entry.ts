@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 /**
  * syncWorldPhoneMemory
@@ -20,10 +20,28 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { senderCharacterId, receiverCharacterId, messageContent, context, conversationId } = await req.json();
+    const { senderCharacterId, receiverCharacterId, messageContent, context, conversationId, receiverMessageId } = await req.json();
 
     if (!senderCharacterId || !receiverCharacterId || !messageContent) {
       return Response.json({ error: 'Missing required fields: senderCharacterId, receiverCharacterId, messageContent' }, { status: 400 });
+    }
+
+    // ── CANON EXCLUSION GUARD ──────────────────────────────────────────────────
+    // If the NPC response message has been canon-excluded (fourth-wall violation,
+    // impossible knowledge, or user removal), do NOT write memories or relationship
+    // updates from it. This function must never propagate excluded content.
+    if (receiverMessageId) {
+      const receiverMsgs = await base44.entities.Message.filter({ id: receiverMessageId }).catch(() => []);
+      const receiverMsg = receiverMsgs[0];
+      if (receiverMsg?.canon_excluded === true || receiverMsg?.memory_eligible === false) {
+        console.log(`[syncWorldPhoneMemory] SKIPPED — message ${receiverMessageId} is canon_excluded or memory_ineligible`);
+        return Response.json({
+          success: true,
+          skipped: true,
+          reason: 'canon_excluded',
+          message_id: receiverMessageId,
+        });
+      }
     }
 
     // Fetch both characters — ownership enforced by owner_email

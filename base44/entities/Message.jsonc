@@ -182,7 +182,7 @@
     },
     "generation_context": {
       "type": "object",
-      "description": "Stored generation metadata for image messages \u2014 used to power accurate regeneration. additionalProperties MUST remain true. Removing it silently strips all structured subject bundle fields (subjects, image_type, resolved_outfit_metadata etc.) on every DB write, causing regeneration to silently fall back to legacy single-subject behavior. This is a HARD SYSTEM REQUIREMENT.",
+      "description": "Stored generation metadata for image messages \u2014 used to power accurate regeneration. additionalProperties MUST remain true.",
       "additionalProperties": true,
       "properties": {
         "generation_context_version": {
@@ -582,7 +582,7 @@
     },
     "source_message_id": {
       "type": "string",
-      "description": "ID of the user message that triggered this character response. Used as the idempotency anchor to prevent duplicate character replies. Every character text response MUST have this set to the ID of the originating user message."
+      "description": "ID of the user message that triggered this character response. Used as the idempotency anchor to prevent duplicate character replies."
     },
     "reply_to_message_id": {
       "type": "string",
@@ -590,26 +590,26 @@
     },
     "idempotency_key": {
       "type": "string",
-      "description": "Composite idempotency key that uniquely identifies this message generation attempt. Format varies by path: 'recovery::email::charId::channel::sourceId::stage', 'group_chat::charId::convoId::sourceId', 'proactive::email::charId::channel::hourBucket'. Prevents duplicate saves on retry."
+      "description": "Composite idempotency key that uniquely identifies this message generation attempt."
     },
     "generation_lock_id": {
       "type": "string",
-      "description": "ID of the generation lock that was held during this message's creation. Used for audit trails."
+      "description": "ID of the generation lock that was held during this message's creation."
     },
     "recovery_signal": {
       "type": "boolean",
       "default": false,
-      "description": "CRITICAL CLASSIFICATION FIELD. false = real character dialogue (memory/relationship eligible). true = technical failure state signal (never dialogue, never memory-eligible, never relationship-eligible). Must be explicitly set on EVERY character text message. Absence treated as false (real message) for backward compatibility."
+      "description": "CRITICAL CLASSIFICATION FIELD. false = real character dialogue. true = technical failure state signal (never memory-eligible, never relationship-eligible)."
     },
     "memory_eligible": {
       "type": "boolean",
       "default": true,
-      "description": "When true, this message may be read by memory extraction pipelines. When false, it must be excluded from all memory writes. Set to false for recovery signals, fallback placeholders, and system-generated failure state messages."
+      "description": "When true, this message may be read by memory extraction pipelines. When false, excluded from all memory writes."
     },
     "relationship_eligible": {
       "type": "boolean",
       "default": true,
-      "description": "When true, this message may trigger relationship score updates. When false, it must be excluded from all relationship progression. Set to false for recovery signals, fallback placeholders, and system-generated failure state messages."
+      "description": "When true, this message may trigger relationship score updates. When false, excluded from all relationship progression."
     },
     "source_media_message_id": {
       "type": "string",
@@ -628,6 +628,20 @@
       "type": "boolean",
       "default": false,
       "description": "True if the original gallery image had generation context metadata."
+    },
+    "canon_excluded": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when this message has been removed from canon by the user. It must not influence memories, relationship progression, journal entries, summaries, or future context assembly. Treated as if it never existed."
+    },
+    "canon_exclusion_reason": {
+      "type": "string",
+      "description": "Why this message was excluded from canon: user_removal, fourth_wall, impossible_knowledge, canon_violation."
+    },
+    "canon_excluded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the canon exclusion was applied."
     }
   },
   "required": [
