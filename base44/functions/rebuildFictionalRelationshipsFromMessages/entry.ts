@@ -1,8 +1,26 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 /**
- * Reconstructs fictional_relationships for each character
- * from message history and character memory
+ * rebuildFictionalRelationshipsFromMessages
+ *
+ * SCOPE: Legacy migration / recovery tool only.
+ *
+ * PURPOSE:
+ *   Adds relationship entries derived from message history for characters
+ *   that have NO existing fictional_relationships at all (empty or missing array).
+ *   This is a one-time recovery path for characters whose relationship data
+ *   was lost or never set — NOT a routine enrichment pass.
+ *
+ * HARD EXCLUSIONS (never modified by this function):
+ *   1. npc_world_service characters (Vick Servicio) — their contact lists are
+ *      intentionally managed and must never be derived from message parsing.
+ *   2. Any character that already has fictional_relationships entries — the
+ *      canonical list is authoritative; reconstruction does not override it.
+ *   3. Characters with character_type: 'npc_fictitious' — they are contact
+ *      targets, not relationship owners that need reconstruction.
+ *
+ * Message parsing is NOT authoritative for relationship data.
+ * It is a last-resort recovery tool for genuinely empty lists only.
  */
 Deno.serve(async (req) => {
   try {
@@ -13,11 +31,47 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get all characters
+    // Get all characters — will be filtered strictly below
     const characters = await base44.asServiceRole.entities.Character.filter({
       created_by: user.email,
       status: 'active'
     });
+
+    // ── HARD EXCLUSION FILTER ─────────────────────────────────────────────────
+    // Characters that must NEVER be processed by message reconstruction:
+    //   1. npc_world_service — intentionally managed contact lists (Vick Servicio et al.)
+    //   2. Any character that already has fictional_relationships entries — canonical is authoritative.
+    //   3. npc_fictitious — they are contact targets, not relationship owners.
+    //
+    // Only characters with character_type 'active_created_character' or 'npc_regular' that
+    // have a genuinely empty fictional_relationships array are eligible for reconstruction.
+    const eligibleCharacters = characters.filter(c => {
+      // Exclude world-service characters — their lists are intentionally managed, never reconstructed
+      if (c.character_type === 'npc_world_service' || c.is_world_service === true) {
+        console.log(`[rebuildFictionalRelationshipsFromMessages] EXCLUDED (world_service): ${c.name} (${c.id})`);
+        return false;
+      }
+      // Exclude fictitious NPCs — they are contact targets, not owners
+      if (c.character_type === 'npc_fictitious') return false;
+      // Exclude any character that already has canonical relationship data
+      // Reconstruction is only a last-resort recovery for genuinely empty lists
+      if (Array.isArray(c.fictional_relationships) && c.fictional_relationships.length > 0) {
+        console.log(`[rebuildFictionalRelationshipsFromMessages] EXCLUDED (has_existing_rels=${c.fictional_relationships.length}): ${c.name} (${c.id})`);
+        return false;
+      }
+      return true;
+    });
+
+    console.log(`[rebuildFictionalRelationshipsFromMessages] Total characters: ${characters.length} | Eligible for reconstruction: ${eligibleCharacters.length}`);
+
+    if (eligibleCharacters.length === 0) {
+      return Response.json({
+        success: true,
+        message: 'No characters require reconstruction — all eligible characters already have canonical relationship data.',
+        charactersProcessed: 0,
+        excluded: characters.length,
+      });
+    }
 
     // Get all messages
     const messages = await base44.asServiceRole.entities.Message.list();
@@ -31,10 +85,10 @@ Deno.serve(async (req) => {
       charNameToId[c.name?.toLowerCase()] = c.id;
     });
 
-    // For each character, find who they interacted with
+    // For each ELIGIBLE character, find who they interacted with
     const characterNetworks = {};
 
-    characters.forEach(char => {
+    eligibleCharacters.forEach(char => {
       characterNetworks[char.id] = new Map(); // name -> relationship data
     });
 
@@ -93,13 +147,11 @@ Deno.serve(async (req) => {
       }
     });
 
-    // Apply updates to each character — MERGE only, never replace.
-    // For each character in the computed network, fetch the CURRENT canonical
-    // fictional_relationships from the DB and add only NEW entries (by related_character_id).
-    // Existing entries are NEVER overwritten, modified, or removed.
-    // This function may only ADD entries that do not already exist.
+    // Apply updates to each ELIGIBLE character — MERGE only, never replace.
+    // Only adds entries for characters not already in the canonical DB list.
+    // Fetches fresh from DB immediately before write to prevent race conditions.
     let updatedCount = 0;
-    for (const char of characters) {
+    for (const char of eligibleCharacters) {
       const network = characterNetworks[char.id];
       if (network.size === 0) continue;
 
@@ -126,8 +178,10 @@ Deno.serve(async (req) => {
 
     return Response.json({
       success: true,
-      message: `Rebuilt fictional_relationships for ${updatedCount} characters`,
-      charactersProcessed: updatedCount
+      message: `Reconstructed fictional_relationships for ${updatedCount} eligible characters (${characters.length - eligibleCharacters.length} excluded: world_service, fictitious, or already had canonical data).`,
+      charactersProcessed: updatedCount,
+      eligible: eligibleCharacters.length,
+      excluded: characters.length - eligibleCharacters.length,
     });
   } catch (error) {
     console.error('Rebuild error:', error);
