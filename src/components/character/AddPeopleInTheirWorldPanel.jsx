@@ -82,9 +82,12 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
 
       const newNPC = createRes.data.character;
 
-      // ── RELATIONSHIP UPDATE: attach NPC to parent character's fictional_relationships ──
+      // ── RELATIONSHIP UPDATE: re-fetch current state before writing ──────────
+      // Prevents stale props from overwriting newer data saved since last render.
+      const freshChar = await base44.entities.Character.filter({ id: character.id }).catch(() => []);
+      const currentRels = freshChar[0]?.fictional_relationships || character.fictional_relationships || [];
       const updatedRels = [
-        ...(character.fictional_relationships || []),
+        ...currentRels,
         {
           person_name: newNPC.name,
           related_character_id: newNPC.id,
@@ -111,8 +114,11 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
     setErrorMsg(null);
     setIsLoading(true);
     try {
+      // Re-fetch current state before writing — prevents stale props from overwriting newer data.
+      const freshChar = await base44.entities.Character.filter({ id: character.id }).catch(() => []);
+      const currentRels = freshChar[0]?.fictional_relationships || character.fictional_relationships || [];
       const updatedRels = [
-        ...(character.fictional_relationships || []),
+        ...currentRels,
         {
           person_name: selectedNPC.name,
           related_character_id: selectedNPC.id,

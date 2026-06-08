@@ -849,6 +849,26 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // Do NOT show "Traveling to…" — characters are at their current_location_id, period.
   // If presence_status is 'traveling', it is stale — fall through to current location display.
 
+  // ── PRIORITY 2.5: LIVE SCHEDULE PRE-CHECK ─────────────────────────────────
+  // Run the live schedule check BEFORE trusting stored presence status.
+  // This ensures that when the DB says 'home' but the work schedule is currently active,
+  // we surface the real state immediately — matching Travel, Map, Scenes, and Chat.
+  // This is the canonical fix for homepage cards showing "home" while all other surfaces
+  // show "at work". The check is identical to resolveCharacterLocation Layer 1.
+  {
+    const liveScheduleCheck = resolveCharacterLocation(character, locationMap);
+    if (liveScheduleCheck.resolved_presence_status === 'at_work') {
+      const workLocName = locationMap[liveScheduleCheck.resolved_current_location_id]?.name
+        || liveScheduleCheck.resolved_current_location_name || 'Work';
+      return { status: 'at_work', label: 'At work', sublabel: workLocName, isTransit: false, isSleeping: false };
+    }
+    if (liveScheduleCheck.resolved_presence_status === 'at_school') {
+      const schoolLocName = locationMap[liveScheduleCheck.resolved_current_location_id]?.name
+        || liveScheduleCheck.resolved_current_location_name || 'School';
+      return { status: 'at_school', label: 'At school', sublabel: schoolLocName, isTransit: false, isSleeping: false };
+    }
+  }
+
   // ── PRIORITY 3: CONFIRMED PRESENCE ────────────────────────────────────────
   if (presenceStatus === 'at_work') {
     const sourceReason = character.resolved_source_reason;
