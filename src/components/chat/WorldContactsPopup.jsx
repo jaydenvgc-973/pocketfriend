@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Globe, ArrowLeft, User, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import WorldContactMessageMenu from "@/components/chat/WorldContactMessageMenu";
 import { enforceCanonIntegrity } from "@/lib/canonIntegrityFilter";
-import { enforceVickCharacterBoundary } from "@/lib/vickCharacterBoundary";
+import { enforceVickCharacterBoundary, isVickServicio } from "@/lib/vickCharacterBoundary";
 import DateSeparator from "@/components/chat/DateSeparator";
 import { injectDateSeparators } from "@/lib/messageDateGrouping";
 import { base44 } from "@/api/base44Client";
@@ -944,10 +944,10 @@ Respond ONLY with valid JSON in this exact format:
       if (!npcText || npcText.startsWith("{") || npcText.startsWith("```")) npcText = "...";
 
       // ── VICK CHARACTER BOUNDARY ────────────────────────────────────────────
-      // When Vick is the NPC responding (character_type === npc_world_service),
-      // apply the hard diagnostic boundary BEFORE the base canon check.
-      // Vick's diagnostic abilities are user-only and must never leak to characters.
-      if (npcText && npcText !== "..." && contactCharRecord?.is_world_service === true) {
+      // When Vick is the NPC responding, apply the hard diagnostic boundary BEFORE
+      // the base canon check. Uses isVickServicio() for multi-field identification —
+      // never a single-field check.
+      if (npcText && npcText !== "..." && isVickServicio(contactCharRecord)) {
         const vickCheck = enforceVickCharacterBoundary(npcText, character.name, 'world_phone');
         if (vickCheck.action === 'rejected') {
           console.error(`[WorldContacts] Vick boundary: response suppressed | target=${character.name}`);

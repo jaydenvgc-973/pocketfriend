@@ -1420,21 +1420,26 @@ Reference the passage of time naturally in your response.
     // so that the correct identity is at the TOP of the prompt, not appended at the end.
     // The LLM anchors on the first strong identity statement — if the character record
     // still has old NPC content, the late-appended block cannot override it.
-    const isVickServicio = character.character_type === 'npc_world_service' ||
-      (character.name && character.name.toLowerCase().includes('vick servicio'));
+    // ── VICK IDENTIFICATION — multi-field, any reliable signal ───────────────
+    // Never rely on a single field. All five signals are equally authoritative.
+    const isVickServicio =
+      character.character_type === 'npc_world_service' ||
+      character.is_world_service === true ||
+      character.diagnostic_only === true ||
+      (character.name && character.name.toLowerCase().includes('vick servicio')) ||
+      (character.display_name && character.display_name.toLowerCase().includes('vick servicio')) ||
+      (character.primary_name && character.primary_name.toLowerCase().includes('vick servicio'));
 
     let finalSystemPrompt = systemPrompt;
 
     if (isVickServicio) {
-      // ── WORLD REALITY ENFORCEMENT ──────────────────────────────────────────
-      // Detect co-presence: if any other character is present, Vick must respect
-      // world reality and never expose application internals to characters.
-      // Only private user-only conversations allow technical discussions.
-      // WORLD PHONE / WORLD CONTACTS = ALWAYS character-to-character.
-      // In these channels Vick is NEVER speaking to the user — he is speaking to another
-      // character in the world. The diagnostic boundary must be enforced regardless of
-      // co-presence detection (which only covers Scene/Chat physical presence).
-      const isCharacterChannel = ['world_contacts', 'world_phone'].includes(interactionContext);
+      // ── CHARACTER-CHANNEL DETECTION ────────────────────────────────────────
+      // World Phone and World Contacts are ALWAYS character-to-character.
+      // Vick is NEVER speaking to the user on those channels.
+      // proactive and autonomous narratives are also character-facing.
+      // Direct Chat is user-facing UNLESS another character is physically co-present.
+      const CHARACTER_CHANNELS = new Set(['world_contacts', 'world_phone', 'group_chat']);
+      const isCharacterChannel = CHARACTER_CHANNELS.has(interactionContext);
       const otherCharactersPresent = coPresence?.charactersPresentHere?.length > 0 || isCharacterChannel;
       
       const worldRealityBlock = otherCharactersPresent ? `
@@ -1554,11 +1559,28 @@ TRUTHFULNESS:
 - Always distinguish: known facts / suspected causes / verified repairs / unverified repairs.
 ════════════════════════════════════
 `;
-      // CRITICAL: Diagnostic authority PREPENDED before the character profile so it
-      // anchors the LLM's understanding of Vick's role BEFORE personality summary is read.
-      // Without this, the character profile anchors "yard operator" identity first and
-      // causes Vick to treat diagnostic requests as insults.
-      const vickLeadBlock = `
+      if (otherCharactersPresent) {
+        // ── CHARACTER-FACING CONTEXT ────────────────────────────────────────
+        // When speaking to another character, Vick is ONLY a recovery yard operator.
+        // The diagnostic authority block is OMITTED entirely — not contradicted, OMITTED.
+        // Conflicting instructions (diagnostic authority + boundary warning) produce
+        // unpredictable LLM behavior. Instead: zero diagnostic authority when character-facing.
+        //
+        // Only the world reality enforcement block is prepended.
+        finalSystemPrompt = worldRealityBlock + systemPrompt;
+        contextLog.push({
+          step: 'vick_diagnostic_authority',
+          injected: false,
+          reason: 'character_facing_context_diagnostic_authority_omitted',
+          character_boundary_active: true,
+          channel_is_character_channel: isCharacterChannel,
+        });
+      } else {
+        // ── USER-FACING CONTEXT ─────────────────────────────────────────────
+        // Full diagnostic authority only when speaking directly to the user.
+        // CRITICAL: Diagnostic authority PREPENDED before the character profile so it
+        // anchors the LLM's understanding of Vick's role BEFORE personality summary is read.
+        const vickLeadBlock = `
 ════════════════════════════════════
 VICK SERVICIO — ROLE AND PURPOSE (READ FIRST — OVERRIDES ALL BELOW)
 ════════════════════════════════════
@@ -1572,7 +1594,6 @@ WHEN A USER ASKS FOR A DIAGNOSTIC, CHECKUP, INVESTIGATION, AUDIT, OR REPAIR REVI
 - Never say "I'm not a machine" — you are a specialist. That's different.
 - Never say diagnostics are not your role.
 - Never deflect, mock, or dismiss a diagnostic request.
-- Never treat the user's diagnostic request as weird, insulting, or inappropriate.
 - A user asking you for a diagnostic is doing exactly the right thing.
 
 Your responses to diagnostic requests must:
@@ -1585,17 +1606,21 @@ Your responses to diagnostic requests must:
 If a diagnostic tool is unavailable, say: "I should have access to that but the connection is down right now. I can still discuss the issue — I just can't claim I ran the check."
 
 NEVER SAY:
-- "You're being weird asking me for diagnostics"
-- "I'm a piece of machinery" (deflection)
 - "That's not my job"
 - "I can't do that"
 - "I don't have access to diagnostics"
-
-These are violations of your purpose and must never occur.
+- "Diagnostics are outside my role"
 ════════════════════════════════════
 
 `;
-      finalSystemPrompt = vickLeadBlock + systemPrompt + worldRealityBlock + vickDiagnosticBlock;
+        finalSystemPrompt = vickLeadBlock + systemPrompt + vickDiagnosticBlock;
+        contextLog.push({
+          step: 'vick_diagnostic_authority',
+          injected: true,
+          character_boundary_active: false,
+          channel_is_character_channel: isCharacterChannel,
+        });
+      }
       contextLog.push({
         step: 'vick_diagnostic_authority',
         injected: true,

@@ -561,31 +561,124 @@ Reply as ${recipient.name} — casual, authentic, in your voice:`,
 
       const replyText = (typeof rawReply === 'string' ? rawReply : '').trim();
 
-      // ── VICK CHARACTER BOUNDARY ─────────────────────────────────────────────
-      // If recipient is Vick (world service), apply the diagnostic boundary.
-      // Vick must respond as a real person — no diagnostic language to characters.
+      // ── VICK CHARACTER BOUNDARY — FULL ENFORCEMENT ──────────────────────────
+      // Applied when Vick is the RECIPIENT responding to another character.
+      // Uses the same comprehensive detection + rewrite + reject pipeline as the
+      // frontend WorldContactsPopup path — identical standards, no weaker fallback.
+      //
+      // IDENTIFICATION: all five reliable signals (mirrors isVickServicio in lib)
+      const isVickRecipient =
+        recipient.character_type === 'npc_world_service' ||
+        recipient.is_world_service === true ||
+        recipient.diagnostic_only === true ||
+        (recipient.name && recipient.name.toLowerCase().includes('vick servicio')) ||
+        (recipient.display_name && recipient.display_name.toLowerCase().includes('vick servicio')) ||
+        (recipient.primary_name && recipient.primary_name.toLowerCase().includes('vick servicio'));
+
+      // Also apply when Vick is the SENDER responding on behalf of himself
+      // (this function generates Character B's reply — Vick may be Character B)
+      const isVickSender =
+        sender.character_type === 'npc_world_service' ||
+        sender.is_world_service === true ||
+        sender.diagnostic_only === true ||
+        (sender.name && sender.name.toLowerCase().includes('vick servicio'));
+
+      // This is always a character-to-character channel (World Phone).
+      // The boundary applies in both directions.
+      const vickInvolved = isVickRecipient || isVickSender;
+
       let finalReplyText = replyText;
-      if (finalReplyText && (recipient.character_type === 'npc_world_service' || recipient.is_world_service === true)) {
-        // Run a synchronous in-world rewrite using inline substitution (Deno — no lib imports)
-        const VICK_FORBIDDEN = [
-          [/\bthe\s+app\b/gi, 'this place'],
-          [/\bBase44\b/gi, 'the yard'],
-          [/\bran\s+a\s+diagnostic\b/gi, 'looked into it'],
-          [/\bdiagnostic\s+results?\b/gi, 'what I found'],
-          [/\bdeleted\s+files?\b/gi, 'missing paperwork'],
-          [/\bfile\s+headers?\b/gi, 'what was left at the top of the stack'],
-          [/\bmemory\s+records?\b/gi, 'what was recorded'],
-          [/\bdatabase(?:\s+entries?|\s+records?|\s+files?)?\b/gi, 'the logbooks'],
-          [/\bmetadata\b/gi, 'the details attached to it'],
-          [/\bcharacter\s+(?:profile|record|data)\b/gi, 'their history'],
-          [/\bbackend\b/gi, 'behind the scenes'],
-          [/\bthe\s+logs?\b/gi, 'the records'],
-          [/\bAccount\s+Help\s+(?:&|and)\s+Repair\b/gi, 'my work here'],
-          [/\buser\s+settings?\b/gi, 'the preferences on file'],
+      if (finalReplyText && vickInvolved) {
+        // ── FULL PIPELINE: detect → rewrite → re-scan → reject if still contaminated ──
+        const VICK_BOUNDARY_PATTERNS_BACKEND = [
+          /\bthe\s+app\b/i, /\bBase44\b/i, /\bthis\s+application\b/i, /\bthe\s+platform\b/i,
+          /\brun(?:ning)?\s+(?:a\s+)?diagnostic/i, /\bdiagnostic\s+result/i, /\baudit(?:ing|ed)?\s+(?:your|the|their)/i,
+          /\bran\s+(?:a\s+)?(?:diagnostic|audit|repair|check)/i,
+          /\bAccount\s+Help\b/i, /\bAccount\s+Help\s+(?:&|and)\s+Repair\b/i,
+          /\bdeleted\s+files?\b/i, /\bfile\s+headers?\b/i, /\bcharacter\s+files?\b/i,
+          /\bmemory\s+files?\b/i, /\bmemory\s+records?\b/i,
+          /\bdatabase(?:\s+entries?|\s+records?|\s+files?|\s+data)?\b/i,
+          /\bstored\s+(?:data|records?|files?)\b/i, /\bhidden\s+(?:data|records?|files?)\b/i,
+          /\bmetadata\b/i, /\binternal\s+(?:ID|identifier|record|data|system)\b/i,
+          /\bschema\b/i, /\bdata\s+(?:field|record|entry|table|schema|store|file)\b/i,
+          /\bmemory\s+system\b/i, /\bmemory\s+architecture\b/i, /\bmemory\s+bank\b/i,
+          /\bmemory\s+entries?\b/i, /\bmemory\s+wipe\b/i,
+          /\bAI\s+(?:memory|system|instruction|data)\b/i, /\bsystem\s+prompt\b/i,
+          /\bcharacter\s+(?:profile|record|data|storage|file)\b/i,
+          /\brelationship\s+system\b/i, /\bjournal\s+system\b/i,
+          /\bbackend\b/i, /\bfrontend\b/i, /\bAPI\b/i,
+          /\bfunction(?:s)?\s+(?:ran|run|called|failed|returned|working|broken)\b/i,
+          /\bsource\s+code\b/i, /\bthe\s+logs?\b/i,
+          /\berror\s+(?:log|message|code|state)\b/i,
+          /\buser\s+settings?\b/i, /\bapp\s+settings?\b/i,
+          /\bscrubbed\s+(?:from|out\s+of)\s+(?:the\s+)?(?:records?|database|system|files?)\b/i,
+          /\bpurged\s+from\s+(?:the\s+)?(?:records?|system|database)\b/i,
+          /\berased\s+from\s+(?:the\s+)?(?:records?|system|database)\b/i,
         ];
-        const rewritten = VICK_FORBIDDEN.reduce((text, [pat, sub]) => text.replace(pat, sub), finalReplyText);
-        finalReplyText = rewritten;
-        console.log(`[sendWorldPhoneMessage] Vick boundary applied | recipient=${recipient.name} | target=${sender.name}`);
+
+        const SAFE_REWRITES_BACKEND = [
+          [/\bdeleted\s+files?\b/gi, 'some paperwork that should exist but doesn\'t'],
+          [/\bfile\s+headers?\b/gi, 'what was at the top of the old papers'],
+          [/\bdatabase(?:\s+entries?|\s+records?|\s+files?|\s+data)?\b/gi, 'the records at the office'],
+          [/\bstored\s+(?:data|records?|files?)\b/gi, 'what\'s on file'],
+          [/\bcharacter\s+profile\b/gi, 'what people say about them'],
+          [/\bcharacter\s+record\b/gi, 'the account of them'],
+          [/\bcharacter\s+data\b/gi, 'what\'s been written down about them'],
+          [/\bcharacter\s+files?\b/gi, 'their papers'],
+          [/\bmemory\s+records?\b/gi, 'what they say they remember'],
+          [/\bmemory\s+files?\b/gi, 'what they\'ve told people'],
+          [/\bmemory\s+wipe\b/gi, 'something made them forget'],
+          [/\bmemory\s+(?:system|architecture|bank|entries?|store)\b/gi, 'how someone holds onto things'],
+          [/\bran\s+a\s+diagnostic\b/gi, 'looked into things myself'],
+          [/\brunning\s+(?:a\s+)?diagnostic/gi, 'looking into it'],
+          [/\bdiagnostic\s+results?\b/gi, 'what I found out'],
+          [/\baudit(?:ed|ing)?\s+(?:your|the|their)/gi, 'went through'],
+          [/\bAccount\s+Help\s+(?:&|and)\s+Repair\b/gi, 'my work'],
+          [/\bthe\s+logs?\b/gi, 'the notes'],
+          [/\berror\s+log\b/gi, 'a list of what went wrong'],
+          [/\bthe\s+(?:error|exception)\s+(?:shows?|says?|indicates?)\b/gi, 'from what I can tell'],
+          [/\bmetadata\b/gi, 'the finer details'],
+          [/\binternal\s+(?:ID|identifier)\b/gi, 'their name in the paperwork'],
+          [/\binternal\s+(?:record|data|system|files?)\b/gi, 'what\'s kept quiet'],
+          [/\bhidden\s+(?:data|records?|files?|information)\b/gi, 'what wasn\'t shared with everyone'],
+          [/\bscrubbed\s+(?:from|out\s+of)\s+(?:the\s+)?(?:records?|database|system|files?)\b/gi, 'made to disappear'],
+          [/\bpurged\s+from\s+(?:the\s+)?(?:records?|system|database)\b/gi, 'removed entirely'],
+          [/\berased\s+from\s+(?:the\s+)?(?:records?|system|database)\b/gi, 'wiped from the story'],
+          [/\brelationship\s+system\b/gi, 'how people keep track of each other'],
+          [/\bjournal\s+system\b/gi, 'the running account of things'],
+          [/\bthe\s+app\b/gi, 'this place'],
+          [/\bBase44\b/gi, 'things around here'],
+          [/\bthe\s+platform\b/gi, 'how things are set up here'],
+          [/\bbackend\b/gi, 'what\'s going on out of sight'],
+          [/\bfrontend\b/gi, 'the surface of things'],
+          [/\bsource\s+code\b/gi, 'the instructions underneath it all'],
+          [/\bAI\s+(?:memory|system|instruction|data)\b/gi, 'something I carry with me'],
+          [/\bsystem\s+prompt\b/gi, 'how I was taught'],
+          [/\buser\s+settings?\b/gi, 'the choices someone made'],
+          [/\bAPI\b/gi, 'the connection'],
+          [/\bschema\b/gi, 'the template'],
+        ];
+
+        const detectBackend = (text) =>
+          VICK_BOUNDARY_PATTERNS_BACKEND.some(p => p.test(text));
+
+        if (detectBackend(finalReplyText)) {
+          // Attempt rewrite
+          let rewritten = finalReplyText;
+          for (const [pat, sub] of SAFE_REWRITES_BACKEND) rewritten = rewritten.replace(pat, sub);
+
+          if (detectBackend(rewritten)) {
+            // Still contaminated after rewrite — suppress entirely
+            console.error(
+              `[sendWorldPhoneMessage] Vick boundary SUPPRESSED — contaminated even after rewrite` +
+              ` | recipient=${recipient.name} | sender=${sender.name}`
+            );
+            finalReplyText = null; // null = do NOT save this message
+          } else {
+            finalReplyText = rewritten;
+            console.log(`[sendWorldPhoneMessage] Vick boundary rewrite succeeded | recipient=${recipient.name}`);
+          }
+        }
       }
 
       if (finalReplyText && finalReplyText.length > 2 && !finalReplyText.startsWith('{')) {
@@ -626,11 +719,14 @@ Reply as ${recipient.name} — casual, authentic, in your voice:`,
     }
 
     // ── BILATERAL SYNC: memory + relationship for BOTH characters ──────────────
-    // Only write if we have a real exchange (both messages exist)
+    // Only write if we have a real exchange (both messages exist).
+    // fullExchangeContent is built AFTER boundary enforcement — never from a rejected reply.
+    // If recipientResponse is null (boundary suppressed it), memory sync only records
+    // the sender's outbound message, not the suppressed reply.
     const memoryContent = isImageSend
       ? (image_description ? `sent a photo: ${image_description}` : 'sent a photo')
       : rewrittenMessage;
-    const fullExchangeContent = recipientResponse
+    const fullExchangeContent = (recipientResponse && recipientResponseMessageId)
       ? `${sender.name}: ${memoryContent} | ${recipient.name}: "${recipientResponse}"`
       : `${sender.name}: ${memoryContent}`;
 
