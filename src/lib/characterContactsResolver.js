@@ -267,59 +267,58 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     if (!ownerIds.has(ws.id)) allKnownChars.push(ws);
   }
 
-  // ── SUPPLEMENT: null-owner NPC records referenced by this account's characters ──
-  // Legacy npc_fictitious/npc_family_member records may have null owner_email yet still
-  // belong to this account because they are referenced by ID in fictional_relationships
-  // or family_members. They are invisible to the owner_email filter above.
-  // Collect all referenced IDs from the already-fetched allOwnerChars, then fetch any
-  // that are not in the owner-scoped result.
-  const referencedNPCIds = new Set();
+  // ── SUPPLEMENT: contact graph characters missing from the owner-scoped fetch ───
+  // Any character referenced by ID in fictional_relationships, family_members,
+  // or people_in_world that is NOT in allOwnerChars may be:
+  //   - a legacy record with null owner_email (invisible to RLS)
+  //   - a shared/world-service NPC owned differently
+  //   - a valid contact of ANY character_type in the known-contact graph
+  // Collect all referenced IDs, then supplement via service-role fetchCharactersByIds.
+  const referencedContactIds = new Set();
   for (const c of allOwnerChars) {
     for (const rel of (c.fictional_relationships || [])) {
       if (rel.related_character_id && !ownerIds.has(rel.related_character_id)) {
-        referencedNPCIds.add(rel.related_character_id);
+        referencedContactIds.add(rel.related_character_id);
       }
     }
     for (const fm of (c.family_members || [])) {
       const id = fm.character_id || fm.related_character_id;
-      if (id && !ownerIds.has(id)) referencedNPCIds.add(id);
+      if (id && !ownerIds.has(id)) referencedContactIds.add(id);
     }
   }
-  // Also check seen (contacts sourced from fictional_relationships/family_members above)
+  // Also collect from the viewed character's own contact graph entries already in seen
   for (const entry of seen.values()) {
     if (entry.related_character_id && !ownerIds.has(entry.related_character_id)) {
-      referencedNPCIds.add(entry.related_character_id);
+      referencedContactIds.add(entry.related_character_id);
     }
   }
 
-  if (referencedNPCIds.size > 0) {
-    // CRITICAL: base44.entities.Character.filter({ id }) is user-scoped RLS.
-    // Null-owner records are invisible to it — they are hidden by RLS, not missing.
-    // Use the backend service-role route instead, which explicitly fetches by ID
-    // without an owner_email constraint and returns null-owner NPC records safely.
-    // repairNullOwnerNPCFictitious with dryRun=true returns the verified record list
-    // without writing anything — safe to call here as a read-only supplement.
+  if (referencedContactIds.size > 0) {
+    // CRITICAL: base44.entities.Character.filter({ owner_email }) is user-scoped RLS.
+    // Any character record with null owner_email (legacy records, shared NPCs, etc.)
+    // is invisible to that query — hidden by RLS, not truly missing.
+    //
+    // This is a CONTACT GRAPH supplement, not an NPC-only path.
+    // We fetch any referenced character ID regardless of character_type.
+    // active_created_character, npc_fictitious, npc_regular, npc_family_member,
+    // npc_world_service — all are valid contact types.
+    //
+    // fetchCharactersByIds uses service-role to bypass owner_email RLS and returns
+    // the full Character record for each requested ID. Read-only, no writes.
     try {
-      const supplementRes = await base44.functions.invoke('repairNullOwnerNPCFictitious', { dryRun: true });
-      const supplementData = supplementRes?.data;
-      const verifiedRecords = supplementData?.repaired || [];
-      // Only add records whose IDs we were looking for
-      for (const entry of verifiedRecords) {
-        if (!referencedNPCIds.has(entry.id)) continue;
-        if (ownerIds.has(entry.id)) continue;
-        // Fetch the full record via service role (the repair function returns audit stubs, not full records)
-        const fullRes = await base44.functions.invoke('fetchNPCsForUser', {}).catch(() => null);
-        const fullNPCs = fullRes?.data?.npcs || [];
-        const fullRec = fullNPCs.find(n => n.id === entry.id);
-        if (fullRec) {
-          allKnownChars.push(fullRec);
-          ownerIds.add(fullRec.id);
-          console.log(`[ContactsResolver] Service-role supplemented null-owner NPC: "${fullRec.name}" (${fullRec.character_type}) | id=${fullRec.id}`);
-        }
+      const supplementRes = await base44.functions.invoke('fetchCharactersByIds', {
+        ids: [...referencedContactIds],
+      });
+      const supplementChars = supplementRes?.data?.characters || [];
+      for (const rec of supplementChars) {
+        if (ownerIds.has(rec.id)) continue; // already in list
+        allKnownChars.push(rec);
+        ownerIds.add(rec.id);
+        console.log(`[ContactsResolver] Service-role supplemented contact: "${rec.name}" (${rec.character_type}) | id=${rec.id}`);
       }
     } catch (e) {
       // Non-fatal — supplement failed, continue with what we have
-      console.warn(`[ContactsResolver] Null-owner NPC supplement failed: ${e.message}`);
+      console.warn(`[ContactsResolver] Contact graph supplement failed: ${e.message}`);
     }
   }
 
@@ -361,12 +360,9 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     ]).filter(id => id !== character.id)
   );
 
-  // Fetch any participant characters NOT found in the owner-scoped allOwnerChars.
-  // Use fetchNPCsForUser (service-role) for null-owner records — user-scoped RLS
-  // will silently return empty for any Character with owner_email=null.
-  // The NPC fetch already ran above and populated allKnownChars; charById is built from it.
-  // For any still-missing IDs (non-NPC active_created or owned chars), try the
-  // user-scoped query — those records WILL be visible because they are owned by this user.
+  // Fetch any participant characters from conversations NOT already in allKnownChars.
+  // The contact graph supplement above already recovered null-owner and cross-account records.
+  // Any still-missing IDs here are owned by this user and visible via user-scoped query.
   const missingIds = [...allConvoLinkedIds].filter(id => !charById.has(id));
   if (missingIds.length > 0) {
     const missingResults = await Promise.all(
