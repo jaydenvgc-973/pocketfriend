@@ -130,20 +130,73 @@ function getWorkContextFromLocation(loc) {
   return 'at_work_office';
 }
 
-function getLocationContext(character, locationMap) {
+// ── STALE PRESENCE THRESHOLD ─────────────────────────────────────────────────
+// A presence/activity record older than this (in ms) is considered stale and cannot
+// grant energy-restoring contexts (home_resting, resting, eating) to an awake character.
+// It CAN still grant energy-draining contexts (at_work, traveling, etc.) since those
+// are conservative — worst case the character drains faster, not indefinitely restores.
+// Stale contexts that would grant net POSITIVE energy (home_resting: +3/hr) while the
+// character is unverifiably awake are the primary failure mode this resolves.
+const STALE_PRESENCE_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+// Contexts that grant net positive energy (would keep character awake forever if stale)
+const ENERGY_RESTORING_CONTEXTS = new Set(['home_resting', 'resting', 'eating', 'hospital', 'hospitalized', 'food_drink']);
+
+/**
+ * resolvePresenceStaleness
+ *
+ * Returns true if the character's resolved_presence_status / current_activity
+ * is stale enough that it should NOT be trusted to grant energy-restoring behavior.
+ *
+ * Staleness is measured from the LATER of:
+ *   - last_need_simulated_at (last time needs were confirmed)
+ *   - resolved_last_updated_at (last time presence was explicitly written)
+ *
+ * If the newer of those two is > 4 hours ago, the resting/positive-energy context
+ * is treated as stale and the simulation falls back to 'default' (-4/hr energy decay).
+ * This guarantees energy eventually reaches critical even during total inactivity.
+ */
+function resolvePresenceStaleness(character, now) {
+  const candidates = [
+    character.last_need_simulated_at,
+    character.resolved_last_updated_at,
+  ].filter(Boolean).map(t => new Date(t).getTime());
+  if (candidates.length === 0) return true; // no timestamps at all = treat as stale
+  const mostRecent = Math.max(...candidates);
+  return (now.getTime() - mostRecent) > STALE_PRESENCE_MS;
+}
+
+function getLocationContext(character, locationMap, now) {
   const activity = (character.current_activity || '').toLowerCase();
   const presenceStatus = character.resolved_presence_status || character.location_status;
 
-  // ── Overrides first ──
+  // ── CRITICAL STATES — never stale, always authoritative ──
+  // These are physical collapse states that the simulation itself writes,
+  // so they cannot be "stale" in the same way as user/system presence flags.
   if (presenceStatus === 'hospitalized') return 'hospitalized';
   if (presenceStatus === 'passed_out') return 'passed_out';
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
   if (activity.includes('passed out') || activity.includes('collapsed')) return 'passed_out';
   if (activity.includes('hospital') || activity.includes('er ') || activity.includes('emergency room') || activity.includes('urgent care')) return 'hospitalized';
-  if (activity.includes('eat') || activity.includes('food') || activity.includes('cook') || activity.includes('meal') || activity.includes('lunch') || activity.includes('dinner') || activity.includes('breakfast') || activity.includes('snack')) return 'eating';
-  if (activity.includes('rest') || activity.includes('nap') || activity.includes('relax')) return 'resting';
 
+  // ── STALE PRESENCE CHECK ──────────────────────────────────────────────────
+  // If presence data is stale, do NOT allow energy-restoring activity contexts.
+  // A character with a 6-hour-old "eating" or "resting" activity is not actually
+  // still eating or resting — the stale tag is keeping them awake indefinitely.
+  const presenceIsStale = now ? resolvePresenceStaleness(character, now) : false;
+
+  if (!presenceIsStale) {
+    // Only trust activity-based positive-energy contexts when presence is fresh
+    if (activity.includes('eat') || activity.includes('food') || activity.includes('cook') || activity.includes('meal') || activity.includes('lunch') || activity.includes('dinner') || activity.includes('breakfast') || activity.includes('snack')) return 'eating';
+    if (activity.includes('rest') || activity.includes('nap') || activity.includes('relax')) return 'resting';
+  }
+
+  // ── TRAVEL — always authoritative (travel_status is independently managed) ──
   if (character.travel_status && character.travel_status !== 'not_traveling') return 'traveling';
+
+  // ── WORK CONTEXTS ─────────────────────────────────────────────────────────
+  // "At work" contexts always drain energy, so we allow them even if presence is stale.
+  // The only stale concern is at_work granting POSITIVE energy — it doesn't (at_work: -5/hr).
   if (activity.includes('at work') || activity.includes('working') || activity.includes('on shift')) {
     const workLocId = character.current_work_location_id || character.occupation_location_id;
     const workLoc = workLocId ? locationMap[workLocId] : null;
@@ -152,6 +205,7 @@ function getLocationContext(character, locationMap) {
   }
 
   if (presenceStatus === 'at_work') {
+    // Validate against actual schedule — if not on shift, stale at_work flag = work_off_shift
     const workLocId = character.current_work_location_id || character.occupation_location_id;
     const workLoc = workLocId ? locationMap[workLocId] : null;
     if (workLoc) return isOnShift(character, locationMap) ? getWorkContextFromLocation(workLoc) : 'work_off_shift';
@@ -161,11 +215,19 @@ function getLocationContext(character, locationMap) {
 
   const locId = character.resolved_current_location_id;
   if (!locId) {
+    // No location resolved + presence is either home or missing.
+    // If stale: fall to 'default' — idle awake with no verified rest context.
+    // If fresh: allow home_resting.
+    if (presenceIsStale) return 'default';
     if (presenceStatus === 'home' || !presenceStatus) return 'home_resting';
     return 'default';
   }
   const loc = locationMap[locId];
-  if (!loc) return 'home_resting';
+  if (!loc) {
+    // Location ID set but location not found — data integrity issue.
+    // Treat as default (energy drains at idle rate) rather than granting rest.
+    return 'default';
+  }
 
   const workLocId = character.current_work_location_id || character.occupation_location_id;
   if (locId === workLocId) return isOnShift(character, locationMap) ? getWorkContextFromLocation(loc) : 'work_off_shift';
@@ -174,10 +236,18 @@ function getLocationContext(character, locationMap) {
   const name = (loc.name || '').toLowerCase();
   if (cat === 'gym') return 'gym';
   if (cat === 'medical') return 'hospital';
-  if (cat === 'food_drink' || name.includes('restaurant') || name.includes('cafe') || name.includes('diner') || name.includes('kitchen')) return 'food_drink';
+  if (cat === 'food_drink' || name.includes('restaurant') || name.includes('cafe') || name.includes('diner') || name.includes('kitchen')) {
+    // Only grant food_drink energy bonus if presence is fresh
+    return presenceIsStale ? 'social_out' : 'food_drink';
+  }
   if (cat === 'social' || name.includes('bar') || name.includes('club') || name.includes('lounge') || name.includes('nightclub')) return 'bar_club';
   if (cat === 'outdoor') return 'social_out';
-  if (cat === 'home' || cat === 'generic') return (presenceStatus === 'home' || !presenceStatus) ? 'home_resting' : 'home_active';
+  if (cat === 'home' || cat === 'generic') {
+    // home_resting grants +3/hr energy — only allow when presence is fresh.
+    // Stale home presence = character is home but doing nothing verifiable → idle default.
+    if (presenceIsStale) return 'default';
+    return (presenceStatus === 'home' || !presenceStatus) ? 'home_resting' : 'home_active';
+  }
   return 'default';
 }
 
@@ -323,6 +393,22 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
   const alreadyHospitalized = presence === 'hospitalized' || (char.current_activity || '').toLowerCase().includes('hospital');
   const alreadySleeping = presence === 'sleeping' || presence === 'napping' || presence === 'passed_out';
 
+  // ── STALE OBLIGATION GUARD ────────────────────────────────────────────────
+  // onShift is the primary blocker preventing sleep writes. If the character's
+  // schedule data is stale (no recent update), do NOT allow onShift to block sleep.
+  // An expired shift record cannot indefinitely keep a character awake.
+  // onShift is still used for corrective routing (which context to apply) but
+  // MUST NOT block the auto-sleep write when the obligation state itself is stale.
+  const presenceStalenessMs = (() => {
+    const candidates = [char.last_need_simulated_at, char.resolved_last_updated_at]
+      .filter(Boolean).map(t => new Date(t).getTime());
+    if (candidates.length === 0) return Infinity;
+    return now.getTime() - Math.max(...candidates);
+  })();
+  // If presence/schedule is stale for more than 6 hours, don't let onShift block sleep.
+  const STALE_OBLIGATION_MS = 6 * 60 * 60 * 1000;
+  const onShiftBlocksSleep = onShift && presenceStalenessMs < STALE_OBLIGATION_MS;
+
   // ALARM WAKE GUARD: if character was woken by an alarm within the last 30 minutes,
   // do NOT write sleeping back — the alarm system owns this wake state.
   const recentlyWokenByAlarm = (() => {
@@ -340,7 +426,7 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
   // Hygiene=0 does NOT lower the health ER threshold.
   const healthAndEnergyBothLow = health <= T.HEALTH_CRITICAL && energy <= T.ENERGY_CRITICAL;
   const healthERThreshold = healthAndEnergyBothLow ? T.HEALTH_CRITICAL : T.HEALTH_ER;
-  if (health <= healthERThreshold && !alreadyHospitalized && !onShift) {
+  if (health <= healthERThreshold && !alreadyHospitalized && !onShiftBlocksSleep) {
     stateWrites.resolved_presence_status = 'hospitalized';
     stateWrites.current_activity = 'receiving emergency medical care';
     const dischargeTime = new Date(now.getTime() + (4 + Math.random() * 2) * 3600000);
@@ -427,7 +513,7 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
     !currentLocType
   );
 
-  if (energy <= T.ENERGY_CRITICAL && !alreadySleeping && !onShift && !recentlyWokenByAlarm) {
+  if (energy <= T.ENERGY_CRITICAL && !alreadySleeping && !onShiftBlocksSleep && !recentlyWokenByAlarm) {
     if (atValidSleepLocation) {
       stateWrites.resolved_presence_status = 'sleeping';
       stateWrites.current_activity = 'sleeping — exhausted';
@@ -589,12 +675,40 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const context = getLocationContext(char, locationMap);
+      const context = getLocationContext(char, locationMap, now);
 
       // Apply elapsed-time decay/recovery
       let newNeeds = applyElapsedTime(currentNeeds, cappedHours, context);
       // Apply cross-system infection
       newNeeds = applyStatInfection(newNeeds, cappedHours);
+
+      // ── AWAKE-TIME ENERGY DRAIN GUARANTEE ────────────────────────────────
+      // Rule: An awake character must lose energy over time — even when idle.
+      // If the context applied net POSITIVE energy while the character is awake
+      // (e.g. home_resting applies +3/hr, eating +2/hr), ensure the result still
+      // trends downward enough that a 24-hour awake period reaches critical (≤25).
+      //
+      // Baseline minimum drain for awake (non-sleeping, non-passed_out) characters:
+      //   -2/hr regardless of context (a resting awake character is still awake).
+      //
+      // This does NOT apply to sleeping/passed_out/hospitalized — those contexts
+      // correctly restore energy and this guard must never block recovery.
+      const isSleepingContext = context === 'sleeping' || context === 'passed_out' || context === 'hospitalized';
+      if (!isSleepingContext) {
+        // Calculate what the context gave us in energy terms
+        const contextEnergyRate = (RATES[context] || RATES.default).energy;
+        const MINIMUM_AWAKE_DRAIN_PER_HOUR = -2; // At minimum -2/hr while awake
+        if (contextEnergyRate > MINIMUM_AWAKE_DRAIN_PER_HOUR) {
+          // Context is restoring more energy than the minimum drain allows.
+          // Override the energy result to apply at most the minimum drain.
+          // e.g. home_resting was +3/hr: we cap it to -2/hr baseline minimum.
+          const energyWithMinDrain = clamp((currentNeeds.energy ?? 75) + MINIMUM_AWAKE_DRAIN_PER_HOUR * cappedHours);
+          // Take the LOWER of the two (most conservative awake drain)
+          if (energyWithMinDrain < newNeeds.energy) {
+            newNeeds.energy = energyWithMinDrain;
+          }
+        }
+      }
       const financialNeed = deriveFinancialNeed(char);
 
       // ── DETECT ESCALATION EVENTS → MEMORY ────────────────────────────────
