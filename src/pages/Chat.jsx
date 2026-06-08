@@ -667,7 +667,7 @@ export default function Chat({ chatTypeOverride } = {}) {
       recentMsgs = [...messages.slice(-50), userMsg];
       // ── VICK SERVICE BRIDGE: routes ALL Vick service questions through Account Help & Repair intelligence ──
       // Same source as Settings SupportAssistant. Persistent context per conversation. No one-shot summaries.
-      if (shouldUseVickFastPath(character, text, !!userImageUrl)) { const fp = await executeVickDiagnosticFastPath({ character, characterId, text, convoId, userMsg, callLLMWithRetry, parseCharacterResponse, filterDashes, stripCharacterNamePrefix, base44, setMessages, setIsTyping, releaseFgTask, isMountedRef, ownerEmail: currentUser?.email, isPrivate: true, imageUrls: userImageUrl ? [userImageUrl] : [] }); if (fp.handled) return; }
+      if (shouldUseVickFastPath(character, text, !!userImageUrl)) { const fp = await executeVickDiagnosticFastPath({ character, characterId, text, convoId, userMsg, callLLMWithRetry, parseCharacterResponse, filterDashes, stripCharacterNamePrefix, base44, setMessages, setIsTyping, releaseFgTask, isMountedRef, ownerEmail: currentUser?.email, isPrivate: !characterSpeechMode, imageUrls: userImageUrl ? [userImageUrl] : [] }); if (fp.handled) return; }
 
       const toneFromBehaviour = behaviour?.tone || 'neutral';
       const lengthInstruction = { short: "Keep responses to 1-2 sentences max.", medium: "Keep responses natural length, 1-4 sentences.", long: "You can elaborate more, up to a paragraph." }[userSettings.response_length || "medium"];
