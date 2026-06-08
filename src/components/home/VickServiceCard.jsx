@@ -14,12 +14,19 @@ import VickInvestigationQueue from "./VickInvestigationQueue";
  *  - Active / completed investigation queue
  *  - Critical alerts with distinct styling
  *
+ * STABILITY RULES:
+ * - Always shows a loading state while Vick's record is being fetched.
+ * - If Vick is missing, triggers provisioning once per session.
+ * - Never returns null during loading — card stays visible with spinner.
+ * - Uses session flag to prevent duplicate provisioning calls.
+ *
  * NON-EXPANSION GUARDRAIL: This card is ONLY for Vick Servicio.
  * Do NOT generalize for other NPCs.
  */
 export default function VickServiceCard({ ownerEmail }) {
   const navigate = useNavigate();
   const [vick, setVick] = useState(null);
+  const [isLoadingVick, setIsLoadingVick] = useState(true);
   const [conversationId, setConversationId] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [latestMessage, setLatestMessage] = useState(null);
@@ -27,20 +34,63 @@ export default function VickServiceCard({ ownerEmail }) {
   const [investigations, setInvestigations] = useState([]);
   const [showQueue, setShowQueue] = useState(false);
 
-  // Load Vick's character record
+  // Load Vick's character record.
+  // If not found: trigger provisioning once per session, then re-fetch.
+  // STABILITY: always shows loading state — never hides the card slot while loading.
   useEffect(() => {
     if (!ownerEmail) return;
-    base44.entities.Character.filter({
-      owner_email: ownerEmail,
-      character_type: "npc_world_service",
-      is_world_service: true,
-    }).then(results => {
-      const vickRecord = results.find(c =>
-        c.name?.toLowerCase().includes("vick") ||
-        c.display_name?.toLowerCase().includes("vick")
-      );
-      if (vickRecord) setVick(vickRecord);
-    }).catch(() => {});
+
+    const sessionKey = `vick_provisioned_${ownerEmail}`;
+
+    const fetchVick = async () => {
+      setIsLoadingVick(true);
+      try {
+        const results = await base44.entities.Character.filter({
+          owner_email: ownerEmail,
+          character_type: "npc_world_service",
+          is_world_service: true,
+        });
+        const vickRecord = results.find(c =>
+          c.name?.toLowerCase().includes("vick") ||
+          c.display_name?.toLowerCase().includes("vick")
+        );
+
+        if (vickRecord) {
+          setVick(vickRecord);
+          setIsLoadingVick(false);
+          return;
+        }
+
+        // Vick not found — provision once per session
+        if (!sessionStorage.getItem(sessionKey)) {
+          sessionStorage.setItem(sessionKey, '1');
+          console.log(`[VickServiceCard] Vick not found for ${ownerEmail} — triggering provisioning`);
+          try {
+            await base44.functions.invoke('ensureVickServicio', {});
+          } catch (provErr) {
+            console.warn('[VickServiceCard] Provisioning call failed (non-fatal):', provErr?.message);
+          }
+          // Re-fetch after provisioning
+          const retryResults = await base44.entities.Character.filter({
+            owner_email: ownerEmail,
+            character_type: "npc_world_service",
+            is_world_service: true,
+          }).catch(() => []);
+          const retryRecord = retryResults.find(c =>
+            c.name?.toLowerCase().includes("vick") ||
+            c.display_name?.toLowerCase().includes("vick")
+          );
+          if (retryRecord) {
+            setVick(retryRecord);
+          }
+        }
+      } catch (err) {
+        console.warn('[VickServiceCard] Fetch error (non-fatal):', err?.message);
+      }
+      setIsLoadingVick(false);
+    };
+
+    fetchVick();
   }, [ownerEmail]);
 
   // Load investigations for this account.
@@ -150,6 +200,25 @@ export default function VickServiceCard({ ownerEmail }) {
     navigate(`/chat/${vick.id}`);
   };
 
+  // Show stable skeleton while loading — never hide the card slot
+  if (isLoadingVick && !vick) {
+    return (
+      <div className="mb-4">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Service Operator</p>
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-secondary animate-pulse flex-shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="h-3.5 bg-secondary rounded animate-pulse w-32" />
+              <div className="h-3 bg-secondary rounded animate-pulse w-48" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Provisioning completed but Vick still not found — hide card (provisioning failed silently)
   if (!vick) return null;
 
   // Derive status from investigation state first, fall back to message state

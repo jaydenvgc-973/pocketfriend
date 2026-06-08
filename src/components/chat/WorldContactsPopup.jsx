@@ -9,6 +9,7 @@ import { useWorldContactsUnread } from "@/hooks/useWorldContactsUnread";
 import { isCountableUnread } from "@/lib/canonicalUnreadResolver";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { resolveCharacterContacts } from "@/lib/characterContactsResolver";
+import { resolveVickContacts, isVickCharacter } from "@/lib/vickContactsResolver";
 import { callLLMWithRetry } from "@/lib/llmUtils";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
@@ -153,25 +154,38 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const isSendingRef = useRef(false);
 
   // ── LOAD CONTACTS via shared resolver (single source of truth) ───────────────
-  // The resolver handles all sources + deduplication internally.
-  // Do NOT merge contacts here — that created duplicate rows.
+  // For Vick Servicio: contacts are built from account-scoped Character records ONLY.
+  // Vick's fictional_relationships are NOT used — they are unstable and may be cleared.
+  // For all other characters: the standard resolveCharacterContacts resolver is used.
   useEffect(() => {
     if (!isOpen || !character?.id) return;
     setIsLoadingContacts(true);
     
     base44.auth.me()
       .then(async me => {
-        const contactList = await resolveCharacterContacts(character, me?.email, me);
+        let contactList;
+        if (isVickCharacter(character)) {
+          // Vick: contacts come ONLY from account roster (Character records), never from fictional_relationships.
+          // This makes World Phone stable regardless of fictional_relationships state.
+          contactList = await resolveVickContacts(me?.email, character.id);
+        } else {
+          contactList = await resolveCharacterContacts(character, me?.email, me);
+        }
         setContacts(contactList);
         setIsLoadingContacts(false);
       })
       .catch(() => {
-        // Fallback: fictional_relationships only — NEVER hide existing contacts
-        const fallback = (character?.fictional_relationships || []).filter(r => r.person_name).map(r => ({
-          ...r,
-          _linkage: r.related_character_id ? 'linked' : 'name_only',
-        }));
-        setContacts(fallback);
+        if (isVickCharacter(character)) {
+          // Vick fallback: empty rather than fictional_relationships — never show inferred contacts
+          setContacts([]);
+        } else {
+          // Fallback: fictional_relationships only — NEVER hide existing contacts
+          const fallback = (character?.fictional_relationships || []).filter(r => r.person_name).map(r => ({
+            ...r,
+            _linkage: r.related_character_id ? 'linked' : 'name_only',
+          }));
+          setContacts(fallback);
+        }
         setIsLoadingContacts(false);
       });
   }, [isOpen, character?.id]);
@@ -431,7 +445,11 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       // score progression, or any fake interaction artifact.
       // ensureBilateralCharacterAwareness only creates a neutral awareness entry (awareness_only=true)
       // if one is missing — existing entries are left completely unchanged.
-      if (contactId && character.id && contactId !== character.id) {
+      //
+      // VICK EXCEPTION: Vick's contacts come from the account roster, not fictional_relationships.
+      // Skip bilateral awareness bootstrap for Vick — his contact availability is roster-based and
+      // does not depend on fictional_relationships being populated in either direction.
+      if (contactId && character.id && contactId !== character.id && !isVickCharacter(character)) {
         base44.functions.invoke('ensureBilateralCharacterAwareness', {
           characterAId: character.id,
           characterBId: contactId,
