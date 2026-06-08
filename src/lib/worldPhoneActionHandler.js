@@ -13,8 +13,13 @@
  *
  * Path 2 — Proactive outreach ("I'll text her", "I'll call him")
  *   → Send the World Phone message immediately.
- *   → If recipient is unresolved: log and drop silently. Do NOT create a fake
- *     meeting, travel commitment, or appointment record. That is a different system.
+ *   → If recipient is resolved: send through World Phone.
+ *   → If recipient is unresolved (pronoun could not be matched): preserve as
+ *     unresolved proactive outreach in CharacterMemory (memory_type: 'fact',
+ *     prefixed [proactive_communication_unresolved]). Do NOT create a meeting,
+ *     travel commitment, appointment record, or use any destination field.
+ *   → If World Phone send fails: preserve as failed proactive outreach in
+ *     CharacterMemory (prefixed [proactive_communication_failed]).
  *   → If send succeeds: strip any fabricated summary of what the recipient
  *     supposedly said back (their real response comes from their own LLM call).
  *
@@ -141,14 +146,34 @@ export async function handleCharacterWorldPhoneAction({
         // Strip fabricated reply summary if present
         modifiedResponseText = stripFabricatedReplyFromResponse(modifiedResponseText);
       } else {
-        // Send failed — log only. Do NOT create a meeting, travel commitment,
-        // appointment record, or any other cross-system artifact.
+        // Send failed — preserve as failed proactive outreach in character memory.
+        // This is a World Phone / communication event. NOT a travel or appointment record.
         console.warn(`[WorldPhone] proactive send failed: ${data?.error}`);
+        base44.entities.CharacterMemory.create({
+          character_id: characterId,
+          memory_type: 'fact',
+          memory_text: `[proactive_communication_failed] ${character.name} attempted to contact "${recipient}" via World Phone but the send failed. Failure reason: ${data?.error || 'unknown'}. Topic: ${outreach.topic || 'unspecified'}. This was a communication event — no appointment or travel action is involved.`,
+          memory_summary: `Failed proactive outreach to "${recipient}" — World Phone send error.`,
+          importance_score: 4,
+          confidence_score: 1,
+          permanence: 'short_term',
+        }).catch(err => console.warn('[WorldPhone] failed to persist failed proactive send record:', err.message));
       }
     } else {
-      // Recipient could not be resolved — log only. This is a communication system.
-      // Unresolvable proactive outreach does not create appointment/travel records.
-      console.log(`[WorldPhone] proactive outreach: recipient unresolved — no action taken`);
+      // Recipient could not be resolved from conversation context or known contacts.
+      // Preserve as unresolved proactive outreach in character memory.
+      // This is a World Phone / communication event. NOT a travel or appointment record.
+      // Do NOT create meeting records, travel records, or use destination fields.
+      console.log(`[WorldPhone] proactive outreach: recipient unresolved — preserving as unresolved communication record`);
+      base44.entities.CharacterMemory.create({
+        character_id: characterId,
+        memory_type: 'fact',
+        memory_text: `[proactive_communication_unresolved] ${character.name} intended to contact someone via World Phone but the recipient could not be resolved. Pronoun used: "${outreach.pronoun || 'unknown'}". Topic context: ${outreach.topic || 'unspecified'}. This was a World Phone / communication event — no appointment or travel action is involved.`,
+        memory_summary: `Unresolved proactive outreach — recipient pronoun could not be matched to a known contact.`,
+        importance_score: 3,
+        confidence_score: 0.6,
+        permanence: 'short_term',
+      }).catch(err => console.warn('[WorldPhone] failed to persist unresolved proactive outreach record:', err.message));
     }
   }
 
