@@ -78,62 +78,79 @@ Deno.serve(async (req) => {
     await Promise.all([senderMemory, receiverMemory]);
 
     // Update last_interaction_summary on both sides — only for real exchanges, never for bootstrap
-    const senderRels = sender.fictional_relationships || [];
-    const senderRelIdx = senderRels.findIndex(r => r.related_character_id === receiverCharacterId);
     const senderInteractionSummary = `Sent a ${contextLabel.replace(/_/g, ' ')} message: "${messageContent.substring(0, 100)}"`;
-
-    if (senderRelIdx >= 0) {
-      const updatedSenderRels = senderRels.map((r, i) =>
-        i === senderRelIdx ? { ...r, last_interaction_summary: senderInteractionSummary } : r
-      );
-      await base44.entities.Character.update(senderCharacterId, { fictional_relationships: updatedSenderRels });
-    } else {
-      await base44.entities.Character.update(senderCharacterId, {
-        fictional_relationships: [
-          ...senderRels,
-          {
-            person_name: receiver.name,
-            related_character_id: receiverCharacterId,
-            relationship_type: 'acquaintance',
-            current_status: 'ongoing',
-            friendship_level: 50,
-            user_respect_level: 50,
-            romantic_level: 0,
-            attraction_level: 0,
-            chosen_family_level: 0,
-            last_interaction_summary: senderInteractionSummary,
-          },
-        ],
-      });
-    }
-
-    const receiverRels = receiver.fictional_relationships || [];
-    const receiverRelIdx = receiverRels.findIndex(r => r.related_character_id === senderCharacterId);
     const receiverInteractionSummary = `${sender.name} reached out via ${contextLabel.replace(/_/g, ' ')}: "${messageContent.substring(0, 100)}"`;
 
-    if (receiverRelIdx >= 0) {
-      const updatedReceiverRels = receiverRels.map((r, i) =>
-        i === receiverRelIdx ? { ...r, last_interaction_summary: receiverInteractionSummary } : r
-      );
-      await base44.entities.Character.update(receiverCharacterId, { fictional_relationships: updatedReceiverRels });
-    } else {
-      await base44.entities.Character.update(receiverCharacterId, {
-        fictional_relationships: [
-          ...receiverRels,
-          {
-            person_name: sender.name,
-            related_character_id: senderCharacterId,
-            relationship_type: 'acquaintance',
-            current_status: 'ongoing',
-            friendship_level: 50,
-            user_respect_level: 50,
-            romantic_level: 0,
-            attraction_level: 0,
-            chosen_family_level: 0,
-            last_interaction_summary: receiverInteractionSummary,
-          },
-        ],
-      });
+    // ── FRESH READ BEFORE WRITE ────────────────────────────────────────────────
+    // CRITICAL: Always re-fetch the LATEST fictional_relationships immediately before
+    // writing. Using the records fetched at the top of this function is unsafe — any
+    // concurrent write (AddPeopleInTheirWorldPanel, NPCRelationshipEditor,
+    // ensureBilateralCharacterAwareness) between that fetch and this write will be silently
+    // overwritten by a stale array. This is the primary cause of relationship data loss.
+    // Sequential fetch+write (not parallel) ensures each write sees the latest state.
+
+    // Sender: re-fetch immediately before write
+    const freshSenderArr = await base44.entities.Character.filter({ id: senderCharacterId }).catch(() => []);
+    const freshSender = freshSenderArr[0];
+    if (freshSender) {
+      const senderRels = freshSender.fictional_relationships || [];
+      const senderRelIdx = senderRels.findIndex(r => r.related_character_id === receiverCharacterId);
+      if (senderRelIdx >= 0) {
+        const updatedSenderRels = senderRels.map((r, i) =>
+          i === senderRelIdx ? { ...r, last_interaction_summary: senderInteractionSummary } : r
+        );
+        await base44.entities.Character.update(senderCharacterId, { fictional_relationships: updatedSenderRels });
+      } else {
+        await base44.entities.Character.update(senderCharacterId, {
+          fictional_relationships: [
+            ...senderRels,
+            {
+              person_name: receiver.name,
+              related_character_id: receiverCharacterId,
+              relationship_type: 'acquaintance',
+              current_status: 'ongoing',
+              friendship_level: 50,
+              user_respect_level: 50,
+              romantic_level: 0,
+              attraction_level: 0,
+              chosen_family_level: 0,
+              last_interaction_summary: senderInteractionSummary,
+            },
+          ],
+        });
+      }
+    }
+
+    // Receiver: re-fetch immediately before write (after sender write completes)
+    const freshReceiverArr = await base44.entities.Character.filter({ id: receiverCharacterId }).catch(() => []);
+    const freshReceiver = freshReceiverArr[0];
+    if (freshReceiver) {
+      const receiverRels = freshReceiver.fictional_relationships || [];
+      const receiverRelIdx = receiverRels.findIndex(r => r.related_character_id === senderCharacterId);
+      if (receiverRelIdx >= 0) {
+        const updatedReceiverRels = receiverRels.map((r, i) =>
+          i === receiverRelIdx ? { ...r, last_interaction_summary: receiverInteractionSummary } : r
+        );
+        await base44.entities.Character.update(receiverCharacterId, { fictional_relationships: updatedReceiverRels });
+      } else {
+        await base44.entities.Character.update(receiverCharacterId, {
+          fictional_relationships: [
+            ...receiverRels,
+            {
+              person_name: sender.name,
+              related_character_id: senderCharacterId,
+              relationship_type: 'acquaintance',
+              current_status: 'ongoing',
+              friendship_level: 50,
+              user_respect_level: 50,
+              romantic_level: 0,
+              attraction_level: 0,
+              chosen_family_level: 0,
+              last_interaction_summary: receiverInteractionSummary,
+            },
+          ],
+        });
+      }
     }
 
     console.log(`[syncWorldPhoneMemory] Complete | ${sender.name} (${senderCharacterId}) ↔ ${receiver.name} (${receiverCharacterId}) | context=${contextLabel}`);

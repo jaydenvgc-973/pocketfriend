@@ -65,75 +65,75 @@ Deno.serve(async (req) => {
 
     console.log(`[ensureBilateralCharacterAwareness] A=${charA.name} (${charAType}) | B=${charB.name} (${charBType})`);
 
-    const aRels = charA.fictional_relationships || [];
-    const bRels = charB.fictional_relationships || [];
+    // ── FRESH READ BEFORE WRITE ────────────────────────────────────────────────
+    // CRITICAL: Re-fetch each character immediately before writing to avoid the race
+    // condition where a concurrent write (syncWorldPhoneMemory, AddPeopleInTheirWorldPanel,
+    // NPCRelationshipEditor) wrote new entries between our initial fetch and this write.
+    // Sequential (not parallel) to ensure each write reads the state left by the previous.
 
-    const aHasB = aRels.some(r => r.related_character_id === characterBId);
-    const bHasA = bRels.some(r => r.related_character_id === characterAId);
+    let entriesCreated = 0;
 
-    const writes = [];
-
-    // A → B: only create if completely missing
-    if (!aHasB) {
-      const newEntry = {
-        person_name: charB.name,
-        related_character_id: characterBId,
-        relationship_type: 'acquaintance',
-        current_status: 'ongoing',
-        friendship_level: 50,
-        user_respect_level: 50,
-        romantic_level: 0,
-        attraction_level: 0,
-        chosen_family_level: 0,
-        source: 'relationship_awareness_bootstrap',
-        awareness_only: true,
-        // ── PROOF: no last_interaction_summary, no memory, no score progression ──
-      };
-      writes.push(
-        base44.entities.Character.update(characterAId, {
-          fictional_relationships: [...aRels, newEntry],
-        })
-      );
-      console.log(`[ensureBilateralCharacterAwareness] Created A→B entry | ${charA.name}→${charB.name} | awareness_only=true`);
-    } else {
-      console.log(`[ensureBilateralCharacterAwareness] A→B already exists | ${charA.name}→${charB.name} | unchanged`);
+    // A → B
+    {
+      const freshA = (await base44.entities.Character.filter({ id: characterAId }).catch(() => []))[0];
+      const aRels = freshA?.fictional_relationships || charA.fictional_relationships || [];
+      const aHasB = aRels.some(r => r.related_character_id === characterBId);
+      if (!aHasB) {
+        await base44.entities.Character.update(characterAId, {
+          fictional_relationships: [...aRels, {
+            person_name: charB.name,
+            related_character_id: characterBId,
+            relationship_type: 'acquaintance',
+            current_status: 'ongoing',
+            friendship_level: 50,
+            user_respect_level: 50,
+            romantic_level: 0,
+            attraction_level: 0,
+            chosen_family_level: 0,
+            source: 'relationship_awareness_bootstrap',
+            awareness_only: true,
+          }],
+        });
+        entriesCreated++;
+        console.log(`[ensureBilateralCharacterAwareness] Created A→B entry | ${charA.name}→${charB.name} | awareness_only=true`);
+      } else {
+        console.log(`[ensureBilateralCharacterAwareness] A→B already exists | ${charA.name}→${charB.name} | unchanged`);
+      }
     }
 
-    // B → A: only create if completely missing
-    if (!bHasA) {
-      const newEntry = {
-        person_name: charA.name,
-        related_character_id: characterAId,
-        relationship_type: 'acquaintance',
-        current_status: 'ongoing',
-        friendship_level: 50,
-        user_respect_level: 50,
-        romantic_level: 0,
-        attraction_level: 0,
-        chosen_family_level: 0,
-        source: 'relationship_awareness_bootstrap',
-        awareness_only: true,
-        // ── PROOF: no last_interaction_summary, no memory, no score progression ──
-      };
-      writes.push(
-        base44.entities.Character.update(characterBId, {
-          fictional_relationships: [...bRels, newEntry],
-        })
-      );
-      console.log(`[ensureBilateralCharacterAwareness] Created B→A entry | ${charB.name}→${charA.name} | awareness_only=true`);
-    } else {
-      console.log(`[ensureBilateralCharacterAwareness] B→A already exists | ${charB.name}→${charA.name} | unchanged`);
+    // B → A (fetched after A write completes so B sees latest state)
+    {
+      const freshB = (await base44.entities.Character.filter({ id: characterBId }).catch(() => []))[0];
+      const bRels = freshB?.fictional_relationships || charB.fictional_relationships || [];
+      const bHasA = bRels.some(r => r.related_character_id === characterAId);
+      if (!bHasA) {
+        await base44.entities.Character.update(characterBId, {
+          fictional_relationships: [...bRels, {
+            person_name: charA.name,
+            related_character_id: characterAId,
+            relationship_type: 'acquaintance',
+            current_status: 'ongoing',
+            friendship_level: 50,
+            user_respect_level: 50,
+            romantic_level: 0,
+            attraction_level: 0,
+            chosen_family_level: 0,
+            source: 'relationship_awareness_bootstrap',
+            awareness_only: true,
+          }],
+        });
+        entriesCreated++;
+        console.log(`[ensureBilateralCharacterAwareness] Created B→A entry | ${charB.name}→${charA.name} | awareness_only=true`);
+      } else {
+        console.log(`[ensureBilateralCharacterAwareness] B→A already exists | ${charB.name}→${charA.name} | unchanged`);
+      }
     }
-
-    if (writes.length > 0) await Promise.all(writes);
 
     return Response.json({
       success: true,
       characterA: { id: characterAId, name: charA.name, character_type: charAType },
       characterB: { id: characterBId, name: charB.name, character_type: charBType },
-      a_had_b_before: aHasB,
-      b_had_a_before: bHasA,
-      entries_created: writes.length,
+      entries_created: entriesCreated,
       memory_written: false,
       last_interaction_updated: false,
       score_progression: false,
