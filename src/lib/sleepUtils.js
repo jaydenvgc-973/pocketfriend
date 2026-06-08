@@ -423,15 +423,74 @@ function computeAdaptiveSleepWindow(character, locationMap) {
 export function isCharacterAsleep(character, locationMap) {
   if (!character) return false;
 
-  // ── ACTIVE_CREATED_CHARACTER: use DB status, not clock window ──────────────
-  // Sleep for active_created_characters is driven by the energy/needs system.
-  // The authoritative answer is the stored resolved_presence_status.
-  // Clock windows must NOT be used to determine sleep state for these characters —
-  // doing so creates a hidden schedule-based sleep controller.
+  // ── ACTIVE_CREATED_CHARACTER: schedule-anchored sleep validation ──────────
+  // Ordinary sleep is valid ONLY when ALL of the following pass:
+  //   1. Explicit sleep_start_time + wake_up_time window exists and current time is inside it
+  //   2. Sleep duration has not reached 8 hours
+  //   3. No active work shift
+  //   4. No active school window
+  // passed_out is a consequence state — not ordinary sleep — and is returned separately.
   if (!isNPCCharacterType(character)) {
-    return character.resolved_presence_status === 'sleeping' ||
-           character.resolved_presence_status === 'napping' ||
-           character.resolved_presence_status === 'passed_out';
+    const status = character.resolved_presence_status || '';
+
+    // passed_out is a medical consequence state, not ordinary sleep. Always trust it.
+    if (status === 'passed_out') return true;
+
+    // Only evaluate ordinary sleep/napping
+    if (status !== 'sleeping' && status !== 'napping') return false;
+
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const currentMin = nowET.getHours() * 60 + nowET.getMinutes();
+    const dayOfWeek = nowET.getDay();
+    const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+
+    // RULE 1: Explicit sleep window is required. No window = not valid sleep.
+    const sleepStartMin = toMin(character.sleep_start_time);
+    const wakeMin = toMin(character.wake_up_time);
+    if (sleepStartMin === null || wakeMin === null) return false;
+
+    const insideWindow = sleepStartMin > wakeMin
+      ? (currentMin >= sleepStartMin || currentMin < wakeMin)
+      : (currentMin >= sleepStartMin && currentMin < wakeMin);
+    if (!insideWindow) return false;
+
+    // RULE 2: 8-hour cap — reject if sleep started 8+ hours ago
+    const sleepStartCandidates = [
+      character.last_sleep_start,
+      character.resolved_last_updated_at,
+      character.last_need_simulated_at,
+    ].filter(Boolean);
+    if (sleepStartCandidates.length > 0) {
+      const sleepStartMs = Math.min(...sleepStartCandidates.map(t => new Date(t).getTime()));
+      if ((nowET.getTime() - sleepStartMs) / 3_600_000 >= 8) return false;
+    }
+
+    // RULE 3: Work shift beats ordinary sleep
+    if (character.work_start_time && character.work_end_time &&
+        Array.isArray(character.work_days) && character.work_days.includes(dayOfWeek)) {
+      const s = toMin(character.work_start_time);
+      const e = toMin(character.work_end_time);
+      if (s !== null && e !== null) {
+        const onShift = e < s ? (currentMin >= s || currentMin < e) : (currentMin >= s && currentMin < e);
+        if (onShift) return false;
+      }
+    }
+
+    // RULE 4: School window beats ordinary sleep
+    if (character.student_status === 'enrolled' && character.education_location_id &&
+        [1, 2, 3, 4, 5].includes(dayOfWeek)) {
+      const enrollments = character.education_enrollments;
+      if (Array.isArray(enrollments) && enrollments.length > 0) {
+        const active = enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+        if (active) {
+          const s = toMin(active.start_time);
+          const e = toMin(active.end_time);
+          if (s !== null && e !== null && currentMin >= s && currentMin < e) return false;
+        }
+      }
+    }
+
+    return true; // All rules passed — ordinary sleep is valid
   }
 
   // ── NPC types: evaluate clock window as before ────────────────────────────
