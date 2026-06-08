@@ -234,14 +234,28 @@ export default function Home() {
   // then remaining characters alphabetically.
   // ANCHOR PRIORITY: Ethan (index 0) and Melody (index 1) must always appear before Shiloh or any
   // newer/lower-continuity character, regardless of created_date or name sort order.
-  // LEGACY COMPATIBILITY: character_type may be absent on older records — these are resolved to
-  // 'active_created_character' by the legacy fallback in useOwnedCharacters. Accept both the
-  // resolved type (via _resolvedType) and the raw field to cover both paths.
-  const isActiveCreated = (c) =>
-    c.character_type === "active_created_character" ||
-    c._resolvedType === "active_created_character" ||
-    // Legacy: character_type absent entirely — trust it passed RLS and has profile data
-    (!c.character_type && (c.personality_summary || c.personality_traits?.length > 0 || c.backstory));
+  // HOMEPAGE ELIGIBILITY RULE:
+  // Only active_created_character records are eligible for homepage cards.
+  // Vick (npc_world_service / is_world_service) is handled separately via VickServiceCard.
+  //
+  // LEGACY COMPATIBILITY: character_type may be absent on very old records.
+  // The legacy fallback ONLY applies when character_type is completely absent (null/undefined).
+  // If character_type is explicitly set to ANY NPC variant, it is excluded — no exceptions.
+  // An NPC with profile data (backstory, personality_summary, etc.) is still an NPC.
+  const NPC_TYPES = new Set([
+    "npc_regular", "npc_family_member", "npc_fictitious", "npc_world_service"
+  ]);
+  const isActiveCreated = (c) => {
+    // Explicit NPC type — always excluded from homepage cards
+    if (c.character_type && NPC_TYPES.has(c.character_type)) return false;
+    // Explicit active_created_character — always included
+    if (c.character_type === "active_created_character") return true;
+    // Resolved type (via _resolvedType from useOwnedCharacters legacy resolution)
+    if (c._resolvedType === "active_created_character") return true;
+    // Legacy fallback: character_type is completely absent — only then apply profile heuristic
+    if (!c.character_type && (c.personality_summary || c.personality_traits?.length > 0 || c.backstory)) return true;
+    return false;
+  };
 
   const activeCustomChars = activeCharacters
     .filter(c => 
