@@ -434,28 +434,34 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
   }
 
   // ── PRIORITY 0: STALE SLEEP DURATION GUARD (8-hour hard wake) ────────────────
-  // Rule: active_created_character must NEVER remain in sleep state beyond 8 hours.
+  // Rule: active_created_character must NEVER remain in sleeping/napping state beyond 8 hours.
   // Stale resolved_presence_status, stale current_activity, stale cached location
   // context, or any other stale field must NOT keep a character asleep indefinitely.
   //
   // This uses the SAME write pattern as clearStaleCharacterSleep — no new system.
   // Authoritative time: America/New_York (Eastern Time). UTC is never used for this logic.
   //
+  // IMPORTANT: "passed_out" is NOT normal sleep. It is part of the exhaustion/consequence path:
+  //   100% → normal decay → 25% critical exhaustion → 20% exhaustion range → passed_out → recovery
+  // passed_out has its own 2.5-hour ScheduledEvent (passout_recovery) created by PRIORITY 2.
+  // The 8-hour stale-sleep guard does NOT apply to passed_out — that state's recovery is owned
+  // by its own existing system. Only sleeping and napping are subject to the 8-hour ceiling.
+  //
   // Sleep start resolution order (most → least authoritative):
   //   1. char.last_sleep_start       — explicitly set when sleep begins
   //   2. char.resolved_last_updated_at — last time presence was written
   //   3. char.last_need_simulated_at  — last simulation tick (fallback only)
   //
-  // Only fires if character is actually in a sleep state — never touches awake characters.
-  // Existing alarm/work/school/obligation/recovery exceptions are fully preserved:
+  // Existing exceptions fully preserved:
   //   - alreadyHospitalized → skip (medical recovery owns this)
   //   - recentlyWokenByAlarm → skip (alarm system owns this)
-  //   - onShiftBlocksSleep has NO bearing here — if they've been asleep 8h, wake them regardless
+  //   - passed_out → skip (passout_recovery ScheduledEvent owns this — see PRIORITY 2)
   //
   // PROOF MATH (6h sleep at +12 energy/hr from exhaustion start of 20):
   //   After 6h: 20 + (12 × 6) = 92 → clamped to 100 — full recovery in 6 hours ✓
-  //   After 8h: already at 100 — 8 hours is the hard upper limit ✓
-  if (alreadySleeping && !alreadyHospitalized && !recentlyWokenByAlarm) {
+  //   After 8h: already at 100 — 8 hours is the hard upper limit for sleeping/napping ✓
+  const isNormalSleep = presence === 'sleeping' || presence === 'napping'; // passed_out is excluded — separate path
+  if (isNormalSleep && !alreadyHospitalized && !recentlyWokenByAlarm) {
     // Resolve sleep start in Eastern Time — must never use UTC as authoritative
     const sleepStartCandidates = [
       char.last_sleep_start,
