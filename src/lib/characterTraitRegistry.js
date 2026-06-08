@@ -546,6 +546,22 @@ export const TRAIT_ENTRIES = [
     conflicts_with: [],
   },
 
+  // ── PROTECTED TRAITS ─────────────────────────────────────────────────────
+  // These traits are permanently assigned and cannot be toggled by users.
+  // UI must render them as read-only (no checkbox / toggle).
+  {
+    key: "trait_never_break_fourth_wall",
+    id: "trait_never_break_fourth_wall",
+    type: "trait",
+    protected: true,
+    label: "Never Break the Fourth Wall",
+    emoji: "🔒",
+    category: "Protected",
+    desc: "This character may possess protected knowledge but is permanently prohibited from revealing, implying, or explaining the artificial or meta-level nature of the world to any other character. Overrides all personality, emotion, relationship, and diagnostic behaviors.",
+    autonomy_modifiers: {},
+    conflicts_with: [],
+  },
+
   // ── EXPRESSION / ENERGY ──────────────────────────────────────────────────
   {
     key: "trait_androgynous",
@@ -954,7 +970,12 @@ export const TRAIT_CATEGORY_ORDER = [
   "Moral / Ethical",
   "Lifestyle / Habits",
   "Expression / Energy",
+  "Protected",
 ];
+
+export const TRAIT_CATEGORY_META = {
+  "Protected": { label: "Protected Traits", color: "text-amber-400", bg: "bg-amber-400/10 border-amber-400/20" },
+};
 
 export const QUIRK_CATEGORY_ORDER = [
   "spending",

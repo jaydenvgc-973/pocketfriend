@@ -1,4 +1,4 @@
-import { Check, AlertTriangle } from "lucide-react";
+import { Check, AlertTriangle, Lock } from "lucide-react";
 import { TRAIT_ENTRIES, TRAIT_CATEGORY_ORDER, detectConflicts } from "@/lib/characterTraitRegistry";
 
 // Re-export for backwards compatibility (EditCharacterTraits imports CHARACTER_TRAITS)
@@ -55,8 +55,33 @@ export default function CharacterTraitsStep({ data, onChange, showConflicts = tr
           <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">{category}</p>
           <div className="grid grid-cols-1 gap-2">
             {traits.map((trait) => {
-              const selected = !!data[trait.key];
-              const inConflict = conflicts.some(c => c.a === trait.key || c.b === trait.key);
+              const isProtected = trait.protected === true;
+              const selected = isProtected ? true : !!data[trait.key];
+              const inConflict = !isProtected && conflicts.some(c => c.a === trait.key || c.b === trait.key);
+
+              if (isProtected) {
+                return (
+                  <div
+                    key={trait.key}
+                    className="flex items-center gap-3 p-3 rounded-xl border bg-amber-500/8 border-amber-500/30 text-left cursor-default"
+                  >
+                    <span className="text-xl flex-shrink-0">{trait.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-medium text-amber-400">{trait.label}</p>
+                        <span className="text-[9px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                          Permanent
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{trait.desc}</p>
+                    </div>
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 bg-amber-500/20">
+                      <Lock className="w-3 h-3 text-amber-400" />
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <button
                   key={trait.key}
