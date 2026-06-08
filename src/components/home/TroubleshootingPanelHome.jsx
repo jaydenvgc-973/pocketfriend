@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, CheckCircle2, Loader2, AlertCircle, Zap } from 'lucide-react';
+import { X, CheckCircle2, Loader2, AlertCircle, Zap, Globe } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import TravelViolationLog from '@/components/travel/TravelViolationLog';
 
@@ -19,6 +19,7 @@ const ISSUE_LIST = [
   { id: 'shift_verification', label: '🕒 Work shift verification', description: 'Check if characters on shift are correctly shown on cards, travel popups, and employee lists. Flags STALE_SCHEDULE_LOCATION_DATA if mismatched.' },
   { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems (cards, popups, profile, balance, world name, relationships, appearance lock) for UI values out of sync with backend.' },
   { id: 'fix_locations', label: '📍 Fix location display', description: 'Detect characters with stale or missing location data. Reports issues only — does not overwrite jail, travel, hotel, shelter, or temporary housing states.' },
+  { id: 'restore_world_contacts', label: '🌐 Restore missing World Contacts', description: 'Find npc_fictitious or npc_family_member records with missing ownership that belong to this account. Identifies them by name, then restores their owner_email. Does not change character types or create duplicates.' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }) {
@@ -26,6 +27,10 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   const [selectedIssues, setSelectedIssues] = useState([]);
+  // World Contacts repair state — two-step: preview then confirm
+  const [wcRepairPreview, setWcRepairPreview] = useState(null); // dry-run result
+  const [wcRepairApplied, setWcRepairApplied] = useState(null); // live result
+  const [wcRepairRunning, setWcRepairRunning] = useState(false);
   const queryClient = useQueryClient();
 
   const toggleIssue = (issueId) => {
@@ -120,6 +125,10 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
           issues_found: data?.issues_found || [],
           checks: data?.checks || [],
         });
+      } else if (selectedIssues.includes('restore_world_contacts') && selectedIssues.length === 1) {
+        // Two-step handled separately — don't route through troubleshootHome
+        setIsRunning(false);
+        return;
       } else {
         // All other selections go through troubleshootHome with ONLY the selected issues
         const res = await base44.functions.invoke('troubleshootHome', { selectedIssues });
@@ -231,6 +240,121 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
                     <Zap className="w-4 h-4" />
                     Fix All — Full Diagnostic + Repair
                   </button>
+
+                  {/* ── WORLD CONTACTS REPAIR — two-step in-panel flow ── */}
+                  {selectedIssues.includes('restore_world_contacts') && (
+                    <div className="border border-border rounded-xl p-4 space-y-3 bg-secondary/30">
+                      <div className="flex items-center gap-2">
+                        <Globe className="w-4 h-4 text-primary" />
+                        <p className="text-sm font-semibold text-foreground">World Contacts Ownership Repair</p>
+                      </div>
+
+                      {!wcRepairPreview && !wcRepairApplied && (
+                        <button
+                          onClick={async () => {
+                            setWcRepairRunning(true);
+                            try {
+                              const res = await base44.functions.invoke('repairNullOwnerNPCFictitious', { dryRun: true });
+                              setWcRepairPreview(res?.data || {});
+                            } catch (e) {
+                              setWcRepairPreview({ error: e.message });
+                            } finally {
+                              setWcRepairRunning(false);
+                            }
+                          }}
+                          disabled={wcRepairRunning}
+                          className="w-full px-3 py-2.5 rounded-lg bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          {wcRepairRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
+                          Step 1 — Preview affected records (dry run)
+                        </button>
+                      )}
+
+                      {wcRepairPreview && !wcRepairApplied && (
+                        <div className="space-y-3">
+                          {wcRepairPreview.error ? (
+                            <p className="text-xs text-destructive">Error: {wcRepairPreview.error}</p>
+                          ) : wcRepairPreview.repaired?.length === 0 ? (
+                            <div className="text-xs text-muted-foreground bg-secondary/50 rounded-lg p-3">
+                              No null-owner NPC records found that are referenced by this account. World Contacts ownership appears clean.
+                            </div>
+                          ) : (
+                            <>
+                              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
+                                <p className="text-xs font-semibold text-amber-400">
+                                  {wcRepairPreview.repaired?.length} record{wcRepairPreview.repaired?.length !== 1 ? 's' : ''} found with missing ownership:
+                                </p>
+                                {wcRepairPreview.repaired?.map((r, i) => (
+                                  <div key={i} className="text-xs text-foreground bg-secondary/50 rounded p-2">
+                                    <p className="font-medium">{r.name}</p>
+                                    <p className="text-muted-foreground">type: {r.character_type} · referenced by: {r.referenced_by}</p>
+                                    <p className="text-muted-foreground">id: {r.id?.substring(0, 12)}…</p>
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="text-xs text-muted-foreground">Pressing Apply will set owner_email on these records only. No character_type changes. No duplicates.</p>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={async () => {
+                                    setWcRepairRunning(true);
+                                    try {
+                                      const res = await base44.functions.invoke('repairNullOwnerNPCFictitious', { dryRun: false });
+                                      setWcRepairApplied(res?.data || {});
+                                      // Invalidate NPC cache so World Contacts refreshes
+                                      queryClient.invalidateQueries({ queryKey: ['npc-characters'] });
+                                      queryClient.invalidateQueries({ queryKey: ['characters'] });
+                                    } catch (e) {
+                                      setWcRepairApplied({ error: e.message });
+                                    } finally {
+                                      setWcRepairRunning(false);
+                                    }
+                                  }}
+                                  disabled={wcRepairRunning}
+                                  className="flex-1 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                                >
+                                  {wcRepairRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                                  Step 2 — Apply ownership repair
+                                </button>
+                                <button
+                                  onClick={() => setWcRepairPreview(null)}
+                                  className="px-3 py-2 rounded-lg bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      {wcRepairApplied && (
+                        <div className="space-y-2">
+                          {wcRepairApplied.error ? (
+                            <p className="text-xs text-destructive">Error: {wcRepairApplied.error}</p>
+                          ) : (
+                            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 space-y-2">
+                              <p className="text-xs font-semibold text-emerald-400">
+                                ✓ {wcRepairApplied.repaired?.length || 0} record{wcRepairApplied.repaired?.length !== 1 ? 's' : ''} repaired.
+                              </p>
+                              {wcRepairApplied.repaired?.map((r, i) => (
+                                <div key={i} className="text-xs text-foreground">
+                                  <span className="font-medium">{r.name}</span>
+                                  <span className="text-emerald-400 ml-2">owner_email restored ✓</span>
+                                </div>
+                              ))}
+                              <p className="text-xs text-muted-foreground mt-1">Open World Contacts to verify these contacts are now visible and World Phone can send messages.</p>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => { setWcRepairPreview(null); setWcRepairApplied(null); }}
+                            className="w-full px-3 py-2 rounded-lg bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
+                          >
+                            Reset
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
 

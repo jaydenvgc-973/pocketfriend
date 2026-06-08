@@ -293,18 +293,33 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
   }
 
   if (referencedNPCIds.size > 0) {
-    const missingNPCResults = await Promise.all(
-      [...referencedNPCIds].map(id => base44.entities.Character.filter({ id }).catch(() => []))
-    );
-    for (const records of missingNPCResults) {
-      const rec = records[0];
-      if (!rec || ownerIds.has(rec.id)) continue;
-      // Only include NPC types — never promote to active_created
-      if (!['npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'].includes(rec.character_type)) continue;
-      if (rec.status === 'deleted' || rec.status === 'soft_deleted') continue;
-      allKnownChars.push(rec);
-      ownerIds.add(rec.id);
-      console.log(`[ContactsResolver] Supplemented null-owner NPC: "${rec.name}" (${rec.character_type}) | id=${rec.id}`);
+    // CRITICAL: base44.entities.Character.filter({ id }) is user-scoped RLS.
+    // Null-owner records are invisible to it — they are hidden by RLS, not missing.
+    // Use the backend service-role route instead, which explicitly fetches by ID
+    // without an owner_email constraint and returns null-owner NPC records safely.
+    // repairNullOwnerNPCFictitious with dryRun=true returns the verified record list
+    // without writing anything — safe to call here as a read-only supplement.
+    try {
+      const supplementRes = await base44.functions.invoke('repairNullOwnerNPCFictitious', { dryRun: true });
+      const supplementData = supplementRes?.data;
+      const verifiedRecords = supplementData?.repaired || [];
+      // Only add records whose IDs we were looking for
+      for (const entry of verifiedRecords) {
+        if (!referencedNPCIds.has(entry.id)) continue;
+        if (ownerIds.has(entry.id)) continue;
+        // Fetch the full record via service role (the repair function returns audit stubs, not full records)
+        const fullRes = await base44.functions.invoke('fetchNPCsForUser', {}).catch(() => null);
+        const fullNPCs = fullRes?.data?.npcs || [];
+        const fullRec = fullNPCs.find(n => n.id === entry.id);
+        if (fullRec) {
+          allKnownChars.push(fullRec);
+          ownerIds.add(fullRec.id);
+          console.log(`[ContactsResolver] Service-role supplemented null-owner NPC: "${fullRec.name}" (${fullRec.character_type}) | id=${fullRec.id}`);
+        }
+      }
+    } catch (e) {
+      // Non-fatal — supplement failed, continue with what we have
+      console.warn(`[ContactsResolver] Null-owner NPC supplement failed: ${e.message}`);
     }
   }
 
@@ -346,7 +361,12 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     ]).filter(id => id !== character.id)
   );
 
-  // Fetch any participant characters NOT found in the owner-scoped allOwnerChars
+  // Fetch any participant characters NOT found in the owner-scoped allOwnerChars.
+  // Use fetchNPCsForUser (service-role) for null-owner records — user-scoped RLS
+  // will silently return empty for any Character with owner_email=null.
+  // The NPC fetch already ran above and populated allKnownChars; charById is built from it.
+  // For any still-missing IDs (non-NPC active_created or owned chars), try the
+  // user-scoped query — those records WILL be visible because they are owned by this user.
   const missingIds = [...allConvoLinkedIds].filter(id => !charById.has(id));
   if (missingIds.length > 0) {
     const missingResults = await Promise.all(
