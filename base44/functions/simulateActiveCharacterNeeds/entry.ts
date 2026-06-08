@@ -43,6 +43,11 @@ const clamp = (v) => Math.max(0, Math.min(100, v));
 //   At 4.2h: energy ≈ 70 — natural wake possible if no obligations missed or health recovering
 //   At 6h: energy ≈ 92 — well rested, almost always awake unless sick/recovering
 //   At 8h: energy = 100 (clamped) — full recovery
+// ── ENERGY RULE: Awake contexts must NEVER restore energy (energy rate must be ≤ 0 for all awake states).
+// Energy restoration is ONLY valid in: sleeping (+12), passed_out (+8), hospitalized (+4).
+// home_resting, resting, eating, food_drink, hospital — previously had positive energy rates.
+// These are now set to 0 (neutral) for energy. Awake resting slows drain but never reverses it.
+// The -5/hr baseline awake drain guarantee (applied after context rates) ensures forward progress to 0.
 const RATES = {
   sleeping:        { hunger: -1,   energy: +12, social: -0.5, health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
   passed_out:      { hunger: -0.5, energy: +8,  social: -0.5, health: +0.5, mental: +1,   hygiene: 0,    comfort: +1   },
@@ -55,14 +60,19 @@ const RATES = {
   at_school:       { hunger: -3,   energy: -4,  social: +2,   health: -0.5, mental: -1,   hygiene: -1,   comfort: -1   },
   gym:             { hunger: -6,   energy: -7,  social: +1,   health: +1,   mental: +1,   hygiene: -5,   comfort: -2   },
   bar_club:        { hunger: -2,   energy: -5,  social: +5,   health: -1,   mental: +1,   hygiene: -1,   comfort: -1   },
-  home_resting:    { hunger: -1,   energy: +3,  social: -1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +3   },
+  // home_resting: energy=0 (neutral). Awake resting does not restore energy. -5/hr baseline still applies.
+  home_resting:    { hunger: -1,   energy:  0,  social: -1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +3   },
   home_active:     { hunger: -2,   energy: -3,  social: -1,   health: 0,    mental: 0,    hygiene: -0.5, comfort: +1   },
-  hospital:        { hunger: -1,   energy: +2,  social: -1,   health: +3,   mental: -1,   hygiene: 0,    comfort: +1   },
-  food_drink:      { hunger: +15,  energy: +2,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
+  // hospital (visited, not admitted): energy=0. Admitted/hospitalized context is separate above.
+  hospital:        { hunger: -1,   energy:  0,  social: -1,   health: +3,   mental: -1,   hygiene: 0,    comfort: +1   },
+  // food_drink: eating out while awake does not restore energy — food restores hunger only.
+  food_drink:      { hunger: +15,  energy:  0,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
   social_out:      { hunger: -2,   energy: -4,  social: +4,   health: 0,    mental: +1,   hygiene: -1,   comfort: -0.5 },
   traveling:       { hunger: -3,   energy: -4,  social: -1,   health: 0,    mental: -1,   hygiene: -2,   comfort: -3   },
-  eating:          { hunger: +15,  energy: +2,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
-  resting:         { hunger: -1,   energy: +3,  social: -0.5, health: +1,   mental: +2,   hygiene: 0,    comfort: +3   },
+  // eating: hunger relief only. Energy=0 while awake. -5/hr baseline still applies on top.
+  eating:          { hunger: +15,  energy:  0,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
+  // resting: energy=0 (neutral). Awake resting does not restore energy.
+  resting:         { hunger: -1,   energy:  0,  social: -0.5, health: +1,   mental: +2,   hygiene: 0,    comfort: +3   },
   default:         { hunger: -2,   energy: -4,  social: -1,   health: 0,    mental: -0.5, hygiene: -1,   comfort: -1   },
 };
 
@@ -682,31 +692,30 @@ Deno.serve(async (req) => {
       // Apply cross-system infection
       newNeeds = applyStatInfection(newNeeds, cappedHours);
 
-      // ── AWAKE-TIME ENERGY DRAIN GUARANTEE ────────────────────────────────
-      // Rule: An awake character must lose energy over time — even when idle.
-      // If the context applied net POSITIVE energy while the character is awake
-      // (e.g. home_resting applies +3/hr, eating +2/hr), ensure the result still
-      // trends downward enough that a 24-hour awake period reaches critical (≤25).
+      // ── AWAKE-TIME ENERGY DRAIN GUARANTEE (active_created_character only) ──
+      // Rule: An awake active_created_character must lose at least -5 energy per hour,
+      // regardless of context. This is a hard floor applied AFTER context rates.
       //
-      // Baseline minimum drain for awake (non-sleeping, non-passed_out) characters:
-      //   -2/hr regardless of context (a resting awake character is still awake).
+      // PROOF MATH (whole numbers, -5/hr baseline):
+      //   Start 100: 100 - (5 × 20) = 0  → reaches 0 after 20 hours awake
+      //   Start  75:  75 - (5 × 15) = 0  → reaches 0 after 15 hours awake
+      //   Start  50:  50 - (5 × 10) = 0  → reaches 0 after 10 hours awake
+      //   Start  25:  25 - (5 ×  5) = 0  → reaches 0 after  5 hours awake
+      //   In all cases energy reaches 0 within 24 hours.
       //
-      // This does NOT apply to sleeping/passed_out/hospitalized — those contexts
-      // correctly restore energy and this guard must never block recovery.
+      // Context rates for awake states are already set to ≤ 0 in RATES (no awake context
+      // restores energy — only sleeping/passed_out/hospitalized do). This guarantee ensures
+      // that even if context adds 0, the floor still drives energy toward zero.
+      //
+      // Does NOT apply to sleeping, passed_out, or hospitalized — those must restore energy.
       const isSleepingContext = context === 'sleeping' || context === 'passed_out' || context === 'hospitalized';
       if (!isSleepingContext) {
-        // Calculate what the context gave us in energy terms
-        const contextEnergyRate = (RATES[context] || RATES.default).energy;
-        const MINIMUM_AWAKE_DRAIN_PER_HOUR = -2; // At minimum -2/hr while awake
-        if (contextEnergyRate > MINIMUM_AWAKE_DRAIN_PER_HOUR) {
-          // Context is restoring more energy than the minimum drain allows.
-          // Override the energy result to apply at most the minimum drain.
-          // e.g. home_resting was +3/hr: we cap it to -2/hr baseline minimum.
-          const energyWithMinDrain = clamp((currentNeeds.energy ?? 75) + MINIMUM_AWAKE_DRAIN_PER_HOUR * cappedHours);
-          // Take the LOWER of the two (most conservative awake drain)
-          if (energyWithMinDrain < newNeeds.energy) {
-            newNeeds.energy = energyWithMinDrain;
-          }
+        const MINIMUM_AWAKE_DRAIN_PER_HOUR = -5; // -5/hr floor: 100 energy → 0 in 20 hours
+        // Apply the baseline drain directly from currentNeeds (not newNeeds) so context
+        // rates and infection do not double-count. Take the lower (more drained) result.
+        const energyWithBaseline = clamp((currentNeeds.energy ?? 75) + MINIMUM_AWAKE_DRAIN_PER_HOUR * cappedHours);
+        if (energyWithBaseline < newNeeds.energy) {
+          newNeeds.energy = energyWithBaseline;
         }
       }
       const financialNeed = deriveFinancialNeed(char);
