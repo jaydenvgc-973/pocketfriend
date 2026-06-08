@@ -149,8 +149,10 @@ function getWorkContextFromLocation(loc) {
 // character is unverifiably awake are the primary failure mode this resolves.
 const STALE_PRESENCE_MS = 4 * 60 * 60 * 1000; // 4 hours
 
-// Contexts that grant net positive energy (would keep character awake forever if stale)
-const ENERGY_RESTORING_CONTEXTS = new Set(['home_resting', 'resting', 'eating', 'hospital', 'hospitalized', 'food_drink']);
+// Contexts that USED TO grant net positive energy — now all awake contexts are 0 or negative.
+// This set is retained for reference only; the -5/hr baseline drain guarantee supersedes it.
+// Only sleeping/passed_out/hospitalized restore energy (handled by isSleepingContext guard below).
+const ENERGY_RESTORING_CONTEXTS = new Set(['sleeping', 'passed_out', 'hospitalized']);
 
 /**
  * resolvePresenceStaleness
@@ -429,6 +431,71 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
   if (recentlyWokenByAlarm) {
     logs.push(`[CORRECTIVE] ${char.name}: alarm wake guard active (sleep_interrupted_at within 30min) — all sleep writes blocked`);
     // Still allow non-sleep corrections (hunger, hygiene) below — do NOT return early yet
+  }
+
+  // ── PRIORITY 0: STALE SLEEP DURATION GUARD (8-hour hard wake) ────────────────
+  // Rule: active_created_character must NEVER remain in sleep state beyond 8 hours.
+  // Stale resolved_presence_status, stale current_activity, stale cached location
+  // context, or any other stale field must NOT keep a character asleep indefinitely.
+  //
+  // This uses the SAME write pattern as clearStaleCharacterSleep — no new system.
+  // Authoritative time: America/New_York (Eastern Time). UTC is never used for this logic.
+  //
+  // Sleep start resolution order (most → least authoritative):
+  //   1. char.last_sleep_start       — explicitly set when sleep begins
+  //   2. char.resolved_last_updated_at — last time presence was written
+  //   3. char.last_need_simulated_at  — last simulation tick (fallback only)
+  //
+  // Only fires if character is actually in a sleep state — never touches awake characters.
+  // Existing alarm/work/school/obligation/recovery exceptions are fully preserved:
+  //   - alreadyHospitalized → skip (medical recovery owns this)
+  //   - recentlyWokenByAlarm → skip (alarm system owns this)
+  //   - onShiftBlocksSleep has NO bearing here — if they've been asleep 8h, wake them regardless
+  //
+  // PROOF MATH (6h sleep at +12 energy/hr from exhaustion start of 20):
+  //   After 6h: 20 + (12 × 6) = 92 → clamped to 100 — full recovery in 6 hours ✓
+  //   After 8h: already at 100 — 8 hours is the hard upper limit ✓
+  if (alreadySleeping && !alreadyHospitalized && !recentlyWokenByAlarm) {
+    // Resolve sleep start in Eastern Time — must never use UTC as authoritative
+    const sleepStartCandidates = [
+      char.last_sleep_start,
+      char.resolved_last_updated_at,
+      char.last_need_simulated_at,
+    ].filter(Boolean);
+
+    if (sleepStartCandidates.length > 0) {
+      // Use the EARLIEST timestamp among candidates — conservative: assume sleep started
+      // as early as possible to avoid under-counting sleep duration
+      const sleepStartMs = Math.min(...sleepStartCandidates.map(t => new Date(t).getTime()));
+      const sleepDurationHours = (now.getTime() - sleepStartMs) / (1000 * 60 * 60);
+
+      const MAX_SLEEP_HOURS = 8; // hard ceiling — stale state must never exceed this
+
+      if (sleepDurationHours >= MAX_SLEEP_HOURS) {
+        // Authoritative ET timestamp for the wake write
+        const nowEtStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' });
+        const nowEtIso = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString();
+
+        stateWrites.resolved_presence_status = 'home';
+        stateWrites.location_status = 'home';
+        stateWrites.current_activity = null;
+        stateWrites.resolved_last_updated_at = now.toISOString(); // ISO UTC for DB storage
+        stateWrites.sleep_interrupted_at = now.toISOString();     // marks wake time for alarm guard
+
+        logs.push(
+          `[CORRECTIVE] ${char.name}: STALE SLEEP CLEARED — sleep_duration=${sleepDurationHours.toFixed(1)}h` +
+          ` (≥${MAX_SLEEP_HOURS}h hard limit) | sleep_start_used=${new Date(sleepStartMs).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET` +
+          ` | now=${nowEtStr} ET | action=force_wake`
+        );
+
+        // Return early — no other corrective action needed, character is being woken
+        return { stateWrites, scheduledEvents, logs };
+      }
+      // Not yet at 8h — log for observability but do not wake
+      logs.push(
+        `[SLEEP-DURATION] ${char.name}: sleep_duration=${sleepDurationHours.toFixed(1)}h (limit=${MAX_SLEEP_HOURS}h) — still within valid window`
+      );
+    }
   }
 
   // ── PRIORITY 1: HEALTH ER (health-only trigger — never hygiene/social/comfort) ──
