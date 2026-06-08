@@ -105,13 +105,22 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
       // ── RELATIONSHIP UPDATE: re-fetch current state before writing ──────────
       // Prevents stale props from overwriting newer data saved since last render.
       const freshChar = await base44.entities.Character.filter({ id: character.id }).catch(() => []);
-      const currentRels = freshChar[0]?.fictional_relationships || character.fictional_relationships || [];
+      const currentRels = (freshChar[0]?.fictional_relationships || character.fictional_relationships || [])
+        .map(r => { const { fictional_relationships: _fr, family_members: _fm, memories: _m, ...safe } = r; return safe; });
       const updatedRels = [
         ...currentRels,
         {
           person_name: newNPC.name,
           related_character_id: newNPC.id,
           relationship_type: 'acquaintance',
+          friendship_level: 30,
+          user_respect_level: 50,
+          romantic_level: 0,
+          attraction_level: 0,
+          chosen_family_level: 0,
+          description: '',
+          current_status: '',
+          last_interaction_summary: '',
         }
       ];
       await base44.entities.Character.update(character.id, {
@@ -134,20 +143,80 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
     setErrorMsg(null);
     setIsLoading(true);
     try {
-      // Re-fetch current state before writing — prevents stale props from overwriting newer data.
-      const freshChar = await base44.entities.Character.filter({ id: character.id }).catch(() => []);
-      const currentRels = freshChar[0]?.fictional_relationships || character.fictional_relationships || [];
-      const updatedRels = [
-        ...currentRels,
-        {
-          person_name: selectedNPC.name,
-          related_character_id: selectedNPC.id,
-          relationship_type: 'acquaintance',
-        }
-      ];
-      await base44.entities.Character.update(character.id, {
-        fictional_relationships: updatedRels
-      });
+      // ── SAFE MINIMAL ENTRY ─────────────────────────────────────────────────
+      // CRITICAL: Never embed full Character objects in fictional_relationships.
+      // Store only minimal safe fields to prevent profile crashes and render loops.
+      const safeRelEntry = {
+        person_name: selectedNPC.name,
+        related_character_id: selectedNPC.id,
+        relationship_type: 'acquaintance',
+        friendship_level: 30,
+        user_respect_level: 50,
+        romantic_level: 0,
+        attraction_level: 0,
+        chosen_family_level: 0,
+        description: '',
+        current_status: '',
+        last_interaction_summary: '',
+      };
+
+      // ── FRESH READ → MERGE → WRITE: Character A side ───────────────────────
+      // Always re-fetch before writing to prevent stale-array overwrites.
+      const freshCharArr = await base44.entities.Character.filter({ id: character.id }).catch(() => []);
+      const currentRels = (freshCharArr[0]?.fictional_relationships || character.fictional_relationships || [])
+        // Safety: strip any accidentally embedded full objects (no fictional_relationships key allowed inside)
+        .map(r => {
+          const { fictional_relationships: _fr, family_members: _fm, memories: _m, ...safe } = r;
+          return safe;
+        });
+
+      // Guard: don't add duplicate
+      const alreadyLinked = currentRels.some(r => r.related_character_id === selectedNPC.id);
+      if (!alreadyLinked) {
+        await base44.entities.Character.update(character.id, {
+          fictional_relationships: [...currentRels, safeRelEntry],
+        });
+      }
+
+      // ── BILATERAL WRITE: Other side (B → A) ─────────────────────────────────
+      // For npc_world_service (Vick) and npc_fictitious characters, write a reciprocal
+      // entry so both sides know each other. Uses fresh read to avoid stale overwrites.
+      const isLinkedChar = selectedNPC.character_type === 'npc_world_service'
+        || selectedNPC.is_world_service === true
+        || selectedNPC.character_type === 'active_created_character'
+        || selectedNPC.character_type === 'npc_fictitious'
+        || selectedNPC.character_type === 'npc_regular';
+
+      if (isLinkedChar && !alreadyLinked) {
+        base44.entities.Character.filter({ id: selectedNPC.id }).then(arr => {
+          const target = arr[0];
+          if (!target) return;
+          const targetRels = (target.fictional_relationships || [])
+            .map(r => {
+              const { fictional_relationships: _fr, family_members: _fm, memories: _m, ...safe } = r;
+              return safe;
+            });
+          const alreadyHasUs = targetRels.some(r => r.related_character_id === character.id);
+          if (!alreadyHasUs) {
+            const reciprocalEntry = {
+              person_name: character.name,
+              related_character_id: character.id,
+              relationship_type: 'known contact',
+              friendship_level: 30,
+              user_respect_level: 50,
+              romantic_level: 0,
+              attraction_level: 0,
+              chosen_family_level: 0,
+              description: '',
+              current_status: '',
+              last_interaction_summary: '',
+            };
+            base44.entities.Character.update(selectedNPC.id, {
+              fictional_relationships: [...targetRels, reciprocalEntry],
+            }).catch(e => console.warn('[AddPeopleInTheirWorldPanel] Bilateral write failed (non-fatal):', e.message));
+          }
+        }).catch(() => {});
+      }
 
       setSelectedNPC(null);
       setMode(null);

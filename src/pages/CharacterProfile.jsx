@@ -208,8 +208,16 @@ export default function CharacterProfile() {
     queryKey: ["characters", currentUser?.email || ""],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      const chars = await base44.entities.Character.filter({ owner_email: currentUser.email });
-      return chars.map(({ system_prompt, ...char }) => char);
+      const [owned, worldService] = await Promise.all([
+        base44.entities.Character.filter({ owner_email: currentUser.email }).catch(() => []),
+        // Fetch npc_world_service characters (e.g. Vick Servicio) separately — they have a
+        // different owner_email and would be missing from the owner-scoped query.
+        base44.entities.Character.filter({ is_world_service: true }).catch(() => []),
+      ]);
+      const seen = new Set();
+      return [...owned, ...worldService]
+        .filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; })
+        .map(({ system_prompt, ...char }) => char);
     },
     enabled: !!currentUser?.email,
     staleTime: 120000,
@@ -984,7 +992,8 @@ export default function CharacterProfile() {
                   if (!r.related_character_id) return false;
                   const lc = allCharacters.find(c => c.id === r.related_character_id);
                   if (!lc) return false;
-                  return lc.character_type === "active_created_character";
+                  // Show active_created_character AND npc_world_service (e.g. Vick Servicio)
+                  return lc.character_type === "active_created_character" || lc.character_type === "npc_world_service" || lc.is_world_service === true;
                 })
                 .map((rel, idx) => {
                   const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
@@ -1036,7 +1045,8 @@ export default function CharacterProfile() {
                   if (!r.related_character_id) return true;
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
                   if (!linked) return true;
-                  return linked.character_type !== "active_created_character";
+                  // active_created_character and npc_world_service go in "Characters They Know"
+                  return linked.character_type !== "active_created_character" && !linked.is_world_service && linked.character_type !== "npc_world_service";
                 });
                 const seen = new Set();
                 const deduped = worldRels.filter(r => {
