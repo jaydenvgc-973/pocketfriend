@@ -19,7 +19,7 @@ const ISSUE_LIST = [
   { id: 'shift_verification', label: '🕒 Work shift verification', description: 'Check if characters on shift are correctly shown on cards, travel popups, and employee lists. Flags STALE_SCHEDULE_LOCATION_DATA if mismatched.' },
   { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems (cards, popups, profile, balance, world name, relationships, appearance lock) for UI values out of sync with backend.' },
   { id: 'fix_locations', label: '📍 Fix location display', description: 'Detect characters with stale or missing location data. Reports issues only — does not overwrite jail, travel, hotel, shelter, or temporary housing states.' },
-  { id: 'restore_world_contacts', label: '🌐 Restore missing World Contacts', description: 'Find npc_fictitious or npc_family_member records with missing ownership that belong to this account. Identifies them by name, then restores their owner_email. Does not change character types or create duplicates.' },
+  { id: 'restore_world_contacts', label: '🌐 Restore missing World Contacts', description: 'Find any contact records (any character type) with missing ownership that are referenced by this account\'s contact graph. Identifies them by name, then restores their owner_email. Does not change character types, promote NPCs, or create duplicates.' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }) {

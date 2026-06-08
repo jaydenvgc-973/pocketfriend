@@ -68,20 +68,28 @@ Deno.serve(async (req) => {
     );
     const candidates = candidateResults.flat();
 
-    // ── STEP 4: Filter to null-owner npc_fictitious (or npc_family_member) ─────
-    const nullOwnerNPCs = candidates.filter(c =>
+    // ── STEP 4: Filter to any null-owner contact referenced by this account ──────
+    // World Contacts is contact-graph based, not NPC-type based.
+    // Any character type (active_created_character, npc_regular, npc_fictitious,
+    // npc_family_member, npc_world_service, etc.) may appear in the contact graph
+    // with a missing owner_email due to legacy creation paths.
+    // We repair ALL such referenced records — not just specific NPC types.
+    // Exception: npc_world_service records are globally shared — do not assign
+    // them to a single account's owner_email.
+    const nullOwnerContacts = candidates.filter(c =>
       !c.owner_email &&
-      (c.character_type === 'npc_fictitious' || c.character_type === 'npc_family_member') &&
+      c.character_type !== 'npc_world_service' &&  // globally shared — never account-assign
       c.status !== 'deleted' &&
-      c.status !== 'soft_deleted'
+      c.status !== 'soft_deleted' &&
+      c.status !== 'merged'
     );
 
-    console.log(`[repairNullOwnerNPCFictitious] null_owner_npc_count=${nullOwnerNPCs.length} | names=${nullOwnerNPCs.map(c => c.name).join(', ')}`);
+    console.log(`[repairNullOwnerNPCFictitious] null_owner_contact_count=${nullOwnerContacts.length} | names=${nullOwnerContacts.map(c => c.name).join(', ')}`);
 
-    if (nullOwnerNPCs.length === 0) {
+    if (nullOwnerContacts.length === 0) {
       return Response.json({
         dryRun,
-        message: 'No null-owner npc_fictitious or npc_family_member records found that are referenced by this account.',
+        message: 'No null-owner contact records found that are referenced by this account.',
         repaired: [],
         skipped: [],
         all_candidates_checked: candidates.length,
@@ -92,32 +100,35 @@ Deno.serve(async (req) => {
     const repaired = [];
     const skipped = [];
 
-    for (const npc of nullOwnerNPCs) {
-      // Find which account character references this NPC
+    for (const contact of nullOwnerContacts) {
+      // Find which account character references this contact
       const referencingChar = ownedChars.find(c => {
-        const inFictional = (c.fictional_relationships || []).some(r => r.related_character_id === npc.id);
+        const inFictional = (c.fictional_relationships || []).some(r => r.related_character_id === contact.id);
         const inFamily = (c.family_members || []).some(fm =>
-          (fm.character_id || fm.related_character_id) === npc.id
+          (fm.character_id || fm.related_character_id) === contact.id
         );
-        return inFictional || inFamily;
+        const inPeopleInWorld = (c.people_in_world || c.known_people || []).some(p =>
+          (p.related_character_id || p.character_id) === contact.id
+        );
+        return inFictional || inFamily || inPeopleInWorld;
       });
 
       if (!referencingChar) {
         skipped.push({
-          id: npc.id,
-          name: npc.name,
-          character_type: npc.character_type,
+          id: contact.id,
+          name: contact.name,
+          character_type: contact.character_type,
           reason: 'not_referenced_by_any_owned_character',
         });
         continue;
       }
 
       const audit = {
-        id: npc.id,
-        name: npc.name,
-        character_type: npc.character_type,
-        owner_email_before: npc.owner_email || null,
-        owner_user_id_before: npc.owner_user_id || null,
+        id: contact.id,
+        name: contact.name,
+        character_type: contact.character_type,
+        owner_email_before: contact.owner_email || null,
+        owner_user_id_before: contact.owner_user_id || null,
         owner_email_after: ownerEmail,
         owner_user_id_after: userId,
         referenced_by: referencingChar.name,
@@ -125,7 +136,7 @@ Deno.serve(async (req) => {
       };
 
       if (!dryRun) {
-        await base44.asServiceRole.entities.Character.update(npc.id, {
+        await base44.asServiceRole.entities.Character.update(contact.id, {
           owner_email: ownerEmail,
           owner_user_id: userId,
         });
@@ -135,7 +146,7 @@ Deno.serve(async (req) => {
       }
 
       repaired.push(audit);
-      console.log(`[repairNullOwnerNPCFictitious] ${dryRun ? 'DRY_RUN' : 'REPAIRED'} | id=${npc.id} | name="${npc.name}" | type=${npc.character_type} | ref_by="${referencingChar.name}"`);
+      console.log(`[repairNullOwnerNPCFictitious] ${dryRun ? 'DRY_RUN' : 'REPAIRED'} | id=${contact.id} | name="${contact.name}" | type=${contact.character_type} | ref_by="${referencingChar.name}"`);
     }
 
     return Response.json({
@@ -146,7 +157,7 @@ Deno.serve(async (req) => {
       repaired,
       skipped,
       total_candidates: candidates.length,
-      total_null_owner_npcs: nullOwnerNPCs.length,
+      total_null_owner_contacts: nullOwnerContacts.length,
     });
 
   } catch (error) {
