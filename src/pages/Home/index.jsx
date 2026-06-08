@@ -230,40 +230,16 @@ export default function Home() {
   // Use unified resolver to get homepage-eligible characters from the full merged pool
   const { activeCharacters } = getCharactersForHomepage(customChars, currentUser?.id, currentUser?.email);
   
-  // Sort active custom characters: anchor characters first (by their position in anchorCharacterIds),
-  // then remaining characters alphabetically.
-  // ANCHOR PRIORITY: Ethan (index 0) and Melody (index 1) must always appear before Shiloh or any
-  // newer/lower-continuity character, regardless of created_date or name sort order.
-  // HOMEPAGE ELIGIBILITY RULE:
-  // Only active_created_character records are eligible for homepage cards.
-  // Vick (npc_world_service / is_world_service) is handled separately via VickServiceCard.
-  //
-  // LEGACY COMPATIBILITY: character_type may be absent on very old records.
-  // The legacy fallback ONLY applies when character_type is completely absent (null/undefined).
-  // If character_type is explicitly set to ANY NPC variant, it is excluded — no exceptions.
-  // An NPC with profile data (backstory, personality_summary, etc.) is still an NPC.
-  const NPC_TYPES = new Set([
-    "npc_regular", "npc_family_member", "npc_fictitious", "npc_world_service"
-  ]);
-  const isActiveCreated = (c) => {
-    // Explicit NPC type — always excluded from homepage cards
-    if (c.character_type && NPC_TYPES.has(c.character_type)) return false;
-    // Explicit active_created_character — always included
-    if (c.character_type === "active_created_character") return true;
-    // Resolved type (via _resolvedType from useOwnedCharacters legacy resolution)
-    if (c._resolvedType === "active_created_character") return true;
-    // Legacy fallback: character_type is completely absent — only then apply profile heuristic
-    if (!c.character_type && (c.personality_summary || c.personality_traits?.length > 0 || c.backstory)) return true;
-    return false;
-  };
-
+  // HOMEPAGE CARD ELIGIBILITY — STRICT RULE, NO FALLBACKS:
+  // Standard homepage cards are generated only from records whose canonical
+  // character_type is exactly "active_created_character". No other type is eligible.
+  // Profile data, memories, relationships, finance records, or contact links do not
+  // confer homepage eligibility. Vick uses VickServiceCard exclusively and does not
+  // pass through this filter.
   const activeCustomChars = activeCharacters
-    .filter(c => 
-      (c.status === "active" || !c.status) && 
-      c.name !== "Leo Parker" && 
-      isActiveCreated(c) &&
-      c.character_type !== "npc_world_service" &&
-      !c.is_world_service &&
+    .filter(c =>
+      c.character_type === "active_created_character" &&
+      (c.status === "active" || !c.status) &&
       !c.exclude_from_homepage
     )
     .sort((a, b) => {
@@ -280,7 +256,7 @@ export default function Home() {
       const nameB = (b.display_name || b.name || '').toLowerCase();
       return nameA.localeCompare(nameB);
     });
-  const movedAwayChars = customChars.filter(c => c.status === "moved_away");
+  const movedAwayChars = customChars.filter(c => c.status === "moved_away" && c.character_type === "active_created_character");
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;
   const showPerformanceWarning = activeCustomChars.length >= 7;
