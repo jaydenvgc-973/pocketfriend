@@ -186,6 +186,8 @@ export function detectCharacterCommunicationCommitment(responseText, senderName)
 
   // ── FUTURE-TENSE WITH PRONOUN — still an obligation, recipient unknown ────
   // Return a pronoun marker — caller must resolve from conversation context.
+  // Only explicit pronoun forms fire here — no-name bare variants are too broad
+  // and would create spurious unresolved commitments on routine messages.
   const pronounPatterns = [
     /\bI'?ll\s+(?:text|call|message|contact|hit\s+up)\s+(him|her|them)\b/i,
     /\bI'?ll\s+let\s+(him|her|them)\s+know\b/i,
@@ -194,8 +196,6 @@ export function detectCharacterCommunicationCommitment(responseText, senderName)
     /\bI'?ll\s+check\s+in\s+with\s+(him|her|them)\b/i,
     /\b(?:going\s+to|gonna)\s+(?:text|call|message)\s+(him|her|them)\b/i,
     /\bI\s+need\s+to\s+(?:text|call|message)\s+(him|her|them)\b/i,
-    // No-name variants: "I'll reach out", "I'll follow up", "I'll check in"
-    /\bI'?ll\s+(?:reach\s+out|follow\s+up|check\s+in)\b/i,
   ];
 
   for (const pattern of pronounPatterns) {
