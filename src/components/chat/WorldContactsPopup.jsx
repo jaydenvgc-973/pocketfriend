@@ -153,6 +153,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const isSendingRef = useRef(false);
 
   // ── LOAD CONTACTS via shared resolver (single source of truth) ───────────────
+  // The resolver reads fictional_relationships + family_members + conversation-linked characters.
+  // This is the canonical contact source for ALL characters including Vick Servicio.
   useEffect(() => {
     if (!isOpen || !character?.id) return;
     setIsLoadingContacts(true);
@@ -429,6 +431,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       // score progression, or any fake interaction artifact.
       // ensureBilateralCharacterAwareness only creates a neutral awareness entry (awareness_only=true)
       // if one is missing — existing entries are left completely unchanged.
+      //
       if (contactId && character.id && contactId !== character.id) {
         base44.functions.invoke('ensureBilateralCharacterAwareness', {
           characterAId: character.id,
