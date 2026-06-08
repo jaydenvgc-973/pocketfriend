@@ -125,6 +125,91 @@ export function stripFabricatedReplyFromResponse(responseText) {
 }
 
 /**
+ * detectCharacterCommunicationCommitment
+ * Detects when a character's LLM response COMMITS to future communication.
+ * Future-tense: "I'll text her", "I'll call him", "I'll let them know", "I'll reach out"
+ *
+ * These must be treated as pending communication obligations — not decoration.
+ * The system must create real World Phone messages to fulfil them.
+ *
+ * Returns { recipient, topic } or null.
+ * recipient may be null if only a pronoun was used (caller must resolve from context).
+ */
+export function detectCharacterCommunicationCommitment(responseText, senderName) {
+  if (!responseText || responseText.length < 10) return null;
+
+  const senderFirst = (senderName || '').toLowerCase().split(' ')[0];
+  const excludedWords = new Set(['me', 'him', 'her', 'them', 'us', 'you', 'the', 'a', 'an', 'it', 'my', 'your', 'his', 'their', 'everyone', 'nobody', 'someone', 'anyone']);
+
+  // Name pattern: 1 or 2 capitalized words
+  const NAME = '([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)?)';
+
+  // ── FUTURE-TENSE WITH NAMED RECIPIENT ────────────────────────────────────
+  const namedPatterns = [
+    // "I'll text/call/message/contact [Name]"
+    new RegExp(`\\bI'?ll\\s+(?:text|call|message|contact|hit\\s+up|reach\\s+out\\s+to)\\s+${NAME}\\b`, 'i'),
+    // "I'll let [Name] know"
+    new RegExp(`\\bI'?ll\\s+let\\s+${NAME}\\s+know\\b`, 'i'),
+    // "I'll tell [Name]"
+    new RegExp(`\\bI'?ll\\s+tell\\s+${NAME}\\b`, 'i'),
+    // "I'll send [Name] a text/message"
+    new RegExp(`\\bI'?ll\\s+send\\s+${NAME}\\s+(?:a\\s+)?(?:text|message|dm)\\b`, 'i'),
+    // "I should text/call/message [Name]"
+    new RegExp(`\\bI\\s+should\\s+(?:text|call|message|contact)\\s+${NAME}\\b`, 'i'),
+    // "going to text/call/message [Name]"
+    new RegExp(`\\b(?:going\\s+to|gonna)\\s+(?:text|call|message|contact)\\s+${NAME}\\b`, 'i'),
+    // "I need to text/call [Name]"
+    new RegExp(`\\bI\\s+need\\s+to\\s+(?:text|call|message|contact)\\s+${NAME}\\b`, 'i'),
+    // "I'll check in with [Name]"
+    new RegExp(`\\bI'?ll\\s+check\\s+in\\s+with\\s+${NAME}\\b`, 'i'),
+    // "I'll get in touch with [Name]"
+    new RegExp(`\\bI'?ll\\s+get\\s+in\\s+touch\\s+with\\s+${NAME}\\b`, 'i'),
+  ];
+
+  for (const pattern of namedPatterns) {
+    const match = responseText.match(pattern);
+    if (match) {
+      const recipient = match[1]?.trim();
+      if (
+        recipient &&
+        recipient.toLowerCase() !== senderFirst &&
+        !excludedWords.has(recipient.toLowerCase()) &&
+        recipient.length > 1
+      ) {
+        // Extract topic hint from surrounding sentence
+        const sentenceMatch = responseText.match(new RegExp(`[^.!?]*${recipient}[^.!?]*[.!?]`, 'i'));
+        const topic = sentenceMatch ? sentenceMatch[0].trim() : null;
+        return { recipient, topic };
+      }
+    }
+  }
+
+  // ── FUTURE-TENSE WITH PRONOUN — still an obligation, recipient unknown ────
+  // Return a pronoun marker — caller must resolve from conversation context.
+  const pronounPatterns = [
+    /\bI'?ll\s+(?:text|call|message|contact|hit\s+up)\s+(him|her|them)\b/i,
+    /\bI'?ll\s+let\s+(him|her|them)\s+know\b/i,
+    /\bI'?ll\s+tell\s+(him|her|them)\b/i,
+    /\bI'?ll\s+reach\s+out\s+to\s+(him|her|them)\b/i,
+    /\bI'?ll\s+check\s+in\s+with\s+(him|her|them)\b/i,
+    /\b(?:going\s+to|gonna)\s+(?:text|call|message)\s+(him|her|them)\b/i,
+    /\bI\s+need\s+to\s+(?:text|call|message)\s+(him|her|them)\b/i,
+    // No-name variants: "I'll reach out", "I'll follow up", "I'll check in"
+    /\bI'?ll\s+(?:reach\s+out|follow\s+up|check\s+in)\b/i,
+  ];
+
+  for (const pattern of pronounPatterns) {
+    const match = responseText.match(pattern);
+    if (match) {
+      const pronoun = match[1]?.toLowerCase() || null;
+      return { recipient: null, pronounCommitment: true, pronoun, topic: responseText.substring(0, 200) };
+    }
+  }
+
+  return null;
+}
+
+/**
  * detectCharacterWorldPhoneAction
  * Detects when a character's LLM response CLAIMS it sent/called/messaged someone.
  * Only past-tense confirmations — not hypothetical future statements.

@@ -1346,6 +1346,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           characterId,
           conversationId: conversationIdRef.current || conversationId,
           ownerEmail: currentUser.email,
+          recentMessages: recentMsgs,
         });
         responseText = actionResult.responseText;
         if (actionResult.worldPhoneSendResult) {
