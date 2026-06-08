@@ -90,11 +90,20 @@ const FOURTH_WALL_TRAIT_ASSIGNMENTS = [
 /**
  * Returns true if the character carries the "Never Break the Fourth Wall" trait.
  *
+ * Two paths:
+ *   1. Explicit entity field: character.trait_never_break_fourth_wall === true
+ *      (applies to any character assigned the trait through the UI)
+ *   2. Identity-based permanent assignment (FOURTH_WALL_TRAIT_ASSIGNMENTS)
+ *      (applies to Vick regardless of whether the field is set in DB)
+ *
  * @param {object} character — character record (partial or full)
  * @returns {boolean}
  */
 export function hasFourthWallTrait(character) {
   if (!character) return false;
+  // Path 1: explicit DB field — applies to any assigned character
+  if (character.trait_never_break_fourth_wall === true) return true;
+  // Path 2: identity-based permanent assignment (Vick always has this, field or not)
   return FOURTH_WALL_TRAIT_ASSIGNMENTS.some(assignment => assignment.match(character));
 }
 

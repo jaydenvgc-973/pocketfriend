@@ -56,30 +56,65 @@ export default function CharacterTraitsStep({ data, onChange, showConflicts = tr
           <div className="grid grid-cols-1 gap-2">
             {traits.map((trait) => {
               const isProtected = trait.protected === true;
-              const selected = isProtected ? true : !!data[trait.key];
+              // CRITICAL: selected is always driven by the actual data value — never auto-true
+              const selected = !!data[trait.key];
               const inConflict = !isProtected && conflicts.some(c => c.a === trait.key || c.b === trait.key);
 
               if (isProtected) {
-                return (
-                  <div
-                    key={trait.key}
-                    className="flex items-center gap-3 p-3 rounded-xl border bg-amber-500/8 border-amber-500/30 text-left cursor-default"
-                  >
-                    <span className="text-xl flex-shrink-0">{trait.emoji}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-medium text-amber-400">{trait.label}</p>
-                        <span className="text-[9px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
-                          Permanent
-                        </span>
+                if (selected) {
+                  // ASSIGNED + PROTECTED: locked, non-removable, clearly active
+                  return (
+                    <div
+                      key={trait.key}
+                      className="flex items-center gap-3 p-3 rounded-xl border bg-amber-500/10 border-amber-500/40 text-left cursor-default"
+                    >
+                      <span className="text-xl flex-shrink-0">{trait.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-sm font-medium text-amber-400">{trait.label}</p>
+                          <span className="text-[9px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                            Active — Protected
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">{trait.desc}</p>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">{trait.desc}</p>
+                      {/* Both checkmark and lock: clearly selected AND locked */}
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center bg-amber-500">
+                          <Check className="w-3 h-3 text-white" />
+                        </div>
+                        <Lock className="w-3.5 h-3.5 text-amber-400" />
+                      </div>
                     </div>
-                    <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 bg-amber-500/20">
-                      <Lock className="w-3 h-3 text-amber-400" />
-                    </div>
-                  </div>
-                );
+                  );
+                } else {
+                  // UNASSIGNED + PROTECTED: available to add, with warning styling
+                  return (
+                    <button
+                      key={trait.key}
+                      onClick={() => {
+                        if (window.confirm(
+                          `Assign "${trait.label}" to this character?\n\nThis is a permanent protected trait. Once assigned, it cannot be removed through normal editing. The character will be permanently prohibited from revealing the nature of the world to other characters.`
+                        )) {
+                          onChange(trait.key, true);
+                        }
+                      }}
+                      className="flex items-center gap-3 p-3 rounded-xl border bg-card border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-500/5 transition-colors text-left"
+                    >
+                      <span className="text-xl flex-shrink-0">{trait.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-medium text-foreground">{trait.label}</p>
+                          <span className="text-[9px] font-bold bg-amber-500/10 text-amber-500/70 border border-amber-500/20 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                            Protected
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">{trait.desc}</p>
+                      </div>
+                      <Lock className="w-3.5 h-3.5 text-amber-500/50 flex-shrink-0" />
+                    </button>
+                  );
+                }
               }
 
               return (
