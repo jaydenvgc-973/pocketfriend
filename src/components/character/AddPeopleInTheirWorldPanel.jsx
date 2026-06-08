@@ -91,7 +91,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
         {
           person_name: newNPC.name,
           related_character_id: newNPC.id,
-          relationship_type: 'friend',
+          relationship_type: 'acquaintance',
         }
       ];
       await base44.entities.Character.update(character.id, {
@@ -122,7 +122,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
         {
           person_name: selectedNPC.name,
           related_character_id: selectedNPC.id,
-          relationship_type: 'friend',
+          relationship_type: 'acquaintance',
         }
       ];
       await base44.entities.Character.update(character.id, {

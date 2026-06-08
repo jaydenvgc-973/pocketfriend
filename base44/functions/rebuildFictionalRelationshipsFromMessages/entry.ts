@@ -93,17 +93,35 @@ Deno.serve(async (req) => {
       }
     });
 
-    // Apply updates to each character
+    // Apply updates to each character — MERGE only, never replace.
+    // For each character in the computed network, fetch the CURRENT canonical
+    // fictional_relationships from the DB and add only NEW entries (by related_character_id).
+    // Existing entries are NEVER overwritten, modified, or removed.
+    // This function may only ADD entries that do not already exist.
     let updatedCount = 0;
     for (const char of characters) {
       const network = characterNetworks[char.id];
-      if (network.size > 0) {
-        const fictionalRels = Array.from(network.values());
-        await base44.asServiceRole.entities.Character.update(char.id, {
-          fictional_relationships: fictionalRels
-        });
-        updatedCount++;
-      }
+      if (network.size === 0) continue;
+
+      // Fresh read immediately before write — prevents race condition with concurrent writes
+      const freshArr = await base44.asServiceRole.entities.Character.filter({ id: char.id }).catch(() => []);
+      const freshChar = freshArr[0];
+      if (!freshChar) continue;
+
+      const currentRels = freshChar.fictional_relationships || [];
+      const existingIds = new Set(currentRels.map(r => r.related_character_id).filter(Boolean));
+
+      // Only add entries for characters not already in the canonical list
+      const newEntries = Array.from(network.values()).filter(
+        entry => entry.related_character_id && !existingIds.has(entry.related_character_id)
+      );
+
+      if (newEntries.length === 0) continue; // Nothing to add — canonical list is authoritative
+
+      await base44.asServiceRole.entities.Character.update(char.id, {
+        fictional_relationships: [...currentRels, ...newEntries],
+      });
+      updatedCount++;
     }
 
     return Response.json({

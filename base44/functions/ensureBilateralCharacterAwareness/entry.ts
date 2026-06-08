@@ -76,7 +76,11 @@ Deno.serve(async (req) => {
     // A → B
     {
       const freshA = (await base44.entities.Character.filter({ id: characterAId }).catch(() => []))[0];
-      const aRels = freshA?.fictional_relationships || charA.fictional_relationships || [];
+      if (!freshA) {
+        console.warn(`[ensureBilateralCharacterAwareness] Fresh read failed for A (${characterAId}) — skipping A→B write to avoid stale overwrite`);
+        return Response.json({ success: false, error: 'Fresh read failed for character A' }, { status: 500 });
+      }
+      const aRels = freshA.fictional_relationships || [];
       const aHasB = aRels.some(r => r.related_character_id === characterBId);
       if (!aHasB) {
         await base44.entities.Character.update(characterAId, {
@@ -104,7 +108,11 @@ Deno.serve(async (req) => {
     // B → A (fetched after A write completes so B sees latest state)
     {
       const freshB = (await base44.entities.Character.filter({ id: characterBId }).catch(() => []))[0];
-      const bRels = freshB?.fictional_relationships || charB.fictional_relationships || [];
+      if (!freshB) {
+        console.warn(`[ensureBilateralCharacterAwareness] Fresh read failed for B (${characterBId}) — skipping B→A write to avoid stale overwrite`);
+        return Response.json({ success: false, error: 'Fresh read failed for character B' }, { status: 500 });
+      }
+      const bRels = freshB.fictional_relationships || [];
       const bHasA = bRels.some(r => r.related_character_id === characterAId);
       if (!bHasA) {
         await base44.entities.Character.update(characterBId, {
