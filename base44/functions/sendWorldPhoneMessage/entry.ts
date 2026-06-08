@@ -20,7 +20,7 @@
  * - Character A's dialogue text must NOT include invented summaries of Character B's reply
  * - Only after Character B's Message record exists does bilateral memory get written
  */
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 Deno.serve(async (req) => {
   try {
@@ -561,8 +561,35 @@ Reply as ${recipient.name} — casual, authentic, in your voice:`,
 
       const replyText = (typeof rawReply === 'string' ? rawReply : '').trim();
 
-      if (replyText && replyText.length > 2 && !replyText.startsWith('{')) {
-        recipientResponse = replyText;
+      // ── VICK CHARACTER BOUNDARY ─────────────────────────────────────────────
+      // If recipient is Vick (world service), apply the diagnostic boundary.
+      // Vick must respond as a real person — no diagnostic language to characters.
+      let finalReplyText = replyText;
+      if (finalReplyText && (recipient.character_type === 'npc_world_service' || recipient.is_world_service === true)) {
+        // Run a synchronous in-world rewrite using inline substitution (Deno — no lib imports)
+        const VICK_FORBIDDEN = [
+          [/\bthe\s+app\b/gi, 'this place'],
+          [/\bBase44\b/gi, 'the yard'],
+          [/\bran\s+a\s+diagnostic\b/gi, 'looked into it'],
+          [/\bdiagnostic\s+results?\b/gi, 'what I found'],
+          [/\bdeleted\s+files?\b/gi, 'missing paperwork'],
+          [/\bfile\s+headers?\b/gi, 'what was left at the top of the stack'],
+          [/\bmemory\s+records?\b/gi, 'what was recorded'],
+          [/\bdatabase(?:\s+entries?|\s+records?|\s+files?)?\b/gi, 'the logbooks'],
+          [/\bmetadata\b/gi, 'the details attached to it'],
+          [/\bcharacter\s+(?:profile|record|data)\b/gi, 'their history'],
+          [/\bbackend\b/gi, 'behind the scenes'],
+          [/\bthe\s+logs?\b/gi, 'the records'],
+          [/\bAccount\s+Help\s+(?:&|and)\s+Repair\b/gi, 'my work here'],
+          [/\buser\s+settings?\b/gi, 'the preferences on file'],
+        ];
+        const rewritten = VICK_FORBIDDEN.reduce((text, [pat, sub]) => text.replace(pat, sub), finalReplyText);
+        finalReplyText = rewritten;
+        console.log(`[sendWorldPhoneMessage] Vick boundary applied | recipient=${recipient.name} | target=${sender.name}`);
+      }
+
+      if (finalReplyText && finalReplyText.length > 2 && !finalReplyText.startsWith('{')) {
+        recipientResponse = finalReplyText;
         const responseTimestamp = new Date(Date.now() + 2000).toISOString();
         const recipientMsg = await base44.entities.Message.create({
           conversation_id: conversationId,
@@ -613,6 +640,7 @@ Reply as ${recipient.name} — casual, authentic, in your voice:`,
       messageContent: fullExchangeContent,
       context: 'world_phone',
       conversationId: conversationId,
+      receiverMessageId: recipientResponseMessageId || null,
     }).catch(err => {
       warnings.push(`Bilateral sync failed (non-fatal): ${err.message}`);
       console.warn(`[sendWorldPhoneMessage] Bilateral sync error: ${err.message}`);

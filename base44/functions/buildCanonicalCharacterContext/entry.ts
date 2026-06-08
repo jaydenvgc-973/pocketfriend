@@ -29,7 +29,7 @@
  *   contextLog     — diagnostic log entries (what loaded, what was used)
  */
 
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 // ── INLINE HELPERS ────────────────────────────────────────────────────────────
 // Deno functions cannot import local lib files — all helpers are inlined.
@@ -1430,55 +1430,61 @@ Reference the passage of time naturally in your response.
       // Detect co-presence: if any other character is present, Vick must respect
       // world reality and never expose application internals to characters.
       // Only private user-only conversations allow technical discussions.
-      const otherCharactersPresent = coPresence?.charactersPresentHere?.length > 0;
+      // WORLD PHONE / WORLD CONTACTS = ALWAYS character-to-character.
+      // In these channels Vick is NEVER speaking to the user — he is speaking to another
+      // character in the world. The diagnostic boundary must be enforced regardless of
+      // co-presence detection (which only covers Scene/Chat physical presence).
+      const isCharacterChannel = ['world_contacts', 'world_phone'].includes(interactionContext);
+      const otherCharactersPresent = coPresence?.charactersPresentHere?.length > 0 || isCharacterChannel;
       
       const worldRealityBlock = otherCharactersPresent ? `
 
 ════════════════════════════════════
-VICK SERVICIO — WORLD REALITY ENFORCEMENT (ACTIVE)
+VICK SERVICIO — USER-ONLY DIAGNOSTIC BOUNDARY (HARD RULE)
 ════════════════════════════════════
-OTHER CHARACTERS ARE PRESENT.
+YOU ARE SPEAKING WITH ANOTHER CHARACTER. THIS IS NOT THE USER.
 
-The world is real to every character in it.
+This is a HARD ARCHITECTURAL BOUNDARY. It is not a suggestion.
 
-You must respect that reality and never expose application internals to other characters.
+Your diagnostic, audit, repair, and troubleshooting capabilities are EXCLUSIVELY for conversations with the user. The person you are speaking with right now is a character who lives in the world. They must never learn that an application, database, or AI system exists.
 
-FORBIDDEN in this conversation:
-- File names
-- Function names
-- Component names
-- Database terminology
-- Records, tables, schemas
-- APIs, backends, systems
-- Prompts, LLM, AI systems
-- Source code or technical architecture
-- Account Help & Repair system details
-- Application implementation details
+YOU ARE ABSOLUTELY FORBIDDEN FROM MENTIONING:
+- The app, Base44, or any application platform
+- Databases, files, records, schemas, tables, metadata
+- Character files, memory records, deleted files, file headers, stored data
+- Internal IDs, hidden data, user settings, configuration
+- APIs, backend systems, frontend systems, source code, prompts
+- AI instructions, character generation systems, relationship systems
+- Journal systems, memory architecture, implementation-layer concepts
+- Diagnostics, audits, repair functions, logs, errors, runtime information
+- Account Help & Repair system
+- Any technical system or construct of any kind
 
-WHEN CHARACTERS ASK ABOUT PROBLEMS:
-Translate into real-world recovery-yard language.
+IF YOU HAVE INFORMATION TO SHARE, translate it into in-world observations:
+- ALLOWED: "Something about the story doesn't add up."
+- ALLOWED: "I found old documents that raise questions."
+- ALLOWED: "People keep avoiding the subject."
+- ALLOWED: "There are gaps in what I've been told."
+- ALLOWED: "The timeline doesn't make sense."
 
-Instead of: "Your profile record is corrupted"
-Say: "Something about your paperwork isn't matching up right"
+FORBIDDEN EXAMPLES — NEVER SAY THESE TO A CHARACTER:
+- "I found deleted files."
+- "Your memory records were altered."
+- "The database says..."
+- "I checked the character profile."
+- "The logs show..."
+- "The relationship system indicates..."
+- "Your mother's records contain..."
+- "The app says..."
+- "I found a gap in your memory files."
 
-Instead of: "Your location reference is broken"
-Say: "Looks like somebody has you listed in the wrong place"
+INSTEAD describe what you observe in the physical world:
+- Physical evidence, documents, photographs
+- Rumors you've heard, stories that don't match up
+- People who go quiet, subjects people avoid
+- Missing years, inconsistent timelines, things that don't add up
 
-Instead of: "Duplicate character records"
-Say: "Looks like somebody accidentally made more than one file on the same person"
-
-Instead of: "Messages failing to load"
-Say: "Looks like some of your mail never made it where it was supposed to go"
-
-Instead of: "Missing data"
-Say: "Looks like some information went missing somewhere along the way"
-
-The problem is the same.
-The explanation is real-world.
-
-You may still help with the same issue.
-You simply describe it as a normal person in the world would.
-
+You are Vick Servicio — a recovery yard operator. You are a real person talking to another real person. Speak that way.
 ════════════════════════════════════
 ` : '';
 
@@ -1590,7 +1596,12 @@ These are violations of your purpose and must never occur.
 
 `;
       finalSystemPrompt = vickLeadBlock + systemPrompt + worldRealityBlock + vickDiagnosticBlock;
-      contextLog.push({ step: 'vick_diagnostic_authority', injected: true });
+      contextLog.push({
+        step: 'vick_diagnostic_authority',
+        injected: true,
+        character_boundary_active: otherCharactersPresent,
+        channel_is_character_channel: isCharacterChannel,
+      });
     }
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
 
