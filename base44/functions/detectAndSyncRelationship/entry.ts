@@ -211,8 +211,17 @@ Only include entries with confidence >= 0.6. Return empty array if nothing detec
       }
 
       // ── RULE: introduced or established → fictional_relationships ────────────
-      // Only for depth "introduced" or "established". Bilateral. Duplicate-safe.
-      const senderRels = char.fictional_relationships || [];
+      // SAFE MERGE: re-fetch immediately before write to prevent stale-overwrite data loss.
+      // Another write (ensureBilateralCharacterAwareness, AddPeopleInTheirWorldPanel, etc.)
+      // may have happened between the top-of-function fetch and this point.
+      // Never overwrite existing relationships with a stale array.
+      const freshSenderArr = await base44.entities.Character.filter({ id: character_id }, null, 1).catch(() => []);
+      const freshSender = freshSenderArr[0];
+      if (!freshSender) {
+        console.warn(`[detectAndSyncRelationship] Fresh re-fetch of ${character_id} failed — skipping write`);
+        continue;
+      }
+      const senderRels = freshSender.fictional_relationships || [];
       const alreadyLinked = senderRels.some(r => r.related_character_id === matchedChar.id);
 
       if (!alreadyLinked) {
@@ -234,27 +243,29 @@ Only include entries with confidence >= 0.6. Return empty array if nothing detec
             ],
           });
         } catch (e) {
-          console.warn(`[detectAndSyncRelationship] Failed to update ${char.name} fictional_relationships:`, e.message);
+          console.warn(`[detectAndSyncRelationship] Failed to update ${freshSender.name} fictional_relationships:`, e.message);
           continue;
         }
       }
 
-      // Bilateral: write recipient side
-      const recipientRels = matchedChar.fictional_relationships || [];
+      // Bilateral: re-fetch recipient immediately before write
+      const freshRecipientArr = await base44.entities.Character.filter({ id: matchedChar.id }, null, 1).catch(() => []);
+      const freshRecipient = freshRecipientArr[0];
+      const recipientRels = freshRecipient?.fictional_relationships || matchedChar.fictional_relationships || [];
       const recipientAlreadyLinked = recipientRels.some(r => r.related_character_id === character_id);
 
-      if (!recipientAlreadyLinked) {
+      if (!recipientAlreadyLinked && freshRecipient) {
         try {
           await base44.entities.Character.update(matchedChar.id, {
             fictional_relationships: [
               ...recipientRels,
               {
-                person_name: char.name,
+                person_name: freshSender.name,
                 related_character_id: character_id,
                 relationship_type: det.relationship_type || 'acquaintance',
                 emotional_tone: det.emotional_tone || 'neutral',
-                description: `${char.name} — met via chat`,
-                last_interaction_summary: `${char.name} referenced this connection in conversation`,
+                description: `${freshSender.name} — met via chat`,
+                last_interaction_summary: `${freshSender.name} referenced this connection in conversation`,
                 source: 'chat_continuity_bilateral',
                 confidence: det.confidence,
                 detected_at: now,

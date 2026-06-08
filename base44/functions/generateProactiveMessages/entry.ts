@@ -350,6 +350,18 @@ Deno.serve(async (req) => {
         results.push({ characterId: char.id, status: 'skipped', reason: 'missing owner_email' });
         continue;
       }
+      // World-service characters (Vick Servicio) never send proactive social messages.
+      // Vick is a diagnostic operator, not a social contact. Skip all five identification signals.
+      const isWorldService = char.character_type === 'npc_world_service' ||
+        char.is_world_service === true ||
+        char.diagnostic_only === true ||
+        (char.name || '').toLowerCase().includes('vick servicio') ||
+        (char.display_name || '').toLowerCase().includes('vick servicio') ||
+        (char.primary_name || '').toLowerCase().includes('vick servicio');
+      if (isWorldService) {
+        results.push({ characterId: char.id, status: 'skipped', reason: 'npc_world_service — no proactive messages' });
+        continue;
+      }
       const todaysConvo = await base44.entities.Conversation.filter({
         owner_email: char.owner_email,
         character_ids: [char.id],

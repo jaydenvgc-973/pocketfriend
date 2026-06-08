@@ -1,25 +1,65 @@
-import React, { useEffect, useState, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { motion } from "framer-motion";
-import { Shield, AlertTriangle, CheckCircle2, Activity, MessageSquare, ChevronDown, ChevronUp } from "lucide-react";
+import { Shield, AlertTriangle, CheckCircle2, Activity, MessageSquare, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import VickInvestigationQueue from "./VickInvestigationQueue";
 
 /**
  * VickServiceCard — Dedicated Home page card for Vick Servicio (npc_world_service).
  *
- * Shows:
- *  - Service status (never asleep)
- *  - Unread message count
- *  - Active / completed investigation queue
- *  - Critical alerts with distinct styling
- *
- * NON-EXPANSION GUARDRAIL: This card is ONLY for Vick Servicio.
- * Do NOT generalize for other NPCs.
+ * STABILITY CONTRACT:
+ * - Never returns null silently. Shows a skeleton while loading.
+ * - Uses four lookup paths before giving up.
+ * - Preserves last known Vick record across query failures.
+ * - Vick is not optional — this card must render every time.
  */
+
+// ── Multi-path Vick lookup ────────────────────────────────────────────────────
+// Path 1: character_type === 'npc_world_service'
+// Path 2: is_world_service === true
+// Path 3: diagnostic_only === true  (legacy flag)
+// Path 4: name/display_name/primary_name includes 'vick servicio'
+// Path 5: fetchNPCsForUser backend fallback (covers ownership gaps)
+
+function isVickRecord(c) {
+  if (!c) return false;
+  if (c.character_type === 'npc_world_service') return true;
+  if (c.is_world_service === true) return true;
+  if (c.diagnostic_only === true) return true;
+  const names = [c.name, c.display_name, c.primary_name].filter(Boolean).map(n => n.toLowerCase());
+  return names.some(n => n.includes('vick servicio'));
+}
+
+async function resolveVickRecord(ownerEmail) {
+  // Path 1: service type filter
+  const r1 = await base44.entities.Character.filter({ owner_email: ownerEmail, character_type: 'npc_world_service' }, null, 10).catch(() => []);
+  const found1 = r1.find(isVickRecord);
+  if (found1) return found1;
+
+  // Path 2: is_world_service flag
+  const r2 = await base44.entities.Character.filter({ owner_email: ownerEmail, is_world_service: true }, null, 10).catch(() => []);
+  const found2 = r2.find(isVickRecord);
+  if (found2) return found2;
+
+  // Path 3: diagnostic_only flag
+  const r3 = await base44.entities.Character.filter({ owner_email: ownerEmail, diagnostic_only: true }, null, 10).catch(() => []);
+  const found3 = r3.find(isVickRecord);
+  if (found3) return found3;
+
+  // Path 4: fetchNPCsForUser backend fallback (covers ownership/created_by gaps)
+  const npcRes = await base44.functions.invoke('fetchNPCsForUser', {}).catch(() => null);
+  const npcs = npcRes?.data?.npcs || npcRes?.npcs || [];
+  const found4 = npcs.find(isVickRecord);
+  if (found4) return found4;
+
+  return null;
+}
+
 export default function VickServiceCard({ ownerEmail }) {
   const navigate = useNavigate();
   const [vick, setVick] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [conversationId, setConversationId] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [latestMessage, setLatestMessage] = useState(null);
@@ -27,49 +67,58 @@ export default function VickServiceCard({ ownerEmail }) {
   const [investigations, setInvestigations] = useState([]);
   const [showQueue, setShowQueue] = useState(false);
 
-  // Load Vick's character record
+  // Preserve last known Vick across re-renders — never overwrite with null on failure
+  const lastKnownVickRef = useRef(null);
+
+  // ── MULTI-PATH VICK LOAD ───────────────────────────────────────────────────
   useEffect(() => {
-    if (!ownerEmail) return;
-    base44.entities.Character.filter({
-      owner_email: ownerEmail,
-      character_type: "npc_world_service",
-      is_world_service: true,
-    }).then(results => {
-      const vickRecord = results.find(c =>
-        c.name?.toLowerCase().includes("vick") ||
-        c.display_name?.toLowerCase().includes("vick")
-      );
-      if (vickRecord) setVick(vickRecord);
-    }).catch(() => {});
+    if (!ownerEmail) { setIsLoading(false); return; }
+    let cancelled = false;
+    const load = async () => {
+      setIsLoading(true);
+      try {
+        const found = await resolveVickRecord(ownerEmail);
+        if (cancelled) return;
+        if (found) {
+          setVick(found);
+          lastKnownVickRef.current = found;
+        } else if (lastKnownVickRef.current) {
+          // Keep last known Vick visible — do not hide due to transient query failure
+          setVick(lastKnownVickRef.current);
+          console.warn('[VickServiceCard] Multi-path lookup returned nothing — preserving last known Vick record');
+        }
+      } catch (err) {
+        if (cancelled) return;
+        // Failure: preserve whatever we already have
+        if (lastKnownVickRef.current) {
+          setVick(lastKnownVickRef.current);
+        }
+        console.warn('[VickServiceCard] Vick lookup error:', err?.message);
+      }
+      if (!cancelled) setIsLoading(false);
+    };
+    load();
+    return () => { cancelled = true; };
   }, [ownerEmail]);
 
-  // Load investigations for this account.
-  // Only surface records that need user attention — active, undelivered, or critical+unread.
-  // Delivered non-critical records are not shown (they already appeared as messages in chat).
+  // ── INVESTIGATIONS ─────────────────────────────────────────────────────────
   const loadInvestigations = useCallback(() => {
     if (!ownerEmail) return;
-    base44.entities.VickInvestigation.filter(
-      { owner_email: ownerEmail },
-      "-created_date",
-      20
-    ).then(invs => {
-      const meaningful = invs.filter(i => {
-        if (["queued", "investigating", "awaiting_evidence", "monitoring"].includes(i.status)) return true;
-        if (i.status === "findings_ready" && !i.findings_read) return true;
-        if (i.priority === "critical" && !i.dismissed && !i.findings_read) return true;
-        return false;
-      });
-      setInvestigations(meaningful);
-      const hasUnreadFindings = meaningful.some(i => i.status === "findings_ready" && !i.findings_read);
-      if (hasUnreadFindings) setShowQueue(true);
-    }).catch(() => {});
+    base44.entities.VickInvestigation.filter({ owner_email: ownerEmail }, "-created_date", 20)
+      .then(invs => {
+        const meaningful = invs.filter(i => {
+          if (["queued", "investigating", "awaiting_evidence", "monitoring"].includes(i.status)) return true;
+          if (i.status === "findings_ready" && !i.findings_read) return true;
+          if (i.priority === "critical" && !i.dismissed && !i.findings_read) return true;
+          return false;
+        });
+        setInvestigations(meaningful);
+        if (meaningful.some(i => i.status === "findings_ready" && !i.findings_read)) setShowQueue(true);
+      }).catch(() => {});
   }, [ownerEmail]);
 
-  useEffect(() => {
-    loadInvestigations();
-  }, [loadInvestigations]);
+  useEffect(() => { loadInvestigations(); }, [loadInvestigations]);
 
-  // Real-time subscription for investigation changes
   useEffect(() => {
     if (!ownerEmail) return;
     const unsubscribe = base44.entities.VickInvestigation.subscribe((event) => {
@@ -79,10 +128,9 @@ export default function VickServiceCard({ ownerEmail }) {
     return () => unsubscribe();
   }, [ownerEmail, loadInvestigations]);
 
-  // Load conversation + unread messages
+  // ── CONVERSATION + UNREAD ─────────────────────────────────────────────────
   useEffect(() => {
     if (!vick?.id || !ownerEmail) return;
-
     base44.entities.Conversation.filter({ owner_email: ownerEmail }).then(convos => {
       const vickConvo = convos.find(c =>
         (c.character_ids || []).includes(vick.id) &&
@@ -90,30 +138,25 @@ export default function VickServiceCard({ ownerEmail }) {
       );
       if (!vickConvo) return;
       setConversationId(vickConvo.id);
-
-      base44.entities.Message.filter({
-        conversation_id: vickConvo.id,
-        sender_type: "character",
-        is_read: false,
-      }, "-timestamp", 20).then(msgs => {
-        const vickMsgs = msgs.filter(m => m.character_id === vick.id);
-        setUnreadCount(vickMsgs.length);
-        if (vickMsgs.length > 0) {
-          setLatestMessage(vickMsgs[0]);
-          const content = vickMsgs[0].content?.toLowerCase() || "";
-          if (content.includes("critical") || content.includes("corruption") || content.includes("data loss")) {
-            setMessageStatus("critical_alert");
-          } else if (content.includes("complete") || content.includes("findings") || content.includes("results")) {
-            setMessageStatus("findings_ready");
-          } else {
-            setMessageStatus("message_waiting");
+      base44.entities.Message.filter({ conversation_id: vickConvo.id, sender_type: "character", is_read: false }, "-timestamp", 20)
+        .then(msgs => {
+          const vickMsgs = msgs.filter(m => m.character_id === vick.id);
+          setUnreadCount(vickMsgs.length);
+          if (vickMsgs.length > 0) {
+            setLatestMessage(vickMsgs[0]);
+            const content = vickMsgs[0].content?.toLowerCase() || "";
+            if (content.includes("critical") || content.includes("corruption") || content.includes("data loss")) {
+              setMessageStatus("critical_alert");
+            } else if (content.includes("complete") || content.includes("findings") || content.includes("results")) {
+              setMessageStatus("findings_ready");
+            } else {
+              setMessageStatus("message_waiting");
+            }
           }
-        }
-      }).catch(() => {});
+        }).catch(() => {});
     }).catch(() => {});
   }, [vick?.id, ownerEmail]); // eslint-disable-line
 
-  // Real-time subscription for new Vick messages
   useEffect(() => {
     if (!conversationId || !vick?.id) return;
     const unsubscribe = base44.entities.Message.subscribe((event) => {
@@ -137,10 +180,8 @@ export default function VickServiceCard({ ownerEmail }) {
 
   const handleDismissInvestigation = async (investigationId) => {
     await base44.entities.VickInvestigation.update(investigationId, {
-      dismissed: true,
-      dismissed_at: new Date().toISOString(),
-      status: "archived",
-      archived_at: new Date().toISOString(),
+      dismissed: true, dismissed_at: new Date().toISOString(),
+      status: "archived", archived_at: new Date().toISOString(),
     }).catch(() => {});
     loadInvestigations();
   };
@@ -150,9 +191,47 @@ export default function VickServiceCard({ ownerEmail }) {
     navigate(`/chat/${vick.id}`);
   };
 
-  if (!vick) return null;
+  // ── LOADING SKELETON — shown while lookup is in progress ──────────────────
+  if (isLoading) {
+    return (
+      <div className="mb-4">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Service Operator</p>
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Loader2 className="w-5 h-5 text-primary/40 animate-spin" />
+            </div>
+            <div className="flex-1 space-y-2">
+              <div className="h-3 bg-muted rounded w-32 animate-pulse" />
+              <div className="h-2.5 bg-muted rounded w-48 animate-pulse" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  // Derive status from investigation state first, fall back to message state
+  // ── NO VICK FOUND — show a stable placeholder (never null) ────────────────
+  if (!vick) {
+    return (
+      <div className="mb-4">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Service Operator</p>
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Shield className="w-5 h-5 text-primary/40" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-foreground">Vick Servicio</p>
+              <p className="text-[11px] text-muted-foreground">Setting up your account service operator…</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── FULL CARD ──────────────────────────────────────────────────────────────
   const activeInvCount = investigations.filter(i => ["queued", "investigating", "monitoring", "awaiting_evidence"].includes(i.status)).length;
   const unreadFindingsCount = investigations.filter(i => i.status === "findings_ready" && !i.findings_read).length;
   const hasCriticalInv = investigations.some(i => i.priority === "critical" && i.status === "findings_ready" && !i.findings_read);
@@ -186,15 +265,12 @@ export default function VickServiceCard({ ownerEmail }) {
     >
       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Service Operator</p>
       <div className={`rounded-2xl border bg-card transition-all duration-200 ${hasCriticalAlert ? "border-red-500/40 shadow-red-500/10 shadow-md" : hasUnread || unreadFindingsCount > 0 ? "border-primary/30" : "border-border"}`}>
-
-        {/* Main card row — tappable to open chat */}
         <motion.button
           whileTap={{ scale: 0.98 }}
           onClick={handleOpen}
           className="w-full text-left p-4"
         >
           <div className="flex items-center gap-3">
-            {/* Avatar */}
             <div className="relative flex-shrink-0">
               {avatarUrl ? (
                 <img src={avatarUrl} alt={displayName} className="w-12 h-12 rounded-xl object-cover" />
@@ -203,16 +279,12 @@ export default function VickServiceCard({ ownerEmail }) {
                   <Shield className="w-5 h-5 text-primary" />
                 </div>
               )}
-              {/* Unread badge */}
               {(unreadCount > 0 || unreadFindingsCount > 0) && (
                 <span className={`absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${hasCriticalAlert ? "bg-red-500" : "bg-primary"}`}>
-                  {Math.min(unreadCount + unreadFindingsCount, 9)}
-                  {unreadCount + unreadFindingsCount > 9 ? "+" : ""}
+                  {Math.min(unreadCount + unreadFindingsCount, 9)}{unreadCount + unreadFindingsCount > 9 ? "+" : ""}
                 </span>
               )}
             </div>
-
-            {/* Info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
@@ -220,14 +292,10 @@ export default function VickServiceCard({ ownerEmail }) {
                   {hasCriticalAlert && <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />}
                 </div>
                 <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0 ${cfg.color} ${cfg.bg} border ${cfg.border}`}>
-                  {cfg.icon}
-                  {cfg.label}
+                  {cfg.icon}{cfg.label}
                 </span>
               </div>
-
               <p className="text-[11px] text-muted-foreground mt-0.5">Account diagnostics · Repair · Investigation</p>
-
-              {/* Summary line */}
               {(activeInvCount > 0 || unreadFindingsCount > 0) ? (
                 <p className="text-xs mt-1.5 text-foreground">
                   {unreadFindingsCount > 0 && <span className="text-primary font-medium">{unreadFindingsCount} finding{unreadFindingsCount > 1 ? "s" : ""} ready</span>}
@@ -248,7 +316,6 @@ export default function VickServiceCard({ ownerEmail }) {
           </div>
         </motion.button>
 
-        {/* Investigation queue toggle */}
         {hasQueue && (
           <div className="border-t border-border">
             <button
@@ -265,7 +332,6 @@ export default function VickServiceCard({ ownerEmail }) {
               </span>
               {showQueue ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
-
             {showQueue && (
               <div className="px-3 pb-3">
                 <VickInvestigationQueue
