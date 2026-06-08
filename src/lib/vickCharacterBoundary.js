@@ -185,73 +185,81 @@ export function detectVickBoundaryViolation(text) {
 //
 // SAFE rewrites translate the meaning into what a person might PHYSICALLY observe:
 
+// ── SAFE REWRITE PHILOSOPHY ────────────────────────────────────────────────────
+// Every replacement here must describe only what a real person could physically
+// see, hear, or touch — or learn from a spoken account. Nothing implies Vick
+// has access to hidden files, internal records, databases, or app mechanics.
+// After rewrite, the full text is re-scanned. Any surviving forbidden term
+// causes the message to be REJECTED — never saved, never delivered.
+
 const SAFE_REWRITES = [
-  // Deleted files → missing paperwork that should exist but doesn't
-  [/\bdeleted\s+files?\b/gi, 'some paperwork that should exist but doesn\'t'],
-  [/\bfile\s+headers?\b/gi, 'what was at the top of the old papers'],
+  // Deleted files → something missing that should be there
+  [/\bdeleted\s+files?\b/gi, 'something that should have been there but wasn\'t'],
+  [/\bfile\s+headers?\b/gi, 'old papers I came across'],
 
-  // Database / records → public documents, old records at the office
-  [/\bdatabase(?:\s+entries?|\s+records?|\s+files?|\s+data)?\b/gi, 'the records at the office'],
-  [/\bstored\s+(?:data|records?|files?)\b/gi, 'what\'s on file'],
+  // Database / stored records → what I found when looking into it
+  [/\bdatabase(?:\s+entries?|\s+records?|\s+files?|\s+data)?\b/gi, 'what I found when I looked into it'],
+  [/\bstored\s+(?:data|records?|files?)\b/gi, 'what\'s been documented'],
 
-  // Character profile / data → who they appear to be on paper
+  // Character profile / data → what people say or what I\'ve gathered
   [/\bcharacter\s+profile\b/gi, 'what people say about them'],
-  [/\bcharacter\s+record\b/gi, 'the account of them'],
-  [/\bcharacter\s+data\b/gi, 'what\'s been written down about them'],
-  [/\bcharacter\s+files?\b/gi, 'their papers'],
+  [/\bcharacter\s+record\b/gi, 'what I know about them'],
+  [/\bcharacter\s+data\b/gi, 'what I\'ve gathered'],
+  [/\bcharacter\s+files?\b/gi, 'what I found on them'],
 
-  // Memory records → what someone says they remember
+  // Memory records → what someone claims to remember
   [/\bmemory\s+records?\b/gi, 'what they say they remember'],
   [/\bmemory\s+files?\b/gi, 'what they\'ve told people'],
-  [/\bmemory\s+wipe\b/gi, 'something made them forget'],
-  [/\bmemory\s+(?:system|architecture|bank|entries?|store)\b/gi, 'how someone holds onto things'],
+  [/\bmemory\s+wipe\b/gi, 'someone deliberately made them forget'],
+  [/\bmemory\s+(?:system|architecture|bank|entries?|store)\b/gi, 'how they carry things with them'],
 
-  // Diagnostic / audit language → looking into it personally
-  [/\bran\s+a\s+diagnostic\b/gi, 'looked into things myself'],
+  // Diagnostic / audit language → personal investigation
+  [/\bran\s+a\s+diagnostic\b/gi, 'looked into it myself'],
   [/\brunning\s+(?:a\s+)?diagnostic/gi, 'looking into it'],
-  [/\bdiagnostic\s+results?\b/gi, 'what I found out'],
-  [/\bdiagnostic\s+tools?\b/gi, 'my own eyes and ears'],
+  [/\bdiagnostic\s+results?\b/gi, 'what I found'],
+  [/\bdiagnostic\s+tools?\b/gi, 'my own judgment'],
   [/\baudit(?:ed|ing)?\s+(?:your|the|their)/gi, 'went through'],
-  [/\brepair\s+function\b/gi, 'what I did to fix it'],
-  [/\bAccount\s+Help\s+(?:&|and)\s+Repair\b/gi, 'my work'],
+  [/\brepair\s+function\b/gi, 'what I did to sort it out'],
+  [/\bAccount\s+Help\s+(?:&|and)\s+Repair\b/gi, 'the work I do'],
 
-  // Logs → notes, conversations, what people said
-  [/\bthe\s+logs?\b/gi, 'the notes'],
-  [/\berror\s+log\b/gi, 'a list of what went wrong'],
-  [/\bthe\s+(?:error|exception)\s+(?:shows?|says?|indicates?)\b/gi, 'from what I can tell'],
+  // Logs → a trail of what happened
+  [/\bthe\s+logs?\b/gi, 'a trail of what happened'],
+  [/\berror\s+log\b/gi, 'a list of things that went wrong'],
+  [/\bthe\s+(?:error|exception)\s+(?:shows?|says?|indicates?)\b/gi, 'from what I could piece together'],
 
-  // Metadata → small details attached to something
-  [/\bmetadata\b/gi, 'the finer details'],
+  // Metadata → incidental details that don\'t add up
+  [/\bmetadata\b/gi, 'small details that don\'t add up'],
 
-  // Internal ID → name in the records
-  [/\binternal\s+(?:ID|identifier)\b/gi, 'their name in the paperwork'],
-  [/\binternal\s+(?:record|data|system|files?)\b/gi, 'what\'s kept quiet'],
+  // Internal ID / records → a name or reference I found
+  [/\binternal\s+(?:ID|identifier)\b/gi, 'a name I found in the paperwork'],
+  [/\binternal\s+(?:record|data|system|files?)\b/gi, 'something that wasn\'t meant to be seen'],
 
-  // Hidden data → what wasn't shared
-  [/\bhidden\s+(?:data|records?|files?|information)\b/gi, 'what wasn\'t shared with everyone'],
+  // Hidden data → information kept from people
+  [/\bhidden\s+(?:data|records?|files?|information)\b/gi, 'information people were kept from'],
 
-  // Scrubbed / purged / erased (system language) → hidden, disappeared
-  [/\bscrubbed\s+(?:from|out\s+of)\s+(?:the\s+)?(?:records?|database|system|files?)\b/gi, 'made to disappear'],
-  [/\bpurged\s+from\s+(?:the\s+)?(?:records?|system|database)\b/gi, 'removed entirely'],
+  // Scrubbed / purged / erased → made to disappear
+  [/\bscrubbed\s+(?:from|out\s+of)\s+(?:the\s+)?(?:records?|database|system|files?)\b/gi, 'made to disappear entirely'],
+  [/\bpurged\s+from\s+(?:the\s+)?(?:records?|system|database)\b/gi, 'removed from the picture'],
   [/\berased\s+from\s+(?:the\s+)?(?:records?|system|database)\b/gi, 'wiped from the story'],
 
-  // Relationship / journal systems → how people keep track
-  [/\brelationship\s+system\b/gi, 'how people keep track of each other'],
-  [/\bjournal\s+system\b/gi, 'the running account of things'],
+  // Relationship / journal systems → how things between people work
+  [/\brelationship\s+system\b/gi, 'how two people relate to each other'],
+  [/\bjournal\s+system\b/gi, 'the running history between people'],
 
-  // AI / code / backend — should not survive to this point,
-  // but if they do, generic translations:
-  [/\bthe\s+app\b/gi, 'this place'],
-  [/\bBase44\b/gi, 'things around here'],
-  [/\bthe\s+platform\b/gi, 'how things are set up here'],
-  [/\bbackend\b/gi, 'what\'s going on out of sight'],
-  [/\bfrontend\b/gi, 'the surface of things'],
-  [/\bsource\s+code\b/gi, 'the instructions underneath it all'],
-  [/\bAI\s+(?:memory|system|instruction|data)\b/gi, 'something I carry with me'],
-  [/\bsystem\s+prompt\b/gi, 'how I was taught'],
+  // App / platform / software — all become neutral in-world references
+  // NOTE: replacements are intentionally non-specific. After rewrite the full output
+  // is re-scanned — any surviving forbidden term causes rejection, not delivery.
+  [/\bthe\s+app\b/gi, 'around here'],
+  [/\bBase44\b/gi, 'this place'],
+  [/\bthe\s+platform\b/gi, 'how things operate here'],
+  [/\bbackend\b/gi, 'what goes on behind the scenes'],
+  [/\bfrontend\b/gi, 'what\'s visible to everyone'],
+  [/\bsource\s+code\b/gi, 'how things were originally set up'],
+  [/\bAI\s+(?:memory|system|instruction|data)\b/gi, 'how I think through things'],
+  [/\bsystem\s+prompt\b/gi, 'how I was shaped to think'],
   [/\buser\s+settings?\b/gi, 'the choices someone made'],
-  [/\bAPI\b/gi, 'the connection'],
-  [/\bschema\b/gi, 'the template'],
+  [/\bAPI\b/gi, 'the link between things'],
+  [/\bschema\b/gi, 'the structure things follow'],
 ];
 
 /**

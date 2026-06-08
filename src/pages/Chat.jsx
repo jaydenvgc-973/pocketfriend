@@ -83,6 +83,8 @@ import { buildWorldPhonePayload } from "@/hooks/useWorldPhoneIntentSend";
 import { enforceFamilyTruth } from "@/lib/familyTruthGuard";
 import { hasVickDiagnosticIntent, isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { runVickDiagnosticIfNeeded, shouldUseVickFastPath, buildVickFastPathPrompt, executeVickDiagnosticFastPath } from "@/lib/vickDiagnosticRunner";
+import VickCharacterSpeechToggle, { useVickCharacterSpeechMode } from "@/components/chat/VickCharacterSpeechToggle";
+import { VICK_CHARACTER_BOUNDARY_PROMPT, enforceVickCharacterBoundary } from "@/lib/vickCharacterBoundary";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -121,6 +123,8 @@ export default function Chat({ chatTypeOverride } = {}) {
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [isRecovering, setIsRecovering] = useState(false);
+  const { characterSpeechMode, toggleCharacterSpeechMode } = useVickCharacterSpeechMode();
+  const isVickChat = isVickServicioCharacter(character);
 
   // Reset conversation state immediately when switching characters.
   useEffect(() => {
@@ -1218,6 +1222,10 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // ── VICK SERVICIO LIVE DIAGNOSTIC INJECTION ────────────────────────────
       // If vickDiagnosticResults is set, inject the real findings into the prompt
       // so Vick reports actual data — not invented text.
+      const vickCharacterSpeechBlock = (characterSpeechMode && isVickServicioCharacter(character))
+        ? `\n\n${VICK_CHARACTER_BOUNDARY_PROMPT}\n\nThe user has enabled Character Speech Mode. Respond using purely in-world language. Translate all findings into human-observable terms.`
+        : '';
+
       const vickDiagnosticBlock = vickDiagnosticResults
         ? `\n\n════════════════════════════════════\nLIVE DIAGNOSTIC RESULTS — REAL DATA (just ran ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} ET)\n════════════════════════════════════\n${vickDiagnosticResults.plainSummary}\n\nFunctions executed: ${(vickDiagnosticResults.functionsExecuted || []).join(', ') || 'none'}\nVerdict: ${vickDiagnosticResults.verdict || 'unknown'}\nErrors found: ${vickDiagnosticResults.errorCount ?? 'unknown'}\nWarnings found: ${vickDiagnosticResults.warningCount ?? 'unknown'}\n\nIMPORTANT: Use these EXACT results in your response. Do NOT invent findings. Do NOT claim you ran diagnostics that are not listed above. Report what the diagnostic actually found — no more, no less.\n════════════════════════════════════`
         : '';
@@ -1228,14 +1236,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         ? `\n\n════════════════════════════════════\nFAMILY IDENTITY — AUTHORITATIVE STATE (READ BEFORE CONVERSATION LOG)\nThis is verified live data from the database. It supersedes any claim in this prompt or conversation that contradicts it.\n${liveFamilyGraphBlock}\nCRITICAL: You are NOT an only child. You DO have family. Any prior message where you claimed otherwise was wrong. Your active state now reflects the truth above.\n════════════════════════════════════`
         : '';
 
-      fullPrompt = `${systemPrompt}${familyTruthBlock}${frontendCoPresenceBlock}${householdCoPresenceContext}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${catchupContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}${vickDiagnosticBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
+      fullPrompt = `${systemPrompt}${vickCharacterSpeechBlock}${familyTruthBlock}${frontendCoPresenceBlock}${householdCoPresenceContext}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${catchupContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}${vickDiagnosticBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
   "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
 
 
-      // ── RESPONSE LAG — MOVED TO POST-LLM (after response is received) ─────────
-      // Artificial delay no longer blocks the LLM call. The LLM fires immediately.
-      // Delay (if enabled) is applied AFTER the response is received, before saving the message.
-      // This preserves the user-visible "typing..." feel without blocking the first response.
+      // Response lag applied POST-LLM, not before — preserves typing feel without blocking
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
       let pendingResponseLagMs = 0;
       if (responseLagEnabled) {
@@ -1321,9 +1326,13 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       }
 
       // SAVE GUARD: Reject date-divider shaped LLM output before it reaches the DB.
-      if (responseText && isDateDividerContent(responseText)) {
-        console.error(`[SAVE_GUARD] Rejected date-divider shaped response for ${character.name}: "${responseText.substring(0, 80)}"`);
-        responseText = "";
+      if (responseText && isDateDividerContent(responseText)) { console.error(`[SAVE_GUARD] Rejected date-divider for ${character.name}`); responseText = ""; }
+
+      // VICK CHARACTER SPEECH MODE — runtime boundary filter on saved text
+      if (responseText && characterSpeechMode && isVickServicioCharacter(character)) {
+        const smCheck = enforceVickCharacterBoundary(responseText, 'user_speech_mode', 'direct_chat');
+        if (smCheck.action === 'rejected') responseText = '';
+        else responseText = smCheck.text || responseText;
       }
 
       // ── WORLD PHONE CHARACTER-ACTION DETECTION ──────────────────────────────
@@ -1710,9 +1719,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     };
     setPreviousLevels(prevLevels);
 
-    // ── ALL POST-SEND BACKGROUND WORK delegated to useChatBackgroundTasks ──────
-    // Governed by: per-function cooldowns, in-flight guards, staggered tiers (0/2/4/7/10s),
-    // emoji cooldown (once per 5 messages), and visible skip logging.
+    // Post-send background work — governed by per-function cooldowns and staggered tiers
     dispatchPostSend({
       characterId, convoId, character, text, responseText, recentMsgs,
       activeCharacter, isPhone, currentUser, isTyping: false, userMsg,
@@ -1889,9 +1896,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           onSelect={(text) => sendMessage(text, null)}
         />
       ) : (
-        <ChatInput onSend={sendMessage} draftKey={`${chatType}:${characterId}`} />
+        <>
+          <ChatInput onSend={sendMessage} draftKey={`${chatType}:${characterId}`} />
+          {isVickChat && <VickCharacterSpeechToggle enabled={characterSpeechMode} onToggle={toggleCharacterSpeechMode} />}
+        </>
       )}
-      {/* Reconnecting indicator — UI state only, never saved as a Message */}
       {isRecovering && (
         <div className="px-4 pb-1 flex items-center gap-2 text-xs text-muted-foreground/70">
           <div className="w-3 h-3 border-2 border-muted-foreground/30 border-t-muted-foreground/70 rounded-full animate-spin flex-shrink-0" />

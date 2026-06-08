@@ -33,10 +33,15 @@ export function hasVickDiagnosticIntent(text) {
 
 /**
  * Returns true if the given character is Vick Servicio.
+ * Uses all five reliable identification signals — never a single-field check.
  */
 export function isVickServicioCharacter(character) {
-  return (
-    character?.character_type === 'npc_world_service' ||
-    (character?.name || '').toLowerCase().includes('vick servicio')
-  );
+  if (!character) return false;
+  if (character.character_type === 'npc_world_service') return true;
+  if (character.is_world_service === true) return true;
+  if (character.diagnostic_only === true) return true;
+  const names = [character.name, character.display_name, character.primary_name]
+    .filter(Boolean)
+    .map(n => n.toLowerCase());
+  return names.some(n => n.includes('vick servicio'));
 }

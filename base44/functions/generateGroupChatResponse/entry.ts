@@ -326,6 +326,87 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
         const response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt, add_context_from_internet: false });
         responseText = (response || '').replace(/^[\w\s]+:\s*/i, '').trim();
         if (!responseText) continue;
+
+        // ── VICK CHARACTER BOUNDARY — GROUP CHAT ─────────────────────────────
+        // Group Chat is always character-facing. If Vick is responding, apply the
+        // same full detect→rewrite→re-scan→reject pipeline used in World Phone.
+        const isVickChar =
+          character.character_type === 'npc_world_service' ||
+          character.is_world_service === true ||
+          character.diagnostic_only === true ||
+          (character.name && character.name.toLowerCase().includes('vick servicio'));
+
+        if (isVickChar) {
+          const VICK_BOUNDARY_PATTERNS_GC = [
+            /\bthe\s+app\b/i, /\bBase44\b/i, /\bthis\s+application\b/i, /\bthe\s+platform\b/i,
+            /\brun(?:ning)?\s+(?:a\s+)?diagnostic/i, /\bdiagnostic\s+result/i,
+            /\baudit(?:ing|ed)?\s+(?:your|the|their)/i,
+            /\bran\s+(?:a\s+)?(?:diagnostic|audit|repair|check)/i,
+            /\bAccount\s+Help\b/i, /\bdeleted\s+files?\b/i, /\bfile\s+headers?\b/i,
+            /\bcharacter\s+files?\b/i, /\bmemory\s+files?\b/i, /\bmemory\s+records?\b/i,
+            /\bdatabase(?:\s+entries?|\s+records?|\s+files?|\s+data)?\b/i,
+            /\bstored\s+(?:data|records?|files?)\b/i, /\bmetadata\b/i,
+            /\binternal\s+(?:ID|identifier|record|data|system)\b/i, /\bschema\b/i,
+            /\bmemory\s+(?:system|architecture|bank|entries?|wipe)\b/i,
+            /\bAI\s+(?:memory|system|instruction|data)\b/i, /\bsystem\s+prompt\b/i,
+            /\bcharacter\s+(?:profile|record|data|storage|file)\b/i,
+            /\brelationship\s+system\b/i, /\bjournal\s+system\b/i,
+            /\bbackend\b/i, /\bfrontend\b/i, /\bAPI\b/i, /\bsource\s+code\b/i,
+            /\bthe\s+logs?\b/i, /\berror\s+(?:log|message|code|state)\b/i,
+            /\buser\s+settings?\b/i,
+            /\bscrubbed\s+(?:from|out\s+of)\s+(?:the\s+)?(?:records?|database|system|files?)\b/i,
+            /\bpurged\s+from\s+(?:the\s+)?(?:records?|system|database)\b/i,
+            /\berased\s+from\s+(?:the\s+)?(?:records?|system|database)\b/i,
+          ];
+          const SAFE_GC = [
+            [/\bdeleted\s+files?\b/gi, 'something that should have been there but wasn\'t'],
+            [/\bdatabase(?:\s+entries?|\s+records?|\s+files?|\s+data)?\b/gi, 'what I found when I looked into it'],
+            [/\bstored\s+(?:data|records?|files?)\b/gi, 'what\'s been documented'],
+            [/\bcharacter\s+profile\b/gi, 'what people say about them'],
+            [/\bcharacter\s+record\b/gi, 'what I know about them'],
+            [/\bcharacter\s+(?:data|files?)\b/gi, 'what I\'ve gathered'],
+            [/\bmemory\s+records?\b/gi, 'what they say they remember'],
+            [/\bmemory\s+wipe\b/gi, 'someone deliberately made them forget'],
+            [/\bmemory\s+(?:system|architecture|bank|entries?|store|files?)\b/gi, 'how they carry things with them'],
+            [/\bran\s+a\s+diagnostic\b/gi, 'looked into it myself'],
+            [/\brunning\s+(?:a\s+)?diagnostic/gi, 'looking into it'],
+            [/\bdiagnostic\s+results?\b/gi, 'what I found'],
+            [/\baudit(?:ed|ing)?\s+(?:your|the|their)/gi, 'went through'],
+            [/\bthe\s+logs?\b/gi, 'a trail of what happened'],
+            [/\bmetadata\b/gi, 'small details that don\'t add up'],
+            [/\binternal\s+(?:ID|identifier)\b/gi, 'a name I found in the paperwork'],
+            [/\binternal\s+(?:record|data|system|files?)\b/gi, 'something that wasn\'t meant to be seen'],
+            [/\bscrubbed[\s\S]*?(?:records?|database|system|files?)\b/gi, 'made to disappear entirely'],
+            [/\bpurged[\s\S]*?(?:records?|system|database)\b/gi, 'removed from the picture'],
+            [/\berased[\s\S]*?(?:records?|system|database)\b/gi, 'wiped from the story'],
+            [/\brelationship\s+system\b/gi, 'how two people relate to each other'],
+            [/\bjournal\s+system\b/gi, 'the running history between people'],
+            [/\bthe\s+app\b/gi, 'around here'],
+            [/\bBase44\b/gi, 'this place'],
+            [/\bthe\s+platform\b/gi, 'how things operate here'],
+            [/\bbackend\b/gi, 'what goes on behind the scenes'],
+            [/\bfrontend\b/gi, 'what\'s visible to everyone'],
+            [/\bAI\s+(?:memory|system|instruction|data)\b/gi, 'how I think through things'],
+            [/\bsystem\s+prompt\b/gi, 'how I was shaped to think'],
+            [/\buser\s+settings?\b/gi, 'the choices someone made'],
+            [/\bAPI\b/gi, 'the link between things'],
+            [/\bschema\b/gi, 'the structure things follow'],
+            [/\bsource\s+code\b/gi, 'how things were originally set up'],
+          ];
+          const gcDetect = (t) => VICK_BOUNDARY_PATTERNS_GC.some(p => p.test(t));
+          if (gcDetect(responseText)) {
+            let rewritten = responseText;
+            for (const [pat, sub] of SAFE_GC) rewritten = rewritten.replace(pat, sub);
+            if (gcDetect(rewritten)) {
+              console.error(`[generateGroupChatResponse] Vick boundary SUPPRESSED in group_chat | char=${character.name}`);
+              responseText = null;
+            } else {
+              responseText = rewritten;
+              console.log(`[generateGroupChatResponse] Vick boundary rewrite succeeded | char=${character.name}`);
+            }
+          }
+          if (!responseText) continue; // suppressed — skip saving this message
+        }
       } catch (err) {
         console.error(`[GROUP-CHAT] ${character.name} LLM error: ${err.message}`);
         // ── CIRCUIT BREAKER: Record durable fallback state — do NOT save generic text ──
