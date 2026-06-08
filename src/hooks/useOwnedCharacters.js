@@ -500,17 +500,17 @@ export function useOwnedCharacters(
   // Legacy resolution: if character_type is missing, infer from profile completeness.
   // NEVER exclude a character solely because character_type is absent.
   const resolveTypeLegacy = (c) => {
+    // STRICT RULE: Only explicit character_type='active_created_character' grants active classification.
+    // Profile data, schedule, needs, memories, or relationships do NOT promote a character.
+    // NPCs can have all of those and remain NPCs.
+    if (c.character_type === 'active_created_character') return 'active_created_character';
+    // All other explicit types returned as-is.
     if (c.character_type) return c.character_type;
-    // Legacy fallback: character with personality/schedule/needs data = active_created_character
-    const hasProfile = c.backstory || c.personality_summary || c.personality_traits?.length > 0;
-    const hasSchedule = c.wake_up_time || c.sleep_start_time;
-    const hasNeeds = c.hunger_value !== undefined;
-    if (hasProfile && (hasSchedule || hasNeeds)) return 'active_created_character';
+    // Legacy fallback for records with no character_type — never default to active_created_character.
+    if (c.is_family_member || c.relationship_type === 'family') return 'npc_family_member';
     if (c.fictional_relationships?.length > 0 && !c.is_family_member) return 'npc_fictitious';
-    if (c.is_family_member) return 'npc_family_member';
-    // If we still cannot determine type, default to active_created_character for user-visible characters.
-    // This preserves legacy characters that predate the character_type field.
-    return 'active_created_character';
+    // Safe final fallback: visible in NPC systems, not on Home cards.
+    return 'npc_regular';
   };
 
   const activeCreated    = allCharacters.filter(c => resolveTypeLegacy(c) === "active_created_character" && c.status !== "deleted");

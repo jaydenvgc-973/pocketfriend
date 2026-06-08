@@ -193,14 +193,14 @@ function resolveCharacterType(character) {
   // This path runs ONLY for legacy records with null/absent character_type.
   // It must produce a visible type — never 'unknown'.
 
+  // LEGACY FALLBACK for records with missing character_type.
+  // CRITICAL RULE: profile data (backstory, schedule, needs) does NOT promote a character
+  // to active_created_character. Only an explicit character_type='active_created_character'
+  // in the database grants that classification. NPCs can have rich profiles and still be NPCs.
+
   // If it's explicitly marked as family → npc_family_member
   if (character.is_family_member || character.relationship_type === 'family') {
     return 'npc_family_member';
-  }
-
-  // If it has full editable story, needs, schedule, etc. → active_created_character
-  if (hasFullEditableProfile(character)) {
-    return 'active_created_character';
   }
 
   // If it's in "People in their world" and is standalone (not family) → npc_fictitious
@@ -208,14 +208,14 @@ function resolveCharacterType(character) {
     return 'npc_fictitious';
   }
 
-  // Final fallback: default to active_created_character so the character remains
-  // visible everywhere active characters are shown. This is the safest visible default
-  // for legacy records that predate the character_type field entirely.
+  // Final fallback: npc_regular keeps the character visible in NPC systems
+  // (World Phone, relationships, contacts, scene) without making it a Home card.
+  // This is the safe default for any legacy record whose type cannot be inferred.
   console.warn(
     `[resolveCharacterType] Legacy character "${character.name}" (${character.id}) ` +
-    `has no character_type — defaulting to active_created_character for visibility.`
+    `has no character_type — defaulting to npc_regular (NPC systems only, not Home cards).`
   );
-  return 'active_created_character';
+  return 'npc_regular';
 }
 
 /**

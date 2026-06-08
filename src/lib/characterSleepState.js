@@ -221,41 +221,163 @@ export function getCharacterSleepState(character, locationMap) {
   const status = character.resolved_presence_status || '';
   const reason = character.resolved_source_reason || '';
 
-  // ── DB TRUTH FIRST: if DB says sleeping/napping, trust it — same source Travel/Text use ──
-  // Do NOT override a sleeping DB status with schedule or energy checks. The DB is the one truth.
-  // enforceSlowdownSleep, scheduledLocationEnforcement, and user-directed sleep all write this.
-  // This applies to ALL character types (active_created, NPC, legacy, untyped).
-  // A character whose DB says 'sleeping' IS sleeping — regardless of schedule fields.
-  if (status === 'sleeping') {
-    return {
-      isSleeping: true,
-      isNapping: false,
-      displayLabel: 'sleeping',
-      contextLabel: 'Asleep',
-      visible_label: 'Asleep',
-      confirmed_reason: reason || 'db_sleeping',
-      evidence_source: 'resolved_presence_status',
-      confidence: 1,
-      stale_risk: false,
-      isLikelyStale: false,
-      blockingCondition: null,
-    };
-  }
+  // ── DB TRUTH FIRST: if DB says sleeping/napping, validate before accepting ──
+  // For active_created_character: DB sleep is subject to hard rules:
+  //   1. 8-hour cap — if sleep exceeded 8h, reject as stale and return awake/tired.
+  //   2. Work/school obligation override — if character is on an active shift/class, reject sleep.
+  //   3. Alarm fired — if sleep_interrupted_at is recent (<30 min) or past wake_up_time, reject.
+  // NPCs and untyped characters: DB truth is accepted without these guards (schedule-window
+  // already governs them via the existing branch below).
+  if (status === 'sleeping' || status === 'napping') {
+    const isActiveCreatedChar = character.character_type === 'active_created_character';
 
-  if (status === 'napping') {
-    return {
-      isSleeping: true,
-      isNapping: true,
-      displayLabel: 'napping',
-      contextLabel: 'Resting',
-      visible_label: 'Resting',
-      confirmed_reason: reason || 'db_napping',
-      evidence_source: 'resolved_presence_status',
-      confidence: 1,
-      stale_risk: false,
-      isLikelyStale: false,
-      blockingCondition: null,
-    };
+    if (isActiveCreatedChar) {
+      const toMinLocal = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+      const nowMin    = nowET.getHours() * 60 + nowET.getMinutes();
+      const dayOfWeek = nowET.getDay();
+
+      // GUARD 1: 8-hour hard cap on ordinary sleep.
+      // Use the earliest available timestamp as sleep start (conservative — max coverage).
+      const sleepStartCandidates = [
+        character.last_sleep_start,
+        character.resolved_last_updated_at,
+        character.last_need_simulated_at,
+      ].filter(Boolean).map(t => new Date(t).getTime());
+
+      if (sleepStartCandidates.length > 0) {
+        const sleepStartMs = Math.min(...sleepStartCandidates);
+        const sleepHours = (nowET.getTime() - sleepStartMs) / 3_600_000;
+        if (sleepHours >= 8) {
+          // Stale sleep: exceeded 8-hour cap. Resolve as awake/tired.
+          return {
+            isSleeping: false,
+            isNapping: false,
+            displayLabel: 'awake',
+            contextLabel: 'Tired',
+            visible_label: 'Tired',
+            confirmed_reason: `stale_sleep_cap_${Math.round(sleepHours)}h`,
+            evidence_source: 'sleep_duration_guard',
+            confidence: 1,
+            stale_risk: false,
+            isLikelyStale: false,
+            blockingCondition: `sleep_exceeded_8h`,
+          };
+        }
+      }
+
+      // GUARD 2: Work shift override — work beats sleep.
+      const isLiveOnWorkShift = (() => {
+        if (!character.work_start_time || !character.work_end_time ||
+            !Array.isArray(character.work_days) || !character.work_days.includes(dayOfWeek)) return false;
+        const s = toMinLocal(character.work_start_time);
+        const e = toMinLocal(character.work_end_time);
+        if (s === null || e === null) return false;
+        return e < s ? (nowMin >= s || nowMin < e) : (nowMin >= s && nowMin < e);
+      })();
+
+      // GUARD 3: School window override — school beats sleep.
+      const isInSchoolWindow = (() => {
+        if (character.student_status !== 'enrolled' || !character.education_location_id) return false;
+        if (![1, 2, 3, 4, 5].includes(dayOfWeek)) return false;
+        const enrollments = character.education_enrollments;
+        if (Array.isArray(enrollments) && enrollments.length > 0) {
+          const active = enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+          if (active) {
+            const s = toMinLocal(active.start_time);
+            const e = toMinLocal(active.end_time);
+            if (s !== null && e !== null) return nowMin >= s && nowMin < e;
+          }
+        }
+        return false;
+      })();
+
+      // GUARD 4: Scheduled wake time passed.
+      const wakeTimePassed = (() => {
+        if (!character.wake_up_time) return false;
+        const wakeMin = toMinLocal(character.wake_up_time);
+        if (wakeMin === null) return false;
+        // Allow 15-minute grace past scheduled wake time before treating as stale.
+        // Overnight sleep: wake is in morning, we check if time is past wake + grace.
+        // If sleep started before midnight and wake is in morning, current time past wake = stale.
+        const grace = 15;
+        // Simple: if nowMin is past wakeMin + grace (mod day), sleep is stale.
+        // Use 4-hour window: if we're between wakeMin+grace and wakeMin+4h, it's stale.
+        const staleLow  = (wakeMin + grace) % 1440;
+        const staleHigh = (wakeMin + 4 * 60) % 1440;
+        if (staleLow < staleHigh) return nowMin >= staleLow && nowMin < staleHigh;
+        return nowMin >= staleLow || nowMin < staleHigh;
+      })();
+
+      if (isLiveOnWorkShift || isInSchoolWindow || wakeTimePassed) {
+        // Obligation or wake time override — character is awake (possibly tired).
+        const blockReason = isLiveOnWorkShift ? 'work_shift_active'
+          : isInSchoolWindow ? 'school_window_active'
+          : 'wake_time_passed';
+        return {
+          isSleeping: false,
+          isNapping: false,
+          displayLabel: 'awake',
+          contextLabel: isLiveOnWorkShift ? 'At Work' : isInSchoolWindow ? 'At School' : 'Awake',
+          visible_label: isLiveOnWorkShift ? 'At Work' : isInSchoolWindow ? 'At School' : null,
+          confirmed_reason: blockReason,
+          evidence_source: 'obligation_guard',
+          confidence: 1,
+          stale_risk: false,
+          isLikelyStale: false,
+          blockingCondition: blockReason,
+        };
+      }
+
+      // Passed all guards — DB sleep is valid for active_created_character.
+      return {
+        isSleeping: true,
+        isNapping: status === 'napping',
+        displayLabel: status === 'napping' ? 'napping' : 'sleeping',
+        contextLabel: status === 'napping' ? 'Resting' : 'Asleep',
+        visible_label: status === 'napping' ? 'Resting' : 'Asleep',
+        confirmed_reason: reason || `db_${status}`,
+        evidence_source: 'resolved_presence_status',
+        confidence: 0.95,
+        stale_risk: false,
+        isLikelyStale: false,
+        blockingCondition: null,
+      };
+    }
+
+    // NPCs / untyped: accept DB truth without the active-character guards.
+    // Schedule-window logic below will still validate them via the NOT-SLEEPING branch
+    // on subsequent ticks, but for now trust the DB for non-active characters.
+    if (status === 'sleeping') {
+      return {
+        isSleeping: true,
+        isNapping: false,
+        displayLabel: 'sleeping',
+        contextLabel: 'Asleep',
+        visible_label: 'Asleep',
+        confirmed_reason: reason || 'db_sleeping',
+        evidence_source: 'resolved_presence_status',
+        confidence: 1,
+        stale_risk: false,
+        isLikelyStale: false,
+        blockingCondition: null,
+      };
+    }
+
+    if (status === 'napping') {
+      return {
+        isSleeping: true,
+        isNapping: true,
+        displayLabel: 'napping',
+        contextLabel: 'Resting',
+        visible_label: 'Resting',
+        confirmed_reason: reason || 'db_napping',
+        evidence_source: 'resolved_presence_status',
+        confidence: 1,
+        stale_risk: false,
+        isLikelyStale: false,
+        blockingCondition: null,
+      };
+    }
   }
 
   // ── NOT SLEEPING: Route by character type ──────────────────────────────────
