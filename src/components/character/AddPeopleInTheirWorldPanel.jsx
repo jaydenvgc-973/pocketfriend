@@ -18,20 +18,40 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
     staleTime: 60000,
   });
 
-  // Fetch all account characters scoped to owner_email
+  // Fetch all account characters + world-service NPCs (e.g. Vick Servicio)
+  // owner_email filter alone misses npc_world_service characters — fetch both sources.
   const { data: allAccountCharacters = [] } = useQuery({
-    queryKey: ['accountCharacters', currentUser?.email],
+    queryKey: ['accountCharactersForRelationship', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      const chars = await base44.entities.Character.filter({ owner_email: currentUser.email });
-      return chars.filter(c => c.id !== character.id);
+      const [owned, npcRes] = await Promise.all([
+        base44.entities.Character.filter({ owner_email: currentUser.email }).catch(() => []),
+        base44.functions.invoke('fetchNPCsForUser', {}).catch(() => ({ data: { npcs: [] } })),
+      ]);
+      const npcs = npcRes?.data?.npcs || [];
+      // Merge, deduplicate by id
+      const seen = new Set();
+      return [...owned, ...npcs].filter(c => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return c.id !== character.id;
+      });
     },
     enabled: !!currentUser?.email
   });
 
-  // Only show canonical npc_fictitious characters
+  // Show all account characters that can be known people — includes npc_fictitious,
+  // npc_world_service (e.g. Vick Servicio), active_created_character, and npc_regular.
+  // npc_world_service must NOT be excluded — characters must be able to know Vick.
+  const RELATIONSHIP_ELIGIBLE_TYPES = new Set([
+    'npc_fictitious',
+    'npc_world_service',
+    'active_created_character',
+    'npc_regular',
+    'npc_family_member',
+  ]);
   const accountNPCs = allAccountCharacters.filter(c =>
-    c.character_type === 'npc_fictitious' && c.id !== character.id
+    RELATIONSHIP_ELIGIBLE_TYPES.has(c.character_type) && c.id !== character.id
   );
 
   // NPCs already linked to this character
