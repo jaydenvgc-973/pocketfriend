@@ -116,7 +116,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
 
   return (
     <Routes>
-      <Route path="/" element={<OnboardingGuard><Home /></OnboardingGuard>} />
+      <Route path="/" element={<Onboarding />} />
       <Route path="/home" element={<OnboardingGuard><Home /></OnboardingGuard>} />
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/community-events-demo" element={<CommunityEventsDemo />} />
