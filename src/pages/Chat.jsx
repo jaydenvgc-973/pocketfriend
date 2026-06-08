@@ -124,7 +124,6 @@ export default function Chat({ chatTypeOverride } = {}) {
   const [retryKey, setRetryKey] = useState(0);
   const [isRecovering, setIsRecovering] = useState(false);
   const { characterSpeechMode, toggleCharacterSpeechMode } = useVickCharacterSpeechMode();
-  const isVickChat = isVickServicioCharacter(character);
 
   // Reset conversation state immediately when switching characters.
   useEffect(() => {
@@ -263,6 +262,9 @@ export default function Chat({ chatTypeOverride } = {}) {
     refetchOnWindowFocus: false,   // Prevents re-fetch storm when user switches tabs/apps
   });
 
+  // Computed after character query — safe, never crashes on undefined
+  const isVickChat = !!character && isVickServicioCharacter(character);
+
   const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
   const { settings: userSettings } = useUserSettings();
   const { playingAudioId, voiceErrors, playCharacterVoice } = useVoicePlayback(chatType);
@@ -274,9 +276,6 @@ export default function Chat({ chatTypeOverride } = {}) {
     },
     enabled: !!characterId && showSendMoney,
   });
-
-  // Voice settings initialized lazily on first playback. Prompt storage is an
-  // optimization handled post-response — not on mount.
 
   const { isLoadingConvoRef, loadOlderMessages } = useChatLoadConvo({
     characterId,
