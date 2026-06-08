@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 Deno.serve(async (req) => {
   try {
@@ -18,19 +18,50 @@ Deno.serve(async (req) => {
     ).catch(() => []);
 
     // SOURCE 2: npc_world_service characters scoped to this account only.
-    // These are service characters (e.g. Vick Servicio) that must be scoped by owner_email
-    // to prevent cross-account bleed. An empty-filter query on npc_world_service returns
-    // Vick records from ALL accounts, causing duplicate Vick entries in the UI.
     const worldServiceChars = await base44.entities.Character.filter(
       { character_type: 'npc_world_service', owner_email: ownerEmail },
       '-created_date',
       10
     ).catch(() => []);
 
+    // SOURCE 3: null-owner npc_fictitious/npc_family_member records referenced by this
+    // account's owned characters via fictional_relationships or family_members.
+    // These are legacy records created before owner_email was reliably set. They are
+    // invisible to owner_email-scoped queries but still belong to this account.
+    const referencedIds = new Set();
+    for (const c of chars1) {
+      for (const rel of (c.fictional_relationships || [])) {
+        if (rel.related_character_id) referencedIds.add(rel.related_character_id);
+      }
+      for (const fm of (c.family_members || [])) {
+        const id = fm.character_id || fm.related_character_id;
+        if (id) referencedIds.add(id);
+      }
+    }
+
+    // Only fetch if there are referenced IDs not already returned by SOURCE 1
+    const source1Ids = new Set(chars1.map(c => c.id));
+    const missingReferencedIds = [...referencedIds].filter(id => !source1Ids.has(id));
+    const nullOwnerReferenced = missingReferencedIds.length > 0
+      ? (await Promise.all(
+          missingReferencedIds.map(id =>
+            base44.asServiceRole.entities.Character.filter({ id }).catch(() => [])
+          )
+        )).flat().filter(c =>
+          !c.owner_email &&
+          (c.character_type === 'npc_fictitious' || c.character_type === 'npc_family_member' || c.character_type === 'npc_regular') &&
+          c.status !== 'deleted' && c.status !== 'soft_deleted'
+        )
+      : [];
+
+    if (nullOwnerReferenced.length > 0) {
+      console.log(`[fetchNPCsForUser] Found ${nullOwnerReferenced.length} null-owner referenced NPCs: ${nullOwnerReferenced.map(c => c.name).join(', ')}`);
+    }
+
     // Merge and deduplicate by id — chars1 has priority (it is owner-scoped)
     const seen = new Set();
     const allChars = [];
-    for (const c of [...chars1, ...worldServiceChars]) {
+    for (const c of [...chars1, ...worldServiceChars, ...nullOwnerReferenced]) {
       if (!c.id || seen.has(c.id)) continue;
       seen.add(c.id);
       allChars.push(c);

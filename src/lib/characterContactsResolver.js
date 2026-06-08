@@ -253,9 +253,7 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
       null, 200
     ).catch(() => []),
     // npc_world_service characters (e.g. Vick Servicio) are seeded globally and may have
-    // a different owner_email. Fetch them separately so they appear in charById for
-    // avatar hydration and conversation-linked identity resolution.
-    // Also catches records with is_world_service:true that may predate the character_type field.
+    // a different owner_email.
     base44.entities.Character.filter(
       { is_world_service: true },
       null, 20
@@ -267,6 +265,47 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
   const ownerIds = new Set(allOwnerChars.map(c => c.id));
   for (const ws of worldServiceChars) {
     if (!ownerIds.has(ws.id)) allKnownChars.push(ws);
+  }
+
+  // ── SUPPLEMENT: null-owner NPC records referenced by this account's characters ──
+  // Legacy npc_fictitious/npc_family_member records may have null owner_email yet still
+  // belong to this account because they are referenced by ID in fictional_relationships
+  // or family_members. They are invisible to the owner_email filter above.
+  // Collect all referenced IDs from the already-fetched allOwnerChars, then fetch any
+  // that are not in the owner-scoped result.
+  const referencedNPCIds = new Set();
+  for (const c of allOwnerChars) {
+    for (const rel of (c.fictional_relationships || [])) {
+      if (rel.related_character_id && !ownerIds.has(rel.related_character_id)) {
+        referencedNPCIds.add(rel.related_character_id);
+      }
+    }
+    for (const fm of (c.family_members || [])) {
+      const id = fm.character_id || fm.related_character_id;
+      if (id && !ownerIds.has(id)) referencedNPCIds.add(id);
+    }
+  }
+  // Also check seen (contacts sourced from fictional_relationships/family_members above)
+  for (const entry of seen.values()) {
+    if (entry.related_character_id && !ownerIds.has(entry.related_character_id)) {
+      referencedNPCIds.add(entry.related_character_id);
+    }
+  }
+
+  if (referencedNPCIds.size > 0) {
+    const missingNPCResults = await Promise.all(
+      [...referencedNPCIds].map(id => base44.entities.Character.filter({ id }).catch(() => []))
+    );
+    for (const records of missingNPCResults) {
+      const rec = records[0];
+      if (!rec || ownerIds.has(rec.id)) continue;
+      // Only include NPC types — never promote to active_created
+      if (!['npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'].includes(rec.character_type)) continue;
+      if (rec.status === 'deleted' || rec.status === 'soft_deleted') continue;
+      allKnownChars.push(rec);
+      ownerIds.add(rec.id);
+      console.log(`[ContactsResolver] Supplemented null-owner NPC: "${rec.name}" (${rec.character_type}) | id=${rec.id}`);
+    }
   }
 
   const charById = new Map(allKnownChars.map(c => [c.id, c]));
