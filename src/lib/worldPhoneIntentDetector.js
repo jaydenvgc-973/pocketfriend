@@ -125,17 +125,17 @@ export function stripFabricatedReplyFromResponse(responseText) {
 }
 
 /**
- * detectCharacterCommunicationCommitment
- * Detects when a character's LLM response COMMITS to future communication.
- * Future-tense: "I'll text her", "I'll call him", "I'll let them know", "I'll reach out"
+ * detectCharacterProactiveOutreach
+ * Detects when a character's LLM response says they will contact someone.
+ * This is social/emotional behavior — "I'll text her", "I'll call him", "I'll reach out".
  *
- * These must be treated as pending communication obligations — not decoration.
- * The system must create real World Phone messages to fulfil them.
+ * This is NOT an appointment or travel commitment. Do not route through movement systems.
+ * These must produce real World Phone messages or be silently dropped (no fake meetings).
  *
- * Returns { recipient, topic } or null.
- * recipient may be null if only a pronoun was used (caller must resolve from context).
+ * Returns { recipient, topic, hasPronoun } or null.
+ * recipient may be null if only a pronoun was used — caller resolves from conversation context.
  */
-export function detectCharacterCommunicationCommitment(responseText, senderName) {
+export function detectCharacterProactiveOutreach(responseText, senderName) {
   if (!responseText || responseText.length < 10) return null;
 
   const senderFirst = (senderName || '').toLowerCase().split(' ')[0];
@@ -202,7 +202,7 @@ export function detectCharacterCommunicationCommitment(responseText, senderName)
     const match = responseText.match(pattern);
     if (match) {
       const pronoun = match[1]?.toLowerCase() || null;
-      return { recipient: null, pronounCommitment: true, pronoun, topic: responseText.substring(0, 200) };
+      return { recipient: null, hasPronoun: true, pronoun, topic: responseText.substring(0, 200) };
     }
   }
 
