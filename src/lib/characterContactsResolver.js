@@ -247,13 +247,30 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
   }
 
   // ── SINGLE FETCH: all owner Characters in one call ───────────────────────────
-  const allOwnerChars = await base44.entities.Character.filter(
-    { owner_email: ownerEmail, status: 'active' },
-    null, 200
-  ).catch(() => []);
+  const [allOwnerChars, worldServiceChars] = await Promise.all([
+    base44.entities.Character.filter(
+      { owner_email: ownerEmail, status: 'active' },
+      null, 200
+    ).catch(() => []),
+    // npc_world_service characters (e.g. Vick Servicio) are seeded globally and may have
+    // a different owner_email. Fetch them separately so they appear in charById for
+    // avatar hydration and conversation-linked identity resolution.
+    // Also catches records with is_world_service:true that may predate the character_type field.
+    base44.entities.Character.filter(
+      { is_world_service: true },
+      null, 20
+    ).catch(() => []),
+  ]);
 
-  const charById = new Map(allOwnerChars.map(c => [c.id, c]));
-  const charByName = new Map(allOwnerChars.map(c => [c.name?.trim().toLowerCase(), c]));
+  // Merge, deduplicating by id
+  const allKnownChars = [...allOwnerChars];
+  const ownerIds = new Set(allOwnerChars.map(c => c.id));
+  for (const ws of worldServiceChars) {
+    if (!ownerIds.has(ws.id)) allKnownChars.push(ws);
+  }
+
+  const charById = new Map(allKnownChars.map(c => [c.id, c]));
+  const charByName = new Map(allKnownChars.map(c => [c.name?.trim().toLowerCase(), c]));
 
   // ── AVATAR HYDRATION: by related_character_id (for all sources so far) ───────
   for (const entry of seen.values()) {
@@ -351,6 +368,7 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     const relLabel = lc.character_type === 'npc_fictitious' ? 'Known Contact'
       : lc.character_type === 'npc_regular' ? 'Contact'
       : lc.character_type === 'npc_family_member' ? 'Contact'  // NOT 'Family' — pair-specific only
+      : lc.character_type === 'npc_world_service' ? 'Service Contact'
       : 'Contact';
 
     seen.set(lc.id, {
