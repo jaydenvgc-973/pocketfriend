@@ -37,7 +37,15 @@ Deno.serve(async (req) => {
     ).catch(() => []);
 
     const activeLiveChars = liveChars
-      .filter(c => c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged')
+      .filter(c =>
+        c.status !== 'deleted' &&
+        c.status !== 'soft_deleted' &&
+        c.status !== 'merged' &&
+        // npc_world_service characters (Vick Servicio) are not valid World Phone re-anchor targets.
+        // They use a dedicated service surface and must never appear as regular conversation participants.
+        c.character_type !== 'npc_world_service' &&
+        c.is_world_service !== true
+      )
       .map(c => ({
         id: c.id,
         name: c.name,

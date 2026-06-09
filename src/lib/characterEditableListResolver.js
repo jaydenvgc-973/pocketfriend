@@ -63,11 +63,19 @@ export function getCharactersForHomepage(allCharacters, currentUserId, currentUs
   const scoped = resolveUserScopedCharacters(allCharacters, currentUserId, currentUserEmail);
   
   return {
-    activeCharacters: scoped.filter(c => c._resolvedType === 'active_created_character'),
+    // STRICT: only active_created_character type gets normal home cards.
+    // npc_world_service (Vick Servicio) is permanently excluded — he uses VickServiceCard.
+    activeCharacters: scoped.filter(c =>
+      c._resolvedType === 'active_created_character' &&
+      c.character_type !== 'npc_world_service' &&
+      c.is_world_service !== true
+    ),
     npcFictitious: scoped.filter(c => c._resolvedType === 'npc_fictitious'),
-    // For location systems: include all valid types
+    // For location systems: include all valid types except npc_world_service (managed separately)
     allForLocationSystems: scoped.filter(c => 
-      ['active_created_character', 'npc_fictitious', 'npc_family_member'].includes(c._resolvedType)
+      ['active_created_character', 'npc_fictitious', 'npc_family_member'].includes(c._resolvedType) &&
+      c.character_type !== 'npc_world_service' &&
+      c.is_world_service !== true
     ),
   };
 }
@@ -184,7 +192,9 @@ function resolveCharacterType(character) {
   if (!character) return 'active_created_character'; // safest visible default
 
   // If character_type is explicitly set and valid, use it
-  const validTypes = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'ambient'];
+  // CRITICAL: npc_world_service must be in validTypes so Vick Servicio is never
+  // misclassified as a different type by the legacy fallback chain.
+  const validTypes = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service', 'ambient'];
   if (character.character_type && validTypes.includes(character.character_type)) {
     return character.character_type;
   }

@@ -256,8 +256,7 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
                         <p className="text-sm font-semibold text-foreground">World Phone Manual Re-Anchor Workspace</p>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        174 World Phone conversations have completely dead participant IDs — no auto-resolution is possible.
-                        Open the re-anchor workspace to review each conversation's message clues and assign the correct live characters.
+                        Open the re-anchor workspace to review each unresolved World Phone conversation's message clues and assign the correct live characters.
                       </p>
                       <button
                         onClick={() => setShowReanchorPanel(true)}
