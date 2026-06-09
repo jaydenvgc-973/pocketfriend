@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, CheckCircle2, Loader2, AlertCircle, Zap, Globe } from 'lucide-react';
+import { X, CheckCircle2, Loader2, AlertCircle, Zap, Globe, ChevronRight } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import TravelViolationLog from '@/components/travel/TravelViolationLog';
+import WorldPhoneReanchorPanel from '@/components/worldphone/WorldPhoneReanchorPanel';
 
 const ISSUE_LIST = [
   { id: 'mark_read', label: '✉️ Mark messages as read', description: 'Clear stale unread badges — marks all unread character messages as read using owner_email-scoped conversation lookup. Returns per-character proof.' },
@@ -20,7 +21,7 @@ const ISSUE_LIST = [
   { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems (cards, popups, profile, balance, world name, relationships, appearance lock) for UI values out of sync with backend.' },
   { id: 'fix_locations', label: '📍 Fix location display', description: 'Detect characters with stale or missing location data. Reports issues only — does not overwrite jail, travel, hotel, shelter, or temporary housing states.' },
   { id: 'restore_world_contacts', label: '🌐 Restore missing World Contacts', description: 'Find any contact records (any character type) with missing ownership that are referenced by this account\'s contact graph. Identifies them by name, then restores their owner_email. Does not change character types, promote NPCs, or create duplicates.' },
-  { id: 'world_phone_anchors', label: '📵 World Phone anchor audit', description: 'Detect World Phone conversations that reference deleted or merged character IDs. These are "wires cut" — the sender believes the message was sent but the recipient never got a Message record. Shows a live-repair button after the dry-run preview.' },
+  { id: 'world_phone_anchors', label: '📵 World Phone manual re-anchor', description: 'Open the manual re-anchor workspace. Each unresolved World Phone conversation shows message samples and character name clues. You pick the two live characters, then the system repairs the Conversation and backfills all Message records.' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }) {
@@ -32,10 +33,7 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
   const [wcRepairPreview, setWcRepairPreview] = useState(null); // dry-run result
   const [wcRepairApplied, setWcRepairApplied] = useState(null); // live result
   const [wcRepairRunning, setWcRepairRunning] = useState(false);
-  // World Phone anchor repair state — two-step: preview then confirm
-  const [wpAnchorPreview, setWpAnchorPreview] = useState(null);
-  const [wpAnchorApplied, setWpAnchorApplied] = useState(null);
-  const [wpAnchorRunning, setWpAnchorRunning] = useState(false);
+  const [showReanchorPanel, setShowReanchorPanel] = useState(false);
   const queryClient = useQueryClient();
 
   const toggleIssue = (issueId) => {
@@ -159,7 +157,7 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
     }
   };
 
-  return createPortal(
+  const troubleshootingPanel = createPortal(
     <AnimatePresence>
       {isOpen && (
         <motion.div
@@ -250,126 +248,27 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
                     Fix All — Full Diagnostic + Repair
                   </button>
 
-                  {/* ── WORLD PHONE ANCHOR REPAIR — two-step in-panel flow ── */}
+                  {/* ── WORLD PHONE MANUAL RE-ANCHOR — opens full workspace ── */}
                   {selectedIssues.includes('world_phone_anchors') && (
                     <div className="border border-border rounded-xl p-4 space-y-3 bg-secondary/30">
                       <div className="flex items-center gap-2">
                         <Globe className="w-4 h-4 text-primary" />
-                        <p className="text-sm font-semibold text-foreground">World Phone Anchor Repair</p>
+                        <p className="text-sm font-semibold text-foreground">World Phone Manual Re-Anchor Workspace</p>
                       </div>
-
-                      {!wpAnchorPreview && !wpAnchorApplied && (
-                        <button
-                          onClick={async () => {
-                            setWpAnchorRunning(true);
-                            try {
-                              const res = await base44.functions.invoke('auditAndRepairWorldPhoneAnchors', { dryRun: true });
-                              setWpAnchorPreview(res?.data || res || {});
-                            } catch (e) {
-                              setWpAnchorPreview({ error: e.message });
-                            } finally {
-                              setWpAnchorRunning(false);
-                            }
-                          }}
-                          disabled={wpAnchorRunning}
-                          className="w-full px-3 py-2.5 rounded-lg bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                        >
-                          {wpAnchorRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
-                          Step 1 — Audit broken conversation anchors (dry run)
-                        </button>
-                      )}
-
-                      {wpAnchorPreview && !wpAnchorApplied && (
-                        <div className="space-y-3">
-                          {wpAnchorPreview.error ? (
-                            <p className="text-xs text-destructive">Error: {wpAnchorPreview.error}</p>
-                          ) : wpAnchorPreview.broken_conversations_found === 0 ? (
-                            <div className="text-xs text-muted-foreground bg-secondary/50 rounded-lg p-3">
-                              All {wpAnchorPreview.total_world_phone_conversations || 0} World Phone conversations have valid live character IDs. No repair needed.
-                              {wpAnchorPreview.still_unresolved_memories > 0 && (
-                                <p className="mt-1 text-amber-400">{wpAnchorPreview.still_unresolved_memories} memory record(s) still waiting for identity resolution — may cause character context blind spots.</p>
-                              )}
-                            </div>
-                          ) : (
-                            <>
-                              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
-                                <p className="text-xs font-semibold text-amber-400">
-                                  {wpAnchorPreview.broken_conversations_found} conversation(s) have stale or dead character IDs:
-                                </p>
-                                {(wpAnchorPreview.broken_details || []).slice(0, 6).map((b, i) => (
-                                  <div key={i} className="text-xs text-foreground bg-secondary/50 rounded p-2">
-                                    <p className="text-muted-foreground">Convo: {b.conversation_id?.substring(0, 12)}…</p>
-                                    <p className="font-medium">{(b.corrections || []).join(', ') || 'unknown participants'}</p>
-                                    {b.unresolved?.length > 0 && <p className="text-destructive/70">⚠ {b.unresolved.length} ID(s) still unresolvable</p>}
-                                  </div>
-                                ))}
-                                {wpAnchorPreview.needs_manual_review > 0 && (
-                                  <p className="text-xs text-amber-300">{wpAnchorPreview.needs_manual_review} conversation(s) need manual review — IDs could not be auto-resolved.</p>
-                                )}
-                                {wpAnchorPreview.auto_resolved_memories > 0 && (
-                                  <p className="text-xs text-emerald-400">{wpAnchorPreview.auto_resolved_memories} memory record(s) can be auto-resolved by name match.</p>
-                                )}
-                                {wpAnchorPreview.still_unresolved_memories > 0 && (
-                                  <p className="text-xs text-amber-300">{wpAnchorPreview.still_unresolved_memories} memory record(s) still waiting for identity resolution.</p>
-                                )}
-                              </div>
-                              <p className="text-xs text-muted-foreground">Apply will re-anchor broken conversations to canonical live character IDs and backfill all Message records. No conversations or messages are deleted.</p>
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={async () => {
-                                    setWpAnchorRunning(true);
-                                    try {
-                                      const res = await base44.functions.invoke('auditAndRepairWorldPhoneAnchors', { dryRun: false });
-                                      setWpAnchorApplied(res?.data || res || {});
-                                      queryClient.invalidateQueries({ queryKey: ['conversations'] });
-                                      queryClient.invalidateQueries({ queryKey: ['characters'] });
-                                    } catch (e) {
-                                      setWpAnchorApplied({ error: e.message });
-                                    } finally {
-                                      setWpAnchorRunning(false);
-                                    }
-                                  }}
-                                  disabled={wpAnchorRunning}
-                                  className="flex-1 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                                >
-                                  {wpAnchorRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                                  Step 2 — Apply anchor repair
-                                </button>
-                                <button
-                                  onClick={() => setWpAnchorPreview(null)}
-                                  className="px-3 py-2 rounded-lg bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      )}
-
-                      {wpAnchorApplied && (
-                        <div className="space-y-2">
-                          {wpAnchorApplied.error ? (
-                            <p className="text-xs text-destructive">Error: {wpAnchorApplied.error}</p>
-                          ) : (
-                            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 space-y-1">
-                              <p className="text-xs font-semibold text-emerald-400">
-                                ✓ {wpAnchorApplied.repaired_conversations || 0} conversation(s) re-anchored. {wpAnchorApplied.auto_resolved_memories || 0} memory records resolved.
-                              </p>
-                              {wpAnchorApplied.needs_manual_review > 0 && (
-                                <p className="text-xs text-amber-400">{wpAnchorApplied.needs_manual_review} conversation(s) still need manual review.</p>
-                              )}
-                              <p className="text-xs text-muted-foreground mt-1">Open the World Phone on affected characters to verify messages now flow correctly.</p>
-                            </div>
-                          )}
-                          <button
-                            onClick={() => { setWpAnchorPreview(null); setWpAnchorApplied(null); }}
-                            className="w-full px-3 py-2 rounded-lg bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
-                          >
-                            Reset
-                          </button>
-                        </div>
-                      )}
+                      <p className="text-xs text-muted-foreground">
+                        174 World Phone conversations have completely dead participant IDs — no auto-resolution is possible.
+                        Open the re-anchor workspace to review each conversation's message clues and assign the correct live characters.
+                      </p>
+                      <button
+                        onClick={() => setShowReanchorPanel(true)}
+                        className="w-full flex items-center justify-between px-4 py-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Globe className="w-4 h-4" />
+                          Open Re-Anchor Workspace
+                        </span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
                     </div>
                   )}
 
@@ -609,5 +508,30 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
       )}
     </AnimatePresence>,
     document.body
+  );
+
+  // Full-screen re-anchor workspace (separate portal, slides in over the troubleshooting panel) — rendered as separate portal above everything
+  const reanchorPortal = showReanchorPanel ? createPortal(
+    <motion.div
+      initial={{ opacity: 0, x: '100%' }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: '100%' }}
+      transition={{ type: 'tween', duration: 0.25 }}
+      className="fixed inset-0 z-[60] bg-background flex flex-col"
+    >
+      <WorldPhoneReanchorPanel onClose={() => {
+        setShowReanchorPanel(false);
+        queryClient.invalidateQueries({ queryKey: ['conversations'] });
+        queryClient.invalidateQueries({ queryKey: ['characters'] });
+      }} />
+    </motion.div>,
+    document.body
+  ) : null;
+
+  return (
+    <>
+      {troubleshootingPanel}
+      {reanchorPortal}
+    </>
   );
 }
