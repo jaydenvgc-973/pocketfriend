@@ -233,6 +233,54 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── WORLD PHONE ANCHOR INTEGRITY ─────────────────────────────────────────
+    // Checks for World Phone conversations referencing deleted/merged character IDs.
+    // These are the "wires cut" cases: the character believes it sent a message but
+    // the recipient never received a Message row because the Conversation anchor is stale.
+    // This runs a DRY RUN of auditAndRepairWorldPhoneAnchors and surfaces the findings.
+    if (selectedIssues.includes('world_phone_anchors')) {
+      try {
+        const anchorRes = await base44.asServiceRole.functions.invoke('auditAndRepairWorldPhoneAnchors', { dryRun: true });
+        const anchorData = anchorRes?.data || anchorRes;
+        const broken = anchorData?.broken_conversations_found ?? 0;
+        const manualReview = anchorData?.needs_manual_review ?? 0;
+        const unresolvedMems = anchorData?.still_unresolved_memories ?? 0;
+        const autoResolved = anchorData?.auto_resolved_memories ?? 0;
+
+        if (broken > 0) {
+          results.issues_found.push(
+            `${broken} World Phone conversation(s) reference deleted or merged character IDs — these recipients will never receive messages until re-anchored.`
+          );
+          (anchorData?.broken_details || []).slice(0, 5).forEach(b => {
+            results.issues_found.push(`  → Conversation ${b.conversation_id?.substring(0,8)} | ${b.corrections?.join(', ') || 'unknown'}`);
+          });
+        }
+        if (manualReview > 0) {
+          results.issues_found.push(`${manualReview} World Phone conversation(s) need manual review — participant IDs could not be automatically resolved.`);
+        }
+        if (unresolvedMems > 0) {
+          results.issues_found.push(`${unresolvedMems} character memory record(s) are still waiting for identity resolution (blind spots in character context).`);
+        }
+        if (autoResolved > 0) {
+          results.issues_found.push(`${autoResolved} memory record(s) could be auto-resolved by name match — run a live repair to fix them.`);
+        }
+
+        results.checks.push({
+          name: 'World Phone Anchor Integrity',
+          status: broken === 0 && manualReview === 0 ? 'passed' : 'warning',
+          message: broken === 0 && manualReview === 0
+            ? `All World Phone conversations reference valid live character IDs. Unresolved memories: ${unresolvedMems}.`
+            : `${broken} broken anchor(s), ${manualReview} manual review required. Run "auditAndRepairWorldPhoneAnchors" with dryRun:false to repair.`,
+        });
+      } catch (anchorErr) {
+        results.checks.push({
+          name: 'World Phone Anchor Integrity',
+          status: 'warning',
+          message: `Audit could not complete: ${anchorErr.message}`,
+        });
+      }
+    }
+
     const totalIssues = results.issues_found.length;
     const totalFixes = results.fixes_applied.length;
     if (totalIssues === 0 && totalFixes === 0) {
