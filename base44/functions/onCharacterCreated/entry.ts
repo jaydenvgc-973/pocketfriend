@@ -59,14 +59,47 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'No character data in payload' }, { status: 400 });
     }
 
-    // Ownership: use owner_email exclusively. created_by is FORBIDDEN.
-    const ownerEmail = character.owner_email;
+    // ══════════════════════════════════════════════════════════════
+    // OWNERSHIP RESOLUTION — CRITICAL
+    // ══════════════════════════════════════════════════════════════
+    // Entity automation payloads wrap all custom schema properties inside a nested
+    // `data` sub-object. Root-level fields (id, created_by, created_date) are at
+    // the top level. Custom fields like owner_email and owner_user_id live inside
+    // character.data — NOT on character directly.
+    //
+    // WRONG: character.owner_email  → always undefined in automations
+    // RIGHT: character.data?.owner_email  → correct value from the saved record
+    //
+    // We also fall back to the authoritative record if data is missing entirely.
+    let ownerEmail = character.data?.owner_email || character.owner_email || null;
+    let ownerUserId = character.data?.owner_user_id || character.owner_user_id || null;
+    const characterType = character.data?.character_type || character.character_type || null;
+    const characterStatus = character.data?.status || character.status || 'active';
 
-    const isNPC = ['npc_regular', 'npc_family_member', 'npc_fictitious'].includes(character.character_type);
-    const isActive = character.character_type === 'active_created_character';
+    // If ownership fields are still missing, fetch the record authoritatively to repair inline.
+    // This is a safety net — createCharacterWithRelationships always writes these fields,
+    // but if they arrive null here, we recover rather than proceeding ownerless.
+    if (!ownerEmail) {
+      try {
+        const authoritative = await base44.asServiceRole.entities.Character.get(character.id);
+        if (authoritative) {
+          ownerEmail = authoritative.owner_email || null;
+          ownerUserId = authoritative.owner_user_id || ownerUserId;
+          if (!ownerEmail) {
+            console.error(`[onCharacterCreated] CRITICAL: Character "${character.name || character.id}" has no owner_email in saved record. This is a pipeline defect. Skipping ownership-dependent operations.`);
+          }
+        }
+      } catch (fetchErr) {
+        console.error('[onCharacterCreated] Failed to fetch authoritative character record:', fetchErr.message);
+      }
+    }
+
+    const isNPC = ['npc_regular', 'npc_family_member', 'npc_fictitious'].includes(characterType);
+    const isActive = characterType === 'active_created_character';
 
     // ── NPC: Auto-assign VGC Towers as home (if not already set) ─────────────
-    if (isNPC && !character.current_home_location_id) {
+    const currentHomeLocationId = character.data?.current_home_location_id || character.current_home_location_id;
+    if (isNPC && !currentHomeLocationId) {
       try {
         if (ownerEmail) {
           const userVGCList = await base44.asServiceRole.entities.LocationReference.filter({
@@ -79,9 +112,12 @@ Deno.serve(async (req) => {
             const now = new Date().toISOString();
             // Initialize sleep rhythm — backfill only if missing (preserve existing schedules)
             const sleepPatch = {};
-            if (!character.sleep_start_time) sleepPatch.sleep_start_time = '23:00';
-            if (!character.wake_up_time) sleepPatch.wake_up_time = '07:00';
-            if (character.sleep_debt_hours === undefined || character.sleep_debt_hours === null) sleepPatch.sleep_debt_hours = 0;
+            const sleepStart = character.data?.sleep_start_time || character.sleep_start_time;
+            const wakeUp = character.data?.wake_up_time || character.wake_up_time;
+            const sleepDebt = character.data?.sleep_debt_hours ?? character.sleep_debt_hours;
+            if (!sleepStart) sleepPatch.sleep_start_time = '23:00';
+            if (!wakeUp) sleepPatch.wake_up_time = '07:00';
+            if (sleepDebt === undefined || sleepDebt === null) sleepPatch.sleep_debt_hours = 0;
 
             await base44.asServiceRole.entities.Character.update(character.id, {
               current_home_location_id: userVGC.id,
@@ -154,13 +190,13 @@ Deno.serve(async (req) => {
     }
 
     // Skip billing for NPCs — financial record is now ensured above
-    if (!isActive || character.status !== 'active') {
+    if (!isActive || characterStatus !== 'active') {
       return Response.json({ success: true, skipped: true, reason: isNPC ? 'NPC financial record ensured, no billing' : 'Not an active character' });
     }
 
     // ── ACTIVE CHARACTER: Auto-link home location ─────────────────────────────
     try {
-      const homeId = character.current_home_location_id;
+      const homeId = character.data?.current_home_location_id || character.current_home_location_id;
       if (homeId) {
         const home = await base44.asServiceRole.entities.LocationReference.get(homeId);
         if (home) {
@@ -249,8 +285,17 @@ Deno.serve(async (req) => {
     //   - Charge 2 days after creation (initial rent)
     //   - UNLESS the 1st of next month falls within those 2 days → skip initial, charge on the 1st only.
     //   - Recurring: 1st of each month via processRecurringExpenses.
+    //
+    // Build a flat character object for requiresOffAppRent that reads from data sub-object.
+    const charForRentCheck = {
+      character_type: characterType,
+      current_home_location_id: character.data?.current_home_location_id || character.current_home_location_id,
+      is_homeless: character.data?.is_homeless ?? character.is_homeless,
+      housing_context: character.data?.housing_context || character.housing_context,
+      temporary_housing_location_id: character.data?.temporary_housing_location_id || character.temporary_housing_location_id,
+    };
     try {
-      if (financial && requiresOffAppRent(character)) {
+      if (financial && requiresOffAppRent(charForRentCheck)) {
         const now = new Date();
         const creationDate = now;
 

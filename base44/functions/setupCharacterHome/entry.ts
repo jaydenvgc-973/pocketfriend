@@ -37,6 +37,7 @@ Deno.serve(async (req) => {
     const financialRecord = await base44.asServiceRole.entities.CharacterFinancial.create({
       character_id: characterId,
       character_name: characterName,
+      owner_email: user.email,
       home_location_id: null,
       home_location_name: null,
       is_homeless: true,

@@ -26,6 +26,7 @@ Deno.serve(async (req) => {
     const financialData = {
       character_id: characterId,
       character_name: characterName,
+      owner_email: user.email,
       is_npc: isNpc,
       home_location_id: homeLocationId || null,
       home_location_name: homeLocationName || null,
