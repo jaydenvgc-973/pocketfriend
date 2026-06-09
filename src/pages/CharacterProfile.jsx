@@ -992,8 +992,8 @@ export default function CharacterProfile() {
                   if (!r.related_character_id) return false;
                   const lc = allCharacters.find(c => c.id === r.related_character_id);
                   if (!lc) return false;
-                  // Show active_created_character AND npc_world_service (e.g. Vick Servicio)
-                  return lc.character_type === "active_created_character" || lc.character_type === "npc_world_service" || lc.is_world_service === true;
+                  // Show ONLY active playable characters in this high-intensity metrics list
+                  return lc.character_type === "active_created_character";
                 })
                 .map((rel, idx) => {
                   const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
@@ -1045,8 +1045,8 @@ export default function CharacterProfile() {
                   if (!r.related_character_id) return true;
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
                   if (!linked) return true;
-                  // active_created_character and npc_world_service go in "Characters They Know"
-                  return linked.character_type !== "active_created_character" && !linked.is_world_service && linked.character_type !== "npc_world_service";
+                  // Only active playable characters go in "Characters They Know" — everyone else (including npc_world_service) stays here
+                  return linked.character_type !== "active_created_character";
                 });
                 const seen = new Set();
                 const deduped = worldRels.filter(r => {

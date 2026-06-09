@@ -146,10 +146,11 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
       // ── SAFE MINIMAL ENTRY ─────────────────────────────────────────────────
       // CRITICAL: Never embed full Character objects in fictional_relationships.
       // Store only minimal safe fields to prevent profile crashes and render loops.
+      const isWorldService = selectedNPC.character_type === 'npc_world_service' || selectedNPC.is_world_service === true;
       const safeRelEntry = {
         person_name: selectedNPC.name,
         related_character_id: selectedNPC.id,
-        relationship_type: 'acquaintance',
+        relationship_type: isWorldService ? 'Service & Support' : 'acquaintance',
         friendship_level: 30,
         user_respect_level: 50,
         romantic_level: 0,
