@@ -397,7 +397,14 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     // RELATIONSHIP LABEL: determined from pair-specific data ONLY.
     // npc_family_member character type = that character's own category, NOT their
     // relationship to the viewed character. Use 'Contact' as neutral default.
-    // npc_world_service = service/support character — labeled clearly, never as civilian.
+    //
+    // ROUTING RULE (for UI section assignment, not filtering):
+    //   active_created_character → "Characters They Know"
+    //   npc_regular, npc_fictitious, npc_family_member, npc_world_service → "People in Their World"
+    //
+    // npc_world_service (Vick Servicio) is a valid People in Their World entry and
+    // valid World Phone participant. It is NOT filtered out here.
+    // The only exclusion for npc_world_service is regular homepage CharacterCard rendering.
     const relLabel = lc.character_type === 'npc_world_service' ? 'Service & Support'
       : lc.character_type === 'npc_fictitious' ? 'Known Contact'
       : lc.character_type === 'npc_regular' ? 'Contact'

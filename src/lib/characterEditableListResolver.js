@@ -426,9 +426,15 @@ export function getLocationPresence(location, characters = []) {
 
   const presence = [];
 
-  // All character types at this location
+  // All character types at this location.
+  // ROUTING RULE:
+  //   active_created_character → "Characters They Know"
+  //   npc_regular, npc_fictitious, npc_family_member, npc_world_service → "People in Their World"
+  // npc_world_service (Vick Servicio) participates in co-presence, encounter tracking,
+  // and location presence — excluded ONLY from regular homepage CharacterCard rendering.
   characters.forEach(char => {
-    if (!['active_created_character', 'npc_fictitious', 'npc_family_member'].includes(char.character_type || resolveCharacterType(char))) {
+    const resolvedType = char.character_type || resolveCharacterType(char);
+    if (!['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'].includes(resolvedType)) {
       return;
     }
 
@@ -507,7 +513,8 @@ export function resolveTravelPresenceForUserScope(location, characters = []) {
     ).map(p => p.character);
 
     const travelingOut = characters.filter(c =>
-      (c.character_type === 'npc_fictitious' || c.character_type === 'npc_family_member') &&
+      // Include all NPC/service types that can travel out from VGC Towers
+      ['npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'].includes(c.character_type) &&
       c.current_home_location_id === location.id &&
       c.resolved_current_location_id &&
       c.resolved_current_location_id !== location.id
