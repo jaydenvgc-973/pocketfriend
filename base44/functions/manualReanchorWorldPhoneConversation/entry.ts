@@ -86,20 +86,14 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Character "${charB.name}" (${participant_b_id}) is ${charB.status} — cannot use as anchor` }, { status: 400 });
     }
 
-    // Reject npc_world_service characters — they are service surfaces (Vick Servicio),
-    // not valid participants in user World Phone conversations.
-    if (charA.character_type === 'npc_world_service' || charA.is_world_service === true) {
-      return Response.json({ error: `Character "${charA.name}" is a service character and cannot be a World Phone anchor` }, { status: 400 });
-    }
-    if (charB.character_type === 'npc_world_service' || charB.is_world_service === true) {
-      return Response.json({ error: `Character "${charB.name}" is a service character and cannot be a World Phone anchor` }, { status: 400 });
-    }
-
-    // Verify ownership — both must belong to this account
-    if (charA.owner_email !== ownerEmail) {
+    // Verify ownership — both must belong to this account OR be npc_world_service (global service characters).
+    // npc_world_service characters (e.g. Vick Servicio) are valid World Phone participants —
+    // they have no owner_email because they are global, not foreign/unauthorized.
+    const isWorldService = (c) => c.character_type === 'npc_world_service' || c.is_world_service === true;
+    if (!isWorldService(charA) && charA.owner_email !== ownerEmail) {
       return Response.json({ error: `Character "${charA.name}" does not belong to this account` }, { status: 403 });
     }
-    if (charB.owner_email !== ownerEmail) {
+    if (!isWorldService(charB) && charB.owner_email !== ownerEmail) {
       return Response.json({ error: `Character "${charB.name}" does not belong to this account` }, { status: 403 });
     }
 
