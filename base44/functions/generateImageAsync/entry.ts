@@ -35,8 +35,7 @@ function cdnFilter(urls) {
   return (urls || []).map(toPublicCDN).filter(isAccessible);
 }
 
-// ── OUTFIT RESOLVER — Layer 1: contextual (uniform/sleep), Layer 2: closet rotation ──────────
-
+// ── OUTFIT RESOLVER ───────────────────────────────────────────────────────────
 function isAIStylePrompt(t) {
   if (!t) return false;
   return /\b(cinematic|chiaroscuro|dramatic lighting|editorial photography|fine art|low-key lighting|sculptural anatomy|artistic composition|museum.quality|photorealistic|ultra.detailed|high.resolution|bokeh|dramatic shadow|noir atmosphere|hyper.realistic|studio lighting|professional photography|stock photo|silhouette|atmosphere|moody|high contrast|film grain|depth of field|aesthetic|luxury editorial)\b/i.test(t);
@@ -150,15 +149,7 @@ function resolveUniformText(character, locationRecord) {
   return null;
 }
 
-// ── NORMAL CLOSET RESOLVER ────────────────────────────────────────────────────
-// This function is ONLY called when no contextual outfit has been injected.
-// Contextual outfits (uniform, sleepwear, swimwear, formalwear) are handled BEFORE
-// this resolver is called in the main handler — they are never blocked by rotation.
-//
-// This resolver handles ONLY the normal closet layer:
-//   - Rotation OFF → locked/selected outfit wins
-//   - Rotation ON P1 → current_outfit wins if it matches scene context category
-//   - Rotation ON P2 → day-stable rotation through closet
+// ── NORMAL CLOSET RESOLVER — only when no contextual outfit was injected ─────
 function resolveCharacterOutfitForPrompt(character) {
   if (!character) return { text: null, source: 'no_character', name: null, category: null };
 
@@ -538,7 +529,7 @@ function buildAppearanceLockText(rec, n) {
 // can read structured fields directly (ethnicity, appearance_lock, etc.)
 // charDesc is the assembled text description (for reference blocks and fallback text only).
 
-function buildPrompt({ prompt, charName, charDesc, charRecord, locationName, zoneName, locCategory, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime, subjectType, characterId, userWorldName, userOutfitText }) {
+function buildPrompt({ prompt, charName, charDesc, charRecord, locationName, zoneName, locCategory, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime, subjectType, characterId, userWorldName, userOutfitText, userAppearanceLockText }) {
   const hasEnv  = envRefCount > 0;
   const hasChar = charRefCount > 0;
   const hasUser = userRefCount > 0;
@@ -898,7 +889,7 @@ ${userRefCount > 0
 These are face/identity reference photographs of the user.
 Extract ONLY: face structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
 ⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.`
-  : `Subject 2 Reference Images: NONE — render the user as a realistic human consistent with scene context. Do NOT substitute a child or irrelevant person.`
+  : userAppearanceLockText ? `Subject 2 Reference Images: NONE — use canonical appearance below. ⛔ DO NOT default to any assumed ethnicity/gender/body type.\nCanonical: ${userAppearanceLockText}` : `Subject 2 Reference Images: NONE — render the user as a realistic human consistent with scene context. Do NOT substitute a child or irrelevant person.`
 }
 ✅ SUBJECT 2 OUTFIT ENFORCEMENT: ${userOutfitText ? `"${userOutfitText}". CANONICAL LAW — render exactly this. Do NOT substitute, modify, or reinterpret.` : 'Use clothing appropriate to scene context.'}
 ⛔ Subject 2 MUST look like the person in the reference photos (if provided). Do NOT use a generic face.
@@ -980,12 +971,7 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
   }
 
   if (hasUser && subjectType !== 'joint') {
-    identityLock += `
-
-USER IDENTITY:
-Images ${userRefStart}–${userEnd} are this exact person's photos.
-Match: face structure, skin tone, hair, body type.
-✅ USER OUTFIT ENFORCEMENT: ${userOutfitText ? `"${userOutfitText}". CANONICAL LAW — render exactly this. Do NOT substitute or modify.` : 'Use clothing appropriate to scene context.'}`;
+    identityLock += `\n\nUSER IDENTITY:\n${hasUser ? `Images ${userRefStart}–${userEnd} are this exact person's photos.\nMatch: face structure, skin tone, hair, body type.` : userAppearanceLockText ? `No reference photos. Canonical appearance (ABSOLUTE — do NOT default to any ethnicity/gender/body type):\n${userAppearanceLockText}` : `No reference photos. Render as a realistic human. ⛔ DO NOT default to Caucasian/white/female.`}\n✅ USER OUTFIT ENFORCEMENT: ${userOutfitText ? `"${userOutfitText}". CANONICAL LAW — render exactly this. Do NOT substitute or modify.` : 'Use clothing appropriate to scene context.'}`;
   }
 
   if (isSelfieMode) {
@@ -1084,6 +1070,11 @@ This applies to every subject in every image — no exceptions.
 `;
   return withFictionalDecl(`${caucasianGuard}${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`);
 }
+
+// buildUserAppearanceLockFallback — returns appearance text from UserSettings.appearance_lock
+// ONLY when renderedSubjectName exactly matches account's fictional_world_name (case-insensitive).
+// Returns null if name doesn't match — never applies another account's appearance to a different subject.
+function buildUserAppearanceLockFallback(s, n) { if(!s||!n)return null;const a=(s.fictional_world_name||'').trim().toLowerCase();if(!a||a!==n.trim().toLowerCase())return null;const l=s.appearance_lock||{};const p=[l.skin_tone?`${l.skin_tone} skin tone`:null,l.hair_type?`${l.hair_type} hair`:null,l.hairstyle?`${l.hairstyle} hairstyle`:null,l.facial_hair||null,l.overall_aesthetic||l.body_type||null,(l.custom_keywords||[]).length>0?l.custom_keywords.join(', '):null].filter(Boolean);return p.length>0?p.join(', '):null; }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
 
@@ -1519,10 +1510,12 @@ Deno.serve(async (req) => {
     }
 
     let userRefs = [];
+    let _userSettingsRecord = null;
     if (subjectType === 'user' || subjectType === 'joint') {
       if (requestingUser) {
         const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
-        const sett = settingsList?.[0] || {};
+        _userSettingsRecord = settingsList?.[0] || null;
+        const sett = _userSettingsRecord || {};
         const dbUserRefs = [
           ...(sett.reference_image_urls || []),
           ...(sett.generated_avatar_urls || []),
@@ -1784,6 +1777,12 @@ Deno.serve(async (req) => {
       if (userOutfitText) console.log(`[generateImageAsync] ✅ User outfit pre-buildPrompt: "${userOutfitText.substring(0, 80)}"`);
     }
 
+    // User appearance-lock fallback: only resolves when no refs available AND subject name matches account world name
+    const userAppearanceLockText = (subjectType === 'user' || subjectType === 'joint') && userRefs.length === 0
+      ? buildUserAppearanceLockFallback(_userSettingsRecord, userWorldName || '')
+      : null;
+    if (userAppearanceLockText) console.log(`[generateImageAsync] ✅ User appearance-lock fallback: "${userAppearanceLockText}" (account: ${requestingUser}, worldName: "${userWorldName}")`);
+
     let thirdPartyPreamble = '';
     if (isThirdPartyPhoto && !characterId) {
       const rawSceneDesc = sanitizedPrompt.replace(/^\[PHOTO SUBJECT[^\]]*\]\s*:?\s*/i, '').replace(/^\[CHARACTER\]\s*/i, '').trim();
@@ -1830,6 +1829,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       characterId,
       userWorldName,
       userOutfitText: userOutfitText || null,
+      userAppearanceLockText: userAppearanceLockText || null,
     });
 
     function extractCameraVarsFromPrompt(p) {
