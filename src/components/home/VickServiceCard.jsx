@@ -4,32 +4,21 @@ import { base44 } from "@/api/base44Client";
 import { motion } from "framer-motion";
 import { Shield, AlertTriangle, CheckCircle2, Activity, MessageSquare, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import VickInvestigationQueue from "./VickInvestigationQueue";
+import { getOrResolveVick, isVickRecord, updateVickCache, getCachedVick } from "@/lib/vickServiceCache";
 
 /**
  * VickServiceCard — Dedicated Home page card for Vick Servicio (npc_world_service).
  *
  * STABILITY CONTRACT:
+ * - Uses a module-level stable cache (vickServiceCache.js) so the Vick record
+ *   is resolved ONCE per session and returned instantly on every subsequent
+ *   mount — eliminating the flicker caused by re-running 4 async lookups on
+ *   every Chat → Home → Travel → Home navigation.
  * - Never returns null silently. Shows a skeleton while loading.
- * - Uses four lookup paths before giving up.
- * - Preserves last known Vick record across query failures.
+ * - On cache hit: isLoading is never set to true — card renders immediately.
+ * - On cache miss: runs multi-path lookup once, then caches.
  * - Vick is not optional — this card must render every time.
  */
-
-// ── Multi-path Vick lookup ────────────────────────────────────────────────────
-// Path 1: character_type === 'npc_world_service'
-// Path 2: is_world_service === true
-// Path 3: diagnostic_only === true  (legacy flag)
-// Path 4: name/display_name/primary_name includes 'vick servicio'
-// Path 5: fetchNPCsForUser backend fallback (covers ownership gaps)
-
-function isVickRecord(c) {
-  if (!c) return false;
-  if (c.character_type === 'npc_world_service') return true;
-  if (c.is_world_service === true) return true;
-  if (c.diagnostic_only === true) return true;
-  const names = [c.name, c.display_name, c.primary_name].filter(Boolean).map(n => n.toLowerCase());
-  return names.some(n => n.includes('vick servicio'));
-}
 
 async function resolveVickRecord(ownerEmail) {
   // Path 1: service type filter
@@ -58,8 +47,14 @@ async function resolveVickRecord(ownerEmail) {
 
 export default function VickServiceCard({ ownerEmail }) {
   const navigate = useNavigate();
-  const [vick, setVick] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+
+  // ── STABLE INITIALISATION: if cache already has Vick, start with him immediately.
+  // This is the key fix for the flicker: on re-mount after navigation, getCachedVick()
+  // returns the already-resolved record synchronously, so isLoading starts as false
+  // and the card renders in its full state with zero async delay.
+  const cachedOnMount = getCachedVick();
+  const [vick, setVick] = useState(cachedOnMount);
+  const [isLoading, setIsLoading] = useState(!cachedOnMount);
   const [conversationId, setConversationId] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [latestMessage, setLatestMessage] = useState(null);
@@ -67,39 +62,47 @@ export default function VickServiceCard({ ownerEmail }) {
   const [investigations, setInvestigations] = useState([]);
   const [showQueue, setShowQueue] = useState(false);
 
-  // Preserve last known Vick across re-renders — never overwrite with null on failure
-  const lastKnownVickRef = useRef(null);
-
-  // ── MULTI-PATH VICK LOAD ───────────────────────────────────────────────────
+  // ── VICK LOAD — uses module-level cache, runs lookup only once per session ──
   useEffect(() => {
     if (!ownerEmail) { setIsLoading(false); return; }
+    // If already initialised from cache on mount, skip the async fetch
+    if (vick) return;
     let cancelled = false;
     const load = async () => {
       setIsLoading(true);
       try {
-        const found = await resolveVickRecord(ownerEmail);
+        const found = await getOrResolveVick(ownerEmail, () => resolveVickRecord(ownerEmail));
         if (cancelled) return;
         if (found) {
           setVick(found);
-          lastKnownVickRef.current = found;
-        } else if (lastKnownVickRef.current) {
-          // Keep last known Vick visible — do not hide due to transient query failure
-          setVick(lastKnownVickRef.current);
-          console.warn('[VickServiceCard] Multi-path lookup returned nothing — preserving last known Vick record');
+        } else {
+          console.warn('[VickServiceCard] No Vick record found via any lookup path');
         }
       } catch (err) {
         if (cancelled) return;
-        // Failure: preserve whatever we already have
-        if (lastKnownVickRef.current) {
-          setVick(lastKnownVickRef.current);
-        }
         console.warn('[VickServiceCard] Vick lookup error:', err?.message);
       }
       if (!cancelled) setIsLoading(false);
     };
     load();
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownerEmail]);
+
+  // ── LIVE VICK RECORD SYNC — keep cache fresh without full re-lookup ─────────
+  // Subscribe to Character updates. If Vick's own record is updated by the backend,
+  // patch state and cache in-place instead of triggering a full multi-path reload.
+  useEffect(() => {
+    if (!vick?.id) return;
+    const unsubscribe = base44.entities.Character.subscribe((event) => {
+      if (event.id !== vick.id) return;
+      if (event.type === 'update' && event.data) {
+        setVick(event.data);
+        updateVickCache(event.data);
+      }
+    });
+    return () => unsubscribe();
+  }, [vick?.id]);
 
   // ── INVESTIGATIONS ─────────────────────────────────────────────────────────
   const loadInvestigations = useCallback(() => {
