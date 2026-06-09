@@ -36,7 +36,10 @@ Deno.serve(async (req) => {
       { owner_email: ownerEmail }, 'name', 500
     ).catch(() => []);
 
-    const activeLiveChars = liveChars
+    // All non-deleted characters on this account are eligible World Phone participants.
+    // character_type is NOT a filter here — npc_world_service (Vick Servicio) and all
+    // other types are valid World Phone anchors. Homepage card eligibility is a separate system.
+    const eligibleLiveCharacters = liveChars
       .filter(c =>
         c.status !== 'deleted' &&
         c.status !== 'soft_deleted' &&
@@ -156,7 +159,7 @@ Deno.serve(async (req) => {
         // Suggest possible replacements based on name matches in messages
         name_based_suggestions: [...mentionedNames].map(name => {
           const lower = name.toLowerCase().trim();
-          const match = activeLiveChars.find(c => c.name?.toLowerCase()?.trim() === lower);
+          const match = eligibleLiveCharacters.find(c => c.name?.toLowerCase()?.trim() === lower);
           return match ? { name, matched_character: match } : { name, matched_character: null };
         }),
       });
@@ -171,7 +174,7 @@ Deno.serve(async (req) => {
       limit,
       has_more: offset + limit < totalCount,
       conversations: enriched,
-      live_characters: activeLiveChars,
+      live_characters: eligibleLiveCharacters,
     });
 
   } catch (error) {
