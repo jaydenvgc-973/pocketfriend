@@ -246,35 +246,35 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     return _finalizeAndSort(seen, familyInlineAvatars);
   }
 
-  // ── SINGLE FETCH: all owner Characters in one call ───────────────────────────
-  const [allOwnerChars, worldServiceChars] = await Promise.all([
+  // ── SINGLE FETCH: all owner Characters + conversations in one pass ───────────
+  const [allOwnerChars, existingConvos] = await Promise.all([
     base44.entities.Character.filter(
       { owner_email: ownerEmail, status: 'active' },
       null, 200
     ).catch(() => []),
-    // npc_world_service characters (e.g. Vick Servicio) are seeded globally and may have
-    // a different owner_email.
-    base44.entities.Character.filter(
-      { is_world_service: true },
-      null, 20
+    // Fetch conversations here so we can hoist conversation-linked IDs into the
+    // service-role supplement pass. This is the key fix for npc_world_service visibility:
+    // Vick has no owner_email so he's RLS-invisible, but the Conversation IS user-owned.
+    base44.entities.Conversation.filter(
+      { owner_email: ownerEmail, character_ids: [character.id] },
+      '-updated_date', 150
     ).catch(() => []),
   ]);
 
-  // Merge, deduplicating by id
   const allKnownChars = [...allOwnerChars];
   const ownerIds = new Set(allOwnerChars.map(c => c.id));
-  for (const ws of worldServiceChars) {
-    if (!ownerIds.has(ws.id)) allKnownChars.push(ws);
-  }
 
   // ── SUPPLEMENT: contact graph characters missing from the owner-scoped fetch ───
-  // Any character referenced by ID in fictional_relationships, family_members,
-  // or people_in_world that is NOT in allOwnerChars may be:
-  //   - a legacy record with null owner_email (invisible to RLS)
-  //   - a shared/world-service NPC owned differently
-  //   - a valid contact of ANY character_type in the known-contact graph
-  // Collect all referenced IDs, then supplement via service-role fetchCharactersByIds.
+  // Collect ALL referenced IDs from:
+  //   1. fictional_relationships, family_members, people_in_world on owned characters
+  //   2. The viewed character's own seen entries
+  //   3. Conversation participant lists (this is what recovers npc_world_service contacts)
+  //
+  // All of these are fed into fetchCharactersByIds which runs service-role to bypass
+  // owner_email RLS — making null-owner legacy records and global world-service
+  // characters visible when they are provably known to this account.
   const referencedContactIds = new Set();
+
   for (const c of allOwnerChars) {
     for (const rel of (c.fictional_relationships || [])) {
       if (rel.related_character_id && !ownerIds.has(rel.related_character_id)) {
@@ -286,38 +286,41 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
       if (id && !ownerIds.has(id)) referencedContactIds.add(id);
     }
   }
-  // Also collect from the viewed character's own contact graph entries already in seen
+
+  // From the viewed character's own contact entries already in seen
   for (const entry of seen.values()) {
     if (entry.related_character_id && !ownerIds.has(entry.related_character_id)) {
       referencedContactIds.add(entry.related_character_id);
     }
   }
 
+  // From conversation participants — this is the authorization proof for world-service contacts
+  const allConvoLinkedIds = new Set(
+    existingConvos.flatMap(c => [
+      ...(c.character_ids || []),
+      ...(c.participant_character_ids || []),
+    ]).filter(id => id !== character.id)
+  );
+  for (const id of allConvoLinkedIds) {
+    if (!ownerIds.has(id)) referencedContactIds.add(id);
+  }
+
   if (referencedContactIds.size > 0) {
-    // CRITICAL: base44.entities.Character.filter({ owner_email }) is user-scoped RLS.
-    // Any character record with null owner_email (legacy records, shared NPCs, etc.)
-    // is invisible to that query — hidden by RLS, not truly missing.
-    //
-    // This is a CONTACT GRAPH supplement, not an NPC-only path.
-    // We fetch any referenced character ID regardless of character_type.
-    // active_created_character, npc_fictitious, npc_regular, npc_family_member,
-    // npc_world_service — all are valid contact types.
-    //
-    // fetchCharactersByIds uses service-role to bypass owner_email RLS and returns
-    // the full Character record for each requested ID. Read-only, no writes.
+    // fetchCharactersByIds runs service-role with contact-graph verification.
+    // It accepts conversation participants as valid proof of contact, so
+    // npc_world_service characters (global, no owner_email) are recoverable here.
     try {
       const supplementRes = await base44.functions.invoke('fetchCharactersByIds', {
         ids: [...referencedContactIds],
       });
       const supplementChars = supplementRes?.data?.characters || [];
       for (const rec of supplementChars) {
-        if (ownerIds.has(rec.id)) continue; // already in list
+        if (ownerIds.has(rec.id)) continue;
         allKnownChars.push(rec);
         ownerIds.add(rec.id);
         console.log(`[ContactsResolver] Service-role supplemented contact: "${rec.name}" (${rec.character_type}) | id=${rec.id}`);
       }
     } catch (e) {
-      // Non-fatal — supplement failed, continue with what we have
       console.warn(`[ContactsResolver] Contact graph supplement failed: ${e.message}`);
     }
   }
@@ -342,36 +345,9 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
   }
 
   // ── SOURCE 4: conversation-linked characters ─────────────────────────────────
-  // Adds characters from green-channel conversations not already in the contact list.
-  // Also fetches shared/system NPCs not in the owner-scoped character list.
-  // CRITICAL: relationship label here is NOT based on npc_family_member character type.
-  //   It uses actual pair-specific relationship data only. npc_family_member type simply
-  //   means that character IS a family member type — it does NOT mean they are family to
-  //   the viewed character unless the viewed character's own relationship data says so.
-  const existingConvos = await base44.entities.Conversation.filter(
-    { owner_email: ownerEmail, character_ids: [character.id] },
-    '-updated_date', 150
-  ).catch(() => []);
-
-  const allConvoLinkedIds = new Set(
-    existingConvos.flatMap(c => [
-      ...(c.character_ids || []),
-      ...(c.participant_character_ids || []),
-    ]).filter(id => id !== character.id)
-  );
-
-  // Fetch any participant characters from conversations NOT already in allKnownChars.
-  // The contact graph supplement above already recovered null-owner and cross-account records.
-  // Any still-missing IDs here are owned by this user and visible via user-scoped query.
-  const missingIds = [...allConvoLinkedIds].filter(id => !charById.has(id));
-  if (missingIds.length > 0) {
-    const missingResults = await Promise.all(
-      missingIds.map(id => base44.entities.Character.filter({ id }).catch(() => []))
-    );
-    missingResults.forEach(records => {
-      if (records[0]) charById.set(records[0].id, records[0]);
-    });
-  }
+  // allConvoLinkedIds already computed above. charById already supplemented.
+  // No additional RLS-scoped fetch needed — service-role supplement covers all types
+  // including npc_world_service which would be invisible to client-side queries.
 
   for (const id of allConvoLinkedIds) {
     const lc = charById.get(id);
@@ -390,7 +366,6 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
       if (!existing.related_character_id) {
         existing.related_character_id = lc.id;
         existing._linkage = 'linked_from_conversation';
-        // Re-key the map entry from name-based to ID-based
         const oldKey = `name:${lc.name?.trim().toLowerCase()}`;
         if (seen.has(oldKey)) {
           seen.delete(oldKey);
@@ -400,30 +375,33 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
       continue;
     }
 
-    // New contact from conversation — only green-channel
+    // New contact from conversation — only green-channel or world-service (always contactable)
     if (isUserSelf({ owner_user_id: lc.owner_user_id, email: lc.owner_email, is_user: lc.is_user })) {
       console.log(`[ContactsResolver] EXCLUDED (user-self) conversation-linked entry: "${lc.name}"`);
       continue;
     }
 
-    const hasGreenConvo = existingConvos.some(c => {
-      const isGreen = c.channel === 'world_phone' || c.type === 'npc' || c.type === 'bilateral';
-      if (!isGreen) return false;
-      return (c.character_ids || []).includes(lc.id) ||
-             (c.participant_character_ids || []).includes(lc.id);
-    });
-    if (!hasGreenConvo) continue;
+    // npc_world_service characters are contactable without requiring a green-channel convo type —
+    // they are a verified service contact as long as a conversation exists (any type).
+    const isWorldService = lc.character_type === 'npc_world_service';
+    if (!isWorldService) {
+      const hasGreenConvo = existingConvos.some(c => {
+        const isGreen = c.channel === 'world_phone' || c.type === 'npc' || c.type === 'bilateral';
+        if (!isGreen) return false;
+        return (c.character_ids || []).includes(lc.id) ||
+               (c.participant_character_ids || []).includes(lc.id);
+      });
+      if (!hasGreenConvo) continue;
+    }
 
     // RELATIONSHIP LABEL: determined from pair-specific data ONLY.
     // npc_family_member character type = that character's own category, NOT their
     // relationship to the viewed character. Use 'Contact' as neutral default.
-    // The only exception: if this character appears in the viewed character's
-    // family_members list (handled in SOURCE 1 above) — but that already added them
-    // with the correct label, so we would have found them in findExistingEntry above.
-    const relLabel = lc.character_type === 'npc_fictitious' ? 'Known Contact'
+    // npc_world_service = service/support character — labeled clearly, never as civilian.
+    const relLabel = lc.character_type === 'npc_world_service' ? 'Service & Support'
+      : lc.character_type === 'npc_fictitious' ? 'Known Contact'
       : lc.character_type === 'npc_regular' ? 'Contact'
       : lc.character_type === 'npc_family_member' ? 'Contact'  // NOT 'Family' — pair-specific only
-      : lc.character_type === 'npc_world_service' ? 'Service Contact'
       : 'Contact';
 
     seen.set(lc.id, {

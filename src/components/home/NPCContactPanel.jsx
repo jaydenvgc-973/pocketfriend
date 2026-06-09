@@ -183,7 +183,9 @@ export default function NPCContactPanel() {
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">{npc.name}</p>
-                        <p className="text-xs text-muted-foreground truncate capitalize">{npc.character_type}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {npc.character_type === 'npc_world_service' ? 'Service & Support' : 'NPC'}
+                        </p>
                       </div>
                     </div>
                     {unreadByContact[npc.name] > 0 && (
@@ -195,22 +197,25 @@ export default function NPCContactPanel() {
                         {unreadByContact[npc.name] > 9 ? '9+' : unreadByContact[npc.name]}
                       </motion.div>
                     )}
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <button
-                        onClick={(e) => handleMarkAsActive(e, npc)}
-                        className="p-1 rounded hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors"
-                        title="Not an NPC — move to active characters"
-                      >
-                        <UserCheck className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={(e) => handleDeleteNPC(e, npc.id)}
-                        className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                        title="Delete NPC"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
+                    {/* npc_world_service characters are permanent — hide destructive/promotion actions */}
+                    {npc.character_type !== 'npc_world_service' && (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={(e) => handleMarkAsActive(e, npc)}
+                          className="p-1 rounded hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors"
+                          title="Not an NPC — move to active characters"
+                        >
+                          <UserCheck className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => handleDeleteNPC(e, npc.id)}
+                          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                          title="Delete NPC"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
                   </motion.button>
                 ))}
               </div>

@@ -12,10 +12,11 @@
  *
  * Security model — CONTACT GRAPH VERIFICATION:
  * - Requires authenticated session.
- * - Requested IDs are cross-checked against the calling user's actual contact
- *   graph (fictional_relationships, family_members, people_in_world across ALL
- *   owned characters). IDs not in the contact graph are silently excluded —
- *   arbitrary ID fishing is not possible.
+ * - Requested IDs are cross-checked against the calling user's FULL contact graph:
+ *     1. fictional_relationships, family_members, people_in_world on owned characters
+ *     2. participant_character_ids and character_ids in owned Conversation records
+ *   IDs that appear in neither source are silently excluded — arbitrary ID fishing
+ *   is not possible.
  * - Excludes deleted/soft_deleted/merged records.
  * - Does NOT filter by character_type — all contact types are valid.
  * - Does NOT write anything — read-only.
@@ -39,15 +40,29 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 1: Build the caller's verified contact graph ─────────────────────
-    // Load all characters owned by this account to extract every valid contact ID.
-    // This is the authorization gate — only IDs actually present in the user's
-    // contact graph are eligible for service-role fetch.
-    const ownedChars = await base44.asServiceRole.entities.Character.filter(
-      { owner_email: user.email },
-      null, 500
-    );
+    // Two sources of proof that a character ID is known to this account:
+    //   (a) Explicitly referenced in owned character relationship/family data
+    //   (b) Appears as a participant in a Conversation owned by this account
+    //
+    // npc_world_service characters (e.g. Vick Servicio) are global — they have no
+    // owner_email, so they are invisible to user-scoped RLS queries. However, if the
+    // user has an active Conversation with them, that conversation IS owned by the
+    // user and proves the contact relationship. Source (b) is the authorization gate
+    // that allows world-service contacts to be recovered for the contact list.
+    const [ownedChars, ownedConvos] = await Promise.all([
+      base44.asServiceRole.entities.Character.filter(
+        { owner_email: user.email },
+        null, 500
+      ),
+      base44.asServiceRole.entities.Conversation.filter(
+        { owner_email: user.email },
+        null, 300
+      ),
+    ]);
 
     const verifiedContactIds = new Set();
+
+    // Source (a): relationship/family/people arrays on owned characters
     for (const c of ownedChars) {
       for (const rel of (c.fictional_relationships || [])) {
         if (rel.related_character_id) verifiedContactIds.add(rel.related_character_id);
@@ -58,6 +73,16 @@ Deno.serve(async (req) => {
       }
       for (const p of (c.people_in_world || c.known_people || [])) {
         const id = p.related_character_id || p.character_id;
+        if (id) verifiedContactIds.add(id);
+      }
+    }
+
+    // Source (b): conversation participants in account-owned threads
+    for (const convo of ownedConvos) {
+      for (const id of (convo.character_ids || [])) {
+        if (id) verifiedContactIds.add(id);
+      }
+      for (const id of (convo.participant_character_ids || [])) {
         if (id) verifiedContactIds.add(id);
       }
     }
