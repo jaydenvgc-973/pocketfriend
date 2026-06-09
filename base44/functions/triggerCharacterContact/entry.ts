@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { senderCharacterId, receiverCharacterName, receiverCharacterId, topic, messageContent, trigger_source } = await req.json();
+    const { senderCharacterId, receiverCharacterName, receiverCharacterId, topic, messageContent, trigger_source, user_instruction_context } = await req.json();
 
     if (!senderCharacterId || (!receiverCharacterName && !receiverCharacterId)) {
       return Response.json({
@@ -87,8 +87,35 @@ Deno.serve(async (req) => {
     }
 
     // ── 2. BUILD MESSAGE CONTENT ─────────────────────────────────────────────
+    // PIPELINE AUTHORITY GUARD:
+    // messageContent must be Character A's authored message, not the user's instruction text.
+    // If messageContent looks like it echoes the user_instruction_context (i.e. someone upstream
+    // passed the user's raw sentence as messageContent), discard it and regenerate in character voice.
     let finalMessage = messageContent?.trim() || null;
     const resolvedReceiverName = receiverCharacterName || '';
+
+    // Echo guard: if messageContent substantially matches user_instruction_context, discard it.
+    if (finalMessage && user_instruction_context) {
+      const normFinal = finalMessage.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      const normInstruction = (user_instruction_context || '').toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (normFinal === normInstruction) {
+        console.warn('[triggerCharacterContact] EchoGuard: messageContent is identical to user_instruction_context — discarding, will regenerate in character voice');
+        finalMessage = null;
+      } else {
+        // Jaccard check inline (no import needed in Deno function)
+        const tokA = new Set(normFinal.split(' ').filter(w => w.length > 2));
+        const tokB = new Set(normInstruction.split(' ').filter(w => w.length > 2));
+        if (tokA.size > 0 && tokB.size > 0) {
+          const inter = [...tokA].filter(w => tokB.has(w)).length;
+          const union = new Set([...tokA, ...tokB]).size;
+          const similarity = inter / union;
+          if (similarity >= 0.65) {
+            console.warn(`[triggerCharacterContact] EchoGuard: messageContent (${Math.round(similarity*100)}% overlap with user instruction) — discarding`);
+            finalMessage = null;
+          }
+        }
+      }
+    }
 
     if (!finalMessage) {
       const canonicalRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
@@ -98,14 +125,24 @@ Deno.serve(async (req) => {
       }).catch(() => null);
       const senderContext = canonicalRes?.data?.systemPrompt || `You are ${sender.name}.`;
 
+      // topic is the SUBJECT/REASON — not the user's instruction sentence.
+      // user_instruction_context is stored for context awareness only — never becomes message body.
+      const topicForGeneration = topic || (user_instruction_context
+        ? `reaching out (context: ${user_instruction_context})`
+        : 'catching up');
+
       finalMessage = await base44.asServiceRole.integrations.Core.InvokeLLM({
         prompt: `${senderContext}
 
-You need to contact ${resolvedReceiverName || 'them'} about: ${topic || 'catching up'}.
+You are writing a text message to ${resolvedReceiverName || 'someone you know'}.
+Topic/reason: ${topicForGeneration}
 
-Write a short, natural text message (1-3 sentences) that you would send them right now.
-Write in your own voice. Make it feel spontaneous and real, not formal.
-Return only the message text, nothing else.`,
+IMPORTANT RULES:
+- Write this message in YOUR OWN voice as ${sender.name}.
+- This is the message YOU are sending TO ${resolvedReceiverName || 'them'} — not something you say to the user.
+- Do NOT repeat or echo any instruction you were given. Generate original content.
+- Keep it short, natural, 1-3 sentences. Spontaneous and real.
+- Return ONLY the message text. Nothing else.`,
       }).catch(() => null);
       finalMessage = (finalMessage || '').trim();
     }

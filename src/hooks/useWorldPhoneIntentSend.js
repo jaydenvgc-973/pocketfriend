@@ -15,6 +15,7 @@
 
 import { base44 } from "@/api/base44Client";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
+import { checkEcho, isVerificationRequest, isExactSendInstruction } from "@/lib/worldPhoneEchoGuard";
 
 /**
  * buildWorldPhonePayload
@@ -22,11 +23,17 @@ import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
  * Constructs the sendWorldPhoneMessage payload from a detected intent + conversation context.
  * Shared by both Chat.jsx inline path and useWorldPhoneIntentSend hook.
  *
- * KEY RULE: Never pass the raw user instruction as requested_message.
- * - If intent.message exists (actual content to relay) → use it as requested_message
- * - If intent.message is null (bare command like "send it", "text him") → pass null
- *   and pass user_instruction_context + recent_conversation_context so the backend
- *   can recover the pending intent from conversation history.
+ * PIPELINE AUTHORITY RULES:
+ *
+ * Field classifications:
+ *   user_instruction_context   — what the user told Character A to do. NEVER becomes Message.content.
+ *   requested_message          — outbound content ONLY if (a) the user explicitly said "send this exact
+ *                                message" OR (b) the detected message is clearly NOT the user's instruction
+ *                                text (i.e. it passed the echo guard).
+ *   generated_outbound_message — the backend generates this in Character A's voice when requested_message is null.
+ *
+ * The echo guard blocks any case where the user's raw sentence would become Character B's received message.
+ * Past-tense queries ("Did you reach out to X?") are verification requests — they never trigger a send.
  */
 export function buildWorldPhonePayload({
   intent,
@@ -41,11 +48,38 @@ export function buildWorldPhonePayload({
     `${m.sender_type === 'user' ? 'User' : characterName}: ${m.content || ''}`
   ).join('\n') + `\nUser: ${text}`;
 
+  // ── ECHO GUARD: never let the user's instruction become the outbound message ──
+  // If intent.message was extracted from the user's text, check whether it's actually
+  // a user instruction sentence rather than explicit relay content.
+  let safeRequestedMessage = intent.message || null;
+
+  if (safeRequestedMessage) {
+    // Block if the candidate message echoes the user's trigger sentence
+    const { isEcho, reason } = checkEcho(text, safeRequestedMessage);
+    if (isEcho) {
+      console.warn(`[WorldPhone:EchoGuard] Blocked echo (${reason}) — user instruction will not become outbound message. Regenerating in character voice.`);
+      safeRequestedMessage = null;
+    }
+    // Block if this is a verification request — "did you reach out to X?" is not a send trigger
+    // and the extracted "message" would be the question itself
+    if (safeRequestedMessage && isVerificationRequest(text)) {
+      console.warn('[WorldPhone:EchoGuard] Blocked: user message is a verification request, not a send instruction.');
+      safeRequestedMessage = null;
+    }
+    // Only allow verbatim if user explicitly asked for exact-send
+    if (!safeRequestedMessage && isExactSendInstruction(text)) {
+      safeRequestedMessage = intent.message;
+    }
+  }
+
   const payload = {
     sender_character_id: characterId,
-    requested_message: intent.message || null,
-    user_instruction_context: intent.message ? null : text,
-    recent_conversation_context: intent.message ? null : recentConvoContext,
+    // Only pass requested_message if it survived the echo guard
+    requested_message: safeRequestedMessage,
+    // Always pass user_instruction_context so the backend knows what the user asked for
+    // (used as topic context for LLM generation, never as message body)
+    user_instruction_context: text,
+    recent_conversation_context: recentConvoContext,
     source: 'user_instruction',
     current_conversation_id: conversationId,
     owner_email: currentUserEmail,

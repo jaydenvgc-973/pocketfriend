@@ -34,6 +34,7 @@
 
 import { detectCharacterWorldPhoneAction, detectCharacterProactiveOutreach, stripFabricatedReplyFromResponse } from "@/lib/worldPhoneIntentDetector";
 import { base44 } from "@/api/base44Client";
+import { checkEcho } from "@/lib/worldPhoneEchoGuard";
 
 /**
  * Resolves a pronoun to a real recipient name from recent conversation messages.
@@ -78,10 +79,22 @@ export async function handleCharacterWorldPhoneAction({
   if (pastTenseAction) {
     console.log('[WorldPhone] past-tense claim detected:', pastTenseAction);
 
+    // PIPELINE AUTHORITY: past-tense claim has an extracted message only if the character's
+    // own response text contained it. We must NEVER use `responseText` (Character A's full
+    // reply to the user) as the outbound message to Character B — it would send Character A's
+    // user-facing dialogue verbatim to Character B.
+    // If pastTenseAction.message is null, pass null and let sendWorldPhoneMessage generate
+    // a character-voiced message using user_instruction_context as topic context only.
+    const candidateMessage = pastTenseAction.message || null;
+
     const result = await base44.functions.invoke('sendWorldPhoneMessage', {
       sender_character_id: characterId,
       recipient_identifier: pastTenseAction.recipient,
-      requested_message: pastTenseAction.message || responseText,
+      requested_message: candidateMessage,
+      // Never pass responseText as outbound content — it's Character A's reply to the user
+      user_instruction_context: candidateMessage
+        ? null
+        : `${character.name} previously mentioned contacting ${pastTenseAction.recipient}`,
       source: 'character_action',
       current_conversation_id: conversationId,
       owner_email: ownerEmail,
