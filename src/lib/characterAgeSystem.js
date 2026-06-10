@@ -10,34 +10,60 @@
  */
 
 /**
- * Calculate character age from birthday or age field
+ * Calculate character age from birthday or age field.
+ *
+ * STRICT RULES — no loose coercion:
+ *   - age === 0 is a valid numeric age (zero years old). Do NOT collapse it with null/missing.
+ *   - age === "" (empty string) is treated as MISSING, not as 0.
+ *   - age === null / undefined / missing field is treated as MISSING.
+ *   - Number("") is never used.
+ *   - if (!age) is never used (would incorrectly treat 0 as falsy).
+ *
+ * Returns: number (0 or greater) if age is known, or null if genuinely unknown.
  */
 export function getCharacterAge(character) {
   if (!character) return null;
-  
-  // Direct age field
-  if (typeof character.age === 'number' && character.age >= 0) {
-    return Math.floor(character.age);
+
+  const rawAge = character.age;
+
+  // Missing / blank / null → unknown age
+  if (
+    rawAge === undefined ||
+    rawAge === null ||
+    (typeof rawAge === 'string' && rawAge.trim() === '')
+  ) {
+    return null;
   }
-  
-  // Calculate from birthday
+
+  // Numeric age (including 0) — trust it directly
+  if (typeof rawAge === 'number' && Number.isFinite(rawAge) && rawAge >= 0) {
+    return Math.floor(rawAge);
+  }
+
+  // String that looks like a valid non-negative integer — parse strictly
+  if (typeof rawAge === 'string') {
+    const parsed = parseInt(rawAge, 10);
+    if (!isNaN(parsed) && parsed >= 0 && String(parsed) === rawAge.trim()) {
+      return parsed;
+    }
+    // Malformed string (e.g. "abc", "0.5") → treat as unknown
+    return null;
+  }
+
+  // Calculate from birthday if age field is absent/unparseable
   if (character.birthday) {
     const today = new Date();
     const birth = new Date(character.birthday);
-    let age = today.getFullYear() - birth.getFullYear();
-    const monthDiff = today.getMonth() - birth.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
-      age--;
+    if (!isNaN(birth.getTime())) {
+      let age = today.getFullYear() - birth.getFullYear();
+      const monthDiff = today.getMonth() - birth.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+        age--;
+      }
+      return age >= 0 ? age : null;
     }
-    return age >= 0 ? age : null;
   }
-  
-  // For family members in the Character record
-  if (character.family_members && Array.isArray(character.family_members)) {
-    // Family members store age_at_creation
-    // This is more complex and should be handled at the character level
-  }
-  
+
   return null;
 }
 
