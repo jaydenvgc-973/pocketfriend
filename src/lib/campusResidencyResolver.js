@@ -56,9 +56,19 @@
  */
 
 // SCHOOL TYPE RESIDENCY RULE — architectural constant, enforced globally.
-// Grammar school and high school are NEVER residential. No campus residency is possible.
-// Only college/university/trade_school may have campus residents.
-const NON_RESIDENTIAL_SCHOOL_TYPES = ['high_school', 'private_school', 'language_school', 'music_school', 'online_school'];
+//
+// NON-RESIDENTIAL (campus residency impossible, forced):
+//   daycare_preschool, elementary_school, high_school, private_school, language_school, music_school, online_school
+//
+// RESIDENTIAL (campus residency always on, forced):
+//   boarding_school
+//
+// RESIDENTIAL OR NON-RESIDENTIAL (user's choice preserved):
+//   college, university, trade_school, other
+//
+const NON_RESIDENTIAL_SCHOOL_TYPES = ['daycare_preschool', 'elementary_school', 'high_school', 'private_school', 'language_school', 'music_school', 'online_school'];
+const ALWAYS_RESIDENTIAL_SCHOOL_TYPES = ['boarding_school'];
+const USER_CHOICE_SCHOOL_TYPES = ['college', 'university', 'trade_school', 'other'];
 
 /**
  * Returns true if this school type can ever support campus residency.
@@ -70,6 +80,21 @@ const NON_RESIDENTIAL_SCHOOL_TYPES = ['high_school', 'private_school', 'language
 export function isResidentialSchoolType(schoolType) {
   if (!schoolType) return true; // unknown: fall through to lives_on_campus check
   return !NON_RESIDENTIAL_SCHOOL_TYPES.includes(schoolType);
+}
+
+/**
+ * Returns 'non_residential' | 'always_residential' | 'user_choice'
+ * for the given school type.
+ *
+ * - 'non_residential'     → daycare_preschool, elementary_school, high_school, etc.
+ * - 'always_residential'  → boarding_school
+ * - 'user_choice'         → college, university, trade_school, other, unknown
+ */
+export function getSchoolResidencyMode(schoolType) {
+  if (!schoolType) return 'user_choice';
+  if (NON_RESIDENTIAL_SCHOOL_TYPES.includes(schoolType)) return 'non_residential';
+  if (ALWAYS_RESIDENTIAL_SCHOOL_TYPES.includes(schoolType)) return 'always_residential';
+  return 'user_choice';
 }
 
 /**

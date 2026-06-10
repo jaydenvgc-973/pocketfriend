@@ -380,7 +380,10 @@
     "school_type": {
       "type": "string",
       "enum": [
+        "daycare_preschool",
+        "elementary_school",
         "high_school",
+        "boarding_school",
         "college",
         "university",
         "trade_school",
@@ -389,7 +392,8 @@
         "music_school",
         "online_school",
         "other"
-      ]
+      ],
+      "description": "Type of school. Determines residency rules: daycare_preschool/elementary_school/high_school = non-residential; boarding_school = always residential; college/university = residential or non-residential (user choice)."
     },
     "community_type": {
       "type": "string",

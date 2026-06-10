@@ -19,15 +19,29 @@ import CharacterAvatar from '@/components/chat/CharacterAvatar';
  * All queries use owner_email — never created_by.
  */
 // SCHOOL TYPE RESIDENCY RULE — mirrors campusResidencyResolver.js and campusResidencyGuard.
-// Grammar school and high school are NEVER residential. No campus residency UI is shown.
-// Only college/university/trade_school may ever support campus housing.
-const NON_RESIDENTIAL_SCHOOL_TYPES = ['high_school', 'private_school', 'language_school', 'music_school', 'online_school'];
+//
+// NON-RESIDENTIAL (no campus residency option, warning shown):
+//   daycare_preschool, elementary_school, high_school
+//
+// ALWAYS RESIDENTIAL (forced residential, toggle hidden):
+//   boarding_school
+//
+// USER CHOICE (Residential / Non-residential toggle shown):
+//   college, university
+//
+const NON_RESIDENTIAL_SCHOOL_TYPES = ['daycare_preschool', 'elementary_school', 'high_school', 'private_school', 'language_school', 'music_school', 'online_school'];
+const ALWAYS_RESIDENTIAL_SCHOOL_TYPES = ['boarding_school'];
 
-function schoolSupportsResidency(location) {
+/**
+ * Returns 'non_residential' | 'always_residential' | 'user_choice'
+ */
+function getResidencyMode(location) {
   const t = location?.school_type;
-  if (!t) return false; // unknown type: no residency option unless explicitly a college/university
-  if (NON_RESIDENTIAL_SCHOOL_TYPES.includes(t)) return false;
-  return ['college', 'university', 'trade_school'].includes(t);
+  if (!t) return 'user_choice';
+  if (NON_RESIDENTIAL_SCHOOL_TYPES.includes(t)) return 'non_residential';
+  if (ALWAYS_RESIDENTIAL_SCHOOL_TYPES.includes(t)) return 'always_residential';
+  // college, university, trade_school, other
+  return 'user_choice';
 }
 
 export default function SchoolEnrollmentSection({ location, onUpdate }) {
@@ -35,7 +49,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [selectedCharIds, setSelectedCharIds] = useState(new Set());
   const [scholarshipEnabled, setScholarshipEnabled] = useState(false);
-  const [livesOnCampus, setLivesOnCampus] = useState(false);
+  const residencyMode = getResidencyMode(location);
+  // boarding_school always starts as residential; non-residential types always false
+  const [livesOnCampus, setLivesOnCampus] = useState(residencyMode === 'always_residential');
   const [enrolling, setEnrolling] = useState(false);
   const [programName, setProgramName] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -82,6 +98,12 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
     setEnrolling(true);
     setEnrollError('');
     try {
+      // Enforce residency mode at the UI layer — backend also enforces this
+      const effectiveLivesOnCampus =
+        residencyMode === 'always_residential' ? true :
+        residencyMode === 'non_residential' ? false :
+        livesOnCampus;
+
       const results = await Promise.allSettled([...selectedCharIds].map(charId =>
         base44.functions.invoke('enrollCharacterInSchool', {
           character_id: charId,
@@ -93,7 +115,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
           scholarship_enabled: scholarshipEnabled,
           start_date: startDate || null,
           end_date: endDate || null,
-          lives_on_campus: livesOnCampus,
+          lives_on_campus: effectiveLivesOnCampus,
         })
       ));
       const failures = results.filter(r => r.status === 'rejected');
@@ -104,7 +126,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
 
       // If lives on campus, also update location residents and character home
       let newResidents = [...(location.residents || [])];
-      if (livesOnCampus && failures.length === 0) {
+      if (effectiveLivesOnCampus && failures.length === 0) {
         const toAdd = characters.filter(c => selectedCharIds.has(c.id));
         toAdd.forEach(char => {
           if (!newResidents.some(r => r.character_id === char.id)) {
@@ -133,7 +155,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             enrollment_type: enrollmentType,
             scholarship_enabled: scholarshipEnabled,
             tuition_amount: scholarshipEnabled ? 0 : (location.tuition_cost || 0),
-            lives_on_campus: livesOnCampus,
+            lives_on_campus: effectiveLivesOnCampus,
             status: 'active',
           }));
 
@@ -152,7 +174,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
               education_location_name: c.education_location_name || location.name,
               current_school_location_id: location.id,
               student_status: 'enrolled',
-              ...(livesOnCampus ? { current_home_location_id: location.id } : {}),
+              ...(effectiveLivesOnCampus ? { current_home_location_id: location.id } : {}),
             };
           });
           queryClient.setQueryData(charCacheKey, patchedChars);
@@ -327,7 +349,6 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
     cancelEdit();
   };
 
-  const supportsResidency = schoolSupportsResidency(location);
   const tuitionDisplay = location.tuition_cost || 0;
   const frequencyDisplay = location.tuition_frequency || 'annual';
 
@@ -459,8 +480,8 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                 <span className="text-sm text-foreground">Scholarship (free tuition) — applies to all selected</span>
               </label>
 
-              {/* Lives on Campus — only shown for college/university (residential school types) */}
-              {supportsResidency ? (
+              {/* Campus Residency — three modes based on school type */}
+              {residencyMode === 'user_choice' && (
                 <div className="p-3 rounded-xl border border-border bg-card space-y-2">
                   <div className="flex items-center gap-2">
                     <Home className="w-4 h-4 text-blue-400" />
@@ -473,7 +494,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                         livesOnCampus ? 'bg-blue-500/10 border-blue-500/50 text-blue-400' : 'bg-card border-border text-muted-foreground hover:border-blue-500/30'
                       }`}
                     >
-                      🏠 Lives on campus
+                      Residential
                     </button>
                     <button
                       onClick={() => setLivesOnCampus(false)}
@@ -481,7 +502,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                         !livesOnCampus ? 'bg-secondary border-border text-foreground' : 'bg-card border-border text-muted-foreground hover:border-border'
                       }`}
                     >
-                      🏘 Does not live on campus
+                      Non-residential
                     </button>
                   </div>
                   {livesOnCampus && (
@@ -490,7 +511,14 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                     </p>
                   )}
                 </div>
-              ) : (
+              )}
+              {residencyMode === 'always_residential' && (
+                <div className="p-2.5 rounded-xl border border-blue-500/30 bg-blue-500/5 flex items-center gap-2">
+                  <Home className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                  <p className="text-xs text-blue-400">Boarding school — all students are Residential. Character's home will be set to this school.</p>
+                </div>
+              )}
+              {residencyMode === 'non_residential' && (
                 <div className="p-2.5 rounded-xl border border-border bg-secondary/30 flex items-center gap-2">
                   <Home className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                   <p className="text-xs text-muted-foreground">Campus residency not available — this school type is non-residential. Students live at their own assigned home.</p>
@@ -561,18 +589,16 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                             <span className="text-xs text-yellow-400">Scholarship</span>
                           </div>
                         )}
-                        {/* Campus residency — shown for all school types.
-                            For non-residential types: always "Does not live on campus" (not editable).
-                            For residential types: shows actual saved value. */}
+                        {/* Campus residency badge */}
                         <span className={`text-xs flex items-center gap-1 px-1.5 py-0.5 rounded-md border ${
-                          supportsResidency && isOnCampus
+                          isOnCampus
                             ? 'text-blue-400 bg-blue-500/10 border-blue-500/30'
                             : 'text-muted-foreground bg-secondary/50 border-border'
                         }`}>
                           <Home className="w-3 h-3" />
-                          {supportsResidency
-                            ? (isOnCampus ? 'Lives on campus' : 'Does not live on campus')
-                            : 'Non-residential school'
+                          {residencyMode === 'non_residential'
+                            ? 'Non-residential'
+                            : (isOnCampus ? 'Residential' : 'Non-residential')
                           }
                         </span>
                       </div>
@@ -682,8 +708,8 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                         />
                         <span className="text-xs text-foreground">Scholarship (free tuition)</span>
                       </label>
-                      {/* Campus residency — only editable for college/university (residential school types) */}
-                      {supportsResidency ? (
+                      {/* Campus residency edit — three modes */}
+                      {residencyMode === 'user_choice' && (
                         <div className="space-y-1">
                           <label className="text-xs text-muted-foreground uppercase tracking-wider block">Campus Residency</label>
                           <div className="flex gap-2">
@@ -696,7 +722,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                                   : 'bg-card border-border text-muted-foreground hover:border-blue-500/30'
                               }`}
                             >
-                              🏠 Lives on campus
+                              Residential
                             </button>
                             <button
                               type="button"
@@ -707,17 +733,21 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                                   : 'bg-card border-border text-muted-foreground hover:border-border'
                               }`}
                             >
-                              🏘 Does not live on campus
+                              Non-residential
                             </button>
                           </div>
                           {editFields.lives_on_campus && (
                             <p className="text-xs text-blue-400/80">Character's home will be set to this campus.</p>
                           )}
-                          {!editFields.lives_on_campus && (
-                            <p className="text-xs text-muted-foreground">Character sleeps at their own home, not on campus.</p>
-                          )}
                         </div>
-                      ) : (
+                      )}
+                      {residencyMode === 'always_residential' && (
+                        <div className="flex items-center gap-2 p-2 rounded-lg bg-blue-500/5 border border-blue-500/30">
+                          <Home className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                          <p className="text-xs text-blue-400">Boarding school — Residential only.</p>
+                        </div>
+                      )}
+                      {residencyMode === 'non_residential' && (
                         <div className="flex items-center gap-2 p-2 rounded-lg bg-secondary/30 border border-border">
                           <Home className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                           <p className="text-xs text-muted-foreground">Non-residential school — students always live at their own home.</p>

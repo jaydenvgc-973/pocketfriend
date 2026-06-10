@@ -83,16 +83,36 @@ Deno.serve(async (req) => {
         else if (school.tuition_frequency === 'semester') tuitionAmount = tuitionAmount / 6;
       }
 
-      // SCHOOL TYPE RESIDENCY RULE:
-      // Grammar school and high school are NON-RESIDENTIAL. Campus residency is impossible.
-      // College/university may support campus residency when explicitly selected.
-      // Any other school type: campus residency not supported.
-      const RESIDENTIAL_SCHOOL_TYPES = ['college', 'university', 'trade_school', 'other'];
-      const isResidentialSchoolType = !school.school_type || RESIDENTIAL_SCHOOL_TYPES.includes(school.school_type);
-      const effectiveLivesOnCampus = isResidentialSchoolType && (body.lives_on_campus === true);
-      if (body.lives_on_campus === true && !isResidentialSchoolType) {
-        console.warn(`[enrollCharacterInSchool] ⛔ campus residency rejected: school_type="${school.school_type}" is non-residential. lives_on_campus forced to false.`);
+      // SCHOOL TYPE RESIDENCY RULE (enforced at backend — mirrors UI and campusResidencyResolver):
+      //
+      // NON-RESIDENTIAL (forced false regardless of request):
+      //   daycare_preschool, elementary_school, high_school, private_school, language_school, music_school, online_school
+      //
+      // ALWAYS RESIDENTIAL (forced true regardless of request):
+      //   boarding_school
+      //
+      // USER CHOICE (preserve request value):
+      //   college, university, trade_school, other, unknown/null
+      //
+      const NON_RESIDENTIAL_SCHOOL_TYPES = ['daycare_preschool', 'elementary_school', 'high_school', 'private_school', 'language_school', 'music_school', 'online_school'];
+      const ALWAYS_RESIDENTIAL_SCHOOL_TYPES = ['boarding_school'];
+
+      let effectiveLivesOnCampus;
+      if (school.school_type && NON_RESIDENTIAL_SCHOOL_TYPES.includes(school.school_type)) {
+        effectiveLivesOnCampus = false;
+        if (body.lives_on_campus === true) {
+          console.warn(`[enrollCharacterInSchool] ⛔ campus residency rejected: school_type="${school.school_type}" is non-residential. Forced to false.`);
+        }
+      } else if (school.school_type && ALWAYS_RESIDENTIAL_SCHOOL_TYPES.includes(school.school_type)) {
+        effectiveLivesOnCampus = true;
+        // boarding_school is always residential regardless of what was passed
+      } else {
+        // college, university, trade_school, other, or unknown → preserve user's choice
+        effectiveLivesOnCampus = body.lives_on_campus === true;
       }
+
+      // Only Residential enrollment changes residence — non-residential enrollment must NOT change home.
+      // Home update is handled after this block only when effectiveLivesOnCampus === true.
 
       // Update school enrolled_students — include all date + program fields so location card stays in sync
       const enrollNow = new Date().toISOString();
@@ -115,12 +135,28 @@ Deno.serve(async (req) => {
       await base44.entities.LocationReference.update(school.id, { enrolled_students: updatedStudents });
 
       // Update character top-level student fields
-      await base44.entities.Character.update(character_id, {
+      const charTopLevelUpdate = {
         student_status: 'enrolled',
         education_location_id: location_id,
         education_location_name: school.name,
         current_school_location_id: location_id,
-      });
+      };
+      // Only Residential enrollment changes the character's home location.
+      // Non-residential enrollment must NEVER change current_home_location_id.
+      if (effectiveLivesOnCampus) {
+        charTopLevelUpdate.current_home_location_id = location_id;
+        // Also add to location residents array
+        const currentResidents = school.residents || [];
+        if (!currentResidents.some(r => r.character_id === character_id)) {
+          currentResidents.push({
+            character_id,
+            character_name: character.name,
+            moved_in_date: new Date().toISOString(),
+          });
+          await base44.entities.LocationReference.update(school.id, { residents: currentResidents });
+        }
+      }
+      await base44.entities.Character.update(character_id, charTopLevelUpdate);
 
       // Update education_enrollments — MUST include lives_on_campus so campusResidencyGuard reads it correctly.
       // lives_on_campus is only ever true for college/university (residential school types).
