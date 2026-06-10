@@ -1,58 +1,67 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
+/**
+ * setupCharacterHome
+ *
+ * Sets up the home location linkage for a character. This function ONLY handles
+ * location assignment — it never creates or modifies CharacterFinancial records.
+ *
+ * Financial initialization is the sole responsibility of the onCharacterCreated
+ * entity automation, which runs server-side with the correct owner_email already
+ * stamped on the saved Character record.
+ *
+ * Calling this from the frontend is now a no-op for location setup post-creation
+ * (the automation handles it), but the function is retained for manual admin use
+ * (e.g. re-linking a character to a new home location after a move).
+ *
+ * OWNERSHIP RULE: owner_email is always read from the saved Character record itself,
+ * never from the calling user's session, to avoid service-account contamination.
+ */
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    let characterId, characterName;
     const body = await req.json();
-    
-    // Support both direct params and automation payload format
-    if (body.event) {
-      // Automation trigger format
-      characterId = body.data?.id;
-      characterName = body.data?.name;
-    } else {
-      // Direct function call format
-      characterId = body.characterId;
-      characterName = body.characterName;
+    const characterId = body.characterId || body.character_id;
+    const characterName = body.characterName || body.character_name;
+
+    if (!characterId) {
+      return Response.json({ error: 'characterId is required' }, { status: 400 });
     }
 
-    if (!characterId || !characterName) {
-      return Response.json({ error: 'characterId and characterName required' }, { status: 400 });
+    // Fetch the authoritative character record to read ownership
+    const character = await base44.asServiceRole.entities.Character.get(characterId);
+    if (!character) {
+      return Response.json({ error: `Character ${characterId} not found` }, { status: 404 });
     }
 
-    // Check if character already has a financial record
-    const existingFinancial = await base44.asServiceRole.entities.CharacterFinancial.filter(
-      { character_id: characterId }
-    );
-    if (existingFinancial.length > 0) {
-      return Response.json({ success: false, message: 'Financial record already exists' });
+    // Owner email is read from the saved record — never from the calling session.
+    // This is the critical rule: service-role calls must not use user.email as owner.
+    const ownerEmail = character.owner_email;
+    const resolvedName = characterName || character.name;
+
+    // If the character already has a home location assigned, nothing to do here.
+    if (character.current_home_location_id) {
+      return Response.json({
+        success: true,
+        skipped: true,
+        reason: 'Character already has a home location assigned',
+        home_location_id: character.current_home_location_id,
+      });
     }
 
-    // Create financial record with no home location assigned
-    // User must explicitly assign a home via the Locations page
-    const financialRecord = await base44.asServiceRole.entities.CharacterFinancial.create({
-      character_id: characterId,
-      character_name: characterName,
-      owner_email: user.email,
-      home_location_id: null,
-      home_location_name: null,
-      is_homeless: true,
-      total_income: 0,
-      total_expenses: 0,
-      current_balance: 6000,
-      income_sources: [],
-      recurring_expenses: [],
-      last_updated: new Date().toISOString(),
-    });
+    // No home — log and return. The character will start without a home location.
+    // User assigns home via the Locations page. This is the correct flow.
+    console.log(`[setupCharacterHome] Character "${resolvedName}" (${characterId}) has no home location. User must assign via Locations page. owner_email=${ownerEmail}`);
 
     return Response.json({
       success: true,
-      financial_record_id: financialRecord.id,
-      message: 'Financial record created. User must assign a home location via Locations page.',
+      skipped: false,
+      message: 'No home location assigned. User must assign via Locations page.',
+      character_id: characterId,
+      owner_email: ownerEmail,
     });
   } catch (error) {
     console.error('[setupCharacterHome]', error);

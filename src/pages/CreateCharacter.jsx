@@ -566,6 +566,9 @@ Return ONLY a JSON object with a "memories" array. Each memory: { title, descrip
           ]).catch(() => {});
         }
 
+        // NOTE: Financial initialization is handled by onCharacterCreated automation.
+        // No frontend calls to setupCharacterHome or initializeCharacterFinancials here.
+
         // Invalidate ALL character cache variants
         queryClient.invalidateQueries({ queryKey: ["characters"] });
         queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
@@ -840,20 +843,12 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
            ]).catch(() => {});
          }
 
-         // Setup character's home with default location registration + financial record
-         if (newChar?.id) {
-           Promise.all([
-             base44.functions.invoke('setupCharacterHome', {
-               characterId: newChar.id,
-               characterName: newChar.name,
-             }).catch(() => {}),
-             base44.functions.invoke('initializeCharacterFinancials', {
-               characterId: newChar.id,
-               characterName: newChar.name,
-               isNpc: false,
-             }).catch(() => {}),
-           ]);
-         }
+         // NOTE: Financial initialization and home setup are handled entirely by the
+         // onCharacterCreated entity automation, which fires server-side immediately after
+         // the Character record is saved with the correct owner_email/owner_user_id.
+         // DO NOT call setupCharacterHome or initializeCharacterFinancials from the frontend —
+         // those calls run without the user's auth session context and produce ownerless
+         // duplicate records that make characters invisible on the homepage.
 
          // Invalidate ALL character cache variants to guarantee Home page refresh
          queryClient.invalidateQueries({ queryKey: ["characters"] });
