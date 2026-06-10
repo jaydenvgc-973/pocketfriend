@@ -3,7 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useNavigate, Link } from "react-router-dom";
-import { Plus, Users, Settings, Wrench } from "lucide-react";
+import { Plus, Users, Settings, Wrench, RefreshCw } from "lucide-react";
 import FixLocationsButton from "@/components/home/FixLocationsButton";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
@@ -35,6 +35,7 @@ export default function Home() {
   const queryClient = useQueryClient();
   const [pendingDelete, setPendingDelete] = useState(null);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [invitations, setInvitations] = useState(null);
   const [pendingReleases, setPendingReleases] = useState([]);
   const [graduationEvents, setGraduationEvents] = useState([]);
@@ -194,6 +195,37 @@ export default function Home() {
     }
   }, [isLoading, currentUser?.email, navigate]);
 
+  // REFRESH / RE-SYNC: discard all stale homepage state and force authoritative re-read.
+  // This is a synchronization action only — no mutations, no type changes, no repairs.
+  // Rules:
+  //   - character records (location, presence, needs, sleep, work, school, travel) are re-fetched from DB
+  //   - location references are re-fetched
+  //   - travel sessions are re-fetched
+  //   - conversations + unread counts are re-fetched
+  //   - old cached state is discarded before re-fetch (removeQueries), not merged with stale data
+  // Cached data must never be the authority source — this forces a clean read.
+  const handleRefreshSync = async () => {
+    if (isSyncing || !currentUser?.email) return;
+    setIsSyncing(true);
+    try {
+      const email = currentUser.email;
+      // Remove stale caches so old location/presence/sleep/travel data cannot win over the re-fetch
+      queryClient.removeQueries({ queryKey: ["characters", email] });
+      queryClient.removeQueries({ queryKey: ["locationReferences", email] });
+      queryClient.removeQueries({ queryKey: ["travelSessions", email] });
+      queryClient.removeQueries({ queryKey: ["homeConversations", email] });
+      queryClient.removeQueries({ queryKey: ["homeUnread", email] });
+      // Force immediate authoritative refetch of all authority sources
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ["characters", email] }),
+        queryClient.refetchQueries({ queryKey: ["locationReferences", email] }),
+        queryClient.refetchQueries({ queryKey: ["travelSessions", email] }),
+      ]);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // Register page context so simulationGate knows home is active (no specific character/location)
   usePageContext({ page: 'home' });
 
@@ -290,6 +322,14 @@ export default function Home() {
                   <Users className="w-5 h-5" />
                 </Button>
               </Link>
+              <button
+                onClick={handleRefreshSync}
+                disabled={isSyncing}
+                className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                title="Re-sync — discard stale cache and reload authoritative character state"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin" : ""}`} />
+              </button>
               <FixLocationsButton currentUserEmail={currentUser?.email} />
               <button
                 onClick={() => setShowTroubleshooting(true)}
