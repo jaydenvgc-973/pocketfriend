@@ -30,17 +30,23 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
-    // Only admins may run a bulk age repair
-    if (user.role !== 'admin') {
-      return Response.json({ error: 'Forbidden: Admin access required' }, { status: 403 });
-    }
 
     const body = await req.json().catch(() => ({}));
-    // dry_run=true → report only, no writes
-    const dryRun = body.dry_run === true;
+
+    // dry_run defaults to true — must explicitly pass dry_run: false to write
+    const dryRun = body.dry_run !== false;
+
+    // Write pass requires explicit confirmation token to prevent accidental execution
+    const confirmed = body.confirm === 'RUN_LEGACY_AGE_REPAIR';
+
+    if (!dryRun && !confirmed) {
+      return Response.json({
+        success: false,
+        error: 'Confirmation token required to execute write pass.',
+        required_confirm: 'RUN_LEGACY_AGE_REPAIR',
+        hint: 'Pass { "dry_run": false, "confirm": "RUN_LEGACY_AGE_REPAIR" } to execute writes.',
+      }, { status: 400 });
+    }
 
     // Load all non-deleted characters across all accounts (service role)
     const allCharacters = await base44.asServiceRole.entities.Character.filter({
