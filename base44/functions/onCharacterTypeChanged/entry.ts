@@ -16,9 +16,25 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, newType, oldType } = await req.json();
+    const { characterId, newType, oldType, user_initiated } = await req.json();
     if (!characterId || !newType) {
       return Response.json({ error: 'characterId and newType are required' }, { status: 400 });
+    }
+
+    // CHARACTER_TYPE_LOCK — PERMANENT RULE:
+    // character_type is USER-OWNED DATA. This function is the ONLY approved path for
+    // changing it. It MUST be called with user_initiated=true to confirm an explicit
+    // user action (button click, Settings > Edit Character Type, creation flow).
+    //
+    // Background functions, repair tools, resolvers, automations, sync jobs, or any
+    // system component must NEVER call this function without user_initiated=true.
+    // Callers that omit this flag are treated as system/background calls and rejected.
+    if (user_initiated !== true) {
+      console.error(`[onCharacterTypeChanged] BLOCKED: Attempted character_type change for "${characterId}" (${oldType} → ${newType}) without user_initiated=true. character_type is user-owned data and may not be changed by system processes.`);
+      return Response.json({
+        error: 'CHARACTER_TYPE_LOCK: character_type may only be changed by explicit user action. Pass user_initiated=true from an approved app control.',
+        blocked: true,
+      }, { status: 403 });
     }
 
     const char = await base44.entities.Character.filter({ id: characterId }).then(r => r[0]);
@@ -105,7 +121,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    return Response.json({ success: true, action: 'no_change_needed', characterId });
+    // Fallthrough: user changed type between two NPC variants, or made another valid change.
+    // Write the new type directly — user_initiated=true was already verified above.
+    if (newType !== char.character_type) {
+      await base44.entities.Character.update(characterId, { character_type: newType });
+      console.log(`[onCharacterTypeChanged] ${char.name}: type updated to ${newType} (user-initiated, no lifecycle migration needed)`);
+    }
+    return Response.json({ success: true, action: 'type_updated', characterId, newType });
   } catch (error) {
     console.error('[onCharacterTypeChanged]', error.message);
     return Response.json({ error: error.message }, { status: 500 });

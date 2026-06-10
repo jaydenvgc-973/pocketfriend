@@ -19,7 +19,22 @@ const CANONICAL_TYPES = new Set([
   'npc_regular',
 ]);
 
+// ⛔ CHARACTER TYPE LOCKOUT — PERMANENT ARCHITECTURAL RULE:
+// This function may ONLY correct known typo variants within the NPC type space.
+// It must NEVER set character_type to 'active_created_character' or promote any
+// NPC/internal/family/service character to a different class.
+// character_type is USER-OWNED DATA. Promotion is exclusively a user action.
+//
+// PERMANENTLY FORBIDDEN corrections:
+//   - Any type → 'active_created_character'
+//   - Any NPC variant → non-NPC type
+//   - Any inference-based correction (backstory, relationships, avatar, etc.)
+//
+// ALLOWED: typo-only repairs within the NPC type namespace.
+
 // Map known invalid typo variants → correct canonical type
+// LOCKOUT: all corrections must resolve within the NPC type space.
+// active_created_character must NEVER appear as a correction target.
 const TYPE_CORRECTIONS = {
   'npc_fictitious_person': 'npc_fictitious',
   'NPC_fictitious':        'npc_fictitious',
@@ -66,6 +81,21 @@ Deno.serve(async (req) => {
           original_type: char.character_type,
           action: 'unknown_type_flagged',
         });
+        continue;
+      }
+
+      // ⛔ HARD LOCKOUT: Never promote to active_created_character via this function.
+      // character_type=active_created_character is exclusively set by user action.
+      if (correction === 'active_created_character') {
+        results.push({
+          id: char.id,
+          name: char.name,
+          owner_email: char.owner_email,
+          original_type: char.character_type,
+          action: 'blocked_promotion_attempt',
+          reason: 'character_type_lockout: promoting to active_created_character is forbidden in repair functions',
+        });
+        console.error(`[repairInvalidCharacterTypes] ⛔ BLOCKED promotion attempt: "${char.name}" (${char.id}) → active_created_character. character_type is user-owned data.`);
         continue;
       }
 

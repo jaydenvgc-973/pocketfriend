@@ -379,6 +379,17 @@ export default function EditCharacterType({ characters = [], currentUser }) {
       // Update the character record
       await base44.entities.Character.update(selectedChar.id, updatePayload);
 
+      // Invoke post-type-change lifecycle handler.
+      // MUST pass user_initiated: true — this function is locked against system-auto calls.
+      if (oldType !== selectedType) {
+        await base44.functions.invoke('onCharacterTypeChanged', {
+          characterId: selectedChar.id,
+          newType: selectedType,
+          oldType,
+          user_initiated: true, // REQUIRED: this is a user-controlled action through an approved app control
+        }).catch(err => console.warn('[EditCharacterType] onCharacterTypeChanged lifecycle warn:', err.message));
+      }
+
       // Handle relationship cascades based on new type
       if (selectedType === "npc_family_member" && linkedCharId && familyTitle) {
         const linkedChar = characters.find(c => c.id === linkedCharId);

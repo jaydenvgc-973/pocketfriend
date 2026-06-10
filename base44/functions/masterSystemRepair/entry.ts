@@ -43,6 +43,9 @@ Deno.serve(async (req) => {
       const dayOfWeek = now.getDay();
 
       // ========== SYSTEM 1: CHARACTER SYSTEM ==========
+      // NOTE: This system reads character_type only as a filter to decide which characters
+      // to backfill with sleep/emotional defaults. It does NOT write character_type.
+      // ⛔ DO NOT add character_type to the updates{} object in this block — ever.
       const system1Fixes = [];
       for (const char of characters) {
         if (char.status === 'active' && char.character_type !== 'npc' && char.character_type !== 'background') {
@@ -72,18 +75,21 @@ Deno.serve(async (req) => {
       if (system1Fixes.length > 0) cycleLog.systems['1_CHARACTER_SYSTEM'] = system1Fixes;
 
       // ========== SYSTEM 2: CHARACTER TYPE SYSTEM ==========
+      // ⛔ CHARACTER TYPE LOCKOUT — PERMANENT ARCHITECTURAL RULE:
+      // character_type is USER-OWNED DATA. No repair, backfill, correction, or normalization
+      // may ever read or write character_type. Promotion/demotion is exclusively a user action.
+      // This block intentionally does NOTHING. It exists only to document the lockout.
+      //
+      // FORBIDDEN:
+      //   - Setting character_type to 'npc', 'active_created_character', or any other value
+      //   - "Correcting" unrecognized types
+      //   - Inferring type from backstory, relationships, finances, avatar, or any data
+      //   - Promoting NPCs to active
+      //   - Demoting active characters to NPC
+      //
+      // Only the user can change character_type through an approved app control.
       const system2Fixes = [];
-      for (const char of characters) {
-        // Normalize character_type to valid values
-        const validTypes = ['active', 'npc', 'family_npc', 'background', 'promoted_npc'];
-        if (char.character_type && !validTypes.includes(char.character_type)) {
-          // Default to 'npc' if invalid
-          await base44.entities.Character.update(char.id, { character_type: 'npc' });
-          system2Fixes.push(`${char.name}: corrected invalid type to 'npc'`);
-          cycleLog.fixesThisCycle++;
-          repairLog.totalFixesApplied++;
-        }
-      }
+      // NO-OP: character_type must never be touched here.
       if (system2Fixes.length > 0) cycleLog.systems['2_CHARACTER_TYPE_SYSTEM'] = system2Fixes;
 
       // ========== SYSTEM 3: RELATIONSHIP SYSTEM ==========
