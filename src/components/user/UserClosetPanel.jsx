@@ -384,10 +384,14 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
 
   // Edit existing outfit in-place — preserves rotation_number and all fields
   const handleEditOutfit = async (updatedOutfit) => {
-    // Normalize rotation_number: empty string → null (no number)
+    // Normalize rotation_number to integer or null — never string, never NaN
+    const rawRot = updatedOutfit.rotation_number;
+    const parsedRot = (rawRot === "" || rawRot == null)
+      ? null
+      : (parseInt(String(rawRot), 10) || null);
     const normalized = {
       ...updatedOutfit,
-      rotation_number: updatedOutfit.rotation_number === "" ? null : updatedOutfit.rotation_number,
+      rotation_number: parsedRot,
     };
     const newCloset = closet.map(o => o.outfit_id === normalized.outfit_id ? normalized : o);
     const isCurrentlyWorn = currentOutfit?.outfit_id === normalized.outfit_id;

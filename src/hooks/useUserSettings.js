@@ -96,8 +96,12 @@ export function useUserSettings(ownerEmailOverride = null) {
       return base44.entities.UserSettings.create(data);
     },
     onSuccess: (saved) => {
-      // Persist the updated settings to localStorage immediately
-      if (saved && resolvedEmail) lfcWrite(resolvedEmail, 'settings', saved);
+      // Merge the saved response with the current cache before persisting to localStorage.
+      // This guards against the platform returning only a partial delta from update(),
+      // which would overwrite the full cached object (including user_closet) with a fragment.
+      const current = queryClient.getQueryData(queryKey);
+      const merged = current && saved ? { ...current, ...saved } : (saved || current);
+      if (merged && resolvedEmail) lfcWrite(resolvedEmail, 'settings', merged);
       queryClient.invalidateQueries({ queryKey });
     },
   });
