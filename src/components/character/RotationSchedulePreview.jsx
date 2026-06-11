@@ -3,19 +3,19 @@ import { Calendar } from "lucide-react";
 /**
  * RotationSchedulePreview
  *
- * Shows "Tomorrow's scheduled outfit" for each rotation group (Home, Daily Wear,
- * Special Occasion, Activity). Computed purely from saved rotation_number values.
- * Weather, medical, and transitional override systems are intentionally excluded.
- * Manual outfit overrides for today do NOT shift tomorrow's sequence.
+ * Shows "Tomorrow's scheduled outfit" for each rotation GROUP:
+ *   Home | Daily Wear | Special Occasion | Activity
  *
- * Rules:
- *  - Rotation groups are: Home, Daily Wear, Special Occasion, Activity
- *  - Within each group, each category is previewed independently
- *  - Only categories that actually have outfits with rotation_number are shown
- *  - "Tomorrow" = dayOfYear + 1, same characterId hash used by the engine
- *  - If duplicates exist in a category → show conflict warning
- *  - If no numbered outfits → show explanatory message
- *  - Rotation off → show locked message per category
+ * One next-outfit preview per group (not per sub-category).
+ * All outfits across the group's sub-categories compete in a single pool.
+ *
+ * Rules (permanent):
+ *  - Purely based on rotation_number values — no weather, medical, or transitional modifiers
+ *  - Manual overrides for today do NOT change tomorrow's sequence
+ *  - "Tomorrow" = dayOfYear+1 (Eastern Time date) + characterId hash
+ *  - Duplicates within the group pool → conflict warning
+ *  - No numbered outfits → explains clearly
+ *  - Rotation off → shows locked message
  */
 
 const OUTFIT_CATEGORIES = [
@@ -35,58 +35,66 @@ const OUTFIT_CATEGORIES = [
   { value: "swimwear",     label: "Swimwear",             emoji: "🏊", group: "Activity" },
 ];
 
-const GROUP_ORDER = ["Home", "Daily Wear", "Special Occasion", "Activity"];
+const GROUPS = [
+  { key: "Home",             emoji: "🏠" },
+  { key: "Daily Wear",       emoji: "👕" },
+  { key: "Special Occasion", emoji: "✨" },
+  { key: "Activity",         emoji: "🏋️" },
+];
 
-/**
- * Deterministically pick the next (tomorrow's) outfit from a pool of numbered outfits.
- * Mirrors the engine's pickFromPool logic but uses dayOfYear+1 for "tomorrow".
- */
-function pickTomorrowFromPool(numbered, characterId = '') {
-  if (numbered.length === 0) return null;
-  const now = new Date();
-  // tomorrow's dayOfYear
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const dayOfYear = Math.floor((tomorrow - new Date(tomorrow.getFullYear(), 0, 0)) / 86400000);
-  const idHash = characterId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  const idx = (dayOfYear + idHash) % numbered.length;
-  return numbered[idx];
+const GROUP_CATEGORIES = OUTFIT_CATEGORIES.reduce((acc, c) => {
+  if (!acc[c.group]) acc[c.group] = [];
+  acc[c.group].push(c.value);
+  return acc;
+}, {});
+
+/** Eastern Time "tomorrow" day-of-year, deterministic */
+function getTomorrowDayOfYear() {
+  // Use Eastern Time date
+  const etNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const etTomorrow = new Date(etNow);
+  etTomorrow.setDate(etTomorrow.getDate() + 1);
+  const start = new Date(etTomorrow.getFullYear(), 0, 0);
+  return Math.floor((etTomorrow - start) / 86400000);
+}
+
+function idHash(characterId = '') {
+  return characterId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
 }
 
 /**
- * Analyze one category's outfits and return a preview descriptor.
- * States: 'scheduled' | 'no_numbered' | 'conflict' | 'rotation_off'
+ * Compute the "next scheduled" outfit for a group.
+ * Returns: { state, outfit? }
+ * States: 'scheduled' | 'no_outfits' | 'no_numbered' | 'conflict' | 'rotation_off'
  */
-function getCategoryPreview(catValue, outfits, rotationEnabled, characterId) {
-  const pool = outfits.filter(o => o.category === catValue);
-  if (pool.length === 0) return null; // category has no outfits at all — skip
+function getGroupPreview(groupKey, outfits, rotationEnabled, characterId) {
+  const catValues = GROUP_CATEGORIES[groupKey] || [];
+  const pool = outfits.filter(o => catValues.includes(o.category));
 
-  if (!rotationEnabled) {
-    return { state: 'rotation_off' };
-  }
+  if (pool.length === 0) return null; // group has no outfits at all — skip
+
+  if (!rotationEnabled) return { state: 'rotation_off' };
 
   const numbered = pool
     .filter(o => o.rotation_number != null && o.rotation_number !== "")
     .sort((a, b) => Number(a.rotation_number) - Number(b.rotation_number));
 
-  if (numbered.length === 0) {
-    return { state: 'no_numbered', total: pool.length };
-  }
+  if (numbered.length === 0) return { state: 'no_numbered', total: pool.length };
 
-  // Check for duplicates
-  const numSet = new Set();
+  // Check for duplicate rotation numbers within the group pool
+  const seen = new Set();
   let hasDuplicate = false;
   for (const o of numbered) {
     const n = Number(o.rotation_number);
-    if (numSet.has(n)) { hasDuplicate = true; break; }
-    numSet.add(n);
+    if (seen.has(n)) { hasDuplicate = true; break; }
+    seen.add(n);
   }
-  if (hasDuplicate) {
-    return { state: 'conflict' };
-  }
+  if (hasDuplicate) return { state: 'conflict' };
 
-  const tomorrow = pickTomorrowFromPool(numbered, characterId);
-  return { state: 'scheduled', outfit: tomorrow };
+  const dayOfYear = getTomorrowDayOfYear();
+  const hash = idHash(characterId);
+  const idx = (dayOfYear + hash) % numbered.length;
+  return { state: 'scheduled', outfit: numbered[idx] };
 }
 
 export default function RotationSchedulePreview({ character }) {
@@ -99,20 +107,16 @@ export default function RotationSchedulePreview({ character }) {
   const rotationEnabled = character.outfit_rotation_enabled !== false;
   const characterId = character.id || '';
 
-  // Build previews per category, group by group
-  const groupedPreviews = {};
-  for (const cat of OUTFIT_CATEGORIES) {
-    const preview = getCategoryPreview(cat.value, outfits, rotationEnabled, characterId);
-    if (!preview) continue; // no outfits in this category — skip entirely
-    if (!groupedPreviews[cat.group]) groupedPreviews[cat.group] = [];
-    groupedPreviews[cat.group].push({ ...cat, preview });
-  }
+  // Build group previews, skip groups with no outfits at all
+  const groupPreviews = GROUPS.map(g => ({
+    ...g,
+    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId),
+  })).filter(g => g.preview !== null);
 
-  const groups = GROUP_ORDER.filter(g => groupedPreviews[g]?.length > 0);
-  if (groups.length === 0) return null;
+  if (groupPreviews.length === 0) return null;
 
   return (
-    <div className="bg-secondary/30 border border-border rounded-xl p-3 space-y-3">
+    <div className="bg-secondary/30 border border-border rounded-xl p-3 space-y-2">
       {/* Header */}
       <div className="flex items-center gap-2">
         <Calendar className="w-3.5 h-3.5 text-primary" />
@@ -121,43 +125,33 @@ export default function RotationSchedulePreview({ character }) {
         </p>
       </div>
 
-      {groups.map(group => (
-        <div key={group} className="space-y-1.5">
-          <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">{group}</p>
-          {groupedPreviews[group].map(({ value, label, emoji, preview }) => (
-            <CategoryPreviewRow
-              key={value}
-              emoji={emoji}
-              label={label}
-              preview={preview}
-            />
-          ))}
-        </div>
-      ))}
+      <div className="space-y-1.5">
+        {groupPreviews.map(({ key, emoji, preview }) => (
+          <GroupPreviewRow key={key} groupName={key} emoji={emoji} preview={preview} />
+        ))}
+      </div>
 
-      <p className="text-[9px] text-muted-foreground/50 leading-relaxed">
-        Schedule is based on rotation numbers only. Weather, medical, and manual overrides do not affect tomorrow's sequence.
+      <p className="text-[9px] text-muted-foreground/50 leading-relaxed pt-0.5">
+        Based on rotation numbers only — weather, medical, and manual overrides do not affect this schedule.
       </p>
     </div>
   );
 }
 
-function CategoryPreviewRow({ emoji, label, preview }) {
+function GroupPreviewRow({ groupName, emoji, preview }) {
   if (preview.state === 'scheduled') {
     const o = preview.outfit;
-    const numBadge = o?.rotation_number != null && o.rotation_number !== ""
-      ? `#${o.rotation_number}`
-      : null;
+    const catDef = OUTFIT_CATEGORIES.find(c => c.value === o?.category);
     return (
       <div className="flex items-start gap-2 bg-card/60 rounded-lg px-2.5 py-2">
-        <span className="text-xs mt-0.5 shrink-0">{emoji}</span>
+        <span className="text-xs mt-0.5 shrink-0">{catDef?.emoji || emoji}</span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <p className="text-[10px] text-muted-foreground shrink-0">{label}:</p>
+            <p className="text-[10px] text-muted-foreground shrink-0">Next {groupName}:</p>
             <p className="text-xs font-semibold text-foreground truncate">{o?.label || '—'}</p>
-            {numBadge && (
+            {o?.rotation_number != null && o.rotation_number !== "" && (
               <span className="text-[9px] font-bold bg-primary/15 text-primary px-1.5 py-0.5 rounded-full shrink-0">
-                {numBadge}
+                #{o.rotation_number}
               </span>
             )}
           </div>
@@ -166,6 +160,9 @@ function CategoryPreviewRow({ emoji, label, preview }) {
               {o.top || o.full_description}
             </p>
           )}
+          {catDef && (
+            <p className="text-[9px] text-muted-foreground/50 mt-0.5">{catDef.label}</p>
+          )}
         </div>
       </div>
     );
@@ -173,33 +170,38 @@ function CategoryPreviewRow({ emoji, label, preview }) {
 
   if (preview.state === 'no_numbered') {
     return (
-      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-secondary/40">
+      <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-secondary/50">
         <span className="text-xs shrink-0">{emoji}</span>
-        <p className="text-[10px] text-muted-foreground/60 italic">
-          {label}: no rotation numbers assigned ({preview.total} outfit{preview.total !== 1 ? 's' : ''})
-        </p>
+        <div>
+          <p className="text-[10px] text-muted-foreground font-medium">{groupName}</p>
+          <p className="text-[9px] text-muted-foreground/60">
+            {preview.total} outfit{preview.total !== 1 ? 's' : ''} — no rotation numbers assigned
+          </p>
+        </div>
       </div>
     );
   }
 
   if (preview.state === 'conflict') {
     return (
-      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+      <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
         <span className="text-xs shrink-0">{emoji}</span>
-        <p className="text-[10px] text-amber-400 font-medium">
-          {label}: ⚠ duplicate rotation numbers — resolve conflicts to enable preview
-        </p>
+        <div>
+          <p className="text-[10px] text-amber-400 font-medium">{groupName}</p>
+          <p className="text-[9px] text-amber-400/80">⚠ Duplicate rotation numbers — resolve conflicts to see tomorrow's outfit</p>
+        </div>
       </div>
     );
   }
 
   if (preview.state === 'rotation_off') {
     return (
-      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-secondary/40">
+      <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-secondary/50">
         <span className="text-xs shrink-0">{emoji}</span>
-        <p className="text-[10px] text-muted-foreground/60 italic">
-          {label}: rotation disabled
-        </p>
+        <div>
+          <p className="text-[10px] text-muted-foreground font-medium">{groupName}</p>
+          <p className="text-[9px] text-muted-foreground/60">Rotation disabled — outfit locked to current selection</p>
+        </div>
       </div>
     );
   }
