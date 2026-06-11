@@ -1,4 +1,216 @@
 /**
+ * ════════════════════════════════════════════════════════════════════════════
+ * SLEEP, ENERGY, NAP, CAFFEINE, AUTONOMY, AND REST-STATE SYSTEM
+ * Authoritative design specification — all modules must comply
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * APPLIES ONLY TO: active_created_character records.
+ * DOES NOT APPLY TO: npc_regular, npc_family_member, npc_fictitious,
+ *   npc_world_service, service characters, system characters, or any
+ *   non-active_created_character record. Applying this system to NPC types
+ *   is a critical failure.
+ *
+ * ── CHARACTERS MANAGE ENERGY, NOT SLEEP ──────────────────────────────────
+ * Characters are not managing a sleep timer. They are managing energy,
+ * comfort, mood, responsibilities, and future plans. Sleep is one tool.
+ * Naps, coffee, energy drinks, and proactive rest are also tools.
+ *
+ * A character is not thinking "it is sleep time so I must sleep."
+ * A character is thinking "how much energy do I have, what do I still need
+ * to do, what do I have coming up, and what is the smartest choice?"
+ *
+ * The system must not reduce this to a rigid sleep scheduler.
+ * Different characters make different choices based on personality, schedule,
+ * obligations, location, energy level, and future plans.
+ * Energy influences the decision. Energy does not erase personality.
+ *
+ * ── SLEEP IS NECESSARY — TIMING IS FLEXIBLE ─────────────────────────────
+ * Sleep is not optional. Sleep matters.
+ * Characters understand sleep improves mood, comfort, focus, performance,
+ * work, school, and well-being. Insufficient sleep causes irritability,
+ * crankiness, reduced focus, and reduced performance.
+ *
+ * However, characters are not forced to sleep at one exact time.
+ * The character has autonomy over WHEN they sleep, not WHETHER sleep matters.
+ *
+ * A character may:
+ *   - sleep earlier because they have work in the morning
+ *   - sleep later because they are finishing something important
+ *   - stay up to finish an assignment, knowingly accepting consequences
+ *   - shift to a later approved sleep window when energy still allows it
+ *
+ * A character must NEVER conclude: "I have energy, so I no longer need sleep."
+ * The correct conclusion is: "I have energy, so I can sleep later."
+ *
+ * Never sleeping is not a valid choice. Sleeping at a different time is.
+ *
+ * ── REAL-PERSON SLEEP REASONING ─────────────────────────────────────────
+ * Sleep decisions should reflect how real people reason:
+ *   - "I need to be up early — I should sleep at 10 PM."
+ *   - "I need to finish this — I am staying up even knowing tomorrow is harder."
+ *   - "I have enough energy right now — I will sleep a bit later tonight."
+ *
+ * Characters understand benefits and consequences.
+ * They may make responsible choices. They may make imperfect choices.
+ * They may knowingly accept consequences.
+ * The system creates believable behavior, not perfect behavior.
+ *
+ * ── FUTURE PLANS MUST INFLUENCE ENERGY DECISIONS ────────────────────────
+ * Characters must consider future plans when deciding whether to sleep,
+ * nap, drink coffee, or use an energy drink.
+ *
+ * Example: A character worked 9 AM–5 PM. They are tired but have plans to
+ * go out until 2 AM. A realistic character may take a nap before going out
+ * so they have energy to enjoy the night. That nap is a proactive autonomy
+ * decision — not a system enforcement action.
+ *
+ * Characters may proactively consume caffeine around ~50% energy if they
+ * know significant obligations remain ahead. This is valid planning behavior.
+ *
+ * ── APPROVED SLEEP WINDOWS ──────────────────────────────────────────────
+ * Sleep windows are GUIDANCE, not commands, schedules, or appointments.
+ * Sleep windows represent when a character normally prefers to sleep.
+ * The existence of a sleep window does NOT trigger sleep.
+ * The existence of a sleep window does NOT force sleep.
+ * The existence of a sleep window does NOT override autonomy.
+ *
+ * Sleep windows MUST come from a predefined approved set.
+ * Sleep windows MUST NEVER be generated dynamically.
+ * Sleep windows MUST NEVER be invented, customized, or created on the fly.
+ * Any generated sleep window is a critical failure.
+ *
+ * A sleep window is INVALID for a character if 3 or more hours of that
+ * window overlap with recurring work obligations, school obligations, or
+ * recurring mandatory commitments. The ENTIRE window must be evaluated —
+ * not only the start time.
+ *
+ * Daytime sleep windows must exist for overnight workers.
+ * The system must not assume all characters sleep at night.
+ *
+ * Characters may shift to a later approved sleep window when their energy
+ * level and obligations make that a reasonable, autonomous choice.
+ *
+ * ── SLEEP AND NAPS ARE THE SUSPENSION OF ACTIVITIES ─────────────────────
+ * This is a core architectural rule.
+ *
+ * Work, school, travel, shopping, socializing, and entertainment are activities.
+ * Sleep is NOT an activity. Naps are NOT activities.
+ * Sleep and naps are the SUSPENSION of activities.
+ *
+ * When a character enters a sleep or nap state:
+ *   - Character-driven activities STOP
+ *   - Energy recovery CONTINUES
+ *   - Social, travel, entertainment, and activity systems do NOT fire
+ *   - The system becomes QUIETER, not busier
+ *
+ * The system MUST NOT create sleep maintenance loops.
+ * The system MUST NOT run extra processes to keep a character asleep.
+ * The system MUST NOT increase processing because a character is resting.
+ *
+ * Sleep is like a computer entering sleep mode — the system quiets down.
+ *
+ * ── MAINTENANCE MUST NEVER DRIVE SLEEP ──────────────────────────────────
+ * The system MAY use naturally occurring sleep periods for maintenance.
+ * The system MUST NEVER force or extend sleep for maintenance purposes.
+ * Characters MUST NEVER be kept asleep because maintenance is running.
+ * Maintenance benefits from natural sleep. It never causes it.
+ *
+ * ── NAP RULES ───────────────────────────────────────────────────────────
+ * Naps generally last 2–3 hours.
+ * Naps exist to restore energy, improve comfort, and prepare for future plans.
+ * Naps are NOT primary sleep periods.
+ *
+ * CONSECUTIVE NAPS (less than 2 hours awake between naps):
+ *   Form a "nap chain" — total chain limited to ~1.5 naps of rest.
+ *   A character may not use consecutive naps as a disguised 6-hour sleep.
+ *   Example ALLOWED: 12 PM–3 PM nap, wake briefly, 3:15 PM–4:30 PM nap.
+ *   Example FAILURE: 12 PM–3 PM nap, wake briefly, 3:05 PM–6:00 PM nap.
+ *
+ * NON-CONSECUTIVE NAPS (2+ hours awake between naps):
+ *   Treated as a fresh separate nap — may be a full nap duration.
+ *   Example ALLOWED: 12 PM–2 PM nap, awake until 6 PM, 6 PM–8 PM nap.
+ *
+ * No nap may begin if it would cause the character to miss a scheduled obligation.
+ *
+ * ── CAFFEINE RULES ──────────────────────────────────────────────────────
+ * Coffee and energy drinks are support tools, not sleep replacements.
+ * They help characters manage energy, remain alert, improve mood/patience/focus.
+ * Characters with demanding schedules may intentionally use caffeine.
+ * Proactive caffeine use around ~50% energy is valid planning behavior.
+ *
+ * HARD RULE: Caffeine MUST NEVER raise energy to 100%.
+ *   Only actual rest may fully restore energy.
+ *   Caffeine cap: approximately 95% maximum.
+ *   The remaining recovery requires rest.
+ *
+ * Caffeine may delay fatigue. It does not eliminate the need for sleep.
+ * Caffeine does not stop energy decay.
+ * Excessive caffeine chaining is unhealthy and must NOT be treated as optimal.
+ *
+ * Coffee sources: home (via groceries — no individual transaction),
+ *   workplace (free — no transaction), businesses (generates financial transaction).
+ *
+ * ── SOCIAL NEEDS AND SLEEP ───────────────────────────────────────────────
+ * Social needs MUST NOT wake a sleeping character.
+ * Entertainment needs MUST NOT wake a sleeping character.
+ * Recreation needs MUST NOT wake a sleeping character.
+ * Characters address those needs after waking.
+ *
+ * ── NPC PROMOTION CONTINUITY ─────────────────────────────────────────────
+ * When a user promotes an NPC to active_created_character:
+ *   - Existing habits, routines, behavior patterns, and sleep patterns are PRESERVED
+ *   - The character should feel like the same character with more autonomy
+ *   - Promotion adds autonomy — it does not erase continuity
+ *   - Promotion MUST NOT create perpetual sleep, nap loops, or instability
+ *   - The existing NPC sleep pattern should inform the preferred sleep behavior
+ *   - Characters are ONLY promoted by explicit user choice — never automatically
+ *
+ * NPC sleep behavior is NOT modified by this system.
+ * NPC sleep is NOT being redesigned.
+ * NPC sleep is NOT being replaced.
+ *
+ * ── VICK OVERSIGHT ───────────────────────────────────────────────────────
+ * Vick MAY: audit, report, verify, and explain sleep behavior.
+ * Vick MAY: know who is asleep, napping, awake, or approaching low energy.
+ * Vick MAY NOT: assign sleep windows, force sleep, force naps, or override autonomy.
+ *
+ * ── TIME AUTHORITY ───────────────────────────────────────────────────────
+ * All sleep, nap, work, and school decisions use authoritative Eastern Time.
+ * UTC is forbidden for all application logic. See custom instructions.
+ *
+ * ── SUCCESS STANDARD ─────────────────────────────────────────────────────
+ * ✓ Characters sleep because sleep is beneficial — not because a timer fired
+ * ✓ Sleep remains necessary; timing remains flexible
+ * ✓ Sleep windows guide behavior without becoming schedules
+ * ✓ Characters understand benefits and consequences
+ * ✓ Characters make realistic, believable, sometimes imperfect choices
+ * ✓ Sleep and naps quiet character activity instead of increasing it
+ * ✓ Energy recovery continues during rest
+ * ✓ Vick audits without controlling
+ * ✓ NPC sleep remains untouched; promotion continuity is preserved
+ * ✓ The user does not micromanage sleep
+ *
+ * ── FAILURE CONDITIONS (any of these is a critical system failure) ────────
+ * ✗ Applying this system to NPCs
+ * ✗ Automatically promoting characters
+ * ✗ Generating sleep windows dynamically
+ * ✗ Treating sleep windows as schedules, commands, or appointments
+ * ✗ Forcing sleep because a window exists
+ * ✗ Preventing sleep because a window was missed
+ * ✗ Characters concluding they never need sleep because they have energy
+ * ✗ Caffeine reaching 100% energy
+ * ✗ Caffeine replacing sleep
+ * ✗ Unlimited caffeine chaining
+ * ✗ Sleep maintenance loops or nap maintenance loops
+ * ✗ Sleep used for server load management
+ * ✗ Maintenance causing or extending sleep
+ * ✗ Social/entertainment needs waking sleeping characters
+ * ✗ Sleep or naps interfering with work or school
+ * ✗ User required to micromanage sleep, naps, caffeine, or sleep windows
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+
+/**
  * SLEEP UTILITIES
  *
  * Sleep debt has been removed. The following remain valid and active:

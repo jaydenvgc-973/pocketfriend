@@ -1,4 +1,69 @@
 /**
+ * ════════════════════════════════════════════════════════════════════════════
+ * ENERGY SYSTEM — BEHAVIORAL PHILOSOPHY
+ * Required context for all prompt generation and autonomous behavior.
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * APPLIES ONLY TO: active_created_character records.
+ *
+ * ── ENERGY INFLUENCES DECISIONS — DOES NOT ERASE PERSONALITY ────────────
+ * Energy should influence mood, comfort, focus, patience, and decision-making.
+ * Energy should NOT override personality or reduce all characters to the same behavior.
+ *
+ * Two characters with identical energy levels may make completely different choices:
+ *   - One goes home to sleep
+ *   - One drinks coffee and keeps working
+ *   - One takes a nap before going out
+ *   - One continues socializing
+ *   - One finishes a project
+ * All of these may be valid depending on personality, schedule, and context.
+ *
+ * ── ENERGY BANDS AND BEHAVIORAL GUIDANCE ─────────────────────────────────
+ *
+ * ~80–100 (strong):
+ *   Character is energized. May plan ahead, take on tasks, socialize comfortably.
+ *   Does NOT mean the character no longer needs sleep. Energy is currently available.
+ *   May choose a later approved sleep window.
+ *
+ * ~60–79 (stable):
+ *   Normal functioning. No urgent energy concerns.
+ *   Character operates at full capacity.
+ *
+ * ~40–59 (reduced):
+ *   Character begins noticing energy. May still function normally for most tasks.
+ *   Around 50%: character may begin planning ahead.
+ *     - May consider a nap before a long evening
+ *     - May proactively drink coffee if significant obligations remain
+ *     - May think about sleep timing relative to tomorrow's schedule
+ *   This is PLANNING behavior, not crisis behavior.
+ *
+ * ~20–39 (low):
+ *   Character experiences irritability, crankiness, reduced comfort, reduced patience.
+ *   Character becomes increasingly interested in sleep, naps, coffee, energy drinks.
+ *   High-effort activities should be avoided or reduced.
+ *   Character may still function if they have obligations or caffeine support.
+ *
+ * 0–19 (critical):
+ *   Character is significantly impaired. Activities are low-key, slow, or restful.
+ *   Sleep, nap, or recovery is the realistic next action.
+ *   Character remains capable of personality-consistent responses but is clearly drained.
+ *
+ * ── CAFFEINE IN THE ENERGY SYSTEM ────────────────────────────────────────
+ * Coffee and energy drinks may raise or maintain energy — but NEVER to 100%.
+ * Cap: approximately 95%. The final recovery gap requires actual rest.
+ * Caffeine does not freeze energy decay. It supports and delays, not eliminates.
+ * Excessive caffeine chaining is unhealthy and must NOT be treated as optimal.
+ *
+ * See sleepUtils.js for full caffeine and nap rules.
+ *
+ * ── NEEDS ARE CURRENT AND AUTHORITATIVE ──────────────────────────────────
+ * Every output — dialogue, actions, plans, refusals — must be consistent
+ * with current need states. Memory provides context; it does not override
+ * current values. Stale context must yield to current need truth.
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+
+/**
  * LIVE NEEDS STATE ENGINE
  * Single source of truth for character needs interpretation.
  * Every module that generates dialogue, narrative, travel, or behavior
