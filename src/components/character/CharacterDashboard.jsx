@@ -316,14 +316,23 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Session-level cache — persists across remounts within the same tab session.
 // Prevents re-running 8 parallel entity queries when navigating away and back to the same profile.
 // Key: characterId → dashboard data object.
+// VERSION stamp: bump this whenever the data shape or classification logic changes so
+// stale pre-fix cached entries are automatically discarded on next load.
+const DASHBOARD_CACHE_VERSION = 2; // bumped: legacy sentiment inference fix
 const dashboardCache = {};
+const dashboardCacheVersion = {};
 
 export default function CharacterDashboard({ character, allCharacters = [] }) {
   const charId = character?.id;
 
-  const [data, setData] = useState(() => dashboardCache[charId] || null);
+  // Only use cached data if it was built with the current cache version
+  const cachedData = dashboardCache[charId];
+  const cachedVersion = dashboardCacheVersion[charId];
+  const cacheValid = cachedData && cachedVersion === DASHBOARD_CACHE_VERSION;
+
+  const [data, setData] = useState(() => cacheValid ? cachedData : null);
   const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(() => !!dashboardCache[charId]);
+  const [loaded, setLoaded] = useState(() => cacheValid);
 
   useEffect(() => {
     if (loaded || loading || !charId) return;
@@ -935,6 +944,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
 
       const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 12), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
       dashboardCache[charId] = dashData;
+      dashboardCacheVersion[charId] = DASHBOARD_CACHE_VERSION;
       setData(dashData);
       setLoaded(true);
       setLoading(false);
