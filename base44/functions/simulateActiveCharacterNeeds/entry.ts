@@ -916,6 +916,28 @@ Deno.serve(async (req) => {
       // Apply cross-system infection
       newNeeds = applyStatInfection(newNeeds, cappedHours);
 
+      // ── VICK SERVICIO NEED LOCKS ──────────────────────────────────────────
+      // sleep_lock: freeze energy (and skip sleep infection cascade from hunger/health).
+      // hunger_lock: freeze hunger (and skip hunger infection cascade).
+      // SCOPE: affects ONLY the locked need value. Everything else — travel, scheduling,
+      // messaging, social, work, school, autonomous actions — continues normally.
+      // RULE: restore the pre-simulation value for the locked need so no decay/recovery
+      // was applied. Do NOT reset to default. Resume from exactly where it was.
+      const isVick = char.character_type === 'npc_world_service' || char.is_world_service === true ||
+        (char.name && char.name.toLowerCase().includes('vick servicio'));
+      if (isVick) {
+        if (char.sleep_lock) {
+          // Freeze energy — restore pre-simulation value
+          newNeeds.energy = currentNeeds.energy ?? 75;
+          console.log(`[simulateNeeds] ${char.name}: sleep_lock active — energy frozen at ${newNeeds.energy}`);
+        }
+        if (char.hunger_lock) {
+          // Freeze hunger — restore pre-simulation value
+          newNeeds.hunger = currentNeeds.hunger ?? 70;
+          console.log(`[simulateNeeds] ${char.name}: hunger_lock active — hunger frozen at ${newNeeds.hunger}`);
+        }
+      }
+
       // ── COMFORT ADD-ON: positive + negative contextual modifiers ─────────
       // Additive only — supplements RATES comfort values with environment,
       // rest state, food quality, and social presence signals.
@@ -941,7 +963,9 @@ Deno.serve(async (req) => {
       //
       // Does NOT apply to sleeping, passed_out, or hospitalized — those must restore energy.
       const isSleepingContext = context === 'sleeping' || context === 'passed_out' || context === 'hospitalized';
-      if (!isSleepingContext) {
+      // sleep_lock bypass: if Vick's sleep_lock is on, skip the awake drain guarantee too
+      const sleepLockActive = isVick && char.sleep_lock;
+      if (!isSleepingContext && !sleepLockActive) {
         const MINIMUM_AWAKE_DRAIN_PER_HOUR = -5; // -5/hr floor: 100 energy → 0 in 20 hours
         // Apply the baseline drain directly from currentNeeds (not newNeeds) so context
         // rates and infection do not double-count. Take the lower (more drained) result.

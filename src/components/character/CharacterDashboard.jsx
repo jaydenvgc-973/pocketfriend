@@ -517,37 +517,39 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const narrs3d  = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff3d)));
       const txns3d   = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
 
-      // Social stats (all msgs in these convos, not just sender_type=character)
+      // ── SOCIAL ACTIVITY STATS — scoped to ALL loaded messages (not 24h-only) ──
+      // The "Social Activity" panel is a social overview, not a 24h summary.
+      // The "Past 24 Hours" timeline panel is what shows 24h-scoped data.
+      // Using msgs24h for totals was misrepresenting lifetime social counts as nearly zero
+      // for legacy characters whose historical interactions predate sentiment classification.
+      //
+      // NOTE: Semantic inference is DISPLAY ONLY. It is never written back to Message records.
+      // If inferred emotion matches a real pattern, it affects only this dashboard rendering session.
+      // No writes to Message.emotional_state happen here. Only simulateActiveCharacterNeeds and
+      // the LLM response pipeline are permitted to update message-level fields.
+      const allSentScoped = scopedMsgs.filter(m => m.sender_type === "character");
+      // 24h subset still used for timeline entries and the "Messages sent" count
       const allSent24h = msgs24h.filter(m => m.sender_type === "character");
       const msgsSent   = allSent24h.length;
 
       // ── LEGACY-SAFE sentiment classification ──────────────────────────────
-      // Many legacy messages have emotional_state = null/undefined because the
-      // field was not populated when the message was originally written.
-      // Counting only on emotional_state produces 0 positive / 0 conflict for
-      // any character whose history predates sentiment classification.
-      //
-      // Resolution priority (matches the graph pipeline):
-      //   1. emotional_state field — authoritative when present and non-trivial
-      //   2. Semantic inference from message content — covers legacy messages
-      //   3. Unclassifiable — counted as neither positive nor conflict (neutral)
-      //
-      // This ensures legacy characters get fair representation without guessing.
+      // Priority: 1. emotional_state field  2. semantic inference from content (display only)
+      // CRITICAL: inferEmotionFromText results are NEVER written back to Message records.
       const resolveMessageSentiment = (m) => {
         if (m.emotional_state) return m.emotional_state.toLowerCase();
-        // Legacy fallback: infer from message content
         if (m.content) {
           const inf = inferEmotionFromText(m.content);
           if (inf) return inf.emotion.toLowerCase();
         }
-        return null; // unclassifiable — treated as neutral
+        return null;
       };
 
       let positiveInteractions = 0;
       let conflictEvents = 0;
       let unclassifiedCount = 0;
 
-      allSent24h.forEach(m => {
+      // Aggregate over ALL scoped messages (not just 24h) for lifetime social totals
+      allSentScoped.forEach(m => {
         const sentiment = resolveMessageSentiment(m);
         if (sentiment === null) {
           unclassifiedCount++;
@@ -1148,7 +1150,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
 
           <div className="rounded-xl overflow-hidden bg-card border border-border">
             <div className="px-4 py-3 border-b border-border">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Social Activity · 24h</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Social Activity · Recent History</p>
             </div>
             <div className="flex divide-x divide-border/40">
               <StatChip icon={MessageCircle} label="Messages" value={socialStats.msgsSent} />
@@ -1157,7 +1159,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
             </div>
             {socialStats.unclassifiedCount > 0 && (
               <p className="px-4 pb-2 text-[9px] text-muted-foreground/60">
-                +{socialStats.unclassifiedCount} older message{socialStats.unclassifiedCount !== 1 ? 's' : ''} without sentiment classification
+                +{socialStats.unclassifiedCount} message{socialStats.unclassifiedCount !== 1 ? 's' : ''} without sentiment data
               </p>
             )}
           </div>

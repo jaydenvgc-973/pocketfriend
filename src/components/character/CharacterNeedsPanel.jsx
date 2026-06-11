@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQueryClient } from '@tanstack/react-query';
+import { Switch } from '@/components/ui/switch';
 
 const NEEDS = [
   { label: 'Hunger',    key: 'hunger_value',         emoji: '🍽️', description: 'How hungry they are' },
@@ -20,12 +21,19 @@ function getLabel(value) {
   return               { text: 'Critical', color: 'text-destructive', bg: 'bg-destructive' };
 }
 
+// Vick Servicio is identified by character_type === 'npc_world_service' or name includes 'Vick Servicio'
+const isVickServicio = (c) =>
+  c?.character_type === 'npc_world_service' ||
+  c?.is_world_service === true ||
+  (c?.name && c.name.toLowerCase().includes('vick servicio'));
+
 export default function CharacterNeedsPanel({ character, onRefresh }) {
   const [isSimulating, setIsSimulating] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [lastSimResult, setLastSimResult] = useState(null);
   const [validationIssues, setValidationIssues] = useState([]);
+  const [lockUpdating, setLockUpdating] = useState(false);
   const queryClient = useQueryClient();
 
   // Show for active_created_character (or legacy characters missing character_type — never hide valid characters)
@@ -65,6 +73,20 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
       setValidationIssues([`Simulation failed: ${err.message}`]);
     } finally {
       setIsSimulating(false);
+    }
+  };
+
+  const handleLockToggle = async (lockKey, newValue) => {
+    if (lockUpdating) return;
+    setLockUpdating(true);
+    try {
+      await base44.entities.Character.update(character.id, { [lockKey]: newValue });
+      await queryClient.invalidateQueries({ queryKey: ['character', character.id] });
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      console.error('[CharacterNeedsPanel] lock toggle error:', err);
+    } finally {
+      setLockUpdating(false);
     }
   };
 
@@ -160,6 +182,35 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
           <span className={`font-semibold ${character.sleep_debt_hours >= 4 ? 'text-destructive' : character.sleep_debt_hours >= 2 ? 'text-amber-400' : 'text-blue-400'}`}>
             {character.sleep_debt_hours.toFixed(1)}h owed
           </span>
+        </div>
+      )}
+
+      {/* Vick-only: Sleep Lock + Hunger Lock */}
+      {isVickServicio(character) && (
+        <div className="mt-4 p-3 rounded-xl bg-secondary/40 border border-border space-y-3">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Need Locks</p>
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-medium text-foreground">Sleep Lock</p>
+              <p className="text-[10px] text-muted-foreground">Freeze energy/sleep simulation</p>
+            </div>
+            <Switch
+              checked={!!character.sleep_lock}
+              disabled={lockUpdating}
+              onCheckedChange={(val) => handleLockToggle('sleep_lock', val)}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-medium text-foreground">Hunger Lock</p>
+              <p className="text-[10px] text-muted-foreground">Freeze hunger simulation</p>
+            </div>
+            <Switch
+              checked={!!character.hunger_lock}
+              disabled={lockUpdating}
+              onCheckedChange={(val) => handleLockToggle('hunger_lock', val)}
+            />
+          </div>
         </div>
       )}
 

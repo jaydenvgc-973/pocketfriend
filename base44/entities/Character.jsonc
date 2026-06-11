@@ -27,6 +27,16 @@
     }
   },
   "properties": {
+    "sleep_lock": {
+      "type": "boolean",
+      "default": false,
+      "description": "Vick Servicio only. When true, energy/sleep simulation is frozen. No decay or recovery. Resumes from current value when turned off."
+    },
+    "hunger_lock": {
+      "type": "boolean",
+      "default": false,
+      "description": "Vick Servicio only. When true, hunger simulation is frozen. No decay or recovery. Resumes from current value when turned off."
+    },
     "presence_stay_lock": {
       "type": "boolean",
       "default": false,
