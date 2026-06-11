@@ -263,6 +263,157 @@ function getLocationContext(character, locationMap, now) {
   return 'default';
 }
 
+// ── COMFORT ADD-ON: POSITIVE & NEGATIVE MODIFIERS ──────────────────────────────
+// This is purely additive. It does NOT replace RATES comfort values.
+// It supplements them with context-aware signals: environment, rest state,
+// food quality, social presence, and conversation tone.
+//
+// DESIGN RULES:
+//   - Max positive modifier: +2/hr (gradual, not instant)
+//   - Max negative modifier: -2/hr (balanced with positive)
+//   - Social comfort and Social need remain INDEPENDENT values
+//   - This fires AFTER applyElapsedTime, adds to comfort result
+//   - Comfort does not shoot to 100 — clamp is applied at the end
+//
+// POSITIVE SOURCES:
+//   - Sleeping/resting in a bed/home                   → +1 to +2/hr
+//   - Comfortable furniture context (sofa, lounge)     → +1/hr
+//   - High-quality food/restaurant                     → +0.5/hr
+//   - Being around trusted/liked people                → +0.5 to +1/hr
+//   - Clean, upscale, pleasant, familiar environment   → +0.5 to +1/hr
+//
+// NEGATIVE SOURCES:
+//   - Being around disliked/feared people              → -0.5 to -1.5/hr
+//   - Hostile, tense, embarrassing conversation        → -0.5 to -1/hr
+//   - Harsh, dirty, loud, unsafe environment           → -0.5 to -1.5/hr
+//   - Mandatory/unwanted social events                 → -0.5/hr
+//
+// NPC EXCLUSION: This only applies to active_created_character (caller already filters).
+
+function computeComfortModifier(char, context, locationMap) {
+  let modifier = 0;
+
+  const presence    = char.resolved_presence_status || '';
+  const activity    = (char.current_activity || '').toLowerCase();
+  const locId       = char.resolved_current_location_id;
+  const loc         = locId ? locationMap[locId] : null;
+  const locCat      = (loc?.category || '').toLowerCase();
+  const locName     = (loc?.name || '').toLowerCase();
+  const locDesc     = (loc?.description || '').toLowerCase();
+  const locFeatures = (loc?.features || []).map(f => (f || '').toLowerCase());
+
+  // ── REST STATE COMFORT ────────────────────────────────────────────────────
+  // Sleeping in a real home/bed: RATES already gives +4/hr — add +1 for "in bed" quality
+  if (context === 'sleeping' && (locCat === 'home' || locCat === 'hotel' || presence === 'home')) {
+    modifier += 1; // in a real bed at home/hotel — superior to passed-out on a couch
+  }
+  // Napping on sofa/home: RATES gives +4 for sleeping — a nap at home is comfortable
+  if ((presence === 'napping' || activity.includes('nap')) && (locCat === 'home' || !locId)) {
+    modifier += 0.5;
+  }
+  // Resting context at home — couch/lounge/bed while awake
+  if (context === 'home_resting') {
+    modifier += 1; // comfortable furniture, familiar surroundings
+  }
+  // Resting at any non-home but comfortable location (hotel, lounge, etc.)
+  if (context === 'resting' && locCat !== 'gym' && locCat !== 'jail_prison') {
+    modifier += 0.5;
+  }
+
+  // ── ENVIRONMENT QUALITY COMFORT ───────────────────────────────────────────
+  if (loc) {
+    // Upscale / nice restaurant / luxury venue
+    const isUpscale = locFeatures.some(f => f.includes('upscale') || f.includes('luxury') || f.includes('fine dining') || f.includes('high-end'))
+      || locDesc.includes('upscale') || locDesc.includes('luxury') || locDesc.includes('fine dining');
+    if (isUpscale) modifier += 0.75;
+
+    // Clean, pleasant, beautiful, relaxing
+    const isPleasant = locFeatures.some(f => f.includes('clean') || f.includes('pleasant') || f.includes('beautiful') || f.includes('relaxing') || f.includes('serene') || f.includes('cozy') || f.includes('comfortable'))
+      || locDesc.includes('cozy') || locDesc.includes('relaxing') || locDesc.includes('comfortable') || locDesc.includes('beautiful');
+    if (isPleasant) modifier += 0.5;
+
+    // Confinement facility / jail — harsh environment
+    if (locCat === 'jail_prison' || loc.is_confinement_facility) {
+      modifier -= 1.5;
+    }
+
+    // Outdoor park / pleasant outdoor — mild comfort bonus
+    if (locCat === 'outdoor' || locCat === 'community') {
+      modifier += 0.25;
+    }
+  }
+
+  // ── FOOD QUALITY COMFORT ──────────────────────────────────────────────────
+  // Eating at a restaurant (food_drink context) — good food improves comfort
+  if (context === 'food_drink' || (activity.includes('eat') && locCat === 'food_drink')) {
+    modifier += 0.5; // a decent meal in a pleasant place adds comfort
+    if (loc) {
+      const isNiceRestaurant = locFeatures.some(f => f.includes('upscale') || f.includes('fine dining') || f.includes('nice'))
+        || locDesc.includes('upscale') || locDesc.includes('fine dining');
+      if (isNiceRestaurant) modifier += 0.5; // extra for a genuinely nice restaurant
+    }
+  }
+
+  // ── SOCIAL PRESENCE COMFORT ───────────────────────────────────────────────
+  // Comfort and Social are SEPARATE needs. Social fulfillment ≠ comfort automatically.
+  // Only positive, trusted, enjoyed relationships add comfort.
+  // Mere interaction does NOT add comfort — quality matters.
+
+  const relationships = char.fictional_relationships || [];
+  const familyMembers = char.family_members || [];
+
+  // Build trust/like score for people currently relevant
+  // We approximate "who they're likely around" from activity/context
+  const isSocialContext = context === 'social_out' || context === 'bar_club' || context === 'food_drink';
+  const isAtHome = context === 'home_resting' || context === 'home_active' || presence === 'home';
+
+  if (isSocialContext || isAtHome) {
+    // Check if character has close, trusted, or loved relationships
+    // High friendship (>75), high trust (>70), or romantic relationship → comfort bonus
+    let bestRelationshipComfort = 0;
+    for (const r of relationships) {
+      const friendship = r.friendship_level ?? 50;
+      const trust      = r.trust_level      ?? 50;
+      const romantic   = r.romantic_level   ?? 0;
+      const tension    = r.tension_level    ?? 0;
+
+      // Disliked, distrusted, or feared person — comfort decreases
+      if (friendship < 25 || trust < 20 || tension > 70) {
+        bestRelationshipComfort = Math.min(bestRelationshipComfort, -1);
+        continue;
+      }
+      // Trusted close friend / family / partner
+      if (friendship > 80 || trust > 75 || romantic > 60) {
+        bestRelationshipComfort = Math.max(bestRelationshipComfort, 1);
+      } else if (friendship > 60 || trust > 55) {
+        bestRelationshipComfort = Math.max(bestRelationshipComfort, 0.5);
+      }
+    }
+
+    // Family members also count — being with loved ones adds comfort
+    if (isAtHome && familyMembers.length > 0) {
+      // Presence of family at home (not a specific relationship record needed) → mild comfort
+      bestRelationshipComfort = Math.max(bestRelationshipComfort, 0.5);
+    }
+
+    modifier += bestRelationshipComfort;
+  }
+
+  // ── MANDATORY / STRESSFUL SOCIAL EVENT COMFORT PENALTY ──────────────────
+  // A mandatory work event, tense gathering, or forced interaction is socially active but
+  // comfort-negative. Approximate from activity text.
+  const activityLower = activity;
+  const isForcedEvent = activityLower.includes('mandatory') || activityLower.includes('forced') || activityLower.includes('awkward') || activityLower.includes('uncomfortable');
+  if (isForcedEvent) modifier -= 0.5;
+
+  const isStressfulActivity = activityLower.includes('argument') || activityLower.includes('confrontation') || activityLower.includes('conflict') || activityLower.includes('tense') || activityLower.includes('stressed');
+  if (isStressfulActivity) modifier -= 1;
+
+  // ── CAP TOTAL MODIFIER ────────────────────────────────────────────────────
+  // Max +2/hr positive, max -2/hr negative — gradual, not dramatic
+  return Math.max(-2, Math.min(2, modifier));
+}
+
 function applyElapsedTime(needs, elapsedHours, context) {
   const rates = RATES[context] || RATES.default;
   return {
@@ -764,6 +915,14 @@ Deno.serve(async (req) => {
       let newNeeds = applyElapsedTime(currentNeeds, cappedHours, context);
       // Apply cross-system infection
       newNeeds = applyStatInfection(newNeeds, cappedHours);
+
+      // ── COMFORT ADD-ON: positive + negative contextual modifiers ─────────
+      // Additive only — supplements RATES comfort values with environment,
+      // rest state, food quality, and social presence signals.
+      const comfortMod = computeComfortModifier(char, context, locationMap);
+      if (comfortMod !== 0) {
+        newNeeds.comfort = clamp(newNeeds.comfort + comfortMod * cappedHours);
+      }
 
       // ── AWAKE-TIME ENERGY DRAIN GUARANTEE (active_created_character only) ──
       // Rule: An awake active_created_character must lose at least -5 energy per hour,
