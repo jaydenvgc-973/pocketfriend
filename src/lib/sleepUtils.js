@@ -213,11 +213,10 @@
 /**
  * SLEEP UTILITIES
  *
- * Sleep debt has been removed. The following remain valid and active:
+ * Active fields:
  * - sleep_interrupted_at: READ-ONLY flag. Records when sleep was cut short by alarm/message/emergency.
  *   Used to classify ongoing sleep as valid (recovery) and to reduce energy recovery on interrupted rest.
  *   Never written here. Written by alarm/wake systems when they interrupt sleep.
- * - sleep_debt_hours: REMOVED. Do not restore.
  *
  * Sleep operates through:
  * - Energy/needs system (simulateActiveCharacterNeeds) — primary sleep driver for active_created_character
@@ -225,7 +224,9 @@
  * - Adaptive schedule (derived from work/school) — context only, not authority
  * - Interrupted sleep recovery (sleep_interrupted_at) — valid recovery reason
  * - Chat interruption (energy recovery calculated from last_sleep_start duration)
- * - Story/presence logic (user-controlled or schedule-controlled, never debt)
+ * - Story/presence logic (user-controlled or schedule-controlled)
+ *
+ * All sleep decisions use Eastern Time. UTC is not used for any sleep logic.
  */
 
 export const STALE_SLEEP_GRACE_MINUTES = 20;
@@ -234,8 +235,8 @@ export const STALE_SLEEP_GRACE_MINUTES = 20;
  * Determines if a character's DB sleeping/napping state is valid (character-driven)
  * or stale (system artifact that should be cleared).
  *
- * REMOVED: Sleep debt classification completely removed.
- * Only explicit story/schedule sleep is valid now.
+ * Classifies whether a character's DB sleep state is valid (character-driven) or stale.
+ * Only explicit story/schedule/energy-driven sleep is valid.
  */
 export function classifySleepState(character) {
   const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
@@ -307,8 +308,7 @@ export function classifySleepState(character) {
 }
 
 /**
- * REMOVED: All sleep debt consequence tags removed.
- * Oversleep consequences are now only story-based (personality, emotional state).
+ * Oversleep consequences are story-based: personality traits, emotional state, obligations.
  */
 export function buildOversleepConsequences(character, nowET) {
   const tags = [];
@@ -335,7 +335,7 @@ export function buildOversleepConsequences(character, nowET) {
     }
   }
 
-  // Personality-based only (no debt tags)
+  // Personality-based consequence tags
   if (character.trait_workaholic) {
     tags.push('panicking', 'guilty', 'rushing');
   } else if (character.trait_anxious || (character.emotional_state || '').includes('anxious')) {
@@ -352,15 +352,14 @@ export function buildOversleepConsequences(character, nowET) {
     tags.push('groggy', 'adjusting');
   }
 
-  // Energy-based (no debt)
+  // Energy-based consequence
   if ((character.energy_value || 75) < 30) tags.push('exhausted');
 
   return tags;
 }
 
 /**
- * Returns detailed sleep state — wake from chat with energy recovery only.
- * REMOVED: No sleep debt calculation.
+ * Returns current sleep state based on resolved_presence_status and schedule validation.
  */
 export function getSleepState(character) {
   const isAsleep = isCharacterAsleep(character);
@@ -382,7 +381,7 @@ export function getSleepState(character) {
  * Calculates partial energy recovery from the sleep session so far.
  * Writes sleep_interrupted_at so subsequent systems know this rest was cut short.
  *
- * IMPORTANT: sleep_interrupted_at is NOT sleep debt. It is a flag that says:
+ * IMPORTANT: sleep_interrupted_at is NOT a cumulative fatigue tracker. It is a flag that says:
  *   "this character did not finish their sleep cycle — they may still be tired."
  * Consequence systems (classifySleepState, classifySleepStateInline) read it
  * to keep the character in valid-recovery sleep for up to 3 hours after interruption.
@@ -456,7 +455,7 @@ export const VGC_RESIDENT_WAKE_TIME_MIN   = 8 * 60 + 30;  // 510 min (8:30 AM)
 
 /**
  * Computes the sleep window for a character.
- * Schedule-based only. No debt.
+ * Schedule-based only. Energy-driven for active_created_character.
  *
  * ONE TRUTH RULE: This is the single canonical sleep-window resolver.
  *
@@ -549,7 +548,7 @@ function computeAdaptiveSleepWindow(character, locationMap) {
         }
       } else {
         // Day shift: only derive sleep from TODAY's work day.
-        // REMOVED: worksTomorrow no longer influences today's sleep window.
+        // Only today's work day is used — adjacent days do not influence today's sleep window.
         const worksToday = character.work_days.includes(today);
         if (worksToday) {
           const wakeMin       = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
