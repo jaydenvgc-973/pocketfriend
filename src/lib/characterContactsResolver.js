@@ -344,6 +344,55 @@ export async function resolveCharacterContacts(character, ownerEmail, currentUse
     }
   }
 
+  // ── SOURCE 4a: Vick bilateral backfill ──────────────────────────────────────
+  // If Vick (npc_world_service) has the viewed character in his fictional_relationships
+  // or family_members, the relationship is bilateral. Inject Vick as a contact on
+  // the viewed character's side even if they have never started a conversation with him.
+  // This ensures Vick appears in the character's World Phone / World Contacts whenever
+  // Vick has that character listed on his side.
+  for (const rec of allKnownChars) {
+    if (rec.character_type !== 'npc_world_service') continue;
+    const vickRec = rec;
+
+    // Already in seen? Skip injection (they already appear)
+    if (findExistingEntry(vickRec.id, vickRec.name)) continue;
+
+    // Check if viewed character appears in Vick's relationship arrays
+    const isLinked = [
+      ...(vickRec.fictional_relationships || []),
+      ...(vickRec.family_members || []),
+    ].some(r => {
+      const rid = r.related_character_id || r.character_id;
+      const rname = (r.person_name || r.name || '').trim().toLowerCase();
+      return (rid && rid === character.id) ||
+             (rname && rname === (character.name || '').trim().toLowerCase());
+    });
+
+    if (!isLinked) continue;
+
+    // Bilateral: inject Vick as a contact on the viewed character's side
+    const av = bestAvatar(vickRec);
+    seen.set(vickRec.id, {
+      person_name: vickRec.name,
+      relationship_type: 'Service & Support',
+      relationship_family: normalizeRelationshipType('Service & Support'),
+      description: vickRec.profile_summary || '',
+      history_summary: '',
+      last_interaction_summary: '',
+      emotional_impact: '',
+      current_status: vickRec.current_activity || '',
+      romantic_level: 0,
+      friendship_level: 40,
+      related_character_id: vickRec.id,
+      avatar_url: av || null,
+      _source: 'vick_bilateral_backfill',
+      _linkage: 'linked',
+      _matched_character_id: vickRec.id,
+      _avatar_source: av ? 'vick_record' : null,
+    });
+    console.log(`[ContactsResolver] Vick bilateral backfill: "${character.name}" ← "${vickRec.name}" (${vickRec.id})`);
+  }
+
   // ── SOURCE 4: conversation-linked characters ─────────────────────────────────
   // allConvoLinkedIds already computed above. charById already supplemented.
   // No additional RLS-scoped fetch needed — service-role supplement covers all types

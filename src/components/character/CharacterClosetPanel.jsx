@@ -89,7 +89,7 @@ function PieceCard({ piece, onDelete, onToggleFavorite }) {
 }
 
 // ── Outfit Card ───────────────────────────────────────────────────────────────
-function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit, onFillFromImage }) {
+function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit, onFillFromImage, hasRotationConflict }) {
   const [expanded, setExpanded] = useState(false);
   const [fillingFromImage, setFillingFromImage] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
@@ -121,7 +121,15 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite,
           <span className="text-base">{catDef.emoji}</span>
           <div>
             <p className="text-sm font-medium text-foreground">{outfit.label}</p>
-            <p className="text-[10px] text-muted-foreground capitalize">{catDef.label}</p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <p className="text-[10px] text-muted-foreground capitalize">{catDef.label}</p>
+              {outfit.rotation_number != null && outfit.rotation_number !== "" && (
+                <span className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${hasRotationConflict ? 'bg-amber-500/20 text-amber-400' : 'bg-primary/15 text-primary'}`}>
+                  #{outfit.rotation_number}
+                  {hasRotationConflict && <span title="Duplicate rotation number in this category">⚠</span>}
+                </span>
+              )}
+            </div>
             {needsTextFill && (
               <p className="text-[9px] text-amber-400 font-medium">Image only · tap below to fill text</p>
             )}
@@ -343,7 +351,7 @@ function AddPieceForm({ character, onSave, onCancel }) {
 // ── Add Outfit Form ────────────────────────────────────────────────────────────
 function AddOutfitForm({ character, onSave, onCancel }) {
   const [form, setForm] = useState({
-    label: "", category: "daily_casual", top: "", bottom: "", shoes: "",
+    label: "", category: "daily_casual", rotation_number: "", top: "", bottom: "", shoes: "",
     outerwear: "", accessories: "", hair_state: "", full_description: "", is_favorite: false,
   });
   const [genPrompt, setGenPrompt] = useState("");
@@ -504,6 +512,17 @@ Return JSON:
           <select value={form.category} onChange={e => update("category", e.target.value)} className="w-full h-9 px-3 rounded-xl bg-input border border-border text-foreground text-sm">
             {OUTFIT_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.emoji} {c.label}</option>)}
           </select>
+        </div>
+        <div className="col-span-2">
+          <Input
+            type="number"
+            min="1"
+            max="99"
+            value={form.rotation_number}
+            onChange={e => update("rotation_number", e.target.value === "" ? "" : parseInt(e.target.value, 10))}
+            placeholder="# Rotation number (optional, e.g. 1, 2, 3)"
+            className="h-9 text-sm rounded-xl"
+          />
         </div>
         <Input value={form.top} onChange={e => update("top", e.target.value)} placeholder="Top" className="h-9 text-sm rounded-xl" />
         <Input value={form.bottom} onChange={e => update("bottom", e.target.value)} placeholder="Bottom" className="h-9 text-sm rounded-xl" />
@@ -745,6 +764,21 @@ export default function CharacterClosetPanel({ character }) {
     return acc;
   }, {});
 
+  // Build a set of outfit_ids that have a duplicate rotation_number within their category
+  const rotationConflictIds = new Set();
+  for (const items of Object.values(groupedOutfits)) {
+    const numCounts = {};
+    for (const o of items) {
+      const n = o.rotation_number;
+      if (n == null || n === "") continue;
+      numCounts[n] = (numCounts[n] || 0) + 1;
+    }
+    for (const o of items) {
+      const n = o.rotation_number;
+      if (n != null && n !== "" && numCounts[n] > 1) rotationConflictIds.add(o.outfit_id);
+    }
+  }
+
   const groupedPieces = PIECE_TYPES.reduce((acc, type) => {
     const items = pieces.filter(p => p.piece_type === type.value);
     if (items.length > 0) acc[type.value] = items;
@@ -861,16 +895,17 @@ export default function CharacterClosetPanel({ character }) {
                   </p>
                   <div className="grid gap-2">
                     {items.map(outfit => (
-                       <OutfitCard
-                         key={outfit.outfit_id}
-                         outfit={outfit}
-                         isActive={currentOutfit?.outfit_id === outfit.outfit_id}
-                         onSetActive={handleSetActive}
-                         onDelete={handleDeleteOutfit}
-                         onToggleFavorite={handleToggleFavoriteOutfit}
-                         onEdit={setEditingOutfit}
-                         onFillFromImage={handleFillFromImage}
-                       />
+                      <OutfitCard
+                        key={outfit.outfit_id}
+                        outfit={outfit}
+                        isActive={currentOutfit?.outfit_id === outfit.outfit_id}
+                        onSetActive={handleSetActive}
+                        onDelete={handleDeleteOutfit}
+                        onToggleFavorite={handleToggleFavoriteOutfit}
+                        onEdit={setEditingOutfit}
+                        onFillFromImage={handleFillFromImage}
+                        hasRotationConflict={rotationConflictIds.has(outfit.outfit_id)}
+                      />
                     ))}
                   </div>
                 </div>

@@ -97,7 +97,9 @@ function getDailyRotationIndex(outfitPool, characterId = '') {
 
 /**
  * Pick an outfit from a category pool, rotating daily.
- * Avoids re-picking the currently active outfit if alternatives exist.
+ * If outfits have rotation_number assigned, they are sorted by that number
+ * and cycled in explicit sequence. Outfits without numbers fall back to
+ * daily date-based rotation.
  */
 // rotationEnabled: pass character.outfit_rotation_enabled (defaults true when undefined)
 function pickFromPool(pool, currentOutfitId = null, characterId = '', rotationEnabled = true) {
@@ -116,14 +118,34 @@ function pickFromPool(pool, currentOutfitId = null, characterId = '', rotationEn
     if (currentInPool) return currentInPool;
   }
 
-  // Daily rotation among candidates — prioritize favorites
-  const favorites = pool.filter(o => o.is_favorite);
-  const candidates = favorites.length > 0 ? favorites : pool;
+  // Sort candidates: numbered outfits first (by rotation_number ascending),
+  // then unnumbered. Favorites are prioritized within each tier.
+  const numbered = pool
+    .filter(o => o.rotation_number != null && o.rotation_number !== "")
+    .sort((a, b) => Number(a.rotation_number) - Number(b.rotation_number));
+  const unnumbered = pool.filter(o => o.rotation_number == null || o.rotation_number === "");
+
+  // If any outfits have explicit rotation numbers, use them as the ordered sequence
+  if (numbered.length > 0) {
+    const now = new Date();
+    const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+    const idHash = characterId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+    const idx = (dayOfYear + idHash) % numbered.length;
+    const picked = numbered[idx];
+    // Skip currently worn if alternatives exist
+    if (rotationEnabled && picked?.outfit_id === currentOutfitId && numbered.length > 1) {
+      return numbered[(idx + 1) % numbered.length];
+    }
+    return picked;
+  }
+
+  // Fallback: no rotation numbers — use daily rotation among favorites or all
+  const favorites = unnumbered.filter(o => o.is_favorite);
+  const candidates = favorites.length > 0 ? favorites : unnumbered;
   if (candidates.length === 1) return candidates[0];
 
   const idx = getDailyRotationIndex(candidates, characterId);
   const picked = candidates[idx];
-  // When rotating, skip the currently worn outfit if alternatives exist
   if (rotationEnabled && picked?.outfit_id === currentOutfitId && candidates.length > 1) {
     return candidates[(idx + 1) % candidates.length];
   }

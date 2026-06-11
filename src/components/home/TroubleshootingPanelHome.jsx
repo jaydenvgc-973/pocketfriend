@@ -22,6 +22,7 @@ const ISSUE_LIST = [
   { id: 'fix_locations', label: '📍 Fix location display', description: 'Detect characters with stale or missing location data. Reports issues only — does not overwrite jail, travel, hotel, shelter, or temporary housing states.' },
   { id: 'restore_world_contacts', label: '🌐 Restore missing World Contacts', description: 'Find any contact records (any character type) with missing ownership that are referenced by this account\'s contact graph. Identifies them by name, then restores their owner_email. Does not change character types, promote NPCs, or create duplicates.' },
   { id: 'world_phone_anchors', label: '📵 World Phone manual re-anchor', description: 'Open the manual re-anchor workspace. Each unresolved World Phone conversation shows message samples and character name clues. You pick the two live characters, then the system repairs the Conversation and backfills all Message records.' },
+  { id: 'vick_bilateral_contacts', label: '🔗 Repair Vick bilateral contacts', description: 'Ensures all characters in Vick\'s World Contacts also have Vick listed in their contacts. Fixes the one-way relationship — Vick sees them but they don\'t see Vick in their World Phone.' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }) {
@@ -136,6 +137,15 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
         // Two-step handled separately — don't route through troubleshootHome
         setIsRunning(false);
         return;
+      } else if (selectedIssues.includes('vick_bilateral_contacts') && selectedIssues.length === 1) {
+        const res = await base44.functions.invoke('repairVickBilateralContacts', {});
+        const data = res?.data;
+        setResults({
+          summary: data?.message || 'Vick bilateral contact repair complete.',
+          fixed: (data?.repaired || []).map(r => `${r.name} — now has Vick in their contacts`),
+          issues_found: (data?.skipped || []).map(r => `Skipped: ${r.name || r.id} — ${r.reason}`),
+          checks: (data?.already_bilateral || []).map(r => ({ name: r.name, status: 'passed', message: 'Already bilateral ✓' })),
+        });
       } else {
         // All other selections go through troubleshootHome with ONLY the selected issues
         const res = await base44.functions.invoke('troubleshootHome', { selectedIssues });

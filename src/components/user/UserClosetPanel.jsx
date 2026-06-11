@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
-import { Shirt, Plus, X, Star, Loader2, Wand2, Camera, ChevronDown, ChevronUp, Pencil, ZoomIn } from "lucide-react";
+import { Shirt, Plus, X, Star, Loader2, Wand2, Camera, ChevronDown, ChevronUp, Pencil, ZoomIn, Hash, AlertTriangle } from "lucide-react";
 import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,7 @@ function generateId() {
   return `outfit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit }) {
+function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit, hasRotationConflict }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
 
@@ -45,7 +45,15 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite,
           <span className="text-base">{catDef.emoji}</span>
           <div>
             <p className="text-sm font-medium text-foreground">{outfit.label}</p>
-            <p className="text-[10px] text-muted-foreground capitalize">{catDef.label}</p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <p className="text-[10px] text-muted-foreground capitalize">{catDef.label}</p>
+              {outfit.rotation_number != null && outfit.rotation_number !== "" && (
+                <span className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${hasRotationConflict ? 'bg-amber-500/20 text-amber-400' : 'bg-primary/15 text-primary'}`}>
+                  #{outfit.rotation_number}
+                  {hasRotationConflict && <span title="Duplicate rotation number in this category">⚠</span>}
+                </span>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -97,7 +105,7 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite,
 
 function AddOutfitForm({ displayName, gender, onSave, onCancel }) {
   const [form, setForm] = useState({
-    label: "", category: "daily_casual", top: "", bottom: "", shoes: "",
+    label: "", category: "daily_casual", rotation_number: "", top: "", bottom: "", shoes: "",
     outerwear: "", accessories: "", hair_state: "", full_description: "", is_favorite: false,
   });
   const [genPrompt, setGenPrompt] = useState("");
@@ -250,6 +258,17 @@ Return JSON:
             {OUTFIT_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.emoji} {c.label}</option>)}
           </select>
         </div>
+        <div className="col-span-2">
+          <Input
+            type="number"
+            min="1"
+            max="99"
+            value={form.rotation_number}
+            onChange={e => update("rotation_number", e.target.value === "" ? "" : parseInt(e.target.value, 10))}
+            placeholder="# Rotation number (optional, e.g. 1, 2, 3)"
+            className="h-9 text-sm rounded-xl"
+          />
+        </div>
         <Input value={form.top} onChange={e => update("top", e.target.value)} placeholder="Top" className="h-9 text-sm rounded-xl" />
         <Input value={form.bottom} onChange={e => update("bottom", e.target.value)} placeholder="Bottom" className="h-9 text-sm rounded-xl" />
         <Input value={form.shoes} onChange={e => update("shoes", e.target.value)} placeholder="Shoes" className="h-9 text-sm rounded-xl" />
@@ -359,12 +378,17 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
     setShowAddForm(false);
   };
 
-  // Edit existing outfit in-place — never creates a duplicate
+  // Edit existing outfit in-place — preserves rotation_number and all fields
   const handleEditOutfit = async (updatedOutfit) => {
-    const newCloset = closet.map(o => o.outfit_id === updatedOutfit.outfit_id ? updatedOutfit : o);
-    const isCurrentlyWorn = currentOutfit?.outfit_id === updatedOutfit.outfit_id;
+    // Normalize rotation_number: empty string → null (no number)
+    const normalized = {
+      ...updatedOutfit,
+      rotation_number: updatedOutfit.rotation_number === "" ? null : updatedOutfit.rotation_number,
+    };
+    const newCloset = closet.map(o => o.outfit_id === normalized.outfit_id ? normalized : o);
+    const isCurrentlyWorn = currentOutfit?.outfit_id === normalized.outfit_id;
     const currentOutfitUpdate = isCurrentlyWorn
-      ? { ...updatedOutfit, last_changed_at: currentOutfit?.last_changed_at }
+      ? { ...normalized, last_changed_at: currentOutfit?.last_changed_at }
       : null;
     await saveCloset(newCloset, currentOutfitUpdate);
     setEditingOutfit(null);
@@ -389,6 +413,21 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
     if (items.length > 0) acc[cat.value] = items;
     return acc;
   }, {});
+
+  // Detect duplicate rotation numbers within the same category
+  const rotationConflictIds = new Set();
+  for (const items of Object.values(groupedOutfits)) {
+    const numCounts = {};
+    for (const o of items) {
+      const n = o.rotation_number;
+      if (n == null || n === "") continue;
+      numCounts[n] = (numCounts[n] || 0) + 1;
+    }
+    for (const o of items) {
+      const n = o.rotation_number;
+      if (n != null && n !== "" && numCounts[n] > 1) rotationConflictIds.add(o.outfit_id);
+    }
+  }
 
   return (
     <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
@@ -450,6 +489,7 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
                     onDelete={handleDelete}
                     onToggleFavorite={handleToggleFavorite}
                     onEdit={setEditingOutfit}
+                    hasRotationConflict={rotationConflictIds.has(outfit.outfit_id)}
                   />
                 ))}
               </div>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Hash, AlertTriangle } from "lucide-react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Loader2, Wand2, Camera, ZoomIn } from "lucide-react";
@@ -41,6 +42,7 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
   const [form, setForm] = useState({
     label:            outfit.label            || "",
     category:         outfit.category         || "daily_casual",
+    rotation_number:  outfit.rotation_number  ?? "",
     top:              outfit.top              || "",
     bottom:           outfit.bottom           || "",
     shoes:            outfit.shoes            || "",
@@ -131,6 +133,21 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
                   <select value={form.category} onChange={e => update("category", e.target.value)} className="w-full h-9 px-3 rounded-xl bg-input border border-border text-foreground text-sm">
                     {OUTFIT_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.emoji} {c.label}</option>)}
                   </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
+                    # Rotation Number (within category)
+                  </label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="99"
+                    value={form.rotation_number}
+                    onChange={e => update("rotation_number", e.target.value === "" ? "" : parseInt(e.target.value, 10))}
+                    placeholder="e.g. 1, 2, 3…"
+                    className="h-9 text-sm rounded-xl"
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Rotation cycles outfits by this number within the same category.</p>
                 </div>
                 <Input value={form.top}         onChange={e => update("top", e.target.value)}         placeholder="Top"                  className="h-9 text-sm rounded-xl" />
                 <Input value={form.bottom}      onChange={e => update("bottom", e.target.value)}      placeholder="Bottom"               className="h-9 text-sm rounded-xl" />
