@@ -220,10 +220,14 @@ Return JSON:
     if (!form.label.trim()) return;
     setSaving(true);
     try {
+      const rotNum = form.rotation_number === "" || form.rotation_number == null
+        ? null
+        : parseInt(String(form.rotation_number), 10) || null;
       await onSave({
         outfit_id: generateId(),
         created_at: new Date().toISOString(),
         ...form,
+        rotation_number: rotNum,
         image_url: uploadedImageUrl || generatedImageUrl || "",
       });
     } finally {
@@ -264,7 +268,7 @@ Return JSON:
             min="1"
             max="99"
             value={form.rotation_number}
-            onChange={e => update("rotation_number", e.target.value === "" ? "" : parseInt(e.target.value, 10))}
+            onChange={e => update("rotation_number", e.target.value)}
             placeholder="# Rotation number (optional, e.g. 1, 2, 3)"
             className="h-9 text-sm rounded-xl"
           />

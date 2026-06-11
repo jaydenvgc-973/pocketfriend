@@ -89,9 +89,13 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
     setSaving(true);
     try {
       // Preserve all existing fields — only patch what the form controls
+      const rotNum = form.rotation_number === "" || form.rotation_number == null
+        ? null
+        : parseInt(String(form.rotation_number), 10) || null;
       await onSave({
         ...outfit,          // preserve outfit_id, created_at, type, etc.
         ...form,            // override editable fields
+        rotation_number: rotNum,
         image_url: imageUrl,
         updated_at: new Date().toISOString(),
       });
@@ -143,7 +147,7 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
                     min="1"
                     max="99"
                     value={form.rotation_number}
-                    onChange={e => update("rotation_number", e.target.value === "" ? "" : parseInt(e.target.value, 10))}
+                    onChange={e => update("rotation_number", e.target.value)}
                     placeholder="e.g. 1, 2, 3…"
                     className="h-9 text-sm rounded-xl"
                   />
