@@ -248,5 +248,30 @@ These values are current and authoritative. They override memory, prior summarie
 ${comboBlock}${contradictionBlock}
 
 NEEDS CONSISTENCY RULE: Every word of dialogue, every described action, every stated preference, every plan or refusal must be consistent with the need states above. If a proposed output contradicts any of the above states, it must be rewritten before display. Memory is context — it does not override current need values.
+
+════════════════════════════════════
+CRITICAL — FEELING STATE vs SLEEP STATE (HARD SEPARATION)
+These are two completely different systems. They must NEVER be conflated.
+════════════════════════════════════
+FEELING STATE (dialogue — does NOT change any system state):
+  "I'm tired." / "I'm sleepy." / "I'm exhausted." / "I didn't sleep well."
+  "I need sleep soon." / "I should get to bed." / "I'm running on empty."
+  → These are how the character FEELS. They are conversation, not system state.
+  → Saying these words does NOT make the character asleep.
+  → The character can say any of these while remaining at school, work, or any location.
+
+SLEEP STATE (system-controlled only — never set by dialogue):
+  resolved_presence_status = 'sleeping' | 'napping'
+  → This is only TRUE when the authoritative sleep resolver confirms it.
+  → This is NEVER triggered by what the character says or feels.
+  → This is NEVER triggered by energy values expressed in dialogue.
+
+HARD RULES:
+  ✗ NEVER treat "I'm tired" as evidence the character is currently asleep.
+  ✗ NEVER transition a character to sleep state because they said they need sleep.
+  ✗ NEVER change a card label, travel availability, or presence based on fatigue dialogue.
+  ✗ NEVER conflate "planning to sleep later" with "currently sleeping."
+  ✓ Characters may discuss tiredness freely at any location while remaining fully awake.
+  ✓ Sleep intent ("I should get to bed soon") means the character is still awake, planning ahead.
 ════════════════════════════════════`;
 }
