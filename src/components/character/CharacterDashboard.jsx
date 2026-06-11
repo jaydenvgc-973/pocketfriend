@@ -345,7 +345,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 8; // force-bust: clear sessions that cached broken v6 timelineEntries-source data
+const DASHBOARD_CACHE_VERSION = 9; // fix: messages filtered/graphed/displayed using timestamp||created_date (not created_date alone)
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -537,7 +537,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
 
       // ── Time windows — unified 3-day window for ALL dashboard metrics ─────
       // cutoff24h is kept only for legacy reference. No UI metric uses it.
-      const msgs3d  = scopedMsgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff3d)));
+      const msgs3d  = scopedMsgs.filter(m => { const d = m.timestamp || m.created_date; return d && isAfter(parseISO(d), parseISO(cutoff3d)); });
       const narrs3d = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff3d)));
       const txns3d  = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
 
@@ -693,13 +693,14 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // If emotional_state is present, use its actual directional score.
       // If missing, infer from message content.
       msgs3d.forEach(m => {
-        if (!m.created_date) return;
+        const mDate = m.timestamp || m.created_date;
+        if (!mDate) return;
         if (m.emotional_state && m.emotional_state !== "calm") {
-          addEvent(m.created_date, m.emotional_state, null, "message");
+          addEvent(mDate, m.emotional_state, null, "message");
         } else if (m.content) {
           const inf = inferEmotionFromText(m.content);
-          if (inf) addEvent(m.created_date, inf.emotion, inf.score, "message");
-          else if (m.emotional_state) addEvent(m.created_date, m.emotional_state, null, "message");
+          if (inf) addEvent(mDate, inf.emotion, inf.score, "message");
+          else if (m.emotional_state) addEvent(mDate, m.emotional_state, null, "message");
         }
       });
 
@@ -894,7 +895,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
           : null;
 
         timelineEntries.push({
-          time: m.created_date,
+          time: m.timestamp || m.created_date,
           icon: meta.isWorldPhone || meta.isAutonomousBeat ? "phone" : "message",
           text: buildMsgText(m._resolvedEmotion || m.emotional_state, resolvedName, meta.isGroup, meta.isWorldPhone, beatType),
           emotion: m._resolvedEmotion || m.emotional_state,
