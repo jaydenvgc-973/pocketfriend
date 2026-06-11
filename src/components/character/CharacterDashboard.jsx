@@ -362,7 +362,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 11; // fix: emotional graph rebalanced — positive/negative symmetry, momentum smoothing, needs/sleep reduced
+const DASHBOARD_CACHE_VERSION = 12; // fix: graph density restored (periodic fills + dedup window fix), x-axis day labels, social counts use fallback msgs
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -570,13 +570,12 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const txns3d  = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
 
       // ── SOCIAL ACTIVITY STATS — scoped to last 3 days ───────────────────────
-      // "Messages" = total message count (both sides of all conversations).
-      // "Positive" / "Conflict" = derived from ALL msgs3d (character + user) using the shared
-      // emotion vocabulary. Character-sent messages carry emotional_state; user messages carry
-      // content that can be inferred. Both sides of a conversation are emotionally meaningful.
-      //
-      // NOTE: Semantic inference is DISPLAY ONLY. Never written back to Message records.
-      const msgsSent = msgs3d.length; // total message activity (both sides) in 3-day window
+      // msgsSent = ALL messages in the 3-day window across scoped conversations.
+      // Use allMsgs filtered to 3d directly when scopedMsgs is empty (Conversation query fallback).
+      // This ensures message counts are never 0 just because the Conversation filter failed.
+      const msgs3dFallback = msgs3d.length > 0 ? msgs3d
+        : allMsgs.filter(m => { const d = m.timestamp || m.created_date; return d && isAfter(parseISO(d), parseISO(cutoff3d)); });
+      const msgsSent = msgs3dFallback.length;
 
       // ── LEGACY-SAFE sentiment classification ──────────────────────────────
       // Priority: 1. emotional_state field  2. semantic inference from content (display only)
@@ -600,7 +599,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       let unclassifiedCount = 0;
       const sentimentBuckets = {};
 
-      msgs3d.forEach(m => {
+      msgs3dFallback.forEach(m => {
         const sentiment = resolveMessageSentiment(m);
         const bucket = sentiment || "unclassified";
         sentimentBuckets[bucket] = (sentimentBuckets[bucket] || 0) + 1;
@@ -639,6 +638,19 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // rawEvents: { tsMs, emotion, score, label, source }
       const rawEvents = [];
 
+      // ── Smart label formatter — only show day name when day changes ─────────
+      // Tracks the last day seen so the label only includes "EEE" prefix on day-change.
+      let lastLabelDay = "";
+      const makeTrendLabel = (d) => {
+        const dayStr = format(d, "EEE");
+        const timeStr = format(d, "h:mma");
+        if (dayStr !== lastLabelDay) {
+          lastLabelDay = dayStr;
+          return `${dayStr} ${timeStr}`;
+        }
+        return timeStr;
+      };
+
       const addEvent = (isoTime, emotion, scoreOverride, source) => {
         if (!isoTime) return;
         try {
@@ -647,8 +659,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
           if (tsMs < cutoff3dMs || tsMs > now.getTime() + 60000) return;
           const em = (emotion || "calm").toLowerCase();
           const score = scoreOverride != null ? scoreOverride : eScore(em);
-          const label = format(d, "EEE h:mma");
-          rawEvents.push({ tsMs, emotion: em, score, label, source: source || "event" });
+          rawEvents.push({ tsMs, emotion: em, score, source: source || "event" });
         } catch {}
       };
 
@@ -728,7 +739,8 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // ── 3. MESSAGES — semantic scoring per message ─────────────────────────
       // If emotional_state is present, use its actual directional score.
       // If missing, infer from message content.
-      msgs3d.forEach(m => {
+      // Use msgs3dFallback so this doesn't return 0 if Conversation filter failed.
+      msgs3dFallback.forEach(m => {
         const mDate = m.timestamp || m.created_date;
         if (!mDate) return;
         if (m.emotional_state && m.emotional_state !== "calm") {
@@ -780,26 +792,41 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // ── 7. CURRENT STATE ANCHOR ────────────────────────────────────────────
       addEvent(nowIso, curEmotion, null, "current");
 
+      // ── 8. PERIODIC DENSITY FILL — ensure multiple points per day ────────────
+      // If there are large gaps (> 4 hours) in the 3-day window, insert periodic
+      // emotional baseline anchors using the character's current emotional state.
+      // This prevents the graph from collapsing to 1 point per day.
+      // These are low-priority fills — real events will replace them during dedup.
+      const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
+      const windowStart = cutoff3dMs;
+      const windowEnd = now.getTime();
+      for (let t = windowStart + FOUR_HOURS_MS; t < windowEnd - FOUR_HOURS_MS; t += FOUR_HOURS_MS) {
+        addEvent(new Date(t).toISOString(), curEmotion, null, "periodic");
+      }
+
       // Sort chronologically
       rawEvents.sort((a, b) => a.tsMs - b.tsMs);
 
-      // Deduplication — 5-minute buckets, prefer positive > negative > neutral
+      // Deduplication — source-priority based, with different windows per source type.
       // RULE: A positive social event must NOT be replaced by a nearby biological need signal.
-      // Source priority: life > message > narrative > financial > needs > sleep > current
-      const SOURCE_PRIORITY = { 'life': 6, 'life:inferred': 5, 'message': 5, 'narrative': 4, 'financial': 3, 'current': 2, 'sleep': 1, 'needs': 1, 'wake': 1, 'memory': 4 };
-      const srcPri = (src) => { if (!src) return 1; for (const [k, v] of Object.entries(SOURCE_PRIORITY)) { if (src.startsWith(k)) return v; } return 1; };
+      // Source priority: life > message/memory > narrative > financial > current/sleep/needs > periodic
+      const SOURCE_PRIORITY = { 'life': 7, 'message': 6, 'memory': 5, 'narrative': 4, 'financial': 3, 'current': 2, 'sleep': 2, 'wake': 2, 'needs': 2, 'periodic': 0 };
+      const srcPri = (src) => { if (!src) return 0; for (const [k, v] of Object.entries(SOURCE_PRIORITY)) { if (src.startsWith(k)) return v; } return 1; };
+
+      // Periodic fills use a 3-hour dedup window; real events use 5 minutes.
+      const dedupWindow = (src) => src === 'periodic' ? 3 * 60 * 60 * 1000 : 5 * 60 * 1000;
 
       const deduped = [];
       for (const ev of rawEvents) {
         const prev = deduped[deduped.length - 1];
-        if (prev && Math.abs(ev.tsMs - prev.tsMs) < 5 * 60 * 1000) {
-          // Prefer higher-priority source first
+        const window = Math.max(dedupWindow(ev.source), prev ? dedupWindow(prev.source) : 0);
+        if (prev && Math.abs(ev.tsMs - prev.tsMs) < window) {
+          // Prefer higher-priority source
           const evPri = srcPri(ev.source);
           const prevPri = srcPri(prev.source);
           if (evPri > prevPri) {
             deduped[deduped.length - 1] = ev;
           } else if (evPri === prevPri && ev.score > prev.score) {
-            // Same source priority: prefer more positive score
             deduped[deduped.length - 1] = ev;
           }
           // Otherwise keep existing
@@ -824,9 +851,11 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         return { ...ev, score: blended };
       });
 
-      // Build final chart data
+      // Build final chart data — assign labels NOW (after sort+dedup+smooth) so
+      // day-change detection is correct and "Tuesday" only appears once per day.
+      lastLabelDay = ""; // reset for label pass
       const trendData = smoothed.map(e => ({
-        label: e.label,
+        label: makeTrendLabel(new Date(e.tsMs)),
         mood: Math.round(e.score),
         emotion: e.emotion,
         tsMs: e.tsMs,
@@ -902,7 +931,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         return p[(s||"").toLowerCase()] || 1;
       };
       // Include ALL messages in last 3 days — legacy messages without emotional_state use inferred sentiment for priority
-      msgs3d.forEach(m => {
+      msgs3dFallback.forEach(m => {
         const resolvedEmotion = m.emotional_state || (m.content ? inferEmotionFromText(m.content)?.emotion : null) || null;
         const existing = convoMsgPick[m.conversation_id];
         if (!existing || priorityScore(resolvedEmotion) > priorityScore(existing._resolvedEmotion))
@@ -1069,7 +1098,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         ? `${workLocationName}${character.occupation ? ` · ${character.occupation}` : ''}`
         : character.occupation || null;
 
-      const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 12), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
+      const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 20), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
       dashboardCache[charId] = dashData;
       dashboardCacheVersion[charId] = DASHBOARD_CACHE_VERSION;
       setData(dashData);
