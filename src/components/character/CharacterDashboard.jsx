@@ -345,7 +345,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 9; // fix: messages filtered/graphed/displayed using timestamp||created_date (not created_date alone)
+const DASHBOARD_CACHE_VERSION = 10; // fix: scopedMsgs fallback when convos empty; LocationHistory added to timeline
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -391,6 +391,10 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       base44.entities.LifeEvent.filter({ character_id: charId }, "-timestamp", 100).catch(() => []),
       // Messages where viewed character is RECEIVER — autonomous beats have character_id = sender, receiver_character_id = viewed char
       base44.entities.Message.filter({ receiver_character_id: charId }, "-created_date", 100).catch(() => []),
+      // Location history — recent places visited
+      ownerEmail
+        ? base44.entities.LocationHistory.filter({ character_id: charId, owner_email: ownerEmail }, "-arrival_time", 30).catch(() => [])
+        : Promise.resolve([]),
       // All characters for this owner — seed from CharacterProfile's React Query cache (allCharacters prop)
       // to avoid redundant network request. Only fetch from DB if cache is empty.
       allCharacters.length > 0
@@ -398,7 +402,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         : ownerEmail
           ? base44.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => [])
           : Promise.resolve([]),
-    ]).then(([msgsR, txR, narrR, convosR, locsR, lifeEventsR, rcvMsgsR, allCharsR]) => {
+    ]).then(([msgsR, txR, narrR, convosR, locsR, lifeEventsR, rcvMsgsR, allCharsR, locHistR]) => {
       const msgs       = msgsR.status       === "fulfilled" ? (msgsR.value       || []) : [];
       const txns       = txR.status         === "fulfilled" ? (txR.value         || []) : [];
       const narrs      = narrR.status       === "fulfilled" ? (narrR.value       || []) : [];
@@ -409,6 +413,8 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const rcvMsgs    = rcvMsgsR.status    === "fulfilled" ? (rcvMsgsR.value    || []) : [];
       // All characters — used to resolve receiver IDs → names for outgoing messages
       const allChars   = allCharsR.status   === "fulfilled" ? (allCharsR.value   || []) : [];
+      // Location history — recent places visited
+      const locHistory = locHistR?.status   === "fulfilled" ? (locHistR.value    || []) : [];
       // Combine for full picture — deduplicated by id
       const allMsgIds = new Set(msgs.map(m => m.id));
       const allMsgs   = [...msgs, ...rcvMsgs.filter(m => !allMsgIds.has(m.id))];
@@ -532,8 +538,13 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // ── Valid conversation IDs (scoped to this character's conversations) ──
       const validConvoIds = new Set(convos.map(c => c.id));
 
-      // scopedMsgs: all messages (both sides) in conversations we loaded
-      const scopedMsgs = allMsgs.filter(m => validConvoIds.has(m.conversation_id));
+      // scopedMsgs: all messages (both sides) in conversations we loaded.
+      // CRITICAL FALLBACK: if Conversation query returned 0 results (array-filter failure or 429),
+      // do NOT discard all messages — use allMsgs directly so graph and timeline still populate.
+      // The convoMeta name resolution will still work for any messages we have.
+      const scopedMsgs = validConvoIds.size > 0
+        ? allMsgs.filter(m => validConvoIds.has(m.conversation_id))
+        : allMsgs;
 
       // ── Time windows — unified 3-day window for ALL dashboard metrics ─────
       // cutoff24h is kept only for legacy reference. No UI metric uses it.
@@ -806,6 +817,20 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       txns3d.forEach(t => {
         if (!t.description) return;
         timelineEntries.push({ time: t.timestamp, icon: "dollar", text: t.description, emotion: t.direction === "expense" ? "stressed" : "calm", sub: t.location_name || null });
+      });
+
+      // Location history — recent places visited in last 3 days
+      locHistory.filter(h => h.arrival_time && isAfter(parseISO(h.arrival_time), parseISO(cutoff3d))).forEach(h => {
+        const locCat = h.location_category || '';
+        const icon = locCat === 'home' ? 'home' : locCat === 'work' ? 'briefcase' : locCat === 'gym' ? 'activity' : locCat === 'food_drink' ? 'dollar' : locCat === 'social' ? 'heart' : 'mappin';
+        const reasonText = h.travel_reason || h.event_type || 'Visited';
+        timelineEntries.push({
+          time: h.arrival_time,
+          icon,
+          text: h.location_name ? `${reasonText} · ${h.location_name}` : reasonText,
+          emotion: locCat === 'gym' ? 'motivated' : locCat === 'food_drink' ? 'content' : locCat === 'social' ? 'content' : 'calm',
+          sub: h.duration_minutes ? `${h.duration_minutes} min` : null,
+        });
       });
 
       // Messages — one entry per conversation, most emotionally significant message
