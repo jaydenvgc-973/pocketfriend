@@ -258,6 +258,25 @@ Deno.serve(async (req) => {
         ? 'just woke up (alarm, short sleep)'
         : 'just woke up (alarm)';
 
+      // ── ENERGY FINALIZATION — calculate partial recovery based on elapsed sleep time ──
+      // Sleep recovery rate: +12 energy/hr. Full refill (0→100) takes ~8.3 hours.
+      // We write the current calculated value so the bar reflects what actually happened.
+      // RULE: never set energy higher than 100, never lower than it was at sleep start.
+      // Only applies to active_created_character and npc_world_service.
+      const isEligibleForEnergyCalc = (
+        character.character_type === 'active_created_character' ||
+        character.character_type === 'npc_world_service' ||
+        (!character.character_type && character.status === 'active') // legacy fallback
+      );
+      let finalizedEnergy = null;
+      if (isEligibleForEnergyCalc && sleepStart) {
+        const SLEEP_RECOVERY_PER_HOUR = 12;
+        const currentEnergy = character.energy_value ?? 75;
+        const recoveredEnergy = Math.min(100, currentEnergy + SLEEP_RECOVERY_PER_HOUR * hoursSlept);
+        // Only apply if recovery would improve energy (sleep should not decrease it)
+        finalizedEnergy = Math.max(currentEnergy, Math.round(recoveredEnergy));
+      }
+
       // Character RLS is scoped by owner_email — try user-scoped write first.
       // If user-scoped fails (RLS mismatch, expired session), fall back to service-role.
       // Service role bypasses RLS and is safe here because ownership was already verified above.
@@ -269,6 +288,7 @@ Deno.serve(async (req) => {
         sleep_interrupted_at: nowIso,
         pending_alarm_time: null,
         resolved_last_updated_at: nowIso,
+        ...(finalizedEnergy !== null ? { energy_value: finalizedEnergy } : {}),
       };
       try {
         await base44.entities.Character.update(characterId, wakeFields);

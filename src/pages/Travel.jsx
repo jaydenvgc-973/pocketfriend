@@ -278,6 +278,29 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     try {
       const char = travelCompanions.find(c => c.id === wakeUpModal.pendingCharacterId);
       if (!char) return;
+
+      // ── ENERGY FINALIZATION before wake ──────────────────────────────────
+      // Calculate partial energy recovery based on elapsed sleep time.
+      // Sleep recovery rate: +12/hr. Never exceed 100. Never lower than current.
+      // Only for active_created_character and npc_world_service (same scope as needs sim).
+      const isEligible = (
+        char.character_type === 'active_created_character' ||
+        char.character_type === 'npc_world_service' ||
+        (!char.character_type && char.status === 'active')
+      );
+      if (isEligible && char.last_sleep_start) {
+        const hoursSlept = (Date.now() - new Date(char.last_sleep_start).getTime()) / 3600000;
+        const SLEEP_RECOVERY_PER_HOUR = 12;
+        const currentEnergy = char.energy_value ?? 75;
+        const recoveredEnergy = Math.min(100, currentEnergy + SLEEP_RECOVERY_PER_HOUR * hoursSlept);
+        const finalizedEnergy = Math.max(currentEnergy, Math.round(recoveredEnergy));
+        // Write the finalized energy value before generating the wake response
+        await base44.entities.Character.update(char.id, {
+          energy_value: finalizedEnergy,
+          sleep_interrupted_at: new Date().toISOString(),
+        }).catch(e => console.warn('[handleWakeUp] energy finalize write failed:', e.message));
+      }
+
       const wakeRes = await base44.functions.invoke('generateWakeUpResponse', {
         characterId: char.id,
         characterData: char,

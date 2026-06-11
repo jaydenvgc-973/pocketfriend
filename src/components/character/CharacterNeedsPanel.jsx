@@ -34,6 +34,7 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
   const [lastSimResult, setLastSimResult] = useState(null);
   const [validationIssues, setValidationIssues] = useState([]);
   const [lockUpdating, setLockUpdating] = useState(false);
+  const [, setTickCount] = useState(0); // forces re-render for live sleep bar
   const queryClient = useQueryClient();
 
   // Show for active_created_character (or legacy characters missing character_type — never hide valid characters)
@@ -55,6 +56,14 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
     const interval = setInterval(runSimulation, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [character?.id, isActiveCreated]);
+
+  // While sleeping: re-render every 60 seconds so the live energy bar visibly ticks up
+  const isSleepingForTick = ['sleeping', 'napping'].includes(character?.resolved_presence_status || '');
+  useEffect(() => {
+    if (!isSleepingForTick || !character?.last_sleep_start) return;
+    const interval = setInterval(() => setTickCount(n => n + 1), 60 * 1000);
+    return () => clearInterval(interval);
+  }, [isSleepingForTick, character?.last_sleep_start]);
 
   const runSimulation = async () => {
     if (isSimulating) return;
@@ -117,6 +126,28 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
     }
   };
 
+  // ── LIVE SLEEP ENERGY CALCULATION ────────────────────────────────────────
+  // While the character is sleeping, calculate the current energy level based on
+  // elapsed sleep time instead of waiting for the next simulation tick.
+  // This makes the energy bar act as a loading bar that fills during sleep.
+  // Rate: +12/hr. Same rate as simulateActiveCharacterNeeds sleeping context.
+  // Only for active_created_character and npc_world_service.
+  const isEligibleForLiveSleep = (
+    character?.character_type === 'active_created_character' ||
+    character?.character_type === 'npc_world_service' ||
+    (!character?.character_type && character?.status === 'active')
+  );
+  const isSleeping = ['sleeping', 'napping'].includes(character?.resolved_presence_status || '');
+  const liveEnergyOverride = (() => {
+    if (!isEligibleForLiveSleep || !isSleeping || !character?.last_sleep_start) return null;
+    const hoursSlept = (Date.now() - new Date(character.last_sleep_start).getTime()) / 3600000;
+    if (hoursSlept <= 0) return null;
+    const SLEEP_RECOVERY_PER_HOUR = 12;
+    const baseEnergy = character.energy_value ?? 75;
+    const calculated = Math.min(100, baseEnergy + SLEEP_RECOVERY_PER_HOUR * hoursSlept);
+    return Math.max(baseEnergy, Math.round(calculated));
+  })();
+
   if (!isActiveCreated) {
     return null; // NPCs do not use this panel
   }
@@ -154,7 +185,9 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
 
       <div className="space-y-2">
         {NEEDS.map(({ label, key, emoji }) => {
-          const value = character[key] ?? null;
+          const rawValue = character[key] ?? null;
+          // Use live-calculated energy during sleep so bar fills gradually without waiting for next sim tick
+          const value = (key === 'energy_value' && liveEnergyOverride !== null) ? liveEnergyOverride : rawValue;
           const displayValue = value !== null ? Math.round(value) : null;
           const { text, color, bg } = displayValue !== null ? getLabel(displayValue) : { text: '…', color: 'text-muted-foreground', bg: 'bg-muted' };
 
