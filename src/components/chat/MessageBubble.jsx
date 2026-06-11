@@ -60,7 +60,7 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, character, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded, onLocationSignal, onMovementCommitment, onShareNarrative }) {
+export default function MessageBubble({ message, character, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded, onLocationSignal, onShowLocationShare, onMovementCommitment, onShareNarrative }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
   const playingAsLabel = isUser && message.played_as_character_name ? message.played_as_character_name : null;
@@ -718,6 +718,7 @@ export default function MessageBubble({ message, character, showName = false, on
                 <LocationSignalButton
                   message={message}
                   onLocationSignal={onLocationSignal}
+                  onShowLocationShare={onShowLocationShare}
                   onMovementCommitment={onMovementCommitment}
                   isImageOnly={!message.content && !!localImageUrl}
                 />
@@ -991,10 +992,11 @@ function extractCommitmentFromMessage(message) {
   return { rawDestination: cleanDestination, etaMinutes: minutes, scheduledArrivalTime };
 }
 
-function LocationSignalButton({ message, onLocationSignal, onMovementCommitment, isImageOnly = false }) {
+function LocationSignalButton({ message, onLocationSignal, onShowLocationShare, onMovementCommitment, isImageOnly = false }) {
   const [open, setOpen] = useState(false);
   const [signaling, setSignaling] = useState(false);
   const [done, setDone] = useState(false);
+  const [signalError, setSignalError] = useState(null);
 
   // Detect if this specific message contains movement intent
   const isMovementMessage = !isImageOnly && detectMovementIntent(message.content);
@@ -1013,19 +1015,43 @@ function LocationSignalButton({ message, onLocationSignal, onMovementCommitment,
       return;
     }
     // Current-location message or image — show static signal popover
+    setSignalError(null);
     setOpen(v => !v);
   };
 
   const handleSignal = async () => {
-    setSignaling(true);
+    // PRIMARY ACTION: open the LocationShareTool modal using the character's authoritative state.
+    // This opens the full location share modal (character's verified current location).
+    // The modal itself shows a visible error if the character has no resolved location.
+    if (onShowLocationShare) {
+      setOpen(false);
+      onShowLocationShare();
+      return;
+    }
+
+    // FALLBACK: if modal opener not available, run the legacy silent DB update.
+    // This ensures backward compatibility if the prop is missing.
     const signalData = isImageOnly && message.generation_context?.location_id
       ? message.generation_context.location_id
       : message.content;
-    await onLocationSignal(signalData, message.character_id);
-    setSignaling(false);
-    setDone(true);
-    setOpen(false);
-    setTimeout(() => setDone(false), 3000);
+
+    if (!signalData) {
+      setSignalError('No location data available for this message.');
+      return;
+    }
+
+    setSignaling(true);
+    setSignalError(null);
+    try {
+      await onLocationSignal(signalData, message.character_id);
+      setDone(true);
+      setOpen(false);
+      setTimeout(() => setDone(false), 3000);
+    } catch (err) {
+      setSignalError('Failed to update location. Try again.');
+    } finally {
+      setSignaling(false);
+    }
   };
 
   return (
@@ -1052,9 +1078,12 @@ function LocationSignalButton({ message, onLocationSignal, onMovementCommitment,
                 ? `Update where this character is based on the photo location (${message.generation_context?.location_name || 'detected location'}).`
                 : 'Update where this character is based on what they said in this message.'}
             </p>
+            {signalError && (
+              <p className="text-[10px] text-destructive mb-2 leading-relaxed">{signalError}</p>
+            )}
             <div className="flex gap-2">
               <button
-                onClick={() => setOpen(false)}
+                onClick={() => { setOpen(false); setSignalError(null); }}
                 className="flex-1 py-1.5 rounded-lg bg-secondary text-muted-foreground text-xs hover:bg-secondary/80 transition-colors"
               >
                 Cancel

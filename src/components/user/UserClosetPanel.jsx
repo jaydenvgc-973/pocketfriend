@@ -7,17 +7,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
+// Canonical approved categories — mirrors CharacterClosetPanel and outfitRotationEngine
 const OUTFIT_CATEGORIES = [
-  { value: "daily_casual", label: "Daily Casual", emoji: "👕" },
-  { value: "work", label: "Work", emoji: "👔" },
-  { value: "gym", label: "Gym", emoji: "🏋️" },
-  { value: "church", label: "Church", emoji: "🛐" },
-  { value: "nightlife", label: "Nightlife", emoji: "🌃" },
-  { value: "formal", label: "Formal", emoji: "🎩" },
-  { value: "sleepwear", label: "Sleepwear", emoji: "😴" },
-  { value: "lounge", label: "Lounge / Home", emoji: "🛋️" },
-  { value: "outdoor", label: "Outdoor / Errands", emoji: "🌳" },
-  { value: "special", label: "Special / Statement", emoji: "✨" },
+  { value: "lounge",        label: "Lounge / Home",       emoji: "🛋️" },
+  { value: "sleepwear",     label: "Sleepwear",           emoji: "😴" },
+  { value: "bath",          label: "Bath / Robe",         emoji: "🛁" },
+  { value: "daily_casual",  label: "Daily Casual",        emoji: "👕" },
+  { value: "work",          label: "Work",                emoji: "👔" },
+  { value: "school",        label: "School",              emoji: "🎒" },
+  { value: "outdoor",       label: "Outdoor / Errands",   emoji: "🌳" },
+  { value: "nightlife",     label: "Nightlife / Party",   emoji: "🌃" },
+  { value: "formal",        label: "Formal",              emoji: "🎩" },
+  { value: "date_night",    label: "Date Night",          emoji: "💘" },
+  { value: "church",        label: "Church / Religious",  emoji: "🛐" },
+  { value: "special",       label: "Special / Statement", emoji: "✨" },
+  { value: "gym",           label: "Gym / Workout",       emoji: "🏋️" },
+  { value: "swimwear",      label: "Swimwear",            emoji: "🏊" },
 ];
 
 function generateId() {

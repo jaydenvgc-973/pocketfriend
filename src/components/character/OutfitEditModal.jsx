@@ -8,25 +8,22 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 
+// Canonical approved categories only — no travel, cold_weather, hot_weather, or medical
 const OUTFIT_CATEGORIES = [
-  { value: "daily_casual",  label: "Daily Casual",       emoji: "👕" },
+  { value: "lounge",        label: "Lounge / Home",       emoji: "🛋️" },
+  { value: "sleepwear",     label: "Sleepwear",           emoji: "😴" },
+  { value: "bath",          label: "Bath / Robe",         emoji: "🛁" },
+  { value: "daily_casual",  label: "Daily Casual",        emoji: "👕" },
   { value: "work",          label: "Work",                emoji: "👔" },
-  { value: "gym",           label: "Gym / Workout",       emoji: "🏋️" },
-  { value: "church",        label: "Church / Religious",  emoji: "🛐" },
+  { value: "school",        label: "School",              emoji: "🎒" },
+  { value: "outdoor",       label: "Outdoor / Errands",   emoji: "🌳" },
   { value: "nightlife",     label: "Nightlife / Party",   emoji: "🌃" },
   { value: "formal",        label: "Formal",              emoji: "🎩" },
-  { value: "sleepwear",     label: "Sleepwear",           emoji: "😴" },
-  { value: "lounge",        label: "Lounge / Home",       emoji: "🛋️" },
-  { value: "outdoor",       label: "Outdoor / Errands",   emoji: "🌳" },
-  { value: "swimwear",      label: "Swimwear",            emoji: "🏊" },
-  { value: "bath",          label: "Bath / Robe",         emoji: "🛁" },
-  { value: "school",        label: "School",              emoji: "🎒" },
   { value: "date_night",    label: "Date Night",          emoji: "💘" },
-  { value: "travel",        label: "Travel",              emoji: "✈️" },
-  { value: "cold_weather",  label: "Cold Weather",        emoji: "🧣" },
-  { value: "hot_weather",   label: "Hot Weather",         emoji: "☀️" },
+  { value: "church",        label: "Church / Religious",  emoji: "🛐" },
   { value: "special",       label: "Special / Statement", emoji: "✨" },
-  { value: "medical",       label: "Medical",             emoji: "🏥" },
+  { value: "gym",           label: "Gym / Workout",       emoji: "🏋️" },
+  { value: "swimwear",      label: "Swimwear",            emoji: "🏊" },
 ];
 
 /**

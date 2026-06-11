@@ -36,6 +36,7 @@ export default function ChatMessageList({
   onDismissError,
   setSendError,
   onLocationSignal,
+  onShowLocationShare,
   onShareNarrative,
   hasOlderMessages,
   onLoadOlderMessages,
@@ -216,6 +217,7 @@ export default function ChatMessageList({
                onForward={!msg.is_narrative ? (m) => onForward(m) : null}
                onImageLoaded={onImageLoaded}
                onLocationSignal={msg.sender_type === "character" && !msg.is_narrative && onLocationSignal ? onLocationSignal : null}
+               onShowLocationShare={msg.sender_type === "character" && !msg.is_narrative ? onShowLocationShare : null}
                onMovementCommitment={msg.sender_type === "character" && !msg.is_narrative ? handleMovementCommitmentFromPin : null}
                onShareNarrative={msg.is_narrative && onShareNarrative ? (m) => onShareNarrative(m) : null}
              />

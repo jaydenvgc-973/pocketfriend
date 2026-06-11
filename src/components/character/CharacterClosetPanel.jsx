@@ -11,25 +11,31 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
+// ── APPROVED OUTFIT CATEGORIES (canonical list — do not add without explicit user approval) ──
+// Home: lounge, sleepwear, bath
+// Daily Wear: daily_casual, work, school, outdoor, nightlife
+// Special Occasion: formal, date_night, church, special
+// Activity: gym, swimwear
+// Weather modifiers (cold_weather, hot_weather), Medical, and Travel are NOT categories.
 const OUTFIT_CATEGORIES = [
-  { value: "daily_casual",  label: "Daily Casual",       emoji: "👕" },
-  { value: "work",          label: "Work",                emoji: "👔" },
-  { value: "gym",           label: "Gym / Workout",       emoji: "🏋️" },
-  { value: "church",        label: "Church / Religious",  emoji: "🛐" },
-  { value: "nightlife",     label: "Nightlife / Party",   emoji: "🌃" },
-  { value: "formal",        label: "Formal",              emoji: "🎩" },
-  { value: "sleepwear",     label: "Sleepwear",           emoji: "😴" },
-  { value: "lounge",        label: "Lounge / Home",       emoji: "🛋️" },
-  { value: "outdoor",       label: "Outdoor / Errands",   emoji: "🌳" },
-  { value: "swimwear",      label: "Swimwear",            emoji: "🏊" },
-  { value: "bath",          label: "Bath / Robe",         emoji: "🛁" },
-  { value: "school",        label: "School",              emoji: "🎒" },
-  { value: "date_night",    label: "Date Night",          emoji: "💘" },
-  { value: "travel",        label: "Travel",              emoji: "✈️" },
-  { value: "cold_weather",  label: "Cold Weather",        emoji: "🧣" },
-  { value: "hot_weather",   label: "Hot Weather",         emoji: "☀️" },
-  { value: "special",       label: "Special / Statement", emoji: "✨" },
-  { value: "medical",       label: "Medical",             emoji: "🏥" },
+  // ── Home ──────────────────────────────────────────────────────────────────
+  { value: "lounge",        label: "Lounge / Home",       emoji: "🛋️", group: "Home" },
+  { value: "sleepwear",     label: "Sleepwear",           emoji: "😴", group: "Home" },
+  { value: "bath",          label: "Bath / Robe",         emoji: "🛁", group: "Home" },
+  // ── Daily Wear ────────────────────────────────────────────────────────────
+  { value: "daily_casual",  label: "Daily Casual",        emoji: "👕", group: "Daily Wear" },
+  { value: "work",          label: "Work",                emoji: "👔", group: "Daily Wear" },
+  { value: "school",        label: "School",              emoji: "🎒", group: "Daily Wear" },
+  { value: "outdoor",       label: "Outdoor / Errands",   emoji: "🌳", group: "Daily Wear" },
+  { value: "nightlife",     label: "Nightlife / Party",   emoji: "🌃", group: "Daily Wear" },
+  // ── Special Occasion ──────────────────────────────────────────────────────
+  { value: "formal",        label: "Formal",              emoji: "🎩", group: "Special Occasion" },
+  { value: "date_night",    label: "Date Night",          emoji: "💘", group: "Special Occasion" },
+  { value: "church",        label: "Church / Religious",  emoji: "🛐", group: "Special Occasion" },
+  { value: "special",       label: "Special / Statement", emoji: "✨", group: "Special Occasion" },
+  // ── Activity ──────────────────────────────────────────────────────────────
+  { value: "gym",           label: "Gym / Workout",       emoji: "🏋️", group: "Activity" },
+  { value: "swimwear",      label: "Swimwear",            emoji: "🏊", group: "Activity" },
 ];
 
 const PIECE_TYPES = [
@@ -365,7 +371,7 @@ User request: "${genPrompt}"
 Return JSON:
 {
   "label": "Short outfit name (2-4 words)",
-  "category": "daily_casual|work|gym|church|nightlife|formal|sleepwear|lounge|outdoor|swimwear|bath|school|date_night|travel|special|medical",
+  "category": "daily_casual|work|gym|church|nightlife|formal|sleepwear|lounge|outdoor|swimwear|bath|school|date_night|special",
   "top": "Specific top",
   "bottom": "Specific bottom",
   "shoes": "Specific shoes",
@@ -409,7 +415,7 @@ Return JSON:
         prompt: `Analyze this outfit image and extract all clothing details. Return JSON:
 {
   "label": "Short outfit name (2-4 words)",
-  "category": "daily_casual|work|gym|church|nightlife|formal|sleepwear|lounge|outdoor|swimwear|bath|school|date_night|travel|special|medical",
+  "category": "daily_casual|work|gym|church|nightlife|formal|sleepwear|lounge|outdoor|swimwear|bath|school|date_night|special",
   "top": "Describe the top/shirt/sweater visible",
   "bottom": "Describe the pants/shorts/skirt visible",
   "shoes": "Describe the shoes/sneakers visible",

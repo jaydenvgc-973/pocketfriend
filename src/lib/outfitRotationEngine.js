@@ -18,26 +18,29 @@
  * rather than always returning the first or previously-active one.
  */
 
-// ── CATEGORY DEFINITIONS ────────────────────────────────────────────────────────
+// ── APPROVED OUTFIT CATEGORIES ──────────────────────────────────────────────────
+// Only these categories participate in outfit rotation.
+// Weather modifiers (cold_weather, hot_weather), Medical, and Travel are NOT categories.
+// They are modifiers/overrides and must never receive rotation numbers or advance rotation.
 export const OUTFIT_CATEGORIES = [
-  { value: "daily_casual",  label: "Daily Casual",          emoji: "👕" },
-  { value: "work",          label: "Work",                   emoji: "👔" },
-  { value: "gym",           label: "Gym / Workout",          emoji: "🏋️" },
-  { value: "church",        label: "Church / Religious",     emoji: "🛐" },
-  { value: "nightlife",     label: "Nightlife / Party",      emoji: "🌃" },
-  { value: "formal",        label: "Formal",                 emoji: "🎩" },
-  { value: "sleepwear",     label: "Sleepwear",              emoji: "😴" },
-  { value: "lounge",        label: "Lounge / Home",          emoji: "🛋️" },
-  { value: "outdoor",       label: "Outdoor / Errands",      emoji: "🌳" },
-  { value: "swimwear",      label: "Swimwear",               emoji: "🏊" },
-  { value: "special",       label: "Special / Statement",    emoji: "✨" },
-  { value: "school",        label: "School",                 emoji: "🎒" },
-  { value: "date_night",    label: "Date Night",             emoji: "💘" },
-  { value: "travel",        label: "Travel",                 emoji: "✈️" },
-  { value: "cold_weather",  label: "Cold Weather",           emoji: "🧣" },
-  { value: "hot_weather",   label: "Hot Weather",            emoji: "☀️" },
-  { value: "bath",          label: "Bath / Robe",            emoji: "🛁" },
-  { value: "medical",       label: "Medical",                emoji: "🏥" },
+  // Home
+  { value: "lounge",        label: "Lounge / Home",          emoji: "🛋️", group: "Home" },
+  { value: "sleepwear",     label: "Sleepwear",              emoji: "😴", group: "Home" },
+  { value: "bath",          label: "Bath / Robe",            emoji: "🛁", group: "Home" },
+  // Daily Wear
+  { value: "daily_casual",  label: "Daily Casual",           emoji: "👕", group: "Daily Wear" },
+  { value: "work",          label: "Work",                   emoji: "👔", group: "Daily Wear" },
+  { value: "school",        label: "School",                 emoji: "🎒", group: "Daily Wear" },
+  { value: "outdoor",       label: "Outdoor / Errands",      emoji: "🌳", group: "Daily Wear" },
+  { value: "nightlife",     label: "Nightlife / Party",      emoji: "🌃", group: "Daily Wear" },
+  // Special Occasion
+  { value: "formal",        label: "Formal",                 emoji: "🎩", group: "Special Occasion" },
+  { value: "date_night",    label: "Date Night",             emoji: "💘", group: "Special Occasion" },
+  { value: "church",        label: "Church / Religious",     emoji: "🛐", group: "Special Occasion" },
+  { value: "special",       label: "Special / Statement",    emoji: "✨", group: "Special Occasion" },
+  // Activity
+  { value: "gym",           label: "Gym / Workout",          emoji: "🏋️", group: "Activity" },
+  { value: "swimwear",      label: "Swimwear",               emoji: "🏊", group: "Activity" },
 ];
 
 // ── ACTIVITY / LOCATION → CATEGORY MAPPING ─────────────────────────────────────
@@ -250,6 +253,9 @@ export function resolveCurrentOutfit(character, activityText = '', locationCateg
  * If the exact category isn't available, try sensible alternatives.
  */
 function buildFallbackChain(targetCategory) {
+  // Fallback chains — only reference approved rotation categories.
+  // Weather (cold_weather, hot_weather), Travel, and Medical are NOT categories
+  // and must never appear here. They are modifier/override systems only.
   const chains = {
     bath:         ['bath', 'sleepwear', 'lounge'],
     sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
@@ -263,12 +269,14 @@ function buildFallbackChain(targetCategory) {
     school:       ['school', 'daily_casual', 'work'],
     lounge:       ['lounge', 'daily_casual', 'sleepwear'],
     outdoor:      ['outdoor', 'daily_casual'],
-    cold_weather: ['cold_weather', 'outdoor', 'daily_casual'],
-    hot_weather:  ['hot_weather', 'outdoor', 'daily_casual', 'swimwear'],
-    travel:       ['travel', 'outdoor', 'daily_casual'],
-    medical:      ['medical', 'work', 'daily_casual'],
     special:      ['special', 'formal', 'daily_casual'],
     daily_casual: ['daily_casual', 'outdoor', 'lounge'],
+    // Legacy values — if an existing outfit has one of these categories saved in DB,
+    // fall through to the nearest approved category. Never surface as selection options.
+    cold_weather: ['outdoor', 'daily_casual'],
+    hot_weather:  ['outdoor', 'daily_casual', 'swimwear'],
+    travel:       ['outdoor', 'daily_casual'],
+    medical:      ['lounge', 'daily_casual'],
   };
   return chains[targetCategory] || ['daily_casual', 'lounge', 'outdoor'];
 }
