@@ -345,7 +345,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 5; // bumped: broadened isPositive/isTense vocab, sentiment counts all msgs3d
+const DASHBOARD_CACHE_VERSION = 6; // bumped: Social Activity counts now derived from timelineEntries (same source as Recent Activity panel)
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -562,40 +562,12 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         return null;
       };
 
+      // ── SOCIAL ACTIVITY SENTIMENT ─────────────────────────────────────────
+      // NOTE: These counters are computed AFTER timelineEntries is built below,
+      // so they're moved to a post-build step. Placeholders here; final values set after timeline construction.
       let positiveInteractions = 0;
       let conflictEvents = 0;
-      let unclassifiedCount = 0;
-      const sentimentBuckets = {};
-
-      // Aggregate over ALL msgs3d (both sides) — same window as message count
-      msgs3d.forEach(m => {
-        const sentiment = resolveMessageSentiment(m);
-        // Track distribution for debug log
-        const bucket = sentiment || "unclassified";
-        sentimentBuckets[bucket] = (sentimentBuckets[bucket] || 0) + 1;
-
-        if (sentiment === null) {
-          unclassifiedCount++;
-        } else if (isPositive(sentiment)) {
-          positiveInteractions++;
-        } else if (isTense(sentiment)) {
-          conflictEvents++;
-        }
-        // neutral/reflective: counted in buckets but not in positive or conflict
-      });
-
-      // ── DEBUG: Sentiment distribution log ────────────────────────────────
-      // Shows exactly how msgs3d break down so classification issues are immediately visible.
-      const topBuckets = Object.entries(sentimentBuckets)
-        .sort(([,a],[,b]) => b - a)
-        .slice(0, 15)
-        .map(([k,v]) => `${k}:${v}`)
-        .join(', ');
-      console.log(
-        `[CharacterDashboard] SENTIMENT DISTRIBUTION | charId=${charId} | msgs3d=${msgs3d.length}` +
-        ` | positive=${positiveInteractions} | conflict=${conflictEvents} | unclassified=${unclassifiedCount}` +
-        ` | top_buckets=[${topBuckets}]`
-      );
+      let unclassifiedCount = msgs3d.filter(m => resolveMessageSentiment(m) === null).length;
 
       // ── INTRADAY EMOTIONAL GRAPH — 3-day window, per-event semantic scoring ─
       // ARCHITECTURE:
@@ -904,6 +876,35 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       });
 
       timelineEntries.sort((a, b) => { try { return new Date(a.time) - new Date(b.time); } catch { return 0; } });
+
+      // ── SOCIAL ACTIVITY COUNTS — derived from the same timeline entries ──
+      // This guarantees the card and the Recent Activity panel use identical source data.
+      // Every item visible in Recent Activity is classified the same way here.
+      // RULE: neutral/reflective entries are counted in unclassified, not positive or conflict.
+      const sentimentBuckets = {};
+      timelineEntries.forEach(entry => {
+        const em = (entry.emotion || "").toLowerCase();
+        const bucket = em || "unclassified";
+        sentimentBuckets[bucket] = (sentimentBuckets[bucket] || 0) + 1;
+        if (!em) {
+          unclassifiedCount++;
+        } else if (isPositive(em)) {
+          positiveInteractions++;
+        } else if (isTense(em)) {
+          conflictEvents++;
+        }
+        // neutral/reflective: tallied in sentimentBuckets but not positive or conflict
+      });
+
+      // Debug: show full distribution so mismatches are immediately visible
+      const topBuckets = Object.entries(sentimentBuckets)
+        .sort(([,a],[,b]) => b - a).slice(0, 15)
+        .map(([k,v]) => `${k}:${v}`).join(', ');
+      console.log(
+        `[CharacterDashboard] SENTIMENT from timelineEntries | total=${timelineEntries.length}` +
+        ` | positive=${positiveInteractions} | conflict=${conflictEvents} | unclassified=${unclassifiedCount}` +
+        ` | buckets=[${topBuckets}]`
+      );
 
       // ── Occupation social context ──────────────────────────────────────────
       const occSocialContext = getOccupationSocialContext(character);
