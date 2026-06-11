@@ -136,10 +136,37 @@ const EMOTION_HEX = {
 };
 const eColor = (s) => EMOTION_HEX[(s || "").toLowerCase()] || "#94a3b8";
 
-const isPositive = (e) => ["happy","joyful","excited","content","affectionate","calm","hopeful"].includes((e||"").toLowerCase());
-const isTense    = (e) => ["angry","irritated","defensive","tense","stressed","overwhelmed","frustrated"].includes((e||"").toLowerCase());
-const isSad      = (e) => ["sad","lonely","exhausted","emotionally drained","closed-off","bored"].includes((e||"").toLowerCase());
-const isAnxious  = (e) => ["anxious","reflective"].includes((e||"").toLowerCase());
+// ── Sentiment classification — shared vocabulary for graph, timeline, AND social activity counters ──
+// RULE: These sets must be identical everywhere. The Social Activity card and the graph/timeline
+// must never use incompatible buckets.
+//
+// POSITIVE: warm, connected, hopeful, relieved, loving, supportive, proud, grateful, calm
+// CONFLICT: tense, angry, hurt, disappointed, sad, anxious, stressed, guilty, overwhelmed, lonely
+// NEUTRAL:  reflective, pensive, bored, nostalgic, conflicted — not counted in either bucket
+const POSITIVE_EMOTIONS = new Set([
+  "happy","joyful","excited","elated","euphoric",
+  "affectionate","loving","content","calm","peaceful","serene",
+  "hopeful","motivated","grateful","proud","encouraged",
+  "relieved","supported","comforted","connected","warm",
+  "playful","flirty","amused","lighthearted","cheerful",
+]);
+const CONFLICT_EMOTIONS = new Set([
+  "angry","furious","rage",
+  "irritated","defensive","tense","hostile",
+  "stressed","overwhelmed","frustrated","bitter",
+  "sad","hurt","disappointed","devastated","heartbroken","despairing",
+  "anxious","worried","nervous","fearful","dread",
+  "guilty","ashamed","regretful",
+  "lonely","isolated","abandoned","neglected",
+  "exhausted","drained","emotionally drained",
+  "jealous","envious","resentful",
+  "closed-off","withdrawn","shut down",
+]);
+
+const isPositive = (e) => POSITIVE_EMOTIONS.has((e||"").toLowerCase());
+const isTense    = (e) => CONFLICT_EMOTIONS.has((e||"").toLowerCase());
+const isSad      = (e) => ["sad","lonely","exhausted","emotionally drained","closed-off","bored","drained","withdrawn"].includes((e||"").toLowerCase());
+const isAnxious  = (e) => ["anxious","worried","nervous","reflective","fearful","dread"].includes((e||"").toLowerCase());
 
 const entryAccent = (emotion) => {
   if (isTense(emotion))   return "border-l-red-500/50 bg-red-500/5";
@@ -318,7 +345,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 4; // bumped: removed all 24h dead variables, msgs count includes both sides
+const DASHBOARD_CACHE_VERSION = 5; // bumped: broadened isPositive/isTense vocab, sentiment counts all msgs3d
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -515,12 +542,12 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const txns3d  = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
 
       // ── SOCIAL ACTIVITY STATS — scoped to last 3 days ───────────────────────
-      // All social stats (messages, positive, conflict) use the same 3-day window.
-      // "Messages" = all messages in scoped conversations (both sides) — full conversation activity.
-      // Positive / Conflict = derived from character-sent messages only (where sentiment is meaningful).
+      // "Messages" = total message count (both sides of all conversations).
+      // "Positive" / "Conflict" = derived from ALL msgs3d (character + user) using the shared
+      // emotion vocabulary. Character-sent messages carry emotional_state; user messages carry
+      // content that can be inferred. Both sides of a conversation are emotionally meaningful.
       //
       // NOTE: Semantic inference is DISPLAY ONLY. Never written back to Message records.
-      const allSentScoped3d = msgs3d.filter(m => m.sender_type === "character");
       const msgsSent = msgs3d.length; // total message activity (both sides) in 3-day window
 
       // ── LEGACY-SAFE sentiment classification ──────────────────────────────
@@ -538,10 +565,15 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       let positiveInteractions = 0;
       let conflictEvents = 0;
       let unclassifiedCount = 0;
+      const sentimentBuckets = {};
 
-      // Aggregate over last 3 days — consistent with all other dashboard metrics
-      allSentScoped3d.forEach(m => {
+      // Aggregate over ALL msgs3d (both sides) — same window as message count
+      msgs3d.forEach(m => {
         const sentiment = resolveMessageSentiment(m);
+        // Track distribution for debug log
+        const bucket = sentiment || "unclassified";
+        sentimentBuckets[bucket] = (sentimentBuckets[bucket] || 0) + 1;
+
         if (sentiment === null) {
           unclassifiedCount++;
         } else if (isPositive(sentiment)) {
@@ -549,7 +581,21 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         } else if (isTense(sentiment)) {
           conflictEvents++;
         }
+        // neutral/reflective: counted in buckets but not in positive or conflict
       });
+
+      // ── DEBUG: Sentiment distribution log ────────────────────────────────
+      // Shows exactly how msgs3d break down so classification issues are immediately visible.
+      const topBuckets = Object.entries(sentimentBuckets)
+        .sort(([,a],[,b]) => b - a)
+        .slice(0, 15)
+        .map(([k,v]) => `${k}:${v}`)
+        .join(', ');
+      console.log(
+        `[CharacterDashboard] SENTIMENT DISTRIBUTION | charId=${charId} | msgs3d=${msgs3d.length}` +
+        ` | positive=${positiveInteractions} | conflict=${conflictEvents} | unclassified=${unclassifiedCount}` +
+        ` | top_buckets=[${topBuckets}]`
+      );
 
       // ── INTRADAY EMOTIONAL GRAPH — 3-day window, per-event semantic scoring ─
       // ARCHITECTURE:
