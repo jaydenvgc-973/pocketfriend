@@ -261,8 +261,22 @@ Deno.serve(async (req) => {
       // ── ENERGY FINALIZATION — calculate partial recovery based on elapsed sleep time ──
       // Sleep recovery rate: +12 energy/hr. Full refill (0→100) takes ~8.3 hours.
       // We write the current calculated value so the bar reflects what actually happened.
-      // RULE: never set energy higher than 100, never lower than it was at sleep start.
+      //
+      // ALARM WAKE ENERGY RULE:
+      //   1. Calculate sleep-recovered energy (last_sleep_start elapsed × 12/hr, capped at 100).
+      //   2. Apply minimum awake threshold: if calculated energy < 45, raise to 45.
+      //      (Character must be functional enough to wake — groggy, not comatose.)
+      //   3. If calculated energy >= 45, keep it as-is. Never raise above earned value.
+      //   4. Never set energy to 100 just because an alarm fired.
+      //   5. Never lower energy below what was already earned during sleep.
+      //
+      // Examples:
+      //   Slept from 20%, alarm at calculated 32%  → final = 45% (minimum floor applied)
+      //   Slept from 20%, alarm at calculated 58%  → final = 58% (no floor needed)
+      //   Slept from 80%, alarm at calculated 96%  → final = 96% (well rested)
+      //
       // Only applies to active_created_character and npc_world_service.
+      const ALARM_WAKE_MINIMUM_ENERGY = 45;
       const isEligibleForEnergyCalc = (
         character.character_type === 'active_created_character' ||
         character.character_type === 'npc_world_service' ||
@@ -273,8 +287,12 @@ Deno.serve(async (req) => {
         const SLEEP_RECOVERY_PER_HOUR = 12;
         const currentEnergy = character.energy_value ?? 75;
         const recoveredEnergy = Math.min(100, currentEnergy + SLEEP_RECOVERY_PER_HOUR * hoursSlept);
-        // Only apply if recovery would improve energy (sleep should not decrease it)
-        finalizedEnergy = Math.max(currentEnergy, Math.round(recoveredEnergy));
+        // Step 1: take the better of current vs recovered (sleep never decreases energy)
+        const earnedEnergy = Math.max(currentEnergy, Math.round(recoveredEnergy));
+        // Step 2: apply minimum awake threshold — alarm wakes need at least 45 to function
+        finalizedEnergy = Math.max(earnedEnergy, ALARM_WAKE_MINIMUM_ENERGY);
+        // Cap at 100 (already handled by recoveredEnergy cap above, but be explicit)
+        finalizedEnergy = Math.min(100, finalizedEnergy);
       }
 
       // Character RLS is scoped by owner_email — try user-scoped write first.

@@ -318,7 +318,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 2; // bumped: legacy sentiment inference fix
+const DASHBOARD_CACHE_VERSION = 3; // bumped: unified 3-day window for all dashboard metrics
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -517,20 +517,17 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const narrs3d  = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff3d)));
       const txns3d   = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
 
-      // ── SOCIAL ACTIVITY STATS — scoped to ALL loaded messages (not 24h-only) ──
-      // The "Social Activity" panel is a social overview, not a 24h summary.
-      // The "Past 24 Hours" timeline panel is what shows 24h-scoped data.
-      // Using msgs24h for totals was misrepresenting lifetime social counts as nearly zero
-      // for legacy characters whose historical interactions predate sentiment classification.
+      // ── SOCIAL ACTIVITY STATS — scoped to last 3 days ───────────────────────
+      // All social stats (messages, positive, conflict) use the same 3-day window
+      // so the dashboard is consistent — no mixing of 24h and 3-day scopes.
       //
       // NOTE: Semantic inference is DISPLAY ONLY. It is never written back to Message records.
       // If inferred emotion matches a real pattern, it affects only this dashboard rendering session.
       // No writes to Message.emotional_state happen here. Only simulateActiveCharacterNeeds and
       // the LLM response pipeline are permitted to update message-level fields.
-      const allSentScoped = scopedMsgs.filter(m => m.sender_type === "character");
-      // 24h subset still used for timeline entries and the "Messages sent" count
-      const allSent24h = msgs24h.filter(m => m.sender_type === "character");
-      const msgsSent   = allSent24h.length;
+      const allSentScoped3d = msgs3d.filter(m => m.sender_type === "character");
+      // msgs3d used for all dashboard activity counts and timeline entries
+      const msgsSent = allSentScoped3d.length;
 
       // ── LEGACY-SAFE sentiment classification ──────────────────────────────
       // Priority: 1. emotional_state field  2. semantic inference from content (display only)
@@ -548,8 +545,8 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       let conflictEvents = 0;
       let unclassifiedCount = 0;
 
-      // Aggregate over ALL scoped messages (not just 24h) for lifetime social totals
-      allSentScoped.forEach(m => {
+      // Aggregate over last 3 days — consistent with all other dashboard metrics
+      allSentScoped3d.forEach(m => {
         const sentiment = resolveMessageSentiment(m);
         if (sentiment === null) {
           unclassifiedCount++;
@@ -727,13 +724,13 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // ── TIMELINE ENTRIES ──────────────────────────────────────────────────
       const timelineEntries = [];
 
-      // Sleep / wake
-      if (character.last_sleep_start && isAfter(parseISO(character.last_sleep_start), parseISO(cutoff24h)))
+      // Sleep / wake — last 3 days
+      if (character.last_sleep_start && isAfter(parseISO(character.last_sleep_start), parseISO(cutoff3d)))
         timelineEntries.push({ time: character.last_sleep_start, icon: "moon", text: "Went to sleep", emotion: "exhausted" });
-      if (character.alarm_woke_at && isAfter(parseISO(character.alarm_woke_at), parseISO(cutoff24h)))
+      if (character.alarm_woke_at && isAfter(parseISO(character.alarm_woke_at), parseISO(cutoff3d)))
         timelineEntries.push({ time: character.alarm_woke_at, icon: "sun", text: "Woke up", emotion: "calm" });
 
-      // Life Journal entries in past 24h — these directly correspond to graph points
+      // Life Journal entries in last 3 days
       const lifeEventIconMap = {
         supportive_event: "heart", bonding_event: "heart", celebration_event: "heart",
         conflict_event: "activity", fight_event: "activity", betrayal_event: "activity",
@@ -743,7 +740,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       };
       lifeEvents.filter(le => {
         const ts = le.timestamp || le.created_date;
-        return ts && isAfter(parseISO(ts), parseISO(cutoff24h));
+        return ts && isAfter(parseISO(ts), parseISO(cutoff3d));
       }).forEach(le => {
         const ts = le.timestamp || le.created_date;
         const { emotion } = le.event_type && LIFE_EVENT_EMOTION[le.event_type]
@@ -758,15 +755,15 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         });
       });
 
-      // Narratives (LLM-written, already human text)
+      // Narratives (LLM-written, already human text) — last 3 days
       const narIconMap = { sleep:"moon", wake:"sun", work_start:"briefcase", work_end:"home", travel_arrival:"mappin", travel_departure:"mappin", social_event:"heart", catch_up_summary:"book", location_change:"mappin", passive_time:"activity" };
-      narrs24h.forEach(n => {
+      narrs3d.forEach(n => {
         const text = (n.narrative_text || "").substring(0, 100);
         if (text) timelineEntries.push({ time: n.timestamp, icon: narIconMap[n.event_type] || "activity", text, emotion: n.emotional_state || curEmotion });
       });
 
-      // Financial events
-      txns24h.forEach(t => {
+      // Financial events — last 3 days
+      txns3d.forEach(t => {
         if (!t.description) return;
         timelineEntries.push({ time: t.timestamp, icon: "dollar", text: t.description, emotion: t.direction === "expense" ? "stressed" : "calm", sub: t.location_name || null });
       });
@@ -778,8 +775,8 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         const p = { angry:6, tense:6, irritated:6, defensive:6, sad:5, anxious:4, reflective:3, happy:2, calm:2 };
         return p[(s||"").toLowerCase()] || 1;
       };
-      // Include ALL messages — legacy messages without emotional_state use inferred sentiment for priority
-      msgs24h.forEach(m => {
+      // Include ALL messages in last 3 days — legacy messages without emotional_state use inferred sentiment for priority
+      msgs3d.forEach(m => {
         const resolvedEmotion = m.emotional_state || (m.content ? inferEmotionFromText(m.content)?.emotion : null) || null;
         const existing = convoMsgPick[m.conversation_id];
         if (!existing || priorityScore(resolvedEmotion) > priorityScore(existing._resolvedEmotion))
@@ -897,9 +894,9 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // A bartender who worked a full shift is NOT socially inactive even if no messages were sent
       if (msgsSent === 0) {
         if (hasPeopleJob) {
-          insights.push(`No direct messages recorded, but ${character.occupation || 'the job'} involves ongoing social interaction during work hours.`);
+          insights.push(`No direct messages recorded in the last 3 days, but ${character.occupation || 'the job'} involves ongoing social interaction during work hours.`);
         } else {
-          insights.push("No direct communication recorded in the past 24 hours.");
+          insights.push("No direct communication recorded in the last 3 days.");
         }
       }
 
@@ -1092,13 +1089,13 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       {/* ── 2. TIMELINE + CURRENT STATE ──────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-5">
 
-        {/* Past 24 Hours */}
+        {/* Recent Activity — Last 3 Days */}
         <div className="sm:col-span-3 rounded-xl overflow-hidden bg-card border border-border">
           <div className="px-4 py-3 border-b border-border">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Past 24 Hours</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Recent Activity · Last 3 Days</p>
           </div>
           {timelineEntries.length === 0
-            ? <p className="px-4 py-4 text-xs text-muted-foreground italic">No recorded activity in the past 24 hours.</p>
+            ? <p className="px-4 py-4 text-xs text-muted-foreground italic">No recorded activity in the last 3 days.</p>
             : (
               <div className="divide-y divide-border/40">
                 {timelineEntries.map((entry, i) => (
@@ -1150,7 +1147,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
 
           <div className="rounded-xl overflow-hidden bg-card border border-border">
             <div className="px-4 py-3 border-b border-border">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Social Activity · Recent History</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Social Activity · Last 3 Days</p>
             </div>
             <div className="flex divide-x divide-border/40">
               <StatChip icon={MessageCircle} label="Messages" value={socialStats.msgsSent} />
