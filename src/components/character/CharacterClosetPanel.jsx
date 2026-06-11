@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
+import RotationSchedulePreview from "@/components/character/RotationSchedulePreview";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -832,6 +833,9 @@ export default function CharacterClosetPanel({ character }) {
           <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${rotationEnabled ? 'translate-x-4' : 'translate-x-1'}`} />
         </button>
       </div>
+
+      {/* Tomorrow's Rotation Preview */}
+      <RotationSchedulePreview character={character} />
 
       {/* Currently Wearing */}
       {currentOutfit && currentOutfit.label && (
