@@ -1439,6 +1439,71 @@ Reference the passage of time naturally in your response.
       console.warn(`[buildCanonicalCharacterContext] travel_context ERROR (non-blocking) | char=${character.name} | err=${tcErr.message}`);
     }
 
+    // ── Step 10c: Fetch upcoming CommunityEvents for conversation awareness ─────
+    // These are injected as a lightweight catalyst for natural conversation topics.
+    // Existing encounter, memory, relationship, and social systems handle everything
+    // else. This only ensures characters KNOW about events and can bring them up.
+    let communityEventsBlock = '';
+    try {
+      const nowForEvents = new Date();
+      const sevenDaysLater = new Date(nowForEvents.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const oneDayAgo = new Date(nowForEvents.getTime() - 24 * 60 * 60 * 1000);
+
+      // Fetch active events in the next 7 days (owner-scoped + shared system events)
+      const [ownerEvents, sharedEvents] = await Promise.all([
+        base44.entities.CommunityEvent.filter(
+          { owner_email: user.email, is_active: true },
+          'start_date',
+          10
+        ).catch(() => []),
+        base44.asServiceRole.entities.CommunityEvent.filter(
+          { is_active: true },
+          'start_date',
+          10
+        ).catch(() => []),
+      ]);
+
+      // Merge and deduplicate by id, filter to relevant time window
+      const seen = new Set();
+      const allEvents = [...ownerEvents, ...sharedEvents].filter(e => {
+        if (seen.has(e.id)) return false;
+        seen.add(e.id);
+        if (!e.start_date) return false;
+        const d = new Date(e.start_date);
+        return d >= oneDayAgo && d <= sevenDaysLater;
+      });
+
+      if (allEvents.length > 0) {
+        // Build inline block (mirrors buildCommunityEventsContext from promptContextBuilders)
+        allEvents.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+        const capped = allEvents.slice(0, 4);
+        const formatEvt = (iso) => {
+          const d = new Date(iso);
+          return d.toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }) +
+            ' at ' + d.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
+        };
+        const lines = capped.map(e => {
+          const where = e.location_name ? ` at ${e.location_name}` : '';
+          const desc = e.description ? ` — ${e.description.substring(0, 80)}` : '';
+          const past = new Date(e.start_date) < nowForEvents ? ' [already happened]' : '';
+          return `• "${e.name}" — ${formatEvt(e.start_date)}${where}${desc}${past}`;
+        }).join('\n');
+
+        communityEventsBlock = `\n\n════════════════════════════════════
+COMMUNITY EVENTS & CALENDAR — CONVERSATION AWARENESS
+You are aware of these upcoming or recent events in your world. Mention them naturally when relevant — ask if someone is going, recommend one, make plans, discuss holidays and gatherings in passing. Do not force it into every reply.
+════════════════════════════════════
+${lines}
+════════════════════════════════════`;
+
+        contextLog.push({ step: 'community_events', count: capped.length });
+      } else {
+        contextLog.push({ step: 'community_events', count: 0 });
+      }
+    } catch (evErr) {
+      contextLog.push({ step: 'community_events', status: 'error', error: evErr.message });
+    }
+
     // ── Step 10c: Pre-build Vick identity override BEFORE prompt construction ──
     // CRITICAL ORDER: Vick's character fields must be overridden BEFORE buildFullCanonicalPrompt
     // is called. The LLM anchors on the first "WHO YOU ARE" block — if old NPC content
@@ -1461,8 +1526,8 @@ Reference the passage of time naturally in your response.
     // Religion block now receives the live-queried worshipLocation — no memory required.
     const educationBlock = buildEducationBlock(character);
     const todayLocationBlock = buildTodayLocationBlock(character);
-    // travelContextBlock is injected alongside todayLocationBlock for "what did I do today"
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock);
+    // travelContextBlock + communityEventsBlock injected alongside todayLocationBlock
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock);
 
     // ── VICK SERVICIO DIAGNOSTIC AUTHORITY OVERRIDE ──────────────────────────
     // Vick is the conversational face of the Account Help & Repair system.

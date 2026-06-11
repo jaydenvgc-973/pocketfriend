@@ -223,17 +223,47 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 const hasValidHome = !!(character.current_home_location_id || character.home_location_id || character.temporary_housing_location_id);
                 const shouldShowHome = presence.status === 'home' && hasValidHome;
 
-                // SLEEP DISPLAY OVERRIDE — ONE TRUTH RULE
-                // resolved_presence_status is the canonical field written by enforceSlowdownSleep,
-                // scheduledLocationEnforcement, and user-directed sleep — the same source Travel uses.
-                // Check it directly FIRST, before any location label resolution.
-                // This ensures homepage and Travel page always agree for active_created_character.
+                // ── AUTHORITATIVE STATE PRIORITY ORDER ────────────────────────────────
+                // 1. Verified blocking states: hospitalized, jailed, house_arrest
+                // 2. Verified school attendance (at_school presence/activity)
+                // 3. Verified work attendance (at_work presence/activity)
+                // 4. Verified sleep state — ONLY after school/work are ruled out
+                // 5. Current location / presence
+                //
+                // STALE CACHE RULE: resolved_presence_status is authoritative ONLY when it
+                // agrees with the character's current schedule. If the character is at school
+                // or work (verified by schedule), sleep/exhaustion labels must NOT override.
+                // Sleep state is evaluated last among high-priority states so that school and
+                // work always win over a stale sleeping flag in resolved_presence_status.
+
                 const canonicalPresence = character.resolved_presence_status || '';
-                const canonicalIsSleeping = canonicalPresence === 'sleeping' || canonicalPresence === 'napping';
+
+                // BLOCKING STATE: hospitalized/jailed/house_arrest — always wins
+                const isBlockingState = character.is_jailed ||
+                  character.house_arrest_active ||
+                  canonicalPresence === 'hospitalized' ||
+                  canonicalPresence === 'incarcerated';
+
+                // SCHEDULE-VERIFIED SCHOOL: at_school presence or education schedule is active
+                const isVerifiedAtSchool = canonicalPresence === 'at_school' ||
+                  presence.status === 'at_school' ||
+                  (character.student_status === 'enrolled' && character.education_location_id && presence.status === 'at_location' &&
+                    character.resolved_current_location_id === character.education_location_id);
+
+                // SCHEDULE-VERIFIED WORK: at_work presence is authoritative
+                const isVerifiedAtWork = canonicalPresence === 'at_work' || presence.status === 'at_work';
+
+                // SLEEP: only evaluate when school and work are NOT active
+                // This prevents a stale sleeping flag from overriding current school/work attendance
+                const canonicalIsSleeping = !isVerifiedAtSchool && !isVerifiedAtWork &&
+                  (canonicalPresence === 'sleeping' || canonicalPresence === 'napping');
 
                 const sleepState = getCharacterSleepState(character);
-                const derivedAsleep = canonicalIsSleeping || sleepState.isSleeping;
-                const isNapping = canonicalPresence === 'napping' || sleepState.isNapping;
+                // Sleep derivation is suppressed when school or work is the verified active state
+                const derivedAsleep = canonicalIsSleeping ||
+                  (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isSleeping);
+                const isNapping = (canonicalPresence === 'napping' && !isVerifiedAtSchool && !isVerifiedAtWork) ||
+                  (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isNapping);
 
                 // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {
@@ -249,7 +279,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 let color = 'text-muted-foreground';
                 let label = presence.label;
 
-                if (derivedAsleep || isNapping || presence.isSleeping) {
+                if (derivedAsleep || isNapping || (!isVerifiedAtSchool && !isVerifiedAtWork && presence.isSleeping)) {
                   IconComponent = Moon;
                   // confidence >= 0.8 covers scheduled, recovery, and stale-DB-detected sleep paths
                   color = sleepState.confidence >= 0.8 ? 'text-blue-300' : 'text-amber-300';

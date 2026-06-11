@@ -1438,6 +1438,90 @@ export function buildConversationLog(recentMsgs, characterName, userWorldName, h
   }).filter(Boolean).join('\n');
 }
 
+// ── COMMUNITY EVENTS & CALENDAR CONTEXT BUILDER ──────────────────────────────
+
+/**
+ * buildCommunityEventsContext
+ *
+ * Injects upcoming CommunityEvent and user calendar events into the LLM system prompt
+ * so characters can naturally bring them up in conversation — mentioning events they're
+ * interested in, asking if others plan to attend, recommending events, making plans, and
+ * discussing holidays, celebrations, community gatherings, and calendar entries.
+ *
+ * DESIGN RULES:
+ * - This is a conversation-starter / catalyst only — NOT an attendance enforcer.
+ * - Existing encounter, relationship, memory, and social systems handle everything
+ *   that happens DURING or AFTER attendance. This only injects awareness.
+ * - Characters should mention events naturally, not lecture about them.
+ * - Events within the next 7 days are "upcoming". Events today or yesterday are "recent".
+ * - Cap: inject at most 4 events to avoid prompt bloat.
+ *
+ * @param {object[]} events - CommunityEvent records (already fetched by caller)
+ * @param {object} character - Full character object (for interest matching)
+ * @returns {string}
+ */
+export function buildCommunityEventsContext(events, character) {
+  if (!events || events.length === 0) return '';
+
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const sevenDaysOut = new Date(nowET.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const oneDayAgo = new Date(nowET.getTime() - 24 * 60 * 60 * 1000);
+
+  // Filter to relevant time window: recent (last 24h) or upcoming (next 7 days)
+  const relevant = events.filter(e => {
+    if (!e.start_date) return false;
+    const d = new Date(e.start_date);
+    return d >= oneDayAgo && d <= sevenDaysOut;
+  });
+
+  if (relevant.length === 0) return '';
+
+  // Sort: soonest first
+  relevant.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+
+  // Cap at 4
+  const capped = relevant.slice(0, 4);
+
+  const formatEventDate = (iso) => {
+    const d = new Date(iso);
+    const nowDay = nowET.toDateString();
+    const evDay = d.toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'long' });
+    const evDate = d.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'long', day: 'numeric' });
+    const evTime = d.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
+    const isToday = d.toDateString() === nowDay;
+    const isYesterday = d.toDateString() === oneDayAgo.toDateString();
+    if (isToday) return `today at ${evTime}`;
+    if (isYesterday) return `yesterday`;
+    return `${evDay}, ${evDate} at ${evTime}`;
+  };
+
+  const lines = capped.map(e => {
+    const when = formatEventDate(e.start_date);
+    const where = e.location_name ? ` at ${e.location_name}` : '';
+    const desc = e.description ? ` — ${e.description.substring(0, 100)}` : '';
+    const past = new Date(e.start_date) < nowET ? ' [already happened]' : '';
+    return `• "${e.name}" — ${when}${where}${desc}${past}`;
+  });
+
+  return `\n\n════════════════════════════════════
+COMMUNITY EVENTS & CALENDAR — CONVERSATION AWARENESS
+These are real upcoming or recent community events, gatherings, and calendar entries.
+You are aware of these as a member of this world. Bring them up naturally when relevant.
+════════════════════════════════════
+${lines.join('\n')}
+
+HOW TO USE THIS INFORMATION (naturally, not forced):
+• If it fits the conversation, mention an event you're interested in or thinking about attending
+• Ask if the other person is planning to go to something that might interest them
+• Reference a recent event ("did you hear about the thing at [place]?")
+• Make plans to attend together if the moment is right
+• Discuss holidays, seasonal events, or community gatherings in passing
+• Recommend an event if you think the other person would enjoy it
+• Do NOT force event mentions into every message — only when it fits naturally
+• Do NOT treat every event as equally important — react based on your personality and interests
+════════════════════════════════════`;
+}
+
 // ── LOCATION RESPONSE VALIDATOR ───────────────────────────────────────────────
 
 /**
