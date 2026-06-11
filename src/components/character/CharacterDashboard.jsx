@@ -11,19 +11,36 @@ import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 
 // ── Emotion scoring — direction + intensity, not just impact tier ─────────────
 // Scale: 0=most distressed, 50=neutral, 100=most elevated positive
+// DESIGN RULE: Positive emotions must be weighted equally to negative emotions at the same intensity.
+// Moderate positive ≠ weaker than moderate negative. Symmetry is enforced.
 const EMOTION_SCORE = {
-  joyful: 92, happy: 88, excited: 85, elated: 90, euphoric: 93,
-  affectionate: 82, hopeful: 78, motivated: 76, grateful: 80,
-  calm: 65, content: 68, peaceful: 66, relieved: 62,
-  reflective: 50, nostalgic: 48, pensive: 46, bored: 42,
-  lonely: 34, vulnerable: 36, conflicted: 38,
-  anxious: 32, worried: 30, stressed: 28, frustrated: 26,
-  "closed-off": 28, sad: 24, disappointed: 22, guilty: 20,
-  irritated: 22, defensive: 20, tense: 18,
-  angry: 12, overwhelmed: 14, "emotionally drained": 16, exhausted: 14,
-  devastated: 8, despairing: 6,
+  // ── Strongly positive (80–95) ─────────────────────────────────────────────
+  joyful: 92, euphoric: 93, elated: 90, happy: 87, excited: 85,
+  affectionate: 84, loving: 86, grateful: 82, proud: 83,
+  // ── Moderately positive (68–79) ──────────────────────────────────────────
+  hopeful: 78, motivated: 76, content: 74, peaceful: 72,
+  relieved: 70, comforted: 71, supported: 72, connected: 73,
+  encouraged: 75, warm: 72, playful: 74, cheerful: 76, lighthearted: 73,
+  // ── Mildly positive / calm (60–67) ───────────────────────────────────────
+  calm: 63, serene: 65, amused: 64, flirty: 62,
+  // ── True neutral (48–59) ─────────────────────────────────────────────────
+  reflective: 52, nostalgic: 50, pensive: 50, bored: 46, conflicted: 48,
+  // ── Mildly negative — normal life (38–47) ────────────────────────────────
+  // Tired, sleepy, hungry = normal biological states. Small downward pull only.
+  tired: 44, sleepy: 45, hungry: 44, busy: 46,
+  // ── Moderately negative (28–37) ──────────────────────────────────────────
+  lonely: 34, vulnerable: 36, anxious: 34, worried: 32,
+  frustrated: 32, stressed: 30, guilty: 28,
+  // ── Significantly negative (16–27) ───────────────────────────────────────
+  sad: 24, disappointed: 22, irritated: 26, defensive: 24,
+  "closed-off": 24, withdrawn: 25, tense: 22,
+  // ── Severely negative (6–15) ─────────────────────────────────────────────
+  // NOTE: exhausted is 38 here — physical exhaustion after productive activity
+  // is a normal life condition, NOT a major emotional failure.
+  exhausted: 38, drained: 38, "emotionally drained": 22,
+  angry: 14, overwhelmed: 16, devastated: 8, despairing: 6, heartbroken: 10,
 };
-const eScore = (s) => EMOTION_SCORE[(s || "").toLowerCase()] ?? 50;
+const eScore = (s) => EMOTION_SCORE[(s || "").toLowerCase()] ?? 52;
 
 // ── Semantic emotion inference ─────────────────────────────────────────────────
 // Derives emotional direction and score from text content when no explicit
@@ -345,7 +362,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 10; // fix: scopedMsgs fallback when convos empty; LocationHistory added to timeline
+const DASHBOARD_CACHE_VERSION = 11; // fix: emotional graph rebalanced — positive/negative symmetry, momentum smoothing, needs/sleep reduced
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -686,11 +703,19 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
           addEvent(n.timestamp, n.emotional_state, null, "narrative");
           return;
         }
-        // Infer from narrative type if emotional_state is generic
+        // Infer from narrative type — CORRECTED weights:
+        // Sleep/wake = normal life cycles, not emotional crises.
+        // Work events = neutral-to-mild, not stress signals.
         const typeScores = {
-          sleep: ["exhausted", 14], wake: ["calm", 65], work_start: ["stressed", 30],
-          work_end: ["relieved", 62], social_event: ["content", 68],
-          needs_warning: ["stressed", 26], catch_up_summary: ["reflective", 50],
+          sleep:             ["tired",      44],  // normal end-of-day rest
+          wake:              ["calm",       63],  // fresh start
+          work_start:        ["calm",       60],  // going to work = normal, not stressed
+          work_end:          ["relieved",   68],  // shift done = mild positive
+          social_event:      ["content",    72],  // social = positive
+          needs_warning:     ["stressed",   30],  // genuine stress signal
+          catch_up_summary:  ["reflective", 52],
+          passive_time:      ["calm",       60],
+          location_change:   ["calm",       58],
         };
         const ts = typeScores[n.event_type];
         if (ts) { addEvent(n.timestamp, ts[0], ts[1], "narrative"); return; }
@@ -715,33 +740,42 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         }
       });
 
-      // ── 4. FINANCIAL STRESS — scored by amount and direction ───────────────
+      // ── 4. FINANCIAL SIGNALS — only meaningful financial events ──────────────
+      // Small routine expenses (groceries, utilities) are not emotional events.
+      // Only large unexpected expenses or income create graph points.
       txns3d.forEach(t => {
         if (!t.timestamp) return;
         if (t.direction === "expense") {
-          // Large expenses create more stress than small ones
           const amt = Math.abs(t.amount || 0);
-          const stressScore = amt > 500 ? 18 : amt > 100 ? 24 : 28;
-          addEvent(t.timestamp, "stressed", stressScore, "financial");
+          // Only add if it's a significant expense — routine small purchases are not stress events
+          if (amt > 300) addEvent(t.timestamp, "stressed", 28, "financial");
+          else if (amt > 100) addEvent(t.timestamp, "stressed", 36, "financial"); // mild concern
+          // Small expenses omitted — not emotionally significant
         } else if (t.direction === "income") {
-          addEvent(t.timestamp, "relieved", 62, "financial");
+          // Getting paid = positive
+          addEvent(t.timestamp, "relieved", 70, "financial");
         }
       });
 
       // ── 5. SLEEP / WAKE LIFECYCLE ──────────────────────────────────────────
-      if (character.last_sleep_start) addEvent(character.last_sleep_start, "exhausted", 14, "sleep");
-      if (character.alarm_woke_at)    addEvent(character.alarm_woke_at, "calm", 60, "wake");
+      // Sleep = normal wind-down, NOT a crisis. Score it as tired (normal).
+      // Wake = fresh start, mild positive.
+      if (character.last_sleep_start) addEvent(character.last_sleep_start, "tired", 44, "sleep");
+      if (character.alarm_woke_at)    addEvent(character.alarm_woke_at, "calm", 63, "wake");
 
-      // ── 6. NEEDS-DERIVED SIGNALS — stamped at now with real directional scores ─
-      // Each need maps to a distinct emotional direction, not all the same score.
+      // ── 6. NEEDS-DERIVED SIGNALS — reduced influence, only genuine distress ─
+      // RULE: Normal biological states (tired, hungry, busy) must NOT dominate.
+      // Only add needs signals when they reach a genuinely distressing threshold.
+      // These are background context — they must not overpower social/life events.
       const nowIso = now.toISOString();
-      if ((character.mental_value ?? 100) < 35)        addEvent(nowIso, "overwhelmed", 14, "needs");
-      else if ((character.mental_value ?? 100) < 55)   addEvent(nowIso, "stressed", 26, "needs");
-      if ((character.social_value ?? 100) < 30)        addEvent(nowIso, "lonely", 32, "needs");
-      if ((character.energy_value ?? 100) < 20)        addEvent(nowIso, "exhausted", 14, "needs");
-      else if ((character.energy_value ?? 100) < 40)   addEvent(nowIso, "tired", 22, "needs");
-      if ((character.financial_need_value ?? 0) > 75)  addEvent(nowIso, "stressed", 22, "needs");
-      if ((character.hunger_value ?? 100) < 25)        addEvent(nowIso, "frustrated", 26, "needs");
+      if ((character.mental_value ?? 100) < 30)        addEvent(nowIso, "overwhelmed", 18, "needs");
+      else if ((character.mental_value ?? 100) < 45)   addEvent(nowIso, "stressed",   32, "needs");
+      if ((character.social_value ?? 100) < 25)        addEvent(nowIso, "lonely",     34, "needs");
+      if ((character.energy_value ?? 100) < 15)        addEvent(nowIso, "exhausted",  30, "needs"); // severe only
+      // NOTE: tired/hungry are normal life states — NOT added as graph signals
+      if ((character.financial_need_value ?? 0) > 80)  addEvent(nowIso, "stressed",   28, "needs");
+      // hunger below 15 only (extreme, not just peckish)
+      if ((character.hunger_value ?? 100) < 15)        addEvent(nowIso, "frustrated", 32, "needs");
 
       // ── 7. CURRENT STATE ANCHOR ────────────────────────────────────────────
       addEvent(nowIso, curEmotion, null, "current");
@@ -749,22 +783,49 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // Sort chronologically
       rawEvents.sort((a, b) => a.tsMs - b.tsMs);
 
-      // Deduplicate events within 3 minutes of each other — keep most extreme score
+      // Deduplication — 5-minute buckets, prefer positive > negative > neutral
+      // RULE: A positive social event must NOT be replaced by a nearby biological need signal.
+      // Source priority: life > message > narrative > financial > needs > sleep > current
+      const SOURCE_PRIORITY = { 'life': 6, 'life:inferred': 5, 'message': 5, 'narrative': 4, 'financial': 3, 'current': 2, 'sleep': 1, 'needs': 1, 'wake': 1, 'memory': 4 };
+      const srcPri = (src) => { if (!src) return 1; for (const [k, v] of Object.entries(SOURCE_PRIORITY)) { if (src.startsWith(k)) return v; } return 1; };
+
       const deduped = [];
       for (const ev of rawEvents) {
         const prev = deduped[deduped.length - 1];
-        if (prev && Math.abs(ev.tsMs - prev.tsMs) < 3 * 60 * 1000) {
-          // Keep the one furthest from neutral (50)
-          if (Math.abs(ev.score - 50) > Math.abs(prev.score - 50)) {
+        if (prev && Math.abs(ev.tsMs - prev.tsMs) < 5 * 60 * 1000) {
+          // Prefer higher-priority source first
+          const evPri = srcPri(ev.source);
+          const prevPri = srcPri(prev.source);
+          if (evPri > prevPri) {
+            deduped[deduped.length - 1] = ev;
+          } else if (evPri === prevPri && ev.score > prev.score) {
+            // Same source priority: prefer more positive score
             deduped[deduped.length - 1] = ev;
           }
+          // Otherwise keep existing
         } else {
           deduped.push(ev);
         }
       }
 
+      // ── MOMENTUM SMOOTHING ────────────────────────────────────────────────
+      // Prevent emotional whiplash. Each point is blended with its neighbors
+      // using a weighted average: 20% prev + 60% current + 20% next.
+      // This preserves meaningful peaks and valleys while dampening single-event spikes.
+      // Needs/sleep signals that fall between positive events won't create cliff drops.
+      const smoothed = deduped.map((ev, i) => {
+        if (deduped.length < 3) return ev;
+        const prev = deduped[i - 1];
+        const next = deduped[i + 1];
+        if (!prev && !next) return ev;
+        const prevScore = prev ? prev.score : ev.score;
+        const nextScore = next ? next.score : ev.score;
+        const blended = Math.round(prevScore * 0.20 + ev.score * 0.60 + nextScore * 0.20);
+        return { ...ev, score: blended };
+      });
+
       // Build final chart data
-      const trendData = deduped.map(e => ({
+      const trendData = smoothed.map(e => ({
         label: e.label,
         mood: Math.round(e.score),
         emotion: e.emotion,
