@@ -6,7 +6,7 @@ import {
   DollarSign, Heart, MapPin, Zap, BookOpen, Brain, Activity
 } from "lucide-react";
 import TravelHistoryCard from "@/components/character/TravelHistoryCard";
-import { format, subHours, isAfter, parseISO, subDays } from "date-fns";
+import { format, isAfter, parseISO, subDays } from "date-fns";
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 
 // ── Emotion scoring — direction + intensity, not just impact tier ─────────────
@@ -318,7 +318,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 3; // bumped: unified 3-day window for all dashboard metrics
+const DASHBOARD_CACHE_VERSION = 4; // bumped: removed all 24h dead variables, msgs count includes both sides
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -340,7 +340,6 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
 
     const ownerEmail = character.owner_email;
     const now = new Date();
-    const cutoff24h = subHours(now, 24).toISOString();
     const cutoff3d  = subDays(now, 3).toISOString();
 
     // ── FETCH ALL DATA IN PARALLEL ─────────────────────────────────────────
@@ -509,25 +508,20 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // scopedMsgs: all messages (both sides) in conversations we loaded
       const scopedMsgs = allMsgs.filter(m => validConvoIds.has(m.conversation_id));
 
-      // ── Time windows ──────────────────────────────────────────────────────
-      const msgs24h  = scopedMsgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff24h)));
-      const txns24h  = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff24h)));
-      const narrs24h = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff24h)));
-      const msgs3d   = scopedMsgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff3d)));
-      const narrs3d  = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff3d)));
-      const txns3d   = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
+      // ── Time windows — unified 3-day window for ALL dashboard metrics ─────
+      // cutoff24h is kept only for legacy reference. No UI metric uses it.
+      const msgs3d  = scopedMsgs.filter(m => m.created_date && isAfter(parseISO(m.created_date), parseISO(cutoff3d)));
+      const narrs3d = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff3d)));
+      const txns3d  = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
 
       // ── SOCIAL ACTIVITY STATS — scoped to last 3 days ───────────────────────
-      // All social stats (messages, positive, conflict) use the same 3-day window
-      // so the dashboard is consistent — no mixing of 24h and 3-day scopes.
+      // All social stats (messages, positive, conflict) use the same 3-day window.
+      // "Messages" = all messages in scoped conversations (both sides) — full conversation activity.
+      // Positive / Conflict = derived from character-sent messages only (where sentiment is meaningful).
       //
-      // NOTE: Semantic inference is DISPLAY ONLY. It is never written back to Message records.
-      // If inferred emotion matches a real pattern, it affects only this dashboard rendering session.
-      // No writes to Message.emotional_state happen here. Only simulateActiveCharacterNeeds and
-      // the LLM response pipeline are permitted to update message-level fields.
+      // NOTE: Semantic inference is DISPLAY ONLY. Never written back to Message records.
       const allSentScoped3d = msgs3d.filter(m => m.sender_type === "character");
-      // msgs3d used for all dashboard activity counts and timeline entries
-      const msgsSent = allSentScoped3d.length;
+      const msgsSent = msgs3d.length; // total message activity (both sides) in 3-day window
 
       // ── LEGACY-SAFE sentiment classification ──────────────────────────────
       // Priority: 1. emotional_state field  2. semantic inference from content (display only)
