@@ -509,10 +509,45 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const txns3d   = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
 
       // Social stats (all msgs in these convos, not just sender_type=character)
-      const allSent24h     = msgs24h.filter(m => m.sender_type === "character");
-      const msgsSent       = allSent24h.length;
-      const positiveInteractions = allSent24h.filter(m => isPositive(m.emotional_state)).length;
-      const conflictEvents = allSent24h.filter(m => isTense(m.emotional_state)).length;
+      const allSent24h = msgs24h.filter(m => m.sender_type === "character");
+      const msgsSent   = allSent24h.length;
+
+      // ── LEGACY-SAFE sentiment classification ──────────────────────────────
+      // Many legacy messages have emotional_state = null/undefined because the
+      // field was not populated when the message was originally written.
+      // Counting only on emotional_state produces 0 positive / 0 conflict for
+      // any character whose history predates sentiment classification.
+      //
+      // Resolution priority (matches the graph pipeline):
+      //   1. emotional_state field — authoritative when present and non-trivial
+      //   2. Semantic inference from message content — covers legacy messages
+      //   3. Unclassifiable — counted as neither positive nor conflict (neutral)
+      //
+      // This ensures legacy characters get fair representation without guessing.
+      const resolveMessageSentiment = (m) => {
+        if (m.emotional_state) return m.emotional_state.toLowerCase();
+        // Legacy fallback: infer from message content
+        if (m.content) {
+          const inf = inferEmotionFromText(m.content);
+          if (inf) return inf.emotion.toLowerCase();
+        }
+        return null; // unclassifiable — treated as neutral
+      };
+
+      let positiveInteractions = 0;
+      let conflictEvents = 0;
+      let unclassifiedCount = 0;
+
+      allSent24h.forEach(m => {
+        const sentiment = resolveMessageSentiment(m);
+        if (sentiment === null) {
+          unclassifiedCount++;
+        } else if (isPositive(sentiment)) {
+          positiveInteractions++;
+        } else if (isTense(sentiment)) {
+          conflictEvents++;
+        }
+      });
 
       // ── INTRADAY EMOTIONAL GRAPH — 3-day window, per-event semantic scoring ─
       // ARCHITECTURE:
@@ -896,7 +931,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         ? `${workLocationName}${character.occupation ? ` · ${character.occupation}` : ''}`
         : character.occupation || null;
 
-      const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 12), socialStats: { msgsSent, positiveInteractions, conflictEvents }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
+      const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 12), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
       dashboardCache[charId] = dashData;
       setData(dashData);
       setLoaded(true);
@@ -1108,6 +1143,11 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
               <StatChip icon={Heart}         label="Positive"  value={socialStats.positiveInteractions} />
               <StatChip icon={Zap}           label="Conflict"  value={socialStats.conflictEvents} />
             </div>
+            {socialStats.unclassifiedCount > 0 && (
+              <p className="px-4 pb-2 text-[9px] text-muted-foreground/60">
+                +{socialStats.unclassifiedCount} older message{socialStats.unclassifiedCount !== 1 ? 's' : ''} without sentiment classification
+              </p>
+            )}
           </div>
         </div>
       </div>
