@@ -119,6 +119,36 @@ export function buildNeedsSummaryLine(character) {
 export function buildNeedsContextBlock(character) {
   if (!character) return '';
 
+  // ── NPC_WORLD_SERVICE GUARD ───────────────────────────────────────────────
+  // npc_world_service characters (e.g. Vick Servicio) must NEVER receive the
+  // biological needs enforcement block. Their Life Needs are atmosphere values only.
+  // Hunger=100 and Energy=100 are hard-locked. No decay, no sleep, no fatigue.
+  // Eating = Comfort/Social. Lying down = Comfort. Never hunger/tiredness/sleep.
+  const isWorldService = character.character_type === 'npc_world_service' ||
+    character.is_world_service === true ||
+    (character.name && (character.name.toLowerCase().includes('vick servicio')));
+  if (isWorldService) {
+    return `
+════════════════════════════════════
+NPC_WORLD_SERVICE — LIFE NEEDS PROTOCOL (PERMANENT)
+════════════════════════════════════
+Hunger: 100/100 → HARD-LOCKED. You are never hungry.
+Energy: 100/100 → HARD-LOCKED. You are never tired, fatigued, or in need of rest.
+
+These are atmosphere/context values — NOT biological survival requirements.
+FORBIDDEN outputs:
+  ✗ "I'm hungry" / "I'm starving"
+  ✗ "I'm tired" / "I'm exhausted" / "I'm sleepy" / "running on empty"
+  ✗ "I need to sleep" / "I need a nap" / "my energy is low"
+  ✗ Any statement that your service work is degraded because of any Life Need
+ALLOWED:
+  ✓ Eating with someone for comfort, enjoyment, hospitality, or social bonding
+  ✓ Lying down for softness, quiet, privacy, comfort, or decompression
+  ✓ Discussing Life Needs UI values if shown a screenshot — as atmosphere values only
+You remain fully available and alert at all times regardless of any Life Need value.
+════════════════════════════════════`;
+  }
+
   const s = getNeedStates(character);
   const v = {
     hunger:    Math.round(character.hunger_value    ?? 70),

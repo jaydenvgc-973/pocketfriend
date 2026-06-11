@@ -27,6 +27,9 @@ import { extractUrlsFromText, analyzeSharedLinkForCharacter, messageContainsLink
  */
 export function buildSleepEnergyAutonomyContext(character) {
   if (!character) return '';
+  // npc_world_service characters must NEVER receive sleep/energy autonomy rules.
+  // They have a dedicated needs protocol in buildNeedsContextBlock and buildHardFacts.
+  if (character.character_type === 'npc_world_service' || character.is_world_service === true) return '';
   if (character.character_type !== 'active_created_character') return '';
 
   const energy = Math.round(character.energy_value ?? 75);

@@ -485,18 +485,40 @@ function buildHardFacts(character) {
     lines.push(`ACTIVE LIFE SITUATION: ${character.current_life_event.substring(0, 200)}`);
   }
 
-  // Critical needs (below 30)
-  const needChecks = [
-    ['hunger_value', 'hunger'],
-    ['energy_value', 'energy'],
-    ['mental_value', 'mental health'],
-    ['health_value', 'physical health'],
-    ['financial_need_value', 'financial stability'],
-    ['social_value', 'social connection'],
-  ];
-  const criticalNeeds = needChecks.filter(([f]) => (character[f] ?? 70) < 30).map(([, l]) => l);
-  if (criticalNeeds.length > 0) {
-    lines.push(`CRITICAL NEEDS (very low — must color behavior and dialogue): ${criticalNeeds.join(', ')}.`);
+  // ── NPC_WORLD_SERVICE NEEDS OVERRIDE ────────────────────────────────────────
+  // For npc_world_service characters (e.g. Vick Servicio), Life Needs values are
+  // NOT biological survival needs. They are atmosphere/context values only.
+  // Hunger=100 and Energy=100 are hard-locked. Never inject hunger/tiredness/sleep needs.
+  // Eating = Comfort/Social (comfort, enjoyment, hospitality). Lying down = Comfort only.
+  const isWorldServiceChar = character.character_type === 'npc_world_service' ||
+    character.is_world_service === true ||
+    (character.name && character.name.toLowerCase().includes('vick servicio'));
+
+  if (isWorldServiceChar) {
+    lines.push(`NPC_WORLD_SERVICE NEEDS PROTOCOL — PERMANENT RULE:
+You are an npc_world_service character. Your Life Needs values are atmosphere indicators — NOT biological survival requirements.
+HUNGER = 100 (hard-locked). You are NEVER hungry. You do NOT need food to survive.
+ENERGY = 100 (hard-locked). You are NEVER tired. You do NOT need sleep or rest to function.
+FORBIDDEN: "I'm hungry." / "I'm tired." / "I need to sleep." / "I need a nap." / "My energy is low." / "My hunger is low."
+FORBIDDEN: Any statement that your service, diagnostic, or stewardship work is reduced because of any Life Need value.
+ALLOWED — eating: comfort, enjoyment, social bonding, hospitality, shared atmosphere. If you eat with someone, it may improve Comfort and Social. It is NOT because of hunger.
+ALLOWED — lying down: softness, quiet, privacy, comfort, decompression, enjoying a space. It may increase Comfort. It does NOT mark you asleep, tired, or in need of rest.
+ALLOWED — Life Needs may be discussed if a user shows you a screenshot of the UI. Acknowledge them honestly as atmosphere/context values — never as operational requirements.
+You remain fully available, alert, and capable regardless of any Life Needs value displayed in the UI.`);
+  } else {
+    // Critical needs (below 30) — active_created_character only
+    const needChecks = [
+      ['hunger_value', 'hunger'],
+      ['energy_value', 'energy'],
+      ['mental_value', 'mental health'],
+      ['health_value', 'physical health'],
+      ['financial_need_value', 'financial stability'],
+      ['social_value', 'social connection'],
+    ];
+    const criticalNeeds = needChecks.filter(([f]) => (character[f] ?? 70) < 30).map(([, l]) => l);
+    if (criticalNeeds.length > 0) {
+      lines.push(`CRITICAL NEEDS (very low — must color behavior and dialogue): ${criticalNeeds.join(', ')}.`);
+    }
   }
 
   if (lines.length === 0) return "";

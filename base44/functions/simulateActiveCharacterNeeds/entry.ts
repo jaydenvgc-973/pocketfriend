@@ -544,6 +544,18 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
   const scheduledEvents = [];
   const logs = [];
 
+  // ── npc_world_service GUARD — skip ALL biological corrective paths ──────────
+  // npc_world_service (e.g. Vick Servicio) must NEVER be put to sleep, pass out,
+  // be hospitalized for energy collapse, or have hunger-driven eating states written.
+  // Their energy=100 and hunger=100 locks are enforced before this function is called,
+  // so thresholds will never be crossed — but guard here defensively as a belt+suspenders.
+  const isWorldService = char.character_type === 'npc_world_service' || char.is_world_service === true ||
+    (char.name && char.name.toLowerCase().includes('vick servicio'));
+  if (isWorldService) {
+    logs.push(`[CORRECTIVE] ${char.name}: npc_world_service — skipping all biological corrective state writes`);
+    return { stateWrites, scheduledEvents, logs };
+  }
+
   const hunger  = newNeeds.hunger;
   const energy  = newNeeds.energy;
   const health  = newNeeds.health;
@@ -829,8 +841,14 @@ Deno.serve(async (req) => {
     let characters = [];
     if (characterId) {
       const found = await writeSDK.entities.Character.filter({ id: characterId }, null, 10);
-      // Only simulate needs for active_created_character — NPCs do NOT use biological need simulation
-      characters = found.filter(c => c.character_type === 'active_created_character' && c.status === 'active');
+      // Only simulate needs for active_created_character.
+      // npc_world_service (Vick Servicio) is explicitly excluded — no biological decay or corrective states.
+      characters = found.filter(c =>
+        c.character_type === 'active_created_character' &&
+        c.status === 'active' &&
+        c.character_type !== 'npc_world_service' &&
+        !c.is_world_service
+      );
     } else {
       // CRITICAL: .list() returns 0 records in service-role context on this entity.
       // Use .filter() with explicit character_type — the proven working pattern from autonomousCharacterMovement.
@@ -913,29 +931,36 @@ Deno.serve(async (req) => {
 
       // Apply elapsed-time decay/recovery
       let newNeeds = applyElapsedTime(currentNeeds, cappedHours, context);
-      // Apply cross-system infection
-      newNeeds = applyStatInfection(newNeeds, cappedHours);
+      // Apply cross-system infection — skipped for npc_world_service (no biological cascades)
+      const isWorldServiceChar = char.character_type === 'npc_world_service' || char.is_world_service === true ||
+        (char.name && char.name.toLowerCase().includes('vick servicio'));
+      if (!isWorldServiceChar) {
+        newNeeds = applyStatInfection(newNeeds, cappedHours);
+      }
 
-      // ── VICK SERVICIO NEED LOCKS ──────────────────────────────────────────
-      // sleep_lock: freeze energy (and skip sleep infection cascade from hunger/health).
-      // hunger_lock: freeze hunger (and skip hunger infection cascade).
-      // SCOPE: affects ONLY the locked need value. Everything else — travel, scheduling,
-      // messaging, social, work, school, autonomous actions — continues normally.
-      // RULE: restore the pre-simulation value for the locked need so no decay/recovery
-      // was applied. Do NOT reset to default. Resume from exactly where it was.
+      // ── NPC_WORLD_SERVICE NEED LOCKS ─────────────────────────────────────
+      // npc_world_service characters (e.g. Vick Servicio) are NOT governed by biological
+      // survival needs. They must NEVER decay hunger or energy, NEVER enter sleep/fatigue/
+      // pass-out/nap states, and NEVER trigger corrective sleep or hunger behaviors.
+      //
+      // Hunger and Energy are hard-locked at their stored values (always 100 for Vick).
+      // Cascade infection from hunger/energy is also suppressed — these characters are
+      // immune to all biological-need cascades.
+      //
+      // Eating / lying down IS allowed but interpreted as Comfort/Social — not biological need.
+      // (Eating → Comfort/Social rise. Lying down → Comfort rise. Never hunger/energy restoration.)
+      //
+      // RULE: restore pre-simulation value for locked needs — no decay or recovery applied.
       const isVick = char.character_type === 'npc_world_service' || char.is_world_service === true ||
         (char.name && char.name.toLowerCase().includes('vick servicio'));
       if (isVick) {
-        if (char.sleep_lock) {
-          // Freeze energy — restore pre-simulation value
-          newNeeds.energy = currentNeeds.energy ?? 75;
-          console.log(`[simulateNeeds] ${char.name}: sleep_lock active — energy frozen at ${newNeeds.energy}`);
-        }
-        if (char.hunger_lock) {
-          // Freeze hunger — restore pre-simulation value
-          newNeeds.hunger = currentNeeds.hunger ?? 70;
-          console.log(`[simulateNeeds] ${char.name}: hunger_lock active — hunger frozen at ${newNeeds.hunger}`);
-        }
+        // Hard-lock hunger and energy — restore pre-simulation values regardless of context
+        newNeeds.energy = currentNeeds.energy ?? 100;
+        newNeeds.hunger = currentNeeds.hunger ?? 100;
+        // Ensure locks always write back at 100 if the stored value has drifted
+        if (newNeeds.energy < 100) { newNeeds.energy = 100; }
+        if (newNeeds.hunger < 100) { newNeeds.hunger = 100; }
+        console.log(`[simulateNeeds] ${char.name}: npc_world_service — hunger=100 energy=100 (hard-locked, no biological decay)`);
       }
 
       // ── COMFORT ADD-ON: positive + negative contextual modifiers ─────────
@@ -950,21 +975,11 @@ Deno.serve(async (req) => {
       // Rule: An awake active_created_character must lose at least -5 energy per hour,
       // regardless of context. This is a hard floor applied AFTER context rates.
       //
-      // PROOF MATH (whole numbers, -5/hr baseline):
-      //   Start 100: 100 - (5 × 20) = 0  → reaches 0 after 20 hours awake
-      //   Start  75:  75 - (5 × 15) = 0  → reaches 0 after 15 hours awake
-      //   Start  50:  50 - (5 × 10) = 0  → reaches 0 after 10 hours awake
-      //   Start  25:  25 - (5 ×  5) = 0  → reaches 0 after  5 hours awake
-      //   In all cases energy reaches 0 within 24 hours.
-      //
-      // Context rates for awake states are already set to ≤ 0 in RATES (no awake context
-      // restores energy — only sleeping/passed_out/hospitalized do). This guarantee ensures
-      // that even if context adds 0, the floor still drives energy toward zero.
-      //
       // Does NOT apply to sleeping, passed_out, or hospitalized — those must restore energy.
+      // Does NOT apply to npc_world_service — their energy is hard-locked at 100.
       const isSleepingContext = context === 'sleeping' || context === 'passed_out' || context === 'hospitalized';
-      // sleep_lock bypass: if Vick's sleep_lock is on, skip the awake drain guarantee too
-      const sleepLockActive = isVick && char.sleep_lock;
+      // npc_world_service bypass: energy is already hard-locked above — skip drain guarantee entirely
+      const sleepLockActive = isVick; // isVick covers all npc_world_service detection
       if (!isSleepingContext && !sleepLockActive) {
         const MINIMUM_AWAKE_DRAIN_PER_HOUR = -5; // -5/hr floor: 100 energy → 0 in 20 hours
         // Apply the baseline drain directly from currentNeeds (not newNeeds) so context
@@ -977,7 +992,9 @@ Deno.serve(async (req) => {
       const financialNeed = deriveFinancialNeed(char);
 
       // ── DETECT ESCALATION EVENTS → MEMORY ────────────────────────────────
-      const escalationEvents = detectCriticalEscalations(currentNeeds, newNeeds, char.name);
+      // npc_world_service: hunger/energy never cross critical thresholds (hard-locked at 100),
+      // so escalation events will never fire — but guard here defensively.
+      const escalationEvents = isWorldServiceChar ? [] : detectCriticalEscalations(currentNeeds, newNeeds, char.name);
       if (escalationEvents.length > 0) {
         Promise.all(escalationEvents.map(evt =>
           writeSDK.entities.Memory.create({
