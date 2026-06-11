@@ -345,7 +345,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 7; // bumped: Social Activity reverted to msgs3d only — no LifeEvent, no timelineEntries
+const DASHBOARD_CACHE_VERSION = 8; // force-bust: clear sessions that cached broken v6 timelineEntries-source data
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
