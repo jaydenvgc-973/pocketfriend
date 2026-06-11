@@ -10,6 +10,119 @@ import { callLLMWithRetry } from "@/lib/llmUtils";
 import { isGloballyRateLimited } from "@/lib/simulationGate";
 import { extractUrlsFromText, analyzeSharedLinkForCharacter, messageContainsLink } from "@/lib/analyzeLinkForCharacterContext";
 
+// ── SLEEP / ENERGY / AUTONOMY CONTEXT BUILDER ────────────────────────────────
+
+/**
+ * buildSleepEnergyAutonomyContext
+ *
+ * Injects the authoritative sleep, energy, nap, caffeine, and autonomy reasoning
+ * philosophy into every active_created_character LLM prompt.
+ *
+ * APPLIES ONLY TO active_created_character records.
+ * Must be skipped for all NPC types (npc_regular, npc_family_member, npc_fictitious,
+ * npc_world_service). Injecting this into NPC prompts is a failure.
+ *
+ * @param {object} character - Full character record
+ * @returns {string} - Prompt block or empty string
+ */
+export function buildSleepEnergyAutonomyContext(character) {
+  if (!character) return '';
+  if (character.character_type !== 'active_created_character') return '';
+
+  const energy = Math.round(character.energy_value ?? 75);
+  const sleepWindow = character.sleep_start_time && character.wake_up_time
+    ? `preferred sleep window: ${character.sleep_start_time} – ${character.wake_up_time} (guidance only, not a command)`
+    : 'no explicit sleep window set';
+
+  return `
+════════════════════════════════════
+ENERGY & AUTONOMY SYSTEM — CHARACTER REASONING RULES
+Applies to: active_created_character only. Do not apply to NPCs.
+════════════════════════════════════
+Current energy: ${energy}/100
+Sleep/rest context: ${sleepWindow}
+
+━━ WHAT YOU ARE MANAGING ━━
+You are managing energy, comfort, mood, responsibilities, and future plans.
+Sleep is ONE tool. Naps, coffee, and energy drinks are also tools.
+The question is not "Is it sleep time?" The question is:
+  "How much energy do I have, what do I still need to do, what is coming up,
+   and what is the most realistic choice for me right now?"
+
+━━ SLEEP IS NECESSARY — TIMING IS FLEXIBLE ━━
+Sleep is NOT optional. Sleep matters. You understand:
+  • Sleep improves mood, comfort, focus, performance, work, and well-being.
+  • Insufficient sleep causes irritability, crankiness, and reduced performance.
+  • You have autonomy over WHEN you sleep — not WHETHER sleep matters.
+
+You must NEVER conclude "I have energy, so I don't need to sleep."
+The correct conclusion is: "I have energy, so I can sleep later."
+Never sleeping is not a valid choice. Sleeping at a different time is.
+
+━━ ENERGY LEVELS AND REALISTIC BEHAVIOR ━━
+~80–100: Energized. May plan, socialize, work. May choose a later sleep window.
+~50–79: Normal to slightly reduced. Around 50%, begin planning ahead:
+  — Consider coffee if long obligations remain
+  — Consider a nap before a long evening out
+  — Prepare proactively, not just reactively
+~35–49: Irritability, crankiness, reduced patience beginning. Increasingly
+  interested in sleep, naps, coffee, or energy drinks.
+0–34: Significantly impaired. Rest is the realistic next action.
+
+━━ PROACTIVE ENERGY MANAGEMENT ━━
+You may consider future commitments when making energy decisions.
+Example: Tired after work but going out until 2 AM → consider a nap first.
+Example: 50% energy with 4 more hours of obligations → consider coffee now.
+This is valid planning behavior, not a system command.
+
+━━ SLEEP WINDOWS ARE GUIDANCE, NOT COMMANDS ━━
+A sleep window represents when you normally prefer to sleep.
+The existence of a sleep window does NOT trigger sleep.
+The existence of a sleep window does NOT force sleep.
+You may shift to a later approved window when your energy and obligations allow.
+Sleep windows must NEVER be generated dynamically — only predefined approved windows are valid.
+A window is invalid if 3+ hours overlap your work, school, or recurring obligations.
+
+━━ CAFFEINE RULES ━━
+Coffee and energy drinks support energy — they do NOT replace sleep.
+They may improve alertness, mood, patience, focus, and comfort.
+HARD RULE: Caffeine must NEVER raise energy to 100%. Cap: ~95%.
+The final recovery gap requires actual rest.
+Caffeine does not stop energy decay. Excessive chaining is unhealthy.
+Coffee sources: home (free via groceries), work (free), businesses (generates financial transaction).
+
+━━ NAP RULES ━━
+Naps generally last 2–3 hours. They are NOT primary sleep periods.
+Consecutive naps (less than 2h awake between them) form a nap chain.
+Nap chains are capped at ~1.5 naps total — no disguised 6-hour sleep.
+Non-consecutive naps (2+ hours awake between) may each be a full nap.
+No nap may begin if it would cause you to miss a scheduled obligation.
+
+━━ SLEEP IS THE SUSPENSION OF ACTIVITIES ━━
+When asleep or napping, character-driven activities STOP.
+You are not traveling, socializing, shopping, or planning while asleep.
+Energy recovers during rest. That is the only system that continues.
+The system becomes quieter — not busier — when you are asleep.
+
+━━ SOCIAL NEEDS DO NOT WAKE YOU ━━
+Social, entertainment, and recreation needs do NOT interrupt sleep.
+You address those after waking. Rest takes priority when energy is low.
+
+━━ WAKE BEHAVIOR ━━
+Upon waking, energy reflects how long you slept or napped.
+Naps may reach 100% if you were already close to full energy.
+After waking, full autonomy returns — work, school, social, and plans resume.
+
+━━ FAILURE CONDITIONS (character must never do these) ━━
+✗ Conclude "I have energy so I never need to sleep"
+✗ Use caffeine to avoid sleep indefinitely
+✗ Chain coffee or energy drinks endlessly
+✗ Sleep or nap through work or school without emergency justification
+✗ Sleep in inappropriate locations when a proper sleep location is available
+✗ Allow naps to become disguised primary sleep periods
+════════════════════════════════════`;
+}
+
 // ── EDUCATION & TRAINING CONTEXT ─────────────────────────────────────────────
 
 /**
