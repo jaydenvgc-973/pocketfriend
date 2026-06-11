@@ -767,10 +767,12 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         const p = { angry:6, tense:6, irritated:6, defensive:6, sad:5, anxious:4, reflective:3, happy:2, calm:2 };
         return p[(s||"").toLowerCase()] || 1;
       };
-      msgs24h.filter(m => m.emotional_state).forEach(m => {
+      // Include ALL messages — legacy messages without emotional_state use inferred sentiment for priority
+      msgs24h.forEach(m => {
+        const resolvedEmotion = m.emotional_state || (m.content ? inferEmotionFromText(m.content)?.emotion : null) || null;
         const existing = convoMsgPick[m.conversation_id];
-        if (!existing || priorityScore(m.emotional_state) > priorityScore(existing.emotional_state))
-          convoMsgPick[m.conversation_id] = m;
+        if (!existing || priorityScore(resolvedEmotion) > priorityScore(existing._resolvedEmotion))
+          convoMsgPick[m.conversation_id] = { ...m, _resolvedEmotion: resolvedEmotion };
       });
 
       Object.values(convoMsgPick).slice(0, 8).forEach(m => {
@@ -847,8 +849,8 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         timelineEntries.push({
           time: m.created_date,
           icon: meta.isWorldPhone || meta.isAutonomousBeat ? "phone" : "message",
-          text: buildMsgText(m.emotional_state, resolvedName, meta.isGroup, meta.isWorldPhone, beatType),
-          emotion: m.emotional_state,
+          text: buildMsgText(m._resolvedEmotion || m.emotional_state, resolvedName, meta.isGroup, meta.isWorldPhone, beatType),
+          emotion: m._resolvedEmotion || m.emotional_state,
           _unresolved: !resolvedName, // internal flag — never shown in UI
         });
       });
@@ -947,7 +949,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         liveStatus: character?.resolved_presence_status || 'home',
         trendData: [],
         timelineEntries: [],
-        socialStats: { msgsSent: 0, positiveInteractions: 0, conflictEvents: 0 },
+        socialStats: { msgsSent: 0, positiveInteractions: 0, conflictEvents: 0, unclassifiedCount: 0 },
         insights: [],
         memoryHighlights: [],
         workDisplay: character?.occupation_location_name || character?.occupation || null,
