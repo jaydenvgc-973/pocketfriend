@@ -18,6 +18,34 @@ Deno.serve(async (req) => {
 
     const text = messageContent.toLowerCase().trim();
 
+    // ── SLEEP/FATIGUE DIALOGUE GUARD — PERMANENT RULE ────────────────────────────
+    // Dialogue expressing tiredness, fatigue, sleep intent, or sleep planning is
+    // NEVER a valid source for current_activity. These are feeling-state expressions,
+    // not system-state transitions. Writing them as current_activity creates a
+    // feedback loop where LLM emotional dialogue becomes authoritative system state.
+    //
+    // RULE: Feeling tired ≠ being asleep. Sleep state is set exclusively by the
+    // authoritative sleep resolver (simulateActiveCharacterNeeds / enforceSlowdownSleep).
+    // Dialogue cannot set or influence sleep state under any circumstances.
+    const SLEEP_FATIGUE_PATTERNS = [
+      /\bi'?m?\s*(so\s+)?(tired|exhausted|sleepy|fatigued|drained|wiped out|worn out|dead tired|running on (empty|fumes))\b/i,
+      /\bi\s*(need|could use|want|gotta get)\s+(some\s+)?(sleep|rest|a nap|to sleep|to rest|to lie down|to go to bed)\b/i,
+      /\bi\s*(should|need to|have to|gotta|am going to|'m going to|'m about to)\s+(go to\s+)?(sleep|bed|lie down|rest|nap|crash)\b/i,
+      /\bi\s*(didn'?t|haven'?t)\s+(sleep|slept|been sleeping|been resting)\s*(well|much|enough|at all)?\b/i,
+      /\b(going to bed|heading to bed|about to sleep|about to crash|calling it a night|need sleep|need rest)\b/i,
+      /\b(so sleepy|so exhausted|so tired|really tired|really exhausted|barely awake|can'?t keep .{0,10} eyes open)\b/i,
+    ];
+
+    if (SLEEP_FATIGUE_PATTERNS.some(p => p.test(text))) {
+      return Response.json({
+        success: false,
+        characterId,
+        blocked: true,
+        reason: 'sleep_fatigue_dialogue_guard',
+        message: 'Fatigue/sleep dialogue is a feeling state, not a system activity. Blocked to prevent sleep-state authority drift.',
+      });
+    }
+
     // MASTER REASONING RULE: Read for context, not keywords
     // Determine tense FIRST: Is this present, past, future, or hypothetical?
     

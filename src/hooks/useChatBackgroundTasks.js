@@ -182,9 +182,15 @@ export function useChatBackgroundTasks({
     }
 
     if (!isOnCooldown(characterId, 'activityUpdate', 30000)) {
-      safeInvoke('updateCharacterActivityFromMessage', {
-        characterId, message: text, responseText, conversationId: convoId,
-      }, characterId, 'activityUpdate');
+      // Only pass the CHARACTER'S response text as messageContent — not the user message.
+      // The function extracts current activity from what the character says about their
+      // own location/actions. User messages are not used for activity inference.
+      // Sleep/fatigue dialogue is blocked server-side by the sleep-fatigue dialogue guard.
+      if (responseText) {
+        safeInvoke('updateCharacterActivityFromMessage', {
+          characterId, messageContent: responseText, conversationId: convoId,
+        }, characterId, 'activityUpdate');
+      }
     }
 
     if (!isOnCooldown(characterId, 'locationUpdate', 30000)) {
