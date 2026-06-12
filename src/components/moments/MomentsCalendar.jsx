@@ -762,7 +762,7 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
                 <Button size="sm" onClick={handleAddEvent} disabled={!eventName.trim() || addToCommunity === null || saving} className="h-8 flex-1">
                   {saving ? <><Loader2 className="w-3 h-3 animate-spin mr-1" />Saving…</> : 'Save'}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => selectedEvents.length > 0 ? setPanelMode('view') : closePanel()} className="h-8">
+                <Button size="sm" variant="outline" onClick={() => setPanelMode('view')} className="h-8">
                   Cancel
                 </Button>
               </div>
