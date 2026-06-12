@@ -425,7 +425,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       ownerEmail
         ? base44.entities.EventParticipation.filter({ character_id: charId, owner_email: ownerEmail }, "-participation_date", 30).catch(() => [])
         : Promise.resolve([]),
-    ]).then(([msgsR, txR, narrR, charNarrR, convosR, locsR, lifeEventsR, rcvMsgsR, allCharsR, locHistR, eventPartR]) => {
+    ]).then(([msgsR, txR, narrR, charNarrR, convosR, locsR, lifeEventsR, rcvMsgsR, locHistR, allCharsR, eventPartR]) => {
       const msgs       = msgsR.status       === "fulfilled" ? (msgsR.value       || []) : [];
       const txns       = txR.status         === "fulfilled" ? (txR.value         || []) : [];
       const narrs      = narrR.status       === "fulfilled" ? (narrR.value       || []) : [];
@@ -436,9 +436,9 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // Messages sent TO the viewed character — autonomous beats: character_id = sender, receiver_character_id = viewed char
       const rcvMsgs    = rcvMsgsR.status    === "fulfilled" ? (rcvMsgsR.value    || []) : [];
       // All characters — used to resolve receiver IDs → names for outgoing messages
-      const allChars   = allCharsR.status   === "fulfilled" ? (allCharsR.value   || []) : [];
       // Location history — recent places visited
       const locHistory = locHistR?.status   === "fulfilled" ? (locHistR.value    || []) : [];
+      const allChars   = allCharsR.status   === "fulfilled" ? (allCharsR.value   || []) : [];
       // Event participation — community events the character attended
       const eventParts = eventPartR?.status === "fulfilled" ? (eventPartR.value  || []) : [];
       // Combine for full picture — deduplicated by id
