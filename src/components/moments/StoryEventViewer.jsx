@@ -41,7 +41,10 @@ export default function StoryEventViewer({ eventId }) {
   const [impactResult, setImpactResult] = useState(null);
   const [impactError, setImpactError] = useState(null);
 
-  // Load characters for send modal
+  // Event participant character records (all types — loaded from StoryEvent participant IDs)
+  const [eventParticipants, setEventParticipants] = useState([]);
+
+  // Load characters for send modal (all types, user-scoped)
   useEffect(() => {
     base44.auth.me().then(me => {
       if (!me?.email) return;
@@ -76,8 +79,9 @@ export default function StoryEventViewer({ eventId }) {
             setEvent(records[0]);
             loaded = true;
             if (records[0].status === 'complete' || records[0].status === 'failed') {
-              await loadRelated(eventId);
-            }
+                await loadRelated(eventId);
+              }
+              await loadEventParticipants(records[0]);
           }
         } catch (fetchErr) {
           console.warn('[StoryEventViewer] Initial fetch failed, retrying:', fetchErr.message);
@@ -90,6 +94,7 @@ export default function StoryEventViewer({ eventId }) {
               if (retryRecords[0].status === 'complete' || retryRecords[0].status === 'failed') {
                 await loadRelated(eventId);
               }
+              await loadEventParticipants(retryRecords[0]);
             }
           } catch (_) {}
         }
@@ -266,6 +271,33 @@ export default function StoryEventViewer({ eventId }) {
     } catch (_) {} finally { setRegenerating(false); }
   };
 
+  const loadEventParticipants = async (evt) => {
+    const allIds = [...new Set([
+      ...(evt.participant_character_ids || []),
+      ...(evt.focus_character_ids || []),
+    ])];
+    if (allIds.length === 0) return;
+
+    const participants = [];
+    for (const cid of allIds) {
+      try {
+        const chars = await base44.entities.Character.filter({ id: cid }, null, 1);
+        if (chars[0]) {
+          participants.push(chars[0]);
+        } else {
+          const idx = (evt.participant_character_ids || []).indexOf(cid);
+          const name = idx >= 0 ? (evt.participant_character_names || [])[idx] : cid;
+          participants.push({ id: cid, name, display_name: name, character_type: 'unknown' });
+        }
+      } catch (_) {
+        const idx = (evt.participant_character_ids || []).indexOf(cid);
+        const name = idx >= 0 ? (evt.participant_character_names || [])[idx] : cid;
+        participants.push({ id: cid, name, display_name: name, character_type: 'unknown' });
+      }
+    }
+    setEventParticipants(participants);
+  };
+
   // ── CHARACTER-SELECT REGENERATION ───────────────────────────────────────
   const openCharSelect = (img) => {
     setCharSelectImage(img);
@@ -273,6 +305,10 @@ export default function StoryEventViewer({ eventId }) {
     const existing = img.visible_character_ids || [];
     setSelectedVisibleIds(new Set(existing));
     setShowCharSelectModal(true);
+    // Load participants if not loaded yet
+    if (eventParticipants.length === 0 && event) {
+      loadEventParticipants(event);
+    }
   };
 
   const toggleVisibleChar = (id) => {
@@ -729,7 +765,7 @@ export default function StoryEventViewer({ eventId }) {
               <h3 className="text-sm font-semibold text-foreground">Characters in Image</h3>
               <button onClick={() => setShowCharSelectModal(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-4 h-4 text-muted-foreground" /></button>
             </div>
-            <div className="p-4 space-y-1 max-h-64 overflow-y-auto">
+            <div className="p-4 space-y-1 max-h-72 overflow-y-auto">
               <p className="text-xs text-muted-foreground mb-2">
                 Select which characters appear in the {charSelectImage.moment_type?.replace('_', ' ') || 'moment'} image.
                 Only selected characters will be used. No generic strangers.
@@ -737,19 +773,41 @@ export default function StoryEventViewer({ eventId }) {
               <p className="text-[10px] text-amber-400/90 mb-2 px-2 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
                 This regenerates the image using ONLY the selected characters' reference photos and appearance data.
               </p>
-              {(event.participant_character_names || []).map((name, i) => {
-                const cid = (event.participant_character_ids || [])[i] || '';
-                const isFocus = (event.focus_character_ids || []).includes(cid);
-                const isSelected = selectedVisibleIds.has(cid);
+              {eventParticipants.map((char) => {
+                const isFocus = (event.focus_character_ids || []).includes(char.id);
+                const isSelected = selectedVisibleIds.has(char.id);
+                const charTypeLabel = {
+                  active_created_character: 'Active',
+                  npc_family_member: 'Family',
+                  npc_fictitious: 'NPC',
+                  npc_world_service: 'Service',
+                }[char.character_type] || 'Other';
+                const avatarUrl = char.avatar_url || char.image_avatar_url || 
+                  (Array.isArray(char.reference_image_urls) ? char.reference_image_urls[0] : null);
+
                 return (
-                  <button key={i} onClick={() => toggleVisibleChar(cid)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all text-left ${
+                  <button key={char.id} onClick={() => toggleVisibleChar(char.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl border transition-all text-left ${
                       isSelected ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
                     }`}>
-                    <span className="flex items-center gap-2 flex-1">
-                      <span className="text-sm font-medium">{name}</span>
-                      {isFocus && <span className="text-[9px] px-1 py-0.5 rounded bg-primary/20 text-primary">★ Focus</span>}
-                    </span>
+                    {/* Avatar */}
+                    <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 bg-secondary border border-border">
+                      {avatarUrl ? (
+                        <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-muted-foreground">
+                          {(char.name || char.display_name || '?')[0]}
+                        </div>
+                      )}
+                    </div>
+                    {/* Name + Type label */}
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium truncate block">{char.name || char.display_name}</span>
+                      <span className="text-[9px] text-muted-foreground">{charTypeLabel}</span>
+                    </div>
+                    {/* Focus badge */}
+                    {isFocus && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary shrink-0">★</span>}
+                    {/* Check */}
                     {isSelected && <Check className="w-4 h-4 shrink-0 text-primary" />}
                   </button>
                 );

@@ -31,33 +31,57 @@ Deno.serve(async (req) => {
     const originalPrompt = existingImage.prompt || '';
     const venueName = event.venue_name || 'the event venue';
 
-    // Load ONLY the selected visible characters
+    // ── LOAD ALL VISIBLE CHARACTERS (NO TYPE RESTRICTION) ──────────────────
+    // Service role lookup by ID only — no owner_email filter.
+    // NPC family members, NPC fictitious, and world service characters
+    // may have different owner_emails than the event owner.
     const charById = {};
     const refImages = [];
     const visibleNames = [];
+    const visibleTypes = [];
+    const lookupStatusByChar = {};
 
-    const ownerEmail = event.owner_email;
     for (const cid of visible_character_ids) {
       try {
-        const chars = await base44.asServiceRole.entities.Character.filter({ id: cid, owner_email: ownerEmail }, null, 1);
+        // Direct ID lookup — service role can see all characters
+        const chars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
         if (chars[0]) {
           const c = chars[0];
           charById[cid] = c;
           visibleNames.push(c.name || c.display_name || cid);
+          visibleTypes.push(c.character_type || 'active_created_character');
 
-          // Collect reference images
-          if (c.avatar_url && typeof c.avatar_url === 'string') refImages.push(c.avatar_url);
-          if (c.image_avatar_url && typeof c.image_avatar_url === 'string') refImages.push(c.image_avatar_url);
+          // Collect all reference image sources
+          const charRefImages = [];
+          if (c.avatar_url && typeof c.avatar_url === 'string') charRefImages.push(c.avatar_url);
+          if (c.image_avatar_url && typeof c.image_avatar_url === 'string') charRefImages.push(c.image_avatar_url);
           if (Array.isArray(c.reference_image_urls)) {
             c.reference_image_urls.forEach(url => {
-              if (url && typeof url === 'string') refImages.push(url);
+              if (url && typeof url === 'string') charRefImages.push(url);
             });
           }
+
+          // Per-character reference lookup status
+          if (charRefImages.length > 0) {
+            refImages.push(...charRefImages);
+            lookupStatusByChar[cid] = 'resolved';
+          } else {
+            lookupStatusByChar[cid] = 'reference_lookup_failed';
+          }
+        } else {
+          // Character ID from StoryEvent but not found in Character records
+          visibleNames.push(cid);
+          visibleTypes.push('unknown');
+          lookupStatusByChar[cid] = 'character_not_found';
         }
-      } catch (_) {}
+      } catch (_) {
+        visibleNames.push(cid);
+        visibleTypes.push('unknown');
+        lookupStatusByChar[cid] = 'character_not_found';
+      }
     }
 
-    // Build appearance context ONLY from selected characters
+    // Build appearance context ONLY from resolved characters
     const appearanceParts = visible_character_ids.map(cid => {
       const c = charById[cid];
       if (!c) return '';
@@ -82,14 +106,14 @@ Deno.serve(async (req) => {
     // Deduplicate ref images
     const dedupedRefs = refImages.filter((url, i, arr) => arr.indexOf(url) === i).slice(0, 10);
 
-    // Honest lookup tracking — never pretend we found references when we didn't
-    const referenceLookupFailed = refImages.length === 0;
-    const charactersNotFound = visible_character_ids.filter(cid => !charById[cid]);
-    const lookupDiagnostic = referenceLookupFailed
-      ? `reference_lookup_failed: no reference images found for any of ${visible_character_ids.length} selected character(s)`
-      : (charactersNotFound.length > 0
-        ? `partial_lookup: ${charactersNotFound.length} of ${visible_character_ids.length} character(s) not found (${charactersNotFound.join(', ')})`
-        : 'all_characters_resolved');
+    // Honest lookup tracking
+    const anyReferenceLookupFailed = Object.values(lookupStatusByChar).some(s => s === 'reference_lookup_failed');
+    const anyCharacterNotFound = Object.values(lookupStatusByChar).some(s => s === 'character_not_found');
+    const allResolved = !anyReferenceLookupFailed && !anyCharacterNotFound;
+
+    const lookupDiagnostic = !allResolved
+      ? `partial_lookup: ${Object.entries(lookupStatusByChar).filter(([,s]) => s !== 'resolved').map(([cid, s]) => `${cid}=${s}`).join(', ')}`
+      : 'all_characters_resolved_with_references';
 
     // Build regeneration prompt
     const reasonText = allReasons.length > 0
@@ -123,13 +147,15 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Image generation failed — no URL returned' }, { status: 500 });
     }
 
-    // Update the StoryEventImage record
+    // Update the StoryEventImage record with all required fields
     await base44.asServiceRole.entities.StoryEventImage.update(image_id, {
       image_url: imageRes.url,
       prompt: regenPrompt,
       visible_character_ids: visible_character_ids,
       visible_character_names: visibleNames,
+      visible_character_types: visibleTypes,
       reference_image_urls: dedupedRefs,
+      reference_lookup_status_by_character: lookupStatusByChar,
       regeneration_reason: allReasons.join(', ') || 'character_selection_update',
       description: lookupDiagnostic,
     });
@@ -150,16 +176,19 @@ Deno.serve(async (req) => {
         moment_type: momentType,
         visible_character_ids,
         visible_character_names: visibleNames,
+        visible_character_types: visibleTypes,
         venue_id: event.venue_id,
         venue_name: venueName,
         regeneration_parent_image_id: image_id,
         regeneration_reasons: allReasons,
         scene_prompt: regenPrompt,
         character_reference_images: dedupedRefs.slice(0, 5),
+        reference_lookup_status_by_character: lookupStatusByChar,
         subjects: visible_character_ids.map(cid => ({
           subject_type: 'character',
           subject_id: cid,
           subject_name: charById[cid]?.name || cid,
+          subject_character_type: charById[cid]?.character_type || 'unknown',
         })),
       },
       timestamp: new Date().toISOString(),
@@ -171,10 +200,12 @@ Deno.serve(async (req) => {
       new_url: imageRes.url,
       visible_character_ids,
       visible_character_names: visibleNames,
+      visible_character_types: visibleTypes,
       reference_image_urls: dedupedRefs,
-      reference_lookup_failed: referenceLookupFailed,
+      reference_lookup_status_by_character: lookupStatusByChar,
       lookup_diagnostic: lookupDiagnostic,
-      characters_not_found: charactersNotFound,
+      reference_lookup_failed_count: Object.values(lookupStatusByChar).filter(s => s === 'reference_lookup_failed').length,
+      character_not_found_count: Object.values(lookupStatusByChar).filter(s => s === 'character_not_found').length,
     });
   } catch (error) {
     console.error('[regenerateStoryEventImageWithCharacters]', error.message);

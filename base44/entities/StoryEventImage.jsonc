@@ -47,12 +47,37 @@
       },
       "description": "Display names of visible characters"
     },
+    "visible_character_types": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "active_created_character",
+          "npc_family_member",
+          "npc_fictitious",
+          "npc_world_service"
+        ]
+      },
+      "description": "Character types of visible characters (same order as visible_character_ids)"
+    },
     "reference_image_urls": {
       "type": "array",
       "items": {
         "type": "string"
       },
       "description": "Character reference image URLs used during generation"
+    },
+    "reference_lookup_status_by_character": {
+      "type": "object",
+      "description": "Per-character lookup status: { character_id: 'resolved' | 'reference_lookup_failed' | 'character_not_found' }",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "resolved",
+          "reference_lookup_failed",
+          "character_not_found"
+        ]
+      }
     },
     "regeneration_reason": {
       "type": "string",
