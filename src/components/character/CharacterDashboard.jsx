@@ -362,7 +362,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 13; // feat: CharacterAutomaticNarrative + EventParticipation sources, need-fulfillment proof records
+const DASHBOARD_CACHE_VERSION = 14; // fix: force cache invalidation after destructuring index swap repair — stale v13 entries were computed with swapped locHistory/allChars mapping
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
