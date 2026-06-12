@@ -1,8 +1,13 @@
-import { useState, useEffect } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2 } from 'lucide-react';
+import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2, Send, RefreshCw, X, Check } from 'lucide-react';
 import { format } from 'date-fns';
+
+const REGEN_REASONS = [
+  { id: 'flawed', label: 'Image is flawed', icon: '⚠️' },
+  { id: 'does_not_look_like_them', label: "Doesn't look like them", icon: '👤' },
+  { id: 'location_incorrect', label: 'Location is incorrect', icon: '📍' },
+];
 
 export default function StoryEventViewer({ eventId }) {
   const [event, setEvent] = useState(null);
@@ -10,6 +15,31 @@ export default function StoryEventViewer({ eventId }) {
   const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(true);
+
+  // Send modal state
+  const [showSendModal, setShowSendModal] = useState(false);
+  const [sendImage, setSendImage] = useState(null);
+  const [characters, setCharacters] = useState([]);
+  const [selectedRecipientIds, setSelectedRecipientIds] = useState(new Set());
+  const [sending, setSending] = useState(false);
+  const [sendSent, setSendSent] = useState(false);
+  const [sendError, setSendError] = useState(null);
+
+  // Regenerate modal state
+  const [showRegenModal, setShowRegenModal] = useState(false);
+  const [regenImage, setRegenImage] = useState(null);
+  const [regenReason, setRegenReason] = useState(null);
+  const [regenerating, setRegenerating] = useState(false);
+
+  // Load characters for send modal
+  useEffect(() => {
+    base44.auth.me().then(me => {
+      if (!me?.email) return;
+      base44.entities.Character.filter({ owner_email: me.email, status: 'active' }, 'name', 200)
+        .then(setCharacters)
+        .catch(() => {});
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!eventId) return;
@@ -80,6 +110,15 @@ export default function StoryEventViewer({ eventId }) {
     return () => { cleanup.then(fn => fn && fn()); };
   }, [eventId]);
 
+  const groupedChars = useMemo(() => {
+    return {
+      active: characters.filter(c => c.character_type === 'active_created_character'),
+      family: characters.filter(c => c.character_type === 'npc_family_member'),
+      npc: characters.filter(c => c.character_type === 'npc_fictitious'),
+      service: characters.filter(c => c.character_type === 'npc_world_service'),
+    };
+  }, [characters]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-6">
@@ -106,6 +145,113 @@ export default function StoryEventViewer({ eventId }) {
 
   const imageByMoment = {};
   images.forEach(img => { imageByMoment[img.moment_type] = img; });
+
+  // ── SEND HANDLER ──────────────────────────────────────────────────────────
+  const openSendModal = (img) => {
+    setSendImage(img);
+    setSelectedRecipientIds(new Set());
+    setSendSent(false);
+    setSendError(null);
+    setShowSendModal(true);
+  };
+
+  const handleSend = async () => {
+    if (!sendImage || selectedRecipientIds.size === 0) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      for (const charId of selectedRecipientIds) {
+        const char = characters.find(c => c.id === charId);
+        if (!char) continue;
+
+        // Find or create direct conversation
+        let convoId = null;
+        try {
+          const convos = await base44.entities.Conversation.filter(
+            { type: 'direct', character_ids: [charId] },
+            '-last_message_date', 10
+          );
+          const directConvo = convos.find(c => {
+            const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
+            return ids.length === 1 && ids[0] === charId && !c.shared_conversation_key;
+          });
+          if (directConvo) convoId = directConvo.id;
+        } catch (_) {}
+
+        if (!convoId) {
+          const newConvo = await base44.entities.Conversation.create({
+            title: `direct with ${char.name || char.display_name}`,
+            type: 'direct',
+            character_ids: [charId],
+          });
+          convoId = newConvo.id;
+        }
+
+        await base44.entities.Message.create({
+          conversation_id: convoId,
+          sender_type: 'user',
+          content: `📸 Story Event: ${event.title} — ${sendImage.moment_type?.replace('_', ' ') || 'moment'}`,
+          image_url: sendImage.image_url,
+          image_description: sendImage.description || sendImage.prompt,
+          image_analysis_status: 'complete',
+          generation_context: {
+            source: 'story_event_send',
+            story_event_id: eventId,
+            event_title: event.title,
+            event_date: event.event_date,
+            moment_type: sendImage.moment_type,
+            venue_name: venueDisplay,
+            participant_character_ids: event.participant_character_ids || [],
+          },
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setSendSent(true);
+      setTimeout(() => { setShowSendModal(false); setSendImage(null); }, 1200);
+    } catch (err) {
+      setSendError(err.message || 'Send failed');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const toggleRecipient = (id) => {
+    const next = new Set(selectedRecipientIds);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setSelectedRecipientIds(next);
+  };
+
+  // ── REGENERATE HANDLER ────────────────────────────────────────────────────
+  const openRegenModal = (img) => {
+    setRegenImage(img);
+    setRegenReason(null);
+    setShowRegenModal(true);
+  };
+
+  const handleRegenerate = async () => {
+    if (!regenImage || !regenReason) return;
+    setRegenerating(true);
+    try {
+      const res = await base44.functions.invoke('regenerateStoryEventImage', {
+        story_event_id: eventId,
+        image_id: regenImage.id,
+        reason: regenReason,
+      });
+      if (res?.data?.success) {
+        // Reload images
+        const imgs = await base44.entities.StoryEventImage.filter(
+          { story_event_id: eventId }, null, 10
+        ).catch(() => []);
+        setImages(imgs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
+        setShowRegenModal(false);
+        setRegenImage(null);
+      }
+    } catch (err) {
+      // Silently fail — image generation can fail
+    } finally {
+      setRegenerating(false);
+    }
+  };
 
   return (
     <div className="bg-card/80 border border-border rounded-xl overflow-hidden">
@@ -184,7 +330,7 @@ export default function StoryEventViewer({ eventId }) {
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">
                     <Image className="w-3 h-3 inline mr-1" /> Moments Captured
                   </p>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-3">
                     {['opening', 'key_moment', 'closing'].map(moment => {
                       const img = imageByMoment[moment];
                       if (!img?.image_url) return (
@@ -193,10 +339,31 @@ export default function StoryEventViewer({ eventId }) {
                         </div>
                       );
                       return (
-                        <div key={moment} className="aspect-[4/3] rounded-lg overflow-hidden border border-border relative group">
-                          <img src={img.image_url} alt={img.description || moment} className="w-full h-full object-cover" />
-                          <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1">
-                            <span className="text-[8px] text-white/80 capitalize">{moment.replace('_', ' ')}</span>
+                        <div key={moment} className="rounded-lg overflow-hidden border border-border bg-secondary/20">
+                          <img src={img.image_url} alt={img.description || moment} className="w-full aspect-[4/3] object-cover" />
+                          <div className="px-3 py-2 flex items-center justify-between">
+                            <div>
+                              <span className="text-[10px] font-medium text-foreground capitalize">{moment.replace('_', ' ')}</span>
+                              {img.description && (
+                                <p className="text-[9px] text-muted-foreground mt-0.5 line-clamp-1">{img.description}</p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => openRegenModal(img)}
+                                className="p-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors"
+                                title="Regenerate image"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => openSendModal(img)}
+                                className="p-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+                                title="Send to character"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -270,6 +437,78 @@ export default function StoryEventViewer({ eventId }) {
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* ── SEND MODAL ────────────────────────────────────────────────────── */}
+      {showSendModal && sendImage && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center p-4" onClick={() => setShowSendModal(false)}>
+          <div className="w-full max-w-sm bg-card border border-border rounded-3xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h3 className="text-sm font-semibold text-foreground">Send Image To</h3>
+              <button onClick={() => setShowSendModal(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-4 h-4 text-muted-foreground" /></button>
+            </div>
+            <div className="p-4 max-h-64 overflow-y-auto space-y-1">
+              {[
+                { group: 'Active Characters', chars: groupedChars.active },
+                { group: 'Family', chars: groupedChars.family },
+                { group: 'NPCs', chars: groupedChars.npc },
+                { group: 'Services', chars: groupedChars.service },
+              ].filter(g => g.chars.length > 0).map(({ group, chars }) => (
+                <div key={group}>
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase px-1 py-1">{group}</p>
+                  {chars.map(c => (
+                    <label key={c.id} className="flex items-center gap-2 px-2 py-2 hover:bg-secondary/40 rounded-lg cursor-pointer">
+                      <input type="checkbox" checked={selectedRecipientIds.has(c.id)} onChange={() => toggleRecipient(c.id)} className="w-4 h-4" />
+                      <span className="text-sm text-foreground">{c.name || c.display_name}</span>
+                    </label>
+                  ))}
+                </div>
+              ))}
+            </div>
+            <div className="flex-shrink-0 border-t border-border p-4 flex flex-col gap-2">
+              {sendError && <p className="text-xs text-destructive">{sendError}</p>}
+              <div className="flex gap-2">
+                <button onClick={() => setShowSendModal(false)} className="flex-1 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm">Cancel</button>
+                <button onClick={handleSend} disabled={sending || sendSent || selectedRecipientIds.size === 0}
+                  className="flex-1 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50">
+                  {sendSent ? '✓ Sent!' : sending ? 'Sending…' : 'Send'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── REGENERATE MODAL ───────────────────────────────────────────────── */}
+      {showRegenModal && regenImage && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center p-4" onClick={() => setShowRegenModal(false)}>
+          <div className="w-full max-w-sm bg-card border border-border rounded-3xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h3 className="text-sm font-semibold text-foreground">Regenerate Image</h3>
+              <button onClick={() => setShowRegenModal(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-4 h-4 text-muted-foreground" /></button>
+            </div>
+            <div className="p-4 space-y-2">
+              <p className="text-xs text-muted-foreground">Why regenerate this {regenImage.moment_type?.replace('_', ' ') || 'moment'} image?</p>
+              {REGEN_REASONS.map(r => (
+                <button key={r.id} onClick={() => setRegenReason(r.id)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all text-left ${
+                    regenReason === r.id ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
+                  }`}>
+                  <span className="text-lg">{r.icon}</span>
+                  <span className="text-sm font-medium">{r.label}</span>
+                  {regenReason === r.id && <Check className="w-4 h-4 ml-auto text-primary" />}
+                </button>
+              ))}
+            </div>
+            <div className="flex-shrink-0 border-t border-border p-4 flex gap-2">
+              <button onClick={() => setShowRegenModal(false)} className="flex-1 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm">Cancel</button>
+              <button onClick={handleRegenerate} disabled={!regenReason || regenerating}
+                className="flex-1 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+                {regenerating ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</> : 'Regenerate'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

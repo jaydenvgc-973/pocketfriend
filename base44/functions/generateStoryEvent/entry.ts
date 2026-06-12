@@ -445,13 +445,55 @@ Deno.serve(async (req) => {
         });
 
         if (imageRes?.url) {
-          await base44.asServiceRole.entities.StoryEventImage.create({
+          // Create StoryEventImage — the canonical event-image link
+          const storyImage = await base44.asServiceRole.entities.StoryEventImage.create({
             story_event_id: eventId,
             moment_type: img.moment,
             image_url: imageRes.url,
             description: img.description || '',
             prompt: img.prompt,
             order: momentOrder[img.moment] ?? 0,
+          });
+
+          // Create Message record for Media Gallery visibility
+          // This is the critical fix: without a Message record, the image
+          // cannot appear in Media Gallery or be sent/regenerated.
+          const visibleCharIds = img.moment === 'opening' ? participantIds.slice(0, 3)
+            : img.moment === 'key_moment' ? (focusIds.length > 0 ? focusIds : participantIds.slice(0, 2))
+            : participantIds.slice(0, 2);
+
+          const visibleCharNames = visibleCharIds.map(id => charById[id]?.name || id).filter(Boolean);
+
+          await base44.asServiceRole.entities.Message.create({
+            conversation_id: `story_event_${eventId}`,
+            sender_type: 'user',
+            content: '',
+            image_url: imageRes.url,
+            image_description: img.description || img.prompt,
+            image_analysis_status: 'complete',
+            generation_context: {
+              source: 'story_event',
+              story_event_id: eventId,
+              story_event_image_id: storyImage?.id || null,
+              event_title: title,
+              event_date: eventDate,
+              moment_type: img.moment,
+              participant_character_ids: participantIds,
+              focus_character_ids: focusIds,
+              visible_character_ids: visibleCharIds,
+              visible_character_names: visibleCharNames,
+              venue_id: event.venue_id || null,
+              venue_name: venueName,
+              scene_prompt: img.prompt,
+              character_reference_images: refImages.slice(0, 5),
+              subjects: visibleCharIds.map(cid => ({
+                subject_type: 'character',
+                subject_id: cid,
+                subject_name: charById[cid]?.name || cid,
+              })),
+            },
+            timestamp: new Date().toISOString(),
+            owner_email: ownerEmail,
           });
         }
       } catch (_) {}
