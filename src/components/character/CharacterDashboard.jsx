@@ -1303,7 +1303,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         liveLocationDisplay: character?.resolved_current_location_name || '—',
         liveStatus: character?.resolved_presence_status || 'home',
         trendData: [],
-        timelineEntries: [],
+        timelineEntries: [], // fallback — empty array same shape
         socialStats: { msgsSent: 0, positiveInteractions: 0, conflictEvents: 0, unclassifiedCount: 0 },
         insights: [],
         memoryHighlights: [],
