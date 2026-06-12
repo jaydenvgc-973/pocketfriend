@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Plus, X, Calendar, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, X, Calendar, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { base44 } from '@/api/base44Client';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, subMonths } from 'date-fns';
 import LocationSelectorForEvent from './LocationSelectorForEvent';
+import StoryEventCreator from './StoryEventCreator';
+import StoryEventViewer from './StoryEventViewer';
 
 // ── CATEGORY CONFIG ────────────────────────────────────────────────────────────
 const CATEGORIES = {
@@ -16,6 +18,7 @@ const CATEGORIES = {
   birthday:   { label: 'Birthday',      dot: 'bg-rose-400',    badge: 'bg-rose-500/20 text-rose-300' },
   user:       { label: 'My Event',      dot: 'bg-indigo-400',  badge: 'bg-indigo-500/20 text-indigo-300' },
   payday:     { label: 'Payday',        dot: 'bg-green-400',   badge: 'bg-green-500/20 text-green-300' },
+  story:      { label: 'Story',         dot: 'bg-purple-400',  badge: 'bg-purple-500/20 text-purple-300' },
 };
 
 // ── MONTH-BASED OBSERVANCES (apply every year by month/day) ──────────────────
@@ -275,6 +278,8 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
   const [eventType, setEventType] = useState('personal');
   const [addToCommunity, setAddToCommunity] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [storyEvents, setStoryEvents] = useState([]); // StoryEvent records for the selected day
+  const [viewingStoryEventId, setViewingStoryEventId] = useState(null); // ID of story event being viewed
 
   // ── LOAD PERSISTED USER EVENTS ─────────────────────────────────────────────
   // User-created events are stored as CommunityEvent records with source='user'.
@@ -376,11 +381,28 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
     return [...annual, ...floating, ...birthdays, ...community, ...custom, ...payday];
   };
 
+  // Load StoryEvents for selected date
+  useEffect(() => {
+    if (!selectedDay) { setStoryEvents([]); return; }
+    const dateStr = format(selectedDay, 'yyyy-MM-dd');
+    base44.auth.me().then(me => {
+      if (!me?.email) return;
+      base44.entities.StoryEvent.filter(
+        { owner_email: me.email, event_date: dateStr },
+        '-created_date',
+        50
+      ).then(records => {
+        setStoryEvents(records);
+      }).catch(() => setStoryEvents([]));
+    }).catch(() => setStoryEvents([]));
+  }, [selectedDay]);
+
   const handleDayClick = (date) => {
     setSelectedDay(date);
     setPanelMode('view');
     setEventName('');
     setAddToCommunity(null);
+    setViewingStoryEventId(null);
   };
 
   const handleAddEvent = async () => {
@@ -451,14 +473,25 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
   const emptyDays = Array(monthStart.getDay()).fill(null);
   const selectedEvents = selectedDay ? getEventsForDate(selectedDay) : [];
 
+  // Build a set of dates that have story events for dot display
+  const storyEventDates = new Set(storyEvents.map(se => se.event_date).filter(Boolean));
+
   // Unique dot colors for a day (deduplicated by category)
   const getDotCategories = (date) => {
+    const dateStr = format(date, 'yyyy-MM-dd');
     const evs = getEventsForDate(date);
     const seen = new Set();
-    return evs
+    const cats = evs
       .map(e => e.category)
       .filter(c => { if (seen.has(c)) return false; seen.add(c); return true; })
       .slice(0, 3);
+
+    // Story Events — show purple dot on days with story events
+    if (storyEventDates.has(dateStr) && !seen.has('story')) {
+      cats.push('story');
+    }
+
+    return cats;
   };
 
   return (
@@ -546,6 +579,10 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
             <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
             <span className="text-[9px] text-muted-foreground">Payday</span>
           </div>
+          <div className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+            <span className="text-[9px] text-muted-foreground">Story</span>
+          </div>
         </div>
       </div>
 
@@ -562,7 +599,8 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
           {/* View mode */}
           {panelMode === 'view' && (
             <div>
-              {selectedEvents.length === 0 ? (
+              {/* Calendar events */}
+              {selectedEvents.length === 0 && storyEvents.length === 0 ? (
                 <p className="text-xs text-muted-foreground mb-3">Nothing on this day.</p>
               ) : (
                 <ul className="space-y-1.5 mb-3">
@@ -583,11 +621,76 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
                       </li>
                     );
                   })}
+                  {/* Story Events */}
+                  {storyEvents.map((se) => (
+                    <li key={se.id} className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm bg-purple-500/15 border border-purple-500/25">
+                      <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-purple-400" />
+                      <div className="flex-1 min-w-0">
+                        <button
+                          onClick={() => { setViewingStoryEventId(se.id); setPanelMode('story_view'); }}
+                          className="font-medium text-foreground hover:text-primary transition-colors text-left"
+                        >
+                          {se.title}
+                        </button>
+                        <div className="flex items-center gap-2 text-[10px] mt-0.5">
+                          {se.start_time && <span className="text-muted-foreground">🕐 {se.start_time}</span>}
+                          {se.venue_name && <span className="text-muted-foreground truncate">📍 {se.venue_name}</span>}
+                          <span className={`px-1.5 py-0.5 rounded-full text-[9px] ${
+                            se.status === 'complete' ? 'bg-emerald-500/20 text-emerald-400' :
+                            se.status === 'generating' ? 'bg-amber-500/20 text-amber-400' :
+                            'bg-red-500/20 text-red-400'
+                          }`}>
+                            {se.status === 'generating' ? '⏳ generating' : se.status === 'complete' ? '✓ complete' : '✗ failed'}
+                          </span>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
                 </ul>
               )}
-              <Button variant="outline" size="sm" onClick={() => setPanelMode('add')} className="h-7 px-3 text-xs gap-1">
-                <Plus className="w-3 h-3" /> Add event on this day
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPanelMode('add')} className="h-7 px-3 text-xs gap-1">
+                  <Plus className="w-3 h-3" /> Add event
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setPanelMode('story')} className="h-7 px-3 text-xs gap-1 border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300">
+                  <Sparkles className="w-3 h-3" /> Story Event
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Story Event creation mode */}
+          {panelMode === 'story' && (
+            <StoryEventCreator
+              date={selectedDay}
+              characters={characters}
+              appLocations={appLocations}
+              onCreated={(storyEventId) => {
+                setViewingStoryEventId(storyEventId);
+                setPanelMode('story_view');
+                // Reload story events for this date
+                const dateStr = format(selectedDay, 'yyyy-MM-dd');
+                base44.auth.me().then(me => {
+                  if (!me?.email) return;
+                  base44.entities.StoryEvent.filter(
+                    { owner_email: me.email, event_date: dateStr },
+                    '-created_date', 50
+                  ).then(setStoryEvents).catch(() => {});
+                }).catch(() => {});
+              }}
+              onCancel={() => setPanelMode('view')}
+            />
+          )}
+
+          {/* Story Event viewing mode */}
+          {panelMode === 'story_view' && viewingStoryEventId && (
+            <div>
+              <StoryEventViewer eventId={viewingStoryEventId} />
+              <div className="mt-3">
+                <Button variant="outline" size="sm" onClick={() => { setViewingStoryEventId(null); setPanelMode('view'); }} className="h-7 text-xs">
+                  ← Back to day
+                </Button>
+              </div>
             </div>
           )}
 

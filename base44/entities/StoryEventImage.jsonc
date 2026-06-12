@@ -1,0 +1,41 @@
+{
+  "name": "StoryEventImage",
+  "type": "object",
+  "properties": {
+    "story_event_id": {
+      "type": "string",
+      "description": "ID of the parent StoryEvent"
+    },
+    "moment_type": {
+      "type": "string",
+      "enum": [
+        "opening",
+        "key_moment",
+        "closing"
+      ],
+      "description": "Which moment in the story this image captures"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "URL of the generated image"
+    },
+    "description": {
+      "type": "string",
+      "description": "What the image depicts"
+    },
+    "prompt": {
+      "type": "string",
+      "description": "The prompt used to generate this image"
+    },
+    "order": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "description": "Display order (0=opening, 1=key, 2=closing)"
+    }
+  },
+  "required": [
+    "story_event_id",
+    "moment_type"
+  ]
+}

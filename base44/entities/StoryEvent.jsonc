@@ -1,0 +1,187 @@
+{
+  "name": "StoryEvent",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Event title"
+    },
+    "event_date": {
+      "type": "string",
+      "description": "Date of the event (YYYY-MM-DD)"
+    },
+    "start_time": {
+      "type": "string",
+      "description": "Start time (HH:MM)"
+    },
+    "end_time": {
+      "type": "string",
+      "description": "End time (HH:MM), optional"
+    },
+    "all_day": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this is an all-day event"
+    },
+    "venue_id": {
+      "type": "string",
+      "description": "ID of the LocationReference venue"
+    },
+    "venue_name": {
+      "type": "string",
+      "description": "Display name of the venue"
+    },
+    "is_rabbit_hole": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if using a rabbit-hole (custom, non-persisted) venue"
+    },
+    "rabbit_hole_venue_name": {
+      "type": "string",
+      "description": "Custom venue name for rabbit-hole events"
+    },
+    "plot": {
+      "type": "string",
+      "description": "The user's plot/plan \u2014 the foundation of the event. Must not be ignored."
+    },
+    "additional_notes": {
+      "type": "string",
+      "description": "Additional context, preferences, or constraints from the user"
+    },
+    "focus_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of focus characters who receive greater narrative attention"
+    },
+    "focus_character_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Display names of focus characters"
+    },
+    "participant_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of all participating characters (includes focus characters)"
+    },
+    "participant_character_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Display names of participants"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner of this story event"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "generating",
+        "complete",
+        "failed"
+      ],
+      "default": "draft",
+      "description": "Lifecycle status"
+    },
+    "generated_narrative": {
+      "type": "string",
+      "description": "The full generated narrative story"
+    },
+    "narrative_preview": {
+      "type": "string",
+      "description": "Short preview/summary of the narrative (first ~150 chars)"
+    },
+    "emotional_outcomes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "character_id": {
+            "type": "string"
+          },
+          "character_name": {
+            "type": "string"
+          },
+          "emotion": {
+            "type": "string"
+          },
+          "intensity": {
+            "type": "string",
+            "enum": [
+              "mild",
+              "moderate",
+              "strong"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Per-character emotional outcomes"
+    },
+    "relationship_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_character_id": {
+            "type": "string"
+          },
+          "target_character_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "target_name": {
+            "type": "string"
+          },
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "friendship",
+              "trust",
+              "familiarity",
+              "attraction",
+              "respect",
+              "tension"
+            ]
+          },
+          "change": {
+            "type": "string",
+            "enum": [
+              "increased",
+              "decreased"
+            ]
+          },
+          "amount": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Per-relationship changes"
+    },
+    "generation_error": {
+      "type": "string",
+      "description": "Error message if generation failed"
+    }
+  },
+  "required": [
+    "title",
+    "event_date",
+    "plot",
+    "participant_character_ids"
+  ]
+}

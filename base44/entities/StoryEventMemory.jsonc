@@ -1,0 +1,57 @@
+{
+  "name": "StoryEventMemory",
+  "type": "object",
+  "properties": {
+    "story_event_id": {
+      "type": "string",
+      "description": "ID of the parent StoryEvent"
+    },
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character who receives this memory"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of the character"
+    },
+    "memory_text": {
+      "type": "string",
+      "description": "The memory content \u2014 what the character remembers"
+    },
+    "memory_summary": {
+      "type": "string",
+      "description": "Short summary for retrieval"
+    },
+    "memory_type": {
+      "type": "string",
+      "enum": [
+        "event",
+        "relationship",
+        "identity",
+        "preference"
+      ],
+      "default": "event",
+      "description": "Classification"
+    },
+    "importance_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 5,
+      "description": "How important this memory is (0-10)"
+    },
+    "emotional_tone": {
+      "type": "string",
+      "description": "Emotional tone of the memory"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email for RLS"
+    }
+  },
+  "required": [
+    "story_event_id",
+    "character_id",
+    "memory_text"
+  ]
+}
