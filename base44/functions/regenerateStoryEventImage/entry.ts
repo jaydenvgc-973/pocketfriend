@@ -7,9 +7,17 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json();
-    const { story_event_id, image_id, reason } = body;
+    const { story_event_id, image_id, reason, reasons } = body;
     if (!story_event_id || !image_id) {
       return Response.json({ error: 'story_event_id and image_id are required' }, { status: 400 });
+    }
+
+    // Support both legacy single reason and new multi-reason array
+    const allReasons = Array.isArray(reasons) && reasons.length > 0
+      ? reasons
+      : (reason ? [reason] : []);
+    if (allReasons.length === 0) {
+      return Response.json({ error: 'At least one reason is required' }, { status: 400 });
     }
 
     // Fetch the StoryEvent
@@ -63,10 +71,14 @@ Deno.serve(async (req) => {
 
     // Build the regeneration prompt — enhanced for better identity
     const venueName = event.venue_name || 'the event venue';
-    const reasonNote = reason === 'flawed' ? 'Fix image flaws — body morphing, layout errors, distortions.'
-      : reason === 'does_not_look_like_them' ? 'Strengthen character likeness — use reference images more strictly.'
-      : reason === 'location_incorrect' ? 'Adjust venue/background to better match the actual setting.'
-      : 'Regenerate with improved quality.';
+    const reasonNotes = {
+      flawed: 'Fix image flaws — body morphing, layout errors, distortions.',
+      does_not_look_like_them: 'Strengthen character likeness — use reference images more strictly.',
+      location_incorrect: 'Adjust venue/background to better match the actual setting.',
+    };
+    const reasonNote = allReasons
+      .map(r => reasonNotes[r] || `Regenerate with improved quality for: ${r}`)
+      .join(' | ');
 
     // Build character appearance context for the image prompt
     const visibleCharIds = momentType === 'opening' ? allIds.slice(0, 3)
@@ -143,7 +155,8 @@ Deno.serve(async (req) => {
         venue_id: event.venue_id,
         venue_name: venueName,
         regeneration_parent_image_id: image_id,
-        regeneration_reason: reason,
+        regeneration_reasons: allReasons,
+        regeneration_reason: allReasons.join(', '),
         scene_prompt: regenPrompt,
         original_raw_prompt: originalPrompt,
         subjects: visibleCharIds.map(cid => ({

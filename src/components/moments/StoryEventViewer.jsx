@@ -28,7 +28,7 @@ export default function StoryEventViewer({ eventId }) {
   // Regenerate modal state
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [regenImage, setRegenImage] = useState(null);
-  const [regenReason, setRegenReason] = useState(null);
+  const [regenReasons, setRegenReasons] = useState(new Set());
   const [regenerating, setRegenerating] = useState(false);
 
   // Impact verification state
@@ -229,18 +229,26 @@ export default function StoryEventViewer({ eventId }) {
   // ── REGENERATE HANDLER ────────────────────────────────────────────────────
   const openRegenModal = (img) => {
     setRegenImage(img);
-    setRegenReason(null);
+    setRegenReasons(new Set());
     setShowRegenModal(true);
   };
 
+  const toggleRegenReason = (reasonId) => {
+    setRegenReasons(prev => {
+      const next = new Set(prev);
+      next.has(reasonId) ? next.delete(reasonId) : next.add(reasonId);
+      return next;
+    });
+  };
+
   const handleRegenerate = async () => {
-    if (!regenImage || !regenReason) return;
+    if (!regenImage || regenReasons.size === 0) return;
     setRegenerating(true);
     try {
       const res = await base44.functions.invoke('regenerateStoryEventImage', {
         story_event_id: eventId,
         image_id: regenImage.id,
-        reason: regenReason,
+        reasons: [...regenReasons],
       });
       if (res?.data?.success) {
         const imgs = await base44.entities.StoryEventImage.filter(
@@ -607,28 +615,31 @@ export default function StoryEventViewer({ eventId }) {
 
       {/* ── REGENERATE MODAL ───────────────────────────────────────────────── */}
       {showRegenModal && regenImage && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center p-4" onClick={() => setShowRegenModal(false)}>
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center pb-24 pt-4 px-4" onClick={() => setShowRegenModal(false)}>
           <div className="w-full max-w-sm bg-card border border-border rounded-3xl overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <h3 className="text-sm font-semibold text-foreground">Regenerate Image</h3>
               <button onClick={() => setShowRegenModal(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-4 h-4 text-muted-foreground" /></button>
             </div>
             <div className="p-4 space-y-2">
-              <p className="text-xs text-muted-foreground">Why regenerate this {regenImage.moment_type?.replace('_', ' ') || 'moment'} image?</p>
-              {REGEN_REASONS.map(r => (
-                <button key={r.id} onClick={() => setRegenReason(r.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all text-left ${
-                    regenReason === r.id ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
-                  }`}>
-                  <span className="text-lg">{r.icon}</span>
-                  <span className="text-sm font-medium">{r.label}</span>
-                  {regenReason === r.id && <Check className="w-4 h-4 ml-auto text-primary" />}
-                </button>
-              ))}
+              <p className="text-xs text-muted-foreground">Why regenerate this {regenImage.moment_type?.replace('_', ' ') || 'moment'} image? Select all that apply:</p>
+              {REGEN_REASONS.map(r => {
+                const isSelected = regenReasons.has(r.id);
+                return (
+                  <button key={r.id} onClick={() => toggleRegenReason(r.id)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all text-left ${
+                      isSelected ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
+                    }`}>
+                    <span className="text-lg">{r.icon}</span>
+                    <span className="text-sm font-medium">{r.label}</span>
+                    {isSelected && <Check className="w-4 h-4 ml-auto text-primary" />}
+                  </button>
+                );
+              })}
             </div>
             <div className="flex-shrink-0 border-t border-border p-4 flex gap-2">
               <button onClick={() => setShowRegenModal(false)} className="flex-1 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm">Cancel</button>
-              <button onClick={handleRegenerate} disabled={!regenReason || regenerating}
+              <button onClick={handleRegenerate} disabled={regenReasons.size === 0 || regenerating}
                 className="flex-1 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
                 {regenerating ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</> : 'Regenerate'}
               </button>

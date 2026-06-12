@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Plus, X, Calendar, Loader2, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { base44 } from '@/api/base44Client';
@@ -279,7 +279,11 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
   const [addToCommunity, setAddToCommunity] = useState(null);
   const [saving, setSaving] = useState(false);
   const [storyEvents, setStoryEvents] = useState([]); // StoryEvent records for the selected day
+  const [storyEventsCache, setStoryEventsCache] = useState({}); // dateStr → StoryEvent[]
   const [viewingStoryEventId, setViewingStoryEventId] = useState(null); // ID of story event being viewed
+  const selectedDayRef = useRef(null);
+  // Keep ref in sync
+  useEffect(() => { selectedDayRef.current = selectedDay; }, [selectedDay]);
 
   // ── LOAD PERSISTED USER EVENTS ─────────────────────────────────────────────
   // User-created events are stored as CommunityEvent records with source='user'.
@@ -381,10 +385,17 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
     return [...annual, ...floating, ...birthdays, ...community, ...custom, ...payday];
   };
 
-  // Load StoryEvents for selected date
+  // ── STORY EVENTS: immediate local cache, then backend refresh ──────────────
   useEffect(() => {
     if (!selectedDay) { setStoryEvents([]); return; }
     const dateStr = format(selectedDay, 'yyyy-MM-dd');
+
+    // IMMEDIATE: show cached events first — no flicker
+    if (storyEventsCache[dateStr]) {
+      setStoryEvents(storyEventsCache[dateStr]);
+    }
+
+    // THEN refresh from backend
     base44.auth.me().then(me => {
       if (!me?.email) return;
       base44.entities.StoryEvent.filter(
@@ -393,9 +404,63 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
         50
       ).then(records => {
         setStoryEvents(records);
-      }).catch(() => setStoryEvents([]));
-    }).catch(() => setStoryEvents([]));
+        setStoryEventsCache(prev => ({ ...prev, [dateStr]: records }));
+      }).catch(() => {});
+    }).catch(() => {});
   }, [selectedDay]);
+
+  // Subscribe to StoryEvent updates for real-time cache invalidation (once at mount)
+  useEffect(() => {
+    const unsub = base44.entities.StoryEvent.subscribe((evt) => {
+      if (evt.data?.event_date) {
+        const d = evt.data.event_date;
+        const sDay = selectedDayRef.current;
+
+        if (evt.type === 'update') {
+          setStoryEventsCache(prev => {
+            if (!prev[d]) return prev;
+            const existing = prev[d];
+            const idx = existing.findIndex(e => e.id === evt.id);
+            if (idx >= 0) {
+              const updated = [...existing];
+              updated[idx] = evt.data;
+              return { ...prev, [d]: updated };
+            }
+            return { ...prev, [d]: [...existing, evt.data] };
+          });
+          // If currently selected, update live state
+          if (sDay) {
+            const curDateStr = format(sDay, 'yyyy-MM-dd');
+            if (d === curDateStr) {
+              setStoryEvents(prev => {
+                const idx = prev.findIndex(e => e.id === evt.id);
+                if (idx >= 0) {
+                  const next = [...prev];
+                  next[idx] = evt.data;
+                  return next;
+                }
+                return [...prev, evt.data];
+              });
+            }
+          }
+        }
+
+        if (evt.type === 'create') {
+          setStoryEventsCache(prev => ({
+            ...prev,
+            [d]: [...(prev[d] || []), evt.data],
+          }));
+          if (sDay) {
+            const curDateStr = format(sDay, 'yyyy-MM-dd');
+            if (d === curDateStr) {
+              setStoryEvents(prev => [...prev, evt.data]);
+            }
+          }
+        }
+      }
+    });
+    return unsub;
+  }, []);
 
   const handleDayClick = (date) => {
     setSelectedDay(date);
@@ -667,18 +732,16 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
               date={selectedDay}
               characters={characters}
               appLocations={appLocations}
-              onCreated={(storyEventId) => {
+              onCreated={(storyEventId, eventPreview) => {
                 setViewingStoryEventId(storyEventId);
                 setPanelMode('story_view');
-                // Reload story events for this date
+                // Insert new event into cache immediately
                 const dateStr = format(selectedDay, 'yyyy-MM-dd');
-                base44.auth.me().then(me => {
-                  if (!me?.email) return;
-                  base44.entities.StoryEvent.filter(
-                    { owner_email: me.email, event_date: dateStr },
-                    '-created_date', 50
-                  ).then(setStoryEvents).catch(() => {});
-                }).catch(() => {});
+                setStoryEventsCache(prev => ({
+                  ...prev,
+                  [dateStr]: [eventPreview, ...(prev[dateStr] || [])],
+                }));
+                setStoryEvents(prev => [eventPreview, ...prev]);
               }}
               onCancel={() => setPanelMode('view')}
             />

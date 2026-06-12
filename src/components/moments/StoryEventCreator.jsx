@@ -76,7 +76,28 @@ export default function StoryEventCreator({ date, characters = [], appLocations 
       });
 
       if (res?.data?.storyEventId) {
-        if (onCreated) onCreated(res.data.storyEventId);
+        const eventPreview = {
+          id: res.data.storyEventId,
+          title: title.trim(),
+          event_date: dateStr,
+          status: 'generating',
+          start_time: allDay ? null : (startTime || null),
+          end_time: allDay ? null : (endTime || null),
+          venue_name: resolveVenueName(),
+          focus_character_ids: focusIds,
+          participant_character_ids: participantIds,
+          focus_character_names: focusIds.map(id => {
+            const c = characters.find(ch => ch.id === id);
+            return c?.name || c?.display_name || id;
+          }),
+          participant_character_names: participantIds.map(id => {
+            const c = characters.find(ch => ch.id === id);
+            return c?.name || c?.display_name || id;
+          }),
+          all_day: allDay,
+          is_rabbit_hole: isRabbitHole,
+        };
+        if (onCreated) onCreated(res.data.storyEventId, eventPreview);
       } else {
         setError(res?.data?.error || 'Failed to create event.');
       }
