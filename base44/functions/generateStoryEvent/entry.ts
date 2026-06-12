@@ -575,7 +575,93 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 6: UPDATE STORY EVENT STATUS WITH FULL DATA ────────────────────
+    // ── STEP 6: PARTICIPANT COVERAGE GUARANTEE ────────────────────────────────
+    // The LLM may not generate a memory for every participant despite instructions.
+    // This pass ensures NO participant is left without records.
+    const memoryCoveredIds = new Set(memories.map(m => m.character_id));
+    const uncoveredIds = allIds.filter(id => !memoryCoveredIds.has(id));
+
+    for (const cid of uncoveredIds) {
+      const c = charById[cid];
+      const cname = c?.name || c?.display_name || cid;
+      const fallbackText = `${cname} attended the story event "${title}" on ${eventDate} at ${venueName}.`;
+      const fallbackSummary = `Attended "${title}" at ${venueName} on ${eventDate}`;
+      const fallbackTone = 'neutral';
+
+      // StoryEventMemory
+      try {
+        await base44.asServiceRole.entities.StoryEventMemory.create({
+          story_event_id: eventId, character_id: cid, character_name: cname,
+          memory_text: fallbackText, memory_summary: fallbackSummary,
+          memory_type: 'event', importance_score: 3, emotional_tone: fallbackTone,
+          owner_email: ownerEmail,
+        });
+      } catch (_) {}
+
+      // Character.memories
+      try {
+        const freshChars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
+        const freshChar = freshChars[0];
+        if (freshChar) {
+          await base44.asServiceRole.entities.Character.update(cid, {
+            memories: [...(freshChar.memories || []), {
+              title: `Story Event: ${title}`, description: fallbackText,
+              date: eventDate, emotion_state: fallbackTone,
+              created_date: new Date().toISOString(),
+            }],
+          });
+        }
+      } catch (_) {}
+
+      // Memory entity
+      try {
+        await base44.asServiceRole.entities.Memory.create({
+          character_id: cid, title: `Attended: ${title}`,
+          description: `[Story Event: ${title} — ${eventDate} at ${venueName}] ${fallbackText}`,
+          emotional_impact: fallbackTone, source_context: `story_event_${eventId}`,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (_) {}
+
+      // CharacterMemory
+      try {
+        await base44.asServiceRole.entities.CharacterMemory.create({
+          character_id: cid, memory_type: 'event',
+          memory_text: `[Story Event: ${title} — ${eventDate} at ${venueName}] ${fallbackText}`,
+          memory_summary: fallbackSummary, importance_score: 3,
+          confidence_score: 0.8, permanence: 'long_term', validation_status: 'confirmed',
+        });
+      } catch (_) {}
+
+      // LifeEvent
+      try {
+        await base44.asServiceRole.entities.LifeEvent.create({
+          character_id: cid, character_name: cname,
+          title: `Story Event: ${title}`, description: fallbackText,
+          event_type: 'bonding_event', severity: 'significant', valence: 'neutral',
+          emotional_impact: `neutral — bonding event`,
+          timestamp: `${eventDate || ''}T${startTime || '12:00'}:00.000`,
+          triggered_by: 'story_event',
+          systems_updated: ['memories'],
+          context_tags: ['story_event', eventId, `participant_${cid}`],
+        });
+      } catch (_) {}
+
+      // EventParticipation
+      try {
+        await base44.asServiceRole.entities.EventParticipation.create({
+          event_id: eventId, event_name: title,
+          character_id: cid, character_name: cname,
+          owner_email: ownerEmail, participation_type: 'attended',
+          emotional_tone: fallbackTone,
+          participation_date: `${eventDate || ''}T${startTime || '12:00'}:00.000`,
+          memory_strength: 'moderate', notes: fallbackSummary,
+          saw_character_ids: participantIds.filter(id => id !== cid),
+        });
+      } catch (_) {}
+    }
+
+    // ── STEP 7: UPDATE STORY EVENT STATUS WITH FULL DATA ────────────────────
     await base44.asServiceRole.entities.StoryEvent.update(eventId, {
       status: 'complete',
       generated_narrative: generated.narrative || '',
@@ -588,7 +674,8 @@ Deno.serve(async (req) => {
       success: true,
       eventId,
       memoriesCreated: memories.length,
-      characterMemoriesCreated: memories.length,
+      uncoveredFilled: uncoveredIds.length,
+      totalParticipants: allIds.length,
       imagesGenerated: imagePrompts.length,
       relationshipChanges: relChanges.length,
       participantTypes: allIds.map(id => charById[id]?.character_type || 'unknown'),

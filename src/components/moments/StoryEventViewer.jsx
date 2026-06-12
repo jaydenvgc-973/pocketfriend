@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2, Send, RefreshCw, X, Check } from 'lucide-react';
+import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2, Send, RefreshCw, X, Check, Shield, CheckCircle2, AlertCircle, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
 const REGEN_REASONS = [
@@ -30,6 +30,11 @@ export default function StoryEventViewer({ eventId }) {
   const [regenImage, setRegenImage] = useState(null);
   const [regenReason, setRegenReason] = useState(null);
   const [regenerating, setRegenerating] = useState(false);
+
+  // Impact verification state
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactResult, setImpactResult] = useState(null);
+  const [impactError, setImpactError] = useState(null);
 
   // Load characters for send modal
   useEffect(() => {
@@ -238,7 +243,6 @@ export default function StoryEventViewer({ eventId }) {
         reason: regenReason,
       });
       if (res?.data?.success) {
-        // Reload images
         const imgs = await base44.entities.StoryEventImage.filter(
           { story_event_id: eventId }, null, 10
         ).catch(() => []);
@@ -246,12 +250,47 @@ export default function StoryEventViewer({ eventId }) {
         setShowRegenModal(false);
         setRegenImage(null);
       }
+    } catch (_) {} finally { setRegenerating(false); }
+  };
+
+  // ── IMPACT VERIFICATION ──────────────────────────────────────────────────
+  const handleVerifyImpact = async () => {
+    setImpactLoading(true);
+    setImpactError(null);
+    setImpactResult(null);
+    try {
+      const res = await base44.functions.invoke('backfillStoryEventImpact', { event_id: eventId });
+      setImpactResult(res?.data);
     } catch (err) {
-      // Silently fail — image generation can fail
+      setImpactError(err.message || 'Verification failed');
     } finally {
-      setRegenerating(false);
+      setImpactLoading(false);
     }
   };
+
+  const recordStatusIcon = (record) => {
+    if (record.error) return <XCircle className="w-3.5 h-3.5 text-destructive" />;
+    if (record.exists && !record.created) return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
+    if (record.exists && record.created) return <CheckCircle2 className="w-3.5 h-3.5 text-primary" />;
+    return <AlertCircle className="w-3.5 h-3.5 text-muted-foreground" />;
+  };
+
+  // Pre-compute for JSX safety — complex optional-chaining conditions confuse the parser
+  const hasCreatedRecords = impactResult && (
+    (impactResult.created_records?.life_events?.length > 0) ||
+    (impactResult.created_records?.memories?.length > 0) ||
+    (impactResult.created_records?.character_memories?.length > 0) ||
+    (impactResult.created_records?.character_memories_array?.length > 0) ||
+    (impactResult.created_records?.event_participations?.length > 0)
+  );
+
+  const createdCounts = impactResult?.created_records ? {
+    lifeEvents: impactResult.created_records.life_events?.length || 0,
+    memories: impactResult.created_records.memories?.length || 0,
+    charMems: impactResult.created_records.character_memories?.length || 0,
+    charMemArrays: impactResult.created_records.character_memories_array?.length || 0,
+    eventParts: impactResult.created_records.event_participations?.length || 0,
+  } : null;
 
   return (
     <div className="bg-card/80 border border-border rounded-xl overflow-hidden">
@@ -435,6 +474,92 @@ export default function StoryEventViewer({ eventId }) {
                   </div>
                 </div>
               )}
+
+              {/* ── IMPACT PROOF SECTION ──────────────────────────────────── */}
+              <div className="border-t border-border pt-3">
+                <button
+                  onClick={handleVerifyImpact}
+                  disabled={impactLoading}
+                  className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-primary/10 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
+                >
+                  {impactLoading
+                    ? <><Loader2 className="w-3 h-3 animate-spin" /> Verifying impact records…</>
+                    : <><Shield className="w-3 h-3" /> Verify & Backfill Impact Records</>
+                  }
+                </button>
+
+                {impactError && (
+                  <p className="text-xs text-destructive mt-2">{impactError}</p>
+                )}
+
+                {impactResult && (
+                  <div className="mt-3 space-y-2">
+                    {/* Summary bar */}
+                    <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2">
+                      <Shield className="w-3 h-3 text-emerald-400" />
+                      <span className="text-[10px] text-emerald-300 font-medium">
+                        {impactResult.participant_count} participants · {impactResult.story_event_images} images · {impactResult.media_gallery_images} gallery images
+                      </span>
+                    </div>
+
+                    {/* Created records summary */}
+                    {hasCreatedRecords && (
+                      <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
+                        <p className="text-[10px] font-bold text-primary uppercase tracking-wider mb-1">Records Created in This Run</p>
+                        <div className="text-[9px] text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
+                          {createdCounts.lifeEvents > 0 && <span>LifeEvents: {createdCounts.lifeEvents}</span>}
+                          {createdCounts.memories > 0 && <span>Memories: {createdCounts.memories}</span>}
+                          {createdCounts.charMems > 0 && <span>CharacterMemories: {createdCounts.charMems}</span>}
+                          {createdCounts.charMemArrays > 0 && <span>Char.Memories: {createdCounts.charMemArrays}</span>}
+                          {createdCounts.eventParts > 0 && <span>EventParts: {createdCounts.eventParts}</span>}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Per-participant table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[9px]">
+                        <thead>
+                          <tr className="border-b border-border">
+                            <th className="text-left py-1.5 px-1 text-muted-foreground font-medium">Character</th>
+                            <th className="text-center py-1.5 px-1 text-muted-foreground font-medium">Life Journal</th>
+                            <th className="text-center py-1.5 px-1 text-muted-foreground font-medium">Chat Memory</th>
+                            <th className="text-center py-1.5 px-1 text-muted-foreground font-medium">Char.Memories</th>
+                            <th className="text-center py-1.5 px-1 text-muted-foreground font-medium">Event Part.</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(impactResult.participants || []).map((p, i) => (
+                            <tr key={i} className="border-b border-border/40 hover:bg-secondary/30">
+                              <td className="py-1.5 px-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-medium text-foreground text-[9px]">{p.character_name}</span>
+                                  {p.is_focus && <span className="text-[7px] px-1 py-0.5 rounded bg-primary/20 text-primary">FOCUS</span>}
+                                  <span className="text-[7px] text-muted-foreground uppercase">{p.character_type?.replace(/npc_|active_created_/g, '')}</span>
+                                </div>
+                                {p.memory_text_preview && (
+                                  <p className="text-[7px] text-muted-foreground mt-0.5 line-clamp-1">{p.memory_text_preview}</p>
+                                )}
+                              </td>
+                              <td className="text-center py-1.5 px-1">{recordStatusIcon(p.life_journal)}</td>
+                              <td className="text-center py-1.5 px-1">{recordStatusIcon(p.chat_memory)}</td>
+                              <td className="text-center py-1.5 px-1">{recordStatusIcon(p.dashboard_impact)}</td>
+                              <td className="text-center py-1.5 px-1">{recordStatusIcon(p.event_participation)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Legend */}
+                    <div className="flex items-center gap-3 text-[8px] text-muted-foreground px-1">
+                      <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> already existed</span>
+                      <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-primary" /> created now</span>
+                      <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-destructive" /> failed</span>
+                    </div>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
