@@ -111,6 +111,77 @@ export function buildNeedsSummaryLine(character) {
 }
 
 /**
+ * Behavioral reasoning philosophy block.
+ * Injected into every prompt to reframe needs as motivations, not restrictions.
+ * Characters must pursue rewards and enjoyment — not only solve deficits.
+ */
+export const NEEDS_BEHAVIORAL_PHILOSOPHY = `
+════════════════════════════════════
+BEHAVIORAL REASONING — NEEDS ARE MOTIVATIONS, NOT RESTRICTIONS
+════════════════════════════════════
+CORE RULE: Needs primarily create motivations, desires, priorities, and preferences.
+A low need is NOT an automatic excuse for why an unrelated action cannot occur.
+The reason given for refusing or avoiding an action MUST be logically connected to that action.
+
+LOGICAL CAUSE-AND-EFFECT REQUIRED:
+  ✗ FORBIDDEN: "I'm too hungry to send a text."
+  ✗ FORBIDDEN: "I'm too hungry to call someone."
+  ✗ FORBIDDEN: "I'm too dirty to eat."
+  ✗ FORBIDDEN: "I'm too comfortable to have a conversation."
+  ✗ FORBIDDEN: "I'm too tired to talk."
+  ✗ FORBIDDEN: "I'm too hungry to socialize."
+  ✓ CORRECT: Being hungry motivates getting food — it does not block texting, calling, or talking.
+  ✓ CORRECT: Being dirty motivates a shower — it does not block eating.
+  ✓ CORRECT: Being comfortable motivates staying — it competes with wanting food, not blocks conversation.
+
+NEEDS CREATE MOTIVATIONS — EXAMPLES:
+  Hunger →  "I should get something to eat." / "Let's grab lunch." / "I'm hungry, I'll stop for food."
+  Social →  "I miss my friends." / "I should call someone." / "I want company."
+  Comfort → "I want to go home." / "I want to relax." / "I want to sit somewhere comfortable."
+  Hygiene → "I want a shower." / "I want to freshen up." / "I want clean clothes."
+  Energy →  "I want to rest." / "I want a nap." / "I want to go to bed early."
+
+NEEDS COMPETE — THEY DO NOT AUTOMATICALLY BLOCK:
+  A character can be comfortable AND hungry at the same time.
+  They weigh both motivations: "I don't feel like getting up, but I'm hungry."
+  They make a choice. They do NOT instantly disable all behavior.
+
+POSITIVE STATES ALSO GENERATE BEHAVIOR:
+  High Energy → "I feel motivated." / "Let's go do something." / "I'm ready."
+  Good Mood →   "Today feels like a good day." / "I want to get out."
+  High Social → "I should check in on them." / "I miss talking to them."
+  Strong Comfort → "I love being here." / "I want to invite someone over."
+
+REWARD RECOGNITION IS REQUIRED:
+  Characters do not only act to eliminate discomfort.
+  Characters also act because they ENJOY things.
+  A friend is someone they enjoy — not only a social stat repair.
+  A meal is something enjoyable — not only hunger reduction.
+  A home is a place they like being — not only comfort recovery.
+  A hobby is something they like doing — not only time consumption.
+
+POSITIVE ENVIRONMENT RECOGNITION:
+  Characters must notice and appreciate what is already good.
+  A comfortable couch → "This feels good." / "I enjoy sitting here." / "I'm glad to be home."
+  A nice home → "I love being here." / "I worked hard for this." / "This place is peaceful."
+  A good meal → "This is really good." / "I've been looking forward to this."
+  Good company → "I enjoy spending time with them." / "I'm glad they're here."
+  Numbers alone do NOT override obvious comfort. A well-furnished room IS comfortable.
+
+PESSIMISM IS NOT THE DEFAULT:
+  ✗ Do NOT begin every decision by asking: "What is wrong? What is preventing action?"
+  ✓ Also ask: "What is good? What do I enjoy? What am I looking forward to?"
+  Characters should pursue what makes life enjoyable — not only solve problems.
+
+EACH NEED IS ITS OWN DOMAIN:
+  Hunger ≠ low energy ≠ low social desire ≠ inability to communicate.
+  Hygiene ≠ exhaustion ≠ hunger ≠ social avoidance.
+  Comfort ≠ hunger ≠ fatigue ≠ loneliness.
+  Do NOT use one need as a substitute explanation for another.
+  If Energy has its own system, hunger must NOT be used as a shortcut for energy.
+════════════════════════════════════`;
+
+/**
  * Build the full LIVE NEEDS CONSISTENCY ENFORCEMENT block
  * to be injected into every LLM prompt (chat, narrative, autonomous behavior, scene).
  *
@@ -262,7 +333,7 @@ You remain fully available and alert at all times regardless of any Life Need va
     ? `\nHARD CONTRADICTION BLOCKS — output must not violate these:\n${contradictions.map(c => `  ✗ ${c}`).join('\n')}`
     : '';
 
-  return `
+  return `${NEEDS_BEHAVIORAL_PHILOSOPHY}
 ════════════════════════════════════
 LIVE NEEDS — FULL STATE TRUTH (read before generating any output)
 These values are current and authoritative. They override memory, prior summaries, and stale context.
