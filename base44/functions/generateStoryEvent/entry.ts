@@ -457,6 +457,82 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
+    // ── STEP 5b: CREATE LIFEEVENT RECORDS (DASHBOARD & LIFE JOURNAL) ────────
+    // This is the critical fix: LifeJournal and CharacterDashboard read LifeEvent,
+    // NOT StoryEventMemory/CharacterMemory. Without this, events are invisible.
+    const milestoneEventTypes = ['life_milestone_event', 'celebration_event', 'bonding_event', 'growth_event', 'supportive_event'];
+    const isMajorEvent = (generated.narrative || '').length > 600 || (focusIds.length >= 2);
+    const defaultEventType = isMajorEvent ? 'life_milestone_event' : 'bonding_event';
+
+    for (const mem of memories) {
+      if (!mem.character_id || !mem.memory_text) continue;
+      const tone = mem.emotional_tone || 'neutral';
+      const valence = tone === 'positive' || tone === 'mixed' ? 'positive'
+        : tone === 'negative' ? 'negative' : 'neutral';
+      const eventTypeForChar = tone === 'positive'
+        ? (isMajorEvent ? 'celebration_event' : 'bonding_event')
+        : tone === 'negative'
+        ? 'setback_event'
+        : defaultEventType;
+
+      try {
+        await base44.asServiceRole.entities.LifeEvent.create({
+          character_id: mem.character_id,
+          character_name: mem.character_name || '',
+          title: `Story Event: ${title}`,
+          description: mem.memory_text,
+          event_type: eventTypeForChar,
+          severity: isMajorEvent ? 'major' : 'significant',
+          valence,
+          emotional_impact: `${mem.emotional_tone || 'neutral'} — ${eventTypeForChar.replace(/_/g, ' ')}`,
+          timestamp: `${eventDate || ''}T${startTime || '12:00'}:00.000`,
+          triggered_by: 'story_event',
+          systems_updated: ['memories', 'relationships', 'emotional_state'],
+          context_tags: ['story_event', eventId, `participant_${mem.character_id}`],
+        });
+      } catch (_) {}
+    }
+
+    // ── STEP 5c: CREATE COMMUNITYEVENT (CALENDAR & HOMEPAGE STRIP) ──────────
+    // Makes the story event visible on the Moments calendar and Homepage community strip
+    try {
+      await base44.asServiceRole.entities.CommunityEvent.create({
+        name: title,
+        event_type: 'celebration',
+        source: 'user_calendar',
+        show_on_community_strip: true,
+        location_id: event.venue_id || null,
+        location_name: venueName || null,
+        start_date: `${eventDate || ''}T${startTime || '00:00'}:00.000`,
+        end_date: endTime ? `${eventDate}T${endTime}:00.000` : null,
+        is_active: true,
+        owner_email: ownerEmail,
+        description: generated.narrative_preview || '',
+        vibe: 'social',
+        participations_count: participantIds.length,
+      });
+    } catch (_) {}
+
+    // ── STEP 5d: CREATE EVENTPARTICIPATION (DASHBOARD ATTENDANCE) ────────────
+    for (const mem of memories) {
+      if (!mem.character_id) continue;
+      try {
+        await base44.asServiceRole.entities.EventParticipation.create({
+          event_id: eventId,
+          event_name: title,
+          character_id: mem.character_id,
+          character_name: mem.character_name || '',
+          owner_email: ownerEmail,
+          participation_type: focusIds.includes(mem.character_id) ? 'attended' : 'attended',
+          emotional_tone: mem.emotional_tone || 'neutral',
+          participation_date: `${eventDate || ''}T${startTime || '12:00'}:00.000`,
+          memory_strength: (mem.importance_score || 5) >= 7 ? 'strong' : 'moderate',
+          notes: mem.memory_summary || mem.memory_text?.substring(0, 120) || '',
+          saw_character_ids: participantIds.filter(id => id !== mem.character_id),
+        });
+      } catch (_) {}
+    }
+
     // ── STEP 6: UPDATE STORY EVENT STATUS WITH FULL DATA ────────────────────
     await base44.asServiceRole.entities.StoryEvent.update(eventId, {
       status: 'complete',
