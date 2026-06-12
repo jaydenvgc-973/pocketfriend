@@ -362,7 +362,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 14; // fix: force cache invalidation after destructuring index swap repair — stale v13 entries were computed with swapped locHistory/allChars mapping
+const DASHBOARD_CACHE_VERSION = 15; // fix: charId-gated cache — stored payload includes charId; cache reads bypassed until profile-switch stability proven
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -398,13 +398,14 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
     const cachedVersion = dashboardCacheVersion[charId];
     const cacheValid = cachedData && cachedVersion === DASHBOARD_CACHE_VERSION;
 
-    if (cacheValid) {
-      // Valid cached entry exists for this character — use it immediately
-      setData(cachedData);
-      setLoaded(true);
-      setLoading(false);
-      return;
-    }
+    // ── CACHE READ DISABLED (temporary) ─────────────────────────────────
+    // Cache is populated below with charId-gated identity checks, but reads
+    // are bypassed until profile-switch stability is proven across multiple
+    // characters. Every profile load recomputes from source records.
+    // Re-enable by restoring the cache-hit branch when:
+    //   - cachedData.charId === currentCharId passes
+    //   - cacheVersion matches DASHBOARD_CACHE_VERSION
+    //   - profile switching verified stable on 3+ characters
 
     // No valid cache. Reset any stale data from a previous character and fetch.
     setData(null);
@@ -1183,14 +1184,15 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         ? `${workLocationName}${character.occupation ? ` · ${character.occupation}` : ''}`
         : character.occupation || null;
 
-      const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 20), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
+      const dashData = { charId: requestCharId, liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 20), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
       // Guard: only write if this charId is still the active request
       if (requestCharId !== activeRequestRef.current) {
         console.log(`[CharacterDashboard] STALE — discarding result for ${requestCharId}, active is ${activeRequestRef.current}`);
         return;
       }
-      dashboardCache[charId] = dashData;
-      dashboardCacheVersion[charId] = DASHBOARD_CACHE_VERSION;
+      // Write cache under REQUEST charId (not the potentially-stale outer charId)
+      dashboardCache[requestCharId] = dashData;
+      dashboardCacheVersion[requestCharId] = DASHBOARD_CACHE_VERSION;
       setData(dashData);
       setLoaded(true);
       setLoading(false);
