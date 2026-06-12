@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Plus, X, Calendar, Loader2, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, X, Calendar, Loader2, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { base44 } from '@/api/base44Client';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, subMonths } from 'date-fns';
@@ -624,7 +624,7 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
                   {/* Story Events */}
                   {storyEvents.map((se) => (
                     <li key={se.id} className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm bg-purple-500/15 border border-purple-500/25">
-                      <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-purple-400" />
+                      <Star className="w-4 h-4 shrink-0 mt-0.5 text-purple-400" />
                       <div className="flex-1 min-w-0">
                         <button
                           onClick={() => { setViewingStoryEventId(se.id); setPanelMode('story_view'); }}
@@ -653,7 +653,7 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
                   <Plus className="w-3 h-3" /> Add event
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => setPanelMode('story')} className="h-7 px-3 text-xs gap-1 border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300">
-                  <Sparkles className="w-3 h-3" /> Story Event
+                  <Star className="w-3 h-3" /> Story Event
                 </Button>
               </div>
             </div>

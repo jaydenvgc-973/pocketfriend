@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { Sparkles, MapPin, Users, Star, Heart, Image, ChevronDown, Loader2 } from 'lucide-react';
+import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 
 export default function StoryEventViewer({ eventId }) {
@@ -91,7 +91,7 @@ export default function StoryEventViewer({ eventId }) {
       {/* Header */}
       <div className="px-4 py-3 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-primary" />
+          <Star className="w-4 h-4 text-primary" />
           <div>
             <h3 className="text-sm font-semibold text-foreground">{event.title}</h3>
             <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5">

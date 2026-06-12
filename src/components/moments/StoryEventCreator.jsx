@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
-import { Loader2, BookOpen, Users, MapPin, Star, Sparkles } from 'lucide-react';
+import { Loader2, BookOpen, Users, MapPin, Star } from 'lucide-react';
 
 export default function StoryEventCreator({ date, characters = [], appLocations = [], onCreated, onCancel }) {
   const [title, setTitle] = useState('');
@@ -83,7 +83,7 @@ export default function StoryEventCreator({ date, characters = [], appLocations 
   return (
     <div className="space-y-3 animate-in fade-in duration-200">
       <div className="flex items-center gap-2 mb-1">
-        <Sparkles className="w-4 h-4 text-primary" />
+        <Star className="w-4 h-4 text-primary" />
         <span className="text-xs font-semibold text-primary uppercase tracking-wider">Create Story Event</span>
       </div>
 
@@ -230,7 +230,7 @@ export default function StoryEventCreator({ date, characters = [], appLocations 
 
       <div className="flex gap-2 pt-1">
         <Button size="sm" onClick={handleSubmit} disabled={saving || !title.trim() || !plot.trim() || participantIds.length === 0} className="h-8 flex-1 text-xs">
-          {saving ? <><Loader2 className="w-3 h-3 animate-spin mr-1" />Creating…</> : <><Sparkles className="w-3 h-3 mr-1" />Generate Story Event</>}
+          {saving ? <><Loader2 className="w-3 h-3 animate-spin mr-1" />Creating…</> : <><Star className="w-3 h-3 mr-1" />Generate Story Event</>}
         </Button>
         <Button size="sm" variant="outline" onClick={onCancel} className="h-8 text-xs">
           Cancel
