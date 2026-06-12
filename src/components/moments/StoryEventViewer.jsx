@@ -31,6 +31,11 @@ export default function StoryEventViewer({ eventId }) {
   const [regenReasons, setRegenReasons] = useState(new Set());
   const [regenerating, setRegenerating] = useState(false);
 
+  // Character selection for image regeneration
+  const [showCharSelectModal, setShowCharSelectModal] = useState(false);
+  const [charSelectImage, setCharSelectImage] = useState(null);
+  const [selectedVisibleIds, setSelectedVisibleIds] = useState(new Set());
+
   // Impact verification state
   const [impactLoading, setImpactLoading] = useState(false);
   const [impactResult, setImpactResult] = useState(null);
@@ -261,6 +266,44 @@ export default function StoryEventViewer({ eventId }) {
     } catch (_) {} finally { setRegenerating(false); }
   };
 
+  // ── CHARACTER-SELECT REGENERATION ───────────────────────────────────────
+  const openCharSelect = (img) => {
+    setCharSelectImage(img);
+    // Pre-select existing visible characters if stored
+    const existing = img.visible_character_ids || [];
+    setSelectedVisibleIds(new Set(existing));
+    setShowCharSelectModal(true);
+  };
+
+  const toggleVisibleChar = (id) => {
+    setSelectedVisibleIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleCharSelectRegen = async () => {
+    if (!charSelectImage || selectedVisibleIds.size === 0) return;
+    setRegenerating(true);
+    try {
+      const res = await base44.functions.invoke('regenerateStoryEventImageWithCharacters', {
+        story_event_id: eventId,
+        image_id: charSelectImage.id,
+        visible_character_ids: [...selectedVisibleIds],
+        reasons: [],
+      });
+      if (res?.data?.success) {
+        const imgs = await base44.entities.StoryEventImage.filter(
+          { story_event_id: eventId }, null, 10
+        ).catch(() => []);
+        setImages(imgs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
+        setShowCharSelectModal(false);
+        setCharSelectImage(null);
+      }
+    } catch (_) {} finally { setRegenerating(false); }
+  };
+
   // ── IMPACT VERIFICATION ──────────────────────────────────────────────────
   const handleVerifyImpact = async () => {
     setImpactLoading(true);
@@ -428,6 +471,13 @@ export default function StoryEventViewer({ eventId }) {
                               )}
                             </div>
                             <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => openCharSelect(img)}
+                                className="p-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors"
+                                title="Edit characters in image"
+                              >
+                                <Users className="w-3.5 h-3.5" />
+                              </button>
                               <button
                                 onClick={() => openRegenModal(img)}
                                 className="p-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors"
@@ -666,6 +716,51 @@ export default function StoryEventViewer({ eventId }) {
                   {sendSent ? '✓ Sent!' : sending ? 'Sending…' : 'Send'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CHARACTER SELECTION MODAL ────────────────────────────────────────── */}
+      {showCharSelectModal && charSelectImage && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center pb-24 pt-4 px-4" onClick={() => setShowCharSelectModal(false)}>
+          <div className="w-full max-w-sm bg-card border border-border rounded-3xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h3 className="text-sm font-semibold text-foreground">Characters in Image</h3>
+              <button onClick={() => setShowCharSelectModal(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-4 h-4 text-muted-foreground" /></button>
+            </div>
+            <div className="p-4 space-y-1 max-h-64 overflow-y-auto">
+              <p className="text-xs text-muted-foreground mb-2">
+                Select which characters appear in the {charSelectImage.moment_type?.replace('_', ' ') || 'moment'} image.
+                Only selected characters will be used. No generic strangers.
+              </p>
+              <p className="text-[10px] text-amber-400/90 mb-2 px-2 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                This regenerates the image using ONLY the selected characters' reference photos and appearance data.
+              </p>
+              {(event.participant_character_names || []).map((name, i) => {
+                const cid = (event.participant_character_ids || [])[i] || '';
+                const isFocus = (event.focus_character_ids || []).includes(cid);
+                const isSelected = selectedVisibleIds.has(cid);
+                return (
+                  <button key={i} onClick={() => toggleVisibleChar(cid)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all text-left ${
+                      isSelected ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
+                    }`}>
+                    <span className="flex items-center gap-2 flex-1">
+                      <span className="text-sm font-medium">{name}</span>
+                      {isFocus && <span className="text-[9px] px-1 py-0.5 rounded bg-primary/20 text-primary">★ Focus</span>}
+                    </span>
+                    {isSelected && <Check className="w-4 h-4 shrink-0 text-primary" />}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex-shrink-0 border-t border-border p-4 flex gap-2">
+              <button onClick={() => setShowCharSelectModal(false)} className="flex-1 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm">Cancel</button>
+              <button onClick={handleCharSelectRegen} disabled={selectedVisibleIds.size === 0 || regenerating}
+                className="flex-1 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+                {regenerating ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</> : 'Regenerate'}
+              </button>
             </div>
           </div>
         </div>

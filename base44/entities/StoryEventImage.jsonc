@@ -32,6 +32,31 @@
       "minimum": 0,
       "maximum": 2,
       "description": "Display order (0=opening, 1=key, 2=closing)"
+    },
+    "visible_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of characters visible in this image"
+    },
+    "visible_character_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Display names of visible characters"
+    },
+    "reference_image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Character reference image URLs used during generation"
+    },
+    "regeneration_reason": {
+      "type": "string",
+      "description": "Reason for last regeneration (if regenerated)"
     }
   },
   "required": [

@@ -271,25 +271,90 @@ Deno.serve(async (req) => {
         result.event_participation = { status: 'query_failed', error: e.message };
       }
 
-      // ── CHECK/CREATE: LOCATIONHISTORY ────────────────────────────────────
+      // ── CHECK/CREATE: LOCATIONHISTORY (full timeline transition) ─────────
+      // A coherent event requires: departure from previous location → arrival at venue → departure from venue → return to next location
       try {
+        // 1. Find character's previous location before event
+        const priorLHs = await base44.asServiceRole.entities.LocationHistory.filter(
+          { character_id: cid, owner_email: ownerEmail }, '-arrival_time', 30
+        );
+        const priorLocation = priorLHs.find(lh => {
+          if (!lh.arrival_time || lh.location_id === venueId) return false;
+          const arr = new Date(lh.arrival_time).getTime();
+          const evArr = new Date(arrivalTime).getTime();
+          // Was at this location within 6 hours before, and it's not the venue
+          return arr < evArr && (evArr - arr) < 6 * 3600000;
+        }) || null;
+
+        // Also check Character resolved location
+        let charResolvedLocation = null;
+        try {
+          const freshChars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
+          const fresh = freshChars[0];
+          if (fresh?.resolved_current_location_id && fresh.resolved_current_location_id !== venueId) {
+            charResolvedLocation = {
+              location_id: fresh.resolved_current_location_id,
+              location_name: fresh.resolved_current_location_name || 'previous location',
+              resolved_type: fresh.resolved_location_type || 'home',
+            };
+          }
+        } catch (_) {}
+
+        // 2. Check venue LocationHistory
         const venueLH = await base44.asServiceRole.entities.LocationHistory.filter(
           { character_id: cid, owner_email: ownerEmail, location_id: venueId }, '-arrival_time', 50
         );
-        // Also check by event_date proximity
         const matching = venueLH.filter(lh => {
           if (!lh.arrival_time) return false;
           const arrDate = lh.arrival_time.split('T')[0];
           if (arrDate !== eventDate) return false;
-          // Check if arrival_time is within a reasonable window of the event
           const arr = new Date(lh.arrival_time).getTime();
           const evArr = new Date(arrivalTime).getTime();
           const diff = Math.abs(arr - evArr);
-          return diff < 6 * 3600000; // within 6 hours
+          return diff < 6 * 3600000;
         });
+
         if (matching.length > 0) {
           result.location_history = { status: 'verified', record_id: matching[0].id };
         } else {
+          // 2a. Create departure from previous location (if they were somewhere)
+          if (priorLocation) {
+            await base44.asServiceRole.entities.LocationHistory.update(priorLocation.id, {
+              departure_time: arrivalTime,
+              is_current: false,
+            });
+            await base44.asServiceRole.entities.LocationHistory.create({
+              character_id: cid, character_name: cname, owner_email: ownerEmail,
+              location_id: priorLocation.location_id,
+              location_name: priorLocation.location_name || 'previous location',
+              location_category: priorLocation.location_category || 'home',
+              event_type: 'departure',
+              arrival_time: priorLocation.arrival_time,
+              departure_time: arrivalTime,
+              travel_source: 'event',
+              travel_reason: `Left to attend "${title}" Story Event`,
+              is_current: false,
+              notes: `Departed for Story Event: ${title} at ${venueName}`,
+            });
+          } else if (charResolvedLocation) {
+            // Create departure from resolved location
+            const depTime = `${eventDate}T${startTime}:00.000`;
+            await base44.asServiceRole.entities.LocationHistory.create({
+              character_id: cid, character_name: cname, owner_email: ownerEmail,
+              location_id: charResolvedLocation.location_id,
+              location_name: charResolvedLocation.location_name,
+              location_category: charResolvedLocation.resolved_type === 'work' ? 'workplace' : 'home',
+              event_type: 'departure',
+              arrival_time: `${eventDate}T00:00:00.000`,
+              departure_time: depTime,
+              travel_source: 'event',
+              travel_reason: `Left to attend "${title}" Story Event`,
+              is_current: false,
+              notes: `Departed from ${charResolvedLocation.location_name} for Story Event: ${title}`,
+            });
+          }
+
+          // 2b. Create arrival at event venue
           const lh = await base44.asServiceRole.entities.LocationHistory.create({
             character_id: cid,
             character_name: cname,
@@ -308,6 +373,41 @@ Deno.serve(async (req) => {
           });
           result.location_history = { status: 'created', record_id: lh.id };
           createdRecords.location_history.push(lh.id);
+
+          // 2c. Create departure from event venue
+          await base44.asServiceRole.entities.LocationHistory.create({
+            character_id: cid, character_name: cname, owner_email: ownerEmail,
+            location_id: venueId || null,
+            location_name: venueName,
+            location_category: 'social',
+            event_type: 'departure',
+            arrival_time: arrivalTime,
+            departure_time: departureTime,
+            travel_source: 'event',
+            travel_reason: `Left "${title}" Story Event`,
+            is_current: false,
+            notes: `Departed from Story Event: ${title}`,
+          });
+
+          // 2d. Create return to home/next location
+          const returnLocId = charResolvedLocation?.location_id || priorLocation?.location_id;
+          const returnLocName = charResolvedLocation?.location_name || priorLocation?.location_name || 'home';
+          const returnLocCat = charResolvedLocation?.resolved_type === 'work' ? 'workplace'
+            : priorLocation?.location_category || 'home';
+
+          await base44.asServiceRole.entities.LocationHistory.create({
+            character_id: cid, character_name: cname, owner_email: ownerEmail,
+            location_id: returnLocId || null,
+            location_name: returnLocName,
+            location_category: returnLocCat,
+            event_type: 'return_home',
+            arrival_time: departureTime,
+            departure_time: null,
+            travel_source: 'event',
+            travel_reason: `Returned after "${title}" Story Event`,
+            is_current: false,
+            notes: `Returned to ${returnLocName} after Story Event: ${title}`,
+          });
         }
       } catch (e) {
         result.location_history = { status: 'query_failed', error: e.message };

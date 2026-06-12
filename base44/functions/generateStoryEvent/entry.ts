@@ -455,6 +455,13 @@ Deno.serve(async (req) => {
         });
 
         if (imageRes?.url) {
+          // Determine visible characters for this moment
+          const visibleCharIds = img.moment === 'opening' ? participantIds.slice(0, 3)
+            : img.moment === 'key_moment' ? (focusIds.length > 0 ? focusIds : participantIds.slice(0, 2))
+            : participantIds.slice(0, 2);
+
+          const visibleCharNames = visibleCharIds.map(id => charById[id]?.name || id).filter(Boolean);
+
           // Create StoryEventImage — the canonical event-image link
           const storyImage = await base44.asServiceRole.entities.StoryEventImage.create({
             story_event_id: eventId,
@@ -463,16 +470,13 @@ Deno.serve(async (req) => {
             description: img.description || '',
             prompt: img.prompt,
             order: momentOrder[img.moment] ?? 0,
+            visible_character_ids: visibleCharIds,
+            visible_character_names: visibleCharNames,
+            reference_image_urls: refImages.slice(0, 5),
           });
 
           // Create Message record for Media Gallery visibility
-          // This is the critical fix: without a Message record, the image
-          // cannot appear in Media Gallery or be sent/regenerated.
-          const visibleCharIds = img.moment === 'opening' ? participantIds.slice(0, 3)
-            : img.moment === 'key_moment' ? (focusIds.length > 0 ? focusIds : participantIds.slice(0, 2))
-            : participantIds.slice(0, 2);
-
-          const visibleCharNames = visibleCharIds.map(id => charById[id]?.name || id).filter(Boolean);
+          // visibleCharIds and visibleCharNames already computed above for StoryEventImage
 
           await base44.asServiceRole.entities.Message.create({
             conversation_id: `story_event_${eventId}`,
@@ -565,9 +569,8 @@ Deno.serve(async (req) => {
       });
     } catch (_) {}
 
-    // ── STEP 5e: WRITE LOCATION HISTORY RECORDS ────────────────────────────
-    // CRITICAL: Without LocationHistory, character memory contradicts their timeline.
-    // Each participant gets a venue visit record so "I was there" is supported by logs.
+    // ── STEP 5e: WRITE LOCATION HISTORY RECORDS (FULL TIMELINE TRANSITION) ──
+    // A coherent event requires: departure from previous → arrival at venue → departure from venue → return home.
     const eventArrivalTime = `${eventDate || ''}T${startTime || '12:00'}:00.000`;
     const eventDepartureTime = endTime
       ? `${eventDate}T${endTime}:00.000`
@@ -579,25 +582,79 @@ Deno.serve(async (req) => {
       eventDurationMinutes = Math.round((depD.getTime() - arrD.getTime()) / 60000);
       if (eventDurationMinutes < 0) eventDurationMinutes = 120;
     }
+
     for (const cid of allIds) {
       const c = charById[cid];
+      const cname = c?.name || c?.display_name || cid;
       if (!c) continue;
       try {
+        // 1. Check prior location (where were they before the event?)
+        let homeLocationId = c.current_home_location_id;
+        let homeLocationName = c.resolved_current_location_name || 'home';
+        const resolvedType = c.resolved_location_type || 'home';
+
+        // If at work/school, create departure from there
+        if (resolvedType === 'work' && c.current_work_location_id) {
+          homeLocationId = c.current_work_location_id;
+          homeLocationName = c.resolved_current_location_name || 'work';
+        } else if (resolvedType === 'school' && c.current_school_location_id) {
+          homeLocationId = c.current_school_location_id;
+          homeLocationName = c.resolved_current_location_name || 'school';
+        }
+
+        // 2. Departure from previous location
         await base44.asServiceRole.entities.LocationHistory.create({
-          character_id: cid,
-          character_name: c.name || c.display_name || cid,
-          owner_email: ownerEmail,
-          location_id: event.venue_id || null,
-          location_name: venueName,
-          location_category: 'social',
-          event_type: 'social_visit',
-          arrival_time: eventArrivalTime,
-          departure_time: eventDepartureTime,
-          duration_minutes: eventDurationMinutes,
+          character_id: cid, character_name: cname, owner_email: ownerEmail,
+          location_id: homeLocationId || null, location_name: homeLocationName,
+          location_category: resolvedType === 'work' ? 'workplace'
+            : resolvedType === 'school' ? 'education'
+            : 'home',
+          event_type: 'departure',
+          arrival_time: `${eventDate}T00:00:00.000`,
+          departure_time: eventArrivalTime,
           travel_source: 'event',
+          travel_reason: `Left to attend "${title}" Story Event`,
+          is_current: false,
+          notes: `Departed from ${homeLocationName} for Story Event: ${title}`,
+        });
+
+        // 3. Arrival at event venue
+        await base44.asServiceRole.entities.LocationHistory.create({
+          character_id: cid, character_name: cname, owner_email: ownerEmail,
+          location_id: event.venue_id || null, location_name: venueName,
+          location_category: 'social', event_type: 'social_visit',
+          arrival_time: eventArrivalTime, departure_time: eventDepartureTime,
+          duration_minutes: eventDurationMinutes, travel_source: 'event',
           travel_reason: `Story Event: ${title}`,
           is_current: false,
           notes: `Attended "${title}" Story Event at ${venueName}.`,
+        });
+
+        // 4. Departure from event venue
+        await base44.asServiceRole.entities.LocationHistory.create({
+          character_id: cid, character_name: cname, owner_email: ownerEmail,
+          location_id: event.venue_id || null, location_name: venueName,
+          location_category: 'social', event_type: 'departure',
+          arrival_time: eventArrivalTime, departure_time: eventDepartureTime,
+          travel_source: 'event',
+          travel_reason: `Left "${title}" Story Event`,
+          is_current: false,
+          notes: `Departed from Story Event: ${title}`,
+        });
+
+        // 5. Return to home/next location
+        await base44.asServiceRole.entities.LocationHistory.create({
+          character_id: cid, character_name: cname, owner_email: ownerEmail,
+          location_id: homeLocationId || null, location_name: homeLocationName,
+          location_category: resolvedType === 'work' ? 'workplace'
+            : resolvedType === 'school' ? 'education'
+            : 'home',
+          event_type: 'return_home',
+          arrival_time: eventDepartureTime, departure_time: null,
+          travel_source: 'event',
+          travel_reason: `Returned after "${title}" Story Event`,
+          is_current: false,
+          notes: `Returned to ${homeLocationName} after Story Event: ${title}`,
         });
       } catch (_) {}
     }
