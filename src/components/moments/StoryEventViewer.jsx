@@ -41,17 +41,52 @@ export default function StoryEventViewer({ eventId }) {
   const [impactResult, setImpactResult] = useState(null);
   const [impactError, setImpactError] = useState(null);
 
-  // Event participant character records (all types — loaded from StoryEvent participant IDs)
-  const [eventParticipants, setEventParticipants] = useState([]);
+  // Full identity roster for char-select modal (User + all character types)
+  const [identityRoster, setIdentityRoster] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
+  // Set of event participant IDs for badge display only
+  const [eventParticipantIds, setEventParticipantIds] = useState(new Set());
 
-  // Load characters for send modal (all types, user-scoped)
+  // Load current user + full character roster (all types, no participant filtering)
   useEffect(() => {
-    base44.auth.me().then(me => {
-      if (!me?.email) return;
-      base44.entities.Character.filter({ owner_email: me.email, status: 'active' }, 'name', 200)
-        .then(setCharacters)
-        .catch(() => {});
-    }).catch(() => {});
+    let cancelled = false;
+    (async () => {
+      // Load user
+      let user = null;
+      try {
+        user = await base44.auth.me();
+        if (!cancelled && user) setCurrentUser(user);
+      } catch (_) {}
+
+      if (!user?.email) return;
+
+      // Load full character roster
+      try {
+        const allChars = await base44.entities.Character.filter(
+          { owner_email: user.email, status: 'active' }, 'name', 200
+        );
+        if (!cancelled) {
+          setCharacters(allChars);
+          // Build identity roster: User first, then all characters
+          const roster = [];
+          if (user) {
+            roster.push({
+              id: `user_${user.id || user.email}`,
+              name: user.full_name,
+              display_name: user.full_name,
+              character_type: 'user',
+              _isUser: true,
+              avatar_url: null, // User has no avatar field — use first letter fallback
+            });
+          }
+          for (const c of allChars) {
+            roster.push({ ...c, _isUser: false });
+          }
+          setIdentityRoster(roster);
+        }
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -81,7 +116,7 @@ export default function StoryEventViewer({ eventId }) {
             if (records[0].status === 'complete' || records[0].status === 'failed') {
                 await loadRelated(eventId);
               }
-              await loadEventParticipants(records[0]);
+              await computeEventParticipantIds(records[0]);
           }
         } catch (fetchErr) {
           console.warn('[StoryEventViewer] Initial fetch failed, retrying:', fetchErr.message);
@@ -94,7 +129,7 @@ export default function StoryEventViewer({ eventId }) {
               if (retryRecords[0].status === 'complete' || retryRecords[0].status === 'failed') {
                 await loadRelated(eventId);
               }
-              await loadEventParticipants(retryRecords[0]);
+              await computeEventParticipantIds(retryRecords[0]);
             }
           } catch (_) {}
         }
@@ -271,31 +306,12 @@ export default function StoryEventViewer({ eventId }) {
     } catch (_) {} finally { setRegenerating(false); }
   };
 
-  const loadEventParticipants = async (evt) => {
+  const computeEventParticipantIds = (evt) => {
     const allIds = [...new Set([
       ...(evt.participant_character_ids || []),
       ...(evt.focus_character_ids || []),
     ])];
-    if (allIds.length === 0) return;
-
-    const participants = [];
-    for (const cid of allIds) {
-      try {
-        const chars = await base44.entities.Character.filter({ id: cid }, null, 1);
-        if (chars[0]) {
-          participants.push(chars[0]);
-        } else {
-          const idx = (evt.participant_character_ids || []).indexOf(cid);
-          const name = idx >= 0 ? (evt.participant_character_names || [])[idx] : cid;
-          participants.push({ id: cid, name, display_name: name, character_type: 'unknown' });
-        }
-      } catch (_) {
-        const idx = (evt.participant_character_ids || []).indexOf(cid);
-        const name = idx >= 0 ? (evt.participant_character_names || [])[idx] : cid;
-        participants.push({ id: cid, name, display_name: name, character_type: 'unknown' });
-      }
-    }
-    setEventParticipants(participants);
+    setEventParticipantIds(new Set(allIds));
   };
 
   // ── CHARACTER-SELECT REGENERATION ───────────────────────────────────────
@@ -305,10 +321,6 @@ export default function StoryEventViewer({ eventId }) {
     const existing = img.visible_character_ids || [];
     setSelectedVisibleIds(new Set(existing));
     setShowCharSelectModal(true);
-    // Load participants if not loaded yet
-    if (eventParticipants.length === 0 && event) {
-      loadEventParticipants(event);
-    }
   };
 
   const toggleVisibleChar = (id) => {
@@ -773,15 +785,20 @@ export default function StoryEventViewer({ eventId }) {
               <p className="text-[10px] text-amber-400/90 mb-2 px-2 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
                 This regenerates the image using ONLY the selected characters' reference photos and appearance data.
               </p>
-              {eventParticipants.map((char) => {
-                const isFocus = (event.focus_character_ids || []).includes(char.id);
+              {identityRoster.map((char) => {
+                const isParticipant = char._isUser
+                  ? false // User is never an event participant (they're the user, not a character)
+                  : eventParticipantIds.has(char.id);
+                const isFocus = char._isUser ? false : (event.focus_character_ids || []).includes(char.id);
                 const isSelected = selectedVisibleIds.has(char.id);
-                const charTypeLabel = {
-                  active_created_character: 'Active',
-                  npc_family_member: 'Family',
-                  npc_fictitious: 'NPC',
-                  npc_world_service: 'Service',
-                }[char.character_type] || 'Other';
+                const charTypeLabel = char._isUser
+                  ? 'User'
+                  : {
+                      active_created_character: 'Active',
+                      npc_family_member: 'Family',
+                      npc_fictitious: 'NPC',
+                      npc_world_service: 'Service',
+                    }[char.character_type] || 'Other';
                 const avatarUrl = char.avatar_url || char.image_avatar_url || 
                   (Array.isArray(char.reference_image_urls) ? char.reference_image_urls[0] : null);
 
@@ -803,7 +820,12 @@ export default function StoryEventViewer({ eventId }) {
                     {/* Name + Type label */}
                     <div className="flex-1 min-w-0">
                       <span className="text-sm font-medium truncate block">{char.name || char.display_name}</span>
-                      <span className="text-[9px] text-muted-foreground">{charTypeLabel}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] text-muted-foreground">{charTypeLabel}</span>
+                        {isParticipant && (
+                          <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">Event Participant</span>
+                        )}
+                      </div>
                     </div>
                     {/* Focus badge */}
                     {isFocus && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary shrink-0">★</span>}
