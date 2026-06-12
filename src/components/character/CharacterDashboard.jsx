@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { LineChart, Line, ReferenceLine, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
@@ -369,18 +369,50 @@ const dashboardCacheVersion = {};
 export default function CharacterDashboard({ character, allCharacters = [] }) {
   const charId = character?.id;
 
-  // Only use cached data if it was built with the current cache version
-  const cachedData = dashboardCache[charId];
-  const cachedVersion = dashboardCacheVersion[charId];
-  const cacheValid = cachedData && cachedVersion === DASHBOARD_CACHE_VERSION;
+  // Track the active request's charId so stale async responses from a
+  // previous character are discarded instead of overwriting the current one.
+  const activeRequestRef = useRef(null);
 
-  const [data, setData] = useState(() => cacheValid ? cachedData : null);
+  // State — initialized null/false. The useEffect below handles ALL transitions:
+  // cache hit, cache miss, and charId change (reset + refetch).
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(() => cacheValid);
+  const [loaded, setLoaded] = useState(false);
 
+  // ── SINGLE EFFECT — triggered ONLY by charId change ──────────────────────
+  // On every charId change this effect re-evaluates the cache for the NEW character,
+  // resets stale state from any previous character, and either uses cached data
+  // or starts a fresh fetch. No `loaded` or `loading` dependency → no loops.
+  // A useRef guards the async pipeline so a stale response from character A
+  // can never write into character B's state or cache.
   useEffect(() => {
-    if (loaded || loading || !charId) return;
+    if (!charId) {
+      setData(null);
+      setLoaded(false);
+      setLoading(false);
+      return;
+    }
+
+    // Re-evaluate cache for the CURRENT charId (may have changed since last render)
+    const cachedData = dashboardCache[charId];
+    const cachedVersion = dashboardCacheVersion[charId];
+    const cacheValid = cachedData && cachedVersion === DASHBOARD_CACHE_VERSION;
+
+    if (cacheValid) {
+      // Valid cached entry exists for this character — use it immediately
+      setData(cachedData);
+      setLoaded(true);
+      setLoading(false);
+      return;
+    }
+
+    // No valid cache. Reset any stale data from a previous character and fetch.
+    setData(null);
+    setLoaded(false);
     setLoading(true);
+
+    const requestCharId = charId;
+    activeRequestRef.current = requestCharId;
 
     const ownerEmail = character.owner_email;
     const now = new Date();
@@ -1152,12 +1184,18 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         : character.occupation || null;
 
       const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 20), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
+      // Guard: only write if this charId is still the active request
+      if (requestCharId !== activeRequestRef.current) {
+        console.log(`[CharacterDashboard] STALE — discarding result for ${requestCharId}, active is ${activeRequestRef.current}`);
+        return;
+      }
       dashboardCache[charId] = dashData;
       dashboardCacheVersion[charId] = DASHBOARD_CACHE_VERSION;
       setData(dashData);
       setLoaded(true);
       setLoading(false);
     }).catch((err) => {
+      if (requestCharId !== activeRequestRef.current) return;
       console.error('[CharacterDashboard] Fatal fetch error:', err?.message);
       // Set minimal fallback data so the dashboard renders with what it has.
       // IMPORTANT: Do NOT cache this fallback — a 429 or transient failure is
