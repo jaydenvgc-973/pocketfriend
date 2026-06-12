@@ -591,19 +591,9 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
         <div className="border-t border-border bg-secondary/20 p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-foreground">{format(selectedDay, 'EEEE, MMMM d')}</h3>
-            <div className="flex items-center gap-1.5">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => { setPanelMode('story'); setViewingStoryEventId(null); }}
-                className="h-7 px-2.5 text-xs gap-1 border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300"
-              >
-                <Star className="w-3 h-3" /> Story
-              </Button>
-              <button onClick={closePanel} className="text-muted-foreground hover:text-foreground p-1">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+            <button onClick={closePanel} className="text-muted-foreground hover:text-foreground p-1">
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
           {/* View mode */}
@@ -658,11 +648,6 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
                   ))}
                 </ul>
               )}
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setPanelMode('add')} className="h-7 px-3 text-xs gap-1">
-                  <Plus className="w-3 h-3" /> Add event
-                </Button>
-              </div>
             </div>
           )}
 
@@ -693,9 +678,12 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
           {panelMode === 'story_view' && viewingStoryEventId && (
             <div>
               <StoryEventViewer eventId={viewingStoryEventId} />
-              <div className="mt-3">
+              <div className="mt-3 flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => { setViewingStoryEventId(null); setPanelMode('view'); }} className="h-7 text-xs">
                   ← Back to day
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => { setPanelMode('story'); setViewingStoryEventId(null); }} className="h-7 text-xs gap-1 border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300">
+                  <Star className="w-3 h-3" /> New Story Event
                 </Button>
               </div>
             </div>
@@ -765,9 +753,34 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
                 <Button size="sm" variant="outline" onClick={() => setPanelMode('view')} className="h-8">
                   Cancel
                 </Button>
+                <Button size="sm" variant="outline" onClick={() => { setPanelMode('story'); setViewingStoryEventId(null); }} className="h-8 text-xs gap-1 border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300">
+                  <Star className="w-3 h-3" /> Story Event
+                </Button>
               </div>
             </div>
           )}
+
+          {/* ── Persistent action footer — always visible regardless of panelMode ── */}
+          <div className="mt-3 pt-3 border-t border-border/50 flex items-center gap-2 flex-wrap">
+            {panelMode !== 'view' && (
+              <Button variant="ghost" size="sm" onClick={() => { setPanelMode('view'); setViewingStoryEventId(null); }} className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground">
+                ← Day view
+              </Button>
+            )}
+            {panelMode !== 'add' && (
+              <Button variant="outline" size="sm" onClick={() => setPanelMode('add')} className="h-7 px-3 text-xs gap-1">
+                <Plus className="w-3 h-3" /> Add event
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setPanelMode('story'); setViewingStoryEventId(null); }}
+              className="h-7 px-3 text-xs gap-1 border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300"
+            >
+              <Star className="w-3 h-3" /> Story Event
+            </Button>
+          </div>
         </div>
       )}
     </div>
