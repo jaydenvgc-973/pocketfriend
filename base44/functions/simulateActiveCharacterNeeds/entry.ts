@@ -773,21 +773,68 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
   }
 
   // ── PRIORITY 4: HUNGER → EATING (food-seeking, not sleep) ──
+  // EXECUTION RULE: If the character is already at home or a food location AND hunger is critical,
+  // apply eating recovery directly this tick. Do not just write intent — execute the action.
+  // Intent loop prevention: if current_activity already says "eating", this tick counts as execution.
   if (hunger <= T.HUNGER_CRITICAL && !alreadySleeping && !alreadyHospitalized) {
     const financial = char.financial_need_value ?? 60;
-    const eatActivity = financial > 15 ? 'eating — addressing hunger' : 'finding food — hunger critical';
-    stateWrites.current_activity = eatActivity;
-    logs.push(`[CORRECTIVE] ${char.name}: hunger=${Math.round(hunger)} → auto-eat: "${eatActivity}"`);
+    const locType = (char.resolved_location_type || '').toLowerCase();
+    const locId = char.resolved_current_location_id;
+    const homeId = char.current_home_location_id;
+    const isAtHomeOrFood = (
+      locType === 'home' ||
+      locType === 'food_drink' ||
+      (locId && locId === homeId) ||
+      presence === 'home'
+    );
+    // Already in an eating activity → this tick IS the execution tick — no re-announce
+    const alreadyEating = (char.current_activity || '').toLowerCase().includes('eat');
+    if (isAtHomeOrFood) {
+      // EXECUTE: Apply hunger recovery directly. Character IS eating this tick.
+      stateWrites.hunger_value_override = Math.min(100, hunger + 20); // direct recovery for this tick
+      stateWrites.current_activity = 'eating — hunger addressed';
+      logs.push(`[CORRECTIVE] ${char.name}: hunger=${Math.round(hunger)} → EXECUTED eating at home/food location — applying recovery`);
+    } else if (!alreadyEating) {
+      // Not at a valid eating location — set intent to find food (will trigger autonomous travel)
+      const eatActivity = financial > 15 ? 'eating — addressing hunger' : 'finding food — hunger critical';
+      stateWrites.current_activity = eatActivity;
+      logs.push(`[CORRECTIVE] ${char.name}: hunger=${Math.round(hunger)} → intent: "${eatActivity}" (not yet at food location)`);
+    }
+    // If alreadyEating but not at home/food, hunger recovery continues via normal rate — no re-announce
   }
 
   // ── PRIORITY 5: HYGIENE → HYGIENE CORRECTION (NOT sleep) ──
-  // hygiene=0 means the character is unwashed, uncomfortable, self-conscious.
-  // They need to shower/wash/change. They do NOT need to sleep.
-  // Inject a hygiene-correction activity note that the context system will pick up.
-  if (hygiene <= 10 && !alreadySleeping && !alreadyHospitalized && !stateWrites.current_activity) {
-    stateWrites.current_activity = 'needs to wash up — hygiene critical';
-    stateWrites.emotional_state = 'uncomfortable';
-    logs.push(`[CORRECTIVE] ${char.name}: hygiene=${Math.round(hygiene)} → hygiene correction nudge (NOT sleep)`);
+  // EXECUTION RULE: If the character is at home and hygiene is critical, they CAN shower right now.
+  // Apply hygiene recovery directly. Do NOT re-announce intent if already announced this cycle.
+  // Intent loop prevention: track hygiene_correction_started_at to avoid repeated "about to shower" loops.
+  if (hygiene <= 20 && !alreadySleeping && !alreadyHospitalized && !stateWrites.current_activity) {
+    const locType2 = (char.resolved_location_type || '').toLowerCase();
+    const locId2 = char.resolved_current_location_id;
+    const homeId2 = char.current_home_location_id;
+    const isAtHome2 = (
+      locType2 === 'home' ||
+      locType2 === 'temporary_housing' ||
+      (locId2 && locId2 === homeId2) ||
+      presence === 'home'
+    );
+    const alreadyShowering = (char.current_activity || '').toLowerCase().includes('wash') ||
+      (char.current_activity || '').toLowerCase().includes('shower') ||
+      (char.current_activity || '').toLowerCase().includes('clean');
+
+    if (isAtHome2) {
+      // EXECUTE: Character is home and hygiene is critical — they are showering this tick.
+      // Apply hygiene recovery directly. This breaks the intent loop.
+      stateWrites.hygiene_value_override = Math.min(100, hygiene + 35); // shower restores hygiene significantly
+      stateWrites.current_activity = 'freshening up';
+      stateWrites.emotional_state = 'calm';
+      logs.push(`[CORRECTIVE] ${char.name}: hygiene=${Math.round(hygiene)} → EXECUTED hygiene correction at home — applying recovery`);
+    } else if (!alreadyShowering) {
+      // Not home yet — set intent once (autonomousMovement will route home)
+      stateWrites.current_activity = 'needs to wash up — heading home';
+      stateWrites.emotional_state = 'uncomfortable';
+      logs.push(`[CORRECTIVE] ${char.name}: hygiene=${Math.round(hygiene)} → intent: heading home to wash (not yet home)`);
+    }
+    // If alreadyShowering but not home, keep current activity — no re-announce
   }
 
   // ── PRIORITY 6: MENTAL → DECOMPRESSION NUDGE (NOT sleep unless energy also low) ──
@@ -1023,6 +1070,19 @@ Deno.serve(async (req) => {
       // REMOVED: Sleep debt system completely removed
       // No sleep debt calculation, no debt decay, no baseline clearing
       let sleepDebtUpdate = {};
+
+      // ── APPLY CORRECTIVE EXECUTION OVERRIDES ─────────────────────────────
+      // computeCorrectiveState may set hunger_value_override or hygiene_value_override
+      // when the character is already at the right location and the action executes this tick.
+      // These override the decay-computed values to apply actual recovery.
+      if (corrective.stateWrites.hunger_value_override != null) {
+        newNeeds.hunger = corrective.stateWrites.hunger_value_override;
+        delete corrective.stateWrites.hunger_value_override;
+      }
+      if (corrective.stateWrites.hygiene_value_override != null) {
+        newNeeds.hygiene = corrective.stateWrites.hygiene_value_override;
+        delete corrective.stateWrites.hygiene_value_override;
+      }
 
       // Build final data payload — needs values + corrective state writes
       const updateData = {

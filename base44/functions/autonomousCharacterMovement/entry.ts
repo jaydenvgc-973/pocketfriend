@@ -347,6 +347,8 @@ function scoreLocation(location, char, vals, nowET) {
   }
 
   // HYGIENE → home to freshen up
+  // Note: if character is already home, simulateActiveCharacterNeeds executes the shower directly.
+  // autonomousMovement only needs to route them home when they are NOT already there.
   if (hygieneU >= 2) {
     if (cat === 'home') score += 2 + hygieneU;
   }
