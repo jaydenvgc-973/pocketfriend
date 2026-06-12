@@ -362,7 +362,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 14; // fix: calm-label override — content inference now takes priority over generic "calm" emotional_state for Social Activity classification and timeline message entries. Also covers destructuring fix for locHistory/allChars index swap.
+const DASHBOARD_CACHE_VERSION = 13; // feat: CharacterAutomaticNarrative + EventParticipation sources, need-fulfillment proof records
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -588,18 +588,14 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const msgsSent = msgs3dFallback.length;
 
       // ── LEGACY-SAFE sentiment classification ──────────────────────────────
-      // Priority: 1. non-calm emotional_state  2. semantic inference from content  3. calm emotional_state fallback
-      // "calm" is a frequently-used default label that does not reflect actual distress content.
-      // Content inference must take priority over a generic "calm" label so hunger/distress
-      // in message text is recognized even when emotional_state field says "calm".
+      // Priority: 1. emotional_state field  2. semantic inference from content (display only)
       // CRITICAL: inferEmotionFromText results are NEVER written back to Message records.
       const resolveMessageSentiment = (m) => {
-        if (m.emotional_state && m.emotional_state.toLowerCase() !== "calm") return m.emotional_state.toLowerCase();
+        if (m.emotional_state) return m.emotional_state.toLowerCase();
         if (m.content) {
           const inf = inferEmotionFromText(m.content);
           if (inf) return inf.emotion.toLowerCase();
         }
-        if (m.emotional_state) return m.emotional_state.toLowerCase();
         return null;
       };
 
@@ -988,14 +984,8 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         return p[(s||"").toLowerCase()] || 1;
       };
       // Include ALL messages in last 3 days — legacy messages without emotional_state use inferred sentiment for priority
-      // When emotional_state is "calm" (a generic default), content inference takes priority.
-      // This ensures message-derived activity entries in the timeline reflect actual distress
-      // (e.g. hunger, exhaustion) rather than being forced to "calm" when content says otherwise.
       msgs3dFallback.forEach(m => {
-        const resolvedEmotion = (m.emotional_state && m.emotional_state.toLowerCase() !== "calm" ? m.emotional_state : null)
-          || (m.content ? inferEmotionFromText(m.content)?.emotion : null)
-          || m.emotional_state
-          || null;
+        const resolvedEmotion = m.emotional_state || (m.content ? inferEmotionFromText(m.content)?.emotion : null) || null;
         const existing = convoMsgPick[m.conversation_id];
         if (!existing || priorityScore(resolvedEmotion) > priorityScore(existing._resolvedEmotion))
           convoMsgPick[m.conversation_id] = { ...m, _resolvedEmotion: resolvedEmotion };
