@@ -591,9 +591,19 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
         <div className="border-t border-border bg-secondary/20 p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-foreground">{format(selectedDay, 'EEEE, MMMM d')}</h3>
-            <button onClick={closePanel} className="text-muted-foreground hover:text-foreground p-1">
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setPanelMode('story'); setViewingStoryEventId(null); }}
+                className="h-7 px-2.5 text-xs gap-1 border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300"
+              >
+                <Star className="w-3 h-3" /> Story Event
+              </Button>
+              <button onClick={closePanel} className="text-muted-foreground hover:text-foreground p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* View mode */}
