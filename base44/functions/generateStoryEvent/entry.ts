@@ -6,10 +6,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
 
     const eventId = body.event_id || (body.data ? body.data.id : null);
-    const eventData = body.data || {};
-
     if (!eventId) {
-      // Try to get the event from the entity event payload
       return Response.json({ error: 'No story event id found' }, { status: 400 });
     }
 
@@ -47,14 +44,47 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // Build character context for the LLM
+    // ── Collect character avatar/reference images for identity-aware image generation ──
+    const characterReferenceImages = [];
+    for (const cid of allIds) {
+      const c = charById[cid];
+      if (!c) continue;
+      if (c.avatar_url && typeof c.avatar_url === 'string') characterReferenceImages.push(c.avatar_url);
+      if (c.image_avatar_url && typeof c.image_avatar_url === 'string') characterReferenceImages.push(c.image_avatar_url);
+      if (c.reference_image_urls && Array.isArray(c.reference_image_urls)) {
+        c.reference_image_urls.forEach(url => {
+          if (url && typeof url === 'string') characterReferenceImages.push(url);
+        });
+      }
+    }
+
+    // Focus character reference images — prioritized for image generation
+    const focusRefImages = [];
+    for (const cid of focusIds) {
+      const c = charById[cid];
+      if (!c) continue;
+      if (c.avatar_url && typeof c.avatar_url === 'string') focusRefImages.push(c.avatar_url);
+      if (c.image_avatar_url && typeof c.image_avatar_url === 'string') focusRefImages.push(c.image_avatar_url);
+      if (c.reference_image_urls && Array.isArray(c.reference_image_urls)) {
+        c.reference_image_urls.forEach(url => {
+          if (url && typeof url === 'string') focusRefImages.push(url);
+        });
+      }
+    }
+
+    // Build character context for the LLM — include character_type so LLM knows who's family/NPC/service
     const characterContexts = allIds.map(cid => {
       const c = charById[cid];
       if (!c) return `- ${cid}: (character data unavailable)`;
       const isFocus = focusIds.includes(cid);
       const marker = isFocus ? '★ FOCUS' : '';
+      const charType = c.character_type || '';
+      const typeNote = charType === 'npc_family_member' ? ' [Family member]'
+        : charType === 'npc_fictitious' ? ' [Fictional/NPC character]'
+        : charType === 'npc_world_service' ? ' [World service character]'
+        : '';
       return [
-        `- ${c.name || cid} ${marker}`,
+        `- ${c.name || cid} ${marker}${typeNote}`,
         c.personality_summary ? `  Personality: ${c.personality_summary}` : '',
         c.occupation ? `  Occupation: ${c.occupation}` : '',
         c.age ? `  Age: ${c.age}` : '',
@@ -90,6 +120,22 @@ Deno.serve(async (req) => {
       ? 'All-day event'
       : `${startTime || 'TBD'}${endTime ? ` to ${endTime}` : ''}`;
 
+    // Build venue appearance context from LocationReference if available
+    let venueContext = '';
+    if (!isRabbitHole && event.venue_id) {
+      try {
+        const venueRecs = await base44.asServiceRole.entities.LocationReference.filter({ id: event.venue_id }, null, 1);
+        const venue = venueRecs[0];
+        if (venue) {
+          venueContext = [
+            `Venue: ${venue.name}`,
+            venue.description ? `Description: ${venue.description}` : '',
+            venue.category ? `Category: ${venue.category}` : '',
+          ].filter(Boolean).join('\n');
+        }
+      } catch (_) {}
+    }
+
     // ── STEP 1: GENERATE NARRATIVE ──────────────────────────────────────────
     const narrativePrompt = [
       `You are a narrative writer creating a meaningful story for a character-driven world.`,
@@ -99,6 +145,9 @@ Deno.serve(async (req) => {
       `TIME: ${timeInfo}`,
       `VENUE: ${venueName}${isRabbitHole ? ' (custom venue)' : ''}`,
       ``,
+      venueContext ? `VENUE DETAILS:` : '',
+      venueContext ? venueContext : '',
+      venueContext ? `` : '',
       `USER'S PLOT (THIS IS THE FOUNDATION — DO NOT REPLACE IT):`,
       `${plot}`,
       ``,
@@ -108,7 +157,7 @@ Deno.serve(async (req) => {
       `FOCUS CHARACTERS (give these characters the most narrative attention):`,
       focusNames.length > 0 ? focusNames.join(', ') : 'None specified',
       ``,
-      `PARTICIPATING CHARACTERS:`,
+      `PARTICIPATING CHARACTERS (ALL of these are present at the event):`,
       participantNames.join(', '),
       ``,
       `CHARACTER DETAILS:`,
@@ -119,8 +168,9 @@ Deno.serve(async (req) => {
       ``,
       `INSTRUCTIONS:`,
       `1. Write a narrative story about this event. The story MUST follow the user's plot above. Expand details, interactions, observations, and emotional moments — but DO NOT replace the user's intended event with a different storyline.`,
-      `2. Focus characters should receive greater narrative attention, more detailed emotional moments, and more internal perspective. Supporting participants should still be included where appropriate.`,
+      `2. Focus characters should receive greater narrative attention, more detailed emotional moments, and more internal perspective. Supporting participants (including family members, NPCs, and service characters) should still be included where appropriate.`,
       `3. Include light dialogue where it supports the event. Dialogue should enhance the story, not dominate it.`,
+      `4. Family members should behave according to their family role. Service characters should behave professionally.`,
       ``,
       `OUTPUT FORMAT — Return a JSON object with these fields:`,
       `{`,
@@ -133,11 +183,11 @@ Deno.serve(async (req) => {
       `    { "source_character_id": "the_exact_id", "target_character_id": "the_exact_id", "source_name": "Name", "target_name": "Name", "dimension": "friendship|trust|familiarity|attraction|respect|tension", "change": "increased|decreased", "amount": 1-10, "reason": "Brief explanation tied to the narrative" }`,
       `  ],`,
       `  "memories": [`,
-      `    { "character_id": "the_exact_id", "character_name": "Name", "memory_text": "What this character remembers about the event — personal, specific, from their perspective. A few sentences.", "memory_summary": "Short summary for retrieval", "importance_score": 1-10, "emotional_tone": "positive|negative|neutral|mixed" }`,
+      `    { "character_id": "the_exact_id", "character_name": "Name", "memory_text": "What this character remembers about the event — personal, specific, from their perspective. Include: the event title, venue, who they saw there, what they did, interactions they had, and how they felt. A few sentences.", "memory_summary": "Short summary for retrieval (one sentence)", "importance_score": 1-10, "emotional_tone": "positive|negative|neutral|mixed" }`,
       `  ],`,
       `  "image_prompts": [`,
-      `    { "moment": "opening", "prompt": "Detailed image generation prompt for the opening moment. Include venue details, characters present, lighting, mood. The venue is: ${venueName}.", "description": "What the image shows." },`,
-      `    { "moment": "key_moment", "prompt": "Detailed image generation prompt for the key/peak moment of the event.", "description": "What the image shows." },`,
+      `    { "moment": "opening", "prompt": "Detailed image generation prompt for the opening moment. Include venue details, characters present, lighting, mood. The venue is: ${venueName}. Use the characters' actual described physical appearances and outfits.", "description": "What the image shows." },`,
+      `    { "moment": "key_moment", "prompt": "Detailed image generation prompt for the key/peak moment of the event. Focus on the focus characters.", "description": "What the image shows." },`,
       `    { "moment": "closing", "prompt": "Detailed image generation prompt for the closing/wrap-up moment.", "description": "What the image shows." }`,
       `  ]`,
       `}`,
@@ -147,8 +197,9 @@ Deno.serve(async (req) => {
       `- Emotional outcomes must be supported by what happens in the narrative. No random emotions.`,
       `- Relationship changes must have a meaningful reason in the narrative. No unsupported changes.`,
       `- Focus characters get richer memories with higher importance scores.`,
-      `- Every participant gets at least one memory.`,
+      `- EVERY participant (family members, NPCs, service characters, AND active characters) gets at least one memory. No character who attended is left without a memory.`,
       `- Image prompts must reference the venue: ${venueName}.`,
+      `- Image prompts must describe the participating characters using their actual physical descriptions — do not invent generic strangers.`,
       `- Only include relationship changes for character pairs that actually interact meaningfully.`,
     ].join('\n');
 
@@ -221,7 +272,6 @@ Deno.serve(async (req) => {
       });
       generated = llmRes;
     } catch (e) {
-      // Update status to failed
       await base44.asServiceRole.entities.StoryEvent.update(eventId, {
         status: 'failed',
         generation_error: `LLM error: ${e.message}`,
@@ -229,7 +279,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: e.message }, { status: 500 });
     }
 
-    // ── STEP 2: CREATE MEMORIES ─────────────────────────────────────────────
+    // ── STEP 2: CREATE STORY EVENT MEMORIES ──────────────────────────────────
     const memories = generated.memories || [];
     for (const mem of memories) {
       if (!mem.character_id || !mem.memory_text) continue;
@@ -244,6 +294,44 @@ Deno.serve(async (req) => {
           importance_score: mem.importance_score || 5,
           emotional_tone: mem.emotional_tone || 'neutral',
           owner_email: ownerEmail,
+        });
+      } catch (_) {}
+    }
+
+    // ── STEP 2b: CREATE CHARACTER MEMORY RECORDS (durable LLM awareness) ─────
+    // Every participant gets a CharacterMemory so they can recall the event in future conversations
+    for (const mem of memories) {
+      if (!mem.character_id || !mem.memory_text) continue;
+      try {
+        await base44.asServiceRole.entities.CharacterMemory.create({
+          character_id: mem.character_id,
+          memory_type: 'event',
+          memory_text: `[Story Event: ${title} — ${eventDate} at ${venueName}] ${mem.memory_text}`,
+          memory_summary: mem.memory_summary || `Attended "${title}" at ${venueName} on ${eventDate}`,
+          importance_score: mem.importance_score || 5,
+          confidence_score: 0.95,
+          permanence: (mem.importance_score || 5) >= 7 ? 'protected' : 'long_term',
+          validation_status: 'confirmed',
+        });
+      } catch (_) {}
+    }
+
+    // Also write to Character.memories array for backward compatibility with older context builders
+    for (const mem of memories) {
+      if (!mem.character_id || !mem.memory_text) continue;
+      try {
+        const existingChar = charById[mem.character_id];
+        if (!existingChar) continue;
+        const existingMemories = existingChar.memories || [];
+        const newMemoryEntry = {
+          title: `Story Event: ${title}`,
+          description: mem.memory_text,
+          date: eventDate,
+          emotion_state: mem.emotional_tone || 'neutral',
+          created_date: new Date().toISOString(),
+        };
+        await base44.asServiceRole.entities.Character.update(mem.character_id, {
+          memories: [...existingMemories, newMemoryEntry],
         });
       } catch (_) {}
     }
@@ -296,15 +384,21 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 5: GENERATE IMAGES ─────────────────────────────────────────────
+    // ── STEP 5: GENERATE IMAGES WITH CHARACTER IDENTITY REFERENCES ───────────
     const imagePrompts = generated.image_prompts || [];
     const momentOrder = { opening: 0, key_moment: 1, closing: 2 };
 
     for (const img of imagePrompts) {
       if (!img.moment || !img.prompt) continue;
       try {
+        // Use all character reference images, with focus character images prioritized first
+        const refImages = [...focusRefImages, ...characterReferenceImages]
+          .filter((url, i, arr) => arr.indexOf(url) === i) // deduplicate
+          .slice(0, 10); // limit to avoid huge payloads
+
         const imageRes = await base44.asServiceRole.integrations.Core.GenerateImage({
           prompt: img.prompt,
+          existing_image_urls: refImages.length > 0 ? refImages : undefined,
         });
 
         if (imageRes?.url) {
@@ -320,7 +414,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 6: UPDATE STORY EVENT STATUS ───────────────────────────────────
+    // ── STEP 6: UPDATE STORY EVENT STATUS WITH FULL DATA ────────────────────
     await base44.asServiceRole.entities.StoryEvent.update(eventId, {
       status: 'complete',
       generated_narrative: generated.narrative || '',
@@ -333,8 +427,10 @@ Deno.serve(async (req) => {
       success: true,
       eventId,
       memoriesCreated: memories.length,
+      characterMemoriesCreated: memories.length,
       imagesGenerated: imagePrompts.length,
       relationshipChanges: relChanges.length,
+      participantTypes: allIds.map(id => charById[id]?.character_type || 'unknown'),
     });
   } catch (error) {
     console.error('[generateStoryEvent]', error.message, error.stack);

@@ -28,13 +28,34 @@ export default function StoryEventViewer({ eventId }) {
           }
         });
 
-        // Initial load
-        const records = await base44.entities.StoryEvent.filter({ id: eventId }, null, 1);
-        if (records[0]) {
-          setEvent(records[0]);
-          if (records[0].status === 'complete') {
-            await loadRelated(eventId);
+        // Initial load — must succeed for re-opening after panel close
+        let loaded = false;
+        try {
+          const records = await base44.entities.StoryEvent.filter({ id: eventId }, null, 1);
+          if (records[0]) {
+            setEvent(records[0]);
+            loaded = true;
+            if (records[0].status === 'complete' || records[0].status === 'failed') {
+              await loadRelated(eventId);
+            }
           }
+        } catch (fetchErr) {
+          console.warn('[StoryEventViewer] Initial fetch failed, retrying:', fetchErr.message);
+          // Retry once — sometimes filter needs a moment after creation
+          try {
+            const retryRecords = await base44.entities.StoryEvent.filter({ id: eventId }, null, 1);
+            if (retryRecords[0]) {
+              setEvent(retryRecords[0]);
+              loaded = true;
+              if (retryRecords[0].status === 'complete' || retryRecords[0].status === 'failed') {
+                await loadRelated(eventId);
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (!loaded) {
+          console.warn('[StoryEventViewer] Could not load event:', eventId);
         }
 
         setLoading(false);

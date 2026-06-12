@@ -20,9 +20,16 @@ export default function StoryEventCreator({ date, characters = [], appLocations 
 
   const dateStr = date ? new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString().split('T')[0] : '';
 
-  const activeChars = characters.filter(c =>
-    c.character_type === 'active_created_character' && c.status === 'active'
+  // All eligible character types: active_created_character, npc_family_member, npc_fictitious, npc_world_service
+  const ELIGIBLE_TYPES = ['active_created_character', 'npc_family_member', 'npc_fictitious', 'npc_world_service'];
+  const eligibleChars = characters.filter(c =>
+    ELIGIBLE_TYPES.includes(c.character_type) && c.status === 'active'
   );
+  // Group by type for organized display
+  const activeChars = eligibleChars.filter(c => c.character_type === 'active_created_character');
+  const familyChars = eligibleChars.filter(c => c.character_type === 'npc_family_member');
+  const fictitiousChars = eligibleChars.filter(c => c.character_type === 'npc_fictitious');
+  const serviceChars = eligibleChars.filter(c => c.character_type === 'npc_world_service');
 
   const venues = appLocations.filter(l => l !== null && l?.name);
 
@@ -181,44 +188,63 @@ export default function StoryEventCreator({ date, characters = [], appLocations 
           <Users className="w-3 h-3 text-muted-foreground" />
           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Characters</span>
         </div>
-        {activeChars.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic">No active characters available.</p>
+        {eligibleChars.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No eligible characters available. Create characters first.</p>
         ) : (
-          <div className="space-y-2 max-h-48 overflow-y-auto">
-            {activeChars.map(c => {
-              const isFocus = focusIds.includes(c.id);
-              const isParticipant = participantIds.includes(c.id);
-              return (
-                <div key={c.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-secondary/40 border border-border">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-foreground truncate">{c.name || c.display_name}</p>
-                    {c.occupation && <p className="text-[10px] text-muted-foreground truncate">{c.occupation}</p>}
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-                    <button
-                      onClick={() => toggleFocus(c.id)}
-                      className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                        isFocus ? 'bg-primary/20 text-primary border border-primary/40' : 'bg-secondary/60 text-muted-foreground border border-border hover:border-primary/30'
-                      }`}
-                      title="Focus character — gets more narrative attention"
-                    >
-                      <Star className={`w-2.5 h-2.5 inline mr-0.5 ${isFocus ? 'fill-primary' : ''}`} />
-                      Focus
-                    </button>
-                    <button
-                      onClick={() => toggleParticipant(c.id)}
-                      className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                        isParticipant && !isFocus ? 'bg-primary/20 text-primary border border-primary/40' : 'bg-secondary/60 text-muted-foreground border border-border hover:border-primary/30'
-                      }`}
-                      disabled={isFocus}
-                      title={isFocus ? 'Focus characters are automatically participants' : 'Include as participant'}
-                    >
-                      {isFocus ? 'Included' : isParticipant ? 'Participant' : 'Include'}
-                    </button>
-                  </div>
+          <div className="space-y-3 max-h-64 overflow-y-auto">
+            {[
+              { group: '★ My Characters', chars: activeChars },
+              { group: '👪 Family', chars: familyChars },
+              { group: '🎭 Fictional / NPC', chars: fictitiousChars },
+              { group: '🔧 World Services', chars: serviceChars },
+            ].filter(g => g.chars.length > 0).map(({ group, chars }) => (
+              <div key={group}>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5 px-1">{group}</p>
+                <div className="space-y-1">
+                  {chars.map(c => {
+                    const isFocus = focusIds.includes(c.id);
+                    const isParticipant = participantIds.includes(c.id);
+                    const typeLabel = c.character_type === 'npc_world_service'
+                      ? 'Service' : c.character_type === 'npc_family_member'
+                      ? 'Family' : c.character_type === 'npc_fictitious'
+                      ? 'NPC' : '';
+                    return (
+                      <div key={c.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-secondary/40 border border-border">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate">{c.name || c.display_name}</p>
+                          <div className="flex gap-1.5 text-[9px] text-muted-foreground mt-0.5">
+                            {typeLabel && <span className="px-1 rounded bg-secondary/80">{typeLabel}</span>}
+                            {c.occupation && <span className="truncate">{c.occupation}</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                          <button
+                            onClick={() => toggleFocus(c.id)}
+                            className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                              isFocus ? 'bg-primary/20 text-primary border border-primary/40' : 'bg-secondary/60 text-muted-foreground border border-border hover:border-primary/30'
+                            }`}
+                            title="Focus character — gets more narrative attention"
+                          >
+                            <Star className={`w-2.5 h-2.5 inline mr-0.5 ${isFocus ? 'fill-primary' : ''}`} />
+                            Focus
+                          </button>
+                          <button
+                            onClick={() => toggleParticipant(c.id)}
+                            className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                              isParticipant && !isFocus ? 'bg-primary/20 text-primary border border-primary/40' : 'bg-secondary/60 text-muted-foreground border border-border hover:border-primary/30'
+                            }`}
+                            disabled={isFocus}
+                            title={isFocus ? 'Focus characters are automatically participants' : 'Include as participant'}
+                          >
+                            {isFocus ? 'Included' : isParticipant ? 'Participant' : 'Include'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         )}
         <p className="text-[9px] text-muted-foreground mt-1">
