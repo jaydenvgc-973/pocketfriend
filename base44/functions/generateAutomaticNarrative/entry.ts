@@ -161,6 +161,53 @@ Deno.serve(async (req) => {
     // Presence
     const presenceStatus = character.resolved_presence_status || 'home';
 
+    // ── DEDUPLICATION: Same-instance check ─────────────────────────────────
+    // Before generating a new narrative, verify that something actually changed
+    // since the last narrative. Re-generating the same "at work" or "at school"
+    // entry when the character is still at work/school creates duplicate entries.
+    // Skip if: same location, same sleep/work/travel state, within 60 minutes,
+    // AND no manual trigger (manual_right_now always generates).
+    if (!isManual) {
+      try {
+        const lastTwoNarrs = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
+          { character_id: characterId },
+          '-timestamp',
+          2
+        ).catch(() => []);
+        const lastNarr = lastTwoNarrs?.[0];
+        if (lastNarr?.timestamp) {
+          const lastNarrMs = new Date(lastNarr.timestamp).getTime();
+          const elapsedMs = NOW.getTime() - lastNarrMs;
+          const SAME_INSTANCE_DEDUP_MS = 60 * 60 * 1000; // 60 minutes
+
+          // Check if state is unchanged from last narrative
+          const sameLocation = lastNarr.location_id === locationId;
+          const sameSleep    = lastNarr.sleep_state === sleepState;
+          const sameWork     = lastNarr.work_state === workState;
+          const sameTravel   = lastNarr.travel_state === travelState;
+          const stateUnchanged = sameLocation && sameSleep && sameWork && sameTravel;
+
+          if (elapsedMs < SAME_INSTANCE_DEDUP_MS && stateUnchanged) {
+            console.log(
+              `[generateAutomaticNarrative] ⏭️ Dedup skipped: same instance — ` +
+              `loc=${resolvedLocationName} sleep=${sleepState} work=${workState} travel=${travelState} ` +
+              `elapsed=${Math.round(elapsedMs / 60000)}min`
+            );
+            return Response.json({
+              success: false,
+              skipped: true,
+              reason: 'same_instance_dedup',
+              detail: 'location, sleep, work, and travel state unchanged since last narrative',
+              lastNarrativeTime: lastNarr.timestamp,
+              elapsedMinutes: Math.round(elapsedMs / 60000),
+            });
+          }
+        }
+      } catch (dedupErr) {
+        console.warn(`[generateAutomaticNarrative] Dedup check failed (non-blocking): ${dedupErr.message}`);
+      }
+    }
+
     // ── NEEDS SNAPSHOT ────────────────────────────────────────────────────
     const needsSnapshot = {
       hunger: character.hunger_value ?? 70,

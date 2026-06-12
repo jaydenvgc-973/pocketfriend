@@ -397,6 +397,8 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       base44.entities.Message.filter({ character_id: charId }, "-created_date", 200).catch(() => []),
       base44.entities.FinancialTransaction.filter({ character_id: charId }, "-timestamp", 20).catch(() => []),
       base44.entities.AutomaticNarrative.filter({ character_id: charId }, "-timestamp", 80).catch(() => []),
+      // CharacterAutomaticNarrative — need-fulfillment and corrective-action durable proof records
+      base44.entities.CharacterAutomaticNarrative.filter({ character_id: charId }, "-timestamp", 80).catch(() => []),
       // Conversations where [VIEWED_CHARACTER] is a participant (any side)
       ownerEmail
         ? base44.entities.Conversation.filter({ owner_email: ownerEmail, character_ids: [charId] }, "-updated_date", 120).catch(() => [])
@@ -419,10 +421,15 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         : ownerEmail
           ? base44.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => [])
           : Promise.resolve([]),
-    ]).then(([msgsR, txR, narrR, convosR, locsR, lifeEventsR, rcvMsgsR, allCharsR, locHistR]) => {
+      // EventParticipation — community events this character attended
+      ownerEmail
+        ? base44.entities.EventParticipation.filter({ character_id: charId, owner_email: ownerEmail }, "-participation_date", 30).catch(() => [])
+        : Promise.resolve([]),
+    ]).then(([msgsR, txR, narrR, charNarrR, convosR, locsR, lifeEventsR, rcvMsgsR, allCharsR, locHistR, eventPartR]) => {
       const msgs       = msgsR.status       === "fulfilled" ? (msgsR.value       || []) : [];
       const txns       = txR.status         === "fulfilled" ? (txR.value         || []) : [];
       const narrs      = narrR.status       === "fulfilled" ? (narrR.value       || []) : [];
+      const charNarrs  = charNarrR.status   === "fulfilled" ? (charNarrR.value   || []) : [];
       const convos     = convosR.status     === "fulfilled" ? (convosR.value     || []) : [];
       const locsArr    = locsR.status       === "fulfilled" ? (locsR.value       || []) : [];
       const lifeEvents = lifeEventsR.status === "fulfilled" ? (lifeEventsR.value || []) : [];
@@ -432,6 +439,8 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const allChars   = allCharsR.status   === "fulfilled" ? (allCharsR.value   || []) : [];
       // Location history — recent places visited
       const locHistory = locHistR?.status   === "fulfilled" ? (locHistR.value    || []) : [];
+      // Event participation — community events the character attended
+      const eventParts = eventPartR?.status === "fulfilled" ? (eventPartR.value  || []) : [];
       // Combine for full picture — deduplicated by id
       const allMsgIds = new Set(msgs.map(m => m.id));
       const allMsgs   = [...msgs, ...rcvMsgs.filter(m => !allMsgIds.has(m.id))];
@@ -566,8 +575,9 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // ── Time windows — unified 3-day window for ALL dashboard metrics ─────
       // cutoff24h is kept only for legacy reference. No UI metric uses it.
       const msgs3d  = scopedMsgs.filter(m => { const d = m.timestamp || m.created_date; return d && isAfter(parseISO(d), parseISO(cutoff3d)); });
-      const narrs3d = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff3d)));
-      const txns3d  = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
+      const narrs3d    = narrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff3d)));
+      const charNarrs3d = charNarrs.filter(n => n.timestamp && isAfter(parseISO(n.timestamp), parseISO(cutoff3d)));
+      const txns3d     = txns.filter(t => t.timestamp && isAfter(parseISO(t.timestamp), parseISO(cutoff3d)));
 
       // ── SOCIAL ACTIVITY STATS — scoped to last 3 days ───────────────────────
       // msgsSent = ALL messages in the 3-day window across scoped conversations.
@@ -769,6 +779,28 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         }
       });
 
+      // ── 4b. CHARACTER AUTOMATIC NARRATIVES — need-fulfillment durable proof ──
+      // event_type 'need_fulfillment' records are the durable proof that corrective
+      // actions (ate, showered, slept, etc.) completed. Score based on event_type.
+      charNarrs3d.forEach(n => {
+        if (!n.timestamp) return;
+        const typeScores = {
+          need_fulfillment:  ["calm",       65],  // ate/showered/slept = positive completion
+          sleep:             ["tired",      44],
+          wake:              ["calm",       63],
+          work_start:        ["calm",       60],
+          work_end:          ["relieved",   68],
+          social_event:      ["content",    72],
+          needs_warning:     ["stressed",   30],
+          catch_up_summary:  ["reflective", 52],
+          passive_time:      ["calm",       60],
+          location_change:   ["calm",       58],
+        };
+        const ts = typeScores[n.event_type];
+        if (ts) { addEvent(n.timestamp, ts[0], ts[1], "char_narrative"); return; }
+        if (n.emotional_state) addEvent(n.timestamp, n.emotional_state, null, "char_narrative");
+      });
+
       // ── 5. SLEEP / WAKE LIFECYCLE ──────────────────────────────────────────
       // Sleep = normal wind-down, NOT a crisis. Score it as tired (normal).
       // Wake = fresh start, mild positive.
@@ -897,10 +929,18 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       });
 
       // Narratives (LLM-written, already human text) — last 3 days
-      const narIconMap = { sleep:"moon", wake:"sun", work_start:"briefcase", work_end:"home", travel_arrival:"mappin", travel_departure:"mappin", social_event:"heart", catch_up_summary:"book", location_change:"mappin", passive_time:"activity" };
+      const narIconMap = { sleep:"moon", wake:"sun", work_start:"briefcase", work_end:"home", travel_arrival:"mappin", travel_departure:"mappin", social_event:"heart", catch_up_summary:"book", location_change:"mappin", passive_time:"activity", need_fulfillment:"activity" };
       narrs3d.forEach(n => {
         const text = (n.narrative_text || "").substring(0, 100);
         if (text) timelineEntries.push({ time: n.timestamp, icon: narIconMap[n.event_type] || "activity", text, emotion: n.emotional_state || curEmotion });
+      });
+
+      // CharacterAutomaticNarrative — durable proof records from simulation corrective actions
+      const charNarIconMap = { need_fulfillment:"activity", sleep:"moon", wake:"sun", work_start:"briefcase", work_end:"home", travel_arrival:"mappin", travel_departure:"mappin", social_event:"heart", catch_up_summary:"book", location_change:"mappin", passive_time:"activity" };
+      charNarrs3d.forEach(n => {
+        const text = (n.narrative_text || "").substring(0, 100);
+        const subtitle = n.event_type === 'need_fulfillment' ? 'Need fulfilled' : null;
+        if (text) timelineEntries.push({ time: n.timestamp, icon: charNarIconMap[n.event_type] || "activity", text, emotion: n.emotional_state || curEmotion, sub: subtitle });
       });
 
       // Financial events — last 3 days
@@ -920,6 +960,19 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
           text: h.location_name ? `${reasonText} · ${h.location_name}` : reasonText,
           emotion: locCat === 'gym' ? 'motivated' : locCat === 'food_drink' ? 'content' : locCat === 'social' ? 'content' : 'calm',
           sub: h.duration_minutes ? `${h.duration_minutes} min` : null,
+        });
+      });
+
+      // Event Participation — community events the character attended
+      eventParts.filter(ep => ep.participation_date && isAfter(parseISO(ep.participation_date), parseISO(cutoff3d))).forEach(ep => {
+        const tone = ep.emotional_tone || 'neutral';
+        const emotion = tone === 'enjoyed' || tone === 'energized' ? 'happy' : tone === 'uncomfortable' || tone === 'drained' ? 'stressed' : 'calm';
+        timelineEntries.push({
+          time: ep.participation_date,
+          icon: 'activity',
+          text: ep.event_name ? `Attended: ${ep.event_name}` : 'Attended a community event',
+          emotion,
+          sub: ep.participation_type ? `${ep.participation_type} · ${tone}` : tone,
         });
       });
 

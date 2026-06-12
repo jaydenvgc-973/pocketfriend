@@ -1099,6 +1099,22 @@ Deno.serve(async (req) => {
         ...corrective.stateWrites,
       };
 
+      // ── Classify corrective action type for durable proof creation ──────
+      let correctiveActionType = null;
+      if (corrective.stateWrites.hunger_value_override != null || (corrective.stateWrites.current_activity && /eat/i.test(corrective.stateWrites.current_activity))) {
+        correctiveActionType = 'ate';
+      } else if (corrective.stateWrites.hygiene_value_override != null || (corrective.stateWrites.current_activity && /freshen|shower|wash|clean/i.test(corrective.stateWrites.current_activity))) {
+        correctiveActionType = 'showered';
+      } else if (corrective.stateWrites.resolved_presence_status === 'sleeping') {
+        correctiveActionType = 'slept';
+      } else if (corrective.stateWrites.resolved_presence_status === 'home' && allCorrectiveLogs.some(l => l.includes('STALE SLEEP CLEARED'))) {
+        correctiveActionType = 'woke';
+      } else if (corrective.stateWrites.resolved_presence_status === 'hospitalized') {
+        correctiveActionType = 'hospitalized';
+      } else if (corrective.stateWrites.resolved_presence_status === 'passed_out') {
+        correctiveActionType = 'passed_out';
+      }
+
       updates.push({
         id: char.id,
         name: char.name,
@@ -1109,6 +1125,7 @@ Deno.serve(async (req) => {
         elapsedHours: Math.round(cappedHours * 100) / 100,
         data: updateData,
         correctiveState: corrective.stateWrites,
+        correctiveActionType,
       });
     }
 
@@ -1140,11 +1157,126 @@ Deno.serve(async (req) => {
       console.error(`[NEEDS-WRITE-FAILURES] ${writeFailures.length} characters failed to write:`, JSON.stringify(writeFailures));
     }
 
+    // ── DURABLE COMPLETION PROOF: Create narrative + memory for corrective actions ──
+    // For each successfully written character that had a corrective action (ate, showered,
+    // slept, woke, hospitalized, passed_out), create a CharacterAutomaticNarrative
+    // and Memory record so the action remains discoverable after current_activity clears.
+    const durableProofResults = [];
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const nowETStr = `${String(nowET.getHours()).padStart(2,'0')}:${String(nowET.getMinutes()).padStart(2,'0')}`;
+    const timeOfDay = nowET.getHours() >= 5 && nowET.getHours() < 7 ? 'early_morning' :
+      nowET.getHours() >= 7 && nowET.getHours() < 10 ? 'morning' :
+      nowET.getHours() >= 10 && nowET.getHours() < 12 ? 'late_morning' :
+      nowET.getHours() >= 12 && nowET.getHours() < 14 ? 'midday' :
+      nowET.getHours() >= 14 && nowET.getHours() < 17 ? 'afternoon' :
+      nowET.getHours() >= 17 && nowET.getHours() < 20 ? 'evening' :
+      nowET.getHours() >= 20 && nowET.getHours() < 23 ? 'night' : 'late_night';
+
+    const CORRECTIVE_NARRATIVE_TEXTS = {
+      ate: (name) => `${name} ate and satisfied their hunger.`,
+      showered: (name) => `${name} freshened up — hygiene restored.`,
+      slept: (name) => `${name} went to sleep, exhausted.`,
+      woke: (name) => `${name} woke up after resting.`,
+      hospitalized: (name) => `${name} was admitted for emergency medical care.`,
+      passed_out: (name) => `${name} collapsed from complete exhaustion — passed out and recovering.`,
+    };
+
+    for (const update of updates) {
+      if (!update.correctiveActionType || !update.data) continue;
+      const wasWritten = writeResults.find(r => r.id === update.id && r.success);
+      if (!wasWritten) continue;
+
+      const actionType = update.correctiveActionType;
+      const narrativeText = (CORRECTIVE_NARRATIVE_TEXTS[actionType] || (() => `${update.name} completed a ${actionType} action.`))(update.name);
+      const charData = characters.find(c => c.id === update.id);
+      if (!charData) continue;
+
+      // DEDUPLICATION: skip if same corrective action already recorded within 60 minutes
+      try {
+        const recentNarrs = await writeSDK.entities.CharacterAutomaticNarrative.filter(
+          { character_id: update.id, event_type: 'need_fulfillment' },
+          '-timestamp', 3
+        ).catch(() => []);
+        const hasRecentDuplicate = recentNarrs.some(n => {
+          if (!n.timestamp) return false;
+          const nMs = new Date(n.timestamp).getTime();
+          return (now.getTime() - nMs) < 60 * 60 * 1000 &&
+            (n.narrative_text || '').toLowerCase().includes(actionType);
+        });
+        if (hasRecentDuplicate) {
+          durableProofResults.push({ id: update.id, name: update.name, action: actionType, created: false, reason: 'duplicate_within_60min' });
+          continue;
+        }
+      } catch (_) { /* non-blocking */ }
+
+      // Create durable narrative record
+      try {
+        const locId = charData.resolved_current_location_id || charData.current_home_location_id || null;
+        let locName = charData.resolved_current_location_name || 'home';
+        let zoneName = null;
+        if (locId && locationMap[locId]) {
+          locName = locationMap[locId].name || locName;
+          zoneName = (locationMap[locId].zones && locationMap[locId].zones[0]) ? locationMap[locId].zones[0].zone_name : null;
+        }
+
+        await writeSDK.entities.CharacterAutomaticNarrative.create({
+          character_id: update.id,
+          character_name: update.name,
+          owner_email: charData.owner_email,
+          owner_user_id: charData.owner_user_id,
+          event_type: 'need_fulfillment',
+          narrative_text: narrativeText,
+          memory_summary: `[Need Fulfilled] ${actionType}: ${narrativeText.substring(0, 80)}`,
+          timestamp: now.toISOString(),
+          local_time: nowETStr,
+          time_of_day: timeOfDay,
+          location_id: locId,
+          location_name: locName,
+          zone_name: zoneName,
+          sleep_state: actionType === 'slept' ? 'asleep' : (actionType === 'woke' ? 'awake' : 'awake'),
+          travel_state: 'at_location',
+          work_state: 'off_work',
+          needs_snapshot: {
+            hunger: Math.round(update.data.hunger_value ?? (charData.hunger_value ?? 70)),
+            energy: Math.round(update.data.energy_value ?? (charData.energy_value ?? 75)),
+            social: Math.round(update.data.social_value ?? (charData.social_value ?? 65)),
+            health: Math.round(update.data.health_value ?? (charData.health_value ?? 80)),
+            mental: Math.round(update.data.mental_value ?? (charData.mental_value ?? 70)),
+            financial_need: Math.round(update.data.financial_need_value ?? (charData.financial_need_value ?? 60)),
+            hygiene: Math.round(update.data.hygiene_value ?? (charData.hygiene_value ?? 75)),
+            comfort: Math.round(update.data.comfort_value ?? (charData.comfort_value ?? 70)),
+          },
+          emotional_state: charData.emotional_state || 'calm',
+          triggered_by: 'autonomous',
+          visibility: 'visible_in_chat',
+        }).catch(e => { durableProofResults.push({ id: update.id, name: update.name, action: actionType, created: false, reason: `narrative_err:${e.message}` }); });
+
+        // Create Memory so character can recall the action
+        await writeSDK.entities.Memory.create({
+          character_id: update.id,
+          title: `${actionType === 'ate' ? 'Ate a meal' : actionType === 'showered' ? 'Showered' : actionType === 'slept' ? 'Went to sleep' : actionType === 'woke' ? 'Woke up' : actionType}`,
+          description: narrativeText,
+          memory_type: 'event',
+          importance_score: 4,
+          confidence_score: 0.95,
+          permanence: 'long_term',
+          timestamp: now.toISOString(),
+        }).catch(() => {});
+
+        durableProofResults.push({ id: update.id, name: update.name, action: actionType, created: true });
+        console.log(`[DURABLE-PROOF] ${update.name}: ${actionType} — narrative + memory created`);
+      } catch (e) {
+        durableProofResults.push({ id: update.id, name: update.name, action: actionType, created: false, reason: e.message });
+      }
+    }
+
     return Response.json({
       success: true,
       processed: characters.length,
       write_failures: writeFailures.length,
       corrective_actions_taken: allCorrectiveLogs.length,
+      durable_proof_created: durableProofResults.filter(r => r.created).length,
+      durable_proof_results: durableProofResults,
       updates: updates.map(u => ({
         id: u.id,
         name: u.name,
@@ -1152,6 +1284,7 @@ Deno.serve(async (req) => {
         context: u.context,
         elapsedHours: u.elapsedHours,
         correctiveState: u.correctiveState || null,
+        correctiveActionType: u.correctiveActionType || null,
       })),
       corrective_logs: allCorrectiveLogs,
       timestamp: now.toISOString(),

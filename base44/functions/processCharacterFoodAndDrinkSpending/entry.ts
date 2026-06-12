@@ -613,27 +613,44 @@ Deno.serve(async (req) => {
     let amount = Math.min(visitCapped, remaining);
     amount = Math.round(amount * 100) / 100;
 
-    if (amount <= 0) {
+    // ── ZERO-DOLLAR TRANSACTION RULE ─────────────────────────────────────
+    // Restaurant meals and bar drinks MUST always create a transaction.
+    // Zero is a valid transaction amount (employee meal, complimentary drink, etc.).
+    // The transaction itself is proof the activity occurred — not the dollar amount.
+    // Only allow $0 transactions for food/drink/nightlife categories — grocery
+    // with $0 amount is skipped (no meaningful activity proof from $0 groceries).
+    const isFoodDrinkCategory = spendCategory === 'restaurant' || spendCategory === 'fast_food' ||
+      spendCategory === 'bar_lounge' || spendCategory === 'club_nightlife';
+
+    if (amount <= 0 && !isFoodDrinkCategory) {
       log.push('amount_zero_after_clamp — skipped');
       return Response.json({ skipped: true, reason: 'amount_zero_after_cap_clamp', log });
     }
 
+    // If amount is zero but it's a food/drink location, create a $0 transaction as proof
+    const effectiveAmount = amount <= 0 ? 0 : amount;
+    const isZeroAmountTransaction = effectiveAmount === 0;
+
     // ── BALANCE CHECK ─────────────────────────────────────────────────────────
-    if (balance < amount) {
-      log.push(`insufficient_balance balance=$${balance} amount=$${amount}`);
-      return Response.json({ skipped: true, reason: 'insufficient_balance', balance, amount, log });
+    // $0 transactions bypass balance check — they don't deduct anything
+    if (!isZeroAmountTransaction && balance < effectiveAmount) {
+      log.push(`insufficient_balance balance=$${balance} amount=$${effectiveAmount}`);
+      return Response.json({ skipped: true, reason: 'insufficient_balance', balance, effectiveAmount, log });
     }
 
     // ── CREATE FinancialTransaction (owner_email scoped) ──────────────────────
-    const newBalance = Math.round((balance - amount) * 100) / 100;
+    const newBalance = isZeroAmountTransaction ? balance : Math.round((balance - effectiveAmount) * 100) / 100;
 
-    const txDescription = {
+    const txDescriptionBase = {
       fast_food:      `Food/drink at ${destination_location_name}`,
       restaurant:     `Meal at ${destination_location_name}`,
       bar_lounge:     `Bar/drinks at ${destination_location_name}`,
       club_nightlife: `Nightlife at ${destination_location_name}`,
       grocery:        `Grocery purchase at ${destination_location_name}`,
     }[spendCategory] || `Spending at ${destination_location_name}`;
+    const txDescription = isZeroAmountTransaction
+      ? `${txDescriptionBase} (employee/complimentary — $0.00)`
+      : txDescriptionBase;
 
     const tx = await base44.asServiceRole.entities.FinancialTransaction.create({
       owner_email,
@@ -644,7 +661,7 @@ Deno.serve(async (req) => {
       sender_name:      char.name,
       receiver_type:    'system',
       receiver_name:    destination_location_name,
-      amount,
+      amount:           effectiveAmount,
       direction:        'expense',
       transaction_type: TX_TYPE[spendCategory],
       description:      txDescription,
@@ -654,19 +671,24 @@ Deno.serve(async (req) => {
       timestamp:        nowISO,
     });
 
-    log.push(`tx_created id=${tx.id} amount=$${amount}`);
+    log.push(`tx_created id=${tx.id} amount=$${effectiveAmount}${isZeroAmountTransaction ? ' (ZERO — proof transaction)' : ''}`);
 
     // ── UPDATE CharacterFinancial.current_balance ─────────────────────────────
-    await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
-      current_balance: newBalance,
-      total_expenses:  Math.round(((financial.total_expenses || 0) + amount) * 100) / 100,
-      last_updated:    nowISO,
-    });
-
-    log.push(`balance $${balance} → $${newBalance}`);
+    // $0 transactions don't change the balance
+    if (!isZeroAmountTransaction) {
+      await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
+        current_balance: newBalance,
+        total_expenses:  Math.round(((financial.total_expenses || 0) + effectiveAmount) * 100) / 100,
+        last_updated:    nowISO,
+      });
+      log.push(`balance $${balance} → $${newBalance}`);
+    } else {
+      log.push(`balance unchanged — $0 transaction`);
+    }
 
     // ── GROCERY: create or update HouseholdResource ───────────────────────────
-    if (spendCategory === 'grocery' && home_location_id) {
+    // $0 grocery transactions are skipped — no meaningful food value from $0 purchase
+    if (spendCategory === 'grocery' && home_location_id && !isZeroAmountTransaction) {
       const hrArr2 = await base44.asServiceRole.entities.HouseholdResource.filter(
         { owner_email, home_location_id, resource_type: 'food' }, null, 1
       ).catch(() => []);
@@ -704,7 +726,7 @@ Deno.serve(async (req) => {
     console.log(
       `[processCharacterFoodAndDrinkSpending] ✓` +
       ` char=${char.name} owner=${owner_email}` +
-      ` category=${spendCategory} amount=$${amount}` +
+      ` category=${spendCategory} amount=$${effectiveAmount}${isZeroAmountTransaction ? ' (ZERO-PROOF)' : ''}` +
       ` multiplier=${multiplier.toFixed(2)}` +
       ` location=${destination_location_name}` +
       ` balance=$${balance}→$${newBalance}`
@@ -714,7 +736,8 @@ Deno.serve(async (req) => {
       success:        true,
       character_name: char.name,
       spend_category: spendCategory,
-      amount,
+      amount:         effectiveAmount,
+      is_zero_amount: isZeroAmountTransaction,
       multiplier,
       modifier_logs:  modifierLogs,
       new_balance:    newBalance,
