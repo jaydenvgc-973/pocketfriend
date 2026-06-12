@@ -16,32 +16,61 @@ Deno.serve(async (req) => {
     const title = event.title || 'Untitled Event';
     const eventDate = event.event_date || '';
     const startTime = event.start_time || '12:00';
+    const endTime = event.end_time || '14:00';
     const venueName = event.venue_name || 'unknown venue';
+    const venueId = event.venue_id || null;
     const ownerEmail = event.owner_email;
     const narrative = event.generated_narrative || '';
     const focusIds = event.focus_character_ids || [];
     const participantIds = event.participant_character_ids || [];
+    const focusNames = event.focus_character_names || [];
+    const participantNames = event.participant_character_names || [];
     const allIds = [...new Set([...focusIds, ...participantIds])];
     const isMajorEvent = narrative.length > 600 || focusIds.length >= 2;
 
-    // ── LOAD CHARACTER DATA ───────────────────────────────────────────────
-    const charById = {};
-    for (const cid of allIds) {
-      try {
-        const chars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
-        if (chars[0]) charById[cid] = chars[0];
-      } catch (_) {}
+    // Build name map from event data (Character entity queries are unreliable)
+    const nameById = {};
+    for (let i = 0; i < allIds.length; i++) {
+      const id = allIds[i];
+      const focusIdx = focusIds.indexOf(id);
+      if (focusIdx >= 0 && focusNames[focusIdx]) {
+        nameById[id] = focusNames[focusIdx];
+      } else {
+        const partIdx = participantIds.indexOf(id);
+        if (partIdx >= 0 && participantNames[partIdx]) {
+          nameById[id] = participantNames[partIdx];
+        }
+      }
     }
 
-    // ── LOAD STORY EVENT MEMORIES (existing) ──────────────────────────────
+    const arrivalTime = `${eventDate}T${startTime}:00.000`;
+    const departureTime = endTime
+      ? `${eventDate}T${endTime}:00.000`
+      : `${eventDate}T14:00:00.000`;
+
+    // Calculate duration
+    let durationMinutes = 120;
+    if (startTime && endTime) {
+      const [sh, sm] = startTime.split(':').map(Number);
+      const [eh, em] = endTime.split(':').map(Number);
+      durationMinutes = (eh * 60 + em) - (sh * 60 + sm);
+      if (durationMinutes <= 0) durationMinutes = 120;
+    }
+
+    // ── LOAD EXISTING RECORDS ──────────────────────────────────────────────
+    // StoryEventMemory
     let storyMemories = [];
+    let storyMemoriesByChar = {};
     try {
       storyMemories = await base44.asServiceRole.entities.StoryEventMemory.filter(
         { story_event_id: eventId }, null, 200
       );
+      for (const sm of storyMemories) {
+        storyMemoriesByChar[sm.character_id] = sm;
+      }
     } catch (_) {}
 
-    // ── LOAD STORY EVENT IMAGES ───────────────────────────────────────────
+    // StoryEventImages
     let storyImages = [];
     try {
       storyImages = await base44.asServiceRole.entities.StoryEventImage.filter(
@@ -49,24 +78,16 @@ Deno.serve(async (req) => {
       );
     } catch (_) {}
 
-    // ── CHECK EXISTING RECORDS PER PARTICIPANT ────────────────────────────
-    const participants = allIds.map(cid => {
-      const c = charById[cid];
-      const mem = storyMemories.find(m => m.character_id === cid);
-      return {
-        character_id: cid,
-        character_name: c?.name || c?.display_name || cid,
-        character_type: c?.character_type || 'unknown',
-        has_story_memory: !!mem,
-        memory_text: mem?.memory_text || null,
-        memory_summary: mem?.memory_summary || null,
-        importance_score: mem?.importance_score || 5,
-        emotional_tone: mem?.emotional_tone || 'neutral',
-        is_focus: focusIds.includes(cid),
-      };
-    });
+    // Media Gallery Messages
+    let mediaGalleryImages = 0;
+    try {
+      const msgs = await base44.asServiceRole.entities.Message.filter(
+        { conversation_id: `story_event_${eventId}` }, null, 50
+      );
+      mediaGalleryImages = msgs.filter(m => m.image_url).length;
+    } catch (_) {}
 
-    // ── VERIFY & BACKFILL EACH RECORD TYPE ────────────────────────────────
+    // ── VERIFY & BACKFILL EACH PARTICIPANT ──────────────────────────────────
     const results = [];
     const createdRecords = {
       life_events: [],
@@ -74,43 +95,48 @@ Deno.serve(async (req) => {
       character_memories: [],
       character_memories_array: [],
       event_participations: [],
+      location_history: [],
     };
 
-    for (const p of participants) {
-      const cid = p.character_id;
-      const cname = p.character_name;
-      const memText = p.memory_text ||
+    for (const cid of allIds) {
+      const cname = nameById[cid] || cid;
+      const isFocus = focusIds.includes(cid);
+
+      const sm = storyMemoriesByChar[cid];
+      const memText = sm?.memory_text ||
         `${cname} attended the story event "${title}" on ${eventDate} at ${venueName}.`;
-      const memSummary = p.memory_summary ||
+      const memSummary = sm?.memory_summary ||
         `Attended "${title}" at ${venueName} on ${eventDate}`;
-      const emotionalTone = p.emotional_tone || 'neutral';
+      const emotionalTone = sm?.emotional_tone || 'neutral';
       const valence = emotionalTone === 'positive' || emotionalTone === 'mixed' ? 'positive'
         : emotionalTone === 'negative' ? 'negative' : 'neutral';
       const eventTypeForChar = valence === 'positive'
         ? (isMajorEvent ? 'celebration_event' : 'bonding_event')
         : valence === 'negative' ? 'setback_event' : 'bonding_event';
-      const importance = p.importance_score || 5;
+      const importance = sm?.importance_score || 5;
 
       const result = {
-        character_name: cname,
-        character_type: p.character_type,
         character_id: cid,
-        is_focus: p.is_focus,
-        life_journal: { exists: false, created: false, record_id: null },
-        chat_memory: { exists: false, created: false, record_id: null },
-        character_memory: { exists: false, created: false, record_id: null },
-        dashboard_impact: { exists: false, created: false, record_id: null },
-        event_participation: { exists: false, created: false, record_id: null },
+        character_name: cname,
+        is_focus: isFocus,
+        story_event_memory: { status: sm ? 'verified' : 'missing' },
+        life_event: { status: 'pending' },
+        memory: { status: 'pending' },
+        character_memory: { status: 'pending' },
+        char_memories_array: { status: 'pending' },
+        event_participation: { status: 'pending' },
+        location_history: { status: 'pending' },
         memory_text_preview: memText.substring(0, 100),
+        overall: 'pending',
       };
 
-      // ── CHECK 1: LIFEEVENT ─────────────────────────────────────────────
+      // ── CHECK/CREATE: LIFEEVENT ─────────────────────────────────────────
       try {
-        const lifeEvents = await base44.asServiceRole.entities.LifeEvent.filter(
+        const les = await base44.asServiceRole.entities.LifeEvent.filter(
           { character_id: cid, title: `Story Event: ${title}` }, null, 5
         );
-        if (lifeEvents.length > 0) {
-          result.life_journal = { exists: true, created: false, record_id: lifeEvents[0].id };
+        if (les.length > 0) {
+          result.life_event = { status: 'verified', record_id: les[0].id };
         } else {
           const le = await base44.asServiceRole.entities.LifeEvent.create({
             character_id: cid,
@@ -121,25 +147,25 @@ Deno.serve(async (req) => {
             severity: isMajorEvent ? 'major' : 'significant',
             valence,
             emotional_impact: `${emotionalTone} — ${eventTypeForChar.replace(/_/g, ' ')}`,
-            timestamp: `${eventDate}T${startTime}:00.000`,
+            timestamp: arrivalTime,
             triggered_by: 'story_event',
             systems_updated: ['memories', 'relationships', 'emotional_state'],
             context_tags: ['story_event', eventId, `participant_${cid}`],
           });
-          result.life_journal = { exists: true, created: true, record_id: le.id };
+          result.life_event = { status: 'created', record_id: le.id };
           createdRecords.life_events.push(le.id);
         }
       } catch (e) {
-        result.life_journal.error = e.message;
+        result.life_event = { status: 'query_failed', error: e.message };
       }
 
-      // ── CHECK 2: MEMORY ENTITY (semantic retrieval well) ───────────────
+      // ── CHECK/CREATE: MEMORY ENTITY ─────────────────────────────────────
       try {
-        const memories = await base44.asServiceRole.entities.Memory.filter(
+        const mems = await base44.asServiceRole.entities.Memory.filter(
           { character_id: cid, source_context: `story_event_${eventId}` }, null, 5
         );
-        if (memories.length > 0) {
-          result.chat_memory = { exists: true, created: false, record_id: memories[0].id };
+        if (mems.length > 0) {
+          result.memory = { status: 'verified', record_id: mems[0].id };
         } else {
           const m = await base44.asServiceRole.entities.Memory.create({
             character_id: cid,
@@ -149,20 +175,25 @@ Deno.serve(async (req) => {
             source_context: `story_event_${eventId}`,
             timestamp: new Date().toISOString(),
           });
-          result.chat_memory = { exists: true, created: true, record_id: m.id };
+          result.memory = { status: 'created', record_id: m.id };
           createdRecords.memories.push(m.id);
         }
       } catch (e) {
-        result.chat_memory.error = e.message;
+        result.memory = { status: 'query_failed', error: e.message };
       }
 
-      // ── CHECK 3: CHARACTERMEMORY (Life Journal block) ──────────────────
+      // ── CHECK/CREATE: CHARACTERMEMORY ───────────────────────────────────
+      // Fetch all CharacterMemories for this character first, then filter locally.
+      // Direct $contains queries on memory_text may produce "Invalid query" errors.
       try {
-        const charMems = await base44.asServiceRole.entities.CharacterMemory.filter(
-          { character_id: cid, memory_text: { $contains: `Story Event: ${title}` } }, null, 5
+        const allCms = await base44.asServiceRole.entities.CharacterMemory.filter(
+          { character_id: cid }, null, 50
         );
-        if (charMems.length > 0) {
-          result.character_memory = { exists: true, created: false, record_id: charMems[0].id };
+        const matching = allCms.filter(cm =>
+          (cm.memory_text || '').includes(`Story Event: ${title}`)
+        );
+        if (matching.length > 0) {
+          result.character_memory = { status: 'verified', record_id: matching[0].id };
         } else {
           const cm = await base44.asServiceRole.entities.CharacterMemory.create({
             character_id: cid,
@@ -174,22 +205,24 @@ Deno.serve(async (req) => {
             permanence: importance >= 7 ? 'protected' : 'long_term',
             validation_status: 'confirmed',
           });
-          result.character_memory = { exists: true, created: true, record_id: cm.id };
+          result.character_memory = { status: 'created', record_id: cm.id };
           createdRecords.character_memories.push(cm.id);
         }
       } catch (e) {
-        result.character_memory.error = e.message;
+        result.character_memory = { status: 'query_failed', error: e.message };
       }
 
-      // ── CHECK 4: CHARACTER.MEMORIES ARRAY (chat context builder) ───────
+      // ── CHECK/CREATE: CHARACTER.MEMORIES ARRAY ──────────────────────────
+      // Character entity queries are unreliable. Attempt via service role
+      // but report honestly if it fails.
       try {
         const freshChars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
-        const freshChar = freshChars[0];
-        if (freshChar) {
-          const existing = (freshChar.memories || []);
+        const fresh = freshChars[0];
+        if (fresh) {
+          const existing = (fresh.memories || []);
           const already = existing.find(m => m.title === `Story Event: ${title}`);
           if (already) {
-            result.dashboard_impact = { exists: true, created: false, record_id: null };
+            result.char_memories_array = { status: 'verified' };
           } else {
             await base44.asServiceRole.entities.Character.update(cid, {
               memories: [...existing, {
@@ -200,23 +233,23 @@ Deno.serve(async (req) => {
                 created_date: new Date().toISOString(),
               }],
             });
-            result.dashboard_impact = { exists: true, created: true, record_id: null };
+            result.char_memories_array = { status: 'created' };
             createdRecords.character_memories_array.push(cid);
           }
         } else {
-          result.dashboard_impact = { exists: false, created: false, record_id: null, error: 'Character not found' };
+          result.char_memories_array = { status: 'query_failed', error: 'Character filter returned empty' };
         }
       } catch (e) {
-        result.dashboard_impact.error = e.message;
+        result.char_memories_array = { status: 'query_failed', error: e.message };
       }
 
-      // ── CHECK 5: EVENTPARTICIPATION ────────────────────────────────────
+      // ── CHECK/CREATE: EVENTPARTICIPATION ────────────────────────────────
       try {
-        const parts = await base44.asServiceRole.entities.EventParticipation.filter(
+        const eps = await base44.asServiceRole.entities.EventParticipation.filter(
           { character_id: cid, event_id: eventId }, null, 5
         );
-        if (parts.length > 0) {
-          result.event_participation = { exists: true, created: false, record_id: parts[0].id };
+        if (eps.length > 0) {
+          result.event_participation = { status: 'verified', record_id: eps[0].id };
         } else {
           const ep = await base44.asServiceRole.entities.EventParticipation.create({
             event_id: eventId,
@@ -226,35 +259,141 @@ Deno.serve(async (req) => {
             owner_email: ownerEmail,
             participation_type: 'attended',
             emotional_tone: emotionalTone,
-            participation_date: `${eventDate}T${startTime}:00.000`,
+            participation_date: arrivalTime,
             memory_strength: importance >= 7 ? 'strong' : 'moderate',
             notes: memSummary,
             saw_character_ids: participantIds.filter(id => id !== cid),
           });
-          result.event_participation = { exists: true, created: true, record_id: ep.id };
+          result.event_participation = { status: 'created', record_id: ep.id };
           createdRecords.event_participations.push(ep.id);
         }
       } catch (e) {
-        result.event_participation.error = e.message;
+        result.event_participation = { status: 'query_failed', error: e.message };
+      }
+
+      // ── CHECK/CREATE: LOCATIONHISTORY ────────────────────────────────────
+      try {
+        const venueLH = await base44.asServiceRole.entities.LocationHistory.filter(
+          { character_id: cid, owner_email: ownerEmail, location_id: venueId }, '-arrival_time', 50
+        );
+        // Also check by event_date proximity
+        const matching = venueLH.filter(lh => {
+          if (!lh.arrival_time) return false;
+          const arrDate = lh.arrival_time.split('T')[0];
+          if (arrDate !== eventDate) return false;
+          // Check if arrival_time is within a reasonable window of the event
+          const arr = new Date(lh.arrival_time).getTime();
+          const evArr = new Date(arrivalTime).getTime();
+          const diff = Math.abs(arr - evArr);
+          return diff < 6 * 3600000; // within 6 hours
+        });
+        if (matching.length > 0) {
+          result.location_history = { status: 'verified', record_id: matching[0].id };
+        } else {
+          const lh = await base44.asServiceRole.entities.LocationHistory.create({
+            character_id: cid,
+            character_name: cname,
+            owner_email: ownerEmail,
+            location_id: venueId || null,
+            location_name: venueName,
+            location_category: 'social',
+            event_type: 'social_visit',
+            arrival_time: arrivalTime,
+            departure_time: departureTime,
+            duration_minutes: durationMinutes,
+            travel_source: 'event',
+            travel_reason: `Story Event: ${title}`,
+            is_current: false,
+            notes: `Attended "${title}" Story Event at ${venueName}. Backfilled by impact repair.`,
+          });
+          result.location_history = { status: 'created', record_id: lh.id };
+          createdRecords.location_history.push(lh.id);
+        }
+      } catch (e) {
+        result.location_history = { status: 'query_failed', error: e.message };
+      }
+
+      // ── DETERMINE OVERALL STATUS ──────────────────────────────────────────
+      const allVerified = result.story_event_memory.status === 'verified' &&
+        (result.life_event.status === 'verified' || result.life_event.status === 'created') &&
+        (result.memory.status === 'verified' || result.memory.status === 'created') &&
+        (result.character_memory.status === 'verified' || result.character_memory.status === 'created') &&
+        (result.char_memories_array.status === 'verified' || result.char_memories_array.status === 'created') &&
+        (result.event_participation.status === 'verified' || result.event_participation.status === 'created') &&
+        (result.location_history.status === 'verified' || result.location_history.status === 'created');
+
+      const anyUnverified = result.life_event.status === 'query_failed' ||
+        result.memory.status === 'query_failed' ||
+        result.character_memory.status === 'query_failed' ||
+        result.char_memories_array.status === 'query_failed' ||
+        result.event_participation.status === 'query_failed' ||
+        result.location_history.status === 'query_failed' ||
+        result.story_event_memory.status === 'missing' ||
+        result.life_event.status === 'missing' ||
+        result.memory.status === 'missing' ||
+        result.character_memory.status === 'missing' ||
+        result.char_memories_array.status === 'missing' ||
+        result.event_participation.status === 'missing' ||
+        result.location_history.status === 'missing';
+
+      if (allVerified) {
+        result.overall = 'coherent';
+      } else if (anyUnverified) {
+        // Something was created or existed, but some systems are unreadable
+        const hasCreates = result.life_event.status === 'created' ||
+          result.memory.status === 'created' ||
+          result.character_memory.status === 'created' ||
+          result.char_memories_array.status === 'created' ||
+          result.event_participation.status === 'created' ||
+          result.location_history.status === 'created';
+        result.overall = hasCreates ? 'repaired_partial' : 'partial';
+      } else {
+        result.overall = 'partial';
       }
 
       results.push(result);
     }
 
-    // ── COUNT EXISTING IMAGE/MESSAGE RECORDS ─────────────────────────────
-    let mediaGalleryImages = 0;
-    try {
-      const msgs = await base44.asServiceRole.entities.Message.filter(
-        { conversation_id: `story_event_${eventId}` }, null, 50
-      );
-      mediaGalleryImages = msgs.filter(m => m.image_url).length;
-    } catch (_) {}
+    // ── EVENT-LEVEL STATUS ──────────────────────────────────────────────────
+    const statusCounts = {
+      coherent: 0, repaired_partial: 0, partial: 0, missing_timeline: 0, conflict: 0, blocked: 0,
+    };
+    for (const r of results) {
+      statusCounts[r.overall] = (statusCounts[r.overall] || 0) + 1;
+    }
+
+    let eventOverall;
+    if (statusCounts.coherent === results.length) {
+      eventOverall = 'coherent';
+    } else if (statusCounts.coherent > 0) {
+      eventOverall = 'partial';
+    } else if (statusCounts.repaired_partial > 0) {
+      eventOverall = 'repaired_partial';
+    } else if (statusCounts.partial > 0) {
+      eventOverall = 'partial';
+    } else {
+      eventOverall = 'missing_timeline';
+    }
+
+    // Identify unverified systems
+    const unverifiedSystems = [];
+    const sysNames = ['story_event_memory', 'life_event', 'memory', 'character_memory', 'char_memories_array', 'event_participation', 'location_history'];
+    for (const sys of sysNames) {
+      const any = results.some(r => r[sys]?.status === 'query_failed' || r[sys]?.status === 'missing');
+      if (any) {
+        const statuses = [...new Set(results.map(r => r[sys]?.status || 'unknown'))];
+        unverifiedSystems.push({ system: sys, statuses });
+      }
+    }
 
     return Response.json({
       success: true,
       event_id: eventId,
       event_title: title,
-      participant_count: participants.length,
+      event_overall: eventOverall,
+      participant_count: allIds.length,
+      summary: statusCounts,
+      unverified_systems: unverifiedSystems,
       story_event_images: storyImages.length,
       media_gallery_images: mediaGalleryImages,
       story_event_memories: storyMemories.length,
@@ -264,6 +403,7 @@ Deno.serve(async (req) => {
       participants: results,
     });
   } catch (error) {
+    console.error('[backfillStoryEventImpact]', error.message);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

@@ -276,11 +276,41 @@ export default function StoryEventViewer({ eventId }) {
     }
   };
 
-  const recordStatusIcon = (record) => {
-    if (record.error) return <XCircle className="w-3.5 h-3.5 text-destructive" />;
-    if (record.exists && !record.created) return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
-    if (record.exists && record.created) return <CheckCircle2 className="w-3.5 h-3.5 text-primary" />;
+  const recordStatusIcon = (statusObj) => {
+    if (!statusObj) return <AlertCircle className="w-3.5 h-3.5 text-muted-foreground" />;
+    const s = statusObj.status || '';
+    if (s === 'verified') return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
+    if (s === 'created') return <CheckCircle2 className="w-3.5 h-3.5 text-primary" />;
+    if (s === 'query_failed') return <XCircle className="w-3.5 h-3.5 text-destructive" />;
+    if (s === 'missing') return <AlertCircle className="w-3.5 h-3.5 text-amber-400" />;
+    if (s === 'unverified' || s === 'inferred_present') return <AlertCircle className="w-3.5 h-3.5 text-slate-500" />;
     return <AlertCircle className="w-3.5 h-3.5 text-muted-foreground" />;
+  };
+
+  const statusLabel = (statusObj) => {
+    if (!statusObj) return '—';
+    const s = statusObj.status || '';
+    const labels = {
+      verified: 'verified',
+      created: 'created',
+      query_failed: 'query failed',
+      missing: 'missing',
+      unverified: 'unverified',
+      inferred_present: 'inferred',
+    };
+    return labels[s] || s;
+  };
+
+  const overallBadge = (overall) => {
+    const badges = {
+      coherent: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+      repaired_partial: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+      partial: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+      missing_timeline: 'bg-red-500/20 text-red-400 border-red-500/30',
+      conflict: 'bg-red-500/20 text-red-400 border-red-500/30',
+      blocked: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
+    };
+    return badges[overall] || 'bg-muted text-muted-foreground border-border';
   };
 
   // Pre-compute for JSX safety — complex optional-chaining conditions confuse the parser
@@ -289,7 +319,8 @@ export default function StoryEventViewer({ eventId }) {
     (impactResult.created_records?.memories?.length > 0) ||
     (impactResult.created_records?.character_memories?.length > 0) ||
     (impactResult.created_records?.character_memories_array?.length > 0) ||
-    (impactResult.created_records?.event_participations?.length > 0)
+    (impactResult.created_records?.event_participations?.length > 0) ||
+    (impactResult.created_records?.location_history?.length > 0)
   );
 
   const createdCounts = impactResult?.created_records ? {
@@ -298,6 +329,7 @@ export default function StoryEventViewer({ eventId }) {
     charMems: impactResult.created_records.character_memories?.length || 0,
     charMemArrays: impactResult.created_records.character_memories_array?.length || 0,
     eventParts: impactResult.created_records.event_participations?.length || 0,
+    locHistory: impactResult.created_records.location_history?.length || 0,
   } : null;
 
   return (
@@ -502,57 +534,81 @@ export default function StoryEventViewer({ eventId }) {
 
                 {impactResult && (
                   <div className="mt-3 space-y-2">
-                    {/* Summary bar */}
-                    <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2">
-                      <Shield className="w-3 h-3 text-emerald-400" />
-                      <span className="text-[10px] text-emerald-300 font-medium">
-                        {impactResult.participant_count} participants · {impactResult.story_event_images} images · {impactResult.media_gallery_images} gallery images
-                      </span>
+                    {/* Summary bar with event-level overall status */}
+                    <div className={`p-2 rounded-lg border flex items-center gap-2 ${overallBadge(impactResult.event_overall)}`}>
+                     <Shield className="w-3 h-3" />
+                     <span className="text-[10px] font-medium">
+                       {impactResult.participant_count} participants · {impactResult.story_event_images} images · {impactResult.media_gallery_images} gallery images
+                     </span>
+                     <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-current opacity-70 ml-auto">
+                       {impactResult.event_overall?.replace(/_/g, ' ') || 'unknown'}
+                     </span>
                     </div>
+
+                    {/* Unverified systems warning */}
+                    {impactResult.unverified_systems?.length > 0 && (
+                     <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                       <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wider mb-1">Unverified Systems</p>
+                       <div className="text-[9px] text-amber-300 flex flex-wrap gap-x-3 gap-y-0.5">
+                         {impactResult.unverified_systems.map((sys, i) => (
+                           <span key={i}>{sys.system}: {sys.statuses.join(', ')}</span>
+                         ))}
+                       </div>
+                     </div>
+                    )}
 
                     {/* Created records summary */}
                     {hasCreatedRecords && (
-                      <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
-                        <p className="text-[10px] font-bold text-primary uppercase tracking-wider mb-1">Records Created in This Run</p>
-                        <div className="text-[9px] text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
-                          {createdCounts.lifeEvents > 0 && <span>LifeEvents: {createdCounts.lifeEvents}</span>}
-                          {createdCounts.memories > 0 && <span>Memories: {createdCounts.memories}</span>}
-                          {createdCounts.charMems > 0 && <span>CharacterMemories: {createdCounts.charMems}</span>}
-                          {createdCounts.charMemArrays > 0 && <span>Char.Memories: {createdCounts.charMemArrays}</span>}
-                          {createdCounts.eventParts > 0 && <span>EventParts: {createdCounts.eventParts}</span>}
-                        </div>
-                      </div>
+                     <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
+                       <p className="text-[10px] font-bold text-primary uppercase tracking-wider mb-1">Records Created in This Run</p>
+                       <div className="text-[9px] text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
+                         {createdCounts.lifeEvents > 0 && <span>LifeEvents: {createdCounts.lifeEvents}</span>}
+                         {createdCounts.memories > 0 && <span>Memories: {createdCounts.memories}</span>}
+                         {createdCounts.charMems > 0 && <span>CharacterMemories: {createdCounts.charMems}</span>}
+                         {createdCounts.charMemArrays > 0 && <span>Char.Memories: {createdCounts.charMemArrays}</span>}
+                         {createdCounts.eventParts > 0 && <span>EventParts: {createdCounts.eventParts}</span>}
+                         {createdCounts.locHistory > 0 && <span>LocationHistory: {createdCounts.locHistory}</span>}
+                       </div>
+                     </div>
                     )}
 
-                    {/* Per-participant table */}
+                    {/* Per-participant table — ALL systems, honest status */}
                     <div className="overflow-x-auto">
-                      <table className="w-full text-[9px]">
+                      <table className="w-full text-[8px]">
                         <thead>
                           <tr className="border-b border-border">
-                            <th className="text-left py-1.5 px-1 text-muted-foreground font-medium">Character</th>
-                            <th className="text-center py-1.5 px-1 text-muted-foreground font-medium">Life Journal</th>
-                            <th className="text-center py-1.5 px-1 text-muted-foreground font-medium">Chat Memory</th>
-                            <th className="text-center py-1.5 px-1 text-muted-foreground font-medium">Char.Memories</th>
-                            <th className="text-center py-1.5 px-1 text-muted-foreground font-medium">Event Part.</th>
+                            <th className="text-left py-1.5 px-0.5 text-muted-foreground font-medium">Character</th>
+                            <th className="text-center py-1.5 px-0.5 text-muted-foreground font-medium">SEMem</th>
+                            <th className="text-center py-1.5 px-0.5 text-muted-foreground font-medium">LifeEv</th>
+                            <th className="text-center py-1.5 px-0.5 text-muted-foreground font-medium">Memory</th>
+                            <th className="text-center py-1.5 px-0.5 text-muted-foreground font-medium">CharMem</th>
+                            <th className="text-center py-1.5 px-0.5 text-muted-foreground font-medium">Ch.Mems</th>
+                            <th className="text-center py-1.5 px-0.5 text-muted-foreground font-medium">EvPart</th>
+                            <th className="text-center py-1.5 px-0.5 text-muted-foreground font-medium">LocHist</th>
+                            <th className="text-center py-1.5 px-0.5 text-muted-foreground font-medium">Overall</th>
                           </tr>
                         </thead>
                         <tbody>
                           {(impactResult.participants || []).map((p, i) => (
                             <tr key={i} className="border-b border-border/40 hover:bg-secondary/30">
-                              <td className="py-1.5 px-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-medium text-foreground text-[9px]">{p.character_name}</span>
-                                  {p.is_focus && <span className="text-[7px] px-1 py-0.5 rounded bg-primary/20 text-primary">FOCUS</span>}
-                                  <span className="text-[7px] text-muted-foreground uppercase">{p.character_type?.replace(/npc_|active_created_/g, '')}</span>
+                              <td className="py-1.5 px-0.5">
+                                <div className="flex items-center gap-1">
+                                  <span className="font-medium text-foreground text-[8px] truncate max-w-[60px]" title={p.character_name}>{p.character_name}</span>
+                                  {p.is_focus && <span className="text-[6px] px-1 py-0.5 rounded bg-primary/20 text-primary">★</span>}
                                 </div>
-                                {p.memory_text_preview && (
-                                  <p className="text-[7px] text-muted-foreground mt-0.5 line-clamp-1">{p.memory_text_preview}</p>
-                                )}
                               </td>
-                              <td className="text-center py-1.5 px-1">{recordStatusIcon(p.life_journal)}</td>
-                              <td className="text-center py-1.5 px-1">{recordStatusIcon(p.chat_memory)}</td>
-                              <td className="text-center py-1.5 px-1">{recordStatusIcon(p.dashboard_impact)}</td>
-                              <td className="text-center py-1.5 px-1">{recordStatusIcon(p.event_participation)}</td>
+                              <td className="text-center py-1.5 px-0.5">{recordStatusIcon(p.story_event_memory)}</td>
+                              <td className="text-center py-1.5 px-0.5">{recordStatusIcon(p.life_event)}</td>
+                              <td className="text-center py-1.5 px-0.5">{recordStatusIcon(p.memory)}</td>
+                              <td className="text-center py-1.5 px-0.5">{recordStatusIcon(p.character_memory)}</td>
+                              <td className="text-center py-1.5 px-0.5">{recordStatusIcon(p.char_memories_array)}</td>
+                              <td className="text-center py-1.5 px-0.5">{recordStatusIcon(p.event_participation)}</td>
+                              <td className="text-center py-1.5 px-0.5">{recordStatusIcon(p.location_history)}</td>
+                              <td className="text-center py-1.5 px-0.5">
+                                <span className={`text-[7px] px-1 py-0.5 rounded-full border ${overallBadge(p.overall)}`}>
+                                  {p.overall?.replace(/_/g, ' ') || '?'}
+                                </span>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -560,10 +616,12 @@ export default function StoryEventViewer({ eventId }) {
                     </div>
 
                     {/* Legend */}
-                    <div className="flex items-center gap-3 text-[8px] text-muted-foreground px-1">
-                      <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> already existed</span>
-                      <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-primary" /> created now</span>
-                      <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-destructive" /> failed</span>
+                    <div className="flex items-center gap-3 text-[8px] text-muted-foreground px-1 flex-wrap">
+                      <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> verified</span>
+                      <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-primary" /> created</span>
+                      <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-destructive" /> query failed</span>
+                      <span className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-amber-400" /> missing</span>
+                      <span className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-slate-500" /> unverified</span>
                     </div>
                   </div>
                 )}
