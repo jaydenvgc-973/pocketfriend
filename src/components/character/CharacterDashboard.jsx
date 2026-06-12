@@ -362,7 +362,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 14; // fix: priority slicing (emotional entries never displaced), conservative consecutive-only dedup, cache safety net
+const DASHBOARD_CACHE_VERSION = 12; // fix: graph density restored (periodic fills + dedup window fix), x-axis day labels, social counts use fallback msgs
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -412,18 +412,6 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       ownerEmail
         ? base44.entities.LocationHistory.filter({ character_id: charId, owner_email: ownerEmail }, "-arrival_time", 30).catch(() => [])
         : Promise.resolve([]),
-      // Travel sessions — completed arrivals (proven destination commitments)
-      ownerEmail
-        ? base44.entities.TravelSession.filter({ character_id: charId, owner_email: ownerEmail, route_status: 'arrived' }, "-updated_date", 20).catch(() => [])
-        : Promise.resolve([]),
-      // Event participation — community events the character attended
-      ownerEmail
-        ? base44.entities.EventParticipation.filter({ character_id: charId, owner_email: ownerEmail }, "-participation_date", 20).catch(() => [])
-        : Promise.resolve([]),
-      // Community events — resolve event names for participations
-      ownerEmail
-        ? base44.entities.CommunityEvent.filter({}, "-start_date", 40).catch(() => [])
-        : Promise.resolve([]),
       // All characters for this owner — seed from CharacterProfile's React Query cache (allCharacters prop)
       // to avoid redundant network request. Only fetch from DB if cache is empty.
       allCharacters.length > 0
@@ -431,7 +419,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         : ownerEmail
           ? base44.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => [])
           : Promise.resolve([]),
-    ]).then(([msgsR, txR, narrR, convosR, locsR, lifeEventsR, rcvMsgsR, locHistR, travelSessionsR, eventPartsR, communityEventsR, allCharsR]) => {
+    ]).then(([msgsR, txR, narrR, convosR, locsR, lifeEventsR, rcvMsgsR, allCharsR, locHistR]) => {
       const msgs       = msgsR.status       === "fulfilled" ? (msgsR.value       || []) : [];
       const txns       = txR.status         === "fulfilled" ? (txR.value         || []) : [];
       const narrs      = narrR.status       === "fulfilled" ? (narrR.value       || []) : [];
@@ -443,16 +431,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // All characters — used to resolve receiver IDs → names for outgoing messages
       const allChars   = allCharsR.status   === "fulfilled" ? (allCharsR.value   || []) : [];
       // Location history — recent places visited
-      const locHistory     = locHistR?.status        === "fulfilled" ? (locHistR.value        || []) : [];
-      // Travel sessions — completed arrivals
-      const travelSessions = travelSessionsR?.status === "fulfilled" ? (travelSessionsR.value || []) : [];
-      // Event participation — community events attended
-      const eventParts     = eventPartsR?.status     === "fulfilled" ? (eventPartsR.value     || []) : [];
-      // Community events — resolve event names for participations
-      const communityEvents = communityEventsR?.status === "fulfilled" ? (communityEventsR.value || []) : [];
-      // Build community event name map
-      const eventNameById = {};
-      communityEvents.forEach(e => { if (e?.id) eventNameById[e.id] = e.name || ''; });
+      const locHistory = locHistR?.status   === "fulfilled" ? (locHistR.value    || []) : [];
       // Combine for full picture — deduplicated by id
       const allMsgIds = new Set(msgs.map(m => m.id));
       const allMsgs   = [...msgs, ...rcvMsgs.filter(m => !allMsgIds.has(m.id))];
@@ -941,157 +920,8 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
           text: h.location_name ? `${reasonText} · ${h.location_name}` : reasonText,
           emotion: locCat === 'gym' ? 'motivated' : locCat === 'food_drink' ? 'content' : locCat === 'social' ? 'content' : 'calm',
           sub: h.duration_minutes ? `${h.duration_minutes} min` : null,
-          _source: 'location_history',
-          _locationId: h.location_id,
-          _eventType: h.event_type,
         });
       });
-
-      // ── TravelSession completed arrivals — proven destination commitments ──
-      travelSessions.forEach(ts => {
-        const arrTime = ts.actual_arrival_time || ts.estimated_arrival_time;
-        if (!arrTime || !isAfter(parseISO(arrTime), parseISO(cutoff3d))) return;
-        const destName = ts.destination_location_name || '';
-        const reason = ts.travel_reason || '';
-        let text = `Arrived at ${destName}`;
-        if (reason && reason !== `Travel to ${destName}`) text = `Arrived at ${destName} · ${reason}`;
-        const destLoc = destName ? locationMap[ts.destination_location_id] : null;
-        const locCat = destLoc?.category || '';
-        const icon = locCat === 'home' ? 'home' : locCat === 'work' || locCat === 'workplace' ? 'briefcase' : locCat === 'gym' ? 'activity' : locCat === 'food_drink' ? 'dollar' : locCat === 'social' ? 'heart' : locCat === 'education' || locCat === 'school' ? 'book' : 'mappin';
-        timelineEntries.push({
-          time: arrTime,
-          icon,
-          text,
-          emotion: locCat === 'home' ? 'calm' : locCat === 'gym' ? 'motivated' : locCat === 'food_drink' ? 'content' : locCat === 'social' ? 'content' : 'calm',
-          sub: ts.duration_minutes ? `${ts.duration_minutes} min travel` : null,
-          _source: 'travel_session',
-          _locationId: ts.destination_location_id,
-          _arrivalId: ts.id,
-        });
-      });
-
-      // ── EventParticipations — community events attended ──
-      eventParts.forEach(ep => {
-        const epDate = ep.participation_date;
-        if (!epDate || !isAfter(parseISO(epDate), parseISO(cutoff3d))) return;
-        const eventName = eventNameById[ep.event_id] || ep.event_name || 'Community event';
-        const icon = ep.participation_type === 'volunteered' ? 'heart' : ep.participation_type === 'performed' ? 'activity' : 'mappin';
-        const emotion = ep.emotional_tone === 'enjoyed' || ep.emotional_tone === 'energized' ? 'content'
-          : ep.emotional_tone === 'uncomfortable' || ep.emotional_tone === 'drained' ? 'stressed'
-          : 'calm';
-        timelineEntries.push({
-          time: epDate,
-          icon,
-          text: `Attended ${eventName}`,
-          emotion,
-          sub: ep.participation_type ? `${ep.participation_type} · ${ep.emotional_tone || 'neutral'}` : null,
-          _source: 'event_participation',
-          _eventId: ep.event_id,
-        });
-      });
-
-      // ── Need-fulfillment activity derived from character state changes ──
-      // Check current_activity for completed need-fulfillment actions.
-      // These are NOT repeated — only logged once when the activity first matches.
-      const curActivity = (character.current_activity || '').toLowerCase();
-      if (curActivity) {
-        // Eating — hunger addressed
-        if (curActivity.includes('eating') || curActivity.includes('ate') || curActivity.includes('meal')) {
-          const eatingIcon = 'dollar'; // food-related
-          const eatingText = curActivity.includes('dinner') ? 'Had Dinner'
-            : curActivity.includes('breakfast') ? 'Had Breakfast'
-            : curActivity.includes('lunch') ? 'Ate Lunch'
-            : curActivity.includes('snack') ? 'Ate a Snack'
-            : 'Ate a Meal';
-          timelineEntries.push({
-            time: now.toISOString(),
-            icon: eatingIcon,
-            text: eatingText,
-            emotion: 'content',
-            sub: null,
-            _source: 'need_fulfillment',
-            _activityType: 'eating',
-          });
-        }
-        // Hygiene — freshening up / showering
-        if (curActivity.includes('freshening') || curActivity.includes('wash') || curActivity.includes('shower') || curActivity.includes('clean')) {
-          timelineEntries.push({
-            time: now.toISOString(),
-            icon: 'activity',
-            text: 'Took a Shower',
-            emotion: 'calm',
-            sub: null,
-            _source: 'need_fulfillment',
-            _activityType: 'hygiene',
-          });
-        }
-        // Sleep — sleeping/napping (from current_activity, not just presence)
-        if (curActivity.includes('sleep') && !curActivity.includes('sleeping —')) {
-          timelineEntries.push({
-            time: character.last_sleep_start || now.toISOString(),
-            icon: 'moon',
-            text: 'Went to Sleep',
-            emotion: 'tired',
-            sub: null,
-            _source: 'need_fulfillment',
-            _activityType: 'sleep',
-          });
-        }
-        // Resting
-        if (curActivity.includes('resting') || curActivity.includes('relaxing') || curActivity.includes('decompress')) {
-          timelineEntries.push({
-            time: now.toISOString(),
-            icon: 'home',
-            text: 'Got Some Rest',
-            emotion: 'calm',
-            sub: null,
-            _source: 'need_fulfillment',
-            _activityType: 'rest',
-          });
-        }
-        // Exercising
-        if (curActivity.includes('gym') || curActivity.includes('exercis') || curActivity.includes('workout')) {
-          timelineEntries.push({
-            time: now.toISOString(),
-            icon: 'activity',
-            text: 'Exercised',
-            emotion: 'motivated',
-            sub: null,
-            _source: 'need_fulfillment',
-            _activityType: 'exercise',
-          });
-        }
-        // Social
-        if (curActivity.includes('socializ') || curActivity.includes('with friend') || curActivity.includes('hangout')) {
-          timelineEntries.push({
-            time: now.toISOString(),
-            icon: 'heart',
-            text: 'Spent Time Socializing',
-            emotion: 'content',
-            sub: null,
-            _source: 'need_fulfillment',
-            _activityType: 'social',
-          });
-        }
-      }
-
-      // ── Consecutive duplicate suppression — only identical back-to-back entries within 30 min ──
-      // Only suppresses entries with the same text, icon, and _source that appear consecutively.
-      // Emotional/life/message entries have no _source tag — never affected.
-      const CONSECUTIVE_DUP_WINDOW_MS = 30 * 60 * 1000;
-      const dedupedTimeline = [];
-      for (let i = 0; i < timelineEntries.length; i++) {
-        const entry = timelineEntries[i];
-        const prev = dedupedTimeline[dedupedTimeline.length - 1];
-        if (entry._source && prev && prev._source === entry._source &&
-            entry.text === prev.text && entry.icon === prev.icon) {
-          const entryTime = entry.time ? new Date(entry.time).getTime() : now.getTime();
-          const prevTime = prev.time ? new Date(prev.time).getTime() : now.getTime();
-          if (Math.abs(entryTime - prevTime) < CONSECUTIVE_DUP_WINDOW_MS) continue;
-        }
-        dedupedTimeline.push(entry);
-      }
-      const finalTimeline = dedupedTimeline;
 
       // Messages — one entry per conversation, most emotionally significant message
       // Include ALL participants (character-to-character, character-to-user, world phone)
@@ -1179,7 +1009,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
           ? 'social_checkin'
           : null;
 
-        finalTimeline.push({
+        timelineEntries.push({
           time: m.timestamp || m.created_date,
           icon: meta.isWorldPhone || meta.isAutonomousBeat ? "phone" : "message",
           text: buildMsgText(m._resolvedEmotion || m.emotional_state, resolvedName, meta.isGroup, meta.isWorldPhone, beatType),
@@ -1188,7 +1018,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         });
       });
 
-      finalTimeline.sort((a, b) => { try { return new Date(a.time) - new Date(b.time); } catch { return 0; } });
+      timelineEntries.sort((a, b) => { try { return new Date(a.time) - new Date(b.time); } catch { return 0; } });
 
 
 
@@ -1268,35 +1098,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         ? `${workLocationName}${character.occupation ? ` · ${character.occupation}` : ''}`
         : character.occupation || null;
 
-      // ── PRIORITY-BASED SLICING — emotional/life/message entries NEVER displaced by location entries ──
-      // Entries without _source (sleep, wake, life events, narratives, financial, messages) are priority.
-      // Entries with _source (location, travel, events, needs) fill remaining slots.
-      const DISPLAY_LIMIT = 50;
-      const priorityEntries = finalTimeline.filter(e => !e._source);
-      const supplementEntries = finalTimeline.filter(e => e._source);
-      const displayEntries = priorityEntries.length >= DISPLAY_LIMIT
-        ? priorityEntries.slice(0, DISPLAY_LIMIT)
-        : [...priorityEntries, ...supplementEntries.slice(0, DISPLAY_LIMIT - priorityEntries.length)];
-      displayEntries.sort((a, b) => { try { return new Date(a.time) - new Date(b.time); } catch { return 0; } });
-
-      const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: displayEntries, socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
-
-      // ── CACHE SAFETY NET — never cache a result with fewer entries than the previous cache ──
-      // Prevents a failed fetch (429s) from overwriting a good cached dashboard with empty data.
-      const prevCached = dashboardCache[charId];
-      const prevCount = prevCached?.timelineEntries?.length ?? 0;
-      const newCount = displayEntries.length;
-      if (prevCached && newCount < prevCount && newCount < 3) {
-        // Suspicious: new fetch produced dramatically fewer entries. Keep old cache.
-        console.warn(`[CharacterDashboard] Cache safety: new fetch produced ${newCount} entries vs ${prevCount} cached — keeping previous cache`);
-        dashboardCacheVersion[charId] = DASHBOARD_CACHE_VERSION; // update version so it doesn't keep retrying
-        // Don't overwrite cache — keep old data
-        setData(prevCached);
-        setLoaded(true);
-        setLoading(false);
-        return;
-      }
-
+      const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 20), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
       dashboardCache[charId] = dashData;
       dashboardCacheVersion[charId] = DASHBOARD_CACHE_VERSION;
       setData(dashData);
@@ -1312,7 +1114,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         liveLocationDisplay: character?.resolved_current_location_name || '—',
         liveStatus: character?.resolved_presence_status || 'home',
         trendData: [],
-        timelineEntries: [], // fallback — empty array same shape
+        timelineEntries: [],
         socialStats: { msgsSent: 0, positiveInteractions: 0, conflictEvents: 0, unclassifiedCount: 0 },
         insights: [],
         memoryHighlights: [],
