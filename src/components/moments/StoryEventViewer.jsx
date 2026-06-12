@@ -324,9 +324,15 @@ export default function StoryEventViewer({ eventId }) {
         setShowRegenModal(false);
         setRegenImage(null);
       } else {
-        setRegenError(res?.data?.error || 'Regeneration failed');
+        // Show clear error — especially for reference_lookup_failed
+        const detail = res?.data?.detail || res?.data?.error || 'Regeneration failed';
+        setRegenError(detail);
       }
-    } catch (_) {} finally { setRegenerating(false); }
+    } catch (err) {
+      // Extract error from Axios response if available
+      const detail = err?.response?.data?.detail || err?.response?.data?.error || err?.message || 'Regeneration failed';
+      setRegenError(detail);
+    } finally { setRegenerating(false); }
   };
 
   const computeEventParticipantIds = (evt) => {

@@ -11,8 +11,15 @@ Deno.serve(async (req) => {
     if (!story_event_id || !image_id) {
       return Response.json({ error: 'story_event_id and image_id required' }, { status: 400 });
     }
-    if (!visible_character_ids || !Array.isArray(visible_character_ids) || visible_character_ids.length === 0) {
-      return Response.json({ error: 'visible_character_ids required — at least one character must be visible' }, { status: 400 });
+    // visible_character_ids is optional for non-identity reasons (flawed, location_incorrect).
+    // When provided, identities MUST resolve with reference images.
+    const hasCharacterIds = visible_character_ids && Array.isArray(visible_character_ids) && visible_character_ids.length > 0;
+    const hasLikenessReason = Array.isArray(reasons) && reasons.includes('does_not_look_like_them');
+    
+    // If likeness reason but no character IDs, fall back to event participants
+    let effectiveCharacterIds = hasCharacterIds ? [...visible_character_ids] : [];
+    if (!hasCharacterIds && hasLikenessReason) {
+      return Response.json({ error: 'visible_character_ids required when "does_not_look_like_them" is selected' }, { status: 400 });
     }
 
     const allReasons = Array.isArray(reasons) && reasons.length > 0 ? reasons : [];
@@ -31,48 +38,100 @@ Deno.serve(async (req) => {
     const originalPrompt = existingImage.prompt || '';
     const venueName = event.venue_name || 'the event venue';
 
-    // ── LOAD ALL VISIBLE CHARACTERS (NO TYPE RESTRICTION) ──────────────────
-    // Service role lookup by ID only — no owner_email filter.
-    // NPC family members, NPC fictitious, and world service characters
-    // may have different owner_emails than the event owner.
+    // ── LOAD ALL VISIBLE IDENTITIES (User + all character types) ──────────
+    // Service role lookup resolves both Character entities and User identities.
     const charById = {};
     const refImages = [];
     const visibleNames = [];
     const visibleTypes = [];
     const lookupStatusByChar = {};
 
-    for (const cid of visible_character_ids) {
+    for (const cid of effectiveCharacterIds) {
       try {
-        // Direct ID lookup — service role can see all characters
-        const chars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
-        if (chars[0]) {
-          const c = chars[0];
-          charById[cid] = c;
-          visibleNames.push(c.name || c.display_name || cid);
-          visibleTypes.push(c.character_type || 'active_created_character');
+        const isUserIdentity = cid.startsWith('user_');
 
-          // Collect all reference image sources
-          const charRefImages = [];
-          if (c.avatar_url && typeof c.avatar_url === 'string') charRefImages.push(c.avatar_url);
-          if (c.image_avatar_url && typeof c.image_avatar_url === 'string') charRefImages.push(c.image_avatar_url);
-          if (Array.isArray(c.reference_image_urls)) {
-            c.reference_image_urls.forEach(url => {
-              if (url && typeof url === 'string') charRefImages.push(url);
-            });
-          }
+        if (isUserIdentity) {
+          // ── User identity: look up User + UserSettings for reference images ─
+          const rawId = cid.replace('user_', '');
+          let userRefImages = [];
+          let userName = rawId;
 
-          // Per-character reference lookup status
-          if (charRefImages.length > 0) {
-            refImages.push(...charRefImages);
+          try {
+            // Look up the user via service role
+            const userList = await base44.asServiceRole.entities.User.list(null, 500);
+            const matched = userList.find(u => u.id === rawId || u.email === rawId);
+            if (matched) {
+              userName = matched.full_name || matched.email || rawId;
+
+              // Look up UserSettings for avatar/reference images
+              try {
+                const settingsList = await base44.asServiceRole.entities.UserSettings.filter(
+                  { owner_email: matched.email }, null, 1
+                );
+                if (settingsList[0]) {
+                  const s = settingsList[0];
+                  // Collect user reference images from all available sources
+                  if (s.avatar_url && typeof s.avatar_url === 'string') userRefImages.push(s.avatar_url);
+                  if (s.image_avatar_url && typeof s.image_avatar_url === 'string') userRefImages.push(s.image_avatar_url);
+                  if (Array.isArray(s.reference_image_urls)) {
+                    s.reference_image_urls.forEach(url => {
+                      if (url && typeof url === 'string') userRefImages.push(url);
+                    });
+                  }
+                }
+              } catch (_) {}
+
+              charById[cid] = {
+                name: userName,
+                display_name: userName,
+                character_type: 'user',
+                appearance_notes: '',
+                appearance_lock: matched.appearance_lock || null,
+                style_identity: '',
+                avatar_url: userRefImages[0] || null,
+              };
+            }
+          } catch (_) {}
+
+          visibleNames.push(userName);
+          visibleTypes.push('user');
+
+          if (userRefImages.length > 0) {
+            refImages.push(...userRefImages);
             lookupStatusByChar[cid] = 'resolved';
           } else {
             lookupStatusByChar[cid] = 'reference_lookup_failed';
           }
         } else {
-          // Character ID from StoryEvent but not found in Character records
-          visibleNames.push(cid);
-          visibleTypes.push('unknown');
-          lookupStatusByChar[cid] = 'character_not_found';
+          // ── Character identity ──────────────────────────────────────────
+          const chars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
+          if (chars[0]) {
+            const c = chars[0];
+            charById[cid] = c;
+            visibleNames.push(c.name || c.display_name || cid);
+            visibleTypes.push(c.character_type || 'active_created_character');
+
+            // Collect all reference image sources
+            const charRefImages = [];
+            if (c.avatar_url && typeof c.avatar_url === 'string') charRefImages.push(c.avatar_url);
+            if (c.image_avatar_url && typeof c.image_avatar_url === 'string') charRefImages.push(c.image_avatar_url);
+            if (Array.isArray(c.reference_image_urls)) {
+              c.reference_image_urls.forEach(url => {
+                if (url && typeof url === 'string') charRefImages.push(url);
+              });
+            }
+
+            if (charRefImages.length > 0) {
+              refImages.push(...charRefImages);
+              lookupStatusByChar[cid] = 'resolved';
+            } else {
+              lookupStatusByChar[cid] = 'reference_lookup_failed';
+            }
+          } else {
+            visibleNames.push(cid);
+            visibleTypes.push('unknown');
+            lookupStatusByChar[cid] = 'character_not_found';
+          }
         }
       } catch (_) {
         visibleNames.push(cid);
@@ -82,7 +141,7 @@ Deno.serve(async (req) => {
     }
 
     // Build appearance context ONLY from resolved characters
-    const appearanceParts = visible_character_ids.map(cid => {
+    const appearanceParts = effectiveCharacterIds.map(cid => {
       const c = charById[cid];
       if (!c) return '';
       const parts = [];
@@ -106,14 +165,35 @@ Deno.serve(async (req) => {
     // Deduplicate ref images
     const dedupedRefs = refImages.filter((url, i, arr) => arr.indexOf(url) === i).slice(0, 10);
 
-    // Honest lookup tracking
+    // ── CRITICAL: BLOCK GENERATION IF REFERENCES FAIL ────────────────────
+    // If any selected identity has reference_lookup_failed, refuse to generate.
+    // This prevents generating generic strangers when identities were selected.
     const anyReferenceLookupFailed = Object.values(lookupStatusByChar).some(s => s === 'reference_lookup_failed');
     const anyCharacterNotFound = Object.values(lookupStatusByChar).some(s => s === 'character_not_found');
     const allResolved = !anyReferenceLookupFailed && !anyCharacterNotFound;
 
+    // BUILD THE DIAGNOSTIC REGARDLESS — it must be returned even on failure
+    const failedCharacters = Object.entries(lookupStatusByChar)
+      .filter(([, s]) => s !== 'resolved')
+      .map(([cid, s]) => ({ id: cid, status: s, name: visibleNames[effectiveCharacterIds.indexOf(cid)] || cid }));
+
     const lookupDiagnostic = !allResolved
-      ? `partial_lookup: ${Object.entries(lookupStatusByChar).filter(([,s]) => s !== 'resolved').map(([cid, s]) => `${cid}=${s}`).join(', ')}`
+      ? `partial_lookup: ${failedCharacters.map(f => `${f.id}=${f.status}`).join(', ')}`
       : 'all_characters_resolved_with_references';
+
+    // BLOCK: identities selected but reference images missing
+    if (hasCharacterIds && !allResolved) {
+      return Response.json({
+        success: false,
+        error: 'reference_lookup_failed',
+        detail: `Cannot regenerate: ${failedCharacters.length} selected identities could not be resolved with reference images. This prevents generating generic strangers.`,
+        failed_characters: failedCharacters,
+        reference_lookup_status_by_character: lookupStatusByChar,
+        resolved_count: Object.values(lookupStatusByChar).filter(s => s === 'resolved').length,
+        reference_lookup_failed_count: Object.values(lookupStatusByChar).filter(s => s === 'reference_lookup_failed').length,
+        character_not_found_count: Object.values(lookupStatusByChar).filter(s => s === 'character_not_found').length,
+      }, { status: 422 });
+    }
 
     // Build regeneration prompt
     const reasonText = allReasons.length > 0
@@ -151,7 +231,7 @@ Deno.serve(async (req) => {
     await base44.asServiceRole.entities.StoryEventImage.update(image_id, {
       image_url: imageRes.url,
       prompt: regenPrompt,
-      visible_character_ids: visible_character_ids,
+      visible_character_ids: effectiveCharacterIds,
       visible_character_names: visibleNames,
       visible_character_types: visibleTypes,
       reference_image_urls: dedupedRefs,
@@ -174,7 +254,7 @@ Deno.serve(async (req) => {
         event_title: event.title,
         event_date: event.event_date,
         moment_type: momentType,
-        visible_character_ids,
+        visible_character_ids: effectiveCharacterIds,
         visible_character_names: visibleNames,
         visible_character_types: visibleTypes,
         venue_id: event.venue_id,
@@ -184,7 +264,7 @@ Deno.serve(async (req) => {
         scene_prompt: regenPrompt,
         character_reference_images: dedupedRefs.slice(0, 5),
         reference_lookup_status_by_character: lookupStatusByChar,
-        subjects: visible_character_ids.map(cid => ({
+        subjects: effectiveCharacterIds.map(cid => ({
           subject_type: 'character',
           subject_id: cid,
           subject_name: charById[cid]?.name || cid,
@@ -198,7 +278,7 @@ Deno.serve(async (req) => {
       success: true,
       image_id,
       new_url: imageRes.url,
-      visible_character_ids,
+      visible_character_ids: effectiveCharacterIds,
       visible_character_names: visibleNames,
       visible_character_types: visibleTypes,
       reference_image_urls: dedupedRefs,
