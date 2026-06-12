@@ -1,5 +1,15 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
+// ── UTILITY: Add hours to a HH:MM time string ────────────────────────────
+function addHoursToTime(timeStr, hours) {
+  if (!timeStr) return null;
+  const [h, m] = timeStr.split(':').map(Number);
+  const totalMins = h * 60 + m + hours * 60;
+  const newH = Math.floor(totalMins / 60) % 24;
+  const newM = totalMins % 60;
+  return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -555,6 +565,43 @@ Deno.serve(async (req) => {
       });
     } catch (_) {}
 
+    // ── STEP 5e: WRITE LOCATION HISTORY RECORDS ────────────────────────────
+    // CRITICAL: Without LocationHistory, character memory contradicts their timeline.
+    // Each participant gets a venue visit record so "I was there" is supported by logs.
+    const eventArrivalTime = `${eventDate || ''}T${startTime || '12:00'}:00.000`;
+    const eventDepartureTime = endTime
+      ? `${eventDate}T${endTime}:00.000`
+      : `${eventDate}T${startTime ? addHoursToTime(startTime, 2) : '14:00'}:00.000`;
+    let eventDurationMinutes = null;
+    if (eventArrivalTime && eventDepartureTime) {
+      const arrD = new Date(eventArrivalTime);
+      const depD = new Date(eventDepartureTime);
+      eventDurationMinutes = Math.round((depD.getTime() - arrD.getTime()) / 60000);
+      if (eventDurationMinutes < 0) eventDurationMinutes = 120;
+    }
+    for (const cid of allIds) {
+      const c = charById[cid];
+      if (!c) continue;
+      try {
+        await base44.asServiceRole.entities.LocationHistory.create({
+          character_id: cid,
+          character_name: c.name || c.display_name || cid,
+          owner_email: ownerEmail,
+          location_id: event.venue_id || null,
+          location_name: venueName,
+          location_category: 'social',
+          event_type: 'social_visit',
+          arrival_time: eventArrivalTime,
+          departure_time: eventDepartureTime,
+          duration_minutes: eventDurationMinutes,
+          travel_source: 'event',
+          travel_reason: `Story Event: ${title}`,
+          is_current: false,
+          notes: `Attended "${title}" Story Event at ${venueName}.`,
+        });
+      } catch (_) {}
+    }
+
     // ── STEP 5d: CREATE EVENTPARTICIPATION (DASHBOARD ATTENDANCE) ────────────
     for (const mem of memories) {
       if (!mem.character_id) continue;
@@ -657,6 +704,26 @@ Deno.serve(async (req) => {
           participation_date: `${eventDate || ''}T${startTime || '12:00'}:00.000`,
           memory_strength: 'moderate', notes: fallbackSummary,
           saw_character_ids: participantIds.filter(id => id !== cid),
+        });
+      } catch (_) {}
+
+      // LocationHistory (timeline support for attendance)
+      try {
+        await base44.asServiceRole.entities.LocationHistory.create({
+          character_id: cid,
+          character_name: cname,
+          owner_email: ownerEmail,
+          location_id: event.venue_id || null,
+          location_name: venueName,
+          location_category: 'social',
+          event_type: 'social_visit',
+          arrival_time: eventArrivalTime,
+          departure_time: eventDepartureTime,
+          duration_minutes: eventDurationMinutes,
+          travel_source: 'event',
+          travel_reason: `Story Event: ${title}`,
+          is_current: false,
+          notes: `Attended "${title}" Story Event at ${venueName}. (Fallback coverage)`,
         });
       } catch (_) {}
     }
