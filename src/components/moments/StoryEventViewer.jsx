@@ -25,16 +25,13 @@ export default function StoryEventViewer({ eventId }) {
   const [sendSent, setSendSent] = useState(false);
   const [sendError, setSendError] = useState(null);
 
-  // Regenerate modal state
+  // Unified regenerate modal state (reasons + identity selection combined)
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [regenImage, setRegenImage] = useState(null);
   const [regenReasons, setRegenReasons] = useState(new Set());
+  const [regenVisibleIds, setRegenVisibleIds] = useState(new Set());
+  const [regenError, setRegenError] = useState(null);
   const [regenerating, setRegenerating] = useState(false);
-
-  // Character selection for image regeneration
-  const [showCharSelectModal, setShowCharSelectModal] = useState(false);
-  const [charSelectImage, setCharSelectImage] = useState(null);
-  const [selectedVisibleIds, setSelectedVisibleIds] = useState(new Set());
 
   // Impact verification state
   const [impactLoading, setImpactLoading] = useState(false);
@@ -271,14 +268,19 @@ export default function StoryEventViewer({ eventId }) {
     setSelectedRecipientIds(next);
   };
 
-  // ── REGENERATE HANDLER ────────────────────────────────────────────────────
+  // ── UNIFIED REGENERATE HANDLER (reasons + identity selection) ─────────────
   const openRegenModal = (img) => {
     setRegenImage(img);
     setRegenReasons(new Set());
+    setRegenError(null);
+    // Pre-select existing visible characters if stored
+    const existing = img.visible_character_ids || [];
+    setRegenVisibleIds(new Set(existing));
     setShowRegenModal(true);
   };
 
   const toggleRegenReason = (reasonId) => {
+    setRegenError(null);
     setRegenReasons(prev => {
       const next = new Set(prev);
       next.has(reasonId) ? next.delete(reasonId) : next.add(reasonId);
@@ -286,13 +288,32 @@ export default function StoryEventViewer({ eventId }) {
     });
   };
 
+  const toggleRegenIdentity = (id) => {
+    setRegenError(null);
+    setRegenVisibleIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
   const handleRegenerate = async () => {
     if (!regenImage || regenReasons.size === 0) return;
+
+    // If "doesn't look like them" is selected, identities are required
+    const needsLikeness = regenReasons.has('does_not_look_like_them');
+    if (needsLikeness && regenVisibleIds.size === 0) {
+      setRegenError('Select at least one identity for "Doesn\'t look like them" regeneration.');
+      return;
+    }
+
     setRegenerating(true);
+    setRegenError(null);
     try {
-      const res = await base44.functions.invoke('regenerateStoryEventImage', {
+      const res = await base44.functions.invoke('regenerateStoryEventImageWithCharacters', {
         story_event_id: eventId,
         image_id: regenImage.id,
+        visible_character_ids: regenVisibleIds.size > 0 ? [...regenVisibleIds] : [],
         reasons: [...regenReasons],
       });
       if (res?.data?.success) {
@@ -302,6 +323,8 @@ export default function StoryEventViewer({ eventId }) {
         setImages(imgs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
         setShowRegenModal(false);
         setRegenImage(null);
+      } else {
+        setRegenError(res?.data?.error || 'Regeneration failed');
       }
     } catch (_) {} finally { setRegenerating(false); }
   };
@@ -312,44 +335,6 @@ export default function StoryEventViewer({ eventId }) {
       ...(evt.focus_character_ids || []),
     ])];
     setEventParticipantIds(new Set(allIds));
-  };
-
-  // ── CHARACTER-SELECT REGENERATION ───────────────────────────────────────
-  const openCharSelect = (img) => {
-    setCharSelectImage(img);
-    // Pre-select existing visible characters if stored
-    const existing = img.visible_character_ids || [];
-    setSelectedVisibleIds(new Set(existing));
-    setShowCharSelectModal(true);
-  };
-
-  const toggleVisibleChar = (id) => {
-    setSelectedVisibleIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
-
-  const handleCharSelectRegen = async () => {
-    if (!charSelectImage || selectedVisibleIds.size === 0) return;
-    setRegenerating(true);
-    try {
-      const res = await base44.functions.invoke('regenerateStoryEventImageWithCharacters', {
-        story_event_id: eventId,
-        image_id: charSelectImage.id,
-        visible_character_ids: [...selectedVisibleIds],
-        reasons: [],
-      });
-      if (res?.data?.success) {
-        const imgs = await base44.entities.StoryEventImage.filter(
-          { story_event_id: eventId }, null, 10
-        ).catch(() => []);
-        setImages(imgs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
-        setShowCharSelectModal(false);
-        setCharSelectImage(null);
-      }
-    } catch (_) {} finally { setRegenerating(false); }
   };
 
   // ── IMPACT VERIFICATION ──────────────────────────────────────────────────
@@ -519,13 +504,6 @@ export default function StoryEventViewer({ eventId }) {
                               )}
                             </div>
                             <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => openCharSelect(img)}
-                                className="p-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors"
-                                title="Edit characters in image"
-                              >
-                                <Users className="w-3.5 h-3.5" />
-                              </button>
                               <button
                                 onClick={() => openRegenModal(img)}
                                 className="p-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors"
@@ -769,84 +747,7 @@ export default function StoryEventViewer({ eventId }) {
         </div>
       )}
 
-      {/* ── CHARACTER SELECTION MODAL ────────────────────────────────────────── */}
-      {showCharSelectModal && charSelectImage && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center pb-24 pt-4 px-4" onClick={() => setShowCharSelectModal(false)}>
-          <div className="w-full max-w-sm bg-card border border-border rounded-3xl overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-              <h3 className="text-sm font-semibold text-foreground">Characters in Image</h3>
-              <button onClick={() => setShowCharSelectModal(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-4 h-4 text-muted-foreground" /></button>
-            </div>
-            <div className="p-4 space-y-1 max-h-72 overflow-y-auto">
-              <p className="text-xs text-muted-foreground mb-2">
-                Select which characters appear in the {charSelectImage.moment_type?.replace('_', ' ') || 'moment'} image.
-                Only selected characters will be used. No generic strangers.
-              </p>
-              <p className="text-[10px] text-amber-400/90 mb-2 px-2 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                This regenerates the image using ONLY the selected characters' reference photos and appearance data.
-              </p>
-              {identityRoster.map((char) => {
-                const isParticipant = char._isUser
-                  ? false // User is never an event participant (they're the user, not a character)
-                  : eventParticipantIds.has(char.id);
-                const isFocus = char._isUser ? false : (event.focus_character_ids || []).includes(char.id);
-                const isSelected = selectedVisibleIds.has(char.id);
-                const charTypeLabel = char._isUser
-                  ? 'User'
-                  : {
-                      active_created_character: 'Active',
-                      npc_family_member: 'Family',
-                      npc_fictitious: 'NPC',
-                      npc_world_service: 'Service',
-                    }[char.character_type] || 'Other';
-                const avatarUrl = char.avatar_url || char.image_avatar_url || 
-                  (Array.isArray(char.reference_image_urls) ? char.reference_image_urls[0] : null);
-
-                return (
-                  <button key={char.id} onClick={() => toggleVisibleChar(char.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl border transition-all text-left ${
-                      isSelected ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
-                    }`}>
-                    {/* Avatar */}
-                    <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 bg-secondary border border-border">
-                      {avatarUrl ? (
-                        <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-muted-foreground">
-                          {(char.name || char.display_name || '?')[0]}
-                        </div>
-                      )}
-                    </div>
-                    {/* Name + Type label */}
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm font-medium truncate block">{char.name || char.display_name}</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[9px] text-muted-foreground">{charTypeLabel}</span>
-                        {isParticipant && (
-                          <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">Event Participant</span>
-                        )}
-                      </div>
-                    </div>
-                    {/* Focus badge */}
-                    {isFocus && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary shrink-0">★</span>}
-                    {/* Check */}
-                    {isSelected && <Check className="w-4 h-4 shrink-0 text-primary" />}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex-shrink-0 border-t border-border p-4 flex gap-2">
-              <button onClick={() => setShowCharSelectModal(false)} className="flex-1 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm">Cancel</button>
-              <button onClick={handleCharSelectRegen} disabled={selectedVisibleIds.size === 0 || regenerating}
-                className="flex-1 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
-                {regenerating ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</> : 'Regenerate'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── REGENERATE MODAL ───────────────────────────────────────────────── */}
+      {/* ── UNIFIED REGENERATE MODAL (reasons + identity selection) ───────────── */}
       {showRegenModal && regenImage && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center pb-24 pt-4 px-4" onClick={() => setShowRegenModal(false)}>
           <div className="w-full max-w-sm bg-card border border-border rounded-3xl overflow-hidden" onClick={e => e.stopPropagation()}>
@@ -854,6 +755,8 @@ export default function StoryEventViewer({ eventId }) {
               <h3 className="text-sm font-semibold text-foreground">Regenerate Image</h3>
               <button onClick={() => setShowRegenModal(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-4 h-4 text-muted-foreground" /></button>
             </div>
+            
+            {/* ── 1. REASONS ──────────────────────────────────────────────── */}
             <div className="p-4 space-y-2">
               <p className="text-xs text-muted-foreground">Why regenerate this {regenImage.moment_type?.replace('_', ' ') || 'moment'} image? Select all that apply:</p>
               {REGEN_REASONS.map(r => {
@@ -869,13 +772,77 @@ export default function StoryEventViewer({ eventId }) {
                   </button>
                 );
               })}
+
+              {/* ── 2. IDENTITY SELECTION ──────────────────────────────────── */}
+              <div className="border-t border-border pt-3 mt-3">
+                <p className="text-xs text-muted-foreground mb-2">
+                  Select which identities appear in the regenerated image. Selected identities' reference photos and appearance data will be used.
+                </p>
+                {regenReasons.has('does_not_look_like_them') && regenVisibleIds.size === 0 && (
+                  <p className="text-[10px] text-destructive mb-2 px-2 py-1.5 rounded-lg bg-destructive/10 border border-destructive/20">
+                    "Doesn't look like them" requires at least one selected identity.
+                  </p>
+                )}
+                <div className="space-y-1 max-h-48 overflow-y-auto">
+                  {identityRoster.map((char) => {
+                    const isParticipant = char._isUser
+                      ? false
+                      : eventParticipantIds.has(char.id);
+                    const isFocus = char._isUser ? false : (event.focus_character_ids || []).includes(char.id);
+                    const isSelected = regenVisibleIds.has(char.id);
+                    const charTypeLabel = char._isUser
+                      ? 'User'
+                      : {
+                          active_created_character: 'Active',
+                          npc_family_member: 'Family',
+                          npc_fictitious: 'NPC',
+                          npc_world_service: 'Service',
+                        }[char.character_type] || 'Other';
+                    const avatarUrl = char.avatar_url || char.image_avatar_url || 
+                      (Array.isArray(char.reference_image_urls) ? char.reference_image_urls[0] : null);
+
+                    return (
+                      <button key={char.id} onClick={() => toggleRegenIdentity(char.id)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl border transition-all text-left ${
+                          isSelected ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
+                        }`}>
+                        <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 bg-secondary border border-border">
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-muted-foreground">
+                              {(char.name || char.display_name || '?')[0]}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-medium truncate block">{char.name || char.display_name}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] text-muted-foreground">{charTypeLabel}</span>
+                            {isParticipant && (
+                              <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">Event Participant</span>
+                            )}
+                          </div>
+                        </div>
+                        {isFocus && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary shrink-0">★</span>}
+                        {isSelected && <Check className="w-4 h-4 shrink-0 text-primary" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-            <div className="flex-shrink-0 border-t border-border p-4 flex gap-2">
-              <button onClick={() => setShowRegenModal(false)} className="flex-1 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm">Cancel</button>
-              <button onClick={handleRegenerate} disabled={regenReasons.size === 0 || regenerating}
-                className="flex-1 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
-                {regenerating ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</> : 'Regenerate'}
-              </button>
+
+            {/* ── FOOTER ──────────────────────────────────────────────── */}
+            <div className="flex-shrink-0 border-t border-border p-4 flex flex-col gap-2">
+              {regenError && <p className="text-xs text-destructive">{regenError}</p>}
+              <div className="flex gap-2">
+                <button onClick={() => setShowRegenModal(false)} className="flex-1 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm">Cancel</button>
+                <button onClick={handleRegenerate} disabled={regenReasons.size === 0 || regenerating}
+                  className="flex-1 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+                  {regenerating ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</> : 'Regenerate'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
