@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Build character context for the LLM — include character_type so LLM knows who's family/NPC/service
+    // Build character context for the LLM — include appearance for image identity
     const characterContexts = allIds.map(cid => {
       const c = charById[cid];
       if (!c) return `- ${cid}: (character data unavailable)`;
@@ -83,12 +83,34 @@ Deno.serve(async (req) => {
         : charType === 'npc_fictitious' ? ' [Fictional/NPC character]'
         : charType === 'npc_world_service' ? ' [World service character]'
         : '';
+      // Build appearance description for image identity
+      const appearanceParts = [];
+      if (c.appearance_notes) appearanceParts.push(c.appearance_notes);
+      if (c.avatar_description_text) appearanceParts.push(c.avatar_description_text);
+      if (c.appearance_lock && typeof c.appearance_lock === 'object') {
+        const al = c.appearance_lock;
+        const lockParts = [];
+        if (al.skin_tone) lockParts.push(`skin: ${al.skin_tone}`);
+        if (al.hair_type) lockParts.push(`hair: ${al.hair_type}`);
+        if (al.hairstyle) lockParts.push(`hairstyle: ${al.hairstyle}`);
+        if (al.facial_hair) lockParts.push(`facial hair: ${al.facial_hair}`);
+        if (al.clothing_style) lockParts.push(`clothing: ${al.clothing_style}`);
+        if (al.overall_aesthetic) lockParts.push(`aesthetic: ${al.overall_aesthetic}`);
+        if (lockParts.length > 0) appearanceParts.push(lockParts.join(', '));
+      }
+      if (c.style_identity && !appearanceParts.some(p => p.includes(c.style_identity))) {
+        appearanceParts.push(`style: ${c.style_identity}`);
+      }
+      const appearanceBlock = appearanceParts.length > 0
+        ? `  APPEARANCE (USE THIS FOR IMAGE GENERATION — DO NOT INVENT GENERIC STRANGERS): ${appearanceParts.join(' | ')}`
+        : '';
       return [
         `- ${c.name || cid} ${marker}${typeNote}`,
         c.personality_summary ? `  Personality: ${c.personality_summary}` : '',
         c.occupation ? `  Occupation: ${c.occupation}` : '',
         c.age ? `  Age: ${c.age}` : '',
         c.gender ? `  Gender: ${c.gender}` : '',
+        appearanceBlock,
         c.communication_style ? `  Communication style: ${c.communication_style}` : '',
         c.current_situation ? `  Current situation: ${c.current_situation}` : '',
         c.profile_summary ? `  Summary: ${c.profile_summary}` : '',
@@ -186,9 +208,9 @@ Deno.serve(async (req) => {
       `    { "character_id": "the_exact_id", "character_name": "Name", "memory_text": "What this character remembers about the event — personal, specific, from their perspective. Include: the event title, venue, who they saw there, what they did, interactions they had, and how they felt. A few sentences.", "memory_summary": "Short summary for retrieval (one sentence)", "importance_score": 1-10, "emotional_tone": "positive|negative|neutral|mixed" }`,
       `  ],`,
       `  "image_prompts": [`,
-      `    { "moment": "opening", "prompt": "Detailed image generation prompt for the opening moment. Include venue details, characters present, lighting, mood. The venue is: ${venueName}. Use the characters' actual described physical appearances and outfits.", "description": "What the image shows." },`,
-      `    { "moment": "key_moment", "prompt": "Detailed image generation prompt for the key/peak moment of the event. Focus on the focus characters.", "description": "What the image shows." },`,
-      `    { "moment": "closing", "prompt": "Detailed image generation prompt for the closing/wrap-up moment.", "description": "What the image shows." }`,
+      `    { "moment": "opening", "prompt": "Image generation prompt for the opening moment at ${venueName}. CRITICAL: Describe each visible character using ONLY their APPEARANCE data from the character details above — skin tone, hair, hairstyle, facial hair, clothing style, overall aesthetic. DO NOT invent generic people. DO NOT describe strangers. Every person in this image must match their character's documented appearance. Include venue ambiance, lighting, and mood.", "description": "What the image shows." },`,
+      `    { "moment": "key_moment", "prompt": "Image generation prompt for the peak moment. Focus characters must be prominent and described using their documented appearance. Supporting characters who appear must also use their documented appearance. DO NOT generate stand-ins.", "description": "What the image shows." },`,
+      `    { "moment": "closing", "prompt": "Image generation prompt for the closing moment. Describe each visible character using their documented appearance. No generic faces.", "description": "What the image shows." }`,
       `  ]`,
       `}`,
       ``,
@@ -199,7 +221,7 @@ Deno.serve(async (req) => {
       `- Focus characters get richer memories with higher importance scores.`,
       `- EVERY participant (family members, NPCs, service characters, AND active characters) gets at least one memory. No character who attended is left without a memory.`,
       `- Image prompts must reference the venue: ${venueName}.`,
-      `- Image prompts must describe the participating characters using their actual physical descriptions — do not invent generic strangers.`,
+      `- IMAGE IDENTITY RULE (CRITICAL): For every character visible in an image, copy their APPEARANCE data verbatim from the character details above. Use their actual skin tone, hair, hairstyle, clothing, aesthetic. DO NOT describe generic strangers. DO NOT invent replacement faces. The people shown must match the selected characters.`,
       `- Only include relationship changes for character pairs that actually interact meaningfully.`,
     ].join('\n');
 
@@ -298,8 +320,49 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 2b: CREATE CHARACTER MEMORY RECORDS (durable LLM awareness) ─────
-    // Every participant gets a CharacterMemory so they can recall the event in future conversations
+    // ── STEP 2b: WRITE TO CHARACTER.MEMORIES ARRAY (read by buildFullCanonicalPrompt) ─
+    // This is the primary memory well read by the chat context builder.
+    // CRITICAL: Fetch FRESH character state — the charById snapshot is stale.
+    for (const mem of memories) {
+      if (!mem.character_id || !mem.memory_text) continue;
+      try {
+        const freshChars = await base44.asServiceRole.entities.Character.filter({ id: mem.character_id }, null, 1);
+        const freshChar = freshChars[0];
+        if (!freshChar) continue;
+        const existingMemories = freshChar.memories || [];
+        const newMemoryEntry = {
+          title: `Story Event: ${title}`,
+          description: mem.memory_text,
+          date: eventDate,
+          emotion_state: mem.emotional_tone || 'neutral',
+          created_date: new Date().toISOString(),
+        };
+        await base44.asServiceRole.entities.Character.update(mem.character_id, {
+          memories: [...existingMemories, newMemoryEntry],
+        });
+      } catch (_) {}
+    }
+
+    // ── STEP 2c: WRITE TO MEMORY ENTITY (primary semantic retrieval well) ─────
+    // The Memory entity is what retrieveActiveMemory reads from for semantic search.
+    // Field names: title, description, character_id, emotional_impact, source_context, timestamp
+    for (const mem of memories) {
+      if (!mem.character_id || !mem.memory_text) continue;
+      try {
+        const eventContext = `[Story Event: ${title} — ${eventDate} at ${venueName}]`;
+        await base44.asServiceRole.entities.Memory.create({
+          character_id: mem.character_id,
+          title: `Attended: ${title}`,
+          description: `${eventContext} ${mem.memory_text}`,
+          emotional_impact: mem.emotional_tone || 'neutral',
+          source_context: `story_event_${eventId}`,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (_) {}
+    }
+
+    // ── STEP 2d: CREATE CHARACTER MEMORY RECORDS (Life Journal block) ─────────
+    // CharacterMemory feeds the Life Journal block in buildCanonicalCharacterContext.
     for (const mem of memories) {
       if (!mem.character_id || !mem.memory_text) continue;
       try {
@@ -312,26 +375,6 @@ Deno.serve(async (req) => {
           confidence_score: 0.95,
           permanence: (mem.importance_score || 5) >= 7 ? 'protected' : 'long_term',
           validation_status: 'confirmed',
-        });
-      } catch (_) {}
-    }
-
-    // Also write to Character.memories array for backward compatibility with older context builders
-    for (const mem of memories) {
-      if (!mem.character_id || !mem.memory_text) continue;
-      try {
-        const existingChar = charById[mem.character_id];
-        if (!existingChar) continue;
-        const existingMemories = existingChar.memories || [];
-        const newMemoryEntry = {
-          title: `Story Event: ${title}`,
-          description: mem.memory_text,
-          date: eventDate,
-          emotion_state: mem.emotional_tone || 'neutral',
-          created_date: new Date().toISOString(),
-        };
-        await base44.asServiceRole.entities.Character.update(mem.character_id, {
-          memories: [...existingMemories, newMemoryEntry],
         });
       } catch (_) {}
     }
