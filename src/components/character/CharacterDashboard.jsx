@@ -362,7 +362,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 13; // fix: expanded Recent Activity — location changes, need fulfillment, community events, sleep, same-instance dedup
+const DASHBOARD_CACHE_VERSION = 14; // fix: priority slicing (emotional entries never displaced), conservative consecutive-only dedup, cache safety net
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -1075,41 +1075,22 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         }
       }
 
-      // ── Same-instance deduplication — prevent repeated entries for ongoing activities ──
-      // Remove entries that are the same ongoing instance of the same activity.
-      // Rules: same _source + same _locationId or _eventId within a cooldown window = duplicate.
-      // Same _source + same _activityType within 2 hours = same instance.
-      // This does NOT delete old history — it only prevents new duplicates.
-      const INSTANCE_COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2 hours for same activity type
+      // ── Consecutive duplicate suppression — only identical back-to-back entries within 30 min ──
+      // Only suppresses entries with the same text, icon, and _source that appear consecutively.
+      // Emotional/life/message entries have no _source tag — never affected.
+      const CONSECUTIVE_DUP_WINDOW_MS = 30 * 60 * 1000;
       const dedupedTimeline = [];
-      const seenInstances = {}; // key → latest timestamp
-      for (const entry of timelineEntries) {
-        let instanceKey = null;
-        if (entry._source === 'need_fulfillment' && entry._activityType) {
-          instanceKey = `need:${entry._activityType}`;
-        } else if (entry._source === 'location_history' && entry._locationId && entry._eventType) {
-          instanceKey = `loc:${entry._locationId}:${entry._eventType}`;
-        } else if (entry._source === 'travel_session' && entry._arrivalId) {
-          instanceKey = `travel:${entry._arrivalId}`;
-        } else if (entry._source === 'event_participation' && entry._eventId) {
-          instanceKey = `event:${entry._eventId}`;
+      for (let i = 0; i < timelineEntries.length; i++) {
+        const entry = timelineEntries[i];
+        const prev = dedupedTimeline[dedupedTimeline.length - 1];
+        if (entry._source && prev && prev._source === entry._source &&
+            entry.text === prev.text && entry.icon === prev.icon) {
+          const entryTime = entry.time ? new Date(entry.time).getTime() : now.getTime();
+          const prevTime = prev.time ? new Date(prev.time).getTime() : now.getTime();
+          if (Math.abs(entryTime - prevTime) < CONSECUTIVE_DUP_WINDOW_MS) continue;
         }
-        // If no dedup key, always include the entry
-        if (!instanceKey) {
-          dedupedTimeline.push(entry);
-          continue;
-        }
-        const entryTime = entry.time ? new Date(entry.time).getTime() : now.getTime();
-        const prevTime = seenInstances[instanceKey];
-        if (prevTime && (entryTime - prevTime) < INSTANCE_COOLDOWN_MS) {
-          // Same instance within cooldown — skip duplicate
-          continue;
-        }
-        seenInstances[instanceKey] = entryTime;
         dedupedTimeline.push(entry);
       }
-
-      // Use deduped timeline going forward
       const finalTimeline = dedupedTimeline;
 
       // Messages — one entry per conversation, most emotionally significant message
@@ -1287,7 +1268,35 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         ? `${workLocationName}${character.occupation ? ` · ${character.occupation}` : ''}`
         : character.occupation || null;
 
-      const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: finalTimeline.slice(0, 30), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
+      // ── PRIORITY-BASED SLICING — emotional/life/message entries NEVER displaced by location entries ──
+      // Entries without _source (sleep, wake, life events, narratives, financial, messages) are priority.
+      // Entries with _source (location, travel, events, needs) fill remaining slots.
+      const DISPLAY_LIMIT = 50;
+      const priorityEntries = finalTimeline.filter(e => !e._source);
+      const supplementEntries = finalTimeline.filter(e => e._source);
+      const displayEntries = priorityEntries.length >= DISPLAY_LIMIT
+        ? priorityEntries.slice(0, DISPLAY_LIMIT)
+        : [...priorityEntries, ...supplementEntries.slice(0, DISPLAY_LIMIT - priorityEntries.length)];
+      displayEntries.sort((a, b) => { try { return new Date(a.time) - new Date(b.time); } catch { return 0; } });
+
+      const dashData = { liveLocationDisplay, liveStatus, trendData, timelineEntries: displayEntries, socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
+
+      // ── CACHE SAFETY NET — never cache a result with fewer entries than the previous cache ──
+      // Prevents a failed fetch (429s) from overwriting a good cached dashboard with empty data.
+      const prevCached = dashboardCache[charId];
+      const prevCount = prevCached?.timelineEntries?.length ?? 0;
+      const newCount = displayEntries.length;
+      if (prevCached && newCount < prevCount && newCount < 3) {
+        // Suspicious: new fetch produced dramatically fewer entries. Keep old cache.
+        console.warn(`[CharacterDashboard] Cache safety: new fetch produced ${newCount} entries vs ${prevCount} cached — keeping previous cache`);
+        dashboardCacheVersion[charId] = DASHBOARD_CACHE_VERSION; // update version so it doesn't keep retrying
+        // Don't overwrite cache — keep old data
+        setData(prevCached);
+        setLoaded(true);
+        setLoading(false);
+        return;
+      }
+
       dashboardCache[charId] = dashData;
       dashboardCacheVersion[charId] = DASHBOARD_CACHE_VERSION;
       setData(dashData);
