@@ -588,34 +588,63 @@ Deno.serve(async (req) => {
       const cname = c?.name || c?.display_name || cid;
       if (!c) continue;
       try {
-        // 1. Check prior location (where were they before the event?)
-        let homeLocationId = c.current_home_location_id;
-        let homeLocationName = c.resolved_current_location_name || 'home';
+        // 1. Check prior location (where were they before the event?) — NOT blindly "home"
+        let priorLocId = c.current_home_location_id;
+        let priorLocName = c.resolved_current_location_name || 'home';
+        let priorCategory = 'home';
         const resolvedType = c.resolved_location_type || 'home';
+        const presenceStatus = c.resolved_presence_status || 'home';
+        const isConfined = presenceStatus === 'incarcerated' || presenceStatus === 'house_arrest' || presenceStatus === 'confined';
+        const isAsleep = presenceStatus === 'sleeping' || presenceStatus === 'napping';
+        const isTraveling = presenceStatus === 'traveling';
 
-        // If at work/school, create departure from there
-        if (resolvedType === 'work' && c.current_work_location_id) {
-          homeLocationId = c.current_work_location_id;
-          homeLocationName = c.resolved_current_location_name || 'work';
+        // Confined characters cannot attend — skip timeline for them
+        if (isConfined) continue;
+
+        if (isAsleep && c.current_home_location_id) {
+          priorLocId = c.current_home_location_id;
+          priorLocName = c.resolved_current_location_name || 'home';
+          priorCategory = 'home';
+        } else if (isTraveling && c.traveling_to_location_id) {
+          // They were en route — use destination as prior location
+          priorLocId = c.traveling_to_location_id;
+          priorLocName = c.traveling_to_location_name || 'destination';
+          priorCategory = 'travel';
+        } else if (resolvedType === 'work' && c.current_work_location_id) {
+          priorLocId = c.current_work_location_id;
+          priorLocName = c.resolved_current_location_name || 'work';
+          priorCategory = 'workplace';
         } else if (resolvedType === 'school' && c.current_school_location_id) {
-          homeLocationId = c.current_school_location_id;
-          homeLocationName = c.resolved_current_location_name || 'school';
+          priorLocId = c.current_school_location_id;
+          priorLocName = c.resolved_current_location_name || 'school';
+          priorCategory = 'education';
+        } else if (resolvedType === 'temporary_housing' && c.temporary_housing_location_id) {
+          priorLocId = c.temporary_housing_location_id;
+          priorLocName = c.resolved_current_location_name || 'temporary housing';
+          priorCategory = 'home';
+        } else if (c.resolved_current_location_id) {
+          priorLocId = c.resolved_current_location_id;
+          priorLocName = c.resolved_current_location_name || 'previous location';
+          priorCategory = resolvedType === 'work' ? 'workplace'
+            : resolvedType === 'school' ? 'education'
+            : 'home';
         }
+
+        // Safety: location_id must never be null
+        if (!priorLocId) priorLocId = `unknown_prior_${cid}`;
 
         // 2. Departure from previous location
         await base44.asServiceRole.entities.LocationHistory.create({
           character_id: cid, character_name: cname, owner_email: ownerEmail,
-          location_id: homeLocationId || null, location_name: homeLocationName,
-          location_category: resolvedType === 'work' ? 'workplace'
-            : resolvedType === 'school' ? 'education'
-            : 'home',
+          location_id: priorLocId, location_name: priorLocName,
+          location_category: priorCategory,
           event_type: 'departure',
           arrival_time: `${eventDate}T00:00:00.000`,
           departure_time: eventArrivalTime,
           travel_source: 'event',
           travel_reason: `Left to attend "${title}" Story Event`,
           is_current: false,
-          notes: `Departed from ${homeLocationName} for Story Event: ${title}`,
+          notes: `Departed from ${priorLocName} for Story Event: ${title}`,
         });
 
         // 3. Arrival at event venue
@@ -642,19 +671,17 @@ Deno.serve(async (req) => {
           notes: `Departed from Story Event: ${title}`,
         });
 
-        // 5. Return to home/next location
+        // 5. Return to next expected location (not blindly home)
         await base44.asServiceRole.entities.LocationHistory.create({
           character_id: cid, character_name: cname, owner_email: ownerEmail,
-          location_id: homeLocationId || null, location_name: homeLocationName,
-          location_category: resolvedType === 'work' ? 'workplace'
-            : resolvedType === 'school' ? 'education'
-            : 'home',
+          location_id: priorLocId || null, location_name: priorLocName,
+          location_category: priorCategory,
           event_type: 'return_home',
           arrival_time: eventDepartureTime, departure_time: null,
           travel_source: 'event',
           travel_reason: `Returned after "${title}" Story Event`,
           is_current: false,
-          notes: `Returned to ${homeLocationName} after Story Event: ${title}`,
+          notes: `Returned to ${priorLocName} after Story Event: ${title}`,
         });
       } catch (_) {}
     }
@@ -770,7 +797,7 @@ Deno.serve(async (req) => {
           character_id: cid,
           character_name: cname,
           owner_email: ownerEmail,
-          location_id: event.venue_id || null,
+          location_id: event.venue_id || `story_event_venue_${eventId}`,
           location_name: venueName,
           location_category: 'social',
           event_type: 'social_visit',

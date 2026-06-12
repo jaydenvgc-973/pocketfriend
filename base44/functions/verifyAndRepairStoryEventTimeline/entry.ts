@@ -167,28 +167,117 @@ Deno.serve(async (req) => {
         });
       }
 
-      // ── CREATE MISSING VENUE LOCATION HISTORY ──────────────────────────
+      // ── CREATE FULL TIMELINE TRANSITION IF MISSING ──────────────────────
+      // A coherent event requires: departure from previous → arrival at venue → departure from venue → return home.
       if (venueLH.length === 0) {
         try {
-          const lhRecord = await base44.asServiceRole.entities.LocationHistory.create({
-            character_id: cid,
-            character_name: cname,
-            owner_email: ownerEmail,
-            location_id: venueId || null,
-            location_name: venueName,
-            location_category: 'social',
-            event_type: 'social_visit',
-            arrival_time: arrivalTime,
-            departure_time: departureTime,
-            duration_minutes: durationMinutes,
+          // Determine previous location — not blindly "home"
+          let priorLocationId = null;
+          let priorLocationName = 'home';
+          let priorCategory = 'home';
+          try {
+            const freshChars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
+            const fresh = freshChars[0];
+            if (fresh) {
+              const resolvedType = fresh.resolved_location_type || 'home';
+              const presenceStatus = fresh.resolved_presence_status || 'home';
+              const isAsleep = presenceStatus === 'sleeping' || presenceStatus === 'napping';
+              const isConfined = presenceStatus === 'incarcerated' || presenceStatus === 'house_arrest' || presenceStatus === 'confined';
+
+              if (isConfined) {
+                // Cannot attend — mark as blocked
+                result.location_history = { status: 'blocked', reason: `Character is ${presenceStatus}` };
+                result.overall = 'blocked';
+                results.push(result);
+                continue;
+              }
+
+              if (isAsleep && fresh.current_home_location_id) {
+                priorLocationId = fresh.current_home_location_id;
+                priorLocationName = fresh.resolved_current_location_name || 'home';
+                priorCategory = 'home';
+              } else if (resolvedType === 'work' && fresh.current_work_location_id) {
+                priorLocationId = fresh.current_work_location_id;
+                priorLocationName = fresh.resolved_current_location_name || 'work';
+                priorCategory = 'workplace';
+              } else if (resolvedType === 'school' && fresh.current_school_location_id) {
+                priorLocationId = fresh.current_school_location_id;
+                priorLocationName = fresh.resolved_current_location_name || 'school';
+                priorCategory = 'education';
+              } else if (fresh.resolved_current_location_id) {
+                priorLocationId = fresh.resolved_current_location_id;
+                priorLocationName = fresh.resolved_current_location_name || 'previous location';
+                priorCategory = fresh.resolved_location_type === 'work' ? 'workplace'
+                  : fresh.resolved_location_type === 'school' ? 'education'
+                  : 'home';
+              } else {
+                priorLocationId = fresh.current_home_location_id;
+                priorLocationName = fresh.resolved_current_location_name || 'home';
+                priorCategory = 'home';
+              }
+            }
+          } catch (_) {}
+
+          // Safety fallback — location_id must never be null
+          if (!priorLocationId) {
+            priorLocationId = `unknown_prior_${cid}`;
+            priorLocationName = priorLocationName || 'previous location';
+          }
+
+          // 1. Departure from previous location
+          await base44.asServiceRole.entities.LocationHistory.create({
+            character_id: cid, character_name: cname, owner_email: ownerEmail,
+            location_id: priorLocationId || null, location_name: priorLocationName,
+            location_category: priorCategory,
+            event_type: 'departure',
+            arrival_time: `${eventDate}T00:00:00.000`,
+            departure_time: arrivalTime,
             travel_source: 'event',
+            travel_reason: `Left to attend "${title}" Story Event`,
+            is_current: false,
+            notes: `Departed from ${priorLocationName} for Story Event: ${title}. Created by timeline repair.`,
+          });
+
+          // 2. Arrival at event venue
+          const lhRecord = await base44.asServiceRole.entities.LocationHistory.create({
+            character_id: cid, character_name: cname, owner_email: ownerEmail,
+            location_id: venueId || null, location_name: venueName,
+            location_category: 'social', event_type: 'social_visit',
+            arrival_time: arrivalTime, departure_time: departureTime,
+            duration_minutes: durationMinutes, travel_source: 'event',
             travel_reason: `Story Event: ${title}`,
             is_current: false,
-            notes: `Attended "${title}" Story Event. Created by timeline repair.`,
+            notes: `Attended "${title}" Story Event at ${venueName}. Created by timeline repair.`,
           });
-          result.location_history = { status: 'created', existed_before: false, created_now: true, record_id: lhRecord.id };
           createdRecords.location_history.push(lhRecord.id);
           totalCreatedLH++;
+
+          // 3. Departure from event venue
+          await base44.asServiceRole.entities.LocationHistory.create({
+            character_id: cid, character_name: cname, owner_email: ownerEmail,
+            location_id: venueId || null, location_name: venueName,
+            location_category: 'social', event_type: 'departure',
+            arrival_time: arrivalTime, departure_time: departureTime,
+            travel_source: 'event',
+            travel_reason: `Left "${title}" Story Event`,
+            is_current: false,
+            notes: `Departed from Story Event: ${title}. Created by timeline repair.`,
+          });
+
+          // 4. Return to next expected location (not blindly home)
+          await base44.asServiceRole.entities.LocationHistory.create({
+            character_id: cid, character_name: cname, owner_email: ownerEmail,
+            location_id: priorLocationId || null, location_name: priorLocationName,
+            location_category: priorCategory,
+            event_type: 'return_home',
+            arrival_time: departureTime, departure_time: null,
+            travel_source: 'event',
+            travel_reason: `Returned after "${title}" Story Event`,
+            is_current: false,
+            notes: `Returned to ${priorLocationName} after Story Event: ${title}. Created by timeline repair.`,
+          });
+
+          result.location_history = { status: 'created', existed_before: false, created_now: true, record_id: lhRecord.id };
         } catch (e) {
           result.location_history = { status: 'failed', error: e.message };
         }

@@ -82,6 +82,15 @@ Deno.serve(async (req) => {
     // Deduplicate ref images
     const dedupedRefs = refImages.filter((url, i, arr) => arr.indexOf(url) === i).slice(0, 10);
 
+    // Honest lookup tracking — never pretend we found references when we didn't
+    const referenceLookupFailed = refImages.length === 0;
+    const charactersNotFound = visible_character_ids.filter(cid => !charById[cid]);
+    const lookupDiagnostic = referenceLookupFailed
+      ? `reference_lookup_failed: no reference images found for any of ${visible_character_ids.length} selected character(s)`
+      : (charactersNotFound.length > 0
+        ? `partial_lookup: ${charactersNotFound.length} of ${visible_character_ids.length} character(s) not found (${charactersNotFound.join(', ')})`
+        : 'all_characters_resolved');
+
     // Build regeneration prompt
     const reasonText = allReasons.length > 0
       ? `REGENERATION REASONS: ${allReasons.join(', ')}.`
@@ -122,6 +131,7 @@ Deno.serve(async (req) => {
       visible_character_names: visibleNames,
       reference_image_urls: dedupedRefs,
       regeneration_reason: allReasons.join(', ') || 'character_selection_update',
+      description: lookupDiagnostic,
     });
 
     // Create Message for Media Gallery
@@ -162,6 +172,9 @@ Deno.serve(async (req) => {
       visible_character_ids,
       visible_character_names: visibleNames,
       reference_image_urls: dedupedRefs,
+      reference_lookup_failed: referenceLookupFailed,
+      lookup_diagnostic: lookupDiagnostic,
+      characters_not_found: charactersNotFound,
     });
   } catch (error) {
     console.error('[regenerateStoryEventImageWithCharacters]', error.message);
