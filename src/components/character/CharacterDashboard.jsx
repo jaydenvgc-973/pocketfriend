@@ -362,7 +362,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 12; // fix: graph density restored (periodic fills + dedup window fix), x-axis day labels, social counts use fallback msgs
+const DASHBOARD_CACHE_VERSION = 13; // feat: CharacterAutomaticNarrative + EventParticipation sources, need-fulfillment proof records
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -842,7 +842,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // Deduplication — source-priority based, with different windows per source type.
       // RULE: A positive social event must NOT be replaced by a nearby biological need signal.
       // Source priority: life > message/memory > narrative > financial > current/sleep/needs > periodic
-      const SOURCE_PRIORITY = { 'life': 7, 'message': 6, 'memory': 5, 'narrative': 4, 'financial': 3, 'current': 2, 'sleep': 2, 'wake': 2, 'needs': 2, 'periodic': 0 };
+      const SOURCE_PRIORITY = { 'life': 7, 'message': 6, 'memory': 5, 'narrative': 4, 'char_narrative': 4, 'financial': 3, 'current': 2, 'sleep': 2, 'wake': 2, 'needs': 2, 'periodic': 0 };
       const srcPri = (src) => { if (!src) return 0; for (const [k, v] of Object.entries(SOURCE_PRIORITY)) { if (src.startsWith(k)) return v; } return 1; };
 
       // Periodic fills use a 3-hour dedup window; real events use 5 minutes.
