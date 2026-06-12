@@ -415,6 +415,8 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
     const requestCharId = charId;
     activeRequestRef.current = requestCharId;
 
+    console.log(`[CharacterDashboard] EFFECT START | charId=${charId} | name="${character?.name || '?'}" | ownerEmail=${character?.owner_email || 'MISSING'} | fetching fresh (cache disabled)`);
+
     const ownerEmail = character.owner_email;
     const now = new Date();
     const cutoff3d  = subDays(now, 3).toISOString();
@@ -1183,6 +1185,20 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const workDisplay = workLocationName
         ? `${workLocationName}${character.occupation ? ` · ${character.occupation}` : ''}`
         : character.occupation || null;
+
+      // ── PIPELINE DEBUG TRACE — temporary, remove after verification ──────────
+      console.log(
+        `[CharacterDashboard] PIPELINE TRACE | requestCharId=${requestCharId} | name="${character.name || '?'}"` +
+        ` | outgoingMsgs=${msgs.length} | receivedMsgs=${rcvMsgs.length} | combinedMsgs=${allMsgs.length}` +
+        ` | validConvos=${validConvoIds.size} | scopedMsgs=${scopedMsgs.length}` +
+        ` | msgs3d=${msgs3d.length} | msgs3dFallback=${msgs3dFallback.length}` +
+        ` | lifeEvents=${lifeEvents.length} | autoNarrs=${narrs.length} | charAutoNarrs=${charNarrs.length}` +
+        ` | finTxns=${txns.length} | locHistory=${locHistory.length} | eventParts=${eventParts.length}` +
+        ` | timelineEntries=${timelineEntries.length} | trendData=${trendData.length}` +
+        ` | socialStats={msgsSent:${msgsSent},positive:${positiveInteractions},conflict:${conflictEvents},unclassified:${unclassifiedCount}}` +
+        ` | ownerEmail=${ownerEmail || 'MISSING'} | allChars=${allChars.length}` +
+        ` | activeRequestRef=${activeRequestRef.current}`
+      );
 
       const dashData = { charId: requestCharId, liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 20), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
       // Guard: only write if this charId is still the active request
