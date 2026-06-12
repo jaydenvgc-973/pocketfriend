@@ -239,13 +239,21 @@ Deno.serve(async (req) => {
         result.character_memory = { status: 'query_failed', error: e.message };
       }
 
-      // Character.memories array — inferred from connected records
-      // (Character entity is unreliable for direct lookup)
-      result.char_memories_array = {
-        status: (result.memory.status === 'verified' || result.life_event.status === 'verified')
-          ? 'inferred_present' : 'unverified',
-        note: 'Inferred from Memory/LifeEvent existence; Character entity query unavailable',
-      };
+      // Character.memories array — attempt direct Character entity query
+      // Report honestly: inference is NOT proof
+      try {
+        const freshChars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
+        const fresh = freshChars[0];
+        if (fresh) {
+          const existing = (fresh.memories || []);
+          const already = existing.find(m => m.title === `Story Event: ${title}`);
+          result.char_memories_array = { status: already ? 'verified' : 'missing' };
+        } else {
+          result.char_memories_array = { status: 'query_failed', error: 'Character filter returned empty' };
+        }
+      } catch (e) {
+        result.char_memories_array = { status: 'query_failed', error: e.message };
+      }
 
       // EventParticipation
       try {
@@ -269,11 +277,13 @@ Deno.serve(async (req) => {
       const hasLocationHistory = result.location_history.status === 'verified' || result.location_history.status === 'created';
       const locationHistoryCreated = result.location_history.status === 'created';
 
+      // ALL seven systems must be verified for coherent status
       const allVerified = hasLocationHistory &&
         result.story_event_memory.status === 'verified' &&
         result.life_event.status === 'verified' &&
         result.memory.status === 'verified' &&
         result.character_memory.status === 'verified' &&
+        result.char_memories_array.status === 'verified' &&
         result.event_participation.status === 'verified';
 
       if (!hasLocationHistory) {
