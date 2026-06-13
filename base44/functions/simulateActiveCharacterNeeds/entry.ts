@@ -50,21 +50,21 @@ const clamp = (v) => Math.max(0, Math.min(100, v));
 // The -5/hr baseline awake drain guarantee (applied after context rates) ensures forward progress to 0.
 const RATES = {
   sleeping:        { hunger: -1,   energy: +12, social: -0.5, health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
-  passed_out:      { hunger: -0.5, energy: +8,  social: -0.5, health: +0.5, mental: +1,   hygiene: 0,    comfort: +1   },
-  hospitalized:    { hunger: -0.5, energy: +4,  social: -1,   health: +5,   mental: -0.5, hygiene: +1,   comfort: +2   },
-  at_work:         { hunger: -4,   energy: -5,  social: +1,   health: -0.5, mental: -2,   hygiene: -2,   comfort: -2   },
-  at_work_medical: { hunger: -5,   energy: -7,  social: +1,   health: -0.5, mental: -4,   hygiene: -3,   comfort: -4   },
-  at_work_service: { hunger: -5,   energy: -6,  social: +2,   health: -1,   mental: -3,   hygiene: -3,   comfort: -3   },
-  at_work_office:  { hunger: -3,   energy: -4,  social: +1,   health: -0.5, mental: -2,   hygiene: -1,   comfort: -1   },
-  work_off_shift:  { hunger: -3,   energy: -3,  social: -1,   health: -0.5, mental: -3,   hygiene: -2,   comfort: -4   },
-  at_school:       { hunger: -3,   energy: -4,  social: +2,   health: -0.5, mental: -1,   hygiene: -1,   comfort: -1   },
+  passed_out:      { hunger: -0.5, energy: +8,  social: -0.5, health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
+  hospitalized:    { hunger: -0.5, energy: +4,  social: -1,   health: +5,   mental: -0.3, hygiene: +1,   comfort: +2   },
+  at_work:         { hunger: -4,   energy: -5,  social: +1,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
+  at_work_medical: { hunger: -5,   energy: -7,  social: +1,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
+  at_work_service: { hunger: -5,   energy: -6,  social: +2,   health: -1,   mental: -0.75,hygiene: -3,   comfort: -3   },
+  at_work_office:  { hunger: -3,   energy: -4,  social: +1,   health: -0.5, mental: -0.5, hygiene: -1,   comfort: -1   },
+  work_off_shift:  { hunger: -3,   energy: -3,  social: -1,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -4   },
+  at_school:       { hunger: -3,   energy: -4,  social: +2,   health: -0.5, mental:  0,   hygiene: -1,   comfort: -1   },
   gym:             { hunger: -6,   energy: -7,  social: +1,   health: +1,   mental: +1,   hygiene: -5,   comfort: -2   },
-  bar_club:        { hunger: -2,   energy: -5,  social: +5,   health: -1,   mental: +1,   hygiene: -1,   comfort: -1   },
+  bar_club:        { hunger: -2,   energy: -5,  social: +5,   health: -1,   mental: +0.5, hygiene: -1,   comfort: -1   },
   // home_resting: energy=0 (neutral). Awake resting does not restore energy. -5/hr baseline still applies.
-  home_resting:    { hunger: -1,   energy:  0,  social: -1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +3   },
-  home_active:     { hunger: -2,   energy: -3,  social: -1,   health: 0,    mental: 0,    hygiene: -0.5, comfort: +1   },
+  home_resting:    { hunger: -1,   energy:  0,  social: -1,   health: +0.5, mental: +2,   hygiene: 0,    comfort: +3   },
+  home_active:     { hunger: -2,   energy: -3,  social: -1,   health: 0,    mental: +0.5, hygiene: -0.5, comfort: +1   },
   // hospital (visited, not admitted): energy=0. Admitted/hospitalized context is separate above.
-  hospital:        { hunger: -1,   energy:  0,  social: -1,   health: +3,   mental: -1,   hygiene: 0,    comfort: +1   },
+  hospital:        { hunger: -1,   energy:  0,  social: -1,   health: +3,   mental: -0.5, hygiene: 0,    comfort: +1   },
   // food_drink: eating out while awake does not restore energy — food restores hunger only.
   food_drink:      { hunger: +15,  energy:  0,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
   social_out:      { hunger: -2,   energy: -4,  social: +4,   health: 0,    mental: +1,   hygiene: -1,   comfort: -0.5 },
@@ -75,8 +75,8 @@ const RATES = {
   // eating: hunger relief only. Energy=0 while awake. -5/hr baseline still applies on top.
   eating:          { hunger: +15,  energy:  0,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
   // resting: energy=0 (neutral). Awake resting does not restore energy.
-  resting:         { hunger: -1,   energy:  0,  social: -0.5, health: +1,   mental: +2,   hygiene: 0,    comfort: +3   },
-  default:         { hunger: -2,   energy: -4,  social: -1,   health: 0,    mental: -0.5, hygiene: -1,   comfort: -1   },
+  resting:         { hunger: -1,   energy:  0,  social: -0.5, health: +1,   mental: +3,   hygiene: 0,    comfort: +3   },
+  default:         { hunger: -2,   energy: -4,  social: -1,   health: 0,    mental: -0.3, hygiene: -1,   comfort: -1   },
 };
 
 // ── THRESHOLDS ────────────────────────────────────────────────────────────────
@@ -91,6 +91,11 @@ const T = {
   HEALTH_ER:        15,
   HEALTH_CRITICAL:  20,
   COMPOUND_CRISIS:   3,   // number of needs below 20 to trigger compound handling
+  // Mental decays slowly — thresholds are MUCH higher than physical needs
+  MENTAL_SEVERE:    40,   // below 40 = severe danger, significant intervention needed
+  MENTAL_CRITICAL:  50,   // 40-50 = critical concern, staff/support should activate
+  MENTAL_MODERATE:  60,   // 50-60 = moderate concern, preventative support
+  MENTAL_MILD:      70,   // 60-70 = mild concern, gentle check-in
 };
 
 function isOnShift(character, locationMap) {
@@ -460,6 +465,99 @@ function computeComfortModifier(char, context, locationMap) {
   return Math.max(-2, Math.min(2, modifier));
 }
 
+// ── MENTAL ADD-ON: POSITIVE CONTEXTUAL MODIFIERS ────────────────────────────
+// Mental decays slowly and recovers from positive lived experience.
+// Small positive moments can produce large improvements when they match
+// the character's personality, preferences, or emotional state.
+//
+// DESIGN RULES:
+//   - Max positive modifier: +3/hr (peaceful rest, worship, being comforted)
+//   - Mental is affected by lived experience, not just direct interactions
+//   - Peaceful locations, exercise, learning, relationships, self-care, comfort,
+//     preferences, and spiritual/community all contribute
+//   - RATES decay is already low — this is additive positive recovery
+//
+function computeMentalModifier(char, context, locationMap) {
+  let modifier = 0;
+
+  const presence    = char.resolved_presence_status || '';
+  const activity    = (char.current_activity || '').toLowerCase();
+  const locId       = char.resolved_current_location_id;
+  const loc         = locId ? locationMap[locId] : null;
+  const locCat      = (loc?.category || '').toLowerCase();
+  const locName     = (loc?.name || '').toLowerCase();
+  const locDesc     = (loc?.description || '').toLowerCase();
+  const locFeatures = (loc?.features || []).map(f => (f || '').toLowerCase());
+  const locSubtypes = (loc?.subtype || []).map(s => (s || '').toLowerCase());
+
+  // ── PEACEFUL LOCATIONS ──────────────────────────────────────────────────
+  // Parks, nature, gardens, clean homes, calm rooms = mental recovery
+  if (locCat === 'outdoor') modifier += 1;
+  if (locCat === 'home' && (locFeatures.some(f => f.includes('clean') || f.includes('tidy') || f.includes('cozy')) || !locFeatures.length)) modifier += 0.75;
+  if (locName.includes('park') || locName.includes('garden') || locName.includes('trail') || locName.includes('nature')) modifier += 1.25;
+  if (locDesc.includes('peaceful') || locDesc.includes('calm') || locDesc.includes('serene') || locDesc.includes('quiet')) modifier += 0.75;
+
+  // ── MOVEMENT & EXERCISE ─────────────────────────────────────────────────
+  if (context === 'gym' || activity.includes('exercise') || activity.includes('workout') || activity.includes('gym')) modifier += 1;
+  if (activity.includes('walk') || activity.includes('stroll') || activity.includes('jog') || activity.includes('run')) modifier += 0.75;
+
+  // ── GROWTH & LEARNING ──────────────────────────────────────────────────
+  if (locCat === 'school' || locCat === 'education' || context === 'at_school') modifier += 0.5;
+  if (activity.includes('study') || activity.includes('learn') || activity.includes('class') || activity.includes('course')) modifier += 0.5;
+  if (activity.includes('graduate') || activity.includes('complete') || activity.includes('achieve') || activity.includes('finish')) modifier += 1.5;
+  if (activity.includes('accomplish') || activity.includes('goal') || activity.includes('milestone')) modifier += 1.5;
+
+  // ── RELATIONSHIPS & CONNECTION ─────────────────────────────────────────
+  if (context === 'social_out' || context === 'bar_club') modifier += 0.5;
+  if (activity.includes('friend') || activity.includes('comfort') || activity.includes('listen') || activity.includes('talk')) modifier += 0.75;
+  const relationships = char.fictional_relationships || [];
+  const hasCloseRelationship = relationships.some(r => (r.friendship_level ?? 50) > 75 || (r.trust_level ?? 50) > 70 || (r.romantic_level ?? 0) > 60);
+  if (hasCloseRelationship && (context === 'home_resting' || context === 'home_active' || presence === 'home')) modifier += 0.5;
+
+  // ── SELF-CARE ──────────────────────────────────────────────────────────
+  if (activity.includes('shower') || activity.includes('wash') || activity.includes('bath') || activity.includes('freshen')) modifier += 1;
+  if (activity.includes('meditat') || activity.includes('breathe') || activity.includes('mindful')) modifier += 1.5;
+  if (activity.includes('hair') || activity.includes('salon') || activity.includes('spa') || activity.includes('pamper')) modifier += 1.25;
+  if (activity.includes('groom') || activity.includes('dress') || activity.includes('outfit')) modifier += 0.5;
+
+  // ── COMFORT ────────────────────────────────────────────────────────────
+  if (context === 'home_resting' || context === 'resting') modifier += 1;
+  if (context === 'eating' || context === 'food_drink') modifier += 0.75;
+  if (activity.includes('rest') || activity.includes('relax') || activity.includes('unwind')) modifier += 0.75;
+
+  // ── PREFERENCES (personality-matched activities) ───────────────────────
+  if (char.trait_conscientious && (activity.includes('clean') || activity.includes('organize') || activity.includes('tidy'))) modifier += 1;
+  if ((char.trait_morning_person) && activity.includes('morning')) modifier += 0.5;
+  if (char.social_energy === 'extrovert' || char.social_energy === 'mostly_extrovert') {
+    if (context === 'social_out' || context === 'bar_club' || activity.includes('social')) modifier += 0.75;
+  }
+  if (char.trait_competitive && (context === 'gym' || activity.includes('compete') || activity.includes('game') || activity.includes('sport'))) modifier += 0.75;
+  // Shopping for characters who enjoy shopping
+  if (locCat === 'grocery' || locSubtypes.includes('clothing') || locSubtypes.includes('shopping') || locName.includes('shop') || locName.includes('store') || locName.includes('mall') || locName.includes('boutique')) modifier += 0.5;
+  // Coffee for characters who enjoy coffee
+  if ((locName.includes('cafe') || locName.includes('coffee') || activity.includes('coffee') || activity.includes('cafe')) && !char.trait_night_owl) modifier += 0.5;
+
+  // ── SPIRITUAL / COMMUNITY ──────────────────────────────────────────────
+  if (locCat === 'religion' || locName.includes('church') || locName.includes('temple') || locName.includes('mosque') || locName.includes('synagogue') || locName.includes('worship')) modifier += 1.25;
+  if (activity.includes('pray') || activity.includes('worship') || activity.includes('meditat') || activity.includes('spiritual')) modifier += 1.5;
+  if (locCat === 'community' || activity.includes('community') || activity.includes('fellowship') || activity.includes('gathering')) modifier += 0.75;
+
+  // ── SAFETY ─────────────────────────────────────────────────────────────
+  // Feeling unsafe, threatened, or in hostile environments drains mental
+  if (locCat === 'jail_prison' || loc.is_confinement_facility) modifier -= 1.5;
+  if (activity.includes('fear') || activity.includes('threat') || activity.includes('danger') || activity.includes('unsafe')) modifier -= 1.5;
+  if (activity.includes('conflict') || activity.includes('argument') || activity.includes('fight')) modifier -= 1.25;
+  if (activity.includes('grief') || activity.includes('loss') || activity.includes('mourn')) modifier -= 1.5;
+  if (activity.includes('isolat') || activity.includes('lonely') || activity.includes('alone')) modifier -= 1;
+
+  // ── ACCOMPLISHMENTS & MILESTONES ───────────────────────────────────────
+  const triggeredMilestones = char.triggered_milestones || [];
+  if (triggeredMilestones.length > 0) modifier += 0.75;
+
+  // ── CAP TOTAL MODIFIER ──────────────────────────────────────────────────
+  return Math.max(-2, Math.min(3, modifier));
+}
+
 function applyElapsedTime(needs, elapsedHours, context) {
   const rates = RATES[context] || RATES.default;
   return {
@@ -501,16 +599,18 @@ function applyStatInfection(needs, elapsedHours) {
     needs.comfort = clamp(needs.comfort - 0.5 * severity * elapsedHours);
   }
 
-  // ── SOCIAL → MENTAL (slow burn) ──
-  if (needs.social < 20) {
-    needs.mental = clamp(needs.mental - 0.2 * elapsedHours);
+  // ── SOCIAL → MENTAL (slow burn, only at deep isolation) ──
+  if (needs.social < 15) {
+    needs.mental = clamp(needs.mental - 0.15 * elapsedHours);
   }
 
-  // ── MENTAL NEGLECT CASCADE ──
-  if (needs.mental < 15) {
-    needs.hunger  = clamp(needs.hunger  - 0.3 * elapsedHours);
-    needs.hygiene = clamp(needs.hygiene - 0.3 * elapsedHours);
-    needs.health  = clamp(needs.health  - 0.2 * elapsedHours);
+  // ── MENTAL NEGLECT CASCADE (severe below 40, not 15) ──
+  // Mental is not a fast-draining survival bar. Cascade only when truly severe.
+  if (needs.mental < 40) {
+    const severity = (40 - needs.mental) / 40;
+    needs.hunger  = clamp(needs.hunger  - 0.2 * severity * elapsedHours);
+    needs.hygiene = clamp(needs.hygiene - 0.2 * severity * elapsedHours);
+    needs.health  = clamp(needs.health  - 0.15 * severity * elapsedHours);
   }
 
   // ── MULTI-CRITICAL COMPOUND DAMAGE ──
@@ -536,7 +636,8 @@ function detectCriticalEscalations(oldNeeds, newNeeds, characterName) {
   if (newNeeds.energy <= 0 && oldNeeds.energy > 0) events.push({ title: 'Passed out from exhaustion', description: `${characterName} collapsed from complete energy depletion.`, memory_tag: 'energy_zero' });
   if (oldNeeds.health >= 20 && newNeeds.health < 20) events.push({ title: 'Health reached critical level', description: `${characterName}'s health deteriorated to a critical state.`, memory_tag: 'health_critical' });
   if (oldNeeds.social >= 15 && newNeeds.social < 15) events.push({ title: 'Deep social isolation', description: `${characterName} felt completely alone and isolated.`, memory_tag: 'social_critical' });
-  if (oldNeeds.mental >= 15 && newNeeds.mental < 15) events.push({ title: 'Mental breakdown threshold reached', description: `${characterName} reached a mental breaking point.`, memory_tag: 'mental_critical' });
+  if (oldNeeds.mental >= 50 && newNeeds.mental < 50) events.push({ title: 'Mental health declining', description: `${characterName}'s mental wellbeing dropped to a concerning level.`, memory_tag: 'mental_critical' });
+  if (oldNeeds.mental >= 40 && newNeeds.mental < 40) events.push({ title: 'Severe mental health concern', description: `${characterName} is in a severely distressed mental state.`, memory_tag: 'mental_severe' });
   return events;
 }
 
@@ -621,7 +722,7 @@ const HYGIENE_CURVE = [[100,0],[75,0],[55,0.08],[45,0.15],[40,0.20],[35,0.30],[3
 const ENERGY_CURVE  = [[100,0],[80,0.03],[60,0.10],[50,0.18],[40,0.28],[35,0.35],[30,0.45],[25,0.58],[20,0.72],[15,0.82],[10,0.90],[5,0.97],[0,1.0]];
 const HUNGER_CURVE  = [[100,0],[70,0],[55,0.10],[45,0.18],[40,0.22],[35,0.30],[25,0.50],[20,0.65],[15,0.80],[10,0.90],[5,0.95],[0,1.0]];
 const SOCIAL_CURVE  = [[100,0],[70,0],[55,0.06],[45,0.12],[35,0.20],[25,0.35],[20,0.45],[15,0.60],[10,0.80],[0,1.0]];
-const MENTAL_CURVE  = [[100,0],[70,0.05],[55,0.12],[45,0.20],[35,0.30],[25,0.42],[20,0.52],[15,0.65],[10,0.82],[0,1.0]];
+const MENTAL_CURVE  = [[100,0],[70,0.05],[65,0.10],[60,0.18],[55,0.28],[50,0.40],[45,0.55],[40,0.70],[35,0.82],[30,0.90],[0,1.0]];
 const COMFORT_CURVE = [[100,0],[70,0.05],[55,0.15],[45,0.22],[35,0.35],[25,0.50],[15,0.68],[10,0.82],[0,1.0]];
 const HEALTH_CURVE  = [[100,0],[80,0],[65,0.05],[50,0.12],[40,0.20],[30,0.30],[25,0.42],[20,0.60],[15,0.80],[10,0.92],[0,1.0]];
 const FINANCE_CURVE = [[100,0],[70,0],[55,0.10],[40,0.20],[30,0.35],[20,0.55],[10,0.80],[0,1.0]];
@@ -1815,6 +1916,15 @@ Deno.serve(async (req) => {
       const comfortMod = computeComfortModifier(char, context, locationMap);
       if (comfortMod !== 0) {
         newNeeds.comfort = clamp(newNeeds.comfort + comfortMod * cappedHours);
+      }
+
+      // ── MENTAL ADD-ON: positive contextual recovery ──────────────────────
+      // Mental decays slowly and recovers from positive lived experience.
+      // Peaceful locations, exercise, learning, relationships, self-care,
+      // comfort, preferences, and spiritual/community all contribute.
+      const mentalMod = computeMentalModifier(char, context, locationMap);
+      if (mentalMod !== 0) {
+        newNeeds.mental = clamp(newNeeds.mental + mentalMod * cappedHours);
       }
 
       // ── AWAKE-TIME ENERGY DRAIN GUARANTEE (active_created_character only) ──
