@@ -172,81 +172,31 @@ function getWorkContextFromLocation(loc) {
 }
 
 // ── STALE PRESENCE THRESHOLD ─────────────────────────────────────────────────
-// A presence/activity record older than this (in ms) is considered stale and cannot
-// grant energy-restoring contexts (home_resting, resting, eating) to an awake character.
-// It CAN still grant energy-draining contexts (at_work, traveling, etc.) since those
-// are conservative — worst case the character drains faster, not indefinitely restores.
-// Stale contexts that would grant net POSITIVE energy (home_resting: +3/hr) while the
-// character is unverifiably awake are the primary failure mode this resolves.
 const STALE_PRESENCE_MS = 4 * 60 * 60 * 1000; // 4 hours
 
-// Contexts that USED TO grant net positive energy — now all awake contexts are 0 or negative.
-// This set is retained for reference only; the -5/hr baseline drain guarantee supersedes it.
-// Only sleeping/passed_out/hospitalized restore energy (handled by isSleepingContext guard below).
 const ENERGY_RESTORING_CONTEXTS = new Set(['sleeping', 'passed_out', 'hospitalized']);
 
-/**
- * resolvePresenceStaleness
- *
- * Returns true if the character's resolved_presence_status / current_activity
- * is stale enough that it should NOT be trusted to grant energy-restoring behavior.
- *
- * Staleness is measured from the LATER of:
- *   - last_need_simulated_at (last time needs were confirmed)
- *   - resolved_last_updated_at (last time presence was explicitly written)
- *
- * If the newer of those two is > 4 hours ago, the resting/positive-energy context
- * is treated as stale and the simulation falls back to 'default' (-4/hr energy decay).
- * This guarantees energy eventually reaches critical even during total inactivity.
- */
 function resolvePresenceStaleness(character, now) {
   const candidates = [
     character.last_need_simulated_at,
     character.resolved_last_updated_at,
   ].filter(Boolean).map(t => new Date(t).getTime());
-  if (candidates.length === 0) return true; // no timestamps at all = treat as stale
+  if (candidates.length === 0) return true;
   const mostRecent = Math.max(...candidates);
   return (now.getTime() - mostRecent) > STALE_PRESENCE_MS;
 }
 
-/**
- * getLocationContext — CONTEXT AUTHORITY FRAMEWORK
- *
- * AUTHORITY HIERARCHY (highest → lowest):
- *   1. Critical physical states (hospitalized, passed_out, sleeping/napping)
- *   2. Authoritative schedule context (isOnShift → work context, at_school)
- *   3. Location-based context (resolved_current_location_id → category)
- *   4. Activity text (eating, resting) — SUBORDINATE to schedule
- *   5. Travel status — ROUTING METADATA ONLY, evaluates destination
- *
- * KEY RULES:
- *   - Schedule is reality. Activity text (eating, resting) does NOT override schedule.
- *   - A bartender eating during shift is still at work. at_work_service persists.
- *   - Travel is routing metadata. Never a needs context. Destination is authoritative.
- *   - Corrective states (eating, resting) are subordinate to schedule context.
- */
 function getLocationContext(character, locationMap, now) {
   const activity = (character.current_activity || '').toLowerCase();
   const presenceStatus = character.resolved_presence_status || character.location_status;
 
-  // ── TIER 1: CRITICAL PHYSICAL STATES ────────────────────────────────────
-  // Never stale, always authoritative. These are physical collapse/medical states.
   if (presenceStatus === 'hospitalized') return 'hospitalized';
   if (presenceStatus === 'passed_out') return 'passed_out';
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
   if (activity.includes('passed out') || activity.includes('collapsed')) return 'passed_out';
   if (activity.includes('hospital') || activity.includes('er ') || activity.includes('emergency room') || activity.includes('urgent care')) return 'hospitalized';
 
-  // ── STALE PRESENCE CHECK ──────────────────────────────────────────────────
   const presenceIsStale = now ? resolvePresenceStaleness(character, now) : false;
-
-  // ── TIER 2: AUTHORITATIVE SCHEDULE CONTEXT ────────────────────────────────
-  // Work and school schedules are REALITY. They are checked BEFORE activity text
-  // or travel status. A character eating during their shift is still at work.
-  // A character traveling to their workplace during shift is still working.
-  // Eating/drinking during a shift does not cancel work context — it is
-  // work-compatible behavior (meal break, staff drink). Work context persists;
-  // hunger recovery is applied via corrective override, not context switching.
 
   if (isOnShift(character, locationMap)) {
     const workLocId = character.occupation_location_id || character.current_work_location_id;
@@ -257,10 +207,6 @@ function getLocationContext(character, locationMap, now) {
 
   if (presenceStatus === 'at_school') return 'at_school';
 
-  // ── TIER 3: TRAVEL — ROUTING METADATA ONLY ───────────────────────────────
-  // Travel is NOT a needs context. It is a routing marker. Characters are
-  // effectively moved between locations. Destination context is authoritative.
-  // Travel must never apply its own decay/recovery rates over the destination.
   if (character.travel_status && character.travel_status !== 'not_traveling') {
     const destId = character.traveling_to_location_id || character.travel_destination_location_id;
     if (destId && locationMap[destId]) {
@@ -275,10 +221,8 @@ function getLocationContext(character, locationMap, now) {
     return 'default';
   }
 
-  // ── TIER 4: STALE PRESENCE FALLBACK — at_work without schedule ───────────
   if (presenceStatus === 'at_work') return 'work_off_shift';
 
-  // ── TIER 5: LOCATION-BASED CONTEXT ────────────────────────────────────────
   const locId = character.resolved_current_location_id;
   if (!locId) {
     if (presenceIsStale) return 'default';
@@ -289,7 +233,7 @@ function getLocationContext(character, locationMap, now) {
   if (!loc) return 'default';
 
   const workLocId = character.occupation_location_id || character.current_work_location_id;
-  if (locId === workLocId) return 'work_off_shift'; // at work location but not on shift
+  if (locId === workLocId) return 'work_off_shift';
 
   const cat = (loc.category || '').toLowerCase();
   const name = (loc.name || '').toLowerCase();
@@ -305,7 +249,6 @@ function getLocationContext(character, locationMap, now) {
     return (presenceStatus === 'home' || !presenceStatus) ? 'home_resting' : 'home_active';
   }
 
-  // ── TIER 6: ACTIVITY TEXT (subordinate — schedule/location not found) ─────
   if (!presenceIsStale) {
     if (activity.includes('eat') || activity.includes('food') || activity.includes('cook') || activity.includes('meal') || activity.includes('lunch') || activity.includes('dinner') || activity.includes('breakfast') || activity.includes('snack')) return 'eating';
     if (activity.includes('rest') || activity.includes('nap') || activity.includes('relax')) return 'resting';
@@ -313,33 +256,6 @@ function getLocationContext(character, locationMap, now) {
 
   return 'default';
 }
-
-// ── COMFORT ADD-ON: POSITIVE & NEGATIVE MODIFIERS ──────────────────────────────
-// This is purely additive. It does NOT replace RATES comfort values.
-// It supplements them with context-aware signals: environment, rest state,
-// food quality, social presence, and conversation tone.
-//
-// DESIGN RULES:
-//   - Max positive modifier: +2/hr (gradual, not instant)
-//   - Max negative modifier: -2/hr (balanced with positive)
-//   - Social comfort and Social need remain INDEPENDENT values
-//   - This fires AFTER applyElapsedTime, adds to comfort result
-//   - Comfort does not shoot to 100 — clamp is applied at the end
-//
-// POSITIVE SOURCES:
-//   - Sleeping/resting in a bed/home                   → +1 to +2/hr
-//   - Comfortable furniture context (sofa, lounge)     → +1/hr
-//   - High-quality food/restaurant                     → +0.5/hr
-//   - Being around trusted/liked people                → +0.5 to +1/hr
-//   - Clean, upscale, pleasant, familiar environment   → +0.5 to +1/hr
-//
-// NEGATIVE SOURCES:
-//   - Being around disliked/feared people              → -0.5 to -1.5/hr
-//   - Hostile, tense, embarrassing conversation        → -0.5 to -1/hr
-//   - Harsh, dirty, loud, unsafe environment           → -0.5 to -1.5/hr
-//   - Mandatory/unwanted social events                 → -0.5/hr
-//
-// NPC EXCLUSION: This only applies to active_created_character (caller already filters).
 
 function computeComfortModifier(char, context, locationMap) {
   let modifier = 0;
@@ -353,74 +269,53 @@ function computeComfortModifier(char, context, locationMap) {
   const locDesc     = (loc?.description || '').toLowerCase();
   const locFeatures = (loc?.features || []).map(f => (f || '').toLowerCase());
 
-  // ── REST STATE COMFORT ────────────────────────────────────────────────────
-  // Sleeping in a real home/bed: RATES already gives +4/hr — add +1 for "in bed" quality
   if (context === 'sleeping' && (locCat === 'home' || locCat === 'hotel' || presence === 'home')) {
-    modifier += 1; // in a real bed at home/hotel — superior to passed-out on a couch
+    modifier += 1;
   }
-  // Napping on sofa/home: RATES gives +4 for sleeping — a nap at home is comfortable
   if ((presence === 'napping' || activity.includes('nap')) && (locCat === 'home' || !locId)) {
     modifier += 0.5;
   }
-  // Resting context at home — couch/lounge/bed while awake
   if (context === 'home_resting') {
-    modifier += 1; // comfortable furniture, familiar surroundings
+    modifier += 1;
   }
-  // Resting at any non-home but comfortable location (hotel, lounge, etc.)
   if (context === 'resting' && locCat !== 'gym' && locCat !== 'jail_prison') {
     modifier += 0.5;
   }
 
-  // ── ENVIRONMENT QUALITY COMFORT ───────────────────────────────────────────
   if (loc) {
-    // Upscale / nice restaurant / luxury venue
     const isUpscale = locFeatures.some(f => f.includes('upscale') || f.includes('luxury') || f.includes('fine dining') || f.includes('high-end'))
       || locDesc.includes('upscale') || locDesc.includes('luxury') || locDesc.includes('fine dining');
     if (isUpscale) modifier += 0.75;
 
-    // Clean, pleasant, beautiful, relaxing
     const isPleasant = locFeatures.some(f => f.includes('clean') || f.includes('pleasant') || f.includes('beautiful') || f.includes('relaxing') || f.includes('serene') || f.includes('cozy') || f.includes('comfortable'))
       || locDesc.includes('cozy') || locDesc.includes('relaxing') || locDesc.includes('comfortable') || locDesc.includes('beautiful');
     if (isPleasant) modifier += 0.5;
 
-    // Confinement facility / jail — harsh environment
     if (locCat === 'jail_prison' || loc.is_confinement_facility) {
       modifier -= 1.5;
     }
 
-    // Outdoor park / pleasant outdoor — mild comfort bonus
     if (locCat === 'outdoor' || locCat === 'community') {
       modifier += 0.25;
     }
   }
 
-  // ── FOOD QUALITY COMFORT ──────────────────────────────────────────────────
-  // Eating at a restaurant (food_drink context) — good food improves comfort
   if (context === 'food_drink' || (activity.includes('eat') && locCat === 'food_drink')) {
-    modifier += 0.5; // a decent meal in a pleasant place adds comfort
+    modifier += 0.5;
     if (loc) {
       const isNiceRestaurant = locFeatures.some(f => f.includes('upscale') || f.includes('fine dining') || f.includes('nice'))
         || locDesc.includes('upscale') || locDesc.includes('fine dining');
-      if (isNiceRestaurant) modifier += 0.5; // extra for a genuinely nice restaurant
+      if (isNiceRestaurant) modifier += 0.5;
     }
   }
-
-  // ── SOCIAL PRESENCE COMFORT ───────────────────────────────────────────────
-  // Comfort and Social are SEPARATE needs. Social fulfillment ≠ comfort automatically.
-  // Only positive, trusted, enjoyed relationships add comfort.
-  // Mere interaction does NOT add comfort — quality matters.
 
   const relationships = char.fictional_relationships || [];
   const familyMembers = char.family_members || [];
 
-  // Build trust/like score for people currently relevant
-  // We approximate "who they're likely around" from activity/context
   const isSocialContext = context === 'social_out' || context === 'bar_club' || context === 'food_drink';
   const isAtHome = context === 'home_resting' || context === 'home_active' || presence === 'home';
 
   if (isSocialContext || isAtHome) {
-    // Check if character has close, trusted, or loved relationships
-    // High friendship (>75), high trust (>70), or romantic relationship → comfort bonus
     let bestRelationshipComfort = 0;
     for (const r of relationships) {
       const friendship = r.friendship_level ?? 50;
@@ -428,12 +323,10 @@ function computeComfortModifier(char, context, locationMap) {
       const romantic   = r.romantic_level   ?? 0;
       const tension    = r.tension_level    ?? 0;
 
-      // Disliked, distrusted, or feared person — comfort decreases
       if (friendship < 25 || trust < 20 || tension > 70) {
         bestRelationshipComfort = Math.min(bestRelationshipComfort, -1);
         continue;
       }
-      // Trusted close friend / family / partner
       if (friendship > 80 || trust > 75 || romantic > 60) {
         bestRelationshipComfort = Math.max(bestRelationshipComfort, 1);
       } else if (friendship > 60 || trust > 55) {
@@ -441,18 +334,13 @@ function computeComfortModifier(char, context, locationMap) {
       }
     }
 
-    // Family members also count — being with loved ones adds comfort
     if (isAtHome && familyMembers.length > 0) {
-      // Presence of family at home (not a specific relationship record needed) → mild comfort
       bestRelationshipComfort = Math.max(bestRelationshipComfort, 0.5);
     }
 
     modifier += bestRelationshipComfort;
   }
 
-  // ── MANDATORY / STRESSFUL SOCIAL EVENT COMFORT PENALTY ──────────────────
-  // A mandatory work event, tense gathering, or forced interaction is socially active but
-  // comfort-negative. Approximate from activity text.
   const activityLower = activity;
   const isForcedEvent = activityLower.includes('mandatory') || activityLower.includes('forced') || activityLower.includes('awkward') || activityLower.includes('uncomfortable');
   if (isForcedEvent) modifier -= 0.5;
@@ -460,14 +348,314 @@ function computeComfortModifier(char, context, locationMap) {
   const isStressfulActivity = activityLower.includes('argument') || activityLower.includes('confrontation') || activityLower.includes('conflict') || activityLower.includes('tense') || activityLower.includes('stressed');
   if (isStressfulActivity) modifier -= 1;
 
-  // ── CAP TOTAL MODIFIER ────────────────────────────────────────────────────
-  // Max +2/hr positive, max -2/hr negative — gradual, not dramatic
   return Math.max(-2, Math.min(2, modifier));
 }
 
-// ── MENTAL MODIFIER ──────────────────────────────────────────────────────────
-// computeMentalModifier and mentalPersonalityScale live in lib/mentalWellbeingModifier.js
-// This file no longer defines them — they are imported for use in the main simulation loop.
+/**
+ * mentalPersonalityScale
+ *
+ * Maps character personality traits to a scaling factor for each mental wellbeing dimension.
+ * Each dimension ranges 0.3–2.0. Higher = this character is MORE sensitive to
+ * this dimension's sources/drains. Extroverts care more about social; conscientious
+ * characters care more about stability; competitive characters care more about
+ * achievement and purpose.
+ */
+function mentalPersonalityScale(char) {
+  const socialEnergy = char.social_energy || 'ambivert';
+  const traits = {
+    conscientious:   char.trait_conscientious   || false,
+    loyal:           char.trait_loyal           || false,
+    competitive:     char.trait_competitive     || false,
+    morningPerson:   char.trait_morning_person  || false,
+    empathetic:      char.trait_empathetic      || false,
+    adaptable:       char.trait_adaptable       || false,
+    cynical:         char.trait_cynical         || false,
+    compassionate:   char.trait_compassionate   || false,
+    stubborn:        char.trait_stubborn        || false,
+    generous:        char.trait_generous        || false,
+    nightOwl:        char.trait_night_owl       || false,
+    leader:          char.trait_leader          || false,
+  };
+
+  // Base: 1.0 for all dimensions
+  const scale = {
+    social:           1.0,
+    rest:             1.0,
+    achievement:      1.0,
+    resilience:       1.0,
+    confidence:       1.0,
+    purpose:          1.0,
+    characterValues:  1.0,
+    stability:        1.0,
+    selfCare:         1.0,
+  };
+
+  // Social energy: extroverts care MORE about social, introverts LESS
+  if (socialEnergy === 'extrovert' || socialEnergy === 'mostly_extrovert') {
+    scale.social *= 1.5;
+    scale.rest   *= 0.8;  // less restorative from alone time
+  } else if (socialEnergy === 'introvert' || socialEnergy === 'mostly_introvert') {
+    scale.social *= 0.6;  // less sensitive to social events
+    scale.rest   *= 1.3;  // more restorative from alone time
+  }
+
+  // Conscientious: cares about stability, routine, achievement
+  if (traits.conscientious) {
+    scale.stability    *= 1.5;
+    scale.achievement  *= 1.3;
+    scale.purpose      *= 1.2;
+    scale.selfCare     *= 1.3;
+  }
+
+  // Loyal: values relationships, character values
+  if (traits.loyal) {
+    scale.social           *= 1.3;
+    scale.characterValues  *= 1.5;
+  }
+
+  // Competitive: cares about achievement, purpose, confidence
+  if (traits.competitive) {
+    scale.achievement  *= 1.6;
+    scale.purpose      *= 1.3;
+    scale.confidence   *= 1.4;
+  }
+
+  // Empathetic: deeply affected by social dynamics
+  if (traits.empathetic) {
+    scale.social  *= 1.4;
+    scale.confidence *= 1.2;
+  }
+
+  // Adaptable: more resilient, but less affected by stability
+  if (traits.adaptable) {
+    scale.resilience  *= 1.5;
+    scale.stability   *= 0.7;  // doesn't need rigid structure
+  }
+
+  // Cynical: resistant to positive social, low resilience
+  if (traits.cynical) {
+    scale.social      *= 0.5;  // doesn't buy social positivity
+    scale.resilience  *= 0.6;
+  }
+
+  // Compassionate: more affected by helping others
+  if (traits.compassionate) {
+    scale.characterValues  *= 1.4;
+    scale.social           *= 1.2;
+  }
+
+  // Stubborn: high confidence but lower resilience to setbacks
+  if (traits.stubborn) {
+    scale.confidence   *= 1.5;
+    scale.resilience   *= 0.7;  // breaks harder when broken
+  }
+
+  // Generous: values giving back
+  if (traits.generous) {
+    scale.characterValues  *= 1.3;
+    scale.social           *= 1.2;
+  }
+
+  // Night owl: less benefit from morning routines
+  if (traits.nightOwl) {
+    scale.rest      *= 0.8;   // less restorative from standard sleep
+    scale.stability *= 0.8;   // routines may not match standard hours
+  }
+
+  // Morning person: more benefit from morning routines
+  if (traits.morningPerson) {
+    scale.rest      *= 1.2;
+    scale.stability *= 1.2;
+    scale.selfCare  *= 1.1;
+  }
+
+  // Leader: cares about purpose, confidence, achievement
+  if (traits.leader) {
+    scale.purpose      *= 1.4;
+    scale.confidence   *= 1.3;
+    scale.achievement  *= 1.3;
+  }
+
+  // Clamp all scales to [0.3, 2.0]
+  for (const k of Object.keys(scale)) {
+    scale[k] = Math.max(0.3, Math.min(2.0, scale[k]));
+  }
+
+  return scale;
+}
+
+/**
+ * computeMentalModifier
+ *
+ * Evaluates the character's current context and activity to determine
+ * a mental wellbeing modifier. Positive = mental health improving.
+ * Negative = mental health declining. The modifier is ADDED to RATES mental.
+ *
+ * Each section is scaled by the character's personality profile so that
+ * identical activities affect two characters differently.
+ */
+function computeMentalModifier(char, context, locationMap) {
+  let modifier = 0;
+  const scale = mentalPersonalityScale(char);
+
+  const activity    = (char.current_activity || '').toLowerCase();
+  const presence    = char.resolved_presence_status || '';
+  const locId       = char.resolved_current_location_id;
+  const loc         = locId ? locationMap[locId] : null;
+  const locCat      = (loc?.category || '').toLowerCase();
+  const locName     = (loc?.name || '').toLowerCase();
+  const locDesc     = (loc?.description || '').toLowerCase();
+  const locFeatures = (loc?.features || []).map(f => (f || '').toLowerCase());
+  const locSubtypes = (loc?.subtype || []).map(s => (s || '').toLowerCase());
+
+  const relationships = char.fictional_relationships || [];
+  const familyMembers = char.family_members || [];
+
+  const hasJob    = !!(char.occupation || char.work_start_time || char.occupation_location_id);
+  const hasHome   = !!(char.current_home_location_id || char.resolved_current_location_id);
+  const atHome    = locCat === 'home' || presence === 'home';
+  const atSchool  = locCat === 'school' || locCat === 'education' || presence === 'at_school';
+  const onShift   = isOnShift(char, locationMap);
+
+  const hasCloseRel = relationships.some(r => (r.friendship_level ?? 0) > 70 || (r.trust_level ?? 0) > 70 || (r.romantic_level ?? 0) > 50);
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // REST & RECOVERY + MOVEMENT & EXERCISE
+  // ═══════════════════════════════════════════════════════════════════════
+  const mQualitySleep = context === 'sleeping' && (locCat === 'home' || locCat === 'hotel');
+  const mNap          = presence === 'napping' || activity.includes('nap') || activity.includes('siesta');
+  const mRestRecover  = activity.includes('rest') || activity.includes('recover') || activity.includes('recharge') || activity.includes('rested');
+  const mAfterEffort  = activity.includes('after') && (activity.includes('work') || activity.includes('effort') || activity.includes('day'));
+  const mGym          = context === 'gym' || activity.includes('exercise') || activity.includes('workout');
+  const mWalk         = activity.includes('walk') || activity.includes('stroll') || activity.includes('jog') || activity.includes('run');
+
+  if (mQualitySleep) modifier += 1.25 * scale.rest;
+  if (mNap)          modifier += 0.75 * scale.rest;
+  if (mRestRecover)  modifier += 0.75 * scale.rest;
+  if (mAfterEffort)  modifier += 0.5 * scale.rest;
+  if (context === 'home_resting' || context === 'resting') modifier += 1.0 * scale.rest;
+  if (context === 'eating' || context === 'food_drink') modifier += 0.75 * scale.rest;
+  if (mGym)          modifier += 1.0;  // exercise is universally beneficial
+  if (mWalk)         modifier += 0.75;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // CHARACTER & PERSONAL VALUES
+  // ═══════════════════════════════════════════════════════════════════════
+  const mHelping     = activity.includes('help') || activity.includes('volunteer') || activity.includes('donate') || activity.includes('assist');
+  const mKind        = activity.includes('kind') || activity.includes('nice') || activity.includes('generous');
+  const mRespectful  = activity.includes('respect') || activity.includes('pleasant') || activity.includes('polite');
+  const mProud       = activity.includes('proud') || activity.includes('right decision') || activity.includes('good choice');
+  const mValues      = activity.includes('values') || activity.includes('integrity') || activity.includes('principle') || activity.includes('honest');
+
+  if (mHelping)    modifier += 1.25 * scale.characterValues;
+  if (mKind)       modifier += 0.75 * scale.characterValues;
+  if (mRespectful) modifier += 0.5 * scale.characterValues;
+  if (mProud)      modifier += 1.0 * scale.characterValues;
+  if (mValues)     modifier += 0.75 * scale.characterValues;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PERSONAL CONFIDENCE & SELF-WORTH
+  // ═══════════════════════════════════════════════════════════════════════
+  const mPepTalk     = activity.includes('pep talk') || (activity.includes('positive') && activity.includes('self'));
+  const mProgress    = activity.includes('progress') || activity.includes('better') || activity.includes('improve');
+  const mCapable     = activity.includes('capable') || activity.includes('competent') || activity.includes('confident');
+  const mRespected   = activity.includes('respect') || activity.includes('reputation') || activity.includes('trust');
+  const mAdvised     = activity.includes('advice sought') || activity.includes('come to me') || activity.includes('asked for help');
+  const mUseful      = activity.includes('useful') || activity.includes('valued') || activity.includes('needed') || activity.includes('depended');
+
+  if (mPepTalk)   modifier += 1.0 * scale.confidence;
+  if (mProgress)  modifier += 0.75 * scale.confidence;
+  if (mCapable)   modifier += 0.75 * scale.confidence;
+  if (mRespected) modifier += 1.0 * scale.confidence;
+  if (mAdvised)   modifier += 0.75 * scale.confidence;
+  if (mUseful)    modifier += 1.0 * scale.confidence;
+  if (hasCloseRel) modifier += 0.2 * scale.confidence;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // GOALS & PURPOSE
+  // ═══════════════════════════════════════════════════════════════════════
+  const mGoals     = activity.includes('goal') || activity.includes('plan') || activity.includes('future');
+  const mPurpose   = activity.includes('purpose') || activity.includes('direction') || activity.includes('meaning');
+  const mWorking   = activity.includes('working toward') || activity.includes('making progress');
+  const mMilestone = activity.includes('milestone') || activity.includes('achieve');
+
+  if (mGoals)     modifier += 0.5 * scale.purpose;
+  if (mPurpose)   modifier += 1.0 * scale.purpose;
+  if (mWorking)   modifier += 0.75 * scale.purpose;
+  if (mMilestone) modifier += 1.25 * scale.purpose;
+  if (atSchool)   modifier += 0.4 * scale.purpose;
+  if (hasJob)     modifier += 0.2 * scale.purpose;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // DAILY STABILITY & ROUTINE
+  // ═══════════════════════════════════════════════════════════════════════
+  const mRoutine     = activity.includes('routine') || activity.includes('habit') || activity.includes('consistent');
+  const mProductive  = activity.includes('productive') || activity.includes('getting things done');
+  const mOrganized   = activity.includes('organize') || activity.includes('tidy') || activity.includes('clean');
+  const mPrepared    = activity.includes('prepare') || activity.includes('ready') || activity.includes('set up');
+  const mCommitment  = activity.includes('commitment') || activity.includes('responsibilit') || activity.includes('reliable');
+  const mEnvOk       = locFeatures.some(f => f.includes('clean') || f.includes('tidy') || f.includes('stable') || f.includes('safe'));
+  const hasStructure = onShift || atSchool;
+
+  if (mRoutine)    modifier += 0.5 * scale.stability;
+  if (mProductive) modifier += 0.75 * scale.stability;
+  if (mOrganized)  modifier += 0.5 * scale.stability;
+  if (mPrepared)   modifier += 0.5 * scale.stability;
+  if (mCommitment) modifier += 0.5 * scale.stability;
+  if (mEnvOk)      modifier += 0.35 * scale.stability;
+  if (hasStructure) modifier += 0.15 * scale.stability;
+  if (onShift)     modifier += 0.25 * scale.stability;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // HEALTHY THINKING & RESILIENCE
+  // ═══════════════════════════════════════════════════════════════════════
+  const mOutlook  = activity.includes('positive outlook') || activity.includes('optimistic') || activity.includes('hopeful');
+  const mHope     = activity.includes('hope') || activity.includes('better days') || activity.includes('looking forward');
+  const mNotWorst = activity.includes('not assuming worst') || activity.includes('staying calm') || activity.includes('realistic');
+  const mResilient = activity.includes('resilient') || activity.includes('bounce back') || activity.includes('cope');
+
+  if (mOutlook)   modifier += 0.75 * scale.resilience;
+  if (mHope)      modifier += 1.0 * scale.resilience;
+  if (mNotWorst)  modifier += 0.5 * scale.resilience;
+  if (mResilient) modifier += 1.0 * scale.resilience;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // LOCATION-BASED (environmental context)
+  // ═══════════════════════════════════════════════════════════════════════
+  if (locCat === 'outdoor') modifier += 0.75;
+  if (atHome && (locFeatures.some(f => f.includes('clean') || f.includes('tidy') || f.includes('cozy')) || !locFeatures.length)) modifier += 0.5;
+  if (locName.includes('park') || locName.includes('garden') || locName.includes('trail') || locName.includes('nature')) modifier += 0.75;
+  if (locDesc.includes('peaceful') || locDesc.includes('calm') || locDesc.includes('serene') || locDesc.includes('quiet')) modifier += 0.5;
+  if (locCat === 'religion' || locName.includes('church') || locName.includes('temple') || locName.includes('mosque') || locName.includes('synagogue') || locName.includes('worship')) modifier += 1.0;
+  if (activity.includes('pray') || activity.includes('worship') || activity.includes('spiritual')) modifier += 1.25;
+  if (locCat === 'community' || activity.includes('community') || activity.includes('fellowship') || activity.includes('gathering')) modifier += 0.5;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // DRAINS (safety, conflict, isolation, grief)
+  // ═══════════════════════════════════════════════════════════════════════
+  if (locCat === 'jail_prison' || (loc && loc.is_confinement_facility)) modifier -= 1.5;
+  if (activity.includes('fear') || activity.includes('threat') || activity.includes('danger') || activity.includes('unsafe')) modifier -= 1.5;
+  if (activity.includes('conflict') || activity.includes('argument') || activity.includes('fight')) modifier -= 1.25;
+  if (activity.includes('grief') || activity.includes('loss') || activity.includes('mourn')) modifier -= 1.5;
+  if (activity.includes('isolat') || activity.includes('lonely') || activity.includes('alone')) modifier -= 1.0;
+  if (activity.includes('critic') && activity.includes('self')) modifier -= 0.5;
+  if (activity.includes('worst') && activity.includes('outcome')) modifier -= 0.5;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PERSONALITY-MATCHED PREFERENCES
+  // ═══════════════════════════════════════════════════════════════════════
+  if (char.trait_conscientious && (mOrganized || activity.includes('clean'))) modifier += 0.75;
+  if (char.social_energy === 'extrovert' || char.social_energy === 'mostly_extrovert') {
+    if (context === 'social_out' || context === 'bar_club' || activity.includes('social')) modifier += 0.5;
+  }
+  if (char.trait_competitive && (mGym || activity.includes('compete') || activity.includes('game') || activity.includes('sport'))) modifier += 0.5;
+  if (char.trait_morning_person && activity.includes('morning')) modifier += 0.35;
+  if ((locCat === 'grocery' || locSubtypes.includes('clothing') || locSubtypes.includes('shopping') || locName.includes('shop') || locName.includes('store') || locName.includes('mall') || locName.includes('boutique'))) modifier += 0.3;
+  if ((locName.includes('cafe') || locName.includes('coffee') || activity.includes('coffee') || activity.includes('cafe')) && !char.trait_night_owl) modifier += 0.35;
+  if ((char.social_energy === 'introvert' || char.social_energy === 'mostly_introvert') && atHome && context === 'home_resting') modifier += 0.35;
+
+  return modifier;
+}
 
 function applyElapsedTime(needs, elapsedHours, context) {
   const rates = RATES[context] || RATES.default;
@@ -482,9 +670,7 @@ function applyElapsedTime(needs, elapsedHours, context) {
   };
 }
 
-// RC5 FIX: Cascade infection is capped more aggressively to prevent runaway
 function applyStatInfection(needs, elapsedHours) {
-  // ── HUNGER CASCADE (only when truly critical) ──
   if (needs.hunger < T.HUNGER_CRITICAL) {
     const severity = (T.HUNGER_CRITICAL - needs.hunger) / T.HUNGER_CRITICAL;
     needs.energy  = clamp(needs.energy  - 1.5 * severity * elapsedHours);
@@ -556,5 +742,352 @@ function needsAreUninitialized(needs) {
   return Object.values(needs).every(v => v === null);
 }
 
-// computeMentalModifier is defined in lib/mentalWellbeingModifier.js
-// Imported at module top for the main simulation loop below.
+// ── CORRECTIVE STATE RESOLVER ──────────────────────────────────────────────
+// When needs cross critical thresholds, the simulation writes a corrective
+// current_activity so that the NEXT tick picks up recovery rates automatically.
+
+function computeCorrectiveState(needs, character) {
+  const activity = (character.current_activity || '').toLowerCase();
+  const presence = character.resolved_presence_status || '';
+
+  // Energy-critical triggers automatic sleep
+  if (needs.energy <= T.ENERGY_CRITICAL && presence !== 'sleeping' && presence !== 'napping') {
+    return { resolved_presence_status: 'sleeping', current_activity: 'forced sleep — exhausted' };
+  }
+
+  // Hunger-critical triggers eating
+  if (needs.hunger <= T.HUNGER_CRITICAL && !activity.includes('eat')) {
+    return { current_activity: 'eating — hunger drove them to food' };
+  }
+
+  // Health ER triggers hospitalization
+  if (needs.health <= T.HEALTH_ER && presence !== 'hospitalized') {
+    return { resolved_presence_status: 'hospitalized', current_activity: 'hospitalized — health collapsed' };
+  }
+
+  // Compound crisis: 3+ needs below 20
+  const criticalCount = [needs.hunger, needs.energy, needs.health, needs.social, needs.mental]
+    .filter(v => v < 20).length;
+  if (criticalCount >= T.COMPOUND_CRISIS && presence !== 'sleeping' && presence !== 'napping') {
+    return { resolved_presence_status: 'sleeping', current_activity: 'forced rest — compound crisis' };
+  }
+
+  return null;
+}
+
+// ── DECISION WEIGHTS ──────────────────────────────────────────────────────
+// Character decides what to do based on current needs and context.
+
+const HYGIENE_CURVE = [
+  { threshold: 20, weight: 3.5 },
+  { threshold: 35, weight: 2.0 },
+  { threshold: 50, weight: 1.0 },
+  { threshold: 65, weight: 0.4 },
+  { threshold: 80, weight: 0.1 },
+];
+
+const ENERGY_CURVE = [
+  { threshold: 15, weight: 5.0 },
+  { threshold: 25, weight: 4.0 },
+  { threshold: 35, weight: 2.5 },
+  { threshold: 50, weight: 1.0 },
+  { threshold: 70, weight: 0.2 },
+];
+
+const HUNGER_CURVE = [
+  { threshold: 10, weight: 5.0 },
+  { threshold: 20, weight: 4.0 },
+  { threshold: 35, weight: 2.0 },
+  { threshold: 50, weight: 1.0 },
+  { threshold: 70, weight: 0.2 },
+];
+
+const SOCIAL_CURVE = [
+  { threshold: 10, weight: 3.0 },
+  { threshold: 25, weight: 2.0 },
+  { threshold: 40, weight: 1.0 },
+  { threshold: 60, weight: 0.4 },
+  { threshold: 80, weight: 0.1 },
+];
+
+const HEALTH_CURVE = [
+  { threshold: 15, weight: 5.0 },
+  { threshold: 30, weight: 3.0 },
+  { threshold: 50, weight: 1.5 },
+  { threshold: 70, weight: 0.5 },
+  { threshold: 85, weight: 0.1 },
+];
+
+const MENTAL_CURVE = [
+  { threshold: 30, weight: 4.0 },
+  { threshold: 45, weight: 2.5 },
+  { threshold: 60, weight: 1.5 },
+  { threshold: 75, weight: 0.5 },
+  { threshold: 90, weight: 0.1 },
+];
+
+function pressureCurve(value, curve) {
+  for (const entry of curve) {
+    if (value <= entry.threshold) return entry.weight;
+  }
+  return 0;
+}
+
+function computeDecisionWeights(needs, character) {
+  const activity = (character.current_activity || '').toLowerCase();
+  const presence = character.resolved_presence_status || '';
+
+  // If already sleeping or hospitalized, no autonomous decisions
+  if (presence === 'sleeping' || presence === 'napping' || presence === 'hospitalized') return null;
+
+  const hygieneW  = pressureCurve(needs.hygiene, HYGIENE_CURVE);
+  const energyW   = pressureCurve(needs.energy,  ENERGY_CURVE);
+  const hungerW   = pressureCurve(needs.hunger,  HUNGER_CURVE);
+  const socialW   = pressureCurve(needs.social,  SOCIAL_CURVE);
+  const healthW   = pressureCurve(needs.health,   HEALTH_CURVE);
+  const mentalW   = pressureCurve(needs.mental,   MENTAL_CURVE);
+
+  return { hygieneW, energyW, hungerW, socialW, healthW, mentalW };
+}
+
+function evaluateDecisionFromWeights(weights) {
+  if (!weights) return null;
+
+  const { hygieneW, energyW, hungerW, socialW, healthW, mentalW } = weights;
+
+  const highest = Math.max(hygieneW, energyW, hungerW, socialW, healthW, mentalW);
+  if (highest <= 0.5) return null; // nothing urgent
+
+  if (healthW === highest)   return 'seek_medical';
+  if (energyW === highest)   return 'seek_rest';
+  if (hungerW === highest)   return 'seek_food';
+  if (hygieneW === highest)  return 'seek_hygiene';
+  if (mentalW  === highest)  return 'seek_mental_relief';
+  if (socialW  === highest)  return 'seek_social';
+
+  return null;
+}
+
+function resolveNextActivity(needs, character) {
+  const weights = computeDecisionWeights(needs, character);
+  return evaluateDecisionFromWeights(weights);
+}
+
+// ── STALE CORRECTIVE CLEANUP ──────────────────────────────────────────────
+// Clears stale corrective activities so character doesn't appear permanently
+// "eating" or "sleeping" when they're actually awake.
+
+function resolveStaleCorrectiveActivities(character, needs) {
+  const activity = (character.current_activity || '').toLowerCase();
+  const presence = character.resolved_presence_status || '';
+
+  const correctivePatterns = [
+    'eating — hunger drove them to food',
+    'forced sleep — exhausted',
+    'forced rest — compound crisis',
+    'hospitalized — health collapsed',
+  ];
+
+  const isCorrective = correctivePatterns.some(p => activity.includes(p || activity === p));
+  if (!isCorrective) return null;
+
+  // Check if the underlying need has recovered enough to clear the corrective state
+  if (activity.includes('eat') && needs.hunger > 40) {
+    return { current_activity: '', resolved_presence_status: presence === 'sleeping' ? 'home' : presence };
+  }
+  if ((activity.includes('forced sleep') || activity.includes('forced rest')) && needs.energy > 50) {
+    return { current_activity: '', resolved_presence_status: 'home' };
+  }
+
+  return null;
+}
+
+function resolveStaleDecisionIntents(character) {
+  // Clear stale decision intents from previous simulation runs
+  // Only valid for one tick (5 min), then cleared
+  const activity = (character.current_activity || '').toLowerCase();
+  if (activity.includes('seek_') && !activity.includes(' — ')) {
+    return { current_activity: '' };
+  }
+  return null;
+}
+
+// ── MAIN HANDLER ──────────────────────────────────────────────────────────
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    const user = await base44.auth.me().catch(() => null);
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const ownerEmail = user.email;
+    const now = new Date();
+
+    // Load all active characters for this account
+    const characters = await base44.asServiceRole.entities.Character.filter(
+      { owner_email: ownerEmail, status: 'active', character_type: 'active_created_character' },
+      null,
+      200
+    ).catch(() => []);
+
+    if (characters.length === 0) {
+      return Response.json({ success: true, simulated: 0, message: 'No active characters' });
+    }
+
+    // Load location map for context resolution
+    const locations = await base44.asServiceRole.entities.LocationReference.filter(
+      { owner_email: ownerEmail },
+      null,
+      200
+    ).catch(() => []);
+
+    const locationMap = {};
+    for (const loc of locations) {
+      locationMap[loc.id] = loc;
+    }
+
+    const results = [];
+
+    for (const char of characters) {
+      try {
+        const nowMs = now.getTime();
+        const lastSim = char.last_need_simulated_at ? new Date(char.last_need_simulated_at).getTime() : 0;
+        if (lastSim <= 0) {
+          // First simulation — initialize needs
+          const initializedNeeds = {
+            hunger:  70,
+            energy:  75,
+            social:  65,
+            health:  80,
+            mental:  70,
+            hygiene: 75,
+            comfort: 70,
+          };
+          await base44.asServiceRole.entities.Character.update(char.id, {
+            hunger_value: 70, energy_value: 75, social_value: 65,
+            health_value: 80, mental_value: 70, hygiene_value: 75,
+            comfort_value: 70, needs_initialized: true,
+            last_need_simulated_at: now.toISOString(),
+          });
+          results.push({ character: char.name, status: 'initialized' });
+          continue;
+        }
+
+        const elapsedMs = nowMs - lastSim;
+        const elapsedHours = Math.min(elapsedMs / (1000 * 60 * 60), 8); // cap at 8h (RC5)
+
+        if (elapsedHours < 0.05) {
+          results.push({ character: char.name, status: 'skipped', reason: 'too_recent' });
+          continue;
+        }
+
+        const needs = getNeedsFromCharacter(char);
+        if (needsAreUninitialized(needs)) {
+          results.push({ character: char.name, status: 'skipped', reason: 'uninitialized' });
+          continue;
+        }
+
+        const context = getLocationContext(char, locationMap, now);
+
+        // Apply time-based rates
+        let newNeeds = applyElapsedTime(needs, elapsedHours, context);
+
+        // Apply stat infection (cascade)
+        newNeeds = applyStatInfection(newNeeds, elapsedHours);
+
+        // Apply mental modifier
+        const mentalMod = computeMentalModifier(char, context, locationMap);
+        newNeeds.mental = clamp(newNeeds.mental + mentalMod * elapsedHours);
+
+        // Apply comfort modifier
+        const comfortMod = computeComfortModifier(char, context, locationMap);
+        newNeeds.comfort = clamp(newNeeds.comfort + comfortMod * elapsedHours);
+
+        // Check corrective states
+        const corrective = computeCorrectiveState(newNeeds, char);
+        const staleCleanup = resolveStaleCorrectiveActivities(char, newNeeds);
+        const staleIntent = resolveStaleDecisionIntents(char);
+
+        // Build update payload
+        const updatePayload = {
+          hunger_value:  Math.round(newNeeds.hunger),
+          energy_value:  Math.round(newNeeds.energy),
+          social_value:  Math.round(newNeeds.social),
+          health_value:  Math.round(newNeeds.health),
+          mental_value:  Math.round(newNeeds.mental),
+          hygiene_value: Math.round(newNeeds.hygiene),
+          comfort_value: Math.round(newNeeds.comfort),
+          last_need_simulated_at: now.toISOString(),
+        };
+
+        if (corrective) {
+          Object.assign(updatePayload, corrective);
+        }
+        if (staleCleanup) {
+          Object.assign(updatePayload, staleCleanup);
+        }
+        if (staleIntent) {
+          Object.assign(updatePayload, staleIntent);
+        }
+
+        // Check for critical escalations
+        const escalations = detectCriticalEscalations(needs, newNeeds, char.name);
+
+        // Write needs update
+        await base44.asServiceRole.entities.Character.update(char.id, updatePayload);
+
+        // Log escalations as LifeEvents
+        for (const esc of escalations) {
+          await base44.asServiceRole.entities.LifeEvent.create({
+            character_id: char.id,
+            character_name: char.name,
+            event_type: 'medical_event',
+            valence: 'negative',
+            severity: 'significant',
+            title: esc.title,
+            description: esc.description,
+            emotional_impact: 'physical distress',
+            triggered_by: 'life_simulation',
+            timestamp: now.toISOString(),
+            context_tags: [esc.memory_tag],
+          }).catch(() => {});
+        }
+
+        results.push({
+          character: char.name,
+          context,
+          mental_modifier: Math.round(mentalMod * 100) / 100,
+          comfort_modifier: Math.round(comfortMod * 100) / 100,
+          corrective: corrective ? Object.keys(corrective) : null,
+          escalations: escalations.length,
+          needs: {
+            hunger: Math.round(newNeeds.hunger),
+            energy: Math.round(newNeeds.energy),
+            social: Math.round(newNeeds.social),
+            health: Math.round(newNeeds.health),
+            mental: Math.round(newNeeds.mental),
+            hygiene: Math.round(newNeeds.hygiene),
+            comfort: Math.round(newNeeds.comfort),
+          },
+        });
+
+        // Small delay between characters to avoid rate limits
+        await new Promise(r => setTimeout(r, 200));
+      } catch (charError) {
+        console.error(`[simulateActiveCharacterNeeds] Error for ${char.name}: ${charError.message}`);
+        results.push({ character: char.name, status: 'error', error: charError.message });
+      }
+    }
+
+    return Response.json({
+      success: true,
+      simulated: results.length,
+      ownerEmail,
+      timestamp: now.toISOString(),
+      results,
+    });
+
+  } catch (error) {
+    console.error(`[simulateActiveCharacterNeeds] Fatal: ${error.message}`);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+});
