@@ -760,11 +760,14 @@ function computeDecisionWeights(char, newNeeds, locationMap) {
 // Pressure contribution to action score only begins at stage 3 (motivation).
 // Before that, actions are driven by opportunity, routine, and preference.
 function stagePressure(pressure) {
-  if (pressure < 0.15) return 0;       // awareness: zero decision pressure
-  if (pressure < 0.35) return 0;       // preference: still no pressure
-  if (pressure < 0.55) return 0.25;    // motivation: moderate influence
-  if (pressure < 0.75) return 0.55;    // pressure: significant influence
-  return 0.90;                           // emergency: dominant influence
+  // Graduated stages — hygiene at 40 should already influence behavior.
+  // Emergency (stage 5) = critical survival pressure that must dominate routines.
+  if (pressure < 0.10) return 0;        // awareness: zero decision pressure
+  if (pressure < 0.22) return 0.10;     // slight discomfort: barely noticeable nudge
+  if (pressure < 0.40) return 0.22;     // preference: mild influence
+  if (pressure < 0.60) return 0.40;     // motivation: moderate influence
+  if (pressure < 0.80) return 0.62;     // pressure: significant influence
+  return 0.90;                           // emergency: dominant — MUST override routines
 }
 
 // ── ROUTINE DETECTION ──────────────────────────────────────────────────────
@@ -838,6 +841,20 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   const onShift = schedule.onShift;
   const atHome = locationType === 'home' || presence === 'home';
 
+  // ── CRITICAL NEED ROUTINE SUPPRESSION ──────────────────────────────────
+  // When any need reaches emergency stage pressure (0.90), routine bonuses
+  // (meal time, shower time, bedtime, social time) are suppressed proportional
+  // to the urgency. A critically exhausted character at breakfast time MUST
+  // choose sleep over food. Routine is preference — survival is authority.
+  const allPressures = Object.values(weights.pressures || {});
+  const maxStage = Math.max(0, ...allPressures.map(p => stagePressure(p)));
+  const routineSuppressionFactor = Math.max(0, 1.0 - maxStage);
+  // Apply suppression to routine bonuses before they enter scoring
+  r.mealTimeBonus = (r.mealTime ? 0.30 : 0) * routineSuppressionFactor;
+  r.showerTimeBonus = (r.usualShowerTime ? 0.20 : 0) * routineSuppressionFactor;
+  r.bedTimeBonus = (r.usualBedTime ? 0.25 : 0) * routineSuppressionFactor;
+  r.socialTimeBonus = (r.usualSocialTime ? 0.20 : 0) * routineSuppressionFactor;
+
   // ── RESTRICTIONS: confined characters have limited options ─────────────
   if (restrictions.confined) {
     if (needs.urgency.energy === 'critical' || needs.urgency.energy === 'critical_collapse')
@@ -883,47 +900,47 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   const eatPressure = stagePressure(p.hunger);
   const eatScore =
     (opp.canEat * 0.35) +                              // food is available right now
-    (r.mealTime ? 0.30 : 0) +                          // it's a normal mealtime
+    r.mealTimeBonus +                                   // it's a normal mealtime (suppressed by critical needs)
     (atHome ? 0.10 : 0) +                              // home makes eating natural
     (pref.routineFollow * 0.15) +                      // routine-followers eat regularly
     (eatPressure * 0.40);                              // hunger pressure (only stage 3+)
 
-  const eatCause = eatPressure > 0 ? 'pressure'
-    : (opp.canEat > 0.40 && r.mealTime) ? 'routine'
+  const eatCause = eatPressure > 0.30 ? 'pressure'
+    : (opp.canEat > 0.40 && r.mealTimeBonus > 0.10) ? 'routine'
     : opp.canEat > 0.40 ? 'opportunity'
-    : r.mealTime ? 'routine'
+    : r.mealTimeBonus > 0.10 ? 'routine'
     : 'preference';
 
   options.push({
     actionType: 'eat', score: eatScore, decisionCause: eatCause,
     reason: opp.canEat > 0.40
-      ? `Food is available — ${r.mealTimeLabel ? r.mealTimeLabel + ' time' : 'eating makes sense'}`
-      : eatPressure > 0
+      ? `Food is available — ${r.mealTimeLabel && r.mealTimeBonus > 0.10 ? r.mealTimeLabel + ' time' : 'eating makes sense'}`
+      : eatPressure > 0.30
         ? `Hungry — needs food (${Math.round(needs.values.hunger)})`
-        : r.mealTime ? `${r.mealTimeLabel} time` : 'Could eat'
+        : r.mealTimeBonus > 0.10 ? `${r.mealTimeLabel} time` : 'Could eat'
   });
 
   // ── HYGIENE ───────────────────────────────────────────────────────────
   const hygienePressure = stagePressure(p.hygiene);
   const hygieneScore =
     (opp.canShower * 0.35) +                           // shower is available
-    (r.usualShowerTime ? 0.20 : 0) +                   // it's a normal shower time
+    r.showerTimeBonus +                                 // it's a normal shower time (suppressed by critical needs)
     (pref.cleanliness * 0.25) +                        // conscientious: prefers being clean
-    (hygienePressure * 0.40);                           // hygiene pressure (only stage 3+)
+    (hygienePressure * 0.40);                           // hygiene pressure (stages 1-5)
 
-  const hygieneCause = hygienePressure > 0 ? 'pressure'
-    : (opp.canShower > 0.40 && r.usualShowerTime) ? 'routine'
+  const hygieneCause = hygienePressure > 0.30 ? 'pressure'
+    : (opp.canShower > 0.40 && r.showerTimeBonus > 0.10) ? 'routine'
     : opp.canShower > 0.40 ? 'opportunity'
-    : r.usualShowerTime ? 'routine'
+    : r.showerTimeBonus > 0.10 ? 'routine'
     : pref.cleanliness > 0.10 ? 'preference'
     : 'preference';
 
   options.push({
     actionType: 'hygiene', score: hygieneScore, decisionCause: hygieneCause,
-    reason: hygienePressure > 0
+    reason: hygienePressure > 0.30
       ? `Needs to clean up (hygiene ${Math.round(needs.values.hygiene)})`
       : opp.canShower > 0.40
-        ? r.usualShowerTime ? 'Shower time — freshen up' : 'Shower is right there'
+        ? r.showerTimeBonus > 0.10 ? 'Shower time — freshen up' : 'Shower is right there'
         : pref.cleanliness > 0.10 ? 'Prefers being clean' : 'Could freshen up'
   });
 
@@ -932,14 +949,14 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   const sleepPressure = stagePressure(p.energy);
   const sleepScore =
     (opp.canSleep * 0.30) +                            // bed is available
-    (r.usualBedTime ? 0.25 : 0) +                      // it's around bedtime
+    r.bedTimeBonus +                                    // it's around bedtime (suppressed by critical needs)
     (timeCtx.isLate ? 0.15 : 0) +                      // it's late
-    (sleepPressure * 0.45);                            // energy pressure (only stage 3+)
+    (sleepPressure * 0.45);                            // energy pressure (stages 1-5)
 
-  const sleepCause = sleepPressure > 0 ? 'pressure'
-    : (opp.canSleep > 0.40 && r.usualBedTime) ? 'routine'
+  const sleepCause = sleepPressure > 0.30 ? 'pressure'
+    : (opp.canSleep > 0.40 && r.bedTimeBonus > 0.10) ? 'routine'
     : opp.canSleep > 0.40 ? 'opportunity'
-    : r.usualBedTime ? 'routine'
+    : r.bedTimeBonus > 0.10 ? 'routine'
     : 'preference';
 
   // Only offer sleep when it makes some sense — not at 10 AM with full energy
@@ -948,7 +965,7 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
       actionType: 'sleep', score: sleepScore, decisionCause: sleepCause,
       reason: sleepPressure > 0.30
         ? `Exhausted (energy ${Math.round(needs.values.energy)})`
-        : r.usualBedTime ? 'Bedtime — getting some rest' :
+        : r.bedTimeBonus > 0.10 ? 'Bedtime — getting some rest' :
           opp.canSleep > 0.40 ? 'Bed is right there' : 'Could rest'
     });
   }
@@ -977,7 +994,7 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   const socialPressure = stagePressure(p.social);
   const socialScore =
     (opp.canSocialize * 0.25) +                        // social venue available
-    (r.usualSocialTime ? 0.20 : 0) +                   // weekend evening
+    r.socialTimeBonus +                                  // weekend evening (suppressed by critical needs)
     (pref.social * 0.25) +                             // extrovert preference
     (socialPressure * 0.30);                           // social need pressure
 
@@ -1925,7 +1942,7 @@ Deno.serve(async (req) => {
 
       // ── Classify corrective action type for durable proof creation ──────
       let correctiveActionType = null;
-      if (corrective.stateWrites.hunger_value_override != null || (corrective.stateWrites.current_activity && /eat/i.test(corrective.stateWrites.current_activity))) {
+      if (corrective.stateWrites.hunger_value_override != null || (corrective.stateWrites.current_activity && /eat|meal/i.test(corrective.stateWrites.current_activity))) {
         correctiveActionType = 'ate';
       } else if (corrective.stateWrites.hygiene_value_override != null || (corrective.stateWrites.current_activity && /freshen|shower|wash|clean/i.test(corrective.stateWrites.current_activity))) {
         correctiveActionType = 'showered';
