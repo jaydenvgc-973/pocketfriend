@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
-// Note: computeMentalModifier is inlined to avoid import issues.
+// computeMentalModifier is defined inline below — ../lib/ imports not supported in Deno Deploy function isolates
 
 /**
  * simulateActiveCharacterNeeds — CORRECTED v2
@@ -466,32 +466,7 @@ function computeComfortModifier(char, context, locationMap) {
   return Math.max(-2, Math.min(2, modifier));
 }
 
-// ── PERSONALITY-BASED MENTAL SCALING ──────────────────────────────────────
-// Different personalities respond differently to the same experience.
-// This returns multipliers for each mental dimension, allowing characters
-// to benefit more or less from specific categories based on their traits.
-function mentalPersonalityScale(char) {
-  return {
-    achievement: 1 + (char.trait_competitive ? 0.20 : 0) + (char.trait_conscientious ? 0.15 : 0)
-      - (char.trait_cynical ? 0.15 : 0),
-    stability:    1 + (char.trait_conscientious ? 0.20 : 0) + (char.trait_morning_person ? 0.10 : 0)
-      - (char.trait_risk_taker ? 0.10 : 0),
-    relationships: 1 + (char.trait_loyal ? 0.20 : 0) + (char.trait_compassionate ? 0.15 : 0)
-      + ((char.social_energy === 'extrovert' || char.social_energy === 'mostly_extrovert') ? 0.15 : 0)
-      - (char.trait_self_absorbed ? 0.20 : 0) - (char.trait_cynical ? 0.10 : 0),
-    selfcare: 1 + (char.trait_conscientious ? 0.15 : 0) + (char.trait_compassionate ? 0.10 : 0),
-    rest:     1 + (char.trait_night_owl ? 0.10 : 0) + ((char.social_energy === 'introvert' || char.social_energy === 'mostly_introvert') ? 0.10 : 0),
-    characterValues: 1 + (char.trait_compassionate ? 0.25 : 0) + (char.trait_loyal ? 0.15 : 0)
-      + (char.trait_conscientious ? 0.10 : 0) - (char.trait_self_absorbed ? 0.15 : 0),
-    confidence: 1 + (char.trait_competitive ? 0.15 : 0) - (char.trait_cynical ? 0.20 : 0)
-      - (char.trait_wishy_washy ? 0.15 : 0),
-    purpose:   1 + (char.trait_conscientious ? 0.20 : 0) + (char.trait_competitive ? 0.10 : 0),
-    resilience: 1 - (char.trait_cynical ? 0.25 : 0) + (char.trait_adaptable ? 0.15 : 0)
-      + (char.trait_compassionate ? 0.10 : 0),
-  };
-}
-
-// ── MENTAL ADD-ON: POSITIVE CONTEXTUAL MODIFIERS ────────────────────────────
+// Mental modifier logic extracted to lib/mentalWellbeingModifier.js
 // Mental is influenced by accomplishment, stability, purpose, positive
 // relationships, self-care, personal growth, and healthy routines.
 // It should generally trend upward when a character lives a stable,
