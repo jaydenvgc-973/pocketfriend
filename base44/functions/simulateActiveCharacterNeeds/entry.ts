@@ -1307,8 +1307,11 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         stateWrites.decision_cause = cause;
 
         if (atValidSleepLocation && !alreadySleeping && !recentlyWokenByAlarm) {
-          // EXECUTE: at valid location — actually sleep
+          // EXECUTE: at valid location — actually sleep, clear intent
           stateWrites.resolved_presence_status = 'sleeping';
+          stateWrites.decision_intent_set_at = null;
+          stateWrites.decision_intent_action = null;
+          stateWrites.decision_intent_cause = null;
           if (cause === 'opportunity') stateWrites.current_activity = 'getting some sleep since bed is right there';
           else if (cause === 'routine') stateWrites.current_activity = 'going to bed for the night';
           else if (cause === 'preference') stateWrites.current_activity = 'calling it a night';
@@ -1319,6 +1322,9 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
           stateWrites.current_activity = cause === 'pressure'
             ? 'exhausted — heading home to sleep'
             : 'heading home — it\'s about that time';
+          stateWrites.decision_intent_set_at = now.toISOString();
+          stateWrites.decision_intent_action = 'sleep';
+          stateWrites.decision_intent_cause = cause;
           logs.push(`[CORRECTIVE] ${char.name}: DECISION → sleep (${cause}) — routing signal`);
         }
         if (alreadyIntending) {
@@ -1342,8 +1348,11 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         stateWrites.decision_cause = cause;
 
         if (isAtFoodLoc) {
-          // EXECUTE: at valid location — actually eat, need value improves
+          // EXECUTE: at valid location — actually eat, need value improves, clear intent
           stateWrites.hunger_value_override = Math.min(100, hunger + 20);
+          stateWrites.decision_intent_set_at = null;
+          stateWrites.decision_intent_action = null;
+          stateWrites.decision_intent_cause = null;
           if (cause === 'opportunity') stateWrites.current_activity = 'eating — food was right there';
           else if (cause === 'routine') stateWrites.current_activity = 'having a meal';
           else if (cause === 'preference') stateWrites.current_activity = 'enjoying a meal';
@@ -1354,6 +1363,9 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
           stateWrites.current_activity = cause === 'pressure'
             ? 'needs to find food — getting hungry'
             : 'grabbing something to eat';
+          stateWrites.decision_intent_set_at = now.toISOString();
+          stateWrites.decision_intent_action = 'eat';
+          stateWrites.decision_intent_cause = cause;
           logs.push(`[CORRECTIVE] ${char.name}: DECISION → eat (${cause}) — intent`);
         }
         if (alreadyEating) {
@@ -1381,8 +1393,11 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         stateWrites.decision_cause = cause;
 
         if (atHome && !alreadyShowering) {
-          // EXECUTE: at home — actually shower/clean up
+          // EXECUTE: at home — actually shower/clean up, clear intent
           stateWrites.hygiene_value_override = Math.min(100, hygiene + 35);
+          stateWrites.decision_intent_set_at = null;
+          stateWrites.decision_intent_action = null;
+          stateWrites.decision_intent_cause = null;
           stateWrites.emotional_state = 'calm';
           if (cause === 'opportunity') stateWrites.current_activity = 'freshening up — shower is right there';
           else if (cause === 'routine') stateWrites.current_activity = 'showering — part of the routine';
@@ -1390,11 +1405,14 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
           else stateWrites.current_activity = 'freshening up';
           logs.push(`[CORRECTIVE] ${char.name}: DECISION → hygiene (${cause}) — executed at home`);
         } else if (!atHome && !alreadyShowering) {
-          // ROUTING SIGNAL: not home
+          // ROUTING SIGNAL: not home, stamp intent
           stateWrites.emotional_state = cause === 'pressure' ? 'uncomfortable' : 'calm';
           stateWrites.current_activity = cause === 'pressure'
             ? 'needs to wash up — heading home'
             : 'heading home to freshen up';
+          stateWrites.decision_intent_set_at = now.toISOString();
+          stateWrites.decision_intent_action = 'hygiene';
+          stateWrites.decision_intent_cause = cause;
           logs.push(`[CORRECTIVE] ${char.name}: DECISION → hygiene (${cause}) — intent`);
         }
         if (alreadyShowering) {
@@ -1520,6 +1538,121 @@ function resolveNextActivity(char, locationMap) {
  * Instead of clearing to null (leaving the character blank), this function
  * resolves the activity into the next valid context using resolveNextActivity.
  */
+/**
+ * resolveStaleDecisionIntents — STALE INTENT RESOLUTION
+ *
+ * Checks if the character has a non-executed routing intent that's been sitting
+ * for >2 hours. If stale and the character is now at the valid location for
+ * execution, force-completes the intent. Otherwise clears it so the next
+ * decision tick can re-evaluate.
+ *
+ * Intent lifecycle: intent created → movement routes → execution → intent cleared.
+ * Stale = movement failed or execution never occurred. Don't leave characters
+ * perpetually "heading home" or "planning to eat."
+ */
+function resolveStaleDecisionIntents(char, newNeeds, correctiveStateWrites, locationMap, now) {
+  const writes = {};
+  const intentSetAt = char.decision_intent_set_at ? new Date(char.decision_intent_set_at) : null;
+  const intentAction = char.decision_intent_action;
+  const currentActivity = (char.current_activity || '').toLowerCase();
+
+  // Only check if there's an active intent that hasn't been resolved
+  if (!intentSetAt || !intentAction) return writes;
+
+  const intentAgeHours = (now.getTime() - intentSetAt.getTime()) / 3600000;
+  const STALE_THRESHOLD_HOURS = 2;
+
+  if (intentAgeHours < STALE_THRESHOLD_HOURS) return writes; // still fresh
+
+  const locType = (char.resolved_location_type || '').toLowerCase();
+  const locId = char.resolved_current_location_id;
+  const homeId = char.current_home_location_id;
+  const atHome = locType === 'home' || (locId && locId === homeId);
+  const presence = char.resolved_presence_status || '';
+
+  // ── Check if execution happened ──────────────────────────────────────────
+  // If intent was "sleep" and character is now sleeping → intent was consumed
+  if (intentAction === 'sleep' && (presence === 'sleeping' || presence === 'napping')) {
+    writes.decision_intent_set_at = null;
+    writes.decision_intent_action = null;
+    writes.decision_intent_cause = null;
+    return writes; // intent successfully consumed
+  }
+  // If a new corrective activity is being written this tick, the intent is being handled
+  if (correctiveStateWrites.current_activity) {
+    // New intent being set — just clear the old one
+    writes.decision_intent_set_at = null;
+    writes.decision_intent_action = null;
+    writes.decision_intent_cause = null;
+    return writes;
+  }
+
+  // ── STALE: resolve based on actionType ─────────────────────────────────
+  switch (intentAction) {
+    case 'sleep': {
+      // Character was "heading home to sleep" but never arrived/fell asleep
+      if (atHome && presence !== 'sleeping' && presence !== 'napping') {
+        // At home but never slept — intent stale, re-evaluate next tick
+        writes.decision_intent_set_at = null;
+        writes.decision_intent_action = null;
+        writes.decision_intent_cause = null;
+        writes.current_activity = 'woke up — getting on with the day';
+      } else if (!atHome) {
+        // Still not home after 2+ hours — clear intent, re-evaluate
+        writes.decision_intent_set_at = null;
+        writes.decision_intent_action = null;
+        writes.decision_intent_cause = null;
+        writes.current_activity = 'going about their day';
+      }
+      break;
+    }
+    case 'eat': {
+      // Character was "getting food" but never ate
+      if (atHome) {
+        // At home — force eat completion (they ate)
+        writes.hunger_value_override = Math.min(100, (newNeeds.hunger ?? 70) + 15);
+        writes.current_activity = 'finished eating';
+        writes.decision_intent_set_at = null;
+        writes.decision_intent_action = null;
+        writes.decision_intent_cause = null;
+      } else {
+        // Still not home — clear intent
+        writes.decision_intent_set_at = null;
+        writes.decision_intent_action = null;
+        writes.decision_intent_cause = null;
+        writes.current_activity = 'going about their day';
+      }
+      break;
+    }
+    case 'hygiene': {
+      if (atHome) {
+        writes.hygiene_value_override = Math.min(100, (newNeeds.hygiene ?? 75) + 20);
+        writes.current_activity = 'freshened up';
+        writes.decision_intent_set_at = null;
+        writes.decision_intent_action = null;
+        writes.decision_intent_cause = null;
+      } else {
+        writes.decision_intent_set_at = null;
+        writes.decision_intent_action = null;
+        writes.decision_intent_cause = null;
+        writes.current_activity = 'going about their day';
+      }
+      break;
+    }
+    default: {
+      // social, rest, family, recreation, home_routine — clear stale intent
+      writes.decision_intent_set_at = null;
+      writes.decision_intent_action = null;
+      writes.decision_intent_cause = null;
+      if (!correctiveStateWrites.current_activity) {
+        writes.current_activity = atHome ? 'relaxing at home' : 'going about their day';
+      }
+    }
+  }
+
+  return writes;
+}
+
 function resolveStaleCorrectiveActivities(char, newNeeds, correctiveStateWrites, locationMap) {
   const currentActivity = char.current_activity || '';
   const alreadyHasNewActivity = !!correctiveStateWrites.current_activity;
@@ -1822,6 +1955,14 @@ Deno.serve(async (req) => {
         newNeeds.hygiene = corrective.stateWrites.hygiene_value_override;
         delete corrective.stateWrites.hygiene_value_override;
       }
+
+      // ── STALE DECISION INTENT DETECTION ────────────────────────────────────
+      // If a routing intent was written >2 hours ago and the character is still
+      // "heading home", "needs to find food", etc. with no execution — the intent
+      // is stale. Clear it and let the next decision tick re-evaluate.
+      // If the character IS at the valid location now, force-complete the intent.
+      const intentResolution = resolveStaleDecisionIntents(char, newNeeds, corrective.stateWrites, locationMap, now);
+      Object.assign(corrective.stateWrites, intentResolution);
 
       // ── CONTINUITY PROGRESSION: clear stale corrective activities ──────────
       // When a need has stabilized above its trigger threshold, clear the

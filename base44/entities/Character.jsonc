@@ -1078,6 +1078,29 @@
       "type": "boolean",
       "default": false
     },
+    "decision_intent_set_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the current decision-intent routing signal was written (e.g., 'heading home to sleep'). Null when intent is executed or cleared. Used for stale intent detection."
+    },
+    "decision_intent_action": {
+      "type": "string",
+      "enum": [
+        "eat",
+        "sleep",
+        "hygiene",
+        "social",
+        "rest",
+        "family",
+        "home_routine",
+        null
+      ],
+      "description": "The actionType of the active decision intent. Cleared when executed."
+    },
+    "decision_intent_cause": {
+      "type": "string",
+      "description": "The decision cause that created the active intent. For diagnostics."
+    },
     "is_jailed": {
       "type": "boolean",
       "default": false,
