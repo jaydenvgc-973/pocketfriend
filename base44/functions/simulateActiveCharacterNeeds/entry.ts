@@ -908,6 +908,66 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
   return { stateWrites, scheduledEvents, logs };
 }
 
+/**
+ * resolveStaleCorrectiveActivities — CONTINUITY PROGRESSION
+ *
+ * Characters do not freeze in time. Temporary corrective activities set by
+ * computeCorrectiveState (eating, showering, decompressing) must naturally complete
+ * when the triggering need stabilizes. If the simulation would previously leave
+ * "eating — hunger addressed" on a character for weeks because no new corrective
+ * state overwrote it, this function clears it.
+ *
+ * Rule: When a need is above its trigger threshold AND the current_activity is a
+ * temporary corrective activity for that need, clear the activity. The character
+ * has moved on.
+ *
+ * Activities NOT cleared (routing/manual):
+ *   - Activities set by travel/autonomousMovement ("heading to X", "traveling to Y")
+ *   - User-set activities
+ *   - Non-corrective presence states
+ */
+function resolveStaleCorrectiveActivities(char, newNeeds, correctiveStateWrites) {
+  const currentActivity = char.current_activity || '';
+  const alreadyHasNewActivity = !!correctiveStateWrites.current_activity;
+
+  // If a new corrective activity was just set, don't clear it
+  if (alreadyHasNewActivity) return {};
+
+  const activity = currentActivity.toLowerCase();
+  const clears = {};
+
+  // ── EATING ACTIVITIES → clear when hunger stable ──────────────────────────
+  if (activity.includes('eat') || activity.includes('food') || activity.includes('hunger') || activity.includes('meal')) {
+    if ((newNeeds.hunger ?? 70) > T.HUNGER_CRITICAL) {
+      clears.current_activity = null;
+    }
+  }
+
+  // ── HYGIENE ACTIVITIES → clear when hygiene stable ───────────────────────
+  if (activity.includes('wash') || activity.includes('shower') || activity.includes('freshen') || activity.includes('clean')) {
+    if ((newNeeds.hygiene ?? 75) > 25) {
+      clears.current_activity = null;
+      clears.emotional_state = 'calm';
+    }
+  }
+
+  // ── DECOMPRESSION → clear when mental stable ────────────────────────────
+  if (activity.includes('decompress') || activity.includes('mental health')) {
+    if ((newNeeds.mental ?? 70) > 20) {
+      clears.current_activity = null;
+    }
+  }
+
+  // ── HOME-ROUTING SLEEP SIGNAL → clear when energy stable ─────────────────
+  if (activity.includes('returning home to sleep') || activity.includes('heading home') && activity.includes('sleep')) {
+    if ((newNeeds.energy ?? 75) > T.ENERGY_CRITICAL) {
+      clears.current_activity = null;
+    }
+  }
+
+  return clears;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -1145,6 +1205,13 @@ Deno.serve(async (req) => {
         newNeeds.hygiene = corrective.stateWrites.hygiene_value_override;
         delete corrective.stateWrites.hygiene_value_override;
       }
+
+      // ── CONTINUITY PROGRESSION: clear stale corrective activities ──────────
+      // When a need has stabilized above its trigger threshold, clear the
+      // temporary activity so the character doesn't remain frozen in time
+      // weeks after the activity naturally completed.
+      const continuityClears = resolveStaleCorrectiveActivities(char, newNeeds, corrective.stateWrites);
+      Object.assign(corrective.stateWrites, continuityClears);
 
       // Build final data payload — needs values + corrective state writes
       const updateData = {
