@@ -362,9 +362,46 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 15; // fix: charId-gated cache — stored payload includes charId; cache reads bypassed until profile-switch stability proven
+const DASHBOARD_CACHE_VERSION = 16; // added liveSnapshot validation
 const dashboardCache = {};
 const dashboardCacheVersion = {};
+
+// ── LIVE CHARACTER SNAPSHOT ──────────────────────────────────────────────
+// Built from current Character fields. Used to validate cache freshness.
+// If ANY of these fields differ between cache time and now, cache is stale.
+const SNAPSHOT_FIELDS = [
+  'id', 'updated_date',
+  'resolved_current_location_id', 'resolved_presence_status',
+  'resolved_source_reason', 'resolved_location_type',
+  'travel_status', 'current_activity',
+  'energy_value', 'hunger_value', 'hygiene_value',
+  'comfort_value', 'social_value', 'mental_value',
+  'health_value', 'financial_need_value',
+  'emotional_state', 'last_sleep_start',
+  'sleep_interrupted_at', 'alarm_woke_at',
+];
+
+function buildLiveCharacterSnapshot(character) {
+  const snap = {};
+  for (const field of SNAPSHOT_FIELDS) {
+    snap[field] = character[field] ?? null;
+  }
+  return snap;
+}
+
+function snapshotsMatch(cached, live) {
+  for (const field of SNAPSHOT_FIELDS) {
+    if (cached[field] !== live[field]) return false;
+  }
+  return true;
+}
+
+// Public cache invalidation — call from CharacterNeedsPanel or anywhere that
+// writes to Character fields (manual bar edits, location changes, etc.)
+export function discardDashboardCacheForCharacter(characterId) {
+  delete dashboardCache[characterId];
+  delete dashboardCacheVersion[characterId];
+}
 
 export default function CharacterDashboard({ character, allCharacters = [] }) {
   const charId = character?.id;
@@ -398,15 +435,25 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
     const cachedVersion = dashboardCacheVersion[charId];
     const cacheValid = cachedData && cachedVersion === DASHBOARD_CACHE_VERSION;
 
-    // ── CACHE READ (re-enabled) ─────────────────────────────────────────
-    // Guards are proven: charId-keyed cache, version stamp, activeRequestRef
-    // stale-response discard. Cache reads save 8+ entity queries per profile open.
-    if (cacheValid && cachedData.charId === requestCharId) {
-      console.log(`[CharacterDashboard] CACHE HIT for ${charId} — skipping full compute pipeline`);
+    // ── CACHE READ WITH LIVE SNAPSHOT VALIDATION ──────────────────────────
+    // Cache is a display optimization only — never authoritative.
+    // Cache hit requires: charId match, version match, AND live snapshot match.
+    // If any live Character field changed since cache was written, discard + recompute.
+    const liveSnapshot = buildLiveCharacterSnapshot(character);
+    const snapshotsValid = cacheValid && cachedData.liveSnapshot &&
+      snapshotsMatch(cachedData.liveSnapshot, liveSnapshot);
+
+    if (cacheValid && cachedData.charId === requestCharId && snapshotsValid) {
+      console.log(`[CharacterDashboard] CACHE HIT for ${charId} — live snapshot validated, skipping full compute`);
       setData(cachedData);
       setLoaded(true);
       setLoading(false);
       return;
+    }
+
+    if (cacheValid && cachedData.charId === requestCharId && !snapshotsValid) {
+      console.log(`[CharacterDashboard] CACHE STALE for ${charId} — live fields changed since cache written, discarding and recomputing`);
+      discardDashboardCacheForCharacter(charId);
     }
 
     // No valid cache. Reset any stale data from a previous character and fetch.
