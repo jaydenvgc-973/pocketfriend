@@ -1,4 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+// Note: computeMentalModifier is inlined to avoid import issues.
 
 /**
  * simulateActiveCharacterNeeds — CORRECTED v2
