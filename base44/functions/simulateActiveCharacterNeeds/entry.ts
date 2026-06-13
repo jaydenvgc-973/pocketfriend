@@ -1222,16 +1222,6 @@ Deno.serve(async (req) => {
           }).catch(() => {});
         }
 
-        // ── SLEEP DEBT TRACKING ───────────────────────────────────────────
-        // If character has sleep debt and is sleeping, gradually pay it down.
-        if (context === 'sleeping' && char.sleep_debt_hours > 0) {
-          const debtPaid = Math.min(char.sleep_debt_hours, elapsedHours);
-          const remainingDebt = Math.max(0, char.sleep_debt_hours - debtPaid);
-          if (remainingDebt !== char.sleep_debt_hours) {
-            updatePayload.sleep_debt_hours = Math.round(remainingDebt * 100) / 100;
-          }
-        }
-
         // ── STALE CORRECTIVE CLEANUP ───────────────────────────────────────
         const staleCleanup = resolveStaleCorrectiveActivities(char, newNeeds);
         if (staleCleanup && !hasStayLock) {
