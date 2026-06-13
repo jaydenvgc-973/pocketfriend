@@ -431,6 +431,9 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
     }
 
     // Re-evaluate cache for the CURRENT charId (may have changed since last render)
+    const requestCharId = charId;
+    activeRequestRef.current = requestCharId;
+
     const cachedData = dashboardCache[charId];
     const cachedVersion = dashboardCacheVersion[charId];
     const cacheValid = cachedData && cachedVersion === DASHBOARD_CACHE_VERSION;
@@ -460,9 +463,6 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
     setData(null);
     setLoaded(false);
     setLoading(true);
-
-    const requestCharId = charId;
-    activeRequestRef.current = requestCharId;
 
     console.log(`[CharacterDashboard] EFFECT START | charId=${charId} | name="${character?.name || '?'}" | ownerEmail=${character?.owner_email || 'MISSING'} | fetching fresh (cache disabled)`);
 
@@ -1249,7 +1249,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         ` | activeRequestRef=${activeRequestRef.current}`
       );
 
-      const dashData = { charId: requestCharId, liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 20), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
+      const dashData = { charId: requestCharId, liveSnapshot: buildLiveCharacterSnapshot(character), liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 20), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
       // Guard: only write if this charId is still the active request
       if (requestCharId !== activeRequestRef.current) {
         console.log(`[CharacterDashboard] STALE — discarding result for ${requestCharId}, active is ${activeRequestRef.current}`);

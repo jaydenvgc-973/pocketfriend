@@ -79,12 +79,17 @@ function pickBestFreeTimeLocation(availableLocations, character) {
 }
 
 /**
- * ENFORCE CORE LOOP — READ-ONLY DIAGNOSTIC AUDIT
+ * ENFORCE CORE LOOP — READ-ONLY DIAGNOSTIC AUDIT WITH REPAIR HANDOFF
  * 
- * This function reports state violations but does NOT auto-correct them.
- * Autonomous authority (autonomousCharacterMovement, simulateActiveCharacterNeeds,
- * processTravelArrivals) is the sole correction pipeline. A second correction
- * authority creates conflicting state and limbo between activities.
+ * This function reports state violations and triggers the authoritative repair
+ * pipeline immediately after. It does NOT auto-correct — autonomousCharacterMovement,
+ * simulateActiveCharacterNeeds, and processTravelArrivals own all corrections.
+ * 
+ * Handoff logic:
+ * - Stuck transitions → invoke autonomousCharacterMovement
+ * - Stale presence/invalid location → invoke autonomousCharacterMovement
+ * - Orphaned travel → invoke processTravelArrivals
+ * - Needs drift → invoke simulateActiveCharacterNeeds
  * 
  * Steps:
  * 1. CHECK TIME
@@ -92,9 +97,9 @@ function pickBestFreeTimeLocation(availableLocations, character) {
  * 3. CHECK LOCATION VALIDITY
  * 4. CHECK ENVIRONMENT (open/closed)
  * 5. CHECK USER INFLUENCE
- * 6. REPORT LOCATION ISSUES (no auto-correction)
+ * 6. REPORT LOCATION ISSUES
  * 7. CHECK PRESENCE CONSISTENCY
- * 8-12. Report only — no writes
+ * 8. HANDOFF TO AUTHORITATIVE PIPELINE
  */
 
 Deno.serve(async (req) => {
@@ -256,8 +261,57 @@ Deno.serve(async (req) => {
     coreLoopReport.systemStatus = {
       charactersProcessed: coreLoopReport.charactersProcessed,
       totalViolations: coreLoopReport.violationsFound,
-      systemHealth: coreLoopReport.violationsFound === 0 ? 'HEALTHY' : `${coreLoopReport.violationsFound} ISSUES REPORTED (not auto-corrected — autonomous systems handle corrections)`
+      systemHealth: coreLoopReport.violationsFound === 0 ? 'HEALTHY' : `${coreLoopReport.violationsFound} ISSUES REPORTED — triggering authoritative repair pipeline`
     };
+
+    // ── STEP 8: HANDOFF TO AUTHORITATIVE REPAIR PIPELINE ─────────────────
+    // When violations exist, immediately trigger the owning correction functions.
+    // Each function owns a specific domain — no cross-domain writes.
+    const handoffResults = {};
+    if (coreLoopReport.violationsFound > 0) {
+      // Classify violations by domain
+      const hasLocationViolations = coreLoopReport.details.some(d =>
+        d.violations.some(v => v.includes('location') || v.includes('presence') || v.includes('closed'))
+      );
+      const hasTravelViolations = coreLoopReport.details.some(d =>
+        d.violations.some(v => v.includes('traveling') || v.includes('orphaned') || v.includes('travel'))
+      );
+      const hasNeedsViolations = coreLoopReport.details.some(d =>
+        d.violations.some(v => v.includes('need') || v.includes('activity') || v.includes('transition'))
+      );
+
+      // Fire-and-forget: trigger each pipeline in parallel — do not await
+      const handoffPromises = [];
+      
+      if (hasLocationViolations || hasTravelViolations) {
+        handoffPromises.push(
+          base44.functions.invoke('autonomousCharacterMovement', { trigger: 'enforceCoreLoop' })
+            .then(() => { handoffResults.autonomousMovement = 'invoked'; })
+            .catch(e => { handoffResults.autonomousMovement = `error:${e.message}`; })
+        );
+      }
+      
+      if (hasTravelViolations) {
+        handoffPromises.push(
+          base44.functions.invoke('processTravelArrivals', { trigger: 'enforceCoreLoop' })
+            .then(() => { handoffResults.processTravelArrivals = 'invoked'; })
+            .catch(e => { handoffResults.processTravelArrivals = `error:${e.message}`; })
+        );
+      }
+      
+      if (hasNeedsViolations) {
+        handoffPromises.push(
+          base44.functions.invoke('simulateActiveCharacterNeeds', { trigger: 'enforceCoreLoop' })
+            .then(() => { handoffResults.simulateNeeds = 'invoked'; })
+            .catch(e => { handoffResults.simulateNeeds = `error:${e.message}`; })
+        );
+      }
+
+      // Don't block the response — fire and continue
+      Promise.allSettled(handoffPromises).catch(() => {});
+    }
+
+    coreLoopReport.handoff = handoffResults;
 
     return Response.json(coreLoopReport);
   } catch (error) {

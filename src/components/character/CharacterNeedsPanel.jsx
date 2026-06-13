@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQueryClient } from '@tanstack/react-query';
 import { Switch } from '@/components/ui/switch';
+import { discardDashboardCacheForCharacter } from '@/components/character/CharacterDashboard';
 
 const NEEDS = [
   { label: 'Hunger',    key: 'hunger_value',         emoji: '🍽️', description: 'How hungry they are' },
@@ -107,6 +108,9 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
       // Persist immediately to backend
       const updatePayload = { [key]: newValue };
       await base44.entities.Character.update(character.id, updatePayload);
+      
+      // Live state wins — invalidate all caches for this character
+      discardDashboardCacheForCharacter(character.id);
       
       // Force re-sync: invalidate character query
       await queryClient.invalidateQueries({ queryKey: ['character', character.id] });

@@ -136,7 +136,18 @@ function getWorkContextFromLocation(loc) {
   const cat = (loc.category || '').toLowerCase();
   const name = (loc.name || '').toLowerCase();
   if (cat === 'medical' || name.includes('hospital') || name.includes('clinic') || name.includes('emergency')) return 'at_work_medical';
+  // Social/people-facing workplaces — workers get social need improvement during shift
   if (cat === 'food_drink' || cat === 'social' || name.includes('bar') || name.includes('restaurant') || name.includes('cafe') || name.includes('diner')) return 'at_work_service';
+  // Education — teachers and school staff interact with students/staff all day
+  if (cat === 'education' || cat === 'school' || name.includes('school') || name.includes('college') || name.includes('university') || name.includes('academy')) return 'at_work_service';
+  // Salon/beauty — close personal interaction with clients
+  if (cat === 'social' || name.includes('salon') || name.includes('barber') || name.includes('spa') || name.includes('beauty')) return 'at_work_service';
+  // Retail/shopping — constant customer interaction
+  if (cat === 'shopping' || name.includes('retail') || name.includes('shop') || name.includes('store') || name.includes('market')) return 'at_work_service';
+  // Community — relationship-based interaction with residents/partners
+  if (cat === 'community' || name.includes('community') || name.includes('center') || name.includes('outreach')) return 'at_work_service';
+  // Gym/fitness — direct client contact as trainer/instructor
+  if ((cat === 'gym' || name.includes('gym') || name.includes('fitness')) && name.includes('studio')) return 'at_work_service';
   return 'at_work_office';
 }
 

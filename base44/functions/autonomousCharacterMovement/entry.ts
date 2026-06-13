@@ -430,8 +430,8 @@ function scoreLocation(location, char, vals, nowET) {
                 if (cat === 'outdoor' || cat === 'gym') score += 2 + adjustedSocialU;
               }
             }
-            // Mark this modifier in the log for visibility
-            char._socialWorkplaceModifier = true;
+            // Log the modifier for observability — no hidden state written to Character
+            console.log(`[autonomousMovement] ${char.name}: social workplace modifier active — social urgency downgraded for location scoring only`);
           }
         }
       }
