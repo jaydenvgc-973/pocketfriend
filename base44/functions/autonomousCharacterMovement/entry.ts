@@ -468,6 +468,49 @@ function scoreLocation(location, char, vals, nowET) {
     score -= penalty;
   }
 
+  // ── DECISION WEIGHT MODULATION ────────────────────────────────────────────
+  // Decision weights from the character's live context modulate raw urgency scores.
+  // This is the bridge between the decision engine and movement routing.
+  // Characters on shift tolerate more hunger before food-seeking. Tired characters
+  // avoid gyms. Conscientious characters favor obligations over recreation.
+  {
+    const dw = (char._decisionWeights) || null;
+    if (dw) {
+      // Schedule gravity: work/school on shift suppresses non-essential movement
+      if (dw.work > 0.30 || dw.education > 0.25) {
+        if (cat === 'social' || cat === 'outdoor') score *= 0.4;
+        if (isNightlifeVenue(location)) score *= 0.3;
+        if (cat === 'gym') score *= 0.5;
+      }
+      // Rest weight: tired characters go home, avoid energy-draining locations
+      if (dw.rest > 0.30) {
+        if (cat === 'home' || cat === 'generic') score *= 1.3;
+        if (cat === 'gym') score *= 0.5;
+        if (isNightlifeVenue(location)) score *= 0.4;
+        if (cat === 'social') score *= 0.6;
+      }
+      // Eat weight: hungry characters prioritize food
+      if (dw.eat > 0.20) {
+        if (cat === 'food_drink' || cat === 'grocery') score *= 1.3;
+        if (cat === 'home') score *= 1.1; // can cook at home
+      }
+      // Social weight: social need drives venue selection
+      if (dw.social > 0.15) {
+        if (cat === 'social' || cat === 'food_drink' || cat === 'outdoor') score *= 1.2;
+        if (cat === 'home') score *= 0.9; // staying home doesn't help social need
+      }
+      // Recreation weight: free-time characters explore
+      if (dw.recreation > 0.05) {
+        if (cat === 'social' || cat === 'outdoor' || cat === 'gym') score *= 1.15;
+        if (cat === 'home') score *= 0.9;
+      }
+      // Confinement: restricted characters can only go home/rest
+      if (dw.emergency) {
+        if (cat !== 'home' && cat !== 'generic' && cat !== 'medical') score = Math.min(score, -1);
+      }
+    }
+  }
+
   // ── PRE-SLEEP UNWIND CONTEXT ─────────────────────────────────────────────
   // If the character is within ~60 minutes of their natural sleep window,
   // gently nudge them toward quieter choices. This is CONTEXT, not authority.
@@ -635,6 +678,77 @@ Deno.serve(async (req) => {
         const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
         const vals = needValues(char);
         const energyUrgency = urgencyLevel(vals.energy);
+
+        // ── DECISION WEIGHTING FOR MOVEMENT ROUTING ─────────────────────────
+        // Compute inline decision weights so the location scorer can modulate
+        // scores based on the character's full context (schedule, needs, traits, time).
+        // Attached to char._decisionWeights for use in scoreLocation.
+        {
+          const nowET2 = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+          const cur = nowET2.getHours() * 60 + nowET2.getMinutes();
+          const dow = nowET2.getDay();
+          const hour = nowET2.getHours();
+
+          // Check if currently on shift
+          let onShiftNow = false;
+          if (char.work_start_time && char.work_end_time && Array.isArray(char.work_days) && char.work_days.includes(dow)) {
+            const [sh, sm = 0] = char.work_start_time.split(':').map(Number);
+            const [eh, em = 0] = char.work_end_time.split(':').map(Number);
+            if (cur >= sh * 60 + sm && cur < eh * 60 + em) onShiftNow = true;
+          }
+          if (!onShiftNow && Array.isArray(char.additional_occupation_locations)) {
+            for (const entry of char.additional_occupation_locations) {
+              if (!entry.location_id) continue;
+              const loc = userLocations.find(l => l.id === entry.location_id);
+              if (!loc) continue;
+              const shift = loc.worker_shifts?.[char.id];
+              if (shift?.start && shift?.end) {
+                const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
+                if (shiftDays && !shiftDays.includes(dow)) continue;
+                const [sh, sm = 0] = shift.start.split(':').map(Number);
+                const [eh, em = 0] = shift.end.split(':').map(Number);
+                if (cur >= sh * 60 + sm && cur < eh * 60 + em) { onShiftNow = true; break; }
+              }
+            }
+          }
+
+          const isStudent = char.student_status === 'enrolled';
+          const isSchoolDay = isStudent && ![0, 6].includes(dow);
+          const isLate = hour >= 22 || hour < 5;
+
+          const dw = {
+            work: 0.15, education: 0.10, rest: 0.10, eat: 0.08,
+            hygiene: 0.05, social: 0.08, home: 0.05, recreation: 0.05,
+          };
+
+          // Emergency: health/energy/hunger collapse trumps everything
+          const needsEnergy = vals.energy;
+          const needsHealth = vals.health;
+          const needsHunger = vals.hunger;
+          if (needsEnergy <= 10 || needsHealth <= 15 || needsHunger <= 5) {
+            dw.rest = 0.70; dw.work = 0; dw.education = 0; dw.eat = 0; dw.social = 0; dw.recreation = 0; dw.emergency = true;
+          } else {
+            if (onShiftNow) { dw.work = 0.40; dw.recreation = 0.01; }
+            if (isSchoolDay) { dw.education = 0.30; dw.recreation = 0.03; }
+            if (vals.hunger <= 20) { dw.eat = onShiftNow ? 0.15 : 0.30; if (!onShiftNow) dw.work *= 0.6; }
+            else if (vals.hunger <= 35) { dw.eat = 0.15; }
+            if (vals.energy <= 25) { dw.rest = 0.45; dw.work = Math.min(dw.work, 0.12); dw.education = Math.min(dw.education, 0.08); }
+            else if (vals.energy <= 35) { dw.rest = 0.20; }
+            if (isLate) { dw.rest += 0.12; dw.work = Math.min(dw.work, 0.05); }
+            // Personality traits
+            if (char.trait_conscientious) { dw.work += 0.10; dw.rest -= 0.03; }
+            if (char.trait_night_owl) { dw.rest += 0.05; }
+            if (char.trait_morning_person) { dw.rest -= 0.03; }
+            if (char.trait_loyal) { dw.social += 0.05; }
+            if (char.trait_stubborn) { dw.eat -= 0.02; }
+            // Confinement
+            if (char.is_jailed || char.house_arrest_active) { dw.work = 0; dw.education = 0; dw.recreation = 0.01; }
+            // Clamp
+            for (const k of Object.keys(dw)) { if (k !== 'emergency') dw[k] = Math.max(0, Math.min(0.75, dw[k])); }
+          }
+
+          char._decisionWeights = dw;
+        }
 
         // ── TIER -1: ACTIVE TRANSIT GUARD ────────────────────────────────────
         // If this character already has an active in_transit TravelSession,

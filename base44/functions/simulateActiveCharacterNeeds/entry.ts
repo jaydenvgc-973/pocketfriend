@@ -678,6 +678,91 @@ function computeDecisionWeights(char, newNeeds, locationMap) {
   return weights;
 }
 
+/**
+ * evaluateDecisionFromWeights — INLINE DECISION EVALUATOR
+ *
+ * Takes the weights already computed by computeDecisionWeights and the same
+ * context already gathered (schedule, needs, time, restrictions), and returns
+ * the single best actionType. This duplicates the logic in evaluateCharacterNextAction
+ * but runs inline to avoid HTTP overhead and circular dependencies.
+ */
+function evaluateDecisionFromWeights(char, schedule, needs, weights, restrictions, timeCtx) {
+  const presence = char.resolved_presence_status || '';
+  const locationType = (char.resolved_location_type || '').toLowerCase();
+  const onShift = schedule.onShift;
+
+  // ── RESTRICTIONS: confined characters have limited options ─────────────
+  if (restrictions.confined) {
+    if (needs.urgency.energy === 'critical' || needs.urgency.energy === 'critical_collapse')
+      return { actionType: 'sleep', reason: `Exhausted while ${restrictions.reason}` };
+    if (needs.urgency.hunger === 'critical')
+      return { actionType: 'eat', reason: `Hungry while ${restrictions.reason}` };
+    return { actionType: 'confinement_routine', reason: `Confined: ${restrictions.reason}` };
+  }
+
+  // ── EMERGENCY: health/energy emergency trumps everything ──────────────
+  if (needs.urgency.health === 'emergency')
+    return { actionType: 'hospitalize', reason: `Health emergency (${Math.round(needs.values.health)})` };
+  if (needs.urgency.energy === 'emergency')
+    return { actionType: 'hospitalize', reason: `Energy collapse (${Math.round(needs.values.energy)})` };
+  if (needs.urgency.energy === 'critical_collapse')
+    return { actionType: 'pass_out', reason: `Energy passout (${Math.round(needs.values.energy)})` };
+
+  // ── ON SHIFT: work is the frame — needs layer inside it ───────────────
+  if (onShift) {
+    if (needs.urgency.energy === 'critical')
+      return { actionType: 'go_home_rest', reason: `Critically tired during shift` };
+    if (needs.urgency.hunger === 'critical' || needs.urgency.hunger === 'emergency')
+      return { actionType: 'eat_at_work', reason: `Hungry but can eat during shift` };
+    return { actionType: 'work', reason: 'On shift — working' };
+  }
+
+  // ── OFF SHIFT: score all options and pick best ────────────────────────
+  const options = [];
+
+  if (needs.urgency.energy === 'critical')
+    options.push({ actionType: 'sleep', score: 0.90, reason: 'Critically exhausted' });
+  else if (needs.urgency.energy === 'low')
+    options.push({ actionType: 'rest', score: weights.rest + 0.15, reason: 'Tired' });
+
+  if (needs.urgency.hunger === 'critical' || needs.urgency.hunger === 'emergency') {
+    const atHome = locationType === 'home' || presence === 'home';
+    options.push({ actionType: 'eat', score: weights.eat + (atHome ? 0.25 : 0.20), reason: atHome ? 'Hungry — can eat at home' : 'Hungry — needs food' });
+  } else if (needs.urgency.hunger === 'low') {
+    options.push({ actionType: 'eat', score: weights.eat + 0.08, reason: 'Getting hungry' });
+  }
+
+  if (needs.urgency.hygiene === 'critical') {
+    const atHome = locationType === 'home' || presence === 'home';
+    options.push({ actionType: 'hygiene', score: weights.hygiene + (atHome ? 0.30 : 0.15), reason: atHome ? 'Needs to freshen up — already home' : 'Needs to clean up' });
+  }
+
+  if (needs.urgency.social === 'critical')
+    options.push({ actionType: 'social', score: weights.social + 0.10, reason: 'Socially isolated' });
+
+  if (needs.urgency.mental === 'critical')
+    options.push({ actionType: 'rest', score: weights.rest + 0.12, reason: 'Mentally strained' });
+
+  // Non-need-driven options
+  if (weights.family > 0.08 && !needs.urgency.energy?.includes('critical'))
+    options.push({ actionType: 'family', score: weights.family, reason: 'Family time' });
+
+  if (weights.social > 0.10 && !needs.urgency.energy?.includes('critical') && !timeCtx.isLate)
+    options.push({ actionType: 'social', score: weights.social, reason: 'Social opportunity' });
+
+  if (weights.recreation > 0.05 && !needs.urgency.energy?.includes('critical') && !timeCtx.isLate)
+    options.push({ actionType: 'recreation', score: weights.recreation, reason: 'Free time' });
+
+  if (weights.education > 0.20)
+    options.push({ actionType: 'education', score: weights.education, reason: 'School obligation' });
+
+  // Default fallback
+  options.push({ actionType: 'home_routine', score: weights.home + 0.05, reason: 'Default — relaxing at home' });
+
+  options.sort((a, b) => b.score - a.score);
+  return options[0];
+}
+
 function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap, decisionWeights) {
   const stateWrites = {};
   const scheduledEvents = [];
@@ -876,141 +961,153 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
     return { stateWrites, scheduledEvents, logs };
   }
 
-  // ── PRIORITY 3: AUTO-SLEEP (ENERGY ONLY — no other need may trigger this) ──
-  // Sleep is ONLY written when energy is the critical driver (≤ ENERGY_CRITICAL = 20).
-  // hygiene=0, social=0, mental=0, comfort=0 — NONE of these may trigger sleep.
-  // Character must also be at a valid sleep location (home/hotel/shelter).
-  const currentLocType = (char.resolved_location_type || '').toLowerCase();
-  const currentPresence = char.resolved_presence_status || '';
-  const atValidSleepLocation = (
-    currentLocType === 'home' ||
-    currentLocType === 'hotel' ||
-    currentLocType === 'shelter' ||
-    currentLocType === 'generic' ||
-    currentLocType === 'temporary_housing' ||
-    currentLocType === 'recovery_nap' ||
-    currentLocType === 'incarcerated' ||
-    currentLocType === 'house_arrest' ||
-    currentPresence === 'home' ||
-    currentPresence === 'sleeping' ||
-    currentPresence === 'napping' ||
-    currentPresence === 'passed_out' ||
-    !currentLocType
-  );
+  // ── DECISION ENGINE: evaluate and pick best corrective action ─────────────
+  // Emergency states (health ER, energy medical, pass-out) are already handled above
+  // as hard gates that return early. For non-emergency states, the decision engine
+  // evaluates ALL factors (schedule, needs, personality, time, restrictions) and
+  // picks the single best actionType. This replaces the old sequential threshold checks
+  // where needs were processed in fixed priority order (energy→hunger→hygiene→mental).
+  {
+    // Build schedule context for decision evaluator
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const hour = nowET.getHours();
+    const timeCtx = {
+      timeOfDay: hour >= 5 && hour < 7 ? 'early_morning' : hour >= 7 && hour < 10 ? 'morning' :
+        hour >= 10 && hour < 12 ? 'late_morning' : hour >= 12 && hour < 14 ? 'midday' :
+        hour >= 14 && hour < 17 ? 'afternoon' : hour >= 17 && hour < 20 ? 'evening' :
+        hour >= 20 && hour < 23 ? 'night' : 'late_night',
+      isLate: hour >= 22 || hour < 5,
+    };
+    const schedule = {
+      onShift: isOnShift(char, locationMap),
+      hasWorkToday: Array.isArray(char.work_days) && char.work_days.includes(nowET.getDay()),
+    };
+    const needs = {
+      values: newNeeds,
+      urgency: {
+        hunger:  hunger <= T.HUNGER_ER ? 'emergency' : hunger <= T.HUNGER_CRITICAL ? 'critical' : hunger <= T.HUNGER_LOW ? 'low' : undefined,
+        energy:  energy <= T.ENERGY_MEDICAL ? 'emergency' : energy <= T.ENERGY_PASSOUT ? 'critical_collapse' : energy <= T.ENERGY_CRITICAL ? 'critical' : energy <= T.ENERGY_LOW ? 'low' : undefined,
+        health:  health <= T.HEALTH_ER ? 'emergency' : health <= T.HEALTH_CRITICAL ? 'critical' : undefined,
+        mental:  mental <= T.MENTAL_CRITICAL ? 'critical' : undefined,
+        hygiene: hygiene <= T.HYGIENE_CRITICAL ? 'critical' : undefined,
+        social:  social <= T.SOCIAL_CRITICAL ? 'critical' : undefined,
+      },
+    };
+    const restrictions = {
+      confined: char.is_jailed || char.house_arrest_active || presence === 'hospitalized' || presence === 'incarcerated',
+      reason: char.is_jailed ? 'incarcerated' : char.house_arrest_active ? 'house_arrest' : presence === 'hospitalized' ? 'hospitalized' : presence === 'incarcerated' ? 'incarcerated' : null,
+    };
 
-  if (energy <= T.ENERGY_CRITICAL && !alreadySleeping && !onShiftBlocksSleep && !recentlyWokenByAlarm) {
-    if (atValidSleepLocation) {
-      stateWrites.resolved_presence_status = 'sleeping';
-      stateWrites.current_activity = 'sleeping — exhausted';
-      logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} (critical) → auto-sleep at valid location`);
-    } else {
-      // Not at a valid sleep location but energy is critical — write a home-routing signal
-      // so autonomousCharacterMovement knows to send them home on the next tick.
-      stateWrites.current_activity = 'exhausted — returning home to sleep';
-      logs.push(`[CORRECTIVE] ${char.name}: energy=${Math.round(energy)} critical — not at valid sleep location (${currentLocType}/${currentPresence}), writing home-routing signal`);
-    }
-  }
+    const decision = evaluateDecisionFromWeights(char, schedule, needs, decisionWeights || {}, restrictions, timeCtx);
 
-  // ── DECISION-WEIGHTED HUNGER THRESHOLD ──────────────────────────────────
-  // The effective hunger critical threshold shifts based on context:
-  //   - High work weight (on shift, conscientious) → threshold LOWER (more tolerant)
-  //   - High eat weight (hungry, no obligations) → threshold HIGHER (more eager)
-  //   - High education weight → threshold LOWER (more tolerant at school)
-  // This is bounded: never below 10 (truly dangerous hunger always triggers).
-  const dw = decisionWeights || {};
-  const obligationWeight = Math.max(dw.work || 0, dw.education || 0);
-  const effectiveHungerCritical = obligationWeight >= 0.30
-    ? Math.max(12, T.HUNGER_CRITICAL - Math.round((obligationWeight - 0.15) * 15))
-    : Math.max(15, T.HUNGER_CRITICAL);
-  // Conversely, when eat weight is high and obligations are low, the character
-  // notices hunger sooner:
-  const eatUrgencyBoost = (dw.eat || 0) >= 0.20 && obligationWeight < 0.20 ? 3 : 0;
+    logs.push(`[DECISION] ${char.name}: actionType=${decision.actionType} reason="${decision.reason}" (energy=${Math.round(energy)} hunger=${Math.round(hunger)} hygiene=${Math.round(hygiene)})`);
 
-  // ── PRIORITY 4: HUNGER → EATING (food-seeking, not sleep) ──
-  // EXECUTION RULE: If the character is already at home or a food location AND hunger is critical,
-  // apply eating recovery directly this tick. Do not just write intent — execute the action.
-  // Intent loop prevention: if current_activity already says "eating", this tick counts as execution.
-  if (hunger <= effectiveHungerCritical && !alreadySleeping && !alreadyHospitalized) {
-    const financial = char.financial_need_value ?? 60;
+    // ── MAP DECISION ACTIONTYPE TO CORRECTIVE STATE WRITES ───────────────────
     const locType = (char.resolved_location_type || '').toLowerCase();
     const locId = char.resolved_current_location_id;
     const homeId = char.current_home_location_id;
-    // Characters at work at bars, restaurants, cafés, clubs, or food-service
-    // workplaces CAN eat during their shift. Eating does not cancel work context.
-    const isAtWorkThatServesFood = (() => {
-      if (!onShift) return false;
-      const workLocId = char.current_work_location_id || char.occupation_location_id;
-      if (!workLocId || !locationMap[workLocId]) return false;
-      const wl = locationMap[workLocId];
-      const wCat = (wl.category || '').toLowerCase();
-      const wName = (wl.name || '').toLowerCase();
-      return wCat === 'food_drink' || wCat === 'social' ||
-        wName.includes('bar') || wName.includes('restaurant') || wName.includes('cafe') ||
-        wName.includes('diner') || wName.includes('grill') || wName.includes('club') ||
-        wName.includes('lounge') || wName.includes('kitchen');
-    })();
+    const atHome = locType === 'home' || presence === 'home' || (locId && locId === homeId);
 
-    const isAtHomeOrFood = (
-      locType === 'home' ||
-      locType === 'food_drink' ||
-      (locId && locId === homeId) ||
-      presence === 'home' ||
-      isAtWorkThatServesFood
-    );
-    // Already in an eating activity → this tick IS the execution tick — no re-announce
-    const alreadyEating = (char.current_activity || '').toLowerCase().includes('eat');
-    if (isAtHomeOrFood) {
-      // EXECUTE: Apply hunger recovery directly. Character IS eating this tick.
-      stateWrites.hunger_value_override = Math.min(100, hunger + 20); // direct recovery for this tick
-      stateWrites.current_activity = 'eating — hunger addressed';
-      logs.push(`[CORRECTIVE] ${char.name}: hunger=${Math.round(hunger)} → EXECUTED eating at home/food location — applying recovery`);
-    } else if (!alreadyEating) {
-      // Not at a valid eating location — set intent to find food (will trigger autonomous travel)
-      const eatActivity = financial > 15 ? 'eating — addressing hunger' : 'finding food — hunger critical';
-      stateWrites.current_activity = eatActivity;
-      logs.push(`[CORRECTIVE] ${char.name}: hunger=${Math.round(hunger)} → intent: "${eatActivity}" (not yet at food location)`);
+    switch (decision.actionType) {
+      case 'sleep': {
+        const atValidSleepLocation = locType === 'home' || locType === 'hotel' || locType === 'shelter' ||
+          locType === 'generic' || locType === 'temporary_housing' || locType === 'incarcerated' ||
+          locType === 'house_arrest' || presence === 'home' || presence === 'sleeping' || presence === 'napping' || !locType;
+        if (atValidSleepLocation && !alreadySleeping && !recentlyWokenByAlarm) {
+          stateWrites.resolved_presence_status = 'sleeping';
+          stateWrites.current_activity = 'sleeping — exhausted';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → sleep (decision-engine) at valid location`);
+        } else if (!atValidSleepLocation && !alreadySleeping && !recentlyWokenByAlarm) {
+          stateWrites.current_activity = 'exhausted — returning home to sleep';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → sleep routing signal (not at valid location)`);
+        }
+        break;
+      }
+      case 'eat':
+      case 'eat_at_work': {
+        const isAtFoodLoc = atHome || locType === 'food_drink' || (onShift && (() => {
+          const wLocId = char.current_work_location_id || char.occupation_location_id;
+          if (!wLocId || !locationMap[wLocId]) return false;
+          const wl = locationMap[wLocId];
+          const wCat = (wl.category || '').toLowerCase();
+          const wName = (wl.name || '').toLowerCase();
+          return wCat === 'food_drink' || wCat === 'social' || wName.includes('bar') || wName.includes('restaurant') ||
+            wName.includes('cafe') || wName.includes('diner') || wName.includes('grill') || wName.includes('club');
+        })());
+        const alreadyEating = (char.current_activity || '').toLowerCase().includes('eat');
+        if (isAtFoodLoc) {
+          stateWrites.hunger_value_override = Math.min(100, hunger + 20);
+          stateWrites.current_activity = 'eating — hunger addressed';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → eat (EXECUTED — at food location)`);
+        } else if (!alreadyEating) {
+          stateWrites.current_activity = 'eating — addressing hunger';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → eat (intent — not yet at food location)`);
+        }
+        break;
+      }
+      case 'go_home_rest': {
+        if (!atHome) {
+          stateWrites.current_activity = 'exhausted — heading home to rest';
+        } else {
+          stateWrites.current_activity = 'resting at home';
+        }
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → go_home_rest`);
+        break;
+      }
+      case 'hygiene': {
+        const alreadyShowering = (char.current_activity || '').toLowerCase().includes('wash') ||
+          (char.current_activity || '').toLowerCase().includes('shower') || (char.current_activity || '').toLowerCase().includes('clean');
+        if (atHome && !alreadyShowering) {
+          stateWrites.hygiene_value_override = Math.min(100, hygiene + 35);
+          stateWrites.current_activity = 'freshening up';
+          stateWrites.emotional_state = 'calm';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → hygiene (EXECUTED — at home)`);
+        } else if (!atHome && !alreadyShowering) {
+          stateWrites.current_activity = 'needs to wash up — heading home';
+          stateWrites.emotional_state = 'uncomfortable';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → hygiene (intent — not yet home)`);
+        }
+        break;
+      }
+      case 'rest': {
+        stateWrites.current_activity = atHome ? 'resting at home' : 'taking a break';
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → rest`);
+        break;
+      }
+      case 'social': {
+        stateWrites.current_activity = atHome ? 'reaching out to someone' : 'spending time out';
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → social`);
+        break;
+      }
+      case 'work': {
+        // Already working — ensure presence is correct if needed
+        if (presence !== 'at_work') {
+          stateWrites.resolved_presence_status = 'at_work';
+          stateWrites.current_activity = 'working';
+        }
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → work (continuing shift)`);
+        break;
+      }
+      case 'family': {
+        stateWrites.current_activity = atHome ? 'spending time with family' : 'visiting family';
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → family`);
+        break;
+      }
+      case 'education': {
+        stateWrites.current_activity = 'attending school';
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → education`);
+        break;
+      }
+      case 'home_routine':
+      default: {
+        // Default — no corrective needed, just ensure activity is reasonable
+        if (!stateWrites.current_activity && !char.current_activity) {
+          stateWrites.current_activity = atHome ? 'relaxing at home' : 'going about their day';
+        }
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → ${decision.actionType} (default/routine)`);
+        break;
+      }
     }
-    // If alreadyEating but not at home/food, hunger recovery continues via normal rate — no re-announce
-  }
-
-  // ── PRIORITY 5: HYGIENE → HYGIENE CORRECTION (NOT sleep) ──
-  // EXECUTION RULE: If the character is at home and hygiene is critical, they CAN shower right now.
-  // Apply hygiene recovery directly. Do NOT re-announce intent if already announced this cycle.
-  // Intent loop prevention: track hygiene_correction_started_at to avoid repeated "about to shower" loops.
-  if (hygiene <= 20 && !alreadySleeping && !alreadyHospitalized && !stateWrites.current_activity) {
-    const locType2 = (char.resolved_location_type || '').toLowerCase();
-    const locId2 = char.resolved_current_location_id;
-    const homeId2 = char.current_home_location_id;
-    const isAtHome2 = (
-      locType2 === 'home' ||
-      locType2 === 'temporary_housing' ||
-      (locId2 && locId2 === homeId2) ||
-      presence === 'home'
-    );
-    const alreadyShowering = (char.current_activity || '').toLowerCase().includes('wash') ||
-      (char.current_activity || '').toLowerCase().includes('shower') ||
-      (char.current_activity || '').toLowerCase().includes('clean');
-
-    if (isAtHome2) {
-      // EXECUTE: Character is home and hygiene is critical — they are showering this tick.
-      // Apply hygiene recovery directly. This breaks the intent loop.
-      stateWrites.hygiene_value_override = Math.min(100, hygiene + 35); // shower restores hygiene significantly
-      stateWrites.current_activity = 'freshening up';
-      stateWrites.emotional_state = 'calm';
-      logs.push(`[CORRECTIVE] ${char.name}: hygiene=${Math.round(hygiene)} → EXECUTED hygiene correction at home — applying recovery`);
-    } else if (!alreadyShowering) {
-      // Not home yet — set intent once (autonomousMovement will route home)
-      stateWrites.current_activity = 'needs to wash up — heading home';
-      stateWrites.emotional_state = 'uncomfortable';
-      logs.push(`[CORRECTIVE] ${char.name}: hygiene=${Math.round(hygiene)} → intent: heading home to wash (not yet home)`);
-    }
-    // If alreadyShowering but not home, keep current activity — no re-announce
-  }
-
-  // ── PRIORITY 6: MENTAL → DECOMPRESSION NUDGE (NOT sleep unless energy also low) ──
-  if (mental <= 15 && !alreadySleeping && !alreadyHospitalized && !stateWrites.current_activity) {
-    stateWrites.current_activity = 'decompressing — mental health critical';
-    logs.push(`[CORRECTIVE] ${char.name}: mental=${Math.round(mental)} → decompression nudge`);
   }
 
   return { stateWrites, scheduledEvents, logs };
