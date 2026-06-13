@@ -880,34 +880,47 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   // Driven by: opportunity (food is here) + routine (mealtime) + preference
   //            + stage-gated hunger pressure
   // A character at home at dinnertime should eat even at hunger=70.
+  const eatPressure = stagePressure(p.hunger);
   const eatScore =
     (opp.canEat * 0.35) +                              // food is available right now
     (r.mealTime ? 0.30 : 0) +                          // it's a normal mealtime
     (atHome ? 0.10 : 0) +                              // home makes eating natural
     (pref.routineFollow * 0.15) +                      // routine-followers eat regularly
-    (stagePressure(p.hunger) * 0.40);                  // hunger pressure (only stage 3+)
+    (eatPressure * 0.40);                              // hunger pressure (only stage 3+)
+
+  const eatCause = eatPressure > 0 ? 'pressure'
+    : (opp.canEat > 0.40 && r.mealTime) ? 'routine'
+    : opp.canEat > 0.40 ? 'opportunity'
+    : r.mealTime ? 'routine'
+    : 'preference';
 
   options.push({
-    actionType: 'eat',
-    score: eatScore,
+    actionType: 'eat', score: eatScore, decisionCause: eatCause,
     reason: opp.canEat > 0.40
       ? `Food is available — ${r.mealTimeLabel ? r.mealTimeLabel + ' time' : 'eating makes sense'}`
-      : stagePressure(p.hunger) > 0
+      : eatPressure > 0
         ? `Hungry — needs food (${Math.round(needs.values.hunger)})`
         : r.mealTime ? `${r.mealTimeLabel} time` : 'Could eat'
   });
 
   // ── HYGIENE ───────────────────────────────────────────────────────────
+  const hygienePressure = stagePressure(p.hygiene);
   const hygieneScore =
     (opp.canShower * 0.35) +                           // shower is available
     (r.usualShowerTime ? 0.20 : 0) +                   // it's a normal shower time
     (pref.cleanliness * 0.25) +                        // conscientious: prefers being clean
-    (stagePressure(p.hygiene) * 0.40);                 // hygiene pressure (only stage 3+)
+    (hygienePressure * 0.40);                           // hygiene pressure (only stage 3+)
+
+  const hygieneCause = hygienePressure > 0 ? 'pressure'
+    : (opp.canShower > 0.40 && r.usualShowerTime) ? 'routine'
+    : opp.canShower > 0.40 ? 'opportunity'
+    : r.usualShowerTime ? 'routine'
+    : pref.cleanliness > 0.10 ? 'preference'
+    : 'preference';
 
   options.push({
-    actionType: 'hygiene',
-    score: hygieneScore,
-    reason: stagePressure(p.hygiene) > 0
+    actionType: 'hygiene', score: hygieneScore, decisionCause: hygieneCause,
+    reason: hygienePressure > 0
       ? `Needs to clean up (hygiene ${Math.round(needs.values.hygiene)})`
       : opp.canShower > 0.40
         ? r.usualShowerTime ? 'Shower time — freshen up' : 'Shower is right there'
@@ -916,18 +929,24 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
 
   // ── SLEEP ─────────────────────────────────────────────────────────────
   // Driven by: bedtime routine + bed availability + energy pressure (stage 3+)
+  const sleepPressure = stagePressure(p.energy);
   const sleepScore =
     (opp.canSleep * 0.30) +                            // bed is available
     (r.usualBedTime ? 0.25 : 0) +                      // it's around bedtime
     (timeCtx.isLate ? 0.15 : 0) +                      // it's late
-    (stagePressure(p.energy) * 0.45);                  // energy pressure (only stage 3+)
+    (sleepPressure * 0.45);                            // energy pressure (only stage 3+)
+
+  const sleepCause = sleepPressure > 0 ? 'pressure'
+    : (opp.canSleep > 0.40 && r.usualBedTime) ? 'routine'
+    : opp.canSleep > 0.40 ? 'opportunity'
+    : r.usualBedTime ? 'routine'
+    : 'preference';
 
   // Only offer sleep when it makes some sense — not at 10 AM with full energy
   if (sleepScore > 0.15) {
     options.push({
-      actionType: 'sleep',
-      score: sleepScore,
-      reason: stagePressure(p.energy) > 0.30
+      actionType: 'sleep', score: sleepScore, decisionCause: sleepCause,
+      reason: sleepPressure > 0.30
         ? `Exhausted (energy ${Math.round(needs.values.energy)})`
         : r.usualBedTime ? 'Bedtime — getting some rest' :
           opp.canSleep > 0.40 ? 'Bed is right there' : 'Could rest'
@@ -935,6 +954,7 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   }
 
   // ── REST (non-sleep relaxation) ──────────────────────────────────────
+  const restPressure = stagePressure(p.mental) || stagePressure(p.comfort);
   const restScore =
     (opp.canRest * 0.30) +                             // can relax where they are
     (atHome ? 0.15 : 0) +                              // home is restful
@@ -942,24 +962,35 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
     (stagePressure(p.mental) * 0.25) +                 // mental strain
     (stagePressure(p.comfort) * 0.20);                 // comfort need
 
+  const restCause = restPressure > 0 ? 'pressure'
+    : opp.canRest > 0.30 ? 'opportunity'
+    : atHome ? 'routine'
+    : 'preference';
+
   options.push({
-    actionType: 'rest',
-    score: restScore,
+    actionType: 'rest', score: restScore, decisionCause: restCause,
     reason: atHome ? 'Relaxing at home' :
             opp.canRest > 0.30 ? 'Taking a break' : 'Could rest'
   });
 
   // ── SOCIAL ────────────────────────────────────────────────────────────
+  const socialPressure = stagePressure(p.social);
   const socialScore =
     (opp.canSocialize * 0.25) +                        // social venue available
     (r.usualSocialTime ? 0.20 : 0) +                   // weekend evening
     (pref.social * 0.25) +                             // extrovert preference
-    (stagePressure(p.social) * 0.30);                  // social need pressure
+    (socialPressure * 0.30);                           // social need pressure
+
+  const socialCause = socialPressure > 0 ? 'pressure'
+    : (opp.canSocialize > 0.30 && r.usualSocialTime) ? 'routine'
+    : opp.canSocialize > 0.30 ? 'opportunity'
+    : r.usualSocialTime ? 'routine'
+    : pref.social > 0.10 ? 'preference'
+    : 'preference';
 
   if (!timeCtx.isLate || opp.canSocialize > 0.30) {
     options.push({
-      actionType: 'social',
-      score: socialScore,
+      actionType: 'social', score: socialScore, decisionCause: socialCause,
       reason: opp.canSocialize > 0.30 ? 'Social opportunity available' :
               r.usualSocialTime ? 'Weekend evening — social time' :
               pref.social > 0.10 ? 'Enjoys socializing' : 'Could connect with someone'
@@ -969,17 +1000,16 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   // ── RECREATION ────────────────────────────────────────────────────────
   if (!timeCtx.isLate && weights.recreation > 0.03) {
     options.push({
-      actionType: 'recreation',
-      score: weights.recreation * 0.5 + opp.canSocialize * 0.3,
-      reason: 'Free time — recreation'
+      actionType: 'recreation', score: weights.recreation * 0.5 + opp.canSocialize * 0.3,
+      decisionCause: 'preference', reason: 'Free time — recreation'
     });
   }
 
   // ── FAMILY ────────────────────────────────────────────────────────────
   if (weights.family > 0.06) {
     options.push({
-      actionType: 'family',
-      score: weights.family * (atHome ? 1.2 : 0.6),
+      actionType: 'family', score: weights.family * (atHome ? 1.2 : 0.6),
+      decisionCause: atHome ? 'opportunity' : 'preference',
       reason: atHome ? 'Family time at home' : 'Spend time with family'
     });
   }
@@ -987,9 +1017,8 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   // ── EDUCATION ─────────────────────────────────────────────────────────
   if (weights.education > 0.15) {
     options.push({
-      actionType: 'education',
-      score: weights.education,
-      reason: 'School obligation'
+      actionType: 'education', score: weights.education,
+      decisionCause: 'routine', reason: 'School obligation'
     });
   }
 
@@ -1000,6 +1029,7 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   options.push({
     actionType: 'home_routine',
     score: (atHome ? 0.22 : 0.08) + pref.comfort * 0.10,
+    decisionCause: 'routine',
     reason: atHome ? 'Relaxing at home' : 'Going about their day'
   });
 
@@ -1250,23 +1280,49 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
     logs.push(`[DECISION] ${char.name}: actionType=${decision.actionType} reason="${decision.reason}" (energy=${Math.round(energy)} hunger=${Math.round(hunger)} hygiene=${Math.round(hygiene)})`);
 
     // ── MAP DECISION ACTIONTYPE TO CORRECTIVE STATE WRITES ───────────────────
+    // Each case uses decision.decisionCause (opportunity|routine|preference|pressure|emergency)
+    // to write cause-appropriate activity text. The narrative/chat system reads this
+    // to generate speech with matching emotional tone.
     const locType = (char.resolved_location_type || '').toLowerCase();
     const locId = char.resolved_current_location_id;
     const homeId = char.current_home_location_id;
     const atHome = locType === 'home' || presence === 'home' || (locId && locId === homeId);
+    const cause = decision.decisionCause || 'preference';
+
+    // ── ACTIVITY TEXT TONE MAP ────────────────────────────────────────────
+    // Maps decisionCause → tone-appropriate phrasing for each action type.
+    // 'opportunity' = calm, casual ("I'm already here, may as well")
+    // 'routine'     = normal, habitual ("this is what I do")
+    // 'preference'  = personal, intentional ("I like feeling clean")
+    // 'pressure'    = increasingly motivated ("I need this")
+    // 'emergency'   = urgent, overriding ("I have to handle this now")
 
     switch (decision.actionType) {
       case 'sleep': {
         const atValidSleepLocation = locType === 'home' || locType === 'hotel' || locType === 'shelter' ||
           locType === 'generic' || locType === 'temporary_housing' || locType === 'incarcerated' ||
           locType === 'house_arrest' || presence === 'home' || presence === 'sleeping' || presence === 'napping' || !locType;
+        const prevActivity = (char.current_activity || '').toLowerCase();
+        const alreadyIntending = prevActivity.includes('sleep') || prevActivity.includes('exhausted');
+        stateWrites.decision_cause = cause;
+
         if (atValidSleepLocation && !alreadySleeping && !recentlyWokenByAlarm) {
+          // EXECUTE: at valid location — actually sleep
           stateWrites.resolved_presence_status = 'sleeping';
-          stateWrites.current_activity = 'sleeping — exhausted';
-          logs.push(`[CORRECTIVE] ${char.name}: DECISION → sleep (decision-engine) at valid location`);
-        } else if (!atValidSleepLocation && !alreadySleeping && !recentlyWokenByAlarm) {
-          stateWrites.current_activity = 'exhausted — returning home to sleep';
-          logs.push(`[CORRECTIVE] ${char.name}: DECISION → sleep routing signal (not at valid location)`);
+          if (cause === 'opportunity') stateWrites.current_activity = 'getting some sleep since bed is right there';
+          else if (cause === 'routine') stateWrites.current_activity = 'going to bed for the night';
+          else if (cause === 'preference') stateWrites.current_activity = 'calling it a night';
+          else stateWrites.current_activity = 'sleeping — exhausted';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → sleep (${cause}) — executed at valid location`);
+        } else if (!atValidSleepLocation && !alreadySleeping && !recentlyWokenByAlarm && !alreadyIntending) {
+          // ROUTING SIGNAL: not at valid location, write intent
+          stateWrites.current_activity = cause === 'pressure'
+            ? 'exhausted — heading home to sleep'
+            : 'heading home — it\'s about that time';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → sleep (${cause}) — routing signal`);
+        }
+        if (alreadyIntending) {
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → sleep — intent already active, skipping re-write`);
         }
         break;
       }
@@ -1281,53 +1337,91 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
           return wCat === 'food_drink' || wCat === 'social' || wName.includes('bar') || wName.includes('restaurant') ||
             wName.includes('cafe') || wName.includes('diner') || wName.includes('grill') || wName.includes('club');
         })());
-        const alreadyEating = (char.current_activity || '').toLowerCase().includes('eat');
+        const prevActivity = (char.current_activity || '').toLowerCase();
+        const alreadyEating = prevActivity.includes('eat') || prevActivity.includes('food') || prevActivity.includes('meal');
+        stateWrites.decision_cause = cause;
+
         if (isAtFoodLoc) {
+          // EXECUTE: at valid location — actually eat, need value improves
           stateWrites.hunger_value_override = Math.min(100, hunger + 20);
-          stateWrites.current_activity = 'eating — hunger addressed';
-          logs.push(`[CORRECTIVE] ${char.name}: DECISION → eat (EXECUTED — at food location)`);
+          if (cause === 'opportunity') stateWrites.current_activity = 'eating — food was right there';
+          else if (cause === 'routine') stateWrites.current_activity = 'having a meal';
+          else if (cause === 'preference') stateWrites.current_activity = 'enjoying a meal';
+          else stateWrites.current_activity = 'eating — addressing hunger';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → eat (${cause}) — executed at food location`);
         } else if (!alreadyEating) {
-          stateWrites.current_activity = 'eating — addressing hunger';
-          logs.push(`[CORRECTIVE] ${char.name}: DECISION → eat (intent — not yet at food location)`);
+          // ROUTING SIGNAL: not at food location
+          stateWrites.current_activity = cause === 'pressure'
+            ? 'needs to find food — getting hungry'
+            : 'grabbing something to eat';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → eat (${cause}) — intent`);
+        }
+        if (alreadyEating) {
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → eat — already eating, skipping re-write`);
         }
         break;
       }
       case 'go_home_rest': {
+        stateWrites.decision_cause = cause;
         if (!atHome) {
-          stateWrites.current_activity = 'exhausted — heading home to rest';
+          stateWrites.current_activity = cause === 'pressure'
+            ? 'exhausted — heading home to rest'
+            : 'heading home';
         } else {
           stateWrites.current_activity = 'resting at home';
         }
-        logs.push(`[CORRECTIVE] ${char.name}: DECISION → go_home_rest`);
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → go_home_rest (${cause})`);
         break;
       }
       case 'hygiene': {
-        const alreadyShowering = (char.current_activity || '').toLowerCase().includes('wash') ||
-          (char.current_activity || '').toLowerCase().includes('shower') || (char.current_activity || '').toLowerCase().includes('clean');
+        const prevActivity = (char.current_activity || '').toLowerCase();
+        const alreadyShowering = prevActivity.includes('wash') || prevActivity.includes('shower')
+          || prevActivity.includes('freshen') || prevActivity.includes('clean');
+        // Always stamp the decision cause for observability
+        stateWrites.decision_cause = cause;
+
         if (atHome && !alreadyShowering) {
+          // EXECUTE: at home — actually shower/clean up
           stateWrites.hygiene_value_override = Math.min(100, hygiene + 35);
-          stateWrites.current_activity = 'freshening up';
           stateWrites.emotional_state = 'calm';
-          logs.push(`[CORRECTIVE] ${char.name}: DECISION → hygiene (EXECUTED — at home)`);
+          if (cause === 'opportunity') stateWrites.current_activity = 'freshening up — shower is right there';
+          else if (cause === 'routine') stateWrites.current_activity = 'showering — part of the routine';
+          else if (cause === 'preference') stateWrites.current_activity = 'freshening up — likes feeling clean';
+          else stateWrites.current_activity = 'freshening up';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → hygiene (${cause}) — executed at home`);
         } else if (!atHome && !alreadyShowering) {
-          stateWrites.current_activity = 'needs to wash up — heading home';
-          stateWrites.emotional_state = 'uncomfortable';
-          logs.push(`[CORRECTIVE] ${char.name}: DECISION → hygiene (intent — not yet home)`);
+          // ROUTING SIGNAL: not home
+          stateWrites.emotional_state = cause === 'pressure' ? 'uncomfortable' : 'calm';
+          stateWrites.current_activity = cause === 'pressure'
+            ? 'needs to wash up — heading home'
+            : 'heading home to freshen up';
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → hygiene (${cause}) — intent`);
+        }
+        if (alreadyShowering) {
+          logs.push(`[CORRECTIVE] ${char.name}: DECISION → hygiene — already showering, skipping re-write`);
         }
         break;
       }
       case 'rest': {
-        stateWrites.current_activity = atHome ? 'resting at home' : 'taking a break';
-        logs.push(`[CORRECTIVE] ${char.name}: DECISION → rest`);
+        stateWrites.decision_cause = cause;
+        if (cause === 'opportunity') stateWrites.current_activity = atHome ? 'taking a comfortable break' : 'taking a moment to rest';
+        else if (cause === 'routine') stateWrites.current_activity = atHome ? 'unwinding at home' : 'taking a break';
+        else if (cause === 'preference') stateWrites.current_activity = atHome ? 'enjoying some downtime' : 'taking a break';
+        else stateWrites.current_activity = atHome ? 'resting at home' : 'taking a break';
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → rest (${cause})`);
         break;
       }
       case 'social': {
-        stateWrites.current_activity = atHome ? 'reaching out to someone' : 'spending time out';
-        logs.push(`[CORRECTIVE] ${char.name}: DECISION → social`);
+        stateWrites.decision_cause = cause;
+        if (cause === 'opportunity') stateWrites.current_activity = atHome ? 'reaching out — company sounds nice' : 'spending time out while they can';
+        else if (cause === 'routine') stateWrites.current_activity = atHome ? 'catching up with people' : 'out and about';
+        else if (cause === 'preference') stateWrites.current_activity = atHome ? 'enjoying some social time' : 'enjoying being out';
+        else stateWrites.current_activity = atHome ? 'reaching out to someone' : 'spending time out';
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → social (${cause})`);
         break;
       }
       case 'work': {
-        // Already working — ensure presence is correct if needed
+        stateWrites.decision_cause = cause;
         if (presence !== 'at_work') {
           stateWrites.resolved_presence_status = 'at_work';
           stateWrites.current_activity = 'working';
@@ -1336,18 +1430,20 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         break;
       }
       case 'family': {
+        stateWrites.decision_cause = cause;
         stateWrites.current_activity = atHome ? 'spending time with family' : 'visiting family';
-        logs.push(`[CORRECTIVE] ${char.name}: DECISION → family`);
+        logs.push(`[CORRECTIVE] ${char.name}: DECISION → family (${cause})`);
         break;
       }
       case 'education': {
+        stateWrites.decision_cause = cause;
         stateWrites.current_activity = 'attending school';
         logs.push(`[CORRECTIVE] ${char.name}: DECISION → education`);
         break;
       }
       case 'home_routine':
       default: {
-        // Default — no corrective needed, just ensure activity is reasonable
+        stateWrites.decision_cause = 'routine';
         if (!stateWrites.current_activity && !char.current_activity) {
           stateWrites.current_activity = atHome ? 'relaxing at home' : 'going about their day';
         }
@@ -1776,6 +1872,7 @@ Deno.serve(async (req) => {
         data: updateData,
         correctiveState: corrective.stateWrites,
         correctiveActionType,
+        decision_cause: corrective.stateWrites.decision_cause || 'preference',
         decisionWeights,
         effectiveHungerThreshold: effectiveHungerCritical,
       });
@@ -1825,9 +1922,18 @@ Deno.serve(async (req) => {
       nowET.getHours() >= 20 && nowET.getHours() < 23 ? 'night' : 'late_night';
 
     const CORRECTIVE_NARRATIVE_TEXTS = {
-      ate: (name) => `${name} ate and satisfied their hunger.`,
-      showered: (name) => `${name} freshened up — hygiene restored.`,
-      slept: (name) => `${name} went to sleep, exhausted.`,
+      ate: (name, cause) => cause === 'opportunity' ? `${name} grabbed a bite — food was right there.`
+        : cause === 'routine' ? `${name} had a meal.`
+        : cause === 'preference' ? `${name} enjoyed a meal.`
+        : `${name} ate — hunger was getting to them.`,
+      showered: (name, cause) => cause === 'opportunity' ? `${name} freshened up — shower was right there.`
+        : cause === 'routine' ? `${name} showered — part of the routine.`
+        : cause === 'preference' ? `${name} freshened up — likes feeling clean.`
+        : `${name} cleaned up — really needed it.`,
+      slept: (name, cause) => cause === 'opportunity' ? `${name} got some sleep since bed was available.`
+        : cause === 'routine' ? `${name} went to bed for the night.`
+        : cause === 'preference' ? `${name} called it a night.`
+        : `${name} went to sleep, exhausted.`,
       woke: (name) => `${name} woke up after resting.`,
       hospitalized: (name) => `${name} was admitted for emergency medical care.`,
       passed_out: (name) => `${name} collapsed from complete exhaustion — passed out and recovering.`,
@@ -1839,7 +1945,9 @@ Deno.serve(async (req) => {
       if (!wasWritten) continue;
 
       const actionType = update.correctiveActionType;
-      const narrativeText = (CORRECTIVE_NARRATIVE_TEXTS[actionType] || (() => `${update.name} completed a ${actionType} action.`))(update.name);
+      const causeForNarrative = update.decision_cause || 'preference';
+      const narrativeTextFn = CORRECTIVE_NARRATIVE_TEXTS[actionType] || ((name) => `${name} completed a ${actionType} action.`);
+      const narrativeText = narrativeTextFn(update.name, causeForNarrative);
       const charData = characters.find(c => c.id === update.id);
       if (!charData) continue;
 
