@@ -841,15 +841,22 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   const onShift = schedule.onShift;
   const atHome = locationType === 'home' || presence === 'home';
 
-  // ── CRITICAL NEED ROUTINE SUPPRESSION ──────────────────────────────────
-  // When any need reaches emergency stage pressure (0.90), routine bonuses
+  // ── STEP 1: Extract pressure values ───────────────────────────────────
+  const p = weights.pressures || {};
+
+  // ── STEP 2: Detect routines (must happen before suppression) ──────────
+  const r = detectRoutines(char, timeCtx.hour, timeCtx.isWeekend || false, atHome);
+  const pref = computePreferenceBoosts(char, atHome);
+
+  // ── STEP 3: CRITICAL NEED ROUTINE SUPPRESSION ─────────────────────────
+  // When any need reaches high-pressure or emergency stage, routine bonuses
   // (meal time, shower time, bedtime, social time) are suppressed proportional
   // to the urgency. A critically exhausted character at breakfast time MUST
   // choose sleep over food. Routine is preference — survival is authority.
   const allPressures = Object.values(weights.pressures || {});
-  const maxStage = Math.max(0, ...allPressures.map(p => stagePressure(p)));
+  const maxStage = Math.max(0, ...allPressures.map(sp => stagePressure(sp)));
   const routineSuppressionFactor = Math.max(0, 1.0 - maxStage);
-  // Apply suppression to routine bonuses before they enter scoring
+  // Assign suppressed routine bonuses (mutate r object after detection)
   r.mealTimeBonus = (r.mealTime ? 0.30 : 0) * routineSuppressionFactor;
   r.showerTimeBonus = (r.usualShowerTime ? 0.20 : 0) * routineSuppressionFactor;
   r.bedTimeBonus = (r.usualBedTime ? 0.25 : 0) * routineSuppressionFactor;
@@ -886,10 +893,8 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
   // Low-need stages (1-2) add zero pressure — only opportunity/routine/preference
   // creates action. This prevents characters from feeling constantly stressed
   // about ordinary life maintenance.
-  const p = weights.pressures || {};
+  // (p, r, pref are declared at function top — STEP 1 and STEP 2 above)
   const opp = weights.opportunity || {};
-  const r = detectRoutines(char, timeCtx.hour, timeCtx.isWeekend || false, atHome);
-  const pref = computePreferenceBoosts(char, atHome);
 
   const options = [];
 
