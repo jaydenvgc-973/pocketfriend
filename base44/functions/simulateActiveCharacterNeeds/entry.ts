@@ -53,7 +53,7 @@ const RATES = {
   passed_out:      { hunger: -0.5, energy: +8,  social: -0.5, health: +0.5, mental: +1,   hygiene: 0,    comfort: +1   },
   hospitalized:    { hunger: -0.5, energy: +4,  social: -1,   health: +5,   mental: -0.5, hygiene: +1,   comfort: +2   },
   at_work:         { hunger: -4,   energy: -5,  social: +1,   health: -0.5, mental: -2,   hygiene: -2,   comfort: -2   },
-  at_work_medical: { hunger: -5,   energy: -7,  social: -1,   health: -0.5, mental: -4,   hygiene: -3,   comfort: -4   },
+  at_work_medical: { hunger: -5,   energy: -7,  social: +1,   health: -0.5, mental: -4,   hygiene: -3,   comfort: -4   },
   at_work_service: { hunger: -5,   energy: -6,  social: +2,   health: -1,   mental: -3,   hygiene: -3,   comfort: -3   },
   at_work_office:  { hunger: -3,   energy: -4,  social: +1,   health: -0.5, mental: -2,   hygiene: -1,   comfort: -1   },
   work_off_shift:  { hunger: -3,   energy: -3,  social: -1,   health: -0.5, mental: -3,   hygiene: -2,   comfort: -4   },
@@ -135,19 +135,31 @@ function isOnShift(character, locationMap) {
 function getWorkContextFromLocation(loc) {
   const cat = (loc.category || '').toLowerCase();
   const name = (loc.name || '').toLowerCase();
-  if (cat === 'medical' || name.includes('hospital') || name.includes('clinic') || name.includes('emergency')) return 'at_work_medical';
+  const subtypes = (loc.subtype || []).map(s => s.toLowerCase());
+  const desc = (loc.description || '').toLowerCase();
+
+  if (cat === 'medical' || name.includes('hospital') || name.includes('clinic') || name.includes('emergency') || name.includes('urgent care')) return 'at_work_medical';
   // Social/people-facing workplaces — workers get social need improvement during shift
-  if (cat === 'food_drink' || cat === 'social' || name.includes('bar') || name.includes('restaurant') || name.includes('cafe') || name.includes('diner')) return 'at_work_service';
+  if (cat === 'food_drink' || cat === 'social'
+    || name.includes('bar') || name.includes('restaurant') || name.includes('cafe') || name.includes('diner')
+    || name.includes('club') || name.includes('lounge') || name.includes('nightclub') || name.includes('pub')
+    || name.includes('tavern') || name.includes('bistro') || name.includes('grill')
+    || name.includes('event') || name.includes('venue') || name.includes('entertainment')
+    || name.includes('hospitality') || name.includes('concierge')) return 'at_work_service';
   // Education — teachers and school staff interact with students/staff all day
-  if (cat === 'education' || cat === 'school' || name.includes('school') || name.includes('college') || name.includes('university') || name.includes('academy')) return 'at_work_service';
+  if (cat === 'education' || cat === 'school' || name.includes('school') || name.includes('college') || name.includes('university') || name.includes('academy') || name.includes('campus')) return 'at_work_service';
   // Salon/beauty — close personal interaction with clients
-  if (cat === 'social' || name.includes('salon') || name.includes('barber') || name.includes('spa') || name.includes('beauty')) return 'at_work_service';
+  if (name.includes('salon') || name.includes('barber') || name.includes('spa') || name.includes('beauty') || name.includes('hair') || name.includes('nail')) return 'at_work_service';
   // Retail/shopping — constant customer interaction
-  if (cat === 'shopping' || name.includes('retail') || name.includes('shop') || name.includes('store') || name.includes('market')) return 'at_work_service';
+  if (cat === 'shopping' || name.includes('retail') || name.includes('shop') || name.includes('store') || name.includes('market') || name.includes('mall') || name.includes('boutique')) return 'at_work_service';
+  // Customer service / reception — constant people-facing interaction
+  if (name.includes('reception') || name.includes('customer') || name.includes('service desk') || name.includes('front desk') || name.includes('call center') || name.includes('help desk') || subtypes.includes('customer_service') || subtypes.includes('reception')) return 'at_work_service';
   // Community — relationship-based interaction with residents/partners
-  if (cat === 'community' || name.includes('community') || name.includes('center') || name.includes('outreach')) return 'at_work_service';
+  if (cat === 'community' || name.includes('community') || name.includes('center') || name.includes('outreach') || name.includes('shelter')) return 'at_work_service';
   // Gym/fitness — direct client contact as trainer/instructor
-  if ((cat === 'gym' || name.includes('gym') || name.includes('fitness')) && name.includes('studio')) return 'at_work_service';
+  if ((cat === 'gym' || name.includes('gym') || name.includes('fitness')) && (name.includes('studio') || name.includes('trainer') || subtypes.includes('fitness_instruction') || subtypes.includes('personal_training'))) return 'at_work_service';
+  // Government / public service — interaction with citizens
+  if (cat === 'government' || name.includes('office') || name.includes('department') || name.includes('agency') || name.includes('bureau') || subtypes.includes('public_service')) return 'at_work_office';
   return 'at_work_office';
 }
 
