@@ -585,7 +585,100 @@ function needsAreUninitialized(needs) {
  * unless energy is itself critically low (≤ ENERGY_CRITICAL).
  * A character with energy=83 and hygiene=0 is tired-looking, not sleepy.
  */
-function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap) {
+/**
+ * computeDecisionWeights — CONTEXTUAL DECISION WEIGHTING
+ *
+ * Computes dynamic decision weights for a character based on their current
+ * context: schedule gravity, needs urgency, time of day, personality traits,
+ * and restrictions. These weights modulate corrective action thresholds
+ * in computeCorrectiveState — a character on shift tolerates more hunger,
+ * a student tolerates more fatigue before abandoning school, etc.
+ *
+ * This runs INLINE (no cross-function HTTP call) for performance.
+ */
+function computeDecisionWeights(char, newNeeds, locationMap) {
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const cur = nowET.getHours() * 60 + nowET.getMinutes();
+  const dow = nowET.getDay();
+  const hour = nowET.getHours();
+
+  const weights = {
+    work: 0.15, education: 0.10, rest: 0.10, eat: 0.08,
+    hygiene: 0.05, social: 0.08, home: 0.05, recreation: 0.05,
+  };
+
+  // ── EMERGENCY OVERRIDE: health/energy collapse trumps everything ──────
+  const needsEnergy = newNeeds.energy ?? 75;
+  const needsHealth = newNeeds.health ?? 80;
+  const needsHunger = newNeeds.hunger ?? 70;
+
+  if (needsEnergy <= T.ENERGY_PASSOUT || needsHealth <= T.HEALTH_ER || needsHunger <= T.HUNGER_ER) {
+    return { work: 0, education: 0, rest: 0.70, eat: 0, hygiene: 0, social: 0, home: 0, recreation: 0, emergency: true };
+  }
+
+  // ── SCHEDULE GRAVITY: work and school carry substantial weight ────────
+  const onShift = isOnShift(char, locationMap);
+  const isStudent = char.student_status === 'enrolled';
+  const isSchoolDay = isStudent && ![0, 6].includes(dow);
+
+  if (onShift) {
+    weights.work = 0.40;
+    weights.recreation = 0.01;
+  }
+
+  if (isSchoolDay) {
+    weights.education = 0.30;
+    weights.recreation = 0.03;
+  }
+
+  // ── NEEDS PUSH: hungry/tired raise their respective weights ───────────
+  if (needsHunger <= T.HUNGER_CRITICAL) {
+    weights.eat = 0.30;
+  } else if (needsHunger <= T.HUNGER_LOW) {
+    weights.eat = 0.15;
+  }
+
+  if (needsEnergy <= T.ENERGY_CRITICAL) {
+    weights.rest = 0.45;
+    weights.work = Math.min(weights.work, 0.12);
+    weights.education = Math.min(weights.education, 0.08);
+  } else if (needsEnergy <= T.ENERGY_LOW) {
+    weights.rest = 0.20;
+  }
+
+  // ── TIME OF DAY ──────────────────────────────────────────────────────
+  const isLate = hour >= 22 || hour < 5;
+  if (isLate) {
+    weights.rest += 0.12;
+    weights.work = Math.min(weights.work, 0.05);
+  }
+
+  // ── PERSONALITY TRAIT INFLUENCES ──────────────────────────────────────
+  const traitMods = {};
+  if (char.trait_conscientious) { traitMods.work = (traitMods.work || 0) + 0.10; traitMods.rest = (traitMods.rest || 0) - 0.03; }
+  if (char.trait_ambitious)    { traitMods.work = (traitMods.work || 0) + 0.08; traitMods.education = (traitMods.education || 0) + 0.08; }
+  if (char.trait_lawbreaker)   { traitMods.work = (traitMods.work || 0) - 0.08; }
+  if (char.trait_night_owl)    { traitMods.rest = (traitMods.rest || 0) + 0.05; }
+  if (char.trait_morning_person) { traitMods.rest = (traitMods.rest || 0) - 0.03; }
+  if (char.trait_loyal)        { traitMods.social = (traitMods.social || 0) + 0.05; }
+  if (char.trait_stubborn)     { traitMods.eat = (traitMods.eat || 0) - 0.02; } // less likely to be swayed by hunger
+
+  for (const [dim, mod] of Object.entries(traitMods)) {
+    weights[dim] = Math.max(0, Math.min(0.75, (weights[dim] || 0) + mod));
+  }
+
+  // ── CONFINEMENT ──────────────────────────────────────────────────────
+  const isConfined = char.is_jailed || char.house_arrest_active || (char.resolved_presence_status || '') === 'hospitalized';
+  if (isConfined) {
+    weights.work = 0;
+    weights.education = 0;
+    weights.recreation = 0.01;
+  }
+
+  return weights;
+}
+
+function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap, decisionWeights) {
   const stateWrites = {};
   const scheduledEvents = [];
   const logs = [];
@@ -818,11 +911,26 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
     }
   }
 
+  // ── DECISION-WEIGHTED HUNGER THRESHOLD ──────────────────────────────────
+  // The effective hunger critical threshold shifts based on context:
+  //   - High work weight (on shift, conscientious) → threshold LOWER (more tolerant)
+  //   - High eat weight (hungry, no obligations) → threshold HIGHER (more eager)
+  //   - High education weight → threshold LOWER (more tolerant at school)
+  // This is bounded: never below 10 (truly dangerous hunger always triggers).
+  const dw = decisionWeights || {};
+  const obligationWeight = Math.max(dw.work || 0, dw.education || 0);
+  const effectiveHungerCritical = obligationWeight >= 0.30
+    ? Math.max(12, T.HUNGER_CRITICAL - Math.round((obligationWeight - 0.15) * 15))
+    : Math.max(15, T.HUNGER_CRITICAL);
+  // Conversely, when eat weight is high and obligations are low, the character
+  // notices hunger sooner:
+  const eatUrgencyBoost = (dw.eat || 0) >= 0.20 && obligationWeight < 0.20 ? 3 : 0;
+
   // ── PRIORITY 4: HUNGER → EATING (food-seeking, not sleep) ──
   // EXECUTION RULE: If the character is already at home or a food location AND hunger is critical,
   // apply eating recovery directly this tick. Do not just write intent — execute the action.
   // Intent loop prevention: if current_activity already says "eating", this tick counts as execution.
-  if (hunger <= T.HUNGER_CRITICAL && !alreadySleeping && !alreadyHospitalized) {
+  if (hunger <= effectiveHungerCritical && !alreadySleeping && !alreadyHospitalized) {
     const financial = char.financial_need_value ?? 60;
     const locType = (char.resolved_location_type || '').toLowerCase();
     const locId = char.resolved_current_location_id;
@@ -1059,7 +1167,15 @@ Deno.serve(async (req) => {
 
     let characters = [];
     if (characterId) {
-      const found = await writeSDK.entities.Character.filter({ id: characterId }, null, 10);
+      let found = await writeSDK.entities.Character.filter({ id: characterId }, null, 10)
+        .catch(() => []);
+      
+      // Fallback: user-scoped read for single-character fetch
+      if (found.length === 0 && user) {
+        found = await base44.entities.Character.filter({ id: characterId }, null, 10)
+          .catch(() => []);
+      }
+      
       // Only simulate needs for active_created_character.
       // npc_world_service (Vick Servicio) is explicitly excluded — no biological decay or corrective states.
       characters = found.filter(c =>
@@ -1228,8 +1344,19 @@ Deno.serve(async (req) => {
         console.warn(`[NEEDS-ESCALATION] ${char.name}: ${escalationEvents.map(e => e.memory_tag).join(', ')}`);
       }
 
+      // ── DECISION WEIGHTING: compute dynamic weights before corrective state ──
+      // Weights modulate corrective thresholds: character on shift tolerates
+      // more hunger before food-seeking, student tolerates more fatigue, etc.
+      const decisionWeights = computeDecisionWeights(char, newNeeds, locationMap);
+
+      // Compute effective hunger threshold (mirrors logic inside computeCorrectiveState)
+      const obligationWeight = Math.max(decisionWeights.work || 0, decisionWeights.education || 0);
+      const effectiveHungerCritical = obligationWeight >= 0.30
+        ? Math.max(12, T.HUNGER_CRITICAL - Math.round((obligationWeight - 0.15) * 15))
+        : Math.max(15, T.HUNGER_CRITICAL);
+
       // ── RC1+RC2+RC3+RC4: CORRECTIVE STATE WRITES ─────────────────────────
-      const corrective = computeCorrectiveState(char, newNeeds, context, now, locationMap);
+      const corrective = computeCorrectiveState(char, newNeeds, context, now, locationMap, decisionWeights);
       allCorrectiveLogs.push(...corrective.logs);
 
       // Fire-and-forget: create ScheduledEvents for ER discharge and pass-out wake
@@ -1305,6 +1432,8 @@ Deno.serve(async (req) => {
         data: updateData,
         correctiveState: corrective.stateWrites,
         correctiveActionType,
+        decisionWeights,
+        effectiveHungerThreshold: effectiveHungerCritical,
       });
     }
 
@@ -1464,6 +1593,8 @@ Deno.serve(async (req) => {
         elapsedHours: u.elapsedHours,
         correctiveState: u.correctiveState || null,
         correctiveActionType: u.correctiveActionType || null,
+        decisionWeights: u.decisionWeights || null,
+        effectiveHungerThreshold: u.effectiveHungerThreshold ?? T.HUNGER_CRITICAL,
       })),
       corrective_logs: allCorrectiveLogs,
       timestamp: now.toISOString(),
