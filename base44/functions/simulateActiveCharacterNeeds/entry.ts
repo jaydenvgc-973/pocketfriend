@@ -465,20 +465,48 @@ function computeComfortModifier(char, context, locationMap) {
   return Math.max(-2, Math.min(2, modifier));
 }
 
+// ── PERSONALITY-BASED MENTAL SCALING ──────────────────────────────────────
+// Different personalities respond differently to the same experience.
+// This returns multipliers for each mental dimension, allowing characters
+// to benefit more or less from specific categories based on their traits.
+function mentalPersonalityScale(char) {
+  return {
+    achievement: 1 + (char.trait_competitive ? 0.20 : 0) + (char.trait_conscientious ? 0.15 : 0)
+      - (char.trait_cynical ? 0.15 : 0),
+    stability:    1 + (char.trait_conscientious ? 0.20 : 0) + (char.trait_morning_person ? 0.10 : 0)
+      - (char.trait_risk_taker ? 0.10 : 0),
+    relationships: 1 + (char.trait_loyal ? 0.20 : 0) + (char.trait_compassionate ? 0.15 : 0)
+      + ((char.social_energy === 'extrovert' || char.social_energy === 'mostly_extrovert') ? 0.15 : 0)
+      - (char.trait_self_absorbed ? 0.20 : 0) - (char.trait_cynical ? 0.10 : 0),
+    selfcare: 1 + (char.trait_conscientious ? 0.15 : 0) + (char.trait_compassionate ? 0.10 : 0),
+    rest:     1 + (char.trait_night_owl ? 0.10 : 0) + ((char.social_energy === 'introvert' || char.social_energy === 'mostly_introvert') ? 0.10 : 0),
+    characterValues: 1 + (char.trait_compassionate ? 0.25 : 0) + (char.trait_loyal ? 0.15 : 0)
+      + (char.trait_conscientious ? 0.10 : 0) - (char.trait_self_absorbed ? 0.15 : 0),
+    confidence: 1 + (char.trait_competitive ? 0.15 : 0) - (char.trait_cynical ? 0.20 : 0)
+      - (char.trait_wishy_washy ? 0.15 : 0),
+    purpose:   1 + (char.trait_conscientious ? 0.20 : 0) + (char.trait_competitive ? 0.10 : 0),
+    resilience: 1 - (char.trait_cynical ? 0.25 : 0) + (char.trait_adaptable ? 0.15 : 0)
+      + (char.trait_compassionate ? 0.10 : 0),
+  };
+}
+
 // ── MENTAL ADD-ON: POSITIVE CONTEXTUAL MODIFIERS ────────────────────────────
-// Mental decays slowly and recovers from positive lived experience.
-// Small positive moments can produce large improvements when they match
-// the character's personality, preferences, or emotional state.
+// Mental is influenced by accomplishment, stability, purpose, positive
+// relationships, self-care, personal growth, and healthy routines.
+// It should generally trend upward when a character lives a stable,
+// meaningful, connected, and fulfilling life.
 //
 // DESIGN RULES:
-//   - Max positive modifier: +3/hr (peaceful rest, worship, being comforted)
+//   - Max positive modifier: +3/hr
+//   - Small meaningful moments can produce significant improvements
 //   - Mental is affected by lived experience, not just direct interactions
-//   - Peaceful locations, exercise, learning, relationships, self-care, comfort,
-//     preferences, and spiritual/community all contribute
-//   - RATES decay is already low — this is additive positive recovery
+//   - Accomplishments, stability, connection, growth, and self-care all contribute
+//   - Personality traits scale how much each character benefits from each dimension
+//   - Characters with stable, fulfilling lives should not continuously decline
 //
 function computeMentalModifier(char, context, locationMap) {
   let modifier = 0;
+  const scale = mentalPersonalityScale(char);
 
   const presence    = char.resolved_presence_status || '';
   const activity    = (char.current_activity || '').toLowerCase();
@@ -489,70 +517,243 @@ function computeMentalModifier(char, context, locationMap) {
   const locDesc     = (loc?.description || '').toLowerCase();
   const locFeatures = (loc?.features || []).map(f => (f || '').toLowerCase());
   const locSubtypes = (loc?.subtype || []).map(s => (s || '').toLowerCase());
-
-  // ── PEACEFUL LOCATIONS ──────────────────────────────────────────────────
-  // Parks, nature, gardens, clean homes, calm rooms = mental recovery
-  if (locCat === 'outdoor') modifier += 1;
-  if (locCat === 'home' && (locFeatures.some(f => f.includes('clean') || f.includes('tidy') || f.includes('cozy')) || !locFeatures.length)) modifier += 0.75;
-  if (locName.includes('park') || locName.includes('garden') || locName.includes('trail') || locName.includes('nature')) modifier += 1.25;
-  if (locDesc.includes('peaceful') || locDesc.includes('calm') || locDesc.includes('serene') || locDesc.includes('quiet')) modifier += 0.75;
-
-  // ── MOVEMENT & EXERCISE ─────────────────────────────────────────────────
-  if (context === 'gym' || activity.includes('exercise') || activity.includes('workout') || activity.includes('gym')) modifier += 1;
-  if (activity.includes('walk') || activity.includes('stroll') || activity.includes('jog') || activity.includes('run')) modifier += 0.75;
-
-  // ── GROWTH & LEARNING ──────────────────────────────────────────────────
-  if (locCat === 'school' || locCat === 'education' || context === 'at_school') modifier += 0.5;
-  if (activity.includes('study') || activity.includes('learn') || activity.includes('class') || activity.includes('course')) modifier += 0.5;
-  if (activity.includes('graduate') || activity.includes('complete') || activity.includes('achieve') || activity.includes('finish')) modifier += 1.5;
-  if (activity.includes('accomplish') || activity.includes('goal') || activity.includes('milestone')) modifier += 1.5;
-
-  // ── RELATIONSHIPS & CONNECTION ─────────────────────────────────────────
-  if (context === 'social_out' || context === 'bar_club') modifier += 0.5;
-  if (activity.includes('friend') || activity.includes('comfort') || activity.includes('listen') || activity.includes('talk')) modifier += 0.75;
   const relationships = char.fictional_relationships || [];
-  const hasCloseRelationship = relationships.some(r => (r.friendship_level ?? 50) > 75 || (r.trust_level ?? 50) > 70 || (r.romantic_level ?? 0) > 60);
-  if (hasCloseRelationship && (context === 'home_resting' || context === 'home_active' || presence === 'home')) modifier += 0.5;
+  const familyMembers = char.family_members || [];
+  const atHome = locCat === 'home' || presence === 'home' || (locId && locId === char.current_home_location_id);
+  const onShift = context === 'at_work' || context === 'at_work_medical' || context === 'at_work_service' || context === 'at_work_office';
 
-  // ── SELF-CARE ──────────────────────────────────────────────────────────
-  if (activity.includes('shower') || activity.includes('wash') || activity.includes('bath') || activity.includes('freshen')) modifier += 1;
-  if (activity.includes('meditat') || activity.includes('breathe') || activity.includes('mindful')) modifier += 1.5;
-  if (activity.includes('hair') || activity.includes('salon') || activity.includes('spa') || activity.includes('pamper')) modifier += 1.25;
-  if (activity.includes('groom') || activity.includes('dress') || activity.includes('outfit')) modifier += 0.5;
+  // ═══════════════════════════════════════════════════════════════════════
+  // ACHIEVEMENT & PROGRESS
+  // ═══════════════════════════════════════════════════════════════════════
+  const mPraise   = activity.includes('praise') || activity.includes('compliment') || activity.includes('recognition') || activity.includes('award');
+  const mPromo    = activity.includes('promot') || activity.includes('raise') || activity.includes('bonus');
+  const mComplete = activity.includes('complete') || activity.includes('finish') || activity.includes('done');
+  const mPass     = activity.includes('passed') || activity.includes('audit') || activity.includes('exam');
+  const mGraduate = activity.includes('graduate') || activity.includes('graduation') || activity.includes('degree');
+  const mLearn    = activity.includes('learn') || activity.includes('master') || activity.includes('skill') || activity.includes('improve');
+  const mSolve    = activity.includes('solve') || activity.includes('fix') || activity.includes('resolve') || activity.includes('figure');
+  const mAchieve  = activity.includes('achieve') || activity.includes('accomplish') || activity.includes('goal') || activity.includes('milestone');
+  const triggeredMilestones = char.triggered_milestones || [];
 
-  // ── COMFORT ────────────────────────────────────────────────────────────
-  if (context === 'home_resting' || context === 'resting') modifier += 1;
-  if (context === 'eating' || context === 'food_drink') modifier += 0.75;
-  if (activity.includes('rest') || activity.includes('relax') || activity.includes('unwind')) modifier += 0.75;
+  if (mPraise)   modifier += 1.25 * scale.achievement;
+  if (mPromo)    modifier += 1.75 * scale.achievement;
+  if (mComplete) modifier += 1.0 * scale.achievement;
+  if (mPass)     modifier += 1.5 * scale.achievement;
+  if (mGraduate) modifier += 2.0 * scale.achievement;
+  if (mLearn)    modifier += 0.75 * scale.achievement;
+  if (mSolve)    modifier += 1.0 * scale.achievement;
+  if (mAchieve || triggeredMilestones.length > 0) modifier += 1.5 * scale.achievement;
+  // Doing a good job at work / completing responsibilities
+  if (onShift && (activity.includes('good job') || activity.includes('productive') || activity.includes('well'))) modifier += 0.5 * scale.achievement;
 
-  // ── PREFERENCES (personality-matched activities) ───────────────────────
-  if (char.trait_conscientious && (activity.includes('clean') || activity.includes('organize') || activity.includes('tidy'))) modifier += 1;
-  if ((char.trait_morning_person) && activity.includes('morning')) modifier += 0.5;
-  if (char.social_energy === 'extrovert' || char.social_energy === 'mostly_extrovert') {
-    if (context === 'social_out' || context === 'bar_club' || activity.includes('social')) modifier += 0.75;
-  }
-  if (char.trait_competitive && (context === 'gym' || activity.includes('compete') || activity.includes('game') || activity.includes('sport'))) modifier += 0.75;
-  // Shopping for characters who enjoy shopping
-  if (locCat === 'grocery' || locSubtypes.includes('clothing') || locSubtypes.includes('shopping') || locName.includes('shop') || locName.includes('store') || locName.includes('mall') || locName.includes('boutique')) modifier += 0.5;
-  // Coffee for characters who enjoy coffee
-  if ((locName.includes('cafe') || locName.includes('coffee') || activity.includes('coffee') || activity.includes('cafe')) && !char.trait_night_owl) modifier += 0.5;
+  // ═══════════════════════════════════════════════════════════════════════
+  // FINANCIAL & LIFE STABILITY
+  // ═══════════════════════════════════════════════════════════════════════
+  const mPaycheck    = activity.includes('paycheck') || activity.includes('paid') || activity.includes('salary') || activity.includes('income');
+  const mFirstPay    = activity.includes('first paycheck') || activity.includes('first pay');
+  const mNewJob      = activity.includes('new job') || activity.includes('hired') || activity.includes('job offer');
+  const mHousing     = activity.includes('apartment') || activity.includes('housing') || activity.includes('moved in') || activity.includes('new home');
+  const mSavings     = activity.includes('savings') || activity.includes('saved') || activity.includes('budget') || activity.includes('financial goal');
+  const mFinanceOk   = activity.includes('financial') && (activity.includes('resolved') || activity.includes('ok') || activity.includes('stable'));
+  // Having a job at all provides baseline stability
+  const hasJob = char.occupation || char.current_work_location_id || char.occupation_location_id;
+  const hasHome = char.current_home_location_id;
 
-  // ── SPIRITUAL / COMMUNITY ──────────────────────────────────────────────
-  if (locCat === 'religion' || locName.includes('church') || locName.includes('temple') || locName.includes('mosque') || locName.includes('synagogue') || locName.includes('worship')) modifier += 1.25;
-  if (activity.includes('pray') || activity.includes('worship') || activity.includes('meditat') || activity.includes('spiritual')) modifier += 1.5;
-  if (locCat === 'community' || activity.includes('community') || activity.includes('fellowship') || activity.includes('gathering')) modifier += 0.75;
+  if (mPaycheck)        modifier += 0.75 * scale.stability;
+  if (mFirstPay)        modifier += 1.25 * scale.stability;
+  if (mNewJob)          modifier += 1.5 * scale.stability;
+  if (mHousing)         modifier += 1.5 * scale.stability;
+  if (mSavings)         modifier += 0.75 * scale.stability;
+  if (mFinanceOk)       modifier += 1.0 * scale.stability;
+  if (hasJob && !mNewJob) modifier += 0.15 * scale.stability; // subtle ongoing stability from employment
+  if (hasHome)           modifier += 0.15 * scale.stability;  // subtle ongoing stability from housing
 
-  // ── SAFETY ─────────────────────────────────────────────────────────────
-  // Feeling unsafe, threatened, or in hostile environments drains mental
+  // ═══════════════════════════════════════════════════════════════════════
+  // RELATIONSHIPS & CONNECTION
+  // ═══════════════════════════════════════════════════════════════════════
+  const mAppreciated    = activity.includes('appreciat') || activity.includes('thank') || activity.includes('included') || activity.includes('welcomed');
+  const mEncouraged     = activity.includes('encourag') || activity.includes('support') || activity.includes('lift');
+  const mDeepTalk       = activity.includes('meaningful') || activity.includes('heart to heart') || activity.includes('deep conversation');
+  const mFriendQuality  = activity.includes('friend') || activity.includes('loved one') || activity.includes('family time');
+  const mComforted      = activity.includes('comfort') || activity.includes('listen') || activity.includes('talk');
+  const hasCloseRel     = relationships.some(r => (r.friendship_level ?? 50) > 75 || (r.trust_level ?? 50) > 70 || (r.romantic_level ?? 0) > 60);
+  const hasFamily       = familyMembers.length > 0;
+
+  if (mAppreciated)     modifier += 1.25 * scale.relationships;
+  if (mEncouraged)      modifier += 1.0 * scale.relationships;
+  if (mDeepTalk)        modifier += 1.0 * scale.relationships;
+  if (mFriendQuality)   modifier += 0.75 * scale.relationships;
+  if (mComforted)       modifier += 0.75 * scale.relationships;
+  if (context === 'social_out' || context === 'bar_club') modifier += 0.5 * scale.relationships;
+  if (hasCloseRel && atHome) modifier += 0.5 * scale.relationships;
+  if (hasFamily && atHome)   modifier += 0.35 * scale.relationships;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SELF-CARE & PERSONAL MAINTENANCE
+  // ═══════════════════════════════════════════════════════════════════════
+  const mHygiene    = activity.includes('shower') || activity.includes('wash') || activity.includes('bath') || activity.includes('freshen');
+  const mLongShower = activity.includes('long shower') || activity.includes('bubble bath');
+  const mHair       = activity.includes('hair') || activity.includes('haircut') || activity.includes('styled') || activity.includes('shape-up');
+  const mNails      = activity.includes('manicure') || activity.includes('pedicure') || activity.includes('facial');
+  const mDress      = activity.includes('dress') || activity.includes('outfit') || activity.includes('appearance') || activity.includes('look good');
+  const mTherapy    = activity.includes('therap') || activity.includes('counsel');
+  const mAdvice     = activity.includes('advice') || activity.includes('guidance') || activity.includes('mentor');
+  const mMeditate   = activity.includes('meditat') || activity.includes('breathe') || activity.includes('mindful');
+  const mGratitude  = activity.includes('gratitude') || activity.includes('journal') || activity.includes('reflect');
+  const mKindSelf   = activity.includes('kind to myself') || activity.includes('self care') || activity.includes('self love') || activity.includes('self compassion');
+  const mSelfTalk   = activity.includes('positive') && (activity.includes('self') || activity.includes('pep talk'));
+
+  if (mHygiene)    modifier += 1.0 * scale.selfcare;
+  if (mLongShower) modifier += 1.25 * scale.selfcare;
+  if (mHair)       modifier += 1.25 * scale.selfcare;
+  if (mNails)      modifier += 1.0 * scale.selfcare;
+  if (mDress)      modifier += 0.75 * scale.selfcare;
+  if (mTherapy)    modifier += 1.75 * scale.selfcare;
+  if (mAdvice)     modifier += 0.75 * scale.selfcare;
+  if (mMeditate)   modifier += 1.5 * scale.selfcare;
+  if (mGratitude)  modifier += 1.0 * scale.selfcare;
+  if (mKindSelf)   modifier += 1.25 * scale.selfcare;
+  if (mSelfTalk)   modifier += 1.0 * scale.selfcare;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // REST & RECOVERY + MOVEMENT & EXERCISE
+  // ═══════════════════════════════════════════════════════════════════════
+  const mQualitySleep = context === 'sleeping' && (locCat === 'home' || locCat === 'hotel');
+  const mNap          = presence === 'napping' || activity.includes('nap') || activity.includes('siesta');
+  const mRestRecover  = activity.includes('rest') || activity.includes('recover') || activity.includes('recharge') || activity.includes('rested');
+  const mAfterEffort  = activity.includes('after') && (activity.includes('work') || activity.includes('effort') || activity.includes('day'));
+  const mGym          = context === 'gym' || activity.includes('exercise') || activity.includes('workout');
+  const mWalk         = activity.includes('walk') || activity.includes('stroll') || activity.includes('jog') || activity.includes('run');
+
+  if (mQualitySleep) modifier += 1.25 * scale.rest;
+  if (mNap)          modifier += 0.75 * scale.rest;
+  if (mRestRecover)  modifier += 0.75 * scale.rest;
+  if (mAfterEffort)  modifier += 0.5 * scale.rest;
+  if (context === 'home_resting' || context === 'resting') modifier += 1.0 * scale.rest;
+  if (context === 'eating' || context === 'food_drink') modifier += 0.75 * scale.rest;
+  if (mGym)          modifier += 1.0;  // exercise is universally beneficial
+  if (mWalk)         modifier += 0.75;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // CHARACTER & PERSONAL VALUES
+  // ═══════════════════════════════════════════════════════════════════════
+  const mHelping     = activity.includes('help') || activity.includes('volunteer') || activity.includes('donate') || activity.includes('assist');
+  const mKind        = activity.includes('kind') || activity.includes('nice') || activity.includes('generous');
+  const mRespectful  = activity.includes('respect') || activity.includes('pleasant') || activity.includes('polite');
+  const mProud       = activity.includes('proud') || activity.includes('right decision') || activity.includes('good choice');
+  const mValues      = activity.includes('values') || activity.includes('integrity') || activity.includes('principle') || activity.includes('honest');
+
+  if (mHelping)    modifier += 1.25 * scale.characterValues;
+  if (mKind)       modifier += 0.75 * scale.characterValues;
+  if (mRespectful) modifier += 0.5 * scale.characterValues;
+  if (mProud)      modifier += 1.0 * scale.characterValues;
+  if (mValues)     modifier += 0.75 * scale.characterValues;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PERSONAL CONFIDENCE & SELF-WORTH
+  // ═══════════════════════════════════════════════════════════════════════
+  const mPepTalk     = activity.includes('pep talk') || (activity.includes('positive') && activity.includes('self'));
+  const mProgress    = activity.includes('progress') || activity.includes('better') || activity.includes('improve');
+  const mCapable     = activity.includes('capable') || activity.includes('competent') || activity.includes('confident');
+  const mRespected   = activity.includes('respect') || activity.includes('reputation') || activity.includes('trust');
+  const mAdvised     = activity.includes('advice sought') || activity.includes('come to me') || activity.includes('asked for help');
+  const mUseful      = activity.includes('useful') || activity.includes('valued') || activity.includes('needed') || activity.includes('depended');
+
+  if (mPepTalk)   modifier += 1.0 * scale.confidence;
+  if (mProgress)  modifier += 0.75 * scale.confidence;
+  if (mCapable)   modifier += 0.75 * scale.confidence;
+  if (mRespected) modifier += 1.0 * scale.confidence;
+  if (mAdvised)   modifier += 0.75 * scale.confidence;
+  if (mUseful)    modifier += 1.0 * scale.confidence;
+  // Having close relationships also builds confidence through being known
+  if (hasCloseRel) modifier += 0.2 * scale.confidence;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // GOALS & PURPOSE
+  // ═══════════════════════════════════════════════════════════════════════
+  const mGoals     = activity.includes('goal') || activity.includes('plan') || activity.includes('future');
+  const mPurpose   = activity.includes('purpose') || activity.includes('direction') || activity.includes('meaning');
+  const mWorking   = activity.includes('working toward') || activity.includes('making progress');
+  const mMilestone = activity.includes('milestone') || activity.includes('achieve');
+  // Being at school or learning adds purpose
+  const atSchool = locCat === 'school' || locCat === 'education' || context === 'at_school';
+
+  if (mGoals)     modifier += 0.5 * scale.purpose;
+  if (mPurpose)   modifier += 1.0 * scale.purpose;
+  if (mWorking)   modifier += 0.75 * scale.purpose;
+  if (mMilestone) modifier += 1.25 * scale.purpose;
+  if (atSchool)   modifier += 0.4 * scale.purpose;
+  // Having a job provides purpose
+  if (hasJob)     modifier += 0.2 * scale.purpose;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // DAILY STABILITY & ROUTINE
+  // ═══════════════════════════════════════════════════════════════════════
+  const mRoutine     = activity.includes('routine') || activity.includes('habit') || activity.includes('consistent');
+  const mProductive  = activity.includes('productive') || activity.includes('getting things done');
+  const mOrganized   = activity.includes('organize') || activity.includes('tidy') || activity.includes('clean');
+  const mPrepared    = activity.includes('prepare') || activity.includes('ready') || activity.includes('set up');
+  const mCommitment  = activity.includes('commitment') || activity.includes('responsibilit') || activity.includes('reliable');
+  const mEnvOk       = locFeatures.some(f => f.includes('clean') || f.includes('tidy') || f.includes('stable') || f.includes('safe'));
+  // Work/school context provides structure
+  const hasStructure = onShift || atSchool;
+
+  if (mRoutine)    modifier += 0.5 * scale.stability;
+  if (mProductive) modifier += 0.75 * scale.stability;
+  if (mOrganized)  modifier += 0.5 * scale.stability;
+  if (mPrepared)   modifier += 0.5 * scale.stability;
+  if (mCommitment) modifier += 0.5 * scale.stability;
+  if (mEnvOk)      modifier += 0.35 * scale.stability;
+  if (hasStructure) modifier += 0.15 * scale.stability;
+  // Doing a good job
+  if (onShift)     modifier += 0.25 * scale.stability;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // HEALTHY THINKING & RESILIENCE
+  // ═══════════════════════════════════════════════════════════════════════
+  const mOutlook  = activity.includes('positive outlook') || activity.includes('optimistic') || activity.includes('hopeful');
+  const mHope     = activity.includes('hope') || activity.includes('better days') || activity.includes('looking forward');
+  const mNotWorst = activity.includes('not assuming worst') || activity.includes('staying calm') || activity.includes('realistic');
+  const mResilient = activity.includes('resilient') || activity.includes('bounce back') || activity.includes('cope');
+
+  if (mOutlook)   modifier += 0.75 * scale.resilience;
+  if (mHope)      modifier += 1.0 * scale.resilience;
+  if (mNotWorst)  modifier += 0.5 * scale.resilience;
+  if (mResilient) modifier += 1.0 * scale.resilience;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // LOCATION-BASED (environmental context)
+  // ═══════════════════════════════════════════════════════════════════════
+  if (locCat === 'outdoor') modifier += 0.75;
+  if (atHome && (locFeatures.some(f => f.includes('clean') || f.includes('tidy') || f.includes('cozy')) || !locFeatures.length)) modifier += 0.5;
+  if (locName.includes('park') || locName.includes('garden') || locName.includes('trail') || locName.includes('nature')) modifier += 0.75;
+  if (locDesc.includes('peaceful') || locDesc.includes('calm') || locDesc.includes('serene') || locDesc.includes('quiet')) modifier += 0.5;
+  if (locCat === 'religion' || locName.includes('church') || locName.includes('temple') || locName.includes('mosque') || locName.includes('synagogue') || locName.includes('worship')) modifier += 1.0;
+  if (activity.includes('pray') || activity.includes('worship') || activity.includes('spiritual')) modifier += 1.25;
+  if (locCat === 'community' || activity.includes('community') || activity.includes('fellowship') || activity.includes('gathering')) modifier += 0.5;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // DRAINS (safety, conflict, isolation, grief)
+  // ═══════════════════════════════════════════════════════════════════════
   if (locCat === 'jail_prison' || loc.is_confinement_facility) modifier -= 1.5;
   if (activity.includes('fear') || activity.includes('threat') || activity.includes('danger') || activity.includes('unsafe')) modifier -= 1.5;
   if (activity.includes('conflict') || activity.includes('argument') || activity.includes('fight')) modifier -= 1.25;
   if (activity.includes('grief') || activity.includes('loss') || activity.includes('mourn')) modifier -= 1.5;
-  if (activity.includes('isolat') || activity.includes('lonely') || activity.includes('alone')) modifier -= 1;
+  if (activity.includes('isolat') || activity.includes('lonely') || activity.includes('alone')) modifier -= 1.0;
 
-  // ── ACCOMPLISHMENTS & MILESTONES ───────────────────────────────────────
-  const triggeredMilestones = char.triggered_milestones || [];
-  if (triggeredMilestones.length > 0) modifier += 0.75;
+  // ═══════════════════════════════════════════════════════════════════════
+  // PERSONALITY-MATCHED PREFERENCES
+  // ═══════════════════════════════════════════════════════════════════════
+  if (char.trait_conscientious && (mOrganized || activity.includes('clean'))) modifier += 0.75;
+  if (char.social_energy === 'extrovert' || char.social_energy === 'mostly_extrovert') {
+    if (context === 'social_out' || context === 'bar_club' || activity.includes('social')) modifier += 0.5;
+  }
+  if (char.trait_competitive && (mGym || activity.includes('compete') || activity.includes('game') || activity.includes('sport'))) modifier += 0.5;
+  if (char.trait_morning_person && activity.includes('morning')) modifier += 0.35;
+  if ((locCat === 'grocery' || locSubtypes.includes('clothing') || locSubtypes.includes('shopping') || locName.includes('shop') || locName.includes('store') || locName.includes('mall') || locName.includes('boutique'))) modifier += 0.3;
+  if ((locName.includes('cafe') || locName.includes('coffee') || activity.includes('coffee') || activity.includes('cafe')) && !char.trait_night_owl) modifier += 0.35;
+  // Introverts benefit more from quiet home time
+  if ((char.social_energy === 'introvert' || char.social_energy === 'mostly_introvert') && atHome && context === 'home_resting') modifier += 0.35;
 
   // ── CAP TOTAL MODIFIER ──────────────────────────────────────────────────
   return Math.max(-2, Math.min(3, modifier));
