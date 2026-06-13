@@ -398,14 +398,16 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
     const cachedVersion = dashboardCacheVersion[charId];
     const cacheValid = cachedData && cachedVersion === DASHBOARD_CACHE_VERSION;
 
-    // ── CACHE READ DISABLED (temporary) ─────────────────────────────────
-    // Cache is populated below with charId-gated identity checks, but reads
-    // are bypassed until profile-switch stability is proven across multiple
-    // characters. Every profile load recomputes from source records.
-    // Re-enable by restoring the cache-hit branch when:
-    //   - cachedData.charId === currentCharId passes
-    //   - cacheVersion matches DASHBOARD_CACHE_VERSION
-    //   - profile switching verified stable on 3+ characters
+    // ── CACHE READ (re-enabled) ─────────────────────────────────────────
+    // Guards are proven: charId-keyed cache, version stamp, activeRequestRef
+    // stale-response discard. Cache reads save 8+ entity queries per profile open.
+    if (cacheValid && cachedData.charId === requestCharId) {
+      console.log(`[CharacterDashboard] CACHE HIT for ${charId} — skipping full compute pipeline`);
+      setData(cachedData);
+      setLoaded(true);
+      setLoading(false);
+      return;
+    }
 
     // No valid cache. Reset any stale data from a previous character and fetch.
     setData(null);

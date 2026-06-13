@@ -363,6 +363,81 @@ function scoreLocation(location, char, vals, nowET) {
   if (se === 'extrovert' && ['social', 'food_drink', 'outdoor'].includes(cat))      score += 1;
   if (['introvert', 'mostly_introvert'].includes(se) && ['home', 'outdoor'].includes(cat)) score += 1;
 
+  // ── SOCIAL WORKPLACE RECOGNITION ──────────────────────────────────────────
+  // If the character has recently completed a shift at a people-facing workplace
+  // (bar, restaurant, salon, school, retail, customer service, medical, etc.),
+  // their social need has already been partially met during work.
+  // A server who just got off a 6-hour shift at a restaurant does NOT need to
+  // go to a bar or café for social recovery — they already had 6 hours of social contact.
+  //
+  // Detection: check resolved_source_reason for 'work_schedule' and the work location's
+  // category/subtype. If the character is marked as currently at work (or just finished
+  // work and went somewhere nearby), recognize the social exposure.
+  //
+  // This modifies social urgency for NEED SCORING ONLY. It does NOT affect
+  // the character's actual social_value — that number is independent.
+  // It only prevents the scorer from sending them to a social venue when their
+  // social need has already been addressed by work context.
+  {
+    const presenceSource = char.resolved_source_reason || '';
+    const currentlyAtWork = char.resolved_presence_status === 'at_work';
+    const justFinishedWork = presenceSource === 'work_schedule' ||
+      presenceSource === 'autonomous_need' ||
+      (char.resolved_location_type === 'work' && !currentlyAtWork);
+
+    if (currentlyAtWork || justFinishedWork) {
+      // Resolve the work location to determine if it is people-facing
+      const workLocId = char.occupation_location_id || char.current_work_location_id;
+      const workLoc = userLocations.find(l => l.id === workLocId);
+
+      if (workLoc) {
+        const wCat = (workLoc.category || '').toLowerCase();
+        const wName = (workLoc.name || '').toLowerCase();
+        const wSubtypes = (workLoc.subtype || []).map(s => s.toLowerCase());
+
+        // People-facing workplace detection
+        const isPeopleFacingWorkplace = (
+          wCat === 'food_drink' ||
+          wCat === 'social' ||
+          (wCat === 'education' && workLoc.school_type) ||
+          wCat === 'medical' ||
+          wCat === 'community' ||
+          wSubtypes.includes('salon') ||
+          wSubtypes.includes('retail') ||
+          wSubtypes.includes('customer_service') ||
+          wName.includes('bar') || wName.includes('restaurant') || wName.includes('cafe') ||
+          wName.includes('salon') || wName.includes('shop') || wName.includes('store') ||
+          wName.includes('clinic') || wName.includes('hospital') || wName.includes('school') ||
+          wName.includes('centre') || wName.includes('center') || wName.includes('service')
+        );
+
+        if (isPeopleFacingWorkplace) {
+          // Reduce social urgency for location scoring — the character already
+          // had social contact during their work shift. They should NOT be routed
+          // to another social venue immediately after work.
+          // This is a scoring modifier only — actual social_value is unchanged.
+          if (socialU >= 1) {
+            // Downgrade social urgency by one level for scoring purposes
+            // Urgent social (>=2) → awareness (1), awareness (1) → none (0)
+            const adjustedSocialU = Math.max(0, socialU - 1);
+            // Recompute social contribution with adjusted urgency
+            const isIntro = ['introvert', 'mostly_introvert'].includes(se);
+            if (adjustedSocialU >= 2) {
+              if (isIntro) {
+                if (cat === 'outdoor' || cat === 'home') score += 2 + adjustedSocialU;
+              } else {
+                if (cat === 'social' || cat === 'food_drink') score += 1 + adjustedSocialU; // reduced weight
+                if (cat === 'outdoor' || cat === 'gym') score += 2 + adjustedSocialU;
+              }
+            }
+            // Mark this modifier in the log for visibility
+            char._socialWorkplaceModifier = true;
+          }
+        }
+      }
+    }
+  }
+
   // ── NIGHTLIFE PENALTY: applied AFTER base scoring ───────────────────────
   // Only applies to confirmed nightlife venues (clubs, bars, lounges).
   // cafés, restaurants (food_drink), parks, gyms are unaffected.
