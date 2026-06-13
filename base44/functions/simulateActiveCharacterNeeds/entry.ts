@@ -1304,7 +1304,6 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
           locType === 'house_arrest' || presence === 'home' || presence === 'sleeping' || presence === 'napping' || !locType;
         const prevActivity = (char.current_activity || '').toLowerCase();
         const alreadyIntending = prevActivity.includes('sleep') || prevActivity.includes('exhausted');
-        stateWrites.decision_cause = cause;
 
         if (atValidSleepLocation && !alreadySleeping && !recentlyWokenByAlarm) {
           // EXECUTE: at valid location — actually sleep
@@ -1356,7 +1355,6 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         })());
         const prevActivity = (char.current_activity || '').toLowerCase();
         const alreadyEating = prevActivity.includes('eat') || prevActivity.includes('food') || prevActivity.includes('meal');
-        stateWrites.decision_cause = cause;
 
         if (isAtFoodLoc) {
           // EXECUTE: at valid location — actually eat, need value improves
@@ -1394,7 +1392,6 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         break;
       }
       case 'go_home_rest': {
-        stateWrites.decision_cause = cause;
         if (!atHome) {
           stateWrites.current_activity = cause === 'pressure'
             ? 'exhausted — heading home to rest'
@@ -1409,8 +1406,6 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         const prevActivity = (char.current_activity || '').toLowerCase();
         const alreadyShowering = prevActivity.includes('wash') || prevActivity.includes('shower')
           || prevActivity.includes('freshen') || prevActivity.includes('clean');
-        // Always stamp the decision cause for observability
-        stateWrites.decision_cause = cause;
 
         if (atHome && !alreadyShowering) {
           // EXECUTE: at home — actually shower/clean up
@@ -1451,7 +1446,6 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         break;
       }
       case 'rest': {
-        stateWrites.decision_cause = cause;
         if (cause === 'opportunity') stateWrites.current_activity = atHome ? 'taking a comfortable break' : 'taking a moment to rest';
         else if (cause === 'routine') stateWrites.current_activity = atHome ? 'unwinding at home' : 'taking a break';
         else if (cause === 'preference') stateWrites.current_activity = atHome ? 'enjoying some downtime' : 'taking a break';
@@ -1460,7 +1454,6 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         break;
       }
       case 'social': {
-        stateWrites.decision_cause = cause;
         if (cause === 'opportunity') stateWrites.current_activity = atHome ? 'reaching out — company sounds nice' : 'spending time out while they can';
         else if (cause === 'routine') stateWrites.current_activity = atHome ? 'catching up with people' : 'out and about';
         else if (cause === 'preference') stateWrites.current_activity = atHome ? 'enjoying some social time' : 'enjoying being out';
@@ -1469,7 +1462,6 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         break;
       }
       case 'work': {
-        stateWrites.decision_cause = cause;
         if (presence !== 'at_work') {
           stateWrites.resolved_presence_status = 'at_work';
           stateWrites.current_activity = 'working';
@@ -1478,20 +1470,17 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
         break;
       }
       case 'family': {
-        stateWrites.decision_cause = cause;
         stateWrites.current_activity = atHome ? 'spending time with family' : 'visiting family';
         logs.push(`[CORRECTIVE] ${char.name}: DECISION → family (${cause})`);
         break;
       }
       case 'education': {
-        stateWrites.decision_cause = cause;
         stateWrites.current_activity = 'attending school';
         logs.push(`[CORRECTIVE] ${char.name}: DECISION → education`);
         break;
       }
       case 'home_routine':
       default: {
-        stateWrites.decision_cause = 'routine';
         if (!stateWrites.current_activity && !char.current_activity) {
           stateWrites.current_activity = atHome ? 'relaxing at home' : 'going about their day';
         }
