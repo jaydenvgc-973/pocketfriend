@@ -912,7 +912,13 @@ function resolveStaleDecisionIntents(character) {
   return null;
 }
 
-// ── MAIN HANDLER ──────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN HANDLER
+// ═══════════════════════════════════════════════════════════════════════════
+// SCOPE: Only active_created_character (character_type filter).
+// Vick Servicio and other world_service / fictitious NPCs are excluded.
+// ═══════════════════════════════════════════════════════════════════════════
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -921,8 +927,10 @@ Deno.serve(async (req) => {
 
     const ownerEmail = user.email;
     const now = new Date();
+    const nowIso = now.toISOString();
 
-    // Load all active characters for this account
+    // ── LOAD CHARACTERS ──────────────────────────────────────────────────
+    // Scope: active_created_character only. NPCs and world-service are excluded.
     const characters = await base44.asServiceRole.entities.Character.filter(
       { owner_email: ownerEmail, status: 'active', character_type: 'active_created_character' },
       null,
@@ -933,7 +941,7 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, simulated: 0, message: 'No active characters' });
     }
 
-    // Load location map for context resolution
+    // ── LOAD LOCATION MAP ────────────────────────────────────────────────
     const locations = await base44.asServiceRole.entities.LocationReference.filter(
       { owner_email: ownerEmail },
       null,
@@ -947,67 +955,155 @@ Deno.serve(async (req) => {
 
     const results = [];
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // PER-CHARACTER SIMULATION LOOP
+    // ═══════════════════════════════════════════════════════════════════════
     for (const char of characters) {
       try {
-        const nowMs = now.getTime();
-        const lastSim = char.last_need_simulated_at ? new Date(char.last_need_simulated_at).getTime() : 0;
-        if (lastSim <= 0) {
-          // First simulation — initialize needs
-          const initializedNeeds = {
-            hunger:  70,
-            energy:  75,
-            social:  65,
-            health:  80,
-            mental:  70,
-            hygiene: 75,
-            comfort: 70,
-          };
+        const charName = char.name || char.display_name || char.id;
+
+        // ── VICK SERVICIO GUARD ──────────────────────────────────────────
+        // Vick is not simulated here — world_service characters are managed
+        // by their own dedicated pipelines.
+        if (char.character_type === 'npc_world_service' || char.is_world_service) {
+          continue;
+        }
+
+        // ── SKIP LOCKED CHARACTERS ───────────────────────────────────────
+        // Diagnostic/test characters are excluded from simulation.
+        if (char.is_test_character || char.diagnostic_only) {
+          continue;
+        }
+
+        // ── SKIP INCARCERATED ────────────────────────────────────────────
+        // Incarcerated characters have their own needs pipeline.
+        if (char.is_jailed || char.resolved_presence_status === 'incarcerated') {
+          continue;
+        }
+
+        // ── FIRST-TIME INITIALIZATION ────────────────────────────────────
+        let needs = getNeedsFromCharacter(char);
+        if (needsAreUninitialized(needs) || !char.needs_initialized) {
           await base44.asServiceRole.entities.Character.update(char.id, {
-            hunger_value: 70, energy_value: 75, social_value: 65,
-            health_value: 80, mental_value: 70, hygiene_value: 75,
-            comfort_value: 70, needs_initialized: true,
-            last_need_simulated_at: now.toISOString(),
+            hunger_value:  70,
+            energy_value:  75,
+            social_value:  65,
+            health_value:  80,
+            mental_value:  70,
+            hygiene_value: 75,
+            comfort_value: 70,
+            financial_need_value: deriveFinancialNeed(char),
+            needs_initialized: true,
+            last_need_simulated_at: nowIso,
           });
-          results.push({ character: char.name, status: 'initialized' });
+          results.push({ character: charName, status: 'initialized' });
           continue;
         }
 
-        const elapsedMs = nowMs - lastSim;
-        const elapsedHours = Math.min(elapsedMs / (1000 * 60 * 60), 8); // cap at 8h (RC5)
+        // ── ELAPSED TIME ─────────────────────────────────────────────────
+        const lastSim = char.last_need_simulated_at
+          ? new Date(char.last_need_simulated_at).getTime()
+          : Date.now();
+        const elapsedMs = now.getTime() - lastSim;
 
+        // RC5: Cap elapsed time at 8 hours
+        const elapsedHours = Math.min(elapsedMs / (1000 * 60 * 60), 8);
+
+        // Skip if too recent (less than ~3 minutes)
         if (elapsedHours < 0.05) {
-          results.push({ character: char.name, status: 'skipped', reason: 'too_recent' });
+          results.push({ character: charName, status: 'skipped', reason: 'too_recent', elapsed_minutes: Math.round(elapsedHours * 60) });
           continue;
         }
 
-        const needs = getNeedsFromCharacter(char);
-        if (needsAreUninitialized(needs)) {
-          results.push({ character: char.name, status: 'skipped', reason: 'uninitialized' });
-          continue;
-        }
+        // ── VICK LOCKED HUNGER/SLEEP ─────────────────────────────────────
+        // If Vick has explicitly locked hunger or sleep for this character,
+        // those values are frozen — no decay, no recovery.
+        // Energy is still simulated if sleep_lock is off.
+        const hungerLocked = char.hunger_lock === true;
+        const sleepLocked  = char.sleep_lock  === true;
 
+        // ── RESOLVE CONTEXT ───────────────────────────────────────────────
         const context = getLocationContext(char, locationMap, now);
 
-        // Apply time-based rates
+        // ── RC2: PASS-OUT DETECTION (energy ≤ ENERGY_PASSOUT) ────────────
+        // Character collapses from exhaustion. Written BEFORE the normal
+        // rate application so the NEXT tick uses passed_out rates (+8/hr).
+        const energyBefore = char.energy_value ?? 75;
+        if (energyBefore <= T.ENERGY_PASSOUT && char.resolved_presence_status !== 'sleeping'
+            && char.resolved_presence_status !== 'napping'
+            && char.resolved_presence_status !== 'passed_out'
+            && !sleepLocked) {
+          // Immediate pass-out write — collapse from exhaustion
+          await base44.asServiceRole.entities.Character.update(char.id, {
+            resolved_presence_status: 'sleeping',
+            current_activity: 'passed out — resting',
+            last_need_simulated_at: nowIso,
+          });
+          await base44.asServiceRole.entities.LifeEvent.create({
+            character_id: char.id,
+            character_name: charName,
+            event_type: 'medical_event',
+            valence: 'negative',
+            severity: 'significant',
+            title: 'Passed out from exhaustion',
+            description: `${charName} collapsed from complete energy depletion.`,
+            emotional_impact: 'physical collapse',
+            triggered_by: 'life_simulation',
+            timestamp: nowIso,
+            context_tags: ['passed_out'],
+          }).catch(() => {});
+
+          results.push({
+            character: charName,
+            context: 'passed_out',
+            event: 'pass_out',
+            needs: {
+              hunger:  Math.round(needs.hunger ?? 70),
+              energy:  Math.round(energyBefore),
+              social:  Math.round(needs.social ?? 65),
+              health:  Math.round(needs.health ?? 80),
+              mental:  Math.round(needs.mental ?? 70),
+              hygiene: Math.round(needs.hygiene ?? 75),
+              comfort: Math.round(needs.comfort ?? 70),
+            },
+          });
+          continue;
+        }
+
+        // ── APPLY TIME-BASED RATES ────────────────────────────────────────
         let newNeeds = applyElapsedTime(needs, elapsedHours, context);
 
-        // Apply stat infection (cascade)
+        // ── VICK HUNGER/SLEEP LOCK OVERRIDE ──────────────────────────────
+        // If Vick locked hunger, restore original value — no decay.
+        if (hungerLocked) {
+          newNeeds.hunger = needs.hunger ?? 70;
+        }
+        // If Vick locked sleep, restore original energy — no decay or recovery.
+        if (sleepLocked) {
+          newNeeds.energy = needs.energy ?? 75;
+        }
+
+        // ── RC5: CASCADE INFECTION ────────────────────────────────────────
         newNeeds = applyStatInfection(newNeeds, elapsedHours);
 
-        // Apply mental modifier
-        const mentalMod = computeMentalModifier(char, context, locationMap);
-        newNeeds.mental = clamp(newNeeds.mental + mentalMod * elapsedHours);
+        // ── MENTAL MODIFIER ───────────────────────────────────────────────
+        if (!hungerLocked) {
+          const mentalMod = computeMentalModifier(char, context, locationMap);
+          newNeeds.mental = clamp(newNeeds.mental + mentalMod * elapsedHours);
+        }
 
-        // Apply comfort modifier
+        // ── COMFORT MODIFIER ──────────────────────────────────────────────
         const comfortMod = computeComfortModifier(char, context, locationMap);
         newNeeds.comfort = clamp(newNeeds.comfort + comfortMod * elapsedHours);
 
-        // Check corrective states
-        const corrective = computeCorrectiveState(newNeeds, char);
-        const staleCleanup = resolveStaleCorrectiveActivities(char, newNeeds);
-        const staleIntent = resolveStaleDecisionIntents(char);
+        // ── PRESENCE STAY LOCK ────────────────────────────────────────────
+        // If character has a stay lock (user chose STAY at scene exit),
+        // the resolved location is frozen — do not override presence.
+        const hasStayLock = char.presence_stay_lock === true;
 
-        // Build update payload
+        // ═══════════════════════════════════════════════════════════════════
+        // BUILD UPDATE PAYLOAD
+        // ═══════════════════════════════════════════════════════════════════
         const updatePayload = {
           hunger_value:  Math.round(newNeeds.hunger),
           energy_value:  Math.round(newNeeds.energy),
@@ -1016,30 +1112,146 @@ Deno.serve(async (req) => {
           mental_value:  Math.round(newNeeds.mental),
           hygiene_value: Math.round(newNeeds.hygiene),
           comfort_value: Math.round(newNeeds.comfort),
-          last_need_simulated_at: now.toISOString(),
+          last_need_simulated_at: nowIso,
         };
 
-        if (corrective) {
+        // ── RC1: CORRECTIVE ACTIVITY WRITER ───────────────────────────────
+        // When needs cross critical thresholds during simulation, write
+        // corrective states so the NEXT tick uses recovery rates.
+        const corrective = computeCorrectiveState(newNeeds, char);
+        if (corrective && !hasStayLock) {
           Object.assign(updatePayload, corrective);
         }
-        if (staleCleanup) {
+
+        // ── RC2 (continued): ENERGY ZERO → PASSED OUT ────────────────────
+        // If energy reached zero during this simulation tick, character
+        // collapses. Write presence and activity immediately.
+        if (newNeeds.energy <= 0 && !sleepLocked && char.resolved_presence_status !== 'sleeping'
+            && char.resolved_presence_status !== 'napping'
+            && char.resolved_presence_status !== 'passed_out') {
+          Object.assign(updatePayload, {
+            resolved_presence_status: 'sleeping',
+            current_activity: 'passed out — resting',
+          });
+        }
+
+        // ── RC3: ER ESCALATION — HEALTH COLLAPSE ─────────────────────────
+        // When health ≤ HEALTH_ER (15) OR compound crisis with health ≤ 20,
+        // create a ScheduledEvent for medical intervention and write
+        // hospitalized presence.
+        const compoundCrisisHealth = newNeeds.health <= T.HEALTH_CRITICAL &&
+          [newNeeds.hunger, newNeeds.energy, newNeeds.health]
+            .filter(v => v < T.HEALTH_CRITICAL).length >= 2;
+
+        if ((newNeeds.health <= T.HEALTH_ER || compoundCrisisHealth)
+            && char.resolved_presence_status !== 'hospitalized'
+            && !hasStayLock) {
+          // Write hospitalized state
+          Object.assign(updatePayload, {
+            resolved_presence_status: 'hospitalized',
+            current_activity: 'hospitalized — health collapsed',
+          });
+
+          // Create a ScheduledEvent for the hospital recovery
+          await base44.asServiceRole.entities.ScheduledEvent.create({
+            character_id: char.id,
+            character_name: charName,
+            event_type: 'medical_emergency',
+            title: 'Emergency hospitalization',
+            description: `${charName} was hospitalized due to critical health collapse (health: ${Math.round(newNeeds.health)})`,
+            scheduled_time: nowIso,
+            status: 'active',
+            owner_email: ownerEmail,
+          }).catch(() => {});
+
+          // Log the ER escalation
+          await base44.asServiceRole.entities.LifeEvent.create({
+            character_id: char.id,
+            character_name: charName,
+            event_type: 'medical_event',
+            valence: 'negative',
+            severity: 'major',
+            title: 'Emergency hospitalization',
+            description: `${charName} was rushed to the hospital — health collapsed to ${Math.round(newNeeds.health)}.`,
+            emotional_impact: 'critical medical event',
+            triggered_by: 'life_simulation',
+            timestamp: nowIso,
+            context_tags: ['er_escalation', 'hospitalized'],
+          }).catch(() => {});
+        }
+
+        // ── RC4: COMPOUND CRISIS — FORCED STABILIZATION ───────────────────
+        // 3+ needs below 20 triggers forced rest and a recovery event.
+        const criticalNeeds = [newNeeds.hunger, newNeeds.energy, newNeeds.health, newNeeds.social, newNeeds.mental]
+          .filter(v => v < T.HUNGER_CRITICAL).length;
+        if (criticalNeeds >= T.COMPOUND_CRISIS
+            && char.resolved_presence_status !== 'sleeping'
+            && char.resolved_presence_status !== 'napping'
+            && char.resolved_presence_status !== 'hospitalized'
+            && !hasStayLock
+            && !sleepLocked) {
+          Object.assign(updatePayload, {
+            resolved_presence_status: 'sleeping',
+            current_activity: 'forced rest — compound crisis',
+          });
+
+          // Create recovery ScheduledEvent
+          await base44.asServiceRole.entities.ScheduledEvent.create({
+            character_id: char.id,
+            character_name: charName,
+            event_type: 'compound_crisis_recovery',
+            title: 'Compound crisis — forced rest',
+            description: `${charName} was put to rest — ${criticalNeeds} needs below critical threshold.`,
+            scheduled_time: nowIso,
+            status: 'active',
+            owner_email: ownerEmail,
+          }).catch(() => {});
+
+          await base44.asServiceRole.entities.LifeEvent.create({
+            character_id: char.id,
+            character_name: charName,
+            event_type: 'medical_event',
+            valence: 'negative',
+            severity: 'major',
+            title: 'Compound crisis — forced rest',
+            description: `${charName}'s body gave out — ${criticalNeeds} needs were critical. Forced to rest.`,
+            emotional_impact: 'physical collapse',
+            triggered_by: 'life_simulation',
+            timestamp: nowIso,
+            context_tags: ['compound_crisis'],
+          }).catch(() => {});
+        }
+
+        // ── SLEEP DEBT TRACKING ───────────────────────────────────────────
+        // If character has sleep debt and is sleeping, gradually pay it down.
+        if (context === 'sleeping' && char.sleep_debt_hours > 0) {
+          const debtPaid = Math.min(char.sleep_debt_hours, elapsedHours);
+          const remainingDebt = Math.max(0, char.sleep_debt_hours - debtPaid);
+          if (remainingDebt !== char.sleep_debt_hours) {
+            updatePayload.sleep_debt_hours = Math.round(remainingDebt * 100) / 100;
+          }
+        }
+
+        // ── STALE CORRECTIVE CLEANUP ───────────────────────────────────────
+        const staleCleanup = resolveStaleCorrectiveActivities(char, newNeeds);
+        if (staleCleanup && !hasStayLock) {
           Object.assign(updatePayload, staleCleanup);
         }
+
+        const staleIntent = resolveStaleDecisionIntents(char);
         if (staleIntent) {
           Object.assign(updatePayload, staleIntent);
         }
 
-        // Check for critical escalations
-        const escalations = detectCriticalEscalations(needs, newNeeds, char.name);
-
-        // Write needs update
+        // ── RC6: ALWAYS USE asServiceRole FOR WRITES ──────────────────────
         await base44.asServiceRole.entities.Character.update(char.id, updatePayload);
 
-        // Log escalations as LifeEvents
+        // ── CRITICAL ESCALATION LOGGING ────────────────────────────────────
+        const escalations = detectCriticalEscalations(needs, newNeeds, charName);
         for (const esc of escalations) {
           await base44.asServiceRole.entities.LifeEvent.create({
             character_id: char.id,
-            character_name: char.name,
+            character_name: charName,
             event_type: 'medical_event',
             valence: 'negative',
             severity: 'significant',
@@ -1047,42 +1259,51 @@ Deno.serve(async (req) => {
             description: esc.description,
             emotional_impact: 'physical distress',
             triggered_by: 'life_simulation',
-            timestamp: now.toISOString(),
+            timestamp: nowIso,
             context_tags: [esc.memory_tag],
           }).catch(() => {});
         }
 
+        // ── FINANCIAL NEED DERIVATION ──────────────────────────────────────
+        updatePayload.financial_need_value = deriveFinancialNeed(char);
+
+        // ── AUTONOMOUS DECISION INTENT ────────────────────────────────────
+        const nextActivity = resolveNextActivity(newNeeds, char);
+        const isCorrectiveActive = corrective &&
+          (corrective.current_activity || '').includes(' — ');
+
         results.push({
-          character: char.name,
+          character: charName,
           context,
-          mental_modifier: Math.round(mentalMod * 100) / 100,
-          comfort_modifier: Math.round(comfortMod * 100) / 100,
-          corrective: corrective ? Object.keys(corrective) : null,
-          escalations: escalations.length,
           needs: {
-            hunger: Math.round(newNeeds.hunger),
-            energy: Math.round(newNeeds.energy),
-            social: Math.round(newNeeds.social),
-            health: Math.round(newNeeds.health),
-            mental: Math.round(newNeeds.mental),
+            hunger:  Math.round(newNeeds.hunger),
+            energy:  Math.round(newNeeds.energy),
+            social:  Math.round(newNeeds.social),
+            health:  Math.round(newNeeds.health),
+            mental:  Math.round(newNeeds.mental),
             hygiene: Math.round(newNeeds.hygiene),
             comfort: Math.round(newNeeds.comfort),
           },
+          corrective_applied: corrective ? Object.keys(corrective) : null,
+          escalations: escalations.length,
+          next_activity: nextActivity,
+          stale_corrective_cleared: staleCleanup ? Object.keys(staleCleanup) : null,
+          elapsed_hours: Math.round(elapsedHours * 100) / 100,
         });
 
-        // Small delay between characters to avoid rate limits
+        // Throttle between characters
         await new Promise(r => setTimeout(r, 200));
       } catch (charError) {
-        console.error(`[simulateActiveCharacterNeeds] Error for ${char.name}: ${charError.message}`);
-        results.push({ character: char.name, status: 'error', error: charError.message });
+        console.error(`[simulateActiveCharacterNeeds] Error for ${char.name || char.id}: ${charError.message}`);
+        results.push({ character: char.name || char.id, status: 'error', error: charError.message });
       }
     }
 
     return Response.json({
       success: true,
-      simulated: results.length,
+      simulated: results.filter(r => r.status !== 'error' && r.status !== 'skipped').length,
       ownerEmail,
-      timestamp: now.toISOString(),
+      timestamp: nowIso,
       results,
     });
 
