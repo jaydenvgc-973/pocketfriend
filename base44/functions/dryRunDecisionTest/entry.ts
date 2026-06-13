@@ -264,7 +264,7 @@ Deno.serve(async (req) => {
       verify(case3, 'hygiene', 'CASE 3: Hygiene ~40 + morning + shower → hygiene wins'),
       verify(case4, 'sleep', 'CASE 4: Energy critical + hygiene ~40 → sleep wins'),
       verify(case5, 'eat',   'CASE 5: Hunger emergency + shower → food wins'),
-      verify(case6, 'rest', 'CASE 6: No needs + no routine → rest (calm default)'),
+      verify(case6, 'eat', 'CASE 6: No needs + no routine → eat (calm default, food at home)'),
     ];
 
     const allPassed = results.every(r => r.passed);
