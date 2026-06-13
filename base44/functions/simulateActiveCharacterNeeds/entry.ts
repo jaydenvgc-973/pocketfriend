@@ -68,7 +68,10 @@ const RATES = {
   // food_drink: eating out while awake does not restore energy — food restores hunger only.
   food_drink:      { hunger: +15,  energy:  0,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
   social_out:      { hunger: -2,   energy: -4,  social: +4,   health: 0,    mental: +1,   hygiene: -1,   comfort: -0.5 },
-  traveling:       { hunger: -3,   energy: -4,  social: -1,   health: 0,    mental: -1,   hygiene: -2,   comfort: -3   },
+  // DEPRECATED: Travel is routing metadata only, not a needs context.
+  // getLocationContext no longer returns 'traveling' — destination context is authoritative.
+  // Kept identical to default for backward compatibility with any remaining references.
+  traveling:       { hunger: -2,   energy: -4,  social: -1,   health: 0,    mental: -0.5, hygiene: -1,   comfort: -1   },
   // eating: hunger relief only. Energy=0 while awake. -5/hr baseline still applies on top.
   eating:          { hunger: +15,  energy:  0,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
   // resting: energy=0 (neutral). Awake resting does not restore energy.
@@ -201,13 +204,28 @@ function resolvePresenceStaleness(character, now) {
   return (now.getTime() - mostRecent) > STALE_PRESENCE_MS;
 }
 
+/**
+ * getLocationContext — CONTEXT AUTHORITY FRAMEWORK
+ *
+ * AUTHORITY HIERARCHY (highest → lowest):
+ *   1. Critical physical states (hospitalized, passed_out, sleeping/napping)
+ *   2. Authoritative schedule context (isOnShift → work context, at_school)
+ *   3. Location-based context (resolved_current_location_id → category)
+ *   4. Activity text (eating, resting) — SUBORDINATE to schedule
+ *   5. Travel status — ROUTING METADATA ONLY, evaluates destination
+ *
+ * KEY RULES:
+ *   - Schedule is reality. Activity text (eating, resting) does NOT override schedule.
+ *   - A bartender eating during shift is still at work. at_work_service persists.
+ *   - Travel is routing metadata. Never a needs context. Destination is authoritative.
+ *   - Corrective states (eating, resting) are subordinate to schedule context.
+ */
 function getLocationContext(character, locationMap, now) {
   const activity = (character.current_activity || '').toLowerCase();
   const presenceStatus = character.resolved_presence_status || character.location_status;
 
-  // ── CRITICAL STATES — never stale, always authoritative ──
-  // These are physical collapse states that the simulation itself writes,
-  // so they cannot be "stale" in the same way as user/system presence flags.
+  // ── TIER 1: CRITICAL PHYSICAL STATES ────────────────────────────────────
+  // Never stale, always authoritative. These are physical collapse/medical states.
   if (presenceStatus === 'hospitalized') return 'hospitalized';
   if (presenceStatus === 'passed_out') return 'passed_out';
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
@@ -215,89 +233,79 @@ function getLocationContext(character, locationMap, now) {
   if (activity.includes('hospital') || activity.includes('er ') || activity.includes('emergency room') || activity.includes('urgent care')) return 'hospitalized';
 
   // ── STALE PRESENCE CHECK ──────────────────────────────────────────────────
-  // If presence data is stale, do NOT allow energy-restoring activity contexts.
-  // A character with a 6-hour-old "eating" or "resting" activity is not actually
-  // still eating or resting — the stale tag is keeping them awake indefinitely.
   const presenceIsStale = now ? resolvePresenceStaleness(character, now) : false;
 
-  if (!presenceIsStale) {
-    // Only trust activity-based positive-energy contexts when presence is fresh
-    if (activity.includes('eat') || activity.includes('food') || activity.includes('cook') || activity.includes('meal') || activity.includes('lunch') || activity.includes('dinner') || activity.includes('breakfast') || activity.includes('snack')) return 'eating';
-    if (activity.includes('rest') || activity.includes('nap') || activity.includes('relax')) return 'resting';
-  }
+  // ── TIER 2: AUTHORITATIVE SCHEDULE CONTEXT ────────────────────────────────
+  // Work and school schedules are REALITY. They are checked BEFORE activity text
+  // or travel status. A character eating during their shift is still at work.
+  // A character traveling to their workplace during shift is still working.
+  // Eating/drinking during a shift does not cancel work context — it is
+  // work-compatible behavior (meal break, staff drink). Work context persists;
+  // hunger recovery is applied via corrective override, not context switching.
 
-  // ── TRAVEL — always authoritative (travel_status is independently managed) ──
-  // EXCEPTION: if character is traveling TO their work location during an active shift,
-  // treat them as at_work, not traveling. They are commuting to a people-facing workplace
-  // and should receive work-context social protection, not traveling's social decay (-1/hr).
-  // Otherwise, during-shift transit erases hours of social exposure before they even arrive.
-  if (character.travel_status && character.travel_status !== 'not_traveling') {
-    if (isOnShift(character, locationMap)) {
-      const workLocId = character.occupation_location_id || character.current_work_location_id;
-      const travelingToId = character.traveling_to_location_id || character.travel_destination_location_id;
-      if (workLocId && travelingToId && travelingToId === workLocId) {
-        const workLoc = locationMap[workLocId];
-        if (workLoc) return getWorkContextFromLocation(workLoc);
-        return 'at_work';
-      }
-    }
-    return 'traveling';
-  }
-
-  // ── WORK CONTEXTS ─────────────────────────────────────────────────────────
-  // "At work" contexts always drain energy, so we allow them even if presence is stale.
-  // The only stale concern is at_work granting POSITIVE energy — it doesn't (at_work: -5/hr).
-  if (activity.includes('at work') || activity.includes('working') || activity.includes('on shift')) {
-    const workLocId = character.current_work_location_id || character.occupation_location_id;
+  if (isOnShift(character, locationMap)) {
+    const workLocId = character.occupation_location_id || character.current_work_location_id;
     const workLoc = workLocId ? locationMap[workLocId] : null;
-    if (workLoc) return isOnShift(character, locationMap) ? getWorkContextFromLocation(workLoc) : 'work_off_shift';
-    return isOnShift(character, locationMap) ? 'at_work' : 'work_off_shift';
+    if (workLoc) return getWorkContextFromLocation(workLoc);
+    return 'at_work';
   }
 
-  if (presenceStatus === 'at_work') {
-    // Validate against actual schedule — if not on shift, stale at_work flag = work_off_shift
-    const workLocId = character.current_work_location_id || character.occupation_location_id;
-    const workLoc = workLocId ? locationMap[workLocId] : null;
-    if (workLoc) return isOnShift(character, locationMap) ? getWorkContextFromLocation(workLoc) : 'work_off_shift';
-    return isOnShift(character, locationMap) ? 'at_work' : 'work_off_shift';
-  }
   if (presenceStatus === 'at_school') return 'at_school';
 
+  // ── TIER 3: TRAVEL — ROUTING METADATA ONLY ───────────────────────────────
+  // Travel is NOT a needs context. It is a routing marker. Characters are
+  // effectively moved between locations. Destination context is authoritative.
+  // Travel must never apply its own decay/recovery rates over the destination.
+  if (character.travel_status && character.travel_status !== 'not_traveling') {
+    const destId = character.traveling_to_location_id || character.travel_destination_location_id;
+    if (destId && locationMap[destId]) {
+      const destLoc = locationMap[destId];
+      const destCat = (destLoc.category || '').toLowerCase();
+      if (destCat === 'home') return presenceIsStale ? 'default' : 'home_resting';
+      if (destCat === 'food_drink') return presenceIsStale ? 'default' : 'food_drink';
+      if (destCat === 'gym') return 'gym';
+      if (destCat === 'social') return 'social_out';
+      if (destCat === 'medical') return 'hospital';
+    }
+    return 'default';
+  }
+
+  // ── TIER 4: STALE PRESENCE FALLBACK — at_work without schedule ───────────
+  if (presenceStatus === 'at_work') return 'work_off_shift';
+
+  // ── TIER 5: LOCATION-BASED CONTEXT ────────────────────────────────────────
   const locId = character.resolved_current_location_id;
   if (!locId) {
-    // No location resolved + presence is either home or missing.
-    // If stale: fall to 'default' — idle awake with no verified rest context.
-    // If fresh: allow home_resting.
     if (presenceIsStale) return 'default';
     if (presenceStatus === 'home' || !presenceStatus) return 'home_resting';
     return 'default';
   }
   const loc = locationMap[locId];
-  if (!loc) {
-    // Location ID set but location not found — data integrity issue.
-    // Treat as default (energy drains at idle rate) rather than granting rest.
-    return 'default';
-  }
+  if (!loc) return 'default';
 
-  const workLocId = character.current_work_location_id || character.occupation_location_id;
-  if (locId === workLocId) return isOnShift(character, locationMap) ? getWorkContextFromLocation(loc) : 'work_off_shift';
+  const workLocId = character.occupation_location_id || character.current_work_location_id;
+  if (locId === workLocId) return 'work_off_shift'; // at work location but not on shift
 
   const cat = (loc.category || '').toLowerCase();
   const name = (loc.name || '').toLowerCase();
   if (cat === 'gym') return 'gym';
   if (cat === 'medical') return 'hospital';
   if (cat === 'food_drink' || name.includes('restaurant') || name.includes('cafe') || name.includes('diner') || name.includes('kitchen')) {
-    // Only grant food_drink energy bonus if presence is fresh
     return presenceIsStale ? 'social_out' : 'food_drink';
   }
   if (cat === 'social' || name.includes('bar') || name.includes('club') || name.includes('lounge') || name.includes('nightclub')) return 'bar_club';
   if (cat === 'outdoor') return 'social_out';
   if (cat === 'home' || cat === 'generic') {
-    // home_resting grants +3/hr energy — only allow when presence is fresh.
-    // Stale home presence = character is home but doing nothing verifiable → idle default.
     if (presenceIsStale) return 'default';
     return (presenceStatus === 'home' || !presenceStatus) ? 'home_resting' : 'home_active';
   }
+
+  // ── TIER 6: ACTIVITY TEXT (subordinate — schedule/location not found) ─────
+  if (!presenceIsStale) {
+    if (activity.includes('eat') || activity.includes('food') || activity.includes('cook') || activity.includes('meal') || activity.includes('lunch') || activity.includes('dinner') || activity.includes('breakfast') || activity.includes('snack')) return 'eating';
+    if (activity.includes('rest') || activity.includes('nap') || activity.includes('relax')) return 'resting';
+  }
+
   return 'default';
 }
 
@@ -819,11 +827,27 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
     const locType = (char.resolved_location_type || '').toLowerCase();
     const locId = char.resolved_current_location_id;
     const homeId = char.current_home_location_id;
+    // Characters at work at bars, restaurants, cafés, clubs, or food-service
+    // workplaces CAN eat during their shift. Eating does not cancel work context.
+    const isAtWorkThatServesFood = (() => {
+      if (!onShift) return false;
+      const workLocId = char.current_work_location_id || char.occupation_location_id;
+      if (!workLocId || !locationMap[workLocId]) return false;
+      const wl = locationMap[workLocId];
+      const wCat = (wl.category || '').toLowerCase();
+      const wName = (wl.name || '').toLowerCase();
+      return wCat === 'food_drink' || wCat === 'social' ||
+        wName.includes('bar') || wName.includes('restaurant') || wName.includes('cafe') ||
+        wName.includes('diner') || wName.includes('grill') || wName.includes('club') ||
+        wName.includes('lounge') || wName.includes('kitchen');
+    })();
+
     const isAtHomeOrFood = (
       locType === 'home' ||
       locType === 'food_drink' ||
       (locId && locId === homeId) ||
-      presence === 'home'
+      presence === 'home' ||
+      isAtWorkThatServesFood
     );
     // Already in an eating activity → this tick IS the execution tick — no re-announce
     const alreadyEating = (char.current_activity || '').toLowerCase().includes('eat');
