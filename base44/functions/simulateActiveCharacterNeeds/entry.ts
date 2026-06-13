@@ -227,7 +227,22 @@ function getLocationContext(character, locationMap, now) {
   }
 
   // ── TRAVEL — always authoritative (travel_status is independently managed) ──
-  if (character.travel_status && character.travel_status !== 'not_traveling') return 'traveling';
+  // EXCEPTION: if character is traveling TO their work location during an active shift,
+  // treat them as at_work, not traveling. They are commuting to a people-facing workplace
+  // and should receive work-context social protection, not traveling's social decay (-1/hr).
+  // Otherwise, during-shift transit erases hours of social exposure before they even arrive.
+  if (character.travel_status && character.travel_status !== 'not_traveling') {
+    if (isOnShift(character, locationMap)) {
+      const workLocId = character.occupation_location_id || character.current_work_location_id;
+      const travelingToId = character.traveling_to_location_id || character.travel_destination_location_id;
+      if (workLocId && travelingToId && travelingToId === workLocId) {
+        const workLoc = locationMap[workLocId];
+        if (workLoc) return getWorkContextFromLocation(workLoc);
+        return 'at_work';
+      }
+    }
+    return 'traveling';
+  }
 
   // ── WORK CONTEXTS ─────────────────────────────────────────────────────────
   // "At work" contexts always drain energy, so we allow them even if presence is stale.
