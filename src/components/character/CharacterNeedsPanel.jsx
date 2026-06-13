@@ -105,8 +105,14 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
     setIsUpdating(true);
     setValidationIssues([]);
     try {
-      // Persist immediately to backend
-      const updatePayload = { [key]: newValue };
+      // Persist immediately to backend — user authority is absolute.
+      // Update last_need_simulated_at so the next simulation tick continues
+      // from the user-set value and current time, not from an old timestamp.
+      const updatePayload = {
+        [key]: newValue,
+        last_need_simulated_at: new Date().toISOString(),
+        needs_initialized: true,
+      };
       await base44.entities.Character.update(character.id, updatePayload);
       
       // Live state wins — invalidate all caches for this character
