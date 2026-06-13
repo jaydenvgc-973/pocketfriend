@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
-// computeMentalModifier is defined inline below — ../lib/ imports not supported in Deno Deploy function isolates
+// Note: computeMentalModifier is inlined to avoid import issues.
 
 /**
  * simulateActiveCharacterNeeds — CORRECTED v2
@@ -466,21 +466,8 @@ function computeComfortModifier(char, context, locationMap) {
   return Math.max(-2, Math.min(2, modifier));
 }
 
-// Mental modifier logic extracted to lib/mentalWellbeingModifier.js
-// Mental is influenced by accomplishment, stability, purpose, positive
-// relationships, self-care, personal growth, and healthy routines.
-// It should generally trend upward when a character lives a stable,
-// meaningful, connected, and fulfilling life.
-//
-// DESIGN RULES:
-//   - Max positive modifier: +3/hr
-//   - Small meaningful moments can produce significant improvements
-//   - Mental is affected by lived experience, not just direct interactions
-//   - Accomplishments, stability, connection, growth, and self-care all contribute
-//   - Personality traits scale how much each character benefits from each dimension
-//   - Characters with stable, fulfilling lives should not continuously decline
-//
-function computeMentalModifier(char, context, locationMap) {
+// computeMentalModifier and mentalPersonalityScale live in ../lib/mentalWellbeingModifier.js
+// computeMentalModifier imported from ../lib/mentalWellbeingModifier.js
   let modifier = 0;
   const scale = mentalPersonalityScale(char);
 
