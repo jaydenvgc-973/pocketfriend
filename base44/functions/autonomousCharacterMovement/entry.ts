@@ -716,12 +716,32 @@ Deno.serve(async (req) => {
           const isSchoolDay = isStudent && ![0, 6].includes(dow);
           const isLate = hour >= 22 || hour < 5;
 
+          // ── PRESSURE CURVES: same as simulateActiveCharacterNeeds ──────
+          const pCurve = (value, curve) => {
+            for (let i = 0; i < curve.length - 1; i++) {
+              const [vHi, pHi] = curve[i], [vLo, pLo] = curve[i+1];
+              if (value >= vLo && value <= vHi) {
+                const range = vHi - vLo;
+                if (range === 0) return pHi;
+                return pHi + ((vHi - value) / range) * (pLo - pHi);
+              }
+            }
+            return value >= curve[0][0] ? curve[0][1] : curve[curve.length-1][1];
+          };
+          const HC = [[100,0],[70,0],[55,0.10],[45,0.18],[40,0.22],[35,0.30],[25,0.50],[20,0.65],[15,0.80],[10,0.90],[5,0.95],[0,1.0]];
+          const EC = [[100,0],[80,0.03],[60,0.10],[50,0.18],[40,0.28],[35,0.35],[30,0.45],[25,0.58],[20,0.72],[15,0.82],[10,0.90],[5,0.97],[0,1.0]];
+          const YC = [[100,0],[75,0],[55,0.08],[45,0.15],[40,0.20],[35,0.30],[30,0.45],[25,0.60],[20,0.75],[15,0.85],[10,0.93],[0,1.0]];
+          const p = {
+            hunger:  pCurve(vals.hunger ?? 70, HC),
+            energy:  pCurve(vals.energy ?? 75, EC),
+            hygiene: pCurve(vals.hygiene ?? 75, YC),
+          };
+
           const dw = {
             work: 0.15, education: 0.10, rest: 0.10, eat: 0.08,
             hygiene: 0.05, social: 0.08, home: 0.05, recreation: 0.05,
           };
 
-          // Emergency: health/energy/hunger collapse trumps everything
           const needsEnergy = vals.energy;
           const needsHealth = vals.health;
           const needsHunger = vals.hunger;
@@ -730,20 +750,18 @@ Deno.serve(async (req) => {
           } else {
             if (onShiftNow) { dw.work = 0.40; dw.recreation = 0.01; }
             if (isSchoolDay) { dw.education = 0.30; dw.recreation = 0.03; }
-            if (vals.hunger <= 20) { dw.eat = onShiftNow ? 0.15 : 0.30; if (!onShiftNow) dw.work *= 0.6; }
-            else if (vals.hunger <= 35) { dw.eat = 0.15; }
-            if (vals.energy <= 25) { dw.rest = 0.45; dw.work = Math.min(dw.work, 0.12); dw.education = Math.min(dw.education, 0.08); }
-            else if (vals.energy <= 35) { dw.rest = 0.20; }
-            if (isLate) { dw.rest += 0.12; dw.work = Math.min(dw.work, 0.05); }
-            // Personality traits
+            // Continuous pressure scaling (not binary thresholds)
+            dw.eat     *= (1 + p.hunger  * 3.5);
+            dw.rest    *= (1 + p.energy  * 3.5);
+            dw.hygiene *= (1 + p.hygiene * 4.0);
+            dw.home    *= (1 + p.energy  * 1.5);
+            if (isLate) { dw.rest += 0.12; dw.work = Math.min(dw.work, 0.05); dw.social *= 0.5; }
             if (char.trait_conscientious) { dw.work += 0.10; dw.rest -= 0.03; }
             if (char.trait_night_owl) { dw.rest += 0.05; }
             if (char.trait_morning_person) { dw.rest -= 0.03; }
             if (char.trait_loyal) { dw.social += 0.05; }
             if (char.trait_stubborn) { dw.eat -= 0.02; }
-            // Confinement
-            if (char.is_jailed || char.house_arrest_active) { dw.work = 0; dw.education = 0; dw.recreation = 0.01; }
-            // Clamp
+            if (char.is_jailed || char.house_arrest_active) { dw.work = 0; dw.education = 0; dw.recreation = 0.01; dw.social *= 0.3; }
             for (const k of Object.keys(dw)) { if (k !== 'emergency') dw[k] = Math.max(0, Math.min(0.75, dw[k])); }
           }
 

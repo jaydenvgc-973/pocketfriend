@@ -596,27 +596,96 @@ function needsAreUninitialized(needs) {
  *
  * This runs INLINE (no cross-function HTTP call) for performance.
  */
+// ── PRESSURE CURVE UTILITY ─────────────────────────────────────────────────
+// Maps raw need value (0-100) to continuous pressure score (0-1) using
+// need-specific curves. Linear interpolation between control points.
+// Each need has its own curve — hygiene at 40% means something different
+// than energy at 40%.
+function pressureCurve(value, curve) {
+  for (let i = 0; i < curve.length - 1; i++) {
+    const [vHi, pHi] = curve[i];
+    const [vLo, pLo] = curve[i + 1];
+    if (value >= vLo && value <= vHi) {
+      const range = vHi - vLo;
+      if (range === 0) return pHi;
+      return pHi + ((vHi - value) / range) * (pLo - pHi);
+    }
+  }
+  if (value >= curve[0][0]) return curve[0][1];
+  return curve[curve.length - 1][1];
+}
+
+// Need-specific pressure curves: [value_threshold, pressure_score]
+// Pressure is continuous — there is no "not critical = ignore" binary.
+const HYGIENE_CURVE = [[100,0],[75,0],[55,0.08],[45,0.15],[40,0.20],[35,0.30],[30,0.45],[25,0.60],[20,0.75],[15,0.85],[10,0.93],[0,1.0]];
+const ENERGY_CURVE  = [[100,0],[80,0.03],[60,0.10],[50,0.18],[40,0.28],[35,0.35],[30,0.45],[25,0.58],[20,0.72],[15,0.82],[10,0.90],[5,0.97],[0,1.0]];
+const HUNGER_CURVE  = [[100,0],[70,0],[55,0.10],[45,0.18],[40,0.22],[35,0.30],[25,0.50],[20,0.65],[15,0.80],[10,0.90],[5,0.95],[0,1.0]];
+const SOCIAL_CURVE  = [[100,0],[70,0],[55,0.06],[45,0.12],[35,0.20],[25,0.35],[20,0.45],[15,0.60],[10,0.80],[0,1.0]];
+const MENTAL_CURVE  = [[100,0],[70,0.05],[55,0.12],[45,0.20],[35,0.30],[25,0.42],[20,0.52],[15,0.65],[10,0.82],[0,1.0]];
+const COMFORT_CURVE = [[100,0],[70,0.05],[55,0.15],[45,0.22],[35,0.35],[25,0.50],[15,0.68],[10,0.82],[0,1.0]];
+const HEALTH_CURVE  = [[100,0],[80,0],[65,0.05],[50,0.12],[40,0.20],[30,0.30],[25,0.42],[20,0.60],[15,0.80],[10,0.92],[0,1.0]];
+const FINANCE_CURVE = [[100,0],[70,0],[55,0.10],[40,0.20],[30,0.35],[20,0.55],[10,0.80],[0,1.0]];
+
 function computeDecisionWeights(char, newNeeds, locationMap) {
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const cur = nowET.getHours() * 60 + nowET.getMinutes();
   const dow = nowET.getDay();
   const hour = nowET.getHours();
 
+  // ── NEED-SPECIFIC CONTINUOUS PRESSURE SCORES ──────────────────────────
+  // Pressure is continuous (0-1), not binary. Every need value contributes
+  // to decision pressure. There is no "ignore until critical" zone.
+  const pressures = {
+    hunger:   pressureCurve(newNeeds.hunger   ?? 70, HUNGER_CURVE),
+    energy:   pressureCurve(newNeeds.energy   ?? 75, ENERGY_CURVE),
+    hygiene:  pressureCurve(newNeeds.hygiene  ?? 75, HYGIENE_CURVE),
+    social:   pressureCurve(newNeeds.social   ?? 65, SOCIAL_CURVE),
+    mental:   pressureCurve(newNeeds.mental   ?? 70, MENTAL_CURVE),
+    comfort:  pressureCurve(newNeeds.comfort  ?? 70, COMFORT_CURVE),
+    health:   pressureCurve(newNeeds.health   ?? 80, HEALTH_CURVE),
+    financial: pressureCurve(newNeeds.financial_need_value ?? 60, FINANCE_CURVE),
+  };
+
+  // ── OPPORTUNITY BOOSTS: can the solution be executed right now? ──────
+  const locType = (char.resolved_location_type || '').toLowerCase();
+  const locId = char.resolved_current_location_id;
+  const homeId = char.current_home_location_id;
+  const presence = char.resolved_presence_status || '';
+  const isAtHome = locType === 'home' || presence === 'home' || (locId && locId === homeId);
+
+  // Food availability: at home, at food_drink, at grocery, or at a food-serving workplace
+  const isAtFoodLocation = isAtHome || locType === 'food_drink' || (() => {
+    if (!locId || !locationMap[locId]) return false;
+    const l = locationMap[locId];
+    const cat = (l.category || '').toLowerCase();
+    const name = (l.name || '').toLowerCase();
+    return cat === 'grocery' || name.includes('restaurant') || name.includes('cafe') ||
+      name.includes('diner') || name.includes('kitchen') || name.includes('bar') ||
+      name.includes('grill') || name.includes('club');
+  })();
+
+  const opportunity = {
+    canEat: isAtFoodLocation ? 0.60 : 0.10,       // food is right here vs needs travel
+    canShower: isAtHome ? 0.55 : 0.05,             // shower is here vs needs to go home
+    canRest: isAtHome ? 0.50 : (locType === 'hotel' || locType === 'generic' ? 0.30 : 0.08),
+    canSleep: (isAtHome || locType === 'hotel' || locType === 'generic' || presence === 'sleeping' || !locType) ? 0.55 : 0.05,
+    canSocialize: (locType === 'social' || locType === 'food_drink' || locType === 'outdoor') ? 0.40 : (isAtHome ? 0.15 : 0.05),
+    canImproveComfort: isAtHome ? 0.45 : 0.10,    // can move to better chair/couch/bed at home
+    canWork: false, // set below
+  };
+
+  // ── BASE WEIGHTS ─────────────────────────────────────────────────────
   const weights = {
     work: 0.15, education: 0.10, rest: 0.10, eat: 0.08,
     hygiene: 0.05, social: 0.08, home: 0.05, recreation: 0.05,
   };
 
-  // ── EMERGENCY OVERRIDE: health/energy collapse trumps everything ──────
-  const needsEnergy = newNeeds.energy ?? 75;
-  const needsHealth = newNeeds.health ?? 80;
-  const needsHunger = newNeeds.hunger ?? 70;
-
-  if (needsEnergy <= T.ENERGY_PASSOUT || needsHealth <= T.HEALTH_ER || needsHunger <= T.HUNGER_ER) {
-    return { work: 0, education: 0, rest: 0.70, eat: 0, hygiene: 0, social: 0, home: 0, recreation: 0, emergency: true };
+  // ── EMERGENCY OVERRIDE ────────────────────────────────────────────────
+  if (newNeeds.energy <= T.ENERGY_PASSOUT || newNeeds.health <= T.HEALTH_ER || newNeeds.hunger <= T.HUNGER_ER) {
+    return { work: 0, education: 0, rest: 0.70, eat: 0, hygiene: 0, social: 0, home: 0, recreation: 0, emergency: true, pressures, opportunity };
   }
 
-  // ── SCHEDULE GRAVITY: work and school carry substantial weight ────────
+  // ── SCHEDULE GRAVITY ─────────────────────────────────────────────────
   const onShift = isOnShift(char, locationMap);
   const isStudent = char.student_status === 'enrolled';
   const isSchoolDay = isStudent && ![0, 6].includes(dow);
@@ -624,6 +693,7 @@ function computeDecisionWeights(char, newNeeds, locationMap) {
   if (onShift) {
     weights.work = 0.40;
     weights.recreation = 0.01;
+    opportunity.canWork = true;
   }
 
   if (isSchoolDay) {
@@ -631,26 +701,31 @@ function computeDecisionWeights(char, newNeeds, locationMap) {
     weights.recreation = 0.03;
   }
 
-  // ── NEEDS PUSH: hungry/tired raise their respective weights ───────────
-  if (needsHunger <= T.HUNGER_CRITICAL) {
-    weights.eat = 0.30;
-  } else if (needsHunger <= T.HUNGER_LOW) {
-    weights.eat = 0.15;
-  }
+  // ── APPLY CONTINUOUS PRESSURE TO WEIGHTS ─────────────────────────────
+  // Each need's pressure continuously modulates its dimension weight.
+  // pressure=0.20 means moderate influence. pressure=0.60 means strong.
+  // This replaces the old "cross threshold → jump weight" binary pattern.
+  weights.eat     = weights.eat     * (1 + pressures.hunger * 3.5);
+  weights.rest    = weights.rest    * (1 + pressures.energy * 3.5);
+  weights.hygiene = weights.hygiene * (1 + pressures.hygiene * 4.0);
+  weights.social  = weights.social  * (1 + pressures.social * 2.5);
+  weights.home    = weights.home    * (1 + pressures.comfort * 2.0 + pressures.energy * 1.5);
 
-  if (needsEnergy <= T.ENERGY_CRITICAL) {
-    weights.rest = 0.45;
-    weights.work = Math.min(weights.work, 0.12);
-    weights.education = Math.min(weights.education, 0.08);
-  } else if (needsEnergy <= T.ENERGY_LOW) {
-    weights.rest = 0.20;
-  }
+  // ── APPLY OPPORTUNITY BOOSTS ─────────────────────────────────────────
+  // When the solution is immediately available, boost the weight.
+  // This is why a character beside their bed with declining energy
+  // should get into bed — the opportunity is right there.
+  weights.eat     *= (1 + opportunity.canEat);
+  weights.hygiene *= (1 + opportunity.canShower);
+  weights.rest    *= (1 + opportunity.canRest);
+  weights.home    *= (1 + opportunity.canImproveComfort);
 
   // ── TIME OF DAY ──────────────────────────────────────────────────────
   const isLate = hour >= 22 || hour < 5;
   if (isLate) {
     weights.rest += 0.12;
     weights.work = Math.min(weights.work, 0.05);
+    weights.social *= 0.5; // don't go clubbing at 2 AM
   }
 
   // ── PERSONALITY TRAIT INFLUENCES ──────────────────────────────────────
@@ -661,7 +736,7 @@ function computeDecisionWeights(char, newNeeds, locationMap) {
   if (char.trait_night_owl)    { traitMods.rest = (traitMods.rest || 0) + 0.05; }
   if (char.trait_morning_person) { traitMods.rest = (traitMods.rest || 0) - 0.03; }
   if (char.trait_loyal)        { traitMods.social = (traitMods.social || 0) + 0.05; }
-  if (char.trait_stubborn)     { traitMods.eat = (traitMods.eat || 0) - 0.02; } // less likely to be swayed by hunger
+  if (char.trait_stubborn)     { traitMods.eat = (traitMods.eat || 0) - 0.02; }
 
   for (const [dim, mod] of Object.entries(traitMods)) {
     weights[dim] = Math.max(0, Math.min(0.75, (weights[dim] || 0) + mod));
@@ -673,9 +748,10 @@ function computeDecisionWeights(char, newNeeds, locationMap) {
     weights.work = 0;
     weights.education = 0;
     weights.recreation = 0.01;
+    weights.social *= 0.3;
   }
 
-  return weights;
+  return { ...weights, pressures, opportunity };
 }
 
 /**
@@ -717,47 +793,96 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
     return { actionType: 'work', reason: 'On shift — working' };
   }
 
-  // ── OFF SHIFT: score all options and pick best ────────────────────────
+  // ── OFF SHIFT: score ALL options via continuous pressure + opportunity ──
+  // Every action is scored continuously, not gated by binary thresholds.
+  // score = weight * (1 + pressure * multiplier) * (1 + opportunity)
+  // A need at 45% creates meaningful pressure — it does not need to be "critical."
+  const p = weights.pressures || {};
+  const opp = weights.opportunity || {};
+  const atHome = locationType === 'home' || presence === 'home';
+
   const options = [];
 
-  if (needs.urgency.energy === 'critical')
-    options.push({ actionType: 'sleep', score: 0.90, reason: 'Critically exhausted' });
-  else if (needs.urgency.energy === 'low')
-    options.push({ actionType: 'rest', score: weights.rest + 0.15, reason: 'Tired' });
-
-  if (needs.urgency.hunger === 'critical' || needs.urgency.hunger === 'emergency') {
-    const atHome = locationType === 'home' || presence === 'home';
-    options.push({ actionType: 'eat', score: weights.eat + (atHome ? 0.25 : 0.20), reason: atHome ? 'Hungry — can eat at home' : 'Hungry — needs food' });
-  } else if (needs.urgency.hunger === 'low') {
-    options.push({ actionType: 'eat', score: weights.eat + 0.08, reason: 'Getting hungry' });
+  // ── SLEEP / REST ──────────────────────────────────────────────────────
+  const sleepScore = weights.rest * (1 + p.energy * 4.5) * (1 + opp.canSleep);
+  if (!timeCtx.isLate && p.energy < 0.15) {
+    // Energy is fine and it's not late — sleep score is zero (no reason to sleep)
+  } else {
+    options.push({
+      actionType: 'sleep', score: sleepScore,
+      reason: p.energy > 0.50 ? `Exhausted (energy ${Math.round(needs.values.energy)})` :
+              opp.canSleep > 0.40 ? 'Bed is right there — might as well rest' :
+              'Could use some rest'
+    });
   }
 
-  if (needs.urgency.hygiene === 'critical') {
-    const atHome = locationType === 'home' || presence === 'home';
-    options.push({ actionType: 'hygiene', score: weights.hygiene + (atHome ? 0.30 : 0.15), reason: atHome ? 'Needs to freshen up — already home' : 'Needs to clean up' });
+  // ── EAT ──────────────────────────────────────────────────────────────
+  const eatScore = weights.eat * (1 + p.hunger * 4.0) * (1 + opp.canEat);
+  options.push({
+    actionType: 'eat', score: eatScore,
+    reason: p.hunger > 0.50 ? `Very hungry (${Math.round(needs.values.hunger)})` :
+            opp.canEat > 0.40 ? 'Food is available — eating now makes sense' :
+            p.hunger > 0.15 ? 'Getting hungry' : 'Could eat'
+  });
+
+  // ── HYGIENE ───────────────────────────────────────────────────────────
+  const hygieneScore = weights.hygiene * (1 + p.hygiene * 5.0) * (1 + opp.canShower);
+  options.push({
+    actionType: 'hygiene', score: hygieneScore,
+    reason: p.hygiene > 0.55 ? `Needs to clean up (hygiene ${Math.round(needs.values.hygiene)})` :
+            opp.canShower > 0.40 ? 'Shower is right there — freshen up' :
+            p.hygiene > 0.15 ? 'Starting to feel less fresh' : 'Shower available'
+  });
+
+  // ── REST (non-sleep) ──────────────────────────────────────────────────
+  const restScore = weights.rest * (1 + p.energy * 2.0 + p.mental * 2.0 + p.comfort * 1.5) * (1 + opp.canRest);
+  options.push({
+    actionType: 'rest', score: restScore,
+    reason: p.mental > 0.40 ? 'Mentally strained — needs a break' :
+            p.comfort > 0.30 ? 'Uncomfortable — should rest somewhere better' :
+            'Could use a break'
+  });
+
+  // ── SOCIAL ────────────────────────────────────────────────────────────
+  const socialScore = weights.social * (1 + p.social * 2.5) * (1 + opp.canSocialize);
+  if (!timeCtx.isLate || opp.canSocialize > 0.30) {
+    options.push({
+      actionType: 'social', score: socialScore,
+      reason: p.social > 0.40 ? 'Needs social connection' :
+              opp.canSocialize > 0.30 ? 'Social opportunity available' : 'Could socialize'
+    });
   }
 
-  if (needs.urgency.social === 'critical')
-    options.push({ actionType: 'social', score: weights.social + 0.10, reason: 'Socially isolated' });
+  // ── RECREATION ────────────────────────────────────────────────────────
+  const recScore = weights.recreation * (0.6 + opp.canSocialize * 0.4);
+  if (!timeCtx.isLate && weights.recreation > 0.03) {
+    options.push({
+      actionType: 'recreation', score: recScore,
+      reason: 'Free time — recreation available'
+    });
+  }
 
-  if (needs.urgency.mental === 'critical')
-    options.push({ actionType: 'rest', score: weights.rest + 0.12, reason: 'Mentally strained' });
+  // ── FAMILY ────────────────────────────────────────────────────────────
+  if (weights.family > 0.06) {
+    options.push({
+      actionType: 'family', score: weights.family * (atHome ? 1.3 : 0.7),
+      reason: atHome ? 'Family time at home' : 'Spend time with family'
+    });
+  }
 
-  // Non-need-driven options
-  if (weights.family > 0.08 && !needs.urgency.energy?.includes('critical'))
-    options.push({ actionType: 'family', score: weights.family, reason: 'Family time' });
+  // ── EDUCATION / SCHOOL ────────────────────────────────────────────────
+  if (weights.education > 0.15) {
+    options.push({
+      actionType: 'education', score: weights.education,
+      reason: 'School obligation'
+    });
+  }
 
-  if (weights.social > 0.10 && !needs.urgency.energy?.includes('critical') && !timeCtx.isLate)
-    options.push({ actionType: 'social', score: weights.social, reason: 'Social opportunity' });
-
-  if (weights.recreation > 0.05 && !needs.urgency.energy?.includes('critical') && !timeCtx.isLate)
-    options.push({ actionType: 'recreation', score: weights.recreation, reason: 'Free time' });
-
-  if (weights.education > 0.20)
-    options.push({ actionType: 'education', score: weights.education, reason: 'School obligation' });
-
-  // Default fallback
-  options.push({ actionType: 'home_routine', score: weights.home + 0.05, reason: 'Default — relaxing at home' });
+  // ── DEFAULT: HOME ROUTINE ─────────────────────────────────────────────
+  options.push({
+    actionType: 'home_routine', score: weights.home * (atHome ? 1.2 : 0.8),
+    reason: atHome ? 'Relaxing at home' : 'Default routine'
+  });
 
   options.sort((a, b) => b.score - a.score);
   return options[0];
