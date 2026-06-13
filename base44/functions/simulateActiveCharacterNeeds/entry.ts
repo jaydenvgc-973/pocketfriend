@@ -68,10 +68,10 @@ const RATES = {
   // food_drink: eating out while awake does not restore energy — food restores hunger only.
   food_drink:      { hunger: +15,  energy:  0,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
   social_out:      { hunger: -2,   energy: -4,  social: +4,   health: 0,    mental: +1,   hygiene: -1,   comfort: -0.5 },
-  // DEPRECATED: Travel is routing metadata only, not a needs context.
-  // getLocationContext no longer returns 'traveling' — destination context is authoritative.
-  // Kept identical to default for backward compatibility with any remaining references.
-  traveling:       { hunger: -2,   energy: -4,  social: -1,   health: 0,    mental: -0.5, hygiene: -1,   comfort: -1   },
+  // REMOVED: Travel is routing metadata only, never a needs context.
+  // Movement is teleport-style — destination/resolved context is always authoritative.
+  // No travel exception for "travel to work" or any other destination.
+  // All zeros — travel applies no needs rates whatsoever.
   // eating: hunger relief only. Energy=0 while awake. -5/hr baseline still applies on top.
   eating:          { hunger: +15,  energy:  0,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
   // resting: energy=0 (neutral). Awake resting does not restore energy.
@@ -693,7 +693,7 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
 
         stateWrites.resolved_presence_status = 'home';
         stateWrites.location_status = 'home';
-        stateWrites.current_activity = null;
+        stateWrites.current_activity = 'woke up — starting their day';
         stateWrites.resolved_last_updated_at = now.toISOString(); // ISO UTC for DB storage
         stateWrites.sleep_interrupted_at = now.toISOString();     // marks wake time for alarm guard
 
@@ -909,63 +909,113 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
 }
 
 /**
+ * resolveNextActivity — CONTINUITY PROGRESSION
+ *
+ * When a temporary corrective activity expires (eating finished, shower done,
+ * decompression ended), resolve it into the next realistic current state based
+ * on authoritative context. Never leave a character blank (null) — they are
+ * always doing something, even if it's just "relaxing at home."
+ *
+ * RESOLUTION ORDER (authoritative context wins):
+ *   1. On shift → "working" (work context persists)
+ *   2. At school → "attending school"
+ *   3. At home → "relaxing at home"
+ *   4. At a social venue → "spending time out"
+ *   5. At food/drink → "finished eating, spending time out"
+ *   6. Default → "going about their day"
+ *
+ * This is a forward-resolve, not a null-clear. Characters are never blank.
+ */
+function resolveNextActivity(char, locationMap) {
+  const presence = char.resolved_presence_status || '';
+  const locType = (char.resolved_location_type || '').toLowerCase();
+  const locId = char.resolved_current_location_id;
+  const onShift = isOnShift(char, locationMap);
+
+  // Tier 1: Authoritative schedule context wins — this is reality
+  if (onShift) return 'working';
+
+  // Tier 2: Presence-based resolution
+  if (presence === 'at_school') return 'attending school';
+  if (presence === 'home' || locType === 'home') return 'relaxing at home';
+
+  // Tier 3: Location-based resolution
+  if (locId && locationMap[locId]) {
+    const loc = locationMap[locId];
+    const cat = (loc.category || '').toLowerCase();
+    const name = (loc.name || '').toLowerCase();
+
+    if (cat === 'home') return 'relaxing at home';
+    if (cat === 'food_drink' || name.includes('restaurant') || name.includes('cafe') || name.includes('bar') || name.includes('diner')) {
+      return 'finished eating, spending time out';
+    }
+    if (cat === 'social' || cat === 'outdoor' || name.includes('club') || name.includes('park')) {
+      return 'spending time out';
+    }
+    if (cat === 'gym') return 'at the gym';
+    if (cat === 'medical') return 'at a medical facility';
+    if (cat === 'education') return 'at school';
+    if (cat === 'jail_prison' || loc.is_confinement_facility) return 'in confinement';
+  }
+
+  // Tier 4: Default — neutral, not blank
+  return 'going about their day';
+}
+
+/**
  * resolveStaleCorrectiveActivities — CONTINUITY PROGRESSION
  *
  * Characters do not freeze in time. Temporary corrective activities set by
- * computeCorrectiveState (eating, showering, decompressing) must naturally complete
- * when the triggering need stabilizes. If the simulation would previously leave
- * "eating — hunger addressed" on a character for weeks because no new corrective
- * state overwrote it, this function clears it.
+ * computeCorrectiveState (eating, showering, decompressing) must naturally
+ * resolve when the triggering need stabilizes.
  *
- * Rule: When a need is above its trigger threshold AND the current_activity is a
- * temporary corrective activity for that need, clear the activity. The character
- * has moved on.
- *
- * Activities NOT cleared (routing/manual):
- *   - Activities set by travel/autonomousMovement ("heading to X", "traveling to Y")
- *   - User-set activities
- *   - Non-corrective presence states
+ * Instead of clearing to null (leaving the character blank), this function
+ * resolves the activity into the next valid context using resolveNextActivity.
  */
-function resolveStaleCorrectiveActivities(char, newNeeds, correctiveStateWrites) {
+function resolveStaleCorrectiveActivities(char, newNeeds, correctiveStateWrites, locationMap) {
   const currentActivity = char.current_activity || '';
   const alreadyHasNewActivity = !!correctiveStateWrites.current_activity;
 
-  // If a new corrective activity was just set, don't clear it
+  // If a new corrective activity was just set, don't override it
   if (alreadyHasNewActivity) return {};
 
   const activity = currentActivity.toLowerCase();
-  const clears = {};
+  let activityExpired = false;
 
-  // ── EATING ACTIVITIES → clear when hunger stable ──────────────────────────
+  // ── EATING ACTIVITIES → expire when hunger stable ─────────────────────────
   if (activity.includes('eat') || activity.includes('food') || activity.includes('hunger') || activity.includes('meal')) {
     if ((newNeeds.hunger ?? 70) > T.HUNGER_CRITICAL) {
-      clears.current_activity = null;
+      activityExpired = true;
     }
   }
 
-  // ── HYGIENE ACTIVITIES → clear when hygiene stable ───────────────────────
+  // ── HYGIENE ACTIVITIES → expire when hygiene stable ───────────────────────
   if (activity.includes('wash') || activity.includes('shower') || activity.includes('freshen') || activity.includes('clean')) {
     if ((newNeeds.hygiene ?? 75) > 25) {
-      clears.current_activity = null;
-      clears.emotional_state = 'calm';
+      activityExpired = true;
     }
   }
 
-  // ── DECOMPRESSION → clear when mental stable ────────────────────────────
+  // ── DECOMPRESSION → expire when mental stable ────────────────────────────
   if (activity.includes('decompress') || activity.includes('mental health')) {
     if ((newNeeds.mental ?? 70) > 20) {
-      clears.current_activity = null;
+      activityExpired = true;
     }
   }
 
-  // ── HOME-ROUTING SLEEP SIGNAL → clear when energy stable ─────────────────
-  if (activity.includes('returning home to sleep') || activity.includes('heading home') && activity.includes('sleep')) {
+  // ── HOME-ROUTING SLEEP SIGNAL → expire when energy stable ─────────────────
+  if ((activity.includes('returning home to sleep')) || (activity.includes('heading home') && activity.includes('sleep'))) {
     if ((newNeeds.energy ?? 75) > T.ENERGY_CRITICAL) {
-      clears.current_activity = null;
+      activityExpired = true;
     }
   }
 
-  return clears;
+  if (activityExpired) {
+    const nextActivity = resolveNextActivity(char, locationMap);
+    return { current_activity: nextActivity };
+  }
+
+  return {};
 }
 
 Deno.serve(async (req) => {
@@ -1210,7 +1260,7 @@ Deno.serve(async (req) => {
       // When a need has stabilized above its trigger threshold, clear the
       // temporary activity so the character doesn't remain frozen in time
       // weeks after the activity naturally completed.
-      const continuityClears = resolveStaleCorrectiveActivities(char, newNeeds, corrective.stateWrites);
+      const continuityClears = resolveStaleCorrectiveActivities(char, newNeeds, corrective.stateWrites, locationMap);
       Object.assign(corrective.stateWrites, continuityClears);
 
       // Build final data payload — needs values + corrective state writes
