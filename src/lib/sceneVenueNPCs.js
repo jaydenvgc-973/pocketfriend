@@ -95,6 +95,13 @@ export const VENUE_NPCS = {
     { id: "npc_volunteer", name: "Volunteer", role: "Volunteer", npcType: "staff" },
     { id: "npc_community_member", name: "Community Member", role: "Community Member", npcType: "customer" },
   ],
+  vgc_recovery_yard: [
+    { id: "npc_warehouse_attendant", name: "Warehouse Attendant", role: "Warehouse Attendant", npcType: "staff" },
+    { id: "npc_inspector", name: "Inspector checking items", role: "Inspector", npcType: "staff" },
+    { id: "npc_restorer", name: "Restorer at workbench", role: "Restorer", npcType: "staff" },
+    { id: "npc_admin_clerk", name: "Admin Clerk", role: "Admin Clerk", npcType: "staff" },
+    { id: "npc_archive_worker", name: "Archive worker cataloguing", role: "Archivist", npcType: "staff" },
+  ],
 };
 
 // Category → required operational staff roles (for temporary NPC generation)
@@ -119,6 +126,51 @@ export const REQUIRED_STAFF_ROLES = {
   community:   [{ id: "tmp_coordinator",  name: "Community Coordinator","role": "Community Coordinator", npcType: "staff", isTemporary: true }],
   religion:    [{ id: "tmp_usher",        name: "Usher",               role: "Usher",               npcType: "staff", isTemporary: true }],
   outdoor:     [{ id: "tmp_park_ranger",  name: "Park Ranger",         role: "Park Ranger",         npcType: "staff", isTemporary: true }],
+};
+
+// ── VICK SERVICIO — VGC RECOVERY YARD TEMPORARY STAFF ──────────────────────
+// These are miniature role-based assistants for Vick's Recovery Yard operations.
+// NOT active_created_character. NOT npc_family_member. NOT npc_fictitious.
+// NOT biological needs characters. NOT homepage character cards.
+// NOT sleep/hunger/energy needs simulation participants.
+// Scoped to VGC Recovery Yard zones only. Temporary operational assistants.
+export const VGC_YARD_STAFF = {
+  'Recovery Warehouse': [
+    { id: "vgc_warehouse_attendant", name: "Warehouse Attendant", role: "Warehouse Attendant", npcType: "staff", isTemporary: true,
+      task_context: "Intake receiving, shelving recovered items, logging arrivals, maintaining warehouse organization. Reports to Vick." },
+  ],
+  'Inspection & Review Area': [
+    { id: "vgc_inspector", name: "Inspector", role: "Inspector", npcType: "staff", isTemporary: true,
+      task_context: "Examining items, documenting condition, cataloguing findings, flagging anomalies, preparing review summaries." },
+  ],
+  'Restoration & Repair Workshop': [
+    { id: "vgc_restorer", name: "Restorer", role: "Restorer", npcType: "staff", isTemporary: true,
+      task_context: "Restoring damaged items, repairing broken components, testing functionality after repair, documenting restoration steps." },
+  ],
+  'Quarantine Storage': [
+    { id: "vgc_quarantine_keeper", name: "Quarantine Keeper", role: "Quarantine Keeper", npcType: "staff", isTemporary: true,
+      task_context: "Securing quarantined items, maintaining containment logs, monitoring quarantine status, flagging items ready for review." },
+  ],
+  'Archive Storage': [
+    { id: "vgc_archivist", name: "Archivist", role: "Archivist", npcType: "staff", isTemporary: true,
+      task_context: "Cataloguing archived items, maintaining archive index, retrieving records on request, preserving reference materials." },
+  ],
+  'Administrative Offices': [
+    { id: "vgc_admin_assistant", name: "Admin Assistant", role: "Admin Assistant", npcType: "staff", isTemporary: true,
+      task_context: "Scheduling, intake paperwork, client coordination, documentation management, assisting Vick with operations." },
+    { id: "vgc_office_clerk", name: "Office Clerk", role: "Office Clerk", npcType: "staff", isTemporary: true,
+      task_context: "Filing, record organization, correspondence, intake form processing, general office support." },
+  ],
+};
+
+// Map each VGC Yard zone to its required temp staff roles for the temporary NPC generation system
+export const VGC_YARD_REQUIRED_STAFF = {
+  'Recovery Warehouse':       VGC_YARD_STAFF['Recovery Warehouse'],
+  'Inspection & Review Area':  VGC_YARD_STAFF['Inspection & Review Area'],
+  'Restoration & Repair Workshop': VGC_YARD_STAFF['Restoration & Repair Workshop'],
+  'Quarantine Storage':       VGC_YARD_STAFF['Quarantine Storage'],
+  'Archive Storage':          VGC_YARD_STAFF['Archive Storage'],
+  'Administrative Offices':   VGC_YARD_STAFF['Administrative Offices'],
 };
 
 export const DEFAULT_VENUE_NPC = [

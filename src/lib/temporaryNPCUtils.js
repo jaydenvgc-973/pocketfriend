@@ -11,7 +11,11 @@ const TEMPORARY_NPC_TITLES = new Set([
   'customer', 'patron', 'shopper', 'diner',
   'nurse', 'doctor', 'receptionist', 'assistant',
   'guy', 'girl', 'woman', 'man', 'person',
-  'local', 'stranger', 'passerby', 'jogger', 'walker'
+  'local', 'stranger', 'passerby', 'jogger', 'walker',
+  // VGC Recovery Yard — Vick's temporary assistants
+  'inspector', 'restorer', 'archivist', 'warehouse attendant',
+  'quarantine keeper', 'admin assistant', 'office clerk',
+  'yard assistant', 'warehouse worker', 'inspection clerk',
 ]);
 
 /**

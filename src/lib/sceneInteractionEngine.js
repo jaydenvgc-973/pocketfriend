@@ -1,4 +1,4 @@
-import { REQUIRED_STAFF_ROLES } from './sceneVenueNPCs.js';
+import { REQUIRED_STAFF_ROLES, VGC_YARD_REQUIRED_STAFF } from './sceneVenueNPCs.js';
 
 /**
  * Scene Interaction Engine — Location-Scoped, Read-Only
@@ -593,6 +593,29 @@ export function getTemporarySceneStaff(location, onShiftWorkerIds = []) {
   if (!location) return [];
 
   const category = location.category || 'generic';
+
+  // ── VGC RECOVERY YARD — resolve temp staff by zone, not category ──────────
+  const isRecoveryYard = location.name === 'VGC Recovery Yard';
+  if (isRecoveryYard) {
+    const tempStaff = [];
+    const zones = location.zones || [];
+    for (const zone of zones) {
+      const zoneRoles = VGC_YARD_REQUIRED_STAFF[zone.zone_name];
+      if (!zoneRoles || zoneRoles.length === 0) continue;
+      for (const roleTemplate of zoneRoles) {
+        // Skip Residential Suite assistants unless explicitly needed
+        if (zone.zone_name === 'Residential Suite') continue;
+        tempStaff.push({
+          ...roleTemplate,
+          id: `${roleTemplate.id}_tmp_${location.id}`,
+          isTemporary: true,
+          temporaryLabel: 'Yard Assistant',
+        });
+      }
+    }
+    return tempStaff;
+  }
+
   const requiredRoles = REQUIRED_STAFF_ROLES[category];
   if (!requiredRoles || requiredRoles.length === 0) return [];
 

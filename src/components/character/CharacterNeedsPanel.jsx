@@ -218,16 +218,6 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
         })}
       </div>
 
-      {/* Sleep Debt — separate visibility from Energy */}
-      {character?.sleep_debt_hours > 0 && (
-        <div className="mt-3 px-3 py-2 rounded-xl bg-secondary/40 border border-border flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">😴 Sleep Debt</span>
-          <span className={`font-semibold ${character.sleep_debt_hours >= 4 ? 'text-destructive' : character.sleep_debt_hours >= 2 ? 'text-amber-400' : 'text-blue-400'}`}>
-            {character.sleep_debt_hours.toFixed(1)}h owed
-          </span>
-        </div>
-      )}
-
       {/* Vick-only: Sleep Lock + Hunger Lock */}
       {isVickServicio(character) && (
         <div className="mt-4 p-3 rounded-xl bg-secondary/40 border border-border space-y-3">
