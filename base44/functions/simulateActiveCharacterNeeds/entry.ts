@@ -701,24 +701,11 @@ function computeDecisionWeights(char, newNeeds, locationMap) {
     weights.recreation = 0.03;
   }
 
-  // ── APPLY CONTINUOUS PRESSURE TO WEIGHTS ─────────────────────────────
-  // Each need's pressure continuously modulates its dimension weight.
-  // pressure=0.20 means moderate influence. pressure=0.60 means strong.
-  // This replaces the old "cross threshold → jump weight" binary pattern.
-  weights.eat     = weights.eat     * (1 + pressures.hunger * 3.5);
-  weights.rest    = weights.rest    * (1 + pressures.energy * 3.5);
-  weights.hygiene = weights.hygiene * (1 + pressures.hygiene * 4.0);
-  weights.social  = weights.social  * (1 + pressures.social * 2.5);
-  weights.home    = weights.home    * (1 + pressures.comfort * 2.0 + pressures.energy * 1.5);
-
-  // ── APPLY OPPORTUNITY BOOSTS ─────────────────────────────────────────
-  // When the solution is immediately available, boost the weight.
-  // This is why a character beside their bed with declining energy
-  // should get into bed — the opportunity is right there.
-  weights.eat     *= (1 + opportunity.canEat);
-  weights.hygiene *= (1 + opportunity.canShower);
-  weights.rest    *= (1 + opportunity.canRest);
-  weights.home    *= (1 + opportunity.canImproveComfort);
+  // ── SCHEDULE + PERSONALITY APPLY TO BASE WEIGHTS ────────────────────
+  // Pressure does NOT multiply weights here. Pressure is evaluated
+  // stage-by-stage in evaluateDecisionFromWeights via stagePressure().
+  // Weights here represent base context (schedule gravity, time, traits).
+  // Actual action scoring uses opportunity + routine + preference + stage-gated pressure.
 
   // ── TIME OF DAY ──────────────────────────────────────────────────────
   const isLate = hour >= 22 || hour < 5;
@@ -762,10 +749,94 @@ function computeDecisionWeights(char, newNeeds, locationMap) {
  * the single best actionType. This duplicates the logic in evaluateCharacterNextAction
  * but runs inline to avoid HTTP overhead and circular dependencies.
  */
+// ── STAGE-BASED PRESSURE CONTRIBUTION ─────────────────────────────────────
+// Needs progress through stages, not constant pressure curves.
+// Stage 1-2 (awareness/preference): no decision pressure — character acts
+//   only when opportunity, routine, or preference creates reason.
+// Stage 3 (motivation): moderate — character begins seeking opportunities.
+// Stage 4 (pressure): significant — character prioritizes this need.
+// Stage 5 (emergency): overriding — crisis mode.
+//
+// Pressure contribution to action score only begins at stage 3 (motivation).
+// Before that, actions are driven by opportunity, routine, and preference.
+function stagePressure(pressure) {
+  if (pressure < 0.15) return 0;       // awareness: zero decision pressure
+  if (pressure < 0.35) return 0;       // preference: still no pressure
+  if (pressure < 0.55) return 0.25;    // motivation: moderate influence
+  if (pressure < 0.75) return 0.55;    // pressure: significant influence
+  return 0.90;                           // emergency: dominant influence
+}
+
+// ── ROUTINE DETECTION ──────────────────────────────────────────────────────
+// Characters follow routines. These are not driven by needs — they are
+// driven by time of day, habit, and context.
+function detectRoutines(char, hour, isWeekend, atHome) {
+  const routines = {
+    mealTime: false,
+    usualShowerTime: false,
+    usualBedTime: false,
+    usualSocialTime: false,
+    mealTimeLabel: null,
+  };
+
+  // Meal time windows (Eastern Time)
+  // Breakfast: 7–10 AM, Lunch: 12–2 PM, Dinner: 5–9 PM
+  if (hour >= 7 && hour < 10) { routines.mealTime = true; routines.mealTimeLabel = 'breakfast'; }
+  if (hour >= 12 && hour < 14) { routines.mealTime = true; routines.mealTimeLabel = 'lunch'; }
+  if (hour >= 17 && hour < 21) { routines.mealTime = true; routines.mealTimeLabel = 'dinner'; }
+
+  // Shower time windows: morning (6–10 AM) or evening (7–11 PM)
+  routines.usualShowerTime = (hour >= 6 && hour < 10) || (hour >= 19 && hour < 23);
+
+  // Bedtime window: near character's sleep_start_time (±90 minutes)
+  if (char.sleep_start_time) {
+    const [sh, sm = 0] = char.sleep_start_time.split(':').map(Number);
+    const sleepMin = sh * 60 + sm;
+    const nowMin = hour * 60 + (hour >= 0 && hour < 24 ? 0 : 0);
+    const diffNow = Math.abs(nowMin - sleepMin);
+    const diffWrapped = Math.abs(1440 - Math.abs(nowMin - sleepMin));
+    const minDiff = Math.min(diffNow, diffWrapped);
+    routines.usualBedTime = minDiff <= 90;
+  }
+
+  // Social time: evenings on weekends
+  routines.usualSocialTime = isWeekend && hour >= 17 && hour < 23;
+
+  return routines;
+}
+
+// ── PREFERENCE BOOSTS ──────────────────────────────────────────────────────
+// Personality traits create consistent behavioral preferences independent
+// of need pressure. A conscientious character prefers being clean even
+// at hygiene=70 — not because they need a shower, but because they prefer
+// being fresh.
+function computePreferenceBoosts(char, atHome) {
+  const pref = {
+    cleanliness: 0,
+    comfort: 0,
+    social: 0,
+    routineFollow: 0,
+  };
+
+  // Conscientious characters prefer cleanliness and order
+  if (char.trait_conscientious) pref.cleanliness = 0.20;
+  // Characters who prefer comfort (proxied from positive traits)
+  if (char.trait_night_owl || char.trait_polite) pref.comfort = 0.10;
+  // Social characters enjoy interaction
+  if (char.social_energy === 'extrovert' || char.social_energy === 'mostly_extrovert') pref.social = 0.15;
+  if (char.trait_loyal || char.trait_flirty) pref.social = Math.max(pref.social, 0.10);
+  // Morning people and conscientious types follow routines more
+  if (char.trait_morning_person) pref.routineFollow = 0.12;
+  if (char.trait_conscientious) pref.routineFollow = Math.max(pref.routineFollow, 0.10);
+
+  return pref;
+}
+
 function evaluateDecisionFromWeights(char, schedule, needs, weights, restrictions, timeCtx) {
   const presence = char.resolved_presence_status || '';
   const locationType = (char.resolved_location_type || '').toLowerCase();
   const onShift = schedule.onShift;
+  const atHome = locationType === 'home' || presence === 'home';
 
   // ── RESTRICTIONS: confined characters have limited options ─────────────
   if (restrictions.confined) {
@@ -793,95 +864,143 @@ function evaluateDecisionFromWeights(char, schedule, needs, weights, restriction
     return { actionType: 'work', reason: 'On shift — working' };
   }
 
-  // ── OFF SHIFT: score ALL options via continuous pressure + opportunity ──
-  // Every action is scored continuously, not gated by binary thresholds.
-  // score = weight * (1 + pressure * multiplier) * (1 + opportunity)
-  // A need at 45% creates meaningful pressure — it does not need to be "critical."
+  // ── OFF SHIFT: multi-dimensional scoring ──────────────────────────────
+  // Actions scored on: opportunity + routine + preference + stage-gated pressure
+  // Low-need stages (1-2) add zero pressure — only opportunity/routine/preference
+  // creates action. This prevents characters from feeling constantly stressed
+  // about ordinary life maintenance.
   const p = weights.pressures || {};
   const opp = weights.opportunity || {};
-  const atHome = locationType === 'home' || presence === 'home';
+  const r = detectRoutines(char, timeCtx.hour, timeCtx.isWeekend || false, atHome);
+  const pref = computePreferenceBoosts(char, atHome);
 
   const options = [];
 
-  // ── SLEEP / REST ──────────────────────────────────────────────────────
-  const sleepScore = weights.rest * (1 + p.energy * 4.5) * (1 + opp.canSleep);
-  if (!timeCtx.isLate && p.energy < 0.15) {
-    // Energy is fine and it's not late — sleep score is zero (no reason to sleep)
-  } else {
-    options.push({
-      actionType: 'sleep', score: sleepScore,
-      reason: p.energy > 0.50 ? `Exhausted (energy ${Math.round(needs.values.energy)})` :
-              opp.canSleep > 0.40 ? 'Bed is right there — might as well rest' :
-              'Could use some rest'
-    });
-  }
+  // ── EAT ────────────────────────────────────────────────────────────────
+  // Driven by: opportunity (food is here) + routine (mealtime) + preference
+  //            + stage-gated hunger pressure
+  // A character at home at dinnertime should eat even at hunger=70.
+  const eatScore =
+    (opp.canEat * 0.35) +                              // food is available right now
+    (r.mealTime ? 0.30 : 0) +                          // it's a normal mealtime
+    (atHome ? 0.10 : 0) +                              // home makes eating natural
+    (pref.routineFollow * 0.15) +                      // routine-followers eat regularly
+    (stagePressure(p.hunger) * 0.40);                  // hunger pressure (only stage 3+)
 
-  // ── EAT ──────────────────────────────────────────────────────────────
-  const eatScore = weights.eat * (1 + p.hunger * 4.0) * (1 + opp.canEat);
   options.push({
-    actionType: 'eat', score: eatScore,
-    reason: p.hunger > 0.50 ? `Very hungry (${Math.round(needs.values.hunger)})` :
-            opp.canEat > 0.40 ? 'Food is available — eating now makes sense' :
-            p.hunger > 0.15 ? 'Getting hungry' : 'Could eat'
+    actionType: 'eat',
+    score: eatScore,
+    reason: opp.canEat > 0.40
+      ? `Food is available — ${r.mealTimeLabel ? r.mealTimeLabel + ' time' : 'eating makes sense'}`
+      : stagePressure(p.hunger) > 0
+        ? `Hungry — needs food (${Math.round(needs.values.hunger)})`
+        : r.mealTime ? `${r.mealTimeLabel} time` : 'Could eat'
   });
 
   // ── HYGIENE ───────────────────────────────────────────────────────────
-  const hygieneScore = weights.hygiene * (1 + p.hygiene * 5.0) * (1 + opp.canShower);
+  const hygieneScore =
+    (opp.canShower * 0.35) +                           // shower is available
+    (r.usualShowerTime ? 0.20 : 0) +                   // it's a normal shower time
+    (pref.cleanliness * 0.25) +                        // conscientious: prefers being clean
+    (stagePressure(p.hygiene) * 0.40);                 // hygiene pressure (only stage 3+)
+
   options.push({
-    actionType: 'hygiene', score: hygieneScore,
-    reason: p.hygiene > 0.55 ? `Needs to clean up (hygiene ${Math.round(needs.values.hygiene)})` :
-            opp.canShower > 0.40 ? 'Shower is right there — freshen up' :
-            p.hygiene > 0.15 ? 'Starting to feel less fresh' : 'Shower available'
+    actionType: 'hygiene',
+    score: hygieneScore,
+    reason: stagePressure(p.hygiene) > 0
+      ? `Needs to clean up (hygiene ${Math.round(needs.values.hygiene)})`
+      : opp.canShower > 0.40
+        ? r.usualShowerTime ? 'Shower time — freshen up' : 'Shower is right there'
+        : pref.cleanliness > 0.10 ? 'Prefers being clean' : 'Could freshen up'
   });
 
-  // ── REST (non-sleep) ──────────────────────────────────────────────────
-  const restScore = weights.rest * (1 + p.energy * 2.0 + p.mental * 2.0 + p.comfort * 1.5) * (1 + opp.canRest);
+  // ── SLEEP ─────────────────────────────────────────────────────────────
+  // Driven by: bedtime routine + bed availability + energy pressure (stage 3+)
+  const sleepScore =
+    (opp.canSleep * 0.30) +                            // bed is available
+    (r.usualBedTime ? 0.25 : 0) +                      // it's around bedtime
+    (timeCtx.isLate ? 0.15 : 0) +                      // it's late
+    (stagePressure(p.energy) * 0.45);                  // energy pressure (only stage 3+)
+
+  // Only offer sleep when it makes some sense — not at 10 AM with full energy
+  if (sleepScore > 0.15) {
+    options.push({
+      actionType: 'sleep',
+      score: sleepScore,
+      reason: stagePressure(p.energy) > 0.30
+        ? `Exhausted (energy ${Math.round(needs.values.energy)})`
+        : r.usualBedTime ? 'Bedtime — getting some rest' :
+          opp.canSleep > 0.40 ? 'Bed is right there' : 'Could rest'
+    });
+  }
+
+  // ── REST (non-sleep relaxation) ──────────────────────────────────────
+  const restScore =
+    (opp.canRest * 0.30) +                             // can relax where they are
+    (atHome ? 0.15 : 0) +                              // home is restful
+    (pref.comfort * 0.15) +                            // comfort-seeking
+    (stagePressure(p.mental) * 0.25) +                 // mental strain
+    (stagePressure(p.comfort) * 0.20);                 // comfort need
+
   options.push({
-    actionType: 'rest', score: restScore,
-    reason: p.mental > 0.40 ? 'Mentally strained — needs a break' :
-            p.comfort > 0.30 ? 'Uncomfortable — should rest somewhere better' :
-            'Could use a break'
+    actionType: 'rest',
+    score: restScore,
+    reason: atHome ? 'Relaxing at home' :
+            opp.canRest > 0.30 ? 'Taking a break' : 'Could rest'
   });
 
   // ── SOCIAL ────────────────────────────────────────────────────────────
-  const socialScore = weights.social * (1 + p.social * 2.5) * (1 + opp.canSocialize);
+  const socialScore =
+    (opp.canSocialize * 0.25) +                        // social venue available
+    (r.usualSocialTime ? 0.20 : 0) +                   // weekend evening
+    (pref.social * 0.25) +                             // extrovert preference
+    (stagePressure(p.social) * 0.30);                  // social need pressure
+
   if (!timeCtx.isLate || opp.canSocialize > 0.30) {
     options.push({
-      actionType: 'social', score: socialScore,
-      reason: p.social > 0.40 ? 'Needs social connection' :
-              opp.canSocialize > 0.30 ? 'Social opportunity available' : 'Could socialize'
+      actionType: 'social',
+      score: socialScore,
+      reason: opp.canSocialize > 0.30 ? 'Social opportunity available' :
+              r.usualSocialTime ? 'Weekend evening — social time' :
+              pref.social > 0.10 ? 'Enjoys socializing' : 'Could connect with someone'
     });
   }
 
   // ── RECREATION ────────────────────────────────────────────────────────
-  const recScore = weights.recreation * (0.6 + opp.canSocialize * 0.4);
   if (!timeCtx.isLate && weights.recreation > 0.03) {
     options.push({
-      actionType: 'recreation', score: recScore,
-      reason: 'Free time — recreation available'
+      actionType: 'recreation',
+      score: weights.recreation * 0.5 + opp.canSocialize * 0.3,
+      reason: 'Free time — recreation'
     });
   }
 
   // ── FAMILY ────────────────────────────────────────────────────────────
   if (weights.family > 0.06) {
     options.push({
-      actionType: 'family', score: weights.family * (atHome ? 1.3 : 0.7),
+      actionType: 'family',
+      score: weights.family * (atHome ? 1.2 : 0.6),
       reason: atHome ? 'Family time at home' : 'Spend time with family'
     });
   }
 
-  // ── EDUCATION / SCHOOL ────────────────────────────────────────────────
+  // ── EDUCATION ─────────────────────────────────────────────────────────
   if (weights.education > 0.15) {
     options.push({
-      actionType: 'education', score: weights.education,
+      actionType: 'education',
+      score: weights.education,
       reason: 'School obligation'
     });
   }
 
-  // ── DEFAULT: HOME ROUTINE ─────────────────────────────────────────────
+  // ── DEFAULT: HOME ROUTINE ────────────────────────────────────────────
+  // This is the baseline — what a calm, content character does by default.
+  // Score is competitive so opportunistic actions (eat/shower when available)
+  // can beat it, but constant low-level pressure cannot.
   options.push({
-    actionType: 'home_routine', score: weights.home * (atHome ? 1.2 : 0.8),
-    reason: atHome ? 'Relaxing at home' : 'Default routine'
+    actionType: 'home_routine',
+    score: (atHome ? 0.22 : 0.08) + pref.comfort * 0.10,
+    reason: atHome ? 'Relaxing at home' : 'Going about their day'
   });
 
   options.sort((a, b) => b.score - a.score);
@@ -1096,12 +1215,15 @@ function computeCorrectiveState(char, newNeeds, currentContext, now, locationMap
     // Build schedule context for decision evaluator
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const hour = nowET.getHours();
+    const dow = nowET.getDay();
     const timeCtx = {
       timeOfDay: hour >= 5 && hour < 7 ? 'early_morning' : hour >= 7 && hour < 10 ? 'morning' :
         hour >= 10 && hour < 12 ? 'late_morning' : hour >= 12 && hour < 14 ? 'midday' :
         hour >= 14 && hour < 17 ? 'afternoon' : hour >= 17 && hour < 20 ? 'evening' :
         hour >= 20 && hour < 23 ? 'night' : 'late_night',
       isLate: hour >= 22 || hour < 5,
+      hour,
+      isWeekend: dow === 0 || dow === 6,
     };
     const schedule = {
       onShift: isOnShift(char, locationMap),
