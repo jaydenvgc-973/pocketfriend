@@ -433,6 +433,25 @@ function scoreLocation(location, char, vals, nowET) {
             // Log the modifier for observability — no hidden state written to Character
             console.log(`[autonomousMovement] ${char.name}: social workplace modifier active — social urgency downgraded for location scoring only`);
           }
+
+          // ── POST-SOCIAL-SHIFT SATURATION PENALTY ──────────────────────────
+          // If the character just finished a people-facing work shift, they are
+          // socially saturated. They do NOT need another crowded venue.
+          // Home gets a decompression bonus. Social/nightlife venues are heavily
+          // penalized. food_drink is reduced but eating-for-hunger remains valid.
+          if (justFinishedWork) {
+            if (cat === 'social' || isNightlifeVenue(location)) {
+              score -= 5; // "I just spent hours in a crowded venue — I need to decompress, not find another one"
+            }
+            if (cat === 'home') {
+              score += 3; // decompression after a social shift — "I need my own space"
+            }
+            // food_drink: reduce social draw (the "let's go out" impulse)
+            // Hunger scoring from the hungerU section above is untouched.
+            if (cat === 'food_drink') {
+              score -= 2;
+            }
+          }
         }
       }
     }
