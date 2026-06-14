@@ -1,0 +1,51 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+/**
+ * Targeted read — returns only the specified fields for a character.
+ * Used for diagnostic verification of nap/sleep state without data truncation.
+ */
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    const { characterId } = await req.json();
+    if (!characterId) return Response.json({ error: 'characterId required' }, { status: 400 });
+
+    // Try multiple query strategies — RLS may gate by different fields
+    let chars = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+    if (!chars.length) {
+      // Try user-scoped first (need owner_email)
+      chars = await base44.asServiceRole.entities.Character.filter({}, null, 50).catch(() => []);
+      chars = chars.filter(c => c.id === characterId);
+    }
+    if (!chars.length) {
+      // Last resort — try direct entity read
+      try {
+        const raw = await base44.asServiceRole.entities.Character.list(null, 500);
+        chars = (raw || []).filter(c => c.id === characterId);
+      } catch { chars = []; }
+    }
+    if (!chars.length) return Response.json({ error: 'Character not found' }, { status: 404 });
+
+    const c = chars[0];
+    return Response.json({
+      id: c.id,
+      name: c.name,
+      resolved_presence_status: c.resolved_presence_status,
+      current_activity: c.current_activity,
+      resolved_current_location_id: c.resolved_current_location_id,
+      resolved_current_location_name: c.resolved_current_location_name,
+      current_home_location_id: c.current_home_location_id,
+      last_nap_time: c.last_nap_time,
+      last_sleep_start: c.last_sleep_start,
+      last_wake_time: c.last_wake_time,
+      last_need_simulated_at: c.last_need_simulated_at,
+      energy_value: c.energy_value,
+      updated_date: c.updated_date,
+      sleep_start_time: c.sleep_start_time,
+      wake_up_time: c.wake_up_time,
+      resolved_source_reason: c.resolved_source_reason,
+    });
+  } catch (error) {
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+});
