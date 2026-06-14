@@ -312,34 +312,7 @@ function computeComfortModifier(char, context, locationMap) {
   const relationships = char.fictional_relationships || [];
   const familyMembers = char.family_members || [];
 
-  const isSocialContext = context === 'social_out' || context === 'bar_club' || context === 'food_drink';
-  const isAtHome = context === 'home_resting' || context === 'home_active' || presence === 'home';
 
-  if (isSocialContext || isAtHome) {
-    let bestRelationshipComfort = 0;
-    for (const r of relationships) {
-      const friendship = r.friendship_level ?? 50;
-      const trust      = r.trust_level      ?? 50;
-      const romantic   = r.romantic_level   ?? 0;
-      const tension    = r.tension_level    ?? 0;
-
-      if (friendship < 25 || trust < 20 || tension > 70) {
-        bestRelationshipComfort = Math.min(bestRelationshipComfort, -1);
-        continue;
-      }
-      if (friendship > 80 || trust > 75 || romantic > 60) {
-        bestRelationshipComfort = Math.max(bestRelationshipComfort, 1);
-      } else if (friendship > 60 || trust > 55) {
-        bestRelationshipComfort = Math.max(bestRelationshipComfort, 0.5);
-      }
-    }
-
-    if (isAtHome && familyMembers.length > 0) {
-      bestRelationshipComfort = Math.max(bestRelationshipComfort, 0.5);
-    }
-
-    modifier += bestRelationshipComfort;
-  }
 
   const activityLower = activity;
   const isForcedEvent = activityLower.includes('mandatory') || activityLower.includes('forced') || activityLower.includes('awkward') || activityLower.includes('uncomfortable');
