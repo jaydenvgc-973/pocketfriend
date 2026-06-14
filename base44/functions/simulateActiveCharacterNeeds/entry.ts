@@ -1135,146 +1135,154 @@ Deno.serve(async (req) => {
 
         let nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 
-        // ── HARD 8-HOUR SLEEP CAP ───────────────────────────────────────
-        // Normal sleep must not exceed 8 hours. Check actual sleep duration
-        // and force-wake if the cap is exceeded. Passed-out and hospitalized
-        // are medical exceptions and not subject to this cap.
-        const sleepStartCandidates = [
-          char.last_sleep_start,
-          char.resolved_last_updated_at,
-          char.last_need_simulated_at,
-        ].filter(Boolean);
+        // ── HARD SLEEP & NAP CAPS + 19-HOUR AWAKE ENFORCEMENT ─────────────
+        // CRITICAL: Sleep and nap timestamps are tracked separately.
+        // last_sleep_start → only for actual sleep (resolved_presence_status='sleeping')
+        // last_nap_start   → only for naps (resolved_presence_status='napping')
+        // The 19-hour awake timer uses last_sleep_start ONLY — naps do NOT reset it.
+        // ─────────────────────────────────────────────────────────────────────
+
         const dbIsSleeping = char.resolved_presence_status === 'sleeping';
         const dbIsNapping  = char.resolved_presence_status === 'napping';
 
-        if ((dbIsSleeping || dbIsNapping) && sleepStartCandidates.length > 0 && !hasStayLock) {
-          const sleepStartMs = Math.min(...sleepStartCandidates.map(t => new Date(t).getTime()));
-          const sleepDurationHours = (nowET.getTime() - sleepStartMs) / 3_600_000;
-
-          // Hard 8-hour cap for normal sleep
-          if (dbIsSleeping && sleepDurationHours >= 8 && char.resolved_presence_status !== 'passed_out'
-              && char.resolved_presence_status !== 'hospitalized' && !sleepLocked) {
-            const wakePayload = {
-              resolved_presence_status: 'home',
-              current_activity: '',
-              hunger_value:  Math.round(newNeeds.hunger),
-              energy_value:  Math.round(newNeeds.energy),
-              social_value:  Math.round(newNeeds.social),
-              health_value:  Math.round(newNeeds.health),
-              mental_value:  Math.round(newNeeds.mental),
-              hygiene_value: Math.round(newNeeds.hygiene),
-              comfort_value: Math.round(newNeeds.comfort),
-              last_need_simulated_at: nowIso,
-            };
-            await base44.asServiceRole.entities.Character.update(char.id, wakePayload);
-            results.push({
-              character: charName,
-              context,
-              event: 'hard_8h_sleep_wake',
-              sleep_duration_hours: Math.round(sleepDurationHours * 100) / 100,
-              needs: {
-                hunger:  Math.round(newNeeds.hunger),
-                energy:  Math.round(newNeeds.energy),
-                social:  Math.round(newNeeds.social),
-                health:  Math.round(newNeeds.health),
-                mental:  Math.round(newNeeds.mental),
-                hygiene: Math.round(newNeeds.hygiene),
-                comfort: Math.round(newNeeds.comfort),
-              },
-            });
-            continue; // skip rest of loop for this character
-          }
-
-          // Hard 3-hour nap cap
-          if (dbIsNapping && sleepDurationHours >= 3) {
-            const napWakePayload = {
-              resolved_presence_status: 'home',
-              current_activity: '',
-              hunger_value:  Math.round(newNeeds.hunger),
-              energy_value:  Math.round(newNeeds.energy),
-              social_value:  Math.round(newNeeds.social),
-              health_value:  Math.round(newNeeds.health),
-              mental_value:  Math.round(newNeeds.mental),
-              hygiene_value: Math.round(newNeeds.hygiene),
-              comfort_value: Math.round(newNeeds.comfort),
-              last_need_simulated_at: nowIso,
-            };
-            await base44.asServiceRole.entities.Character.update(char.id, napWakePayload);
-            results.push({
-              character: charName,
-              context,
-              event: 'hard_3h_nap_wake',
-              nap_duration_hours: Math.round(sleepDurationHours * 100) / 100,
-              needs: {
-                hunger:  Math.round(newNeeds.hunger),
-                energy:  Math.round(newNeeds.energy),
-                social:  Math.round(newNeeds.social),
-                health:  Math.round(newNeeds.health),
-                mental:  Math.round(newNeeds.mental),
-                hygiene: Math.round(newNeeds.hygiene),
-                comfort: Math.round(newNeeds.comfort),
-              },
-            });
-            continue;
+        // ── HARD 8-HOUR SLEEP CAP ──────────────────────────────────────────
+        // Uses last_sleep_start ONLY. Falls back to resolved_last_updated_at
+        // and last_need_simulated_at only if last_sleep_start is absent.
+        if (dbIsSleeping && char.resolved_presence_status !== 'passed_out'
+            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
+          const sleepCapCandidates = [
+            char.last_sleep_start,
+            char.resolved_last_updated_at,
+            char.last_need_simulated_at,
+          ].filter(Boolean);
+          if (sleepCapCandidates.length > 0) {
+            const sleepStartMs = Math.min(...sleepCapCandidates.map(t => new Date(t).getTime()));
+            const sleepDurationHours = (nowET.getTime() - sleepStartMs) / 3_600_000;
+            if (sleepDurationHours >= 8) {
+              const wakePayload = {
+                resolved_presence_status: 'home',
+                current_activity: '',
+                hunger_value:  Math.round(newNeeds.hunger),
+                energy_value:  Math.round(newNeeds.energy),
+                social_value:  Math.round(newNeeds.social),
+                health_value:  Math.round(newNeeds.health),
+                mental_value:  Math.round(newNeeds.mental),
+                hygiene_value: Math.round(newNeeds.hygiene),
+                comfort_value: Math.round(newNeeds.comfort),
+                last_need_simulated_at: nowIso,
+              };
+              await base44.asServiceRole.entities.Character.update(char.id, wakePayload);
+              results.push({
+                character: charName, context,
+                event: 'hard_8h_sleep_wake',
+                sleep_duration_hours: Math.round(sleepDurationHours * 100) / 100,
+                needs: {
+                  hunger: Math.round(newNeeds.hunger), energy: Math.round(newNeeds.energy),
+                  social: Math.round(newNeeds.social), health: Math.round(newNeeds.health),
+                  mental: Math.round(newNeeds.mental), hygiene: Math.round(newNeeds.hygiene),
+                  comfort: Math.round(newNeeds.comfort),
+                },
+              });
+              continue;
+            }
           }
         }
 
-        // ── 19-HOUR AWAKE ENFORCEMENT ───────────────────────────────────
-        // Characters may stay awake up to ~18 hours with realistic support
-        // (coffee, energy drinks, naps). 19 hours without actual sleep is a
-        // failure condition. Naps do not reset this timer — only actual sleep
-        // (resolved_presence_status === 'sleeping') counts.
+        // ── HARD 3-HOUR NAP CAP ───────────────────────────────────────────
+        // Uses last_nap_start ONLY. Does NOT use last_sleep_start.
+        // Falls back if no nap timestamp exists (legacy record without nap tracking).
+        if (dbIsNapping && !hasStayLock) {
+          const napCapCandidates = [
+            char.last_nap_start,
+            char.last_sleep_start,
+            char.resolved_last_updated_at,
+            char.last_need_simulated_at,
+          ].filter(Boolean);
+          if (napCapCandidates.length > 0) {
+            const napStartMs = Math.min(...napCapCandidates.map(t => new Date(t).getTime()));
+            const napDurationHours = (nowET.getTime() - napStartMs) / 3_600_000;
+            if (napDurationHours >= 3) {
+              const napWakePayload = {
+                resolved_presence_status: 'home',
+                current_activity: '',
+                hunger_value:  Math.round(newNeeds.hunger),
+                energy_value:  Math.round(newNeeds.energy),
+                social_value:  Math.round(newNeeds.social),
+                health_value:  Math.round(newNeeds.health),
+                mental_value:  Math.round(newNeeds.mental),
+                hygiene_value: Math.round(newNeeds.hygiene),
+                comfort_value: Math.round(newNeeds.comfort),
+                last_need_simulated_at: nowIso,
+              };
+              await base44.asServiceRole.entities.Character.update(char.id, napWakePayload);
+              results.push({
+                character: charName, context,
+                event: 'hard_3h_nap_wake',
+                nap_duration_hours: Math.round(napDurationHours * 100) / 100,
+                needs: {
+                  hunger: Math.round(newNeeds.hunger), energy: Math.round(newNeeds.energy),
+                  social: Math.round(newNeeds.social), health: Math.round(newNeeds.health),
+                  mental: Math.round(newNeeds.mental), hygiene: Math.round(newNeeds.hygiene),
+                  comfort: Math.round(newNeeds.comfort),
+                },
+              });
+              continue;
+            }
+          }
+        }
+
+        // ── 19-HOUR AWAKE ENFORCEMENT ─────────────────────────────────────
+        // Uses last_sleep_start ONLY — naps do NOT reset this timer.
+        // A character who slept, then napped, then stayed awake is still
+        // measured from the last actual sleep, not the last nap.
         if (!dbIsSleeping && !dbIsNapping && char.resolved_presence_status !== 'passed_out'
-            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock
-            && sleepStartCandidates.length > 0) {
-          const lastSleepEndMs = Math.min(...sleepStartCandidates.map(t => new Date(t).getTime()));
-          const awakeHours = (nowET.getTime() - lastSleepEndMs) / 3_600_000;
-          if (awakeHours >= 19) {
-            const awakeLimitPayload = {
-              resolved_presence_status: 'sleeping',
-              current_activity: 'forced sleep — 19-hour awake limit',
-              last_sleep_start: nowIso,
-              hunger_value:  Math.round(newNeeds.hunger),
-              energy_value:  Math.round(newNeeds.energy),
-              social_value:  Math.round(newNeeds.social),
-              health_value:  Math.round(newNeeds.health),
-              mental_value:  Math.round(newNeeds.mental),
-              hygiene_value: Math.round(newNeeds.hygiene),
-              comfort_value: Math.round(newNeeds.comfort),
-              last_need_simulated_at: nowIso,
-            };
-            await base44.asServiceRole.entities.Character.update(char.id, awakeLimitPayload);
+            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
+          const awakeCandidates = [
+            char.last_sleep_start,
+            char.resolved_last_updated_at,
+            char.last_need_simulated_at,
+          ].filter(Boolean);
+          if (awakeCandidates.length > 0) {
+            const lastSleepEndMs = Math.min(...awakeCandidates.map(t => new Date(t).getTime()));
+            const awakeHours = (nowET.getTime() - lastSleepEndMs) / 3_600_000;
+            if (awakeHours >= 19) {
+              const awakeLimitPayload = {
+                resolved_presence_status: 'sleeping',
+                current_activity: 'forced sleep — 19-hour awake limit',
+                last_sleep_start: nowIso,
+                hunger_value:  Math.round(newNeeds.hunger),
+                energy_value:  Math.round(newNeeds.energy),
+                social_value:  Math.round(newNeeds.social),
+                health_value:  Math.round(newNeeds.health),
+                mental_value:  Math.round(newNeeds.mental),
+                hygiene_value: Math.round(newNeeds.hygiene),
+                comfort_value: Math.round(newNeeds.comfort),
+                last_need_simulated_at: nowIso,
+              };
+              await base44.asServiceRole.entities.Character.update(char.id, awakeLimitPayload);
 
-            await base44.asServiceRole.entities.LifeEvent.create({
-              character_id: char.id,
-              character_name: charName,
-              event_type: 'sleep_deprivation_event',
-              valence: 'negative',
-              severity: 'significant',
-              title: 'Forced sleep — 19-hour awake limit',
-              description: `${charName} was awake for ${Math.round(awakeHours)} hours and forced to sleep.`,
-              emotional_impact: 'exhaustion',
-              triggered_by: 'life_simulation',
-              timestamp: nowIso,
-              context_tags: ['awake_limit', 'forced_sleep'],
-            }).catch(() => {});
+              await base44.asServiceRole.entities.LifeEvent.create({
+                character_id: char.id, character_name: charName,
+                event_type: 'sleep_deprivation_event', valence: 'negative', severity: 'significant',
+                title: 'Forced sleep — 19-hour awake limit',
+                description: `${charName} was awake for ${Math.round(awakeHours)} hours and forced to sleep.`,
+                emotional_impact: 'exhaustion', triggered_by: 'life_simulation',
+                timestamp: nowIso, context_tags: ['awake_limit', 'forced_sleep'],
+              }).catch(() => {});
 
-            results.push({
-              character: charName,
-              context,
-              event: '19h_awake_forced_sleep',
-              awake_hours: Math.round(awakeHours * 100) / 100,
-              needs: {
-                hunger:  Math.round(newNeeds.hunger),
-                energy:  Math.round(newNeeds.energy),
-                social:  Math.round(newNeeds.social),
-                health:  Math.round(newNeeds.health),
-                mental:  Math.round(newNeeds.mental),
-                hygiene: Math.round(newNeeds.hygiene),
-                comfort: Math.round(newNeeds.comfort),
-              },
-            });
-            continue;
+              results.push({
+                character: charName, context,
+                event: '19h_awake_forced_sleep',
+                awake_hours: Math.round(awakeHours * 100) / 100,
+                needs: {
+                  hunger: Math.round(newNeeds.hunger), energy: Math.round(newNeeds.energy),
+                  social: Math.round(newNeeds.social), health: Math.round(newNeeds.health),
+                  mental: Math.round(newNeeds.mental), hygiene: Math.round(newNeeds.hygiene),
+                  comfort: Math.round(newNeeds.comfort),
+                },
+              });
+              continue;
+            }
           }
         }
 

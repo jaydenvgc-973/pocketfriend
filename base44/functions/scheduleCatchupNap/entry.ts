@@ -25,6 +25,7 @@ Deno.serve(async (req) => {
     // Set current_activity to "napping" and clear decided_to_stay_up_until if nap covers that period
     await base44.entities.Character.update(characterId, {
       current_activity: `napping (${napDurationMinutes}min)`,
+      last_nap_start: napStart.toISOString(),
     });
 
     // Return scheduled nap details
