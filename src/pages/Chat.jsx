@@ -62,6 +62,7 @@ import { useChatReactionActions } from "@/hooks/useChatReactionActions";
 import { useChatLocationSignal } from "@/hooks/useChatLocationSignal";
 import { useChatSongShare } from "@/hooks/useChatSongShare";
 import { useChatPostLoadEffects } from "@/hooks/useChatPostLoadEffects";
+import { useAwarenessNarrative } from "@/hooks/useAwarenessNarrative.js";
 import { useChatScrollTracking } from "@/hooks/useChatScrollTracking";
 import { useChatLocationShare } from "@/hooks/useChatLocationShare";
 import { useChatBackgroundTasks } from "@/hooks/useChatBackgroundTasks.js";
@@ -118,7 +119,7 @@ export default function Chat({ chatTypeOverride } = {}) {
   const [showHousingModal, setShowHousingModal] = useState(false);
   const [showLocationShare, setShowLocationShare] = useState(false);
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
-  const [catchupNarrativeText, setCatchupNarrativeText] = useState(null);
+  const [awarenessNarrativeText, setAwarenessNarrativeText] = useState(null);
   const [isLoadingConvo, setIsLoadingConvo] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
@@ -134,7 +135,7 @@ export default function Chat({ chatTypeOverride } = {}) {
     setIsTyping(false);
     setConvoLoadError(null);
     setUserScrolledAway(false);
-    setCatchupNarrativeText(null);
+    setAwarenessNarrativeText(null);
     // Clear canonical context cache — new character needs fresh canonical fetch
     // NOTE: location cache (locationSessionCache.js) is module-level and NOT cleared here —
     // location data is shared across characters and stable for the session.
@@ -342,6 +343,8 @@ export default function Chat({ chatTypeOverride } = {}) {
   useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
+
+  useAwarenessNarrative(conversationId, characterId, character);
 
   useChatPostLoadEffects({
     conversationId,
@@ -1079,12 +1082,12 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       const sleepContext = charStatus === 'asleep' ? buildSleepInterruptionContext(character) : "";
 
       const livePresence = getCharacterLivePresence(character, worldStateLocationMap || {});
-      const awarenessContext = buildLiveLocationContext(character, worldStateLocationMap || {});
+      const liveLocationContext = buildLiveLocationContext(character, worldStateLocationMap || {});
 
       const needsContext = buildNeedsContextBlock(character);
 
-      const catchupContext = catchupNarrativeText
-        ? `\n\nTIMELINE CATCH-UP — WHAT HAPPENED WHILE THE USER WAS AWAY:\n${catchupNarrativeText}\nThis is real. You lived through it. Reference it naturally when appropriate. Do NOT pretend the last message was just seconds ago.`
+      const awarenessContext = awarenessNarrativeText
+        ? `\n\nTIME-PASSED AWARENESS — WHAT HAPPENED WHILE YOU WERE APART:\n${awarenessNarrativeText}\nThis is real. You lived through it. Reference it naturally when appropriate. Do NOT pretend the last message was just seconds ago.`
         : "";
 
       const _presenceForValidation = livePresence;
@@ -1392,8 +1395,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       await new Promise(r => setTimeout(r, typingDelayMs));
       emotionalState = character.emotional_state || "calm";
 
-      if (catchupNarrativeText) {
-        setCatchupNarrativeText(null);
+      if (awarenessNarrativeText) {
+        setAwarenessNarrativeText(null);
+      }
+      }
+        setAwarenessNarrativeText(null);
       }
     } catch (err) {
       releaseFgTask(); // release on error — background systems can resume

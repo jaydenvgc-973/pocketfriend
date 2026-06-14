@@ -1,8 +1,8 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * Generate a catch-up narrative when user returns to chat after time has passed.
- * Uses backfilled AutomaticNarrative records to build the catch-up text.
+ * Generate an awareness narrative when user returns to chat after time has passed.
+ * Uses backfilled AutomaticNarrative records to build the awareness text.
  * Called from Chat page before character responds.
  */
 Deno.serve(async (req) => {
@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'characterId required' }, { status: 400 });
     }
 
-    console.log(`[generateCatchupNarrative] characterId=${characterId} conversationId=${conversationId}`);
+    console.log(`[generateAwarenessNarrative] characterId=${characterId} conversationId=${conversationId}`);
 
     // ── 1. FETCH CHARACTER ───────────────────────────────────────────────
     const charList = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
@@ -45,9 +45,9 @@ Deno.serve(async (req) => {
     }
 
     const minutesAway = Math.floor((Date.now() - anchorTime.getTime()) / 60000);
-    console.log(`[generateCatchupNarrative] minutesAway=${minutesAway}`);
+    console.log(`[generateAwarenessNarrative] minutesAway=${minutesAway}`);
 
-    // Only create catch-up if significant time has passed (> 30 mins)
+    // Only create awareness if significant time has passed (> 30 mins)
     if (minutesAway < 30) {
       return Response.json({ skipped: true, reason: 'not_enough_time', minutesAway });
     }
@@ -62,9 +62,9 @@ Deno.serve(async (req) => {
         '-timestamp',
         50
       );
-      console.log(`[generateCatchupNarrative] Found ${backfilledNarratives.length} backfilled narratives in AutomaticNarrative`);
+      console.log(`[generateAwarenessNarrative] Found ${backfilledNarratives.length} backfilled narratives in AutomaticNarrative`);
     } catch (err) {
-      console.error(`[generateCatchupNarrative] AutomaticNarrative fetch error: ${err.message}`);
+      console.error(`[generateAwarenessNarrative] AutomaticNarrative fetch error: ${err.message}`);
       backfilledNarratives = [];
     }
 
@@ -74,21 +74,21 @@ Deno.serve(async (req) => {
       return nTime > anchorTime;
     });
 
-    console.log(`[generateCatchupNarrative] After anchor time filter: ${newNarratives.length} narratives`);
+    console.log(`[generateAwarenessNarrative] After anchor time filter: ${newNarratives.length} narratives`);
 
-    // ── 4. BUILD CATCH-UP TEXT ───────────────────────────────────────────
-    let catchupText = '';
+    // ── 4. BUILD AWARENESS TEXT ───────────────────────────────────────────
+    let awarenessText = '';
     const hoursAway = Math.floor(minutesAway / 60);
 
     if (newNarratives.length === 0) {
-      // No backfilled narratives yet — generate a passive catch-up
-      catchupText = buildPassiveCatchup(character, hoursAway, minutesAway);
-      console.log(`[generateCatchupNarrative] Using passive catch-up (no backfilled narratives)`);
+      // No backfilled narratives yet — generate a passive awareness
+      awarenessText = buildPassiveAwareness(character, hoursAway, minutesAway);
+      console.log(`[generateAwarenessNarrative] Using passive awareness (no backfilled narratives)`);
     } else {
       // Sort by time ascending to build a chronological story
       newNarratives.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
       
-      // Build catch-up text from backfilled narratives
+      // Build awareness text from backfilled narratives
       const timePhrase = hoursAway >= 24
         ? `${Math.floor(hoursAway / 24)} day${Math.floor(hoursAway / 24) > 1 ? 's' : ''}`
         : hoursAway >= 2
@@ -100,21 +100,21 @@ Deno.serve(async (req) => {
         .map(n => n.narrative_text)
         .join('\n\n');
 
-      catchupText = `While you were away for ${timePhrase}:\n\n${narrativeLines}`;
-      console.log(`[generateCatchupNarrative] Built catch-up from ${newNarratives.length} backfilled narratives`);
+      awarenessText = `While you were away for ${timePhrase}:\n\n${narrativeLines}`;
+      console.log(`[generateAwarenessNarrative] Built awareness from ${newNarratives.length} backfilled narratives`);
     }
 
     return Response.json({
       success: true,
-      catchupText,
+      awarenessText,
       minutesAway,
       hoursAway,
       narrativesFound: newNarratives.length,
-      shouldDisplayCatchup: true,
+      shouldDisplay: true,
     });
 
   } catch (error) {
-    console.error('[generateCatchupNarrative] Fatal:', error.message);
+    console.error('[generateAwarenessNarrative] Fatal:', error.message);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
@@ -128,7 +128,7 @@ function isSleepingNow(character) {
   return hour >= sleepTime || hour < wakeTime;
 }
 
-function buildPassiveCatchup(character, hoursAway, minutesAway) {
+function buildPassiveAwareness(character, hoursAway, minutesAway) {
   const charName = character.name;
   const timePhrase = hoursAway >= 2 ? `${hoursAway} hours` : `${minutesAway} minutes`;
 
