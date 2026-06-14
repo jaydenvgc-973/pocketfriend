@@ -614,7 +614,7 @@ function buildSoapOperaLifeContext(character) {
 // ── CO-PRESENCE BLOCK BUILDER ─────────────────────────────────────────────────
 // Receives already-resolved co-presence data and builds the prompt block.
 // This is pure formatting — all resolution happens in the main handler.
-function buildCoPresenceBlock(coPresence) {
+function buildCoPresenceBlock(coPresence, speakingCharacter = null) {
   if (!coPresence) return '';
 
   const {
@@ -629,6 +629,10 @@ function buildCoPresenceBlock(coPresence) {
     checkedAt,
   } = coPresence;
 
+  // Determine if the speaking character is asleep — co-presence must be passive context only
+  const charStatus = speakingCharacter?.resolved_presence_status || '';
+  const isSpeakingCharAsleep = charStatus === 'sleeping' || charStatus === 'napping';
+
   // If both location IDs are missing, fail visibly rather than silently
   if (presenceMissing) {
     return `\n════════════════════════════════════\nCO-PRESENCE CONTEXT\n════════════════════════════════════\n⚠️ CO-PRESENCE CONTEXT MISSING — presence resolver could not determine verified location for user or character. Do NOT invent who is nearby. Do NOT assume the user is present. Treat this as unknown.\n════════════════════════════════════\n`;
@@ -638,7 +642,18 @@ function buildCoPresenceBlock(coPresence) {
 
   block += `Your current location: ${speakingCharacterLocationName || 'unknown'}\n`;
 
-  if (userPresentHere) {
+  if (isSpeakingCharAsleep) {
+    // ── SLEEP-AWARE CO-PRESENCE — passive context only, no wake demand ──────
+    block += `CO-PRESENCE WHILE ASLEEP: You are currently ${charStatus}. This is passive awareness only — do NOT wake, do NOT generate awake behavior, do NOT respond.\n`;
+    if (userPresentHere) {
+      block += `The user is sharing this space (${userLocationName || speakingCharacterLocationName}) while you sleep.`;
+      if (charactersPresentHere.length > 0) {
+        const names = charactersPresentHere.map(c => c.name).join(', ');
+        block += ` ${names} ${charactersPresentHere.length === 1 ? 'is' : 'are'} also sharing this space.`;
+      }
+      block += `\n`;
+    }
+  } else if (userPresentHere) {
     block += `USER IS HERE WITH YOU: YES\n`;
     block += `The user is physically present at your current location (${userLocationName || speakingCharacterLocationName}).\n`;
     block += `MANDATORY: You must recognize the user as physically present. Do NOT act as if you are alone. Do NOT say "unless you're standing on my porch" or suggest the user isn't there — they ARE there.\n`;
@@ -647,7 +662,7 @@ function buildCoPresenceBlock(coPresence) {
     block += `The user is NOT at your current location. Do NOT imply they are nearby. Do NOT invent shared presence.\n`;
   }
 
-  if (charactersPresentHere.length > 0) {
+  if (!isSpeakingCharAsleep && charactersPresentHere.length > 0) {
         block += `\nOTHER VERIFIED CHARACTERS PRESENT HERE:\n`;
         for (const c of charactersPresentHere) {
           if (c.awarenessLevel === 'known') {
@@ -660,7 +675,7 @@ function buildCoPresenceBlock(coPresence) {
         }
         block += `RULE: Do NOT invent familiarity. Only treat someone as known if listed as known above.\n`;
         block += `You must recognize these characters as physically present with you.\n`;
-      } else {
+      } else if (!isSpeakingCharAsleep) {
         block += `\nOTHER CHARACTERS PRESENT HERE: None verified.\n`;
         block += `Do NOT mention or imply any other character is physically nearby unless listed above.\n`;
       }
@@ -722,7 +737,7 @@ function buildFullCanonicalPrompt(character, memories, worldName, interactionCon
   const hardFacts = buildHardFacts(character);
   // NOTE: worldStateContinuity is now delegated to reconcileWorldStateForResponse
   // which is called at the Chat level before this function is invoked
-  const coPresenceBlock = buildCoPresenceBlock(coPresence);
+  const coPresenceBlock = buildCoPresenceBlock(coPresence, character);
   const memoryBlock = buildMemoryBlock(memories);
   const familySection = buildFamilySection(character);
   const internalFamilyTruth = buildInternalFamilyTruth(character);
