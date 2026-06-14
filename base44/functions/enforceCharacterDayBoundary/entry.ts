@@ -100,8 +100,26 @@ Deno.serve(async (req) => {
       // Skip if already home
       if (char.resolved_current_location_id === char.current_home_location_id) continue;
 
-      // Skip if sleeping/napping (let sleep cycle handle this)
-      if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) continue;
+      // Skip if hospitalized (valid medical state)
+      if (char.resolved_presence_status === 'hospitalized') continue;
+
+      // Stale sleep: if sleeping/napping but past wake_up_time, WAKE and return home
+      if (['sleeping', 'napping'].includes(char.resolved_presence_status)) {
+        const wakeTime = char.wake_up_time || '07:00';
+        const [wakeH, wakeM] = wakeTime.split(':').map(Number);
+        const wakeMinutes = wakeH * 60 + wakeM;
+        const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
+        if (currentMinutes >= wakeMinutes + 30) {
+          // Stale sleep detected — wake and return home
+          toReturn.push({
+            id: char.id,
+            name: char.name,
+            reason: 'stale_sleep_day_boundary',
+            from: char.resolved_current_location_name || char.resolved_presence_status,
+          });
+        }
+        continue;
+      }
 
       // Skip if in valid work shift
       if (isWorkScheduleActive(char, nowET)) continue;
@@ -176,7 +194,14 @@ Deno.serve(async (req) => {
          const currentLoc = locationMap[char.resolved_current_location_id];
          const activityConflict = currentLoc && char.current_activity &&
            char.current_activity.toLowerCase().includes(currentLoc.name.toLowerCase());
-         const activityClear = activityConflict ? { current_activity: null } : {};
+
+         // Check if current_activity is sleep-related (for stale sleep wake)
+         const isSleepActivity = char.current_activity &&
+           (char.current_activity.toLowerCase().includes('sleep') ||
+            char.current_activity.toLowerCase().includes('nap') ||
+            char.current_activity.toLowerCase().includes('exhausted'));
+
+         const activityClear = (activityConflict || isSleepActivity) ? { current_activity: null } : {};
 
          const payload = {
            resolved_current_location_id: homeLocId,
