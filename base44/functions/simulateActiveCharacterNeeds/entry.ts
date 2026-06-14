@@ -1146,9 +1146,9 @@ Deno.serve(async (req) => {
         const dbIsNapping  = char.resolved_presence_status === 'napping';
 
         // ── HARD 8-HOUR SLEEP CAP ──────────────────────────────────────────
-        // Uses last_sleep_start ONLY. Generic timestamps (resolved_last_updated_at,
-        // last_need_simulated_at) are NEVER used as sleep-start evidence.
-        // If last_sleep_start is missing while sleeping, log violation and skip cap.
+        // Uses last_sleep_start ONLY. Generic timestamps are NEVER sleep-start evidence.
+        // If last_sleep_start is missing, this is a state violation — apply safe correction
+        // by setting last_sleep_start=now (resets the 8h timer, conservative but safe).
         if (dbIsSleeping && char.resolved_presence_status !== 'passed_out'
             && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
           if (char.last_sleep_start) {
@@ -1158,6 +1158,7 @@ Deno.serve(async (req) => {
               const wakePayload = {
                 resolved_presence_status: 'home',
                 current_activity: '',
+                last_wake_time: nowIso,
                 hunger_value:  Math.round(newNeeds.hunger),
                 energy_value:  Math.round(newNeeds.energy),
                 social_value:  Math.round(newNeeds.social),
@@ -1182,14 +1183,15 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            console.warn(`[simulateActiveCharacterNeeds] SLEEP_CAP_SKIPPED: ${charName} is sleeping but missing last_sleep_start — cannot verify duration`);
+            console.warn(`[simulateActiveCharacterNeeds] SLEEP_VIOLATION: ${charName} is sleeping but missing last_sleep_start — setting last_sleep_start=now as safe correction`);
+            updatePayload.last_sleep_start = nowIso;
           }
         }
 
         // ── HARD 3-HOUR NAP CAP ───────────────────────────────────────────
-        // Uses last_nap_start ONLY. last_sleep_start, resolved_last_updated_at,
-        // and last_need_simulated_at are NEVER used as nap-start evidence.
-        // If last_nap_start is missing while napping, mark unverified — do not guess.
+        // Uses last_nap_start ONLY. If missing, state violation — apply safe
+        // correction by setting last_nap_start=now (resets timer, conservative).
+        // Naps do NOT write last_wake_time — nap end is not an actual-sleep wake.
         if (dbIsNapping && !hasStayLock) {
           if (char.last_nap_start) {
             const napStartMs = new Date(char.last_nap_start).getTime();
@@ -1222,20 +1224,21 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            console.warn(`[simulateActiveCharacterNeeds] NAP_CAP_SKIPPED: ${charName} is napping but missing last_nap_start — marking nap duration unverified`);
+            console.warn(`[simulateActiveCharacterNeeds] NAP_VIOLATION: ${charName} is napping but missing last_nap_start — setting last_nap_start=now as safe correction`);
+            updatePayload.last_nap_start = nowIso;
           }
         }
 
         // ── 19-HOUR AWAKE ENFORCEMENT ─────────────────────────────────────
-        // Uses last_sleep_start ONLY — naps do NOT reset this timer.
-        // Generic timestamps (resolved_last_updated_at, last_need_simulated_at)
-        // are NEVER used as sleep/wake evidence. If last_sleep_start is missing,
-        // skip enforcement — cannot verify awake duration.
+        // Uses last_wake_time ONLY — marks when character last completed actual
+        // sleep (not nap). Naps do NOT reset this timer. If last_wake_time is
+        // missing, state violation — apply safe correction by setting
+        // last_wake_time=now (assumes they just woke, giving a full 19h window).
         if (!dbIsSleeping && !dbIsNapping && char.resolved_presence_status !== 'passed_out'
             && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
-          if (char.last_sleep_start) {
-            const lastSleepEndMs = new Date(char.last_sleep_start).getTime();
-            const awakeHours = (nowET.getTime() - lastSleepEndMs) / 3_600_000;
+          if (char.last_wake_time) {
+            const lastWakeMs = new Date(char.last_wake_time).getTime();
+            const awakeHours = (nowET.getTime() - lastWakeMs) / 3_600_000;
             if (awakeHours >= 19) {
               const awakeLimitPayload = {
                 resolved_presence_status: 'sleeping',
@@ -1275,7 +1278,8 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            console.warn(`[simulateActiveCharacterNeeds] AWAKE_ENFORCEMENT_SKIPPED: ${charName} missing last_sleep_start — cannot verify awake duration`);
+            console.warn(`[simulateActiveCharacterNeeds] AWAKE_VIOLATION: ${charName} awake but missing last_wake_time — setting last_wake_time=now as safe correction`);
+            updatePayload.last_wake_time = nowIso;
           }
         }
 

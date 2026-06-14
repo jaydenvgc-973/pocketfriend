@@ -548,6 +548,11 @@
       "format": "date-time",
       "description": "When the scheduled alarm last successfully woke this character. Written by processScheduledCharacterAlarms."
     },
+    "last_wake_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the character last completed actual sleep (not nap) and became awake. Written by simulateActiveCharacterNeeds sleep cap and other wake-from-actual-sleep transitions. Used as the authoritative timer-start for 19-hour awake enforcement. Naps do NOT update this field."
+    },
     "work_start_time": {
       "type": "string"
     },
