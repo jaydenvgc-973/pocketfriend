@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
     }
 
     // napStartTime: ISO timestamp when the nap begins
-    // After nap, character will be rested (clear the stayed_up flag)
+    // After nap, character will be rested
     const napStart = new Date(napStartTime);
     const napEnd = new Date(napStart.getTime() + napDurationMinutes * 60 * 1000);
 
@@ -31,7 +31,6 @@ Deno.serve(async (req) => {
       last_need_simulated_at: napStart.toISOString(),
     });
 
-    // Return scheduled nap details
     return Response.json({
       success: true,
       characterId,
