@@ -53,8 +53,11 @@ Deno.serve(async (req) => {
     let wokenCount = 0;
 
     for (const char of eligibleChars) {
-      // Skip if not sleeping/napping
-      if (!['sleeping', 'napping'].includes(char.resolved_presence_status)) continue;
+      // Skip if not sleeping. Naps are NOT wake-time-bound — they are governed by
+      // the 3-hour nap cap in simulateActiveCharacterNeeds. A nap at any time of day
+      // is valid; waking a character from a nap because "it's past their wake-up time"
+      // is incorrect — wake_up_time is for overnight sleep, not midday rest.
+      if (char.resolved_presence_status !== 'sleeping') continue;
 
       // Skip if valid exception (hospitalized, jailed, house arrest, etc.)
       if (VALID_SLEEP_EXCEPTIONS.includes(char.resolved_presence_status)) continue;
