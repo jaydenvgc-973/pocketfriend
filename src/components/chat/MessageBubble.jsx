@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { isCharacterConfined, getConfinementLabel } from "@/lib/confinementMessagingEngine";
-import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward, MapPin, Pencil, Check, Share2 } from "lucide-react";
+import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward, MapPin, Pencil, Check, Share2, Copy } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { filterDashes } from "@/lib/dashFilter";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
@@ -738,7 +738,22 @@ export default function MessageBubble({ message, character, showName = false, on
       </div>
 
       {/* Forward button — visible on all non-narrative messages */}
-      {!isNarrative && onForward && (
+              {!isNarrative && message.content && (
+          <motion.button
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              navigator.clipboard.writeText(message.content);
+            }}
+            className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors opacity-0 group-hover:opacity-100"
+            title="Copy message"
+          >
+            <Copy className="w-3.5 h-3.5" />
+          </motion.button>
+        )}
+
+        {!isNarrative && onForward && (
         <motion.button
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.95 }}
