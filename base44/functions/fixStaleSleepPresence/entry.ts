@@ -256,16 +256,22 @@ Deno.serve(async (req) => {
       // Repair stale sleep
       if (isStale && isSleepingInDB) {
         const homeId = char.current_home_location_id || char.temporary_housing_location_id || null;
+        const wasActualSleep = dbStatus === 'sleeping';
+        const nowIso = nowET.toISOString();
         const repairPayload = {
           resolved_presence_status: 'home',
           resolved_source_reason: 'stale_sleep_cleared',
-          resolved_last_updated_at: nowET.toISOString(),
+          resolved_last_updated_at: nowIso,
           ...(homeId ? { resolved_current_location_id: homeId, resolved_location_type: 'home' } : {}),
           ...(consequence_tags?.length > 0 ? {
             last_oversleep_consequence_tags: consequence_tags,
-            last_oversleep_cleared_at: nowET.toISOString(),
+            last_oversleep_cleared_at: nowIso,
           } : {}),
         };
+        if (wasActualSleep) {
+          repairPayload.last_wake_time = nowIso;
+        }
+        // Nap wake does NOT write last_wake_time.
         try {
           await base44.entities.Character.update(char.id, repairPayload);
           repaired.push({

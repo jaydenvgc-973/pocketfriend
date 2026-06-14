@@ -1183,8 +1183,17 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            console.warn(`[simulateActiveCharacterNeeds] SLEEP_VIOLATION: ${charName} is sleeping but missing last_sleep_start — setting last_sleep_start=now as safe correction`);
             updatePayload.last_sleep_start = nowIso;
+            base44.asServiceRole.entities.LifeEvent.create({
+              character_id: char.id, character_name: charName,
+              event_type: 'medical_event', valence: 'neutral', severity: 'significant',
+              title: 'Missing last_sleep_start — safe correction applied',
+              description: `${charName} is sleeping but missing last_sleep_start. Set to now (${nowIso}) as safe correction. Prior writer failed to record sleep-start evidence.`,
+              emotional_impact: 'system diagnostic',
+              triggered_by: 'life_simulation',
+              timestamp: nowIso,
+              context_tags: ['missing_timestamp', 'last_sleep_start', 'simulateActiveCharacterNeeds'],
+            }).catch(() => {});
           }
         }
 
@@ -1224,8 +1233,17 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            console.warn(`[simulateActiveCharacterNeeds] NAP_VIOLATION: ${charName} is napping but missing last_nap_start — setting last_nap_start=now as safe correction`);
             updatePayload.last_nap_start = nowIso;
+            base44.asServiceRole.entities.LifeEvent.create({
+              character_id: char.id, character_name: charName,
+              event_type: 'medical_event', valence: 'neutral', severity: 'significant',
+              title: 'Missing last_nap_start — safe correction applied',
+              description: `${charName} is napping but missing last_nap_start. Set to now (${nowIso}) as safe correction. Prior writer failed to record nap-start evidence.`,
+              emotional_impact: 'system diagnostic',
+              triggered_by: 'life_simulation',
+              timestamp: nowIso,
+              context_tags: ['missing_timestamp', 'last_nap_start', 'simulateActiveCharacterNeeds'],
+            }).catch(() => {});
           }
         }
 
@@ -1278,8 +1296,17 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            console.warn(`[simulateActiveCharacterNeeds] AWAKE_VIOLATION: ${charName} awake but missing last_wake_time — setting last_wake_time=now as safe correction`);
             updatePayload.last_wake_time = nowIso;
+            base44.asServiceRole.entities.LifeEvent.create({
+              character_id: char.id, character_name: charName,
+              event_type: 'medical_event', valence: 'neutral', severity: 'significant',
+              title: 'Missing last_wake_time — safe correction applied',
+              description: `${charName} is awake but missing last_wake_time. Set to now (${nowIso}) as safe correction. Prior wake writer failed to record wake evidence.`,
+              emotional_impact: 'system diagnostic',
+              triggered_by: 'life_simulation',
+              timestamp: nowIso,
+              context_tags: ['missing_timestamp', 'last_wake_time', 'simulateActiveCharacterNeeds'],
+            }).catch(() => {});
           }
         }
 

@@ -21,11 +21,14 @@ Deno.serve(async (req) => {
     const napStart = new Date(napStartTime);
     const napEnd = new Date(napStart.getTime() + napDurationMinutes * 60 * 1000);
 
-    // Update character to reflect nap scheduling
-    // Set current_activity to "napping" and clear decided_to_stay_up_until if nap covers that period
+    // Update character to reflect nap scheduling.
+    // WRITES authoritative presence state so simulateActiveCharacterNeeds can enforce the 3-hour nap cap.
+    // Does NOT write last_wake_time or last_sleep_start — nap is not actual sleep.
     await base44.entities.Character.update(characterId, {
+      resolved_presence_status: 'napping',
       current_activity: `napping (${napDurationMinutes}min)`,
       last_nap_start: napStart.toISOString(),
+      last_need_simulated_at: napStart.toISOString(),
     });
 
     // Return scheduled nap details

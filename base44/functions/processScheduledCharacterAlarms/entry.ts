@@ -134,6 +134,8 @@ Deno.serve(async (req) => {
         updatePayload.current_activity = activityNote;
         updatePayload.emotional_state = newEmotionalState;
         updatePayload.sleep_debt_hours = Math.round(sleepDebtHours * 10) / 10;
+        // Alarm wake from actual sleep — write last_wake_time for 19h awake enforcement
+        updatePayload.last_wake_time = nowIso;
       }
 
       try {

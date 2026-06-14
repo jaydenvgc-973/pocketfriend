@@ -306,6 +306,7 @@ Deno.serve(async (req) => {
         sleep_interrupted_at: nowIso,
         pending_alarm_time: null,
         resolved_last_updated_at: nowIso,
+        last_wake_time: nowIso,
         ...(finalizedEnergy !== null ? { energy_value: finalizedEnergy } : {}),
       };
       try {

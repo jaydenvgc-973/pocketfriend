@@ -61,15 +61,40 @@ Deno.serve(async (req) => {
         }
 
         // Wake them
+        // Classify prior state: actual sleep → write last_wake_time; nap → don't
+        const wasActualSleep = char.resolved_presence_status === 'sleeping';
+        const wasNap = char.resolved_presence_status === 'napping';
+        const wakePayload = {
+          resolved_presence_status: 'home',
+          location_status: 'home',
+          current_activity: 'awake',
+          emotional_state: char.emotional_state || 'neutral',
+          resolved_last_updated_at: nowEtIso,
+          sleep_interrupted_at: nowEtIso,
+        };
+        if (wasActualSleep) {
+          wakePayload.last_wake_time = nowEtIso;
+        }
+        // Nap wake does NOT write last_wake_time.
+        // If prior state is unknown (not sleeping, not napping but somehow here),
+        // log a durable violation instead of guessing.
+        if (!wasActualSleep && !wasNap) {
+          base44.asServiceRole.entities.LifeEvent.create({
+            character_id: charId,
+            character_name: char.name,
+            event_type: 'medical_event',
+            valence: 'neutral',
+            severity: 'minor',
+            title: 'Unknown sleep state cleared — cannot classify wake type',
+            description: `clearStaleCharacterSleep woke ${char.name} from prior presence "${char.resolved_presence_status}". Cannot determine if this was actual sleep or nap wake. last_wake_time NOT written.`,
+            emotional_impact: 'system diagnostic',
+            triggered_by: 'life_simulation',
+            timestamp: nowEtIso,
+            context_tags: ['missing_timestamp', 'unknown_sleep_state', 'clearStaleCharacterSleep'],
+          }).catch(() => {});
+        }
         if (!dry_run) {
-          await base44.asServiceRole.entities.Character.update(charId, {
-            resolved_presence_status: 'home',
-            location_status: 'home',
-            current_activity: 'awake',
-            emotional_state: char.emotional_state || 'neutral',
-            resolved_last_updated_at: nowEtIso,
-            sleep_interrupted_at: nowEtIso,
-          });
+          await base44.asServiceRole.entities.Character.update(charId, wakePayload);
 
           console.log(`[clearStaleCharacterSleep] WOKE ${char.name} (${charId})`);
         }

@@ -84,6 +84,7 @@ Deno.serve(async (req) => {
         resolved_source_reason: 'wake_time_boundary_enforcement',
         resolved_last_updated_at: nowETIso,
         sleep_interrupted_at: nowETIso,
+        last_wake_time: nowETIso,
       };
 
       try {
