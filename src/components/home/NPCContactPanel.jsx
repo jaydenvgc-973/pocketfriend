@@ -79,7 +79,7 @@ export default function NPCContactPanel() {
   const { unreadByContact, globalUnreadCount } = useWorldContactsUnread(
     currentUser?.id,
     sortedNpcCharacters.length > 0
-      ? sortedNpcCharacters.map(c => ({ person_name: c.name, id: c.id }))
+      ? sortedNpcCharacters.map(c => ({ person_name: c.name, related_character_id: c.id }))
       : []
   );
 

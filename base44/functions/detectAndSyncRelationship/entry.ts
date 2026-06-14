@@ -66,16 +66,81 @@ Deno.serve(async (req) => {
 
     let detected = [];
     try {
-      const detectionRes = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are analyzing a chat message exchange to detect relationship claims between characters.
+      // ── DERIVE LISTENER NAME for third-party reference disambiguation ─────
+      // conversation_id is provided when called from chat pipeline.
+      // Use it to determine who the speaker is talking TO so the LLM can
+      // separate listener from the actual subject being discussed.
+      let listenerName = null;
+      if (conversation_id) {
+        try {
+          const convoArr = await base44.entities.Conversation.filter({ id: conversation_id }, null, 1).catch(() => []);
+          const convo = convoArr[0];
+          if (convo) {
+            // Conversation types:
+            //   direct: type === 'direct' — the user is the listener
+            //   phone/world_phone: type === 'phone' or channel === 'world_phone' — other participant
+            //   group: type === 'group' — multiple listeners
+            //   npc: type === 'npc' — the NPC is the listener
+            if (convo.type === 'direct') {
+              listenerName = 'the user';
+            } else {
+              const allChars = await base44.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => []);
+              const otherIds = (convo.character_ids || []).filter(id => id !== character_id);
+              const otherChar = allChars.find(c => otherIds.includes(c.id));
+              if (otherChar) listenerName = otherChar.name;
+            }
+          }
+        } catch (_) { /* non-blocking */ }
+      }
+      const listenerContext = listenerName
+        ? `\nCRITICAL CONTEXT: The speaker "${char.name}" is talking TO "${listenerName}". "${listenerName}" is the LISTENER, not necessarily the subject of any third-party references.`
+        : '';
 
-Character speaking: "${char.name}"
-Known app characters to check against: ${candidateNames.slice(0, 50).join(', ')}
+      const detectionRes = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are analyzing a chat message exchange to detect relationship claims between the speaker and OTHER characters.${listenerContext}
+
+SPEAKER (the character talking): "${char.name}"
+LISTENER (who the speaker is talking TO): ${listenerName || 'unknown — could be the user or another character'}
+
+Known app characters to check against (these are the ONLY names you may return): ${candidateNames.slice(0, 50).join(', ')}
 
 Chat exchange:
 ${combinedText}
 
-Task: Find any names from the known characters list that are referenced in this exchange.
+═══════════════════════════════════════
+HARD RULES — VIOLATION = INCORRECT OUTPUT
+═══════════════════════════════════════
+
+RULE 1 — LISTENER ≠ SUBJECT:
+If the speaker mentions a relationship type (cousin, girlfriend, brother, boss, therapist, partner, etc.) about a THIRD PARTY, do NOT attach that relationship type to the LISTENER.
+
+RIGHT: "My cousin is in town" → the cousin is a third party (NOT the listener). The listener is NOT the cousin.
+RIGHT: "I talked to my therapist" → the therapist is a third party (NOT the listener).
+RIGHT: "You are my cousin" → the listener IS the cousin. confidence=0.9+ relationship_type=family.
+RIGHT: "Hayden is my cousin" → Hayden (a known character) IS the cousin. confidence=0.9+ relationship_type=family.
+WRONG: "I haven't talked to my cousin" → DO NOT label the listener as family.
+
+RULE 2 — ONLY EXPLICIT IDENTIFICATION:
+Only assign a relationship type when the speaker EXPLICITLY identifies the named character AS that relationship:
+- "You are my girlfriend" → the listener IS romantic
+- "Hayden is my boss" → Hayden IS the boss
+- "My girlfriend Sarah..." → Sarah IS the girlfriend
+- "I talked to my brother" → the brother is an UNRESOLVED third party. DO NOT assign to the listener.
+
+RULE 3 — UNRESOLVED THIRD-PARTY REFERENCES:
+If the speaker mentions a relationship to someone who is NOT explicitly named AND NOT clearly the listener:
+- Set relationship_type to "unknown"
+- Set interaction_depth to "incidental" or "none"
+- Set confidence <= 0.3
+- Do NOT attach to the listener
+
+RULE 4 — WHEN IN DOUBT, DON'T:
+If you cannot tell whether the relationship applies to the listener or a third party:
+- Set relationship_type to "unknown"
+- Set interaction_depth to "incidental"
+- Set confidence <= 0.3
+
+═══════════════════════════════════════
 
 For each found name, detect:
 - relationship_type: "friend" | "romantic" | "family" | "coworker" | "classmate" | "acquaintance" | "enemy" | "contact" | "unknown"
@@ -89,7 +154,7 @@ For each found name, detect:
   - "none": just co-location with no actual exchange
 
 Return JSON: {"relationships": [{"name": "...", "relationship_type": "...", "emotional_tone": "...", "confidence": 0.8, "interaction_summary": "...", "interaction_depth": "..."}]}
-Only include entries with confidence >= 0.6. Return empty array if nothing detected.`,
+Only include entries with confidence >= 0.6. If no confident matches, return empty array.`,
         response_json_schema: {
           type: 'object',
           properties: {
