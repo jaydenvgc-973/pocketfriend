@@ -1138,7 +1138,7 @@ Deno.serve(async (req) => {
         // ── HARD SLEEP & NAP CAPS + 19-HOUR AWAKE ENFORCEMENT ─────────────
         // CRITICAL: Sleep and nap timestamps are tracked separately.
         // last_sleep_start → only for actual sleep (resolved_presence_status='sleeping')
-        // last_nap_start   → only for naps (resolved_presence_status='napping')
+        // last_nap_time   → only for naps (resolved_presence_status='napping')
         // The 19-hour awake timer uses last_sleep_start ONLY — naps do NOT reset it.
         // ─────────────────────────────────────────────────────────────────────
 
@@ -1198,12 +1198,12 @@ Deno.serve(async (req) => {
         }
 
         // ── HARD 3-HOUR NAP CAP ───────────────────────────────────────────
-        // Uses last_nap_start ONLY. If missing, state violation — apply safe
-        // correction by setting last_nap_start=now (resets timer, conservative).
+        // Uses last_nap_time ONLY. If missing, state violation — apply safe
+        // correction by setting last_nap_time=now (resets timer, conservative).
         // Naps do NOT write last_wake_time — nap end is not an actual-sleep wake.
         if (dbIsNapping && !hasStayLock) {
-          if (char.last_nap_start) {
-            const napStartMs = new Date(char.last_nap_start).getTime();
+          if (char.last_nap_time) {
+            const napStartMs = new Date(char.last_nap_time).getTime();
             const napDurationHours = (nowET.getTime() - napStartMs) / 3_600_000;
             if (napDurationHours >= 3) {
               const napWakePayload = {
@@ -1233,16 +1233,16 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            updatePayload.last_nap_start = nowIso;
+            updatePayload.last_nap_time = nowIso;
             base44.asServiceRole.entities.LifeEvent.create({
               character_id: char.id, character_name: charName,
               event_type: 'medical_event', valence: 'neutral', severity: 'significant',
-              title: 'Missing last_nap_start — safe correction applied',
-              description: `${charName} is napping but missing last_nap_start. Set to now (${nowIso}) as safe correction. Prior writer failed to record nap-start evidence.`,
+              title: 'Missing last_nap_time — safe correction applied',
+              description: `${charName} is napping but missing last_nap_time. Set to now (${nowIso}) as safe correction. Prior writer failed to record nap-start evidence.`,
               emotional_impact: 'system diagnostic',
               triggered_by: 'life_simulation',
               timestamp: nowIso,
-              context_tags: ['missing_timestamp', 'last_nap_start', 'simulateActiveCharacterNeeds'],
+              context_tags: ['missing_timestamp', 'last_nap_time', 'simulateActiveCharacterNeeds'],
             }).catch(() => {});
           }
         }

@@ -51,8 +51,8 @@ Deno.serve(async (req) => {
       const isOwnerVerified = char.owner_email ? true : false;
 
       // ── NAP DURATION ENFORCEMENT ──────────────────────────────────────
-      if (isNap && char.nap_start_time) {
-        const napStart = new Date(char.nap_start_time);
+      if (isNap && char.last_nap_time) {
+        const napStart = new Date(char.last_nap_time);
         const napDurationMs = nowUtc.getTime() - napStart.getTime();
         const napDurationHours = napDurationMs / 3600000;
 
@@ -65,13 +65,19 @@ Deno.serve(async (req) => {
           });
 
           if (!dry_run) {
-            await base44.asServiceRole.entities.Character.update(char.id, {
+            const wasActualSleep = char.resolved_presence_status === 'sleeping';
+            const napWakePayload = {
               resolved_presence_status: 'home',
               location_status: 'home',
               current_activity: 'just woke up (nap time exceeded)',
               emotional_state: 'neutral',
               resolved_last_updated_at: nowEtIso,
-            }).catch(e => console.error(`Update failed: ${e.message}`));
+            };
+            // Nap wake does NOT write last_wake_time
+            if (wasActualSleep) {
+              napWakePayload.last_wake_time = nowEtIso;
+            }
+            await base44.asServiceRole.entities.Character.update(char.id, napWakePayload).catch(e => console.error(`Update failed: ${e.message}`));
 
             woken.push(char.id);
             console.log(`[enforceStaleNapLimit] WOKE ${char.name} — nap exceeded 3 hours`);
@@ -81,7 +87,7 @@ Deno.serve(async (req) => {
       }
 
       // ── STALE NAP (no start time) ─────────────────────────────────────
-      if (isNap && !char.nap_start_time) {
+      if (isNap && !char.last_nap_time) {
         violations.push({
           character_id: char.id,
           character_name: char.name,
@@ -90,14 +96,20 @@ Deno.serve(async (req) => {
         });
 
         if (!dry_run) {
-          await base44.asServiceRole.entities.Character.update(char.id, {
-            resolved_presence_status: 'home',
-            location_status: 'home',
-            resolved_last_updated_at: nowEtIso,
-          }).catch(e => console.error(`Update failed: ${e.message}`));
+          const wasActualSleepStale = char.resolved_presence_status === 'sleeping';
+            const staleWakePayload = {
+              resolved_presence_status: 'home',
+              location_status: 'home',
+              resolved_last_updated_at: nowEtIso,
+            };
+            // Nap wake does NOT write last_wake_time
+            if (wasActualSleepStale) {
+              staleWakePayload.last_wake_time = nowEtIso;
+            }
+            await base44.asServiceRole.entities.Character.update(char.id, staleWakePayload).catch(e => console.error(`Update failed: ${e.message}`));
 
-          woken.push(char.id);
-          console.log(`[enforceStaleNapLimit] WOKE ${char.name} — stale nap state`);
+            woken.push(char.id);
+            console.log(`[enforceStaleNapLimit] WOKE ${char.name} — stale nap state`);
         }
         continue;
       }
@@ -130,12 +142,18 @@ Deno.serve(async (req) => {
           });
 
           if (!dry_run) {
-            await base44.asServiceRole.entities.Character.update(char.id, {
+            const wasActualSleepLate = char.resolved_presence_status === 'sleeping';
+            const lateWakePayload = {
               resolved_presence_status: 'home',
               location_status: 'home',
               current_activity: 'woke up late',
               resolved_last_updated_at: nowEtIso,
-            }).catch(e => console.error(`Update failed: ${e.message}`));
+            };
+            // Nap wake does NOT write last_wake_time
+            if (wasActualSleepLate) {
+              lateWakePayload.last_wake_time = nowEtIso;
+            }
+            await base44.asServiceRole.entities.Character.update(char.id, lateWakePayload).catch(e => console.error(`Update failed: ${e.message}`));
 
             woken.push(char.id);
             console.log(`[enforceStaleNapLimit] WOKE ${char.name} — past wake time, no valid reason`);

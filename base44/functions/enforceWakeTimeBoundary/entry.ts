@@ -76,6 +76,7 @@ Deno.serve(async (req) => {
       if (currentMinutes < wakeMinutes + 15) continue;
 
       // WAKE THEM
+      const wasActualSleep = char.resolved_presence_status === 'sleeping';
       const wakePayload = {
         resolved_presence_status: 'home',
         resolved_location_type: 'home',
@@ -84,8 +85,11 @@ Deno.serve(async (req) => {
         resolved_source_reason: 'wake_time_boundary_enforcement',
         resolved_last_updated_at: nowETIso,
         sleep_interrupted_at: nowETIso,
-        last_wake_time: nowETIso,
       };
+      // Only actual-sleep wake writes last_wake_time. Nap wake does not reset the 19h awake timer.
+      if (wasActualSleep) {
+        wakePayload.last_wake_time = nowETIso;
+      }
 
       try {
         try {

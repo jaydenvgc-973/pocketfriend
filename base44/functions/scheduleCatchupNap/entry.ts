@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
     await base44.entities.Character.update(characterId, {
       resolved_presence_status: 'napping',
       current_activity: `napping (${napDurationMinutes}min)`,
-      last_nap_start: napStart.toISOString(),
+      last_nap_time: napStart.toISOString(),
       last_need_simulated_at: napStart.toISOString(),
     });
 
