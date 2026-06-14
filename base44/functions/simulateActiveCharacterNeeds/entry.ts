@@ -49,8 +49,8 @@ const clamp = (v) => Math.max(0, Math.min(100, v));
 // These are now set to 0 (neutral) for energy. Awake resting slows drain but never reverses it.
 // The -5/hr baseline awake drain guarantee (applied after context rates) ensures forward progress to 0.
 const RATES = {
-  sleeping:        { hunger: -1,   energy: +12, social: -0.5, health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
-  passed_out:      { hunger: -0.5, energy: +8,  social: -0.5, health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
+  sleeping:        { hunger: -1,   energy: +12.5, social: -0.5, health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
+  passed_out:      { hunger: -0.5, energy: +12.5, social: -0.5, health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
   hospitalized:    { hunger: -0.5, energy: +4,  social: -1,   health: +5,   mental: -0.3, hygiene: +1,   comfort: +2   },
   at_work:         { hunger: -4,   energy: -5,  social: +1,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
   at_work_medical: { hunger: -5,   energy: -7,  social: +1,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
@@ -1068,6 +1068,7 @@ Deno.serve(async (req) => {
           await base44.asServiceRole.entities.Character.update(char.id, {
             resolved_presence_status: 'sleeping',
             current_activity: 'passed out — resting',
+            last_sleep_start: nowIso,
             last_need_simulated_at: nowIso,
           });
           await base44.asServiceRole.entities.LifeEvent.create({
@@ -1132,6 +1133,151 @@ Deno.serve(async (req) => {
         // the resolved location is frozen — do not override presence.
         const hasStayLock = char.presence_stay_lock === true;
 
+        let nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+
+        // ── HARD 8-HOUR SLEEP CAP ───────────────────────────────────────
+        // Normal sleep must not exceed 8 hours. Check actual sleep duration
+        // and force-wake if the cap is exceeded. Passed-out and hospitalized
+        // are medical exceptions and not subject to this cap.
+        const sleepStartCandidates = [
+          char.last_sleep_start,
+          char.resolved_last_updated_at,
+          char.last_need_simulated_at,
+        ].filter(Boolean);
+        const dbIsSleeping = char.resolved_presence_status === 'sleeping';
+        const dbIsNapping  = char.resolved_presence_status === 'napping';
+
+        if ((dbIsSleeping || dbIsNapping) && sleepStartCandidates.length > 0 && !hasStayLock) {
+          const sleepStartMs = Math.min(...sleepStartCandidates.map(t => new Date(t).getTime()));
+          const sleepDurationHours = (nowET.getTime() - sleepStartMs) / 3_600_000;
+
+          // Hard 8-hour cap for normal sleep
+          if (dbIsSleeping && sleepDurationHours >= 8 && char.resolved_presence_status !== 'passed_out'
+              && char.resolved_presence_status !== 'hospitalized' && !sleepLocked) {
+            const wakePayload = {
+              resolved_presence_status: 'home',
+              current_activity: '',
+              hunger_value:  Math.round(newNeeds.hunger),
+              energy_value:  Math.round(newNeeds.energy),
+              social_value:  Math.round(newNeeds.social),
+              health_value:  Math.round(newNeeds.health),
+              mental_value:  Math.round(newNeeds.mental),
+              hygiene_value: Math.round(newNeeds.hygiene),
+              comfort_value: Math.round(newNeeds.comfort),
+              last_need_simulated_at: nowIso,
+            };
+            await base44.asServiceRole.entities.Character.update(char.id, wakePayload);
+            results.push({
+              character: charName,
+              context,
+              event: 'hard_8h_sleep_wake',
+              sleep_duration_hours: Math.round(sleepDurationHours * 100) / 100,
+              needs: {
+                hunger:  Math.round(newNeeds.hunger),
+                energy:  Math.round(newNeeds.energy),
+                social:  Math.round(newNeeds.social),
+                health:  Math.round(newNeeds.health),
+                mental:  Math.round(newNeeds.mental),
+                hygiene: Math.round(newNeeds.hygiene),
+                comfort: Math.round(newNeeds.comfort),
+              },
+            });
+            continue; // skip rest of loop for this character
+          }
+
+          // Hard 3-hour nap cap
+          if (dbIsNapping && sleepDurationHours >= 3) {
+            const napWakePayload = {
+              resolved_presence_status: 'home',
+              current_activity: '',
+              hunger_value:  Math.round(newNeeds.hunger),
+              energy_value:  Math.round(newNeeds.energy),
+              social_value:  Math.round(newNeeds.social),
+              health_value:  Math.round(newNeeds.health),
+              mental_value:  Math.round(newNeeds.mental),
+              hygiene_value: Math.round(newNeeds.hygiene),
+              comfort_value: Math.round(newNeeds.comfort),
+              last_need_simulated_at: nowIso,
+            };
+            await base44.asServiceRole.entities.Character.update(char.id, napWakePayload);
+            results.push({
+              character: charName,
+              context,
+              event: 'hard_3h_nap_wake',
+              nap_duration_hours: Math.round(sleepDurationHours * 100) / 100,
+              needs: {
+                hunger:  Math.round(newNeeds.hunger),
+                energy:  Math.round(newNeeds.energy),
+                social:  Math.round(newNeeds.social),
+                health:  Math.round(newNeeds.health),
+                mental:  Math.round(newNeeds.mental),
+                hygiene: Math.round(newNeeds.hygiene),
+                comfort: Math.round(newNeeds.comfort),
+              },
+            });
+            continue;
+          }
+        }
+
+        // ── 19-HOUR AWAKE ENFORCEMENT ───────────────────────────────────
+        // Characters may stay awake up to ~18 hours with realistic support
+        // (coffee, energy drinks, naps). 19 hours without actual sleep is a
+        // failure condition. Naps do not reset this timer — only actual sleep
+        // (resolved_presence_status === 'sleeping') counts.
+        if (!dbIsSleeping && !dbIsNapping && char.resolved_presence_status !== 'passed_out'
+            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock
+            && sleepStartCandidates.length > 0) {
+          const lastSleepEndMs = Math.min(...sleepStartCandidates.map(t => new Date(t).getTime()));
+          const awakeHours = (nowET.getTime() - lastSleepEndMs) / 3_600_000;
+          if (awakeHours >= 19) {
+            const awakeLimitPayload = {
+              resolved_presence_status: 'sleeping',
+              current_activity: 'forced sleep — 19-hour awake limit',
+              last_sleep_start: nowIso,
+              hunger_value:  Math.round(newNeeds.hunger),
+              energy_value:  Math.round(newNeeds.energy),
+              social_value:  Math.round(newNeeds.social),
+              health_value:  Math.round(newNeeds.health),
+              mental_value:  Math.round(newNeeds.mental),
+              hygiene_value: Math.round(newNeeds.hygiene),
+              comfort_value: Math.round(newNeeds.comfort),
+              last_need_simulated_at: nowIso,
+            };
+            await base44.asServiceRole.entities.Character.update(char.id, awakeLimitPayload);
+
+            await base44.asServiceRole.entities.LifeEvent.create({
+              character_id: char.id,
+              character_name: charName,
+              event_type: 'sleep_deprivation_event',
+              valence: 'negative',
+              severity: 'significant',
+              title: 'Forced sleep — 19-hour awake limit',
+              description: `${charName} was awake for ${Math.round(awakeHours)} hours and forced to sleep.`,
+              emotional_impact: 'exhaustion',
+              triggered_by: 'life_simulation',
+              timestamp: nowIso,
+              context_tags: ['awake_limit', 'forced_sleep'],
+            }).catch(() => {});
+
+            results.push({
+              character: charName,
+              context,
+              event: '19h_awake_forced_sleep',
+              awake_hours: Math.round(awakeHours * 100) / 100,
+              needs: {
+                hunger:  Math.round(newNeeds.hunger),
+                energy:  Math.round(newNeeds.energy),
+                social:  Math.round(newNeeds.social),
+                health:  Math.round(newNeeds.health),
+                mental:  Math.round(newNeeds.mental),
+                hygiene: Math.round(newNeeds.hygiene),
+                comfort: Math.round(newNeeds.comfort),
+              },
+            });
+            continue;
+          }
+        }
+
         // ═══════════════════════════════════════════════════════════════════
         // BUILD UPDATE PAYLOAD
         // ═══════════════════════════════════════════════════════════════════
@@ -1152,6 +1298,10 @@ Deno.serve(async (req) => {
         const corrective = computeCorrectiveState(newNeeds, char);
         if (corrective && !hasStayLock) {
           Object.assign(updatePayload, corrective);
+          // Write sleep start timestamp when force-sleeping
+          if (corrective.resolved_presence_status === 'sleeping') {
+            updatePayload.last_sleep_start = nowIso;
+          }
         }
 
         // ── RC2 (continued): ENERGY ZERO → PASSED OUT ────────────────────
@@ -1163,6 +1313,7 @@ Deno.serve(async (req) => {
           Object.assign(updatePayload, {
             resolved_presence_status: 'sleeping',
             current_activity: 'passed out — resting',
+            last_sleep_start: nowIso,
           });
         }
 
@@ -1181,6 +1332,7 @@ Deno.serve(async (req) => {
           Object.assign(updatePayload, {
             resolved_presence_status: 'hospitalized',
             current_activity: 'hospitalized — health collapsed',
+            last_sleep_start: nowIso,
           });
 
           // Create a ScheduledEvent for the hospital recovery
@@ -1224,6 +1376,7 @@ Deno.serve(async (req) => {
           Object.assign(updatePayload, {
             resolved_presence_status: 'sleeping',
             current_activity: 'forced rest — compound crisis',
+            last_sleep_start: nowIso,
           });
 
           // Create recovery ScheduledEvent
