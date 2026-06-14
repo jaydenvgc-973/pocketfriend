@@ -323,12 +323,16 @@ function scoreLocation(location, char, vals, nowET) {
   if (socialU >= 2) {
     const isIntro = ['introvert', 'mostly_introvert'].includes(se);
     if (isIntro) {
-      if (cat === 'outdoor' || cat === 'home') score += 2 + socialU;
+      if (cat === 'outdoor')               score += 2 + socialU;
+      if (cat === 'home')                  score -= socialU; // Home reinforces the deprivation loop — penalize
     } else {
       // NIGHTLIFE GATE: clubs/bars are NOT the default social solution.
       // They score the same as other social venues BEFORE the nightlife penalty is applied below.
       if (cat === 'social' || cat === 'food_drink') score += 3 + socialU * 2;
       if (cat === 'outdoor' || cat === 'gym')       score += 2 + socialU;
+      // HOME PENALTY: staying home when social is critically low makes the problem worse.
+      // The character needs to be AROUND people. Home prevents that.
+      if (cat === 'home')                           score -= 2 + socialU;
     }
   }
 

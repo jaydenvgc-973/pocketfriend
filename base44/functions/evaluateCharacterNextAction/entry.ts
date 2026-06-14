@@ -361,6 +361,17 @@ function computeBaseWeights(char, schedule, needs, restrictions, timeCtx, locati
   } else if (needs.urgency.energy === 'low') {
     weights.rest = 0.20;
   }
+
+  // ── SOCIAL CRITICAL: mandatory social-seeking boost, suppress home ──────
+  if (needs.urgency.social === 'critical') {
+    // Social is critically low — character MUST seek social contact.
+    // Boost social weight significantly, suppress home (home IS the deprivation).
+    weights.social = Math.max(weights.social, 0.45);
+    weights.home  = Math.min(weights.home, 0.01);
+    // Suppress rest/recreation to prevent "just stay home and relax" winning
+    weights.rest = Math.min(weights.rest, 0.05);
+    weights.recreation = Math.min(weights.recreation, 0.02);
+  }
   
   // ── TIME-OF-DAY MODULATION ──────────────────────────────────────────────
   if (timeCtx.isLate) {
@@ -498,7 +509,31 @@ function evaluateDecision(char, schedule, needs, weights, restrictions, timeCtx,
   }
   
   if (needs.urgency.social === 'critical') {
-    options.push({ action: 'reach out to someone', actionType: 'social', dimension: 'social', score: weights.social + 0.10, explanation: `${char.name} has been isolated and should connect with someone.` });
+    // CRITICAL SOCIAL — MANDATORY OUTBOUND ACTION
+    // Social need at critical level means the character MUST pursue social fulfillment.
+    // "relax at home" is explicitly blocked below — home IS the cause of the deficit.
+    // This is NOT a weight-based choice. It is a mandatory behavioral requirement.
+    const atHome = locationType === 'home' || locCat === 'home' || presence === 'home';
+    if (atHome) {
+      // Character is isolated at home — MUST leave to find social contact
+      // Home is NOT a valid option when social is critically low and it's causing the deprivation
+      options.push({
+        action: 'go out to socialize and be around people',
+        actionType: 'go_out_socialize',
+        dimension: 'social',
+        score: 0.95, // Near-maximum — this is mandatory, not optional
+        explanation: `${char.name} has been isolated too long with critically low social need. Must leave home to find social interaction — visiting venues, seeing people, being in public.`
+      });
+    } else {
+      // Already out somewhere — seek social contact wherever they are
+      options.push({
+        action: 'seek social interaction where you are',
+        actionType: 'social',
+        dimension: 'social',
+        score: 0.90,
+        explanation: `${char.name} has critically low social need. Must connect with people — talk to someone nearby, join an activity, find social contact.`
+      });
+    }
   }
   
   if (needs.urgency.mental === 'critical') {
