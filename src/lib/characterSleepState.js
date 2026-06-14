@@ -594,5 +594,3 @@ export function getCharacterSleepState(character, locationMap) {
     },
   };
 }
-
-export default getCharacterSleepState;
