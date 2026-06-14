@@ -367,11 +367,21 @@ function generateWorldStateTruth(
   }
 
   // ── CO-PRESENCE ────────────────────────────────────────────────────
+  const isSpeakingCharAsleep = ['sleeping','napping'].includes(charLocation.resolved_presence_status);
   if (isUserPresent) {
-    lines.push(`\n[CO-PRESENCE: USER IS HERE]`);
-    lines.push(`The user is physically present with you at ${charLocation.resolved_current_location_name}.`);
-    lines.push(`This is a co-present conversation, not remote text/call.`);
-    lines.push(`Speak as if they are nearby or in the room, not distant.`);
+    if (isSpeakingCharAsleep) {
+      // Passive co-presence: character is asleep. Do NOT demand active recognition.
+      lines.push(`\n[CO-PRESENCE: USER SHARES THIS SPACE WHILE YOU SLEEP]`);
+      lines.push(`The user is physically present at ${charLocation.resolved_current_location_name} while you are asleep.`);
+      lines.push(`This is NOT a conversation. You are asleep. The user's presence is passive context only.`);
+      lines.push(`Do NOT wake up. Do NOT acknowledge the user. Do NOT generate dialogue.`);
+      lines.push(`The user's presence may affect your comfort or emotional state during sleep based on your relationship, but it does NOT wake you.`);
+    } else {
+      lines.push(`\n[CO-PRESENCE: USER IS HERE]`);
+      lines.push(`The user is physically present with you at ${charLocation.resolved_current_location_name}.`);
+      lines.push(`This is a co-present conversation, not remote text/call.`);
+      lines.push(`Speak as if they are nearby or in the room, not distant.`);
+    }
   } else if (conversationType === 'remote_text' || conversationType === 'remote_call') {
     lines.push(`\n[CONVERSATION TYPE: REMOTE]`);
     lines.push(`The user is NOT physically present.`);

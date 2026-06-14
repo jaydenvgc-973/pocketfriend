@@ -842,6 +842,10 @@ The arrival commitment governs this response. Honor it.
 export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
   if (!character) return '';
 
+  // SLEEP GUARD: When the character is asleep, household co-presence is passive context only.
+  // Do NOT inject active recognition demands into the sleeping character's prompt.
+  const isAsleep = ['sleeping','napping'].includes(character.resolved_presence_status);
+
   const charHomeId = character.current_home_location_id || character.resolved_current_location_id;
   const charCurrentLocId = character.resolved_current_location_id;
   const familyMembers = character.family_members || [];
@@ -907,6 +911,32 @@ export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
 
   const lines = coPresent.map(cp => {
     if (cp.reason === 'same_location_now' || cp.reason === 'family_same_location') {
+      return `• ${cp.name} is at the same location as you.`;
+    }
+    return `• ${cp.name} is home with you.`;
+  });
+
+  if (isAsleep) {
+    // Sleeping character: co-presence is passive context only. No active awareness demands.
+    return `\n\n════════════════════════════════════
+HOUSEHOLD & CO-PRESENCE — PASSIVE CONTEXT (character is ASLEEP)
+════════════════════════════════════
+You are currently ASLEEP. The following people share this location while you sleep:
+
+${lines.join('\n')}
+
+PASSIVE RULES FOR SLEEP:
+• You are asleep — do NOT generate dialogue or active awareness.
+• These people are nearby but you are NOT interacting with them.
+• Their presence may affect your comfort, safety, or emotional state during sleep based on your relationship.
+• If you trust or love someone here, their presence may make your sleep more restful.
+• If you fear or distrust someone here, their presence may make your sleep more restless.
+• But in ALL cases — you remain ASLEEP. No active recognition is required.
+════════════════════════════════════`;
+  }
+
+  const activeLines = coPresent.map(cp => {
+    if (cp.reason === 'same_location_now' || cp.reason === 'family_same_location') {
       return `• ${cp.name} is WITH YOU right now at the same location. You do NOT need to call them. They are physically present.`;
     }
     return `• ${cp.name} is home with you. They are in the house right now — no need to call or locate them.`;
@@ -919,7 +949,7 @@ The following people are currently WITH YOU or in the same home as you.
 Do NOT say things like "I need to call them", "I wonder where they are", or "let me text them" — they are right there.
 If you want to involve them in conversation, reference them as physically present.
 
-${lines.join('\n')}
+${activeLines.join('\n')}
 
 RULE: This physical truth overrides any memory, assumption, or narrative about these people being elsewhere.
 ════════════════════════════════════`;
