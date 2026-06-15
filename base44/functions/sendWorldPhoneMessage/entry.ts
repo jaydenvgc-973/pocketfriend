@@ -270,6 +270,37 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
 
 
 
+    // ── STEP 4: PRESENCE VALIDATION ────────────────────────────────────────────
+    let presenceValidated = false;
+    let userPresenceData = null;
+
+    try {
+      const settingsList = await base44.entities.UserSettings.filter({ owner_email: ownerEmail }, null, 1).catch(() => []);
+      const settings = settingsList?.[0] || {};
+      const userLocationId = settings.user_current_location_id || null;
+      const userLocationName = settings.user_current_location_name || null;
+      const userPresenceStatus = settings.user_presence_status || 'away';
+      const senderLocationId = sender.resolved_current_location_id || null;
+      const senderLocationName = sender.resolved_current_location_name || null;
+      const senderStayLock = sender.presence_stay_lock === true;
+
+      userPresenceData = {
+        user_location_id: userLocationId,
+        user_location_name: userLocationName,
+        user_presence_status: userPresenceStatus,
+        sender_location_id: senderLocationId,
+        sender_location_name: senderLocationName,
+        presence_stay_lock: senderStayLock,
+        locations_match: !!(senderLocationId && userLocationId && senderLocationId === userLocationId),
+      };
+      presenceValidated = true;
+
+      console.log(`[sendWorldPhoneMessage] presence_validated | sender=${sender.name} | sender_location=${senderLocationName || 'none'} | user_location=${userLocationName || 'none'} | stay_lock=${senderStayLock} | locations_match=${userPresenceData.locations_match}`);
+    } catch (presenceErr) {
+      console.warn(`[sendWorldPhoneMessage] presence_validation_warning | sender=${sender.name} | error=${presenceErr.message}`);
+      presenceValidated = true;
+    }
+
     // ── GENERATE MESSAGE IN SENDER'S VOICE (text only) ───────────────────────────
     // Two modes:
     // A) requested_message has actual content to relay → rewrite it in sender's voice
