@@ -243,36 +243,32 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
       if (ctxData?.systemPrompt) {
         canonicalContext = ctxData;
         canonicalLoaded = true;
-        console.log(`[sendWorldPhoneMessage] canonical_context_loaded | sender=${sender.name} | memories=${ctxData.memories?.length || 0} | location=${sender.resolved_current_location_name || 'unknown'}`);
+        console.log(`[sendWorldPhoneMessage] canonical_context_loaded | sender=${sender.name} | memories=${ctxData.memories?.length || 0} | life_journal=${ctxData.lifeJournalEntries?.length || 0} | location=${sender.resolved_current_location_name || 'unknown'}`);
       }
     } catch (ctxErr) {
-      warnings.push(`Canonical context build failed (non-fatal): ${ctxErr.message}`);
-      console.warn(`[sendWorldPhoneMessage] canonical_context_failed | sender=${sender.name} | error=${ctxErr.message}`);
-    }
-
-    // ── STEP 4: PRESENCE VERIFICATION ────────────────────────────────────────────
-    // Verify sender presence — check for routing blockers before allowing send.
-    // presence_stay_lock: character is locked in place by user STAY decision — valid send still allowed from locked location.
-    // Blockers that prevent communication: jailed, house_arrest, hospitalized.
-    const presenceBlockers = [];
-    if (sender.is_jailed) presenceBlockers.push('incarcerated');
-    if (sender.house_arrest_active) presenceBlockers.push('house_arrest');
-    const senderPresence = sender.resolved_presence_status || '';
-    if (senderPresence === 'hospitalized') presenceBlockers.push('hospitalized');
-
-    if (presenceBlockers.length > 0) {
+      console.error(`[sendWorldPhoneMessage] CANONICAL CONTEXT EXCEPTION | sender=${sender.name} | error=${ctxErr.message}`);
       return Response.json({
         success: false,
-        error: `Sender cannot send messages while ${presenceBlockers.join(', ')}.`,
-        presence_blockers: presenceBlockers,
+        error: `buildCanonicalCharacterContext threw exception for sender ${sender.name}: ${ctxErr.message}. Message not sent.`,
+        routing_step: 'canonical_context',
+        routing_step_failed: true,
       });
     }
 
-    // Verify recipient presence — log but don't block (recipient can receive while asleep/away)
-    const recipientPresence = recipient.resolved_presence_status || '';
-    if (recipient.is_jailed) {
-      warnings.push(`Recipient ${recipient.name} is incarcerated — message delivered but they may be unable to respond.`);
+    // HARD STOP: if canonical context returned no usable systemPrompt, do not proceed
+    if (!canonicalLoaded) {
+      console.error(`[sendWorldPhoneMessage] CANONICAL CONTEXT EMPTY | sender=${sender.name} | systemPrompt_present=false`);
+      return Response.json({
+        success: false,
+        error: `buildCanonicalCharacterContext returned no usable systemPrompt for sender ${sender.name}. Message not sent.`,
+        routing_step: 'canonical_context',
+        routing_step_failed: true,
+      });
     }
+
+
+
+
 
     // ── GENERATE MESSAGE IN SENDER'S VOICE (text only) ───────────────────────────
     // Two modes:
@@ -438,16 +434,36 @@ This must be a real message — not a command, not a description, not a meta-ins
       memory_eligible: true,
       relationship_eligible: true,
       message_type: message_type || 'text',
-      // ── STEP 7: generation_context — anchors this message to canonical data ─────
-      generation_context: canonicalLoaded ? {
-        canonical_loaded: true,
-        sender_location_id: sender.resolved_current_location_id || null,
-        sender_location_name: sender.resolved_current_location_name || null,
-        sender_presence_status: sender.resolved_presence_status || null,
-        memory_count: canonicalContext?.memories?.length || 0,
-        life_journal_count: canonicalContext?.lifeJournalEntries?.length || 0,
+      // ── STEP 8: generation_context — full routing evidence ───────────────────
+      generation_context: {
+        // Identity anchors
+        sender_character_id,
+        recipient_character_id: recipient.id,
+        owner_email: ownerEmail,
+        // Conversation anchor
+        conversation_id: conversationId,
+        recipient_in_character_ids: participantIds.includes(recipient.id),
+        // Canonical context
+        build_canonical_character_context_status: canonicalLoaded ? 'success' : 'failed',
+        canonical_context_memory_count: canonicalContext?.memories?.length || 0,
+        canonical_context_life_journal_count: canonicalContext?.lifeJournalEntries?.length || 0,
+        // CharacterMemory / Life Journal — importance_score >= 4
+        life_journal_importance_4_plus_count: (canonicalContext?.lifeJournalEntries || []).filter(e => (e.importance_score ?? 0) >= 4).length,
+        // Location / presence
+        sender_resolved_current_location_id: sender.resolved_current_location_id || null,
+        sender_resolved_current_location_name: sender.resolved_current_location_name || null,
+        user_current_location_id: userPresenceData?.user_location_id || null,
+        user_current_location_name: userPresenceData?.user_location_name || null,
+        sender_presence_stay_lock: sender.presence_stay_lock === true,
+        presence_validated: presenceValidated,
+        // Character type
+        sender_character_type: sender.character_type || null,
+        recipient_character_type: recipient.character_type || null,
+        // Recipient resolution
+        recipient_resolution_path: recipientResolutionPath,
+        // Timestamp
         built_at: now,
-      } : { canonical_loaded: false, reason: 'canonical_context_unavailable', built_at: now },
+      },
     };
 
     // Add image fields if this is an image send
