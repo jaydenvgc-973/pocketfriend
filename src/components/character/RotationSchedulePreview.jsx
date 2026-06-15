@@ -48,9 +48,15 @@ const GROUP_CATEGORIES = OUTFIT_CATEGORIES.reduce((acc, c) => {
   return acc;
 }, {});
 
+/** Eastern Time day-of-year, deterministic */
+function getTodayDayOfYear() {
+  const etNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const start = new Date(etNow.getFullYear(), 0, 0);
+  return Math.floor((etNow - start) / 86400000);
+}
+
 /** Eastern Time "tomorrow" day-of-year, deterministic */
 function getTomorrowDayOfYear() {
-  // Use Eastern Time date
   const etNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
   const etTomorrow = new Date(etNow);
   etTomorrow.setDate(etTomorrow.getDate() + 1);
@@ -67,7 +73,7 @@ function idHash(characterId = '') {
  * Returns: { state, outfit? }
  * States: 'scheduled' | 'no_outfits' | 'no_numbered' | 'conflict' | 'rotation_off'
  */
-function getGroupPreview(groupKey, outfits, rotationEnabled, characterId) {
+function getGroupPreview(groupKey, outfits, rotationEnabled, characterId, dayOfYear) {
   const catValues = GROUP_CATEGORIES[groupKey] || [];
   const pool = outfits.filter(o => catValues.includes(o.category));
 
@@ -91,7 +97,6 @@ function getGroupPreview(groupKey, outfits, rotationEnabled, characterId) {
   }
   if (hasDuplicate) return { state: 'conflict' };
 
-  const dayOfYear = getTomorrowDayOfYear();
   const hash = idHash(characterId);
   const idx = (dayOfYear + hash) % numbered.length;
   return { state: 'scheduled', outfit: numbered[idx] };
@@ -107,29 +112,63 @@ export default function RotationSchedulePreview({ character }) {
   const rotationEnabled = character.outfit_rotation_enabled !== false;
   const characterId = character.id || '';
 
-  // Build group previews, skip groups with no outfits at all
-  const groupPreviews = GROUPS.map(g => ({
+  const todayDayOfYear = getTodayDayOfYear();
+  const tomorrowDayOfYear = getTomorrowDayOfYear();
+
+  // Build today's group previews
+  const todayPreviews = GROUPS.map(g => ({
     ...g,
-    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId),
+    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId, todayDayOfYear),
   })).filter(g => g.preview !== null);
 
-  if (groupPreviews.length === 0) return null;
+  // Build tomorrow's group previews
+  const tomorrowPreviews = GROUPS.map(g => ({
+    ...g,
+    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId, tomorrowDayOfYear),
+  })).filter(g => g.preview !== null);
+
+  if (todayPreviews.length === 0 && tomorrowPreviews.length === 0) return null;
 
   return (
-    <div className="bg-secondary/30 border border-border rounded-xl p-3 space-y-2">
-      {/* Header */}
-      <div className="flex items-center gap-2">
-        <Calendar className="w-3.5 h-3.5 text-primary" />
-        <p className="text-[10px] font-semibold text-foreground uppercase tracking-wider">
-          Tomorrow's Rotation Schedule
-        </p>
-      </div>
+    <div className="bg-secondary/30 border border-border rounded-xl p-3 space-y-3">
+      {/* Today's Rotation */}
+      {todayPreviews.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+            <p className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider">
+              Today's Rotation
+            </p>
+          </div>
+          <div className="space-y-1">
+            {todayPreviews.map(({ key, emoji, preview }) => (
+              <GroupPreviewRow key={`today-${key}`} groupName={key} emoji={emoji} preview={preview} variant="today" />
+            ))}
+          </div>
+        </div>
+      )}
 
-      <div className="space-y-1.5">
-        {groupPreviews.map(({ key, emoji, preview }) => (
-          <GroupPreviewRow key={key} groupName={key} emoji={emoji} preview={preview} />
-        ))}
-      </div>
+      {/* Divider */}
+      {todayPreviews.length > 0 && tomorrowPreviews.length > 0 && (
+        <div className="border-t border-border/50" />
+      )}
+
+      {/* Tomorrow's Rotation */}
+      {tomorrowPreviews.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-3.5 h-3.5 text-primary" />
+            <p className="text-[10px] font-semibold text-foreground uppercase tracking-wider">
+              Tomorrow's Rotation Schedule
+            </p>
+          </div>
+          <div className="space-y-1">
+            {tomorrowPreviews.map(({ key, emoji, preview }) => (
+              <GroupPreviewRow key={`tomorrow-${key}`} groupName={key} emoji={emoji} preview={preview} variant="tomorrow" />
+            ))}
+          </div>
+        </div>
+      )}
 
       <p className="text-[9px] text-muted-foreground/50 leading-relaxed pt-0.5">
         Based on rotation numbers only — weather, medical, and manual overrides do not affect this schedule.
@@ -138,19 +177,23 @@ export default function RotationSchedulePreview({ character }) {
   );
 }
 
-function GroupPreviewRow({ groupName, emoji, preview }) {
+function GroupPreviewRow({ groupName, emoji, preview, variant = "tomorrow" }) {
+  const isToday = variant === "today";
+
   if (preview.state === 'scheduled') {
     const o = preview.outfit;
     const catDef = OUTFIT_CATEGORIES.find(c => c.value === o?.category);
     return (
-      <div className="flex items-start gap-2 bg-card/60 rounded-lg px-2.5 py-2">
+      <div className={`flex items-start gap-2 rounded-lg px-2.5 py-2 ${isToday ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-card/60'}`}>
         <span className="text-xs mt-0.5 shrink-0">{catDef?.emoji || emoji}</span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <p className="text-[10px] text-muted-foreground shrink-0">Next {groupName}:</p>
+            <p className={`text-[10px] shrink-0 ${isToday ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+              {isToday ? 'Today' : 'Next'} {groupName}:
+            </p>
             <p className="text-xs font-semibold text-foreground truncate">{o?.label || '—'}</p>
             {o?.rotation_number != null && o.rotation_number !== "" && (
-              <span className="text-[9px] font-bold bg-primary/15 text-primary px-1.5 py-0.5 rounded-full shrink-0">
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${isToday ? 'bg-emerald-500/20 text-emerald-400' : 'bg-primary/15 text-primary'}`}>
                 #{o.rotation_number}
               </span>
             )}
@@ -170,7 +213,7 @@ function GroupPreviewRow({ groupName, emoji, preview }) {
 
   if (preview.state === 'no_numbered') {
     return (
-      <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-secondary/50">
+      <div className={`flex items-center gap-2 px-2.5 py-2 rounded-lg ${isToday ? 'bg-emerald-500/5' : 'bg-secondary/50'}`}>
         <span className="text-xs shrink-0">{emoji}</span>
         <div>
           <p className="text-[10px] text-muted-foreground font-medium">{groupName}</p>
@@ -188,7 +231,9 @@ function GroupPreviewRow({ groupName, emoji, preview }) {
         <span className="text-xs shrink-0">{emoji}</span>
         <div>
           <p className="text-[10px] text-amber-400 font-medium">{groupName}</p>
-          <p className="text-[9px] text-amber-400/80">⚠ Duplicate rotation numbers — resolve conflicts to see tomorrow's outfit</p>
+          <p className="text-[9px] text-amber-400/80">
+            {isToday ? '⚠ Duplicate rotation numbers — resolve conflicts' : '⚠ Duplicate rotation numbers — resolve conflicts to see tomorrow\'s outfit'}
+          </p>
         </div>
       </div>
     );
@@ -196,7 +241,7 @@ function GroupPreviewRow({ groupName, emoji, preview }) {
 
   if (preview.state === 'rotation_off') {
     return (
-      <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-secondary/50">
+      <div className={`flex items-center gap-2 px-2.5 py-2 rounded-lg ${isToday ? 'bg-emerald-500/5' : 'bg-secondary/50'}`}>
         <span className="text-xs shrink-0">{emoji}</span>
         <div>
           <p className="text-[10px] text-muted-foreground font-medium">{groupName}</p>
