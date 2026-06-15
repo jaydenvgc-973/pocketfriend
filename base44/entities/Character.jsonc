@@ -51,6 +51,27 @@
       "format": "date-time",
       "description": "When the stay lock was set. VGC Towers travel logic uses this to know when to clear the lock."
     },
+    "presence_stay_lock_reason": {
+      "type": "string",
+      "description": "Why the lock exists (e.g., user_scene_stay, sleep_state, work_shift, school_schedule)."
+    },
+    "presence_stay_lock_authority": {
+      "type": "string",
+      "description": "Which system set the lock (e.g., SceneExit, simulateActiveCharacterNeeds, enforceCharacterWorkSchedule)."
+    },
+    "presence_stay_lock_expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the lock automatically expires. Null for locks that release on condition."
+    },
+    "presence_stay_lock_release_condition": {
+      "type": "string",
+      "description": "Programmatic condition for release (e.g., sleep_complete, shift_end, scene_end)."
+    },
+    "presence_stay_lock_created_by": {
+      "type": "string",
+      "description": "Who initiated the lock (user or system_automation)."
+    },
     "character_type": {
       "type": "string",
       "enum": [

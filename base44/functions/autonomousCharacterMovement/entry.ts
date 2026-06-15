@@ -1367,72 +1367,39 @@ Deno.serve(async (req) => {
         }
 
         // ── TIER 5: PRESENCE STAY LOCK VALIDATION ────────────────────────────
-        // Validates that the lock is still relevant and not blocking a higher-priority action.
         if (char.presence_stay_lock === true) {
-          let releaseLock = false;
-          let releaseReason = '';
-          const LOCK_EXPIRATION_HOURS = 4; // Stale lock cleanup
+          const validationResult = await base44.functions.invoke('validatePresenceStayLock', { character: char, context: 'autonomous_movement' });
+          const { shouldRespectLock, shouldReleaseLock, releaseReason, proof } = validationResult.data;
 
-          const lockSetAt = char.presence_stay_lock_set_at ? new Date(char.presence_stay_lock_set_at) : null;
-          if (lockSetAt && (nowET.getTime() - lockSetAt.getTime()) > LOCK_EXPIRATION_HOURS * 60 * 60 * 1000) {
-            releaseLock = true;
-            releaseReason = `expired (> ${LOCK_EXPIRATION_HOURS} hours)`;
-          }
-
-          // Emergency needs override any lock
-          if (!releaseLock && (energyUrgency >= 4 || urgencyLevel(vals.health) >= 3)) {
-            releaseLock = true;
-            releaseReason = `emergency_need_override (energy: ${Math.round(vals.energy)}, health: ${Math.round(vals.health)})`;
-          }
-
-          // If sleeping, check if wake conditions are met
-          if (!releaseLock && (status === 'sleeping' || status === 'napping')) {
-            const energyNow = vals.energy;
-            const sleepStartedAt = char.last_sleep_start ? new Date(char.last_sleep_start) : null;
-            const sleepDurationHours = sleepStartedAt ? (Date.now() - sleepStartedAt.getTime()) / 3600000 : 0;
-            const isHealthRecovering = (vals.health < 30 || vals.mental < 25);
-            
-            const nowMin3 = nowET.getHours() * 60 + nowET.getMinutes();
-            const dowNow3 = nowET.getDay();
-            const todayET3 = nowET.toISOString().slice(0, 10);
-
-            const hasActiveWorkObligation = (() => {
-              if (!Array.isArray(char.work_days) || char.work_days.length === 0 || !char.work_start_time || !char.work_end_time) return false;
-              if (!char.work_days.includes(dowNow3)) return false;
-              const hasCallout3 = char.work_exception_status === 'called_out' && char.work_exception_date === todayET3;
-              if (hasCallout3) return false;
-              const s3 = toMin(char.work_start_time), e3 = toMin(char.work_end_time);
-              if (s3 === null || e3 === null) return false;
-              return e3 < s3 ? (nowMin3 >= s3 || nowMin3 < e3) : (nowMin3 >= s3 && nowMin3 < e3);
-            })();
-
-            const hasActiveSchoolObligation = (char.student_status === 'enrolled' && char.education_location_id) ? (nowMin3 >= 8 * 60 && nowMin3 < 15 * 60) : false;
-
-            if (hasActiveWorkObligation || hasActiveSchoolObligation || (energyNow >= 70 && sleepDurationHours >= 4 && !isHealthRecovering)) {
-                releaseLock = true;
-                releaseReason = 'sleep_obligation_completed';
-            }
-          }
-
-          if (releaseLock) {
-            console.log(`[autonomousMovement] ${char.name}: Releasing stale/overridden presence_stay_lock. Reason: ${releaseReason}`);
+          if (shouldReleaseLock) {
+            console.log(`[autonomousMovement] ${char.name}: Releasing presence_stay_lock. Reason: ${releaseReason}. Proof: ${proof}`);
             try {
               await base44.entities.Character.update(char.id, {
                 presence_stay_lock: false,
                 presence_stay_lock_location_id: null,
                 presence_stay_lock_set_at: null,
+                presence_stay_lock_reason: null,
+                presence_stay_lock_authority: null,
+                presence_stay_lock_expires_at: null,
+                presence_stay_lock_release_condition: null,
+                presence_stay_lock_created_by: null,
               });
             } catch {
               await base44.asServiceRole.entities.Character.update(char.id, {
                 presence_stay_lock: false,
                 presence_stay_lock_location_id: null,
                 presence_stay_lock_set_at: null,
+                presence_stay_lock_reason: null,
+                presence_stay_lock_authority: null,
+                presence_stay_lock_expires_at: null,
+                presence_stay_lock_release_condition: null,
+                presence_stay_lock_created_by: null,
               }).catch(() => {});
             }
             char.presence_stay_lock = false; // Update in-memory for this run
-          } else {
-            console.log(`[autonomousMovement] ${char.name}: STAY_LOCK active and validated — skipping autonomous movement (locked at ${char.presence_stay_lock_location_id})`);
-            skippedLog.push(`${char.name}: STAY_LOCK active`);
+          } else if (shouldRespectLock) {
+            console.log(`[autonomousMovement] ${char.name}: STAY_LOCK active and validated — skipping autonomous movement. Proof: ${proof}`);
+            skippedLog.push(`${char.name}: STAY_LOCK active and validated`);
             continue;
           }
         }
