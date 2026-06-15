@@ -48,35 +48,39 @@ const clamp = (v) => Math.max(0, Math.min(100, v));
 // home_resting, resting, eating, food_drink, hospital — previously had positive energy rates.
 // These are now set to 0 (neutral) for energy. Awake resting slows drain but never reverses it.
 // The -5/hr baseline awake drain guarantee (applied after context rates) ensures forward progress to 0.
+// ── SOCIAL NEED MODEL (corrected) ────────────────────────────────────────────
+// Social measures FULFILLMENT — not current activity, not location type.
+// A bartender who spent 8 hours with customers is socially fulfilled, not deprived.
+// A character resting at home after a social day has HIGH social, not low.
+// Social GAINS from interaction with people (work, school, events, family, calls).
+// Social only DECAYS during genuine isolation (extended solitude with zero interaction).
+// Being at home ≠ antisocial. Being in public ≠ automatically social.
+// KEY INSIGHT: A character can be socially fulfilled AND want quiet time. These are not opposites.
 const RATES = {
-  sleeping:        { hunger: -1,   energy: +12.5, social: -0.5, health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
-  passed_out:      { hunger: -0.5, energy: +12.5, social: -0.5, health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
-  hospitalized:    { hunger: -0.5, energy: +4,  social: -1,   health: +5,   mental: -0.3, hygiene: +1,   comfort: +2   },
-  at_work:         { hunger: -4,   energy: -5,  social: +1,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
-  at_work_medical: { hunger: -5,   energy: -7,  social: +1,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
-  at_work_service: { hunger: -5,   energy: -6,  social: +2,   health: -1,   mental: -0.75,hygiene: -3,   comfort: -3   },
-  at_work_office:  { hunger: -3,   energy: -4,  social: +1,   health: -0.5, mental: -0.5, hygiene: -1,   comfort: -1   },
-  work_off_shift:  { hunger: -3,   energy: -3,  social: -1,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -4   },
-  at_school:       { hunger: -3,   energy: -4,  social: +2,   health: -0.5, mental:  0,   hygiene: -1,   comfort: -1   },
+  sleeping:        { hunger: -1,   energy: +12.5, social:  0,   health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
+  passed_out:      { hunger: -0.5, energy: +12.5, social:  0,   health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
+  hospitalized:    { hunger: -0.5, energy: +4,  social:  0,   health: +5,   mental: -0.3, hygiene: +1,   comfort: +2   },
+  at_work:         { hunger: -4,   energy: -5,  social: +2,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
+  at_work_medical: { hunger: -5,   energy: -7,  social: +2,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
+  at_work_service: { hunger: -5,   energy: -6,  social: +3,   health: -1,   mental: -0.75,hygiene: -3,   comfort: -3   },
+  at_work_office:  { hunger: -3,   energy: -4,  social: +2,   health: -0.5, mental: -0.5, hygiene: -1,   comfort: -1   },
+  work_off_shift:  { hunger: -3,   energy: -3,  social:  0,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -4   },
+  at_school:       { hunger: -3,   energy: -4,  social: +3,   health: -0.5, mental:  0,   hygiene: -1,   comfort: -1   },
   gym:             { hunger: -6,   energy: -7,  social: +1,   health: +1,   mental: +1,   hygiene: -5,   comfort: -2   },
-  bar_club:        { hunger: -2,   energy: -5,  social: +5,   health: -1,   mental: +0.5, hygiene: -1,   comfort: -1   },
-  // home_resting: energy=0 (neutral). Awake resting does not restore energy. -5/hr baseline still applies.
-  home_resting:    { hunger: -1,   energy:  0,  social: -1,   health: +0.5, mental: +2,   hygiene: 0,    comfort: +3   },
-  home_active:     { hunger: -2,   energy: -3,  social: -1,   health: 0,    mental: +0.5, hygiene: -0.5, comfort: +1   },
+  bar_club:        { hunger: -2,   energy: -5,  social: +4,   health: -1,   mental: +0.5, hygiene: -1,   comfort: -1   },
+  // home_resting: energy=0 (neutral). Awake resting does not restore energy.
+  // Social=0: being home after a social day does NOT drain social fulfillment. Resting is not isolation.
+  home_resting:    { hunger: -1,   energy:  0,  social:  0,   health: +0.5, mental: +2,   hygiene: 0,    comfort: +3   },
+  home_active:     { hunger: -2,   energy: -3,  social:  0,   health: 0,    mental: +0.5, hygiene: -0.5, comfort: +1   },
   // hospital (visited, not admitted): energy=0. Admitted/hospitalized context is separate above.
-  hospital:        { hunger: -1,   energy:  0,  social: -1,   health: +3,   mental: -0.5, hygiene: 0,    comfort: +1   },
-  // food_drink: eating out while awake does not restore energy — food restores hunger only.
+  hospital:        { hunger: -1,   energy:  0,  social:  0,   health: +3,   mental: -0.5, hygiene: 0,    comfort: +1   },
+  // food_drink: eating out. Energy=0 while awake.
   food_drink:      { hunger: +15,  energy:  0,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
-  social_out:      { hunger: -2,   energy: -4,  social: +4,   health: 0,    mental: +1,   hygiene: -1,   comfort: -0.5 },
-  // REMOVED: Travel is routing metadata only, never a needs context.
-  // Movement is teleport-style — destination/resolved context is always authoritative.
-  // No travel exception for "travel to work" or any other destination.
-  // All zeros — travel applies no needs rates whatsoever.
-  // eating: hunger relief only. Energy=0 while awake. -5/hr baseline still applies on top.
+  social_out:      { hunger: -2,   energy: -4,  social: +3,   health: 0,    mental: +1,   hygiene: -1,   comfort: -0.5 },
   eating:          { hunger: +15,  energy:  0,  social: +1,   health: +0.5, mental: +1,   hygiene: 0,    comfort: +2   },
-  // resting: energy=0 (neutral). Awake resting does not restore energy.
-  resting:         { hunger: -1,   energy:  0,  social: -0.5, health: +1,   mental: +3,   hygiene: 0,    comfort: +3   },
-  default:         { hunger: -2,   energy: -4,  social: -1,   health: 0,    mental: -0.3, hygiene: -1,   comfort: -1   },
+  // resting: energy=0 (neutral). Awake resting does not drain social — fulfillment persists.
+  resting:         { hunger: -1,   energy:  0,  social:  0,   health: +1,   mental: +3,   hygiene: 0,    comfort: +3   },
+  default:         { hunger: -2,   energy: -4,  social:  0,   health: 0,    mental: -0.3, hygiene: -1,   comfort: -1   },
 };
 
 // ── THRESHOLDS ────────────────────────────────────────────────────────────────
@@ -723,6 +727,8 @@ function applyStatInfection(needs, elapsedHours) {
     needs.energy  = clamp(needs.energy  - 1.5 * severity * elapsedHours);
     needs.comfort = clamp(needs.comfort - 0.5 * severity * elapsedHours);
   }
+  // Social < 15 = genuine isolation (not "at home resting"). Only truly isolated
+  // characters reach this threshold under the corrected fulfillment model.
   if (needs.social < 15) {
     needs.mental = clamp(needs.mental - 0.15 * elapsedHours);
   }
@@ -1129,6 +1135,13 @@ Deno.serve(async (req) => {
         if (sleepLocked) {
           newNeeds.energy = needs.energy ?? 75;
         }
+
+        // SOCIAL FULFILLMENT MODEL: Social measures fulfillment, not current activity.
+        // A bartender who worked 8h with customers is socially fulfilled (+3/hr → +24/shift).
+        // A character resting at home after a social day does NOT lose social (rate=0).
+        // Social only decays during genuine isolation — extended solitude with zero interaction.
+        // Being home ≠ antisocial. Being in public ≠ automatically social.
+        // Social and Energy are independent: a character can be fulfilled AND tired.
 
         // ── RC5: CASCADE INFECTION ────────────────────────────────────────
         newNeeds = applyStatInfection(newNeeds, elapsedHours);
