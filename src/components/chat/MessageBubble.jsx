@@ -68,6 +68,7 @@ export default function MessageBubble({ message, character, showName = false, on
   const time = message.timestamp ? format(new Date(message.timestamp), "h:mm a") : "";
   const hasReactions = message.reactions?.length > 0;
   const [showDelete, setShowDelete] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [isEditingNarrative, setIsEditingNarrative] = useState(false);
   const [editedNarrative, setEditedNarrative] = useState(message.content || "");
   const [isSavingNarrative, setIsSavingNarrative] = useState(false);
@@ -708,23 +709,38 @@ export default function MessageBubble({ message, character, showName = false, on
             )}
           </div>
 
-          {/* Reactions + location signal + add button — anchored to bottom corner */}
+          {/* Reactions + copy + location signal + add button — anchored to bottom corner */}
           {!isNarrative && !isUser && (
-            <div className={`absolute -bottom-2.5 right-1 z-20 flex gap-0.5 items-center`}>
-              {hasReactions && (
-                <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
-              )}
-              {onLocationSignal && (message.content || localImageUrl) && (
-                <LocationSignalButton
-                  message={message}
-                  onLocationSignal={onLocationSignal}
-                  onShowLocationShare={onShowLocationShare}
-                  onMovementCommitment={onMovementCommitment}
-                  isImageOnly={!message.content && !!localImageUrl}
-                />
-              )}
-              {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
-            </div>
+           <div className={`absolute -bottom-2.5 right-1 z-20 flex gap-0.5 items-center`}>
+             {hasReactions && (
+               <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
+             )}
+             {/* Copy button — appears on hover, copies full message text */}
+             {message.content && (
+               <button
+                 onClick={(e) => {
+                   e.stopPropagation();
+                   navigator.clipboard.writeText(message.content);
+                   setCopied(true);
+                   setTimeout(() => setCopied(false), 2000);
+                 }}
+                 className={`opacity-0 group-hover:opacity-100 transition-opacity bg-card border rounded-full w-5 h-5 flex items-center justify-center shadow-md ${copied ? "border-green-500 text-green-400 opacity-100" : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"}`}
+                 title={copied ? "Copied!" : "Copy message"}
+               >
+                 {copied ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
+               </button>
+             )}
+             {onLocationSignal && (message.content || localImageUrl) && (
+               <LocationSignalButton
+                 message={message}
+                 onLocationSignal={onLocationSignal}
+                 onShowLocationShare={onShowLocationShare}
+                 onMovementCommitment={onMovementCommitment}
+                 isImageOnly={!message.content && !!localImageUrl}
+               />
+             )}
+             {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
+           </div>
           )}
         </div>
 
@@ -737,23 +753,7 @@ export default function MessageBubble({ message, character, showName = false, on
         )}
       </div>
 
-      {/* Forward button — visible on all non-narrative messages */}
-              {!isNarrative && message.content && (
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={(e) => {
-              e.stopPropagation();
-              navigator.clipboard.writeText(message.content);
-            }}
-            className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors opacity-0 group-hover:opacity-100"
-            title="Copy message"
-          >
-            <Copy className="w-3.5 h-3.5" />
-          </motion.button>
-        )}
-
-        {!isNarrative && onForward && (
+      {!isNarrative && onForward && (
         <motion.button
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.95 }}
