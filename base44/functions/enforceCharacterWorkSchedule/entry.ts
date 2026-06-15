@@ -150,6 +150,12 @@ Deno.serve(async (req) => {
           resolved_location_type: 'work',
           resolved_source_reason: 'work_schedule',
           resolved_last_updated_at: singleNowET.toISOString(),
+          presence_stay_lock: true,
+          presence_stay_lock_reason: 'work_shift',
+          presence_stay_lock_authority: 'enforceCharacterWorkSchedule',
+          presence_stay_lock_set_at: singleNowET.toISOString(),
+          presence_stay_lock_location_id: singleActiveWorkLocId,
+          presence_stay_lock_created_by: 'system_automation',
         });
         return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: singleActiveWorkLocId, reason: 'On shift — moved to work' });
       }
@@ -166,6 +172,14 @@ Deno.serve(async (req) => {
               resolved_location_type: 'home',
               resolved_source_reason: 'fallback_to_home_base',
               resolved_last_updated_at: singleNowET.toISOString(),
+              presence_stay_lock: false,
+              presence_stay_lock_location_id: null,
+              presence_stay_lock_set_at: null,
+              presence_stay_lock_reason: null,
+              presence_stay_lock_authority: null,
+              presence_stay_lock_expires_at: null,
+              presence_stay_lock_release_condition: null,
+              presence_stay_lock_created_by: null,
             });
             return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: homeLocId, reason: 'Sleeping at work — moved home' });
           }
@@ -179,6 +193,14 @@ Deno.serve(async (req) => {
             resolved_location_type: 'home',
             resolved_source_reason: 'fallback_to_home_base',
             resolved_last_updated_at: singleNowET.toISOString(),
+            presence_stay_lock: false,
+            presence_stay_lock_location_id: null,
+            presence_stay_lock_set_at: null,
+            presence_stay_lock_reason: null,
+            presence_stay_lock_authority: null,
+            presence_stay_lock_expires_at: null,
+            presence_stay_lock_release_condition: null,
+            presence_stay_lock_created_by: null,
           });
           return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: homeLocId, reason: `Shift ended — going home (${newStatus})` });
         }
@@ -332,6 +354,12 @@ Deno.serve(async (req) => {
               resolved_location_type: 'work',
               resolved_source_reason: 'work_schedule',
               resolved_last_updated_at: nowET.toISOString(),
+              presence_stay_lock: true,
+              presence_stay_lock_reason: 'work_shift',
+              presence_stay_lock_authority: 'enforceCharacterWorkSchedule',
+              presence_stay_lock_set_at: nowET.toISOString(),
+              presence_stay_lock_location_id: activeWorkLocId,
+              presence_stay_lock_created_by: 'system_automation',
             });
             fixes_applied.push(`${char.name}: synced to work location`);
             fixCount++;
@@ -361,6 +389,14 @@ Deno.serve(async (req) => {
             resolved_location_type: 'home',
             resolved_source_reason: 'fallback_to_home_base',
             resolved_last_updated_at: nowET.toISOString(),
+            presence_stay_lock: false,
+            presence_stay_lock_location_id: null,
+            presence_stay_lock_set_at: null,
+            presence_stay_lock_reason: null,
+            presence_stay_lock_authority: null,
+            presence_stay_lock_expires_at: null,
+            presence_stay_lock_release_condition: null,
+            presence_stay_lock_created_by: null,
           });
           fixes_applied.push(`${char.name}: relocated home (${newStatus})`);
           fixCount++;
