@@ -228,6 +228,52 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
       return Response.json({ success: false, error: 'Sender and recipient are the same character.' });
     }
 
+    // ── STEP 3: INVOKE CANONICAL CHARACTER CONTEXT ──────────────────────────────
+    // The message must be anchored to canonical character data — not cache, not defaults.
+    // buildCanonicalCharacterContext is the single source of identity, memory, presence, and location.
+    let canonicalContext = null;
+    let canonicalLoaded = false;
+    try {
+      const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
+        characterId: sender_character_id,
+        interactionContext: 'world_contacts',
+        topKMemories: 8,
+      });
+      const ctxData = ctxRes?.data || ctxRes;
+      if (ctxData?.systemPrompt) {
+        canonicalContext = ctxData;
+        canonicalLoaded = true;
+        console.log(`[sendWorldPhoneMessage] canonical_context_loaded | sender=${sender.name} | memories=${ctxData.memories?.length || 0} | location=${sender.resolved_current_location_name || 'unknown'}`);
+      }
+    } catch (ctxErr) {
+      warnings.push(`Canonical context build failed (non-fatal): ${ctxErr.message}`);
+      console.warn(`[sendWorldPhoneMessage] canonical_context_failed | sender=${sender.name} | error=${ctxErr.message}`);
+    }
+
+    // ── STEP 4: PRESENCE VERIFICATION ────────────────────────────────────────────
+    // Verify sender presence — check for routing blockers before allowing send.
+    // presence_stay_lock: character is locked in place by user STAY decision — valid send still allowed from locked location.
+    // Blockers that prevent communication: jailed, house_arrest, hospitalized.
+    const presenceBlockers = [];
+    if (sender.is_jailed) presenceBlockers.push('incarcerated');
+    if (sender.house_arrest_active) presenceBlockers.push('house_arrest');
+    const senderPresence = sender.resolved_presence_status || '';
+    if (senderPresence === 'hospitalized') presenceBlockers.push('hospitalized');
+
+    if (presenceBlockers.length > 0) {
+      return Response.json({
+        success: false,
+        error: `Sender cannot send messages while ${presenceBlockers.join(', ')}.`,
+        presence_blockers: presenceBlockers,
+      });
+    }
+
+    // Verify recipient presence — log but don't block (recipient can receive while asleep/away)
+    const recipientPresence = recipient.resolved_presence_status || '';
+    if (recipient.is_jailed) {
+      warnings.push(`Recipient ${recipient.name} is incarcerated — message delivered but they may be unable to respond.`);
+    }
+
     // ── GENERATE MESSAGE IN SENDER'S VOICE (text only) ───────────────────────────
     // Two modes:
     // A) requested_message has actual content to relay → rewrite it in sender's voice
@@ -392,6 +438,16 @@ This must be a real message — not a command, not a description, not a meta-ins
       memory_eligible: true,
       relationship_eligible: true,
       message_type: message_type || 'text',
+      // ── STEP 7: generation_context — anchors this message to canonical data ─────
+      generation_context: canonicalLoaded ? {
+        canonical_loaded: true,
+        sender_location_id: sender.resolved_current_location_id || null,
+        sender_location_name: sender.resolved_current_location_name || null,
+        sender_presence_status: sender.resolved_presence_status || null,
+        memory_count: canonicalContext?.memories?.length || 0,
+        life_journal_count: canonicalContext?.lifeJournalEntries?.length || 0,
+        built_at: now,
+      } : { canonical_loaded: false, reason: 'canonical_context_unavailable', built_at: now },
     };
 
     // Add image fields if this is an image send
