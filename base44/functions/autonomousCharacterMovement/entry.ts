@@ -1344,14 +1344,34 @@ Deno.serve(async (req) => {
 
           // ── SCHOOL SCHEDULE CHECK ──────────────────────────────────────────
           // Only for enrolled students with an assigned education_location_id.
-          // School hours use the standard 08:00–15:00 window (no stored override field).
+          // Uses the education location's operating_hours via isLocationOpen(),
+          // plus a fallback to character's education_details for start/end times.
+          // Does NOT hardcode a universal 8AM–3PM school window.
           if (
             char.student_status === 'enrolled' &&
             char.education_location_id
           ) {
-            const SCHOOL_START = 8 * 60;   // 08:00
-            const SCHOOL_END   = 15 * 60;  // 15:00
-            const schoolActiveNow = nowMin >= SCHOOL_START && nowMin < SCHOOL_END;
+            const schoolLoc = userLocations.find(l => l.id === char.education_location_id);
+            // Use location operating_hours as the primary source for school time window
+            let schoolActiveNow = false;
+            if (schoolLoc) {
+              schoolActiveNow = isLocationOpen(schoolLoc);
+            }
+            // Fallback: if no location or no operating_hours, check character's education_details
+            if (!schoolLoc || (!schoolLoc.operating_hours || schoolLoc.operating_hours.length === 0)) {
+              const edDetails = char.education_details || {};
+              const edStart = edDetails.start_time || edDetails.school_start_time || null;
+              const edEnd   = edDetails.end_time   || edDetails.school_end_time   || null;
+              if (edStart && edEnd) {
+                const s = toMinutes(edStart);
+                const e = toMinutes(edEnd);
+                if (s !== null && e !== null) {
+                  schoolActiveNow = e < s
+                    ? (nowMin >= s || nowMin < e)
+                    : (nowMin >= s && nowMin < e);
+                }
+              }
+            }
 
             if (schoolActiveNow) {
               const schoolLoc = userLocations.find(l => l.id === char.education_location_id);
