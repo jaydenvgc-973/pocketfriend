@@ -1165,7 +1165,7 @@ Deno.serve(async (req) => {
         // If last_sleep_start is missing, this is a state violation — apply safe correction
         // by setting last_sleep_start=now (resets the 8h timer, conservative but safe).
         if (dbIsSleeping && char.resolved_presence_status !== 'passed_out'
-            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
+            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked) {
           if (char.last_sleep_start) {
             const sleepStartMs = new Date(char.last_sleep_start).getTime();
             const sleepDurationHours = (nowET.getTime() - sleepStartMs) / 3_600_000;
@@ -1216,7 +1216,7 @@ Deno.serve(async (req) => {
         // Uses last_nap_time ONLY. If missing, state violation — apply safe
         // correction by setting last_nap_time=now (resets timer, conservative).
         // Naps do NOT write last_wake_time — nap end is not an actual-sleep wake.
-        if (dbIsNapping && !hasStayLock) {
+        if (dbIsNapping) {
           if (char.last_nap_time) {
             const napStartMs = new Date(char.last_nap_time).getTime();
             const napDurationHours = (nowET.getTime() - napStartMs) / 3_600_000;
@@ -1343,11 +1343,16 @@ Deno.serve(async (req) => {
         // When needs cross critical thresholds during simulation, write
         // corrective states so the NEXT tick uses recovery rates.
         const corrective = computeCorrectiveState(newNeeds, char);
-        if (corrective && !hasStayLock) {
+        if (corrective) {
           Object.assign(updatePayload, corrective);
           // Write sleep start timestamp when force-sleeping
           if (corrective.resolved_presence_status === 'sleeping') {
             updatePayload.last_sleep_start = nowIso;
+            updatePayload.presence_stay_lock = true;
+            updatePayload.presence_stay_lock_reason = "sleep_state";
+            updatePayload.presence_stay_lock_authority = "simulateActiveCharacterNeeds";
+            updatePayload.presence_stay_lock_set_at = nowIso;
+            updatePayload.presence_stay_lock_created_by = "system_automation";
           }
         }
 
@@ -1373,8 +1378,7 @@ Deno.serve(async (req) => {
             .filter(v => v < T.HEALTH_CRITICAL).length >= 2;
 
         if ((newNeeds.health <= T.HEALTH_ER || compoundCrisisHealth)
-            && char.resolved_presence_status !== 'hospitalized'
-            && !hasStayLock) {
+            && char.resolved_presence_status !== 'hospitalized') {
           // Write hospitalized state — medical recovery, NOT sleep.
           // Do NOT write last_sleep_start here. Hospitalization is not ordinary sleep
           // and must not reset the 19h awake timer nor confuse sleep cap logic.
@@ -1419,7 +1423,6 @@ Deno.serve(async (req) => {
             && char.resolved_presence_status !== 'sleeping'
             && char.resolved_presence_status !== 'napping'
             && char.resolved_presence_status !== 'hospitalized'
-            && !hasStayLock
             && !sleepLocked) {
           Object.assign(updatePayload, {
             resolved_presence_status: 'sleeping',
@@ -1456,7 +1459,7 @@ Deno.serve(async (req) => {
 
         // ── STALE CORRECTIVE CLEANUP ───────────────────────────────────────
         const staleCleanup = resolveStaleCorrectiveActivities(char, newNeeds);
-        if (staleCleanup && !hasStayLock) {
+        if (staleCleanup) {
           Object.assign(updatePayload, staleCleanup);
         }
 

@@ -76,9 +76,19 @@ Deno.serve(async (req) => {
         return isSleeping || isCriticallyIll || isInEmergency;
       };
 
-      if (isBlockedFromWork(character)) {
+            if (isBlockedFromWork(character)) {
         return Response.json({ updated: false, reason: 'Character blocked from work (sleeping/sick/emergency)' });
       }
+
+      // ADD PRESENCE LOCK
+      await base44.asServiceRole.entities.Character.update(characterId, {
+        presence_stay_lock: true,
+        presence_stay_lock_reason: "work_shift",
+        presence_stay_lock_authority: "enforceCharacterWorkSchedule",
+        presence_stay_lock_set_at: singleNowET.toISOString(),
+        presence_stay_lock_location_id: singleActiveWorkLocId,
+        presence_stay_lock_created_by: "system_automation",
+      });
 
       // CALLOUT GUARD: valid callout for today = full work schedule bypass
       const singleNowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));

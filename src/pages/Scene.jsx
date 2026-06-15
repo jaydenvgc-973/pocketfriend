@@ -713,6 +713,10 @@ export default function Scene() {
           presence_stay_lock: true,
           presence_stay_lock_location_id: location.id,
           presence_stay_lock_set_at: now,
+          presence_stay_lock_reason: "user_scene_stay",
+          presence_stay_lock_authority: "SceneExit",
+          presence_stay_lock_release_condition: "scene_end",
+          presence_stay_lock_created_by: "user",
           travel_status: 'not_traveling',
           travel_destination_location_id: null,
         }).catch(() => {})

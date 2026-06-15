@@ -536,10 +536,6 @@
     "return_to_schedule_after_outing": {
       "type": "string"
     },
-    "sleep_debt_hours": {
-      "type": "number",
-      "default": 0
-    },
     "last_sleep_start": {
       "type": "string",
       "format": "date-time"

@@ -56,6 +56,76 @@ function computeCommitmentReliabilityScore(char) {
   return score;
 }
 
+// ── INLINE PRESENCE STAY LOCK VALIDATOR ──────────────────────────────────────
+// No network call. Observes authoritative state. Does NOT duplicate sleep/work/school logic.
+function validateStayLock(char, nowET) {
+  if (!char || char.presence_stay_lock !== true) {
+    return { shouldRespectLock: false, shouldReleaseLock: false, reason: 'no_lock_active', authority: null, lockReason: null, proof: 'Lock not active' };
+  }
+
+  const lockReason = char.presence_stay_lock_reason || null;
+  const lockAuthority = char.presence_stay_lock_authority || null;
+  const lockExpiresAt = char.presence_stay_lock_expires_at || null;
+
+  // Legacy lock detection
+  const isLegacy = !lockReason && !lockAuthority && !lockExpiresAt && !char.presence_stay_lock_release_condition;
+
+  if (isLegacy) {
+    const lockSetAt = char.presence_stay_lock_set_at ? new Date(char.presence_stay_lock_set_at).getTime() : null;
+    const lockLocId = char.presence_stay_lock_location_id || null;
+    const curLocId = char.resolved_current_location_id || null;
+
+    if (!lockSetAt) {
+      return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'orphaned_legacy_lock_no_timestamp', authority: lockAuthority, lockReason: lockReason, proof: 'Legacy lock missing set_at' };
+    }
+    if (lockLocId && curLocId && lockLocId !== curLocId) {
+      return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'legacy_lock_location_mismatch', authority: lockAuthority, lockReason: lockReason, proof: `Locked at ${lockLocId}, now at ${curLocId}` };
+    }
+    if (nowET.getTime() - lockSetAt > 12 * 60 * 60 * 1000) {
+      return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'stale_legacy_lock', authority: lockAuthority, lockReason: lockReason, proof: 'Legacy lock > 12 hours old' };
+    }
+  }
+
+  // Expiration
+  if (lockExpiresAt && nowET > new Date(lockExpiresAt)) {
+    return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'expired', authority: lockAuthority, lockReason: lockReason, proof: `Expired at ${lockExpiresAt}` };
+  }
+
+  // Emergency override
+  if ((char.energy_value ?? 75) < 10 || (char.health_value ?? 80) < 25) {
+    return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'emergency_need_override', authority: 'needs_system', lockReason: lockReason, proof: `Energy: ${char.energy_value}, Health: ${char.health_value}` };
+  }
+
+  // Observe authoritative state — do NOT duplicate sleep/work/school logic
+  const status = char.resolved_presence_status || '';
+  const sourceReason = char.resolved_source_reason || '';
+
+  if (lockReason === 'sleep_state') {
+    if (status !== 'sleeping' && status !== 'napping') {
+      return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'sleep_obligation_completed', authority: lockAuthority, lockReason: lockReason, proof: `No longer sleeping (status=${status})` };
+    }
+  }
+  if (lockReason === 'work_shift') {
+    if (status !== 'at_work' && sourceReason !== 'work_schedule') {
+      return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'work_shift_completed', authority: lockAuthority, lockReason: lockReason, proof: `No longer at work (status=${status})` };
+    }
+  }
+  if (lockReason === 'school_schedule') {
+    if (status !== 'at_school' && sourceReason !== 'school_schedule') {
+      return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'school_schedule_completed', authority: lockAuthority, lockReason: lockReason, proof: `No longer at school (status=${status})` };
+    }
+  }
+
+  // Scene end release
+  if (char.presence_stay_lock_release_condition === 'scene_end' && lockReason === 'user_scene_stay') {
+    if (char.resolved_current_location_id !== char.presence_stay_lock_location_id) {
+      return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'scene_ended_user_left', authority: lockAuthority, lockReason: lockReason, proof: 'User left scene location' };
+    }
+  }
+
+  return { shouldRespectLock: true, shouldReleaseLock: false, reason: isLegacy ? 'valid_legacy_lock' : 'valid_active_lock', authority: lockAuthority, lockReason: lockReason, proof: isLegacy ? 'Legacy lock respected' : `Lock '${lockReason}' still active` };
+}
+
 // ── SHARED TIME HELPER ────────────────────────────────────────────────────────
 // Used by multiple helpers throughout this file (orphaned travel guard, work schedule check, etc.)
 function toMin(t) { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); }
@@ -1367,39 +1437,33 @@ Deno.serve(async (req) => {
         }
 
         // ── TIER 5: PRESENCE STAY LOCK VALIDATION ────────────────────────────
+        // Inline validator — no network call per character.
+        // Observes authoritative state; does NOT duplicate sleep/work/school logic.
         if (char.presence_stay_lock === true) {
-          const validationResult = await base44.functions.invoke('validatePresenceStayLock', { character: char, context: 'autonomous_movement' });
-          const { shouldRespectLock, shouldReleaseLock, releaseReason, proof } = validationResult.data;
+          const lockResult = validateStayLock(char, nowET);
+          const { shouldRespectLock, shouldReleaseLock, releaseReason, proof } = lockResult;
 
           if (shouldReleaseLock) {
             console.log(`[autonomousMovement] ${char.name}: Releasing presence_stay_lock. Reason: ${releaseReason}. Proof: ${proof}`);
+            const releasePayload = {
+              presence_stay_lock: false,
+              presence_stay_lock_location_id: null,
+              presence_stay_lock_set_at: null,
+              presence_stay_lock_reason: null,
+              presence_stay_lock_authority: null,
+              presence_stay_lock_expires_at: null,
+              presence_stay_lock_release_condition: null,
+              presence_stay_lock_created_by: null,
+            };
             try {
-              await base44.entities.Character.update(char.id, {
-                presence_stay_lock: false,
-                presence_stay_lock_location_id: null,
-                presence_stay_lock_set_at: null,
-                presence_stay_lock_reason: null,
-                presence_stay_lock_authority: null,
-                presence_stay_lock_expires_at: null,
-                presence_stay_lock_release_condition: null,
-                presence_stay_lock_created_by: null,
-              });
+              await base44.entities.Character.update(char.id, releasePayload);
             } catch {
-              await base44.asServiceRole.entities.Character.update(char.id, {
-                presence_stay_lock: false,
-                presence_stay_lock_location_id: null,
-                presence_stay_lock_set_at: null,
-                presence_stay_lock_reason: null,
-                presence_stay_lock_authority: null,
-                presence_stay_lock_expires_at: null,
-                presence_stay_lock_release_condition: null,
-                presence_stay_lock_created_by: null,
-              }).catch(() => {});
+              await base44.asServiceRole.entities.Character.update(char.id, releasePayload).catch(() => {});
             }
-            char.presence_stay_lock = false; // Update in-memory for this run
+            char.presence_stay_lock = false;
           } else if (shouldRespectLock) {
-            console.log(`[autonomousMovement] ${char.name}: STAY_LOCK active and validated — skipping autonomous movement. Proof: ${proof}`);
-            skippedLog.push(`${char.name}: STAY_LOCK active and validated`);
+            console.log(`[autonomousMovement] ${char.name}: STAY_LOCK active — skipping autonomous movement. Proof: ${proof}`);
+            skippedLog.push(`${char.name}: STAY_LOCK active (${lockResult.lockReason || 'legacy'})`);
             continue;
           }
         }
