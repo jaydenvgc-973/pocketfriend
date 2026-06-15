@@ -1368,11 +1368,12 @@ Deno.serve(async (req) => {
 
         // ── TIER 5: PRESENCE STAY LOCK ────────────────────────────────────────
         // User explicitly chose STAY for this character at a scene exit.
-        // Only checked AFTER sleep and energy-critical enforcement above.
+        // ARCHITECTURAL CORRECTION: This lock is a SUPPORT MECHANISM, not an authority.
+        // It must not block the character's core needs-based autonomy.
+        // The authoritative systems (sleep, work, school) are responsible for clearing the lock.
+        // This check is now for logging/observation only. It does not use `continue`.
         if (char.presence_stay_lock === true) {
-          console.log(`[autonomousMovement] ${char.name}: STAY_LOCK active — skipping (locked at ${char.presence_stay_lock_location_id})`);
-          skippedLog.push(`${char.name}: STAY_LOCK active`);
-          continue;
+          console.log(`[autonomousMovement] ${char.name}: OBSERVATION - STAY_LOCK is active (locked at ${char.presence_stay_lock_location_id}) - movement is NOT blocked by this lock.`);
         }
 
         // ── TIER 6: AUTONOMOUS TRAVEL TOGGLE + FOREGROUND YIELD ──────────────
