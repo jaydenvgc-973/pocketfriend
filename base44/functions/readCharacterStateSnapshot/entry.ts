@@ -4,9 +4,9 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * readCharacterStateSnapshot — READ-ONLY GENERAL CHARACTER STATE VIEWER
  *
  * Returns targeted presence, sleep, nap, needs, and location fields for ANY
- * character by ID. Does NOT write anything. Safe for assistant NPC investigation.
+ * character by ID. Does NOT write anything. Safe for Temporary NPC investigation.
  *
- * Used by: Vick's assistant NPCs for observation and verification.
+ * Used by: Temporary NPCs for observation and verification.
  */
 Deno.serve(async (req) => {
   try {
