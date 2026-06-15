@@ -90,6 +90,7 @@ const T = {
   ENERGY_LOW:       35,   // character is noticeably tired, starts wanting to go home
   HEALTH_ER:        15,
   HEALTH_CRITICAL:  20,
+  SOCIAL_CRITICAL:  20,   // social need critically low — must seek social contact
   COMPOUND_CRISIS:   3,   // number of needs below 20 to trigger compound handling
   // Mental decays slowly — thresholds are MUCH higher than physical needs
   MENTAL_SEVERE:    40,   // below 40 = severe danger, significant intervention needed
@@ -796,6 +797,14 @@ function computeCorrectiveState(needs, character) {
     return { resolved_presence_status: 'hospitalized', current_activity: 'hospitalized — health collapsed' };
   }
 
+  // Social-critical: character is isolated — must seek social contact
+  // Home alone with critically low social is the deprivation loop this fixes.
+  // Do NOT force sleep — the character needs to go OUT, not rest.
+  if (needs.social <= T.SOCIAL_CRITICAL && presence !== 'sleeping' && presence !== 'napping'
+      && presence !== 'hospitalized' && !character.is_jailed && !character.house_arrest_active) {
+    return { current_activity: 'seeking social contact — isolated too long' };
+  }
+
   // Compound crisis: 3+ needs below 20
   const criticalCount = [needs.hunger, needs.energy, needs.health, needs.social, needs.mental]
     .filter(v => v < 20).length;
@@ -917,6 +926,7 @@ function resolveStaleCorrectiveActivities(character, needs) {
     'forced sleep — exhausted',
     'forced rest — compound crisis',
     'hospitalized — health collapsed',
+    'seeking social contact — isolated too long',
   ];
 
   const isCorrective = correctivePatterns.some(p => activity.includes(p || activity === p));
@@ -928,6 +938,11 @@ function resolveStaleCorrectiveActivities(character, needs) {
   }
   if ((activity.includes('forced sleep') || activity.includes('forced rest')) && needs.energy > 50) {
     return { current_activity: '', resolved_presence_status: 'home' };
+  }
+
+  // Social corrective cleared once social has recovered enough
+  if (activity.includes('seeking social contact') && needs.social > 40) {
+    return { current_activity: '' };
   }
 
   return null;
