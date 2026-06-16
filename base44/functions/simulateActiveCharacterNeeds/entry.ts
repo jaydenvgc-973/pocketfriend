@@ -896,27 +896,124 @@ function computeDecisionWeights(needs, character) {
   return { hygieneW, energyW, hungerW, socialW, healthW, mentalW };
 }
 
-function evaluateDecisionFromWeights(weights) {
+/**
+ * buildPressureProfile — CORRECTED
+ *
+ * Needs create PRESSURE. Needs do NOT create actions, destinations, or restrictions.
+ *
+ * Returns a structured pressure profile indicating which needs are pressing.
+ * The profile is a diagnostic input for downstream decision systems.
+ * It does NOT prescribe a single action.
+ *
+ * Pressure thresholds:
+ *   > 2.0  = dominant pressure — this need is the loudest
+ *   1.0-2.0 = elevated pressure — this need is calling for attention
+ *   0.5-1.0 = mild pressure — this need is whispering
+ *   < 0.5   = satisfied — no pressure from this need
+ *
+ * The decision system (autonomousMovement, LLM, etc.) uses this profile
+ * alongside personality, relationships, schedules, goals, and context
+ * to select appropriate behavior. Different characters with the same
+ * pressure profile should make DIFFERENT choices.
+ */
+function buildPressureProfile(weights) {
   if (!weights) return null;
 
   const { hygieneW, energyW, hungerW, socialW, healthW, mentalW } = weights;
 
-  const highest = Math.max(hygieneW, energyW, hungerW, socialW, healthW, mentalW);
-  if (highest <= 0.5) return null; // nothing urgent
+  const profile = {
+    pressures: [
+      { need: 'health',  weight: healthW },
+      { need: 'energy',  weight: energyW },
+      { need: 'hunger',  weight: hungerW },
+      { need: 'hygiene', weight: hygieneW },
+      { need: 'mental',  weight: mentalW },
+      { need: 'social',  weight: socialW },
+    ].sort((a, b) => b.weight - a.weight),
+    dominant: null,
+    elevated: [],
+    satisfied: true,
+  };
 
-  if (healthW === highest)   return 'seek_medical';
-  if (energyW === highest)   return 'seek_rest';
-  if (hungerW === highest)   return 'seek_food';
-  if (hygieneW === highest)  return 'seek_hygiene';
-  if (mentalW  === highest)  return 'seek_mental_relief';
-  if (socialW  === highest)  return 'seek_social';
+  profile.pressures.forEach(p => {
+    if (p.weight > 2.0) {
+      profile.dominant = profile.dominant || p.need;
+    }
+    if (p.weight > 0.5) {
+      profile.satisfied = false;
+    }
+    if (p.weight >= 1.0) {
+      profile.elevated.push(p.need);
+    }
+  });
 
-  return null;
+  return profile;
 }
 
+/**
+ * resolveNextActivity — CORRECTED
+ *
+ * Returns a PRESSURE PROFILE, not a single action.
+ *
+ * The pressure profile tells downstream systems which needs are pressing.
+ * It does NOT tell them what to do.
+ *
+ * Personality-aware evaluation:
+ *   - Extroverts amplify social pressure (they feel isolation more acutely)
+ *   - Introverts dampen social pressure (solitude is restorative)
+ *   - Conscientious characters amplify hygiene/stability pressure
+ *   - The pressure is the pressure — the character decides the response
+ *
+ * The pressure profile includes a `character_factors` diagnostic field
+ * showing how personality influenced the pressure calculation.
+ */
 function resolveNextActivity(needs, character) {
   const weights = computeDecisionWeights(needs, character);
-  return evaluateDecisionFromWeights(weights);
+  if (!weights) return null;
+
+  // Apply personality modulation to the raw pressure weights
+  const socialEnergy = character.social_energy || 'ambivert';
+  const personalityMod = {
+    social: 1.0,
+    hygiene: 1.0,
+    mental: 1.0,
+  };
+
+  if (socialEnergy === 'extrovert' || socialEnergy === 'mostly_extrovert') {
+    personalityMod.social = 1.3;
+  } else if (socialEnergy === 'introvert' || socialEnergy === 'mostly_introvert') {
+    personalityMod.social = 0.7;
+  }
+
+  if (character.trait_conscientious) {
+    personalityMod.hygiene = 1.3;
+    personalityMod.mental = 1.2;
+  }
+
+  if (character.trait_adaptable) {
+    personalityMod.mental = 0.8;
+  }
+
+  // Build modulated weights
+  const modulated = {
+    hygieneW: weights.hygieneW * personalityMod.hygiene,
+    energyW:  weights.energyW,
+    hungerW:  weights.hungerW,
+    socialW:  weights.socialW * personalityMod.social,
+    healthW:  weights.healthW,
+    mentalW:  weights.mentalW * personalityMod.mental,
+  };
+
+  const profile = buildPressureProfile(modulated);
+
+  if (profile) {
+    profile.character_factors = {
+      social_energy: socialEnergy,
+      personality_mod: personalityMod,
+    };
+  }
+
+  return profile;
 }
 
 // ── STALE CORRECTIVE CLEANUP ──────────────────────────────────────────────
@@ -1524,7 +1621,7 @@ Deno.serve(async (req) => {
           },
           corrective_applied: corrective ? Object.keys(corrective) : null,
           escalations: escalations.length,
-          next_activity: nextActivity,
+          pressure_profile: nextActivity,
           stale_corrective_cleared: staleCleanup ? Object.keys(staleCleanup) : null,
           elapsed_hours: Math.round(elapsedHours * 100) / 100,
         });
