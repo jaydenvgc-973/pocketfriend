@@ -718,12 +718,13 @@ Deno.serve(async (req) => {
     results.vick = { id: vick.id, name: vick.name };
 
     // ── STEP 3: Ensure Recovery Yard has Vick as owner, worker, and resident ──
+    // Also repair is_system_managed flag if missing on pre-existing Yards (GAP G3 fix).
     const yardWorkerIds = Array.from(new Set([...(recoveryYard.worker_character_ids || []), vick.id]));
     const yardResidentIds = Array.from(new Set([...(recoveryYard.resident_character_ids || []), vick.id]));
     const yardResidentNames = Array.from(new Set([...(recoveryYard.resident_character_names || []), vick.name]));
     const jobTitles = { ...(recoveryYard.worker_job_titles || {}), [vick.id]: 'Recovery Yard Operator' };
 
-    await base44.asServiceRole.entities.LocationReference.update(recoveryYard.id, {
+    const yardUpdatePayload = {
       owner_character_id: vick.id,
       owner_character_name: vick.name,
       owner_is_npc: true,
@@ -733,7 +734,19 @@ Deno.serve(async (req) => {
       worker_job_titles: jobTitles,
       resident_character_ids: yardResidentIds,
       resident_character_names: yardResidentNames,
-    }).catch(e => console.warn(`[ensureVickServicio] Non-fatal: could not update yard ownership — ${e.message}`));
+    };
+
+    // GAP FIX G3: Ensure system-managed flag is set on all Recovery Yards
+    // Pre-existing Yards created before this flag existed may be missing it.
+    // Without this flag, the Yard is not protected as a system-managed location.
+    if (recoveryYard.is_system_managed !== true) {
+      yardUpdatePayload.is_system_managed = true;
+      results.repaired.push('yard_system_managed_flag');
+      console.log(`[ensureVickServicio] Repairing is_system_managed flag on Recovery Yard for ${ownerEmail}`);
+    }
+
+    await base44.asServiceRole.entities.LocationReference.update(recoveryYard.id, yardUpdatePayload)
+      .catch(e => console.warn(`[ensureVickServicio] Non-fatal: could not update yard ownership — ${e.message}`));
 
     // ── STEP 4: Ensure CharacterFinancial record ($20,000 starting balance) ───
     // is_npc: true ensures Vick does not appear in playable/managed character finance lists.
