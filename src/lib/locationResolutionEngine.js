@@ -816,17 +816,6 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     return { status: sleepStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
   }
 
-  // ── RESTING DETECTION: low energy + at home + not working/school ──────────
-  // When resolved_presence_status is 'home' but energy is critically low and the
-  // character is not at work or school, surface "Resting" instead of just "Home".
-  const energyLow = (character.energy_value ?? 75) < 30;
-  const isHomeOrResting = presenceStatus === 'home' || !presenceStatus;
-  const isNotWorking = presenceStatus !== 'at_work';
-  const isNotAtSchool = presenceStatus !== 'at_school';
-  if (energyLow && isHomeOrResting && isNotWorking && isNotAtSchool) {
-    return { status: 'resting', label: 'Resting', sublabel: 'at home', isTransit: false, isSleeping: false };
-  }
-
   // Critical needs override — hunger/health emergencies must surface
   const hungerCritical  = (character.hunger_value ?? 70) < 15;
   const healthCritical  = (character.health_value ?? 80) < 20;

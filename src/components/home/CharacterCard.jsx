@@ -265,8 +265,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isSleeping);
                 const isNapping = (canonicalPresence === 'napping' && !isVerifiedAtSchool && !isVerifiedAtWork) ||
                   (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isNapping);
-                const isResting = canonicalPresence === 'resting' ||
-                  (!isVerifiedAtSchool && !isVerifiedAtWork && !isNapping && !derivedAsleep && presence.status === 'resting');
+                const isResting = canonicalPresence === 'resting';
 
                 // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {

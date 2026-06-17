@@ -257,7 +257,6 @@ export function getCharacterSleepState(character, locationMap) {
       return {
         isSleeping: false,
         isNapping: false,
-        isResting: true,
         displayLabel: 'resting',
         contextLabel: 'Resting',
         visible_label: 'Resting',
@@ -355,7 +354,6 @@ export function getCharacterSleepState(character, locationMap) {
       return {
         isSleeping: true,
         isNapping: status === 'napping',
-        isResting: false,
         displayLabel: status === 'napping' ? 'napping' : 'sleeping',
         contextLabel: status === 'napping' ? 'Napping' : 'Sleeping',
         visible_label: status === 'napping' ? 'Napping' : 'Sleeping',
@@ -533,7 +531,6 @@ export function getCharacterSleepState(character, locationMap) {
     return {
       isSleeping: true,
       isNapping: false,
-      isResting: false,
       displayLabel: 'sleeping',
       contextLabel: '🌙 sleeping (scheduled)',
       visible_label: '🌙 sleeping',
@@ -578,7 +575,6 @@ export function getCharacterSleepState(character, locationMap) {
     return {
       isSleeping: true,
       isNapping: status === 'napping',
-      isResting: false,
       displayLabel: status === 'napping' ? 'napping' : 'sleeping',
       contextLabel: status === 'napping' ? '💤 napping (recovery)' : '🌙 sleeping (recovery)',
       visible_label: status === 'napping' ? '💤 napping' : '🌙 sleeping',
@@ -606,7 +602,6 @@ export function getCharacterSleepState(character, locationMap) {
   return {
     isSleeping: true,
     isNapping: status === 'napping',
-    isResting: false,
     displayLabel: 'sleeping (unverified)',
     contextLabel: '⚠️ Unverified sleep state',
     visible_label: 'Unverified sleep state',
