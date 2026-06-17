@@ -205,6 +205,7 @@ export function getCharacterSleepState(character, locationMap) {
     return {
       isSleeping: false,
       isNapping: false,
+      isResting: false,
       displayLabel: 'unknown',
       contextLabel: null,
       visible_label: 'No character data',
@@ -243,6 +244,24 @@ export function getCharacterSleepState(character, locationMap) {
         contextLabel: 'Collapsed',
         visible_label: 'Collapsed',
         confirmed_reason: 'passed_out_medical',
+        evidence_source: 'resolved_presence_status',
+        confidence: 1,
+        stale_risk: false,
+        isLikelyStale: false,
+        blockingCondition: null,
+      };
+    }
+
+    // resting is a low-energy home state — trust DB, no window required
+    if (status === 'resting') {
+      return {
+        isSleeping: false,
+        isNapping: false,
+        isResting: true,
+        displayLabel: 'resting',
+        contextLabel: 'Resting',
+        visible_label: 'Resting',
+        confirmed_reason: reason || 'low_energy_resting',
         evidence_source: 'resolved_presence_status',
         confidence: 1,
         stale_risk: false,
@@ -336,9 +355,10 @@ export function getCharacterSleepState(character, locationMap) {
       return {
         isSleeping: true,
         isNapping: status === 'napping',
+        isResting: false,
         displayLabel: status === 'napping' ? 'napping' : 'sleeping',
-        contextLabel: status === 'napping' ? 'Resting' : 'Asleep',
-        visible_label: status === 'napping' ? 'Resting' : 'Asleep',
+        contextLabel: status === 'napping' ? 'Napping' : 'Sleeping',
+        visible_label: status === 'napping' ? 'Napping' : 'Sleeping',
         confirmed_reason: reason || `db_${status}_window_valid`,
         evidence_source: 'sleep_window_validated',
         confidence: 0.95,
@@ -355,7 +375,7 @@ export function getCharacterSleepState(character, locationMap) {
   // ── NPCs / untyped: accept DB truth — schedule-window governs them below ──
   if (status === 'sleeping') {
     return {
-      isSleeping: true, isNapping: false, displayLabel: 'sleeping',
+      isSleeping: true, isNapping: false, isResting: false, displayLabel: 'sleeping',
       contextLabel: 'Asleep', visible_label: 'Asleep',
       confirmed_reason: reason || 'db_sleeping', evidence_source: 'resolved_presence_status',
       confidence: 1, stale_risk: false, isLikelyStale: false, blockingCondition: null,
@@ -363,9 +383,17 @@ export function getCharacterSleepState(character, locationMap) {
   }
   if (status === 'napping') {
     return {
-      isSleeping: true, isNapping: true, displayLabel: 'napping',
-      contextLabel: 'Resting', visible_label: 'Resting',
+      isSleeping: true, isNapping: true, isResting: false, displayLabel: 'napping',
+      contextLabel: 'Napping', visible_label: 'Napping',
       confirmed_reason: reason || 'db_napping', evidence_source: 'resolved_presence_status',
+      confidence: 1, stale_risk: false, isLikelyStale: false, blockingCondition: null,
+    };
+  }
+  if (status === 'resting') {
+    return {
+      isSleeping: false, isNapping: false, isResting: true, displayLabel: 'resting',
+      contextLabel: 'Resting', visible_label: 'Resting',
+      confirmed_reason: reason || 'db_resting', evidence_source: 'resolved_presence_status',
       confidence: 1, stale_risk: false, isLikelyStale: false, blockingCondition: null,
     };
   }
@@ -438,6 +466,7 @@ export function getCharacterSleepState(character, locationMap) {
         return {
           isSleeping: false,
           isNapping: false,
+          isResting: false,
           displayLabel: 'awake',
           contextLabel: null,
           visible_label: null,
@@ -464,6 +493,7 @@ export function getCharacterSleepState(character, locationMap) {
           return {
             isSleeping: true,
             isNapping: false,
+            isResting: false,
             displayLabel: 'sleeping',
             contextLabel: '🌙 sleeping (scheduled window)',
             visible_label: '🌙 sleeping',
@@ -484,6 +514,7 @@ export function getCharacterSleepState(character, locationMap) {
     return {
       isSleeping: false,
       isNapping: false,
+      isResting: false,
       displayLabel: 'awake',
       contextLabel: null,
       visible_label: null,
@@ -502,6 +533,7 @@ export function getCharacterSleepState(character, locationMap) {
     return {
       isSleeping: true,
       isNapping: false,
+      isResting: false,
       displayLabel: 'sleeping',
       contextLabel: '🌙 sleeping (scheduled)',
       visible_label: '🌙 sleeping',
@@ -546,6 +578,7 @@ export function getCharacterSleepState(character, locationMap) {
     return {
       isSleeping: true,
       isNapping: status === 'napping',
+      isResting: false,
       displayLabel: status === 'napping' ? 'napping' : 'sleeping',
       contextLabel: status === 'napping' ? '💤 napping (recovery)' : '🌙 sleeping (recovery)',
       visible_label: status === 'napping' ? '💤 napping' : '🌙 sleeping',
@@ -573,6 +606,7 @@ export function getCharacterSleepState(character, locationMap) {
   return {
     isSleeping: true,
     isNapping: status === 'napping',
+    isResting: false,
     displayLabel: 'sleeping (unverified)',
     contextLabel: '⚠️ Unverified sleep state',
     visible_label: 'Unverified sleep state',

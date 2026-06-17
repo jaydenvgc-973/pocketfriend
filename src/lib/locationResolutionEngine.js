@@ -795,12 +795,36 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // For active_created_character: isCharacterAsleepFromUtils applies the strict
   // schedule-anchored validator — raw DB sleeping is NOT accepted without window validation.
   // For NPCs: clock-window approach unchanged.
+  // ── SLEEP/REST DETECTION: DB-first with window cross-check ──────────────
+  // If DB says sleeping/napping/resting, trust it UNLESS school/work is actively verified.
+  // This prevents the card from showing "Home" when the authoritative state is sleep/rest.
+  // The window validator (isCharacterAsleepFromUtils) may reject DB sleep if no explicit
+  // sleep_start_time/wake_up_time exist, but the DB state is still authoritative for display.
+  const dbSleepStatus = presenceStatus === 'sleeping' || presenceStatus === 'napping' || presenceStatus === 'resting';
   const characterIsSleepingLive = isCharacterAsleepFromUtils(character, locationMap);
 
+  // DB says sleeping/napping/resting — use it directly as the authoritative display state
+  if (dbSleepStatus) {
+    const label = presenceStatus === 'napping' ? 'Napping' : presenceStatus === 'resting' ? 'Resting' : 'Sleeping';
+    return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
+  }
+
+  // Window validator confirms sleep (even if DB doesn't explicitly say it)
   if (characterIsSleepingLive) {
     const sleepStatus = presenceStatus === 'napping' ? 'napping' : 'sleeping';
     const label = presenceStatus === 'napping' ? 'Napping' : 'Sleeping';
     return { status: sleepStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
+  }
+
+  // ── RESTING DETECTION: low energy + at home + not working/school ──────────
+  // When resolved_presence_status is 'home' but energy is critically low and the
+  // character is not at work or school, surface "Resting" instead of just "Home".
+  const energyLow = (character.energy_value ?? 75) < 30;
+  const isHomeOrResting = presenceStatus === 'home' || !presenceStatus;
+  const isNotWorking = presenceStatus !== 'at_work';
+  const isNotAtSchool = presenceStatus !== 'at_school';
+  if (energyLow && isHomeOrResting && isNotWorking && isNotAtSchool) {
+    return { status: 'resting', label: 'Resting', sublabel: 'at home', isTransit: false, isSleeping: false };
   }
 
   // Critical needs override — hunger/health emergencies must surface

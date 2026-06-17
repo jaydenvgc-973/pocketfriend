@@ -26,9 +26,27 @@ function getPlainStatus(character) {
     : 999;
 
   // Sleeping
-  if (status === 'sleeping' || status === 'napping') {
+  if (status === 'sleeping') {
     return {
-      text: `${name} is resting right now — low energy.`,
+      text: `${name} is sleeping right now.`,
+      color: 'text-blue-300',
+      needsRepair: false,
+    };
+  }
+
+  // Napping
+  if (status === 'napping') {
+    return {
+      text: `${name} is napping right now — low energy.`,
+      color: 'text-indigo-300',
+      needsRepair: false,
+    };
+  }
+
+  // Resting
+  if (status === 'resting') {
+    return {
+      text: `${name} is resting right now — recharging.`,
       color: 'text-blue-300',
       needsRepair: false,
     };

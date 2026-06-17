@@ -253,17 +253,20 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 // SCHEDULE-VERIFIED WORK: at_work presence is authoritative
                 const isVerifiedAtWork = canonicalPresence === 'at_work' || presence.status === 'at_work';
 
-                // SLEEP: only evaluate when school and work are NOT active
-                // This prevents a stale sleeping flag from overriding current school/work attendance
-                const canonicalIsSleeping = !isVerifiedAtSchool && !isVerifiedAtWork &&
-                  (canonicalPresence === 'sleeping' || canonicalPresence === 'napping');
+                // ── SLEEP/REST DETECTION: DB-first ──────────────────────────
+                // DB says sleeping, napping, or resting → use it as the authoritative display state.
+                // Only suppressed when school or work is verified active.
+                const canonicalIsSleepingOrResting = !isVerifiedAtSchool && !isVerifiedAtWork &&
+                  (canonicalPresence === 'sleeping' || canonicalPresence === 'napping' || canonicalPresence === 'resting');
 
                 const sleepState = getCharacterSleepState(character);
                 // Sleep derivation is suppressed when school or work is the verified active state
-                const derivedAsleep = canonicalIsSleeping ||
+                const derivedAsleep = canonicalIsSleepingOrResting ||
                   (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isSleeping);
                 const isNapping = (canonicalPresence === 'napping' && !isVerifiedAtSchool && !isVerifiedAtWork) ||
                   (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isNapping);
+                const isResting = canonicalPresence === 'resting' ||
+                  (!isVerifiedAtSchool && !isVerifiedAtWork && !isNapping && !derivedAsleep && presence.status === 'resting');
 
                 // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {
@@ -279,14 +282,14 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 let color = 'text-muted-foreground';
                 let label = presence.label;
 
-                if (derivedAsleep || isNapping || (!isVerifiedAtSchool && !isVerifiedAtWork && presence.isSleeping)) {
+                if (isResting) {
                   IconComponent = Moon;
-                  // confidence >= 0.8 covers scheduled, recovery, and stale-DB-detected sleep paths
+                  color = 'text-blue-300';
+                  label = 'Resting';
+                } else if (derivedAsleep || isNapping || (!isVerifiedAtSchool && !isVerifiedAtWork && presence.isSleeping)) {
+                  IconComponent = Moon;
                   color = sleepState.confidence >= 0.8 ? 'text-blue-300' : 'text-amber-300';
-                  // Use clean text label — icon already provides visual cue, no emoji duplication
-                  label = sleepState.confidence >= 0.8
-                    ? (isNapping ? 'Resting' : 'Asleep')
-                    : 'Asleep';
+                  label = isNapping ? 'Napping' : 'Sleeping';
                 } else if (presence.status === 'at_work') {
                   IconComponent = Briefcase;
                   color = 'text-blue-400';
