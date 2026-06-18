@@ -285,14 +285,19 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 let color = 'text-muted-foreground';
                 let label = presence.label;
 
+                // ── SLEEP/REST: append location context so user sees "Sleeping at Home" not just "Sleeping"
+                const homeLocName = locationMap[character.current_home_location_id]?.name || 'Home';
+                const resolvedLocName = character.resolved_current_location_name || homeLocName;
+                const locationSuffix = resolvedLocName ? ` at ${resolvedLocName}` : '';
+
                 if (isResting) {
                   IconComponent = Moon;
                   color = 'text-blue-300';
-                  label = 'Resting';
+                  label = `Resting${locationSuffix}`;
                 } else if (derivedAsleep || isNapping || (!isVerifiedAtSchool && !isVerifiedAtWork && presence.isSleeping)) {
                   IconComponent = Moon;
                   color = sleepState.confidence >= 0.8 ? 'text-blue-300' : 'text-amber-300';
-                  label = isNapping ? 'Napping' : 'Sleeping';
+                  label = `${isNapping ? 'Napping' : 'Sleeping'}${locationSuffix}`;
                 } else if (presence.status === 'at_work') {
                   IconComponent = Briefcase;
                   color = 'text-blue-400';

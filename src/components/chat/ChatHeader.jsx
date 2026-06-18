@@ -94,8 +94,14 @@ export default function ChatHeader({
         {character ? (() => {
           const ss = getCharacterSleepState(character);
           if (ss.isSleeping) {
+            const label = ss.isNapping ? '💤 Napping' : '🌙 Sleeping';
             return (
-              <p className="text-xs text-muted-foreground">🌙 Asleep</p>
+              <p className="text-xs text-muted-foreground">{label}</p>
+            );
+          }
+          if (ss.displayLabel === 'resting') {
+            return (
+              <p className="text-xs text-muted-foreground">🛋️ Resting</p>
             );
           }
           return <p className="text-xs text-muted-foreground">{isPhone ? 'Texting' : 'Talking'}</p>;

@@ -1,6 +1,7 @@
 import { Check, User } from "lucide-react";
 import { getCharacterTravelAvailability } from "@/lib/travelAvailability";
-import { Moon, Briefcase, BookOpen, AlertTriangle, Sparkles } from "lucide-react";
+import { getCharacterSleepState } from "@/lib/characterSleepState";
+import { Moon, Briefcase, BookOpen, AlertTriangle, Sparkles, Coffee } from "lucide-react";
 
 const STATUS_ICONS = {
   sleep: Moon,
@@ -8,6 +9,7 @@ const STATUS_ICONS = {
   school: BookOpen,
   hospital: AlertTriangle,
   prayer: Sparkles,
+  rest: Coffee,
 };
 
 /**
@@ -126,46 +128,50 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
     const isHome = presenceEntity?.is_home ?? (resolvedStatus === 'home' || resolvedStatus === 'sleeping' || resolvedStatus === 'napping');
     const hasHomeId = !!(char.current_home_location_id || presenceEntity?.residence_location_id);
 
-    // ── SLEEPING / NAPPING: canonical multi-field check, all character types ────
-    // ANY one of these fields being truthy is sufficient to treat the character as asleep.
-    // NPC types use forced sleep windows (resolved by locationResolutionEngine).
-    // active_created uses adaptive schedule + DB state.
-    // Do NOT require all fields to agree — use first-match wins.
-    const isSleepingCanonical =
-      presenceEntity?.is_sleeping === true ||
-      resolvedStatus === 'sleeping' ||
-      resolvedStatus === 'napping' ||
-      char.resolved_presence_status === 'sleeping' ||
-      char.resolved_presence_status === 'napping' ||
-      char.presence_state === 'sleeping' ||
-      char.sleep_state === 'asleep';
+    // ── AUTHORITATIVE SLEEP/REST STATE: use getCharacterSleepState ────────────
+    // Replaces the simplistic isSleepingCanonical lump with distinct
+    // sleeping / napping / resting classification for all character types.
+    const sleepState = getCharacterSleepState(char, locationMap);
+    const isSleeping  = sleepState.isSleeping;
+    const isNapping   = sleepState.isNapping;
+    const isResting   = sleepState.displayLabel === 'resting';
+    const homeLocName = char.current_home_location_id && locationMap[char.current_home_location_id]
+      ? locationMap[char.current_home_location_id].name
+      : 'Home';
 
     // In the new instant-relocation system, 'traveling' is a stale/legacy status.
     // Treat it the same as any other non-home presence: show the resolved location name.
     const isStaleTravel = resolvedStatus === 'traveling';
 
     let currentLocationLabel = null;
-    if (isSleepingCanonical) {
-      currentLocationLabel = 'is asleep right now and unavailable';
+    let sleepRestTag = null;
+    if (isSleeping) {
+      const stateLabel = isNapping ? 'Napping' : 'Sleeping';
+      const locName = char.resolved_current_location_name || homeLocName;
+      currentLocationLabel = `${stateLabel} at ${locName}`;
+      sleepRestTag = stateLabel;
+    } else if (isResting) {
+      const locName = char.resolved_current_location_name || homeLocName;
+      currentLocationLabel = `Resting at ${locName}`;
+      sleepRestTag = 'Resting';
     } else if (resolvedLocName && !isHome && !isStaleTravel) {
       currentLocationLabel = `Currently at ${resolvedLocName}`;
     } else if (isStaleTravel && resolvedLocName) {
-      // Stale travel status — show the destination as current location, not "in transit"
       currentLocationLabel = `Currently at ${resolvedLocName}`;
     } else if (isHome || hasHomeId) {
       currentLocationLabel = 'At home';
     }
 
-    // Sleeping characters are never selectable — hard block regardless of availability check
-    const isUnavailable = isSleepingCanonical || !isAvailable;
+    // Sleeping/napping characters are never selectable — hard block
+    const isUnavailable = isSleeping || isNapping || !isAvailable;
 
     return (
       <button
         key={char.id}
-        onClick={isSleepingCanonical ? undefined : () => onToggle(char.id)}
-        disabled={isSleepingCanonical}
+        onClick={(isSleeping || isNapping) ? undefined : () => onToggle(char.id)}
+        disabled={isSleeping || isNapping}
         className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
-          isSleepingCanonical ? "bg-card border-border opacity-60 cursor-not-allowed"
+          (isSleeping || isNapping) ? "bg-card border-border opacity-60 cursor-not-allowed"
           : isSelected ? "bg-primary/10 border-primary/40"
           : isAvailable ? "bg-card border-border hover:border-primary/30"
           : "bg-card border-border opacity-70"
@@ -180,7 +186,7 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-semibold ${isUnavailable ? "text-muted-foreground" : "text-foreground"}`}>{char.name}</p>
           <div className="flex items-center gap-1 mt-0.5">
-            {isSleepingCanonical ? (
+            {(isSleeping || isNapping || isResting) ? (
               <p className="text-xs text-muted-foreground">{currentLocationLabel}</p>
             ) : !isAvailable && StatusIcon ? (
               <>
@@ -193,13 +199,17 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
               <p className="text-xs text-muted-foreground">{currentLocationLabel || "Available"}</p>
             )}
           </div>
-          {!isSleepingCanonical && !isAvailable && availability.availableAt && (
+          {!isSleeping && !isNapping && !isAvailable && availability.availableAt && (
             <p className="text-[10px] text-muted-foreground/70 mt-0.5">{availability.availableAt}</p>
           )}
         </div>
-        {isSleepingCanonical ? (
+        {isSleeping || isNapping ? (
           <div className="px-2 py-1 rounded-full bg-secondary border border-border flex-shrink-0">
-            <span className="text-[10px] text-muted-foreground font-medium">Asleep</span>
+            <span className="text-[10px] text-muted-foreground font-medium">{sleepRestTag}</span>
+          </div>
+        ) : isResting ? (
+          <div className="px-2 py-1 rounded-full bg-secondary border border-border flex-shrink-0">
+            <span className="text-[10px] text-muted-foreground font-medium">{sleepRestTag}</span>
           </div>
         ) : isAvailable ? (
           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isSelected ? "bg-primary border-primary" : "border-border"}`}>
