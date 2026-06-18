@@ -1194,11 +1194,35 @@ function computeDecisionWeights(needs, character) {
   if (presence === 'sleeping' || presence === 'napping' || presence === 'hospitalized') return null;
 
   const hygieneW  = pressureCurve(needs.hygiene, HYGIENE_CURVE);
-  const energyW   = pressureCurve(needs.energy,  ENERGY_CURVE);
+  let   energyW   = pressureCurve(needs.energy,  ENERGY_CURVE);
   const hungerW   = pressureCurve(needs.hunger,  HUNGER_CURVE);
   const socialW   = pressureCurve(needs.social,  SOCIAL_CURVE);
   const healthW   = pressureCurve(needs.health,   HEALTH_CURVE);
   const mentalW   = pressureCurve(needs.mental,   MENTAL_CURVE);
+
+  // ── PASS-OUT LEARNING: PRACTICAL AVOIDANCE, NOT DEPRESSION ────────────
+  // A character who passed out remembers it was unpleasant, embarrassing,
+  // and physically draining. They become more likely to choose rest earlier
+  // when tired because they do not want to repeat the experience.
+  //
+  // This ONLY affects energy pressure (sleep priority). It does NOT affect
+  // mental health, confidence, social confidence, or emotional baseline.
+  // This is learned body-signal caution, not depression.
+  //
+  // Recent pass-out (< 7 days): energy pressure +50%
+  // Recent pass-out (< 30 days): energy pressure +30%
+  // Repeated pass-outs: +15% per extra pass-out
+  // Decay: beyond 30 days, amplification fades to zero
+  if (character.last_pass_out_at) {
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const daysSince = (nowET.getTime() - new Date(character.last_pass_out_at).getTime()) / (24 * 3_600_000);
+    if (daysSince < 30) {
+      let amp = daysSince < 7 ? 1.5 : 1.3;
+      const extraCount = Math.max(0, (character.pass_out_count ?? 0) - 1);
+      if (extraCount > 0) amp += extraCount * 0.15;
+      energyW *= amp;
+    }
+  }
 
   return { hygieneW, energyW, hungerW, socialW, healthW, mentalW };
 }
