@@ -89,9 +89,11 @@ const T = {
   HUNGER_CRITICAL:  20,
   HUNGER_LOW:       35,
   ENERGY_MEDICAL:    5,   // hospitalization — sustained energy collapse requiring medical intervention
-  ENERGY_PASSOUT:   10,   // character collapses from exhaustion
-  ENERGY_CRITICAL:  25,   // auto-sleep trigger — energy critically low, character forces sleep
-  ENERGY_LOW:       35,   // character is noticeably tired, starts wanting to go home
+  ENERGY_PASSOUT:   10,   // character collapses from exhaustion (involuntary — bypasses decision pipeline)
+  ENERGY_CRITICAL:  25,   // sleep urgent — sleep as soon as obligations and valid location allow
+  ENERGY_LOW:       35,   // sleep/nap transition point — transition should occur if conditions valid
+  ENERGY_NAP_PRESSURE: 40, // strong nap pressure — prefer nap/rest when conditions valid
+  ENERGY_NAP_AVAILABLE: 50, // nap becomes an available option — does NOT force state change
   HEALTH_ER:        15,
   HEALTH_CRITICAL:  20,
   SOCIAL_CRITICAL:  20,   // social need critically low — must seek social contact
@@ -784,13 +786,148 @@ function needsAreUninitialized(needs) {
 // When needs cross critical thresholds, the simulation writes a corrective
 // current_activity so that the NEXT tick picks up recovery rates automatically.
 
-function computeCorrectiveState(needs, character) {
+// ── CORRECTIVE STATE RESOLVER ──────────────────────────────────────────────
+// Behavioral pipeline: Need → Pressure → Decision → Action → State
+// Energy thresholds create PRESSURE, not direct state changes.
+// State is only written when ALL conditions in the decision chain are validated.
+//
+// EXCEPTIONS (bypass the pipeline — involuntary physical failure):
+//   Pass-out (≤10% energy): Need → Physical Failure → State
+//   Medical danger (≤5% energy): Need → Physical Failure → State
+
+function computeCorrectiveState(needs, character, locationMap) {
   const activity = (character.current_activity || '').toLowerCase();
   const presence = character.resolved_presence_status || '';
 
-  // Energy-critical triggers automatic sleep
-  if (needs.energy <= T.ENERGY_CRITICAL && presence !== 'sleeping' && presence !== 'napping') {
-    return { resolved_presence_status: 'sleeping', current_activity: 'forced sleep — exhausted' };
+  const isInRestState = presence === 'sleeping' || presence === 'napping' ||
+    presence === 'passed_out' || presence === 'hospitalized';
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PASS-OUT (≤10%): bypass pipeline — involuntary physical collapse
+  // ═══════════════════════════════════════════════════════════════════════
+  if (needs.energy <= T.ENERGY_PASSOUT && !isInRestState && !character.sleep_lock) {
+    return {
+      resolved_presence_status: 'sleeping',
+      current_activity: 'passed out — resting',
+      last_sleep_start: new Date().toISOString(),
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // MEDICAL DANGER (≤5%): bypass pipeline
+  // ═══════════════════════════════════════════════════════════════════════
+  if (needs.energy <= T.ENERGY_MEDICAL && presence !== 'hospitalized') {
+    return {
+      resolved_presence_status: 'hospitalized',
+      current_activity: 'hospitalized — energy collapse',
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ENERGY 25-50%: DECISION PIPELINE REQUIRED
+  // State only written if: at home + no obligations + no sleep lock
+  // Blocked characters: return null, re-evaluate next tick
+  // ═══════════════════════════════════════════════════════════════════════
+
+  if (needs.energy <= T.ENERGY_NAP_AVAILABLE && needs.energy > T.ENERGY_PASSOUT && !isInRestState) {
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+
+    // ── HARD BLOCKERS ──────────────────────────────────────────────────
+    const inObligation = isOnShift(character, locationMap) ||
+      presence === 'at_school' ||
+      (character.travel_status && character.travel_status !== 'not_traveling') ||
+      character.is_jailed ||
+      character.house_arrest_active;
+
+    const atHome = character.resolved_current_location_id === character.current_home_location_id ||
+      presence === 'home' ||
+      (character.resolved_location_type || '').toLowerCase() === 'home';
+
+    const isBlocked = inObligation || !atHome || character.sleep_lock;
+
+    // ── SLEEP WINDOW PROXIMITY ──────────────────────────────────────────
+    const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+    const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+    const dayOfWeek = nowET.getDay();
+
+    let sleepStartMin = null;
+    if (character.sleep_start_time) {
+      sleepStartMin = toMin(character.sleep_start_time);
+    } else if (character.work_start_time && Array.isArray(character.work_days) && character.work_days.length > 0) {
+      const workStart = toMin(character.work_start_time);
+      if (workStart !== null) {
+        const wakeMin = (workStart - 60 + 1440) % 1440;
+        sleepStartMin = (wakeMin - 7 * 60 + 1440) % 1440;
+      }
+    }
+    if (sleepStartMin === null && character.student_status === 'enrolled' && [1, 2, 3, 4, 5].includes(dayOfWeek)) {
+      sleepStartMin = 23 * 60;
+    }
+    if (sleepStartMin === null) {
+      sleepStartMin = 23 * 60;
+    }
+
+    let minutesToSleep = sleepStartMin - nowMin;
+    if (minutesToSleep < 0) minutesToSleep += 1440;
+    const closeToSleepWindow = minutesToSleep <= 90;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ENERGY ≤ 25%: SLEEP URGENT
+    // Sleep is urgent but NEVER abandon obligations.
+    // If at home + free → sleep now. If at work/school → return null.
+    // ═══════════════════════════════════════════════════════════════════
+    if (needs.energy <= T.ENERGY_CRITICAL) {
+      if (!isBlocked) {
+        return {
+          resolved_presence_status: 'sleeping',
+          current_activity: 'sleeping — energy critically low',
+          last_sleep_start: new Date().toISOString(),
+        };
+      }
+      return null; // blocked — re-evaluate next tick
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ENERGY ≤ 35%: NAP/SLEEP TRANSITION (only if conditions valid)
+    // ═══════════════════════════════════════════════════════════════════
+    if (needs.energy <= T.ENERGY_LOW) {
+      if (!isBlocked) {
+        if (closeToSleepWindow) {
+          return {
+            resolved_presence_status: 'sleeping',
+            current_activity: 'sleeping — low energy near bedtime',
+            last_sleep_start: new Date().toISOString(),
+          };
+        }
+        return {
+          resolved_presence_status: 'napping',
+          current_activity: 'napping — low energy recovery',
+          last_nap_time: new Date().toISOString(),
+        };
+      }
+      return null; // blocked — re-evaluate next tick
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ENERGY ≤ 40%: STRONG NAP PRESSURE (only if conditions valid)
+    // ═══════════════════════════════════════════════════════════════════
+    if (needs.energy <= T.ENERGY_NAP_PRESSURE) {
+      if (!isBlocked) {
+        return {
+          resolved_presence_status: 'napping',
+          current_activity: 'napping — strong energy pressure',
+          last_nap_time: new Date().toISOString(),
+        };
+      }
+      return null; // blocked — re-evaluate next tick
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ENERGY ≤ 50%: NAP AVAILABLE — NO automatic state change
+    // Nap is an available option. The character may want a nap but this
+    // does NOT force a state change. Decision engine weighs options.
+    // ═══════════════════════════════════════════════════════════════════
+    return null;
   }
 
   // Hunger-critical triggers eating
@@ -803,19 +940,21 @@ function computeCorrectiveState(needs, character) {
     return { resolved_presence_status: 'hospitalized', current_activity: 'hospitalized — health collapsed' };
   }
 
-  // Social-critical: character is isolated — must seek social contact
-  // Home alone with critically low social is the deprivation loop this fixes.
-  // Do NOT force sleep — the character needs to go OUT, not rest.
-  if (needs.social <= T.SOCIAL_CRITICAL && presence !== 'sleeping' && presence !== 'napping'
-      && presence !== 'hospitalized' && !character.is_jailed && !character.house_arrest_active) {
+  // Social-critical
+  if (needs.social <= T.SOCIAL_CRITICAL && !isInRestState
+      && !character.is_jailed && !character.house_arrest_active) {
     return { current_activity: 'seeking social contact — isolated too long' };
   }
 
-  // Compound crisis: 3+ needs below 20
+  // Compound crisis
   const criticalCount = [needs.hunger, needs.energy, needs.health, needs.social, needs.mental]
     .filter(v => v < 20).length;
-  if (criticalCount >= T.COMPOUND_CRISIS && presence !== 'sleeping' && presence !== 'napping') {
-    return { resolved_presence_status: 'sleeping', current_activity: 'forced rest — compound crisis' };
+  if (criticalCount >= T.COMPOUND_CRISIS && !isInRestState) {
+    return {
+      resolved_presence_status: 'sleeping',
+      current_activity: 'forced rest — compound crisis',
+      last_sleep_start: new Date().toISOString(),
+    };
   }
 
   return null;
@@ -1457,14 +1596,19 @@ Deno.serve(async (req) => {
         // ── RC1: CORRECTIVE ACTIVITY WRITER ───────────────────────────────
         // When needs cross critical thresholds during simulation, write
         // corrective states so the NEXT tick uses recovery rates.
-        const corrective = computeCorrectiveState(newNeeds, char);
+        const corrective = computeCorrectiveState(newNeeds, char, locationMap);
         if (corrective) {
           Object.assign(updatePayload, corrective);
-          // Write sleep start timestamp when force-sleeping
-          if (corrective.resolved_presence_status === 'sleeping') {
-            updatePayload.last_sleep_start = nowIso;
+          // Write sleep/nap timestamp and stay lock for authoritative state transitions
+          if (corrective.resolved_presence_status === 'sleeping' || corrective.resolved_presence_status === 'napping') {
+            if (corrective.resolved_presence_status === 'sleeping') {
+              updatePayload.last_sleep_start = nowIso;
+              updatePayload.presence_stay_lock_reason = "sleep_state";
+            } else {
+              updatePayload.last_nap_time = nowIso;
+              updatePayload.presence_stay_lock_reason = "nap_state";
+            }
             updatePayload.presence_stay_lock = true;
-            updatePayload.presence_stay_lock_reason = "sleep_state";
             updatePayload.presence_stay_lock_authority = "simulateActiveCharacterNeeds";
             updatePayload.presence_stay_lock_set_at = nowIso;
             updatePayload.presence_stay_lock_created_by = "system_automation";
