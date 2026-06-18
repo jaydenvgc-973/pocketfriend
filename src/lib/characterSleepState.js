@@ -269,12 +269,12 @@ export function getCharacterSleepState(character, locationMap) {
       };
     }
 
-    // For ordinary sleep/napping: require explicit window
-    if (status === 'sleeping' || status === 'napping') {
+    // ── SLEEPING VALIDATION: require sleep window ────────────────────
+    if (status === 'sleeping') {
       const sleepStartMin = toMinLocal(character.sleep_start_time);
       const wakeMin = toMinLocal(character.wake_up_time);
 
-      // No explicit window → sleep is invalid regardless of DB state
+      // No explicit window → sleep is invalid
       if (sleepStartMin === null || wakeMin === null) {
         return {
           isSleeping: false, isNapping: false, displayLabel: 'awake',
@@ -296,15 +296,10 @@ export function getCharacterSleepState(character, locationMap) {
         };
       }
 
-      // 8-hour cap
-      const sleepStartCandidates = [
-        character.last_sleep_start,
-        character.resolved_last_updated_at,
-        character.last_need_simulated_at,
-      ].filter(Boolean);
-      if (sleepStartCandidates.length > 0) {
-        const sleepStartMs = Math.min(...sleepStartCandidates.map(t => new Date(t).getTime()));
-        if ((nowET.getTime() - sleepStartMs) / 3_600_000 >= 8) {
+      // 8-hour cap (uses last_sleep_start only — authoritative sleep timestamp)
+      if (character.last_sleep_start) {
+        const sleepDuration = (nowET.getTime() - new Date(character.last_sleep_start).getTime()) / 3_600_000;
+        if (sleepDuration >= 8) {
           return {
             isSleeping: false, isNapping: false, displayLabel: 'awake',
             contextLabel: null, visible_label: null, confidence: 1,
@@ -350,15 +345,113 @@ export function getCharacterSleepState(character, locationMap) {
         }
       }
 
-      // All checks passed — ordinary sleep is valid
+      // All checks passed — sleep is valid
       return {
         isSleeping: true,
-        isNapping: status === 'napping',
-        displayLabel: status === 'napping' ? 'napping' : 'sleeping',
-        contextLabel: status === 'napping' ? 'Napping' : 'Sleeping',
-        visible_label: status === 'napping' ? 'Napping' : 'Sleeping',
-        confirmed_reason: reason || `db_${status}_window_valid`,
+        isNapping: false,
+        displayLabel: 'sleeping',
+        contextLabel: 'Sleeping',
+        visible_label: 'Sleeping',
+        confirmed_reason: reason || 'db_sleeping_window_valid',
         evidence_source: 'sleep_window_validated',
+        confidence: 0.95,
+        stale_risk: false,
+        isLikelyStale: false,
+        blockingCondition: null,
+      };
+    }
+
+    // ── NAPPING VALIDATION: nap-specific (NO sleep window) ──────────
+    if (status === 'napping') {
+      // ── NAP REQUIRES last_nap_time ─────────────────────────────────
+      // Without last_nap_time, the nap start is unverifiable → stale
+      if (!character.last_nap_time) {
+        return {
+          isSleeping: false, isNapping: false, displayLabel: 'awake',
+          contextLabel: null, visible_label: null, confidence: 1,
+          stale_risk: true, isLikelyStale: true,
+          blockingCondition: 'missing_last_nap_time',
+        };
+      }
+
+      // ── 3-HOUR NAP CAP ────────────────────────────────────────────
+      const napDuration = (nowET.getTime() - new Date(character.last_nap_time).getTime()) / 3_600_000;
+      if (napDuration >= 3) {
+        return {
+          isSleeping: false, isNapping: false, displayLabel: 'awake',
+          contextLabel: null, visible_label: null, confidence: 1,
+          stale_risk: true, isLikelyStale: true,
+          blockingCondition: `nap_cap_3h_exceeded`,
+        };
+      }
+
+      // ── BLOCKERS ──────────────────────────────────────────────────
+      // Work shift override
+      if (character.work_start_time && character.work_end_time &&
+          Array.isArray(character.work_days) && character.work_days.includes(dayOfWeek)) {
+        const s = toMinLocal(character.work_start_time);
+        const e = toMinLocal(character.work_end_time);
+        if (s !== null && e !== null) {
+          const onShift = e < s ? (nowMin >= s || nowMin < e) : (nowMin >= s && nowMin < e);
+          if (onShift) {
+            return {
+              isSleeping: false, isNapping: false, displayLabel: 'awake',
+              contextLabel: 'At Work', visible_label: 'At Work', confidence: 1,
+              stale_risk: false, isLikelyStale: false, blockingCondition: 'work_shift_active',
+            };
+          }
+        }
+      }
+
+      // School window override
+      if (character.student_status === 'enrolled' && character.education_location_id &&
+          [1, 2, 3, 4, 5].includes(dayOfWeek)) {
+        const enrollments = character.education_enrollments;
+        if (Array.isArray(enrollments) && enrollments.length > 0) {
+          const active = enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+          if (active) {
+            const s = toMinLocal(active.start_time);
+            const e = toMinLocal(active.end_time);
+            if (s !== null && e !== null && nowMin >= s && nowMin < e) {
+              return {
+                isSleeping: false, isNapping: false, displayLabel: 'awake',
+                contextLabel: 'At School', visible_label: 'At School', confidence: 1,
+                stale_risk: false, isLikelyStale: false, blockingCondition: 'school_window_active',
+              };
+            }
+          }
+        }
+      }
+
+      // Travel blocker
+      if (character.travel_status && character.travel_status !== 'not_traveling') {
+        return {
+          isSleeping: false, isNapping: false, displayLabel: 'awake',
+          contextLabel: null, visible_label: null, confidence: 1,
+          stale_risk: false, isLikelyStale: false, blockingCondition: 'traveling',
+        };
+      }
+
+      // Jail / house arrest blocker
+      if (character.is_jailed || character.house_arrest_active) {
+        return {
+          isSleeping: false, isNapping: false, displayLabel: 'awake',
+          contextLabel: null, visible_label: null, confidence: 1,
+          stale_risk: false, isLikelyStale: false, blockingCondition: 'confinement',
+        };
+      }
+
+      // ── VALID NAP ─────────────────────────────────────────────────
+      // Nap passed all checks: has last_nap_time, within 3h cap, no blockers.
+      // NO sleep-window proximity check — naps are valid any time of day.
+      return {
+        isSleeping: true,
+        isNapping: true,
+        displayLabel: 'napping',
+        contextLabel: 'Napping',
+        visible_label: 'Napping',
+        confirmed_reason: reason || 'db_napping_nap_validated',
+        evidence_source: 'nap_validated',
         confidence: 0.95,
         stale_risk: false,
         isLikelyStale: false,
