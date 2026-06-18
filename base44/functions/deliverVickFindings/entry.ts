@@ -35,20 +35,53 @@ Deno.serve(async (req) => {
     const nowIso = new Date().toISOString();
 
     // ── STEP 1: Find Vick's character record (safe multi-path lookup) ───────
-    // Priority: is_world_service flag → name match → character_type fallback.
-    // Vick's character_type is NOT required — the lookup finds him regardless.
+    // Uses user-scoped queries first (RLS handles ownership scoping automatically),
+    // then falls back to service-role queries with explicit owner_email.
     let vick = null;
 
-    // Path 1: is_world_service flag (type-independent, safest)
+    // Path 1a: user-scoped is_world_service
     try {
-      const results = await base44.asServiceRole.entities.Character.filter(
-        { is_world_service: true, owner_email: ownerEmail, status: 'active' },
+      const results = await base44.entities.Character.filter(
+        { is_world_service: true, status: 'active' },
         '-created_date', 5
       ).catch(() => []);
       if (results.length > 0) vick = results[0];
     } catch (_) {}
 
-    // Path 2: name match (works regardless of type/flag state)
+    // Path 1b: user-scoped name match
+    if (!vick) {
+      try {
+        const results = await base44.entities.Character.filter(
+          { name: 'Vick Servicio', status: 'active' },
+          '-created_date', 5
+        ).catch(() => []);
+        if (results.length > 0) vick = results[0];
+      } catch (_) {}
+    }
+
+    // Path 1c: user-scoped character_type
+    if (!vick) {
+      try {
+        const results = await base44.entities.Character.filter(
+          { character_type: 'npc_world_service', status: 'active' },
+          '-created_date', 5
+        ).catch(() => []);
+        if (results.length > 0) vick = results[0];
+      } catch (_) {}
+    }
+
+    // Path 2a: service-role is_world_service (fallback)
+    if (!vick) {
+      try {
+        const results = await base44.asServiceRole.entities.Character.filter(
+          { is_world_service: true, owner_email: ownerEmail, status: 'active' },
+          '-created_date', 5
+        ).catch(() => []);
+        if (results.length > 0) vick = results[0];
+      } catch (_) {}
+    }
+
+    // Path 2b: service-role name match
     if (!vick) {
       try {
         const results = await base44.asServiceRole.entities.Character.filter(
@@ -59,7 +92,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // Path 3: character_type fallback (legacy path, kept as last resort)
+    // Path 2c: service-role character_type
     if (!vick) {
       try {
         const results = await base44.asServiceRole.entities.Character.filter(
@@ -80,11 +113,11 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 2: Find or create Vick's conversation with the user ──────────────
-    // Search for existing direct conversation with Vick
+    // Try user-scoped first (RLS handles ownership), then service role
     let conversation = null;
     try {
-      const convos = await base44.asServiceRole.entities.Conversation.filter(
-        { owner_email: ownerEmail, type: 'direct' },
+      const convos = await base44.entities.Conversation.filter(
+        { type: 'direct' },
         '-updated_date',
         50
       ).catch(() => []);
@@ -94,6 +127,21 @@ Deno.serve(async (req) => {
         c.character_ids.includes(vick.id)
       );
     } catch (_) {}
+
+    if (!conversation) {
+      try {
+        const convos = await base44.asServiceRole.entities.Conversation.filter(
+          { owner_email: ownerEmail, type: 'direct' },
+          '-updated_date',
+          50
+        ).catch(() => []);
+
+        conversation = convos.find(c =>
+          Array.isArray(c.character_ids) &&
+          c.character_ids.includes(vick.id)
+        );
+      } catch (_) {}
+    }
 
     if (!conversation) {
       // Create a new conversation

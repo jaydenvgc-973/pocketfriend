@@ -46,36 +46,74 @@ Deno.serve(async (req) => {
     });
 
     // ── STEP 1: Find Vick via safe multi-path lookup ────────────────────────
+    // Uses user-scoped queries first (RLS handles ownership scoping automatically),
+    // then falls back to service-role queries with explicit owner_email.
     let vick = null;
+    let vickLookupPath = '';
 
-    // Path 1: is_world_service flag (most reliable, type-independent)
-    try {
-      const r = await base44.asServiceRole.entities.Character.filter(
-        { is_world_service: true, owner_email: ownerEmail, status: 'active' },
-        '-created_date', 5
-      ).catch(() => []);
-      if (r.length > 0) vick = r[0];
-    } catch (_) {}
+    // Path 1a: user-scoped is_world_service (RLS scopes to owner_email automatically)
+    if (!vick) {
+      try {
+        const r = await base44.entities.Character.filter(
+          { is_world_service: true, status: 'active' },
+          '-created_date', 5
+        ).catch(() => []);
+        if (r.length > 0) { vick = r[0]; vickLookupPath = 'user_is_world_service'; }
+      } catch (_) {}
+    }
 
-    // Path 2: name match (works regardless of type)
+    // Path 1b: user-scoped name match
+    if (!vick) {
+      try {
+        const r = await base44.entities.Character.filter(
+          { name: 'Vick Servicio', status: 'active' },
+          '-created_date', 5
+        ).catch(() => []);
+        if (r.length > 0) { vick = r[0]; vickLookupPath = 'user_name_match'; }
+      } catch (_) {}
+    }
+
+    // Path 1c: user-scoped character_type
+    if (!vick) {
+      try {
+        const r = await base44.entities.Character.filter(
+          { character_type: 'npc_world_service', status: 'active' },
+          '-created_date', 5
+        ).catch(() => []);
+        if (r.length > 0) { vick = r[0]; vickLookupPath = 'user_character_type'; }
+      } catch (_) {}
+    }
+
+    // Path 2a: service-role is_world_service (fallback)
+    if (!vick) {
+      try {
+        const r = await base44.asServiceRole.entities.Character.filter(
+          { is_world_service: true, owner_email: ownerEmail, status: 'active' },
+          '-created_date', 5
+        ).catch(() => []);
+        if (r.length > 0) { vick = r[0]; vickLookupPath = 'sr_is_world_service'; }
+      } catch (_) {}
+    }
+
+    // Path 2b: service-role name match
     if (!vick) {
       try {
         const r = await base44.asServiceRole.entities.Character.filter(
           { name: 'Vick Servicio', owner_email: ownerEmail, status: 'active' },
           '-created_date', 5
         ).catch(() => []);
-        if (r.length > 0) vick = r[0];
+        if (r.length > 0) { vick = r[0]; vickLookupPath = 'sr_name_match'; }
       } catch (_) {}
     }
 
-    // Path 3: character_type (legacy fallback only)
+    // Path 2c: service-role character_type
     if (!vick) {
       try {
         const r = await base44.asServiceRole.entities.Character.filter(
           { character_type: 'npc_world_service', owner_email: ownerEmail, status: 'active' },
           '-created_date', 5
         ).catch(() => []);
-        if (r.length > 0) vick = r[0];
+        if (r.length > 0) { vick = r[0]; vickLookupPath = 'sr_character_type'; }
       } catch (_) {}
     }
 
@@ -84,10 +122,25 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 2: Verify conversation belongs to this account ─────────────────
-    const convos = await base44.asServiceRole.entities.Conversation.filter(
-      { id: conversationId, owner_email: ownerEmail }, null, 1
-    ).catch(() => []);
-    if (!convos[0]) {
+    // Try user-scoped first (RLS handles ownership), then service role
+    let convo = null;
+    try {
+      const r = await base44.entities.Conversation.filter(
+        { id: conversationId }, null, 1
+      ).catch(() => []);
+      if (r.length > 0) convo = r[0];
+    } catch (_) {}
+
+    if (!convo) {
+      try {
+        const r = await base44.asServiceRole.entities.Conversation.filter(
+          { id: conversationId, owner_email: ownerEmail }, null, 1
+        ).catch(() => []);
+        if (r.length > 0) convo = r[0];
+      } catch (_) {}
+    }
+
+    if (!convo) {
       return Response.json({ error: 'Conversation not found' }, { status: 404 });
     }
 
@@ -247,8 +300,9 @@ Deno.serve(async (req) => {
         }
 
         // Vick self-report
-        observed.push(`Vick Servicio: ID ${vick.id}, type: ${vick.character_type || 'not set'}, world_service: ${vick.is_world_service || false}`);
+        observed.push(`Vick Servicio: ID ${vick.id}, type: ${vick.character_type || 'not set'}, world_service: ${vick.is_world_service ?? 'NOT SET'}`);
         observed.push(`Vick location: ${vick.resolved_presence_status} at ${vick.resolved_current_location_name || 'unknown'}`);
+        observed.push(`Vick lookup path: ${vickLookupPath} (${vickLookupPath.startsWith('user_') ? 'user-scoped RLS' : 'service role'})`);
 
       } catch (e) {
         unknown.push(`Account overview failed: ${e.message}`);
@@ -317,6 +371,7 @@ Deno.serve(async (req) => {
       success: true,
       ownerEmail,
       vickId: vick.id,
+      vickLookupPath,
       conversationId,
       scope,
       dryRun,
