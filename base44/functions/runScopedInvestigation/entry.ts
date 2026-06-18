@@ -74,13 +74,14 @@ Deno.serve(async (req) => {
     const results = {};
 
     // ── CONVERSATIONS ──────────────────────────────────────────────────────
+    // $contains is not supported for array fields in filter queries.
+    // Use list() then filter client-side instead.
     if (scope === 'conversations' || scope === 'full') {
       try {
-        const convos = await base44.asServiceRole.entities.Conversation.filter(
-          { character_ids: { $contains: characterId } },
-          null,
-          limit
-        );
+        const allConvos = await base44.asServiceRole.entities.Conversation.list(null, 200);
+        const convos = allConvos
+          .filter(c => Array.isArray(c.character_ids) && c.character_ids.includes(characterId))
+          .slice(0, limit);
         if (convos.length > 0) {
           const convLabels = convos.map(c => ({
             id: c.id,
@@ -125,12 +126,11 @@ Deno.serve(async (req) => {
     // ── RECENT MESSAGES ────────────────────────────────────────────────────
     if (scope === 'messages' || scope === 'full') {
       try {
-        // Find conversations first to get their IDs
-        const convos = await base44.asServiceRole.entities.Conversation.filter(
-          { character_ids: { $contains: characterId } },
-          null,
-          limit
-        );
+        // Find conversations first to get their IDs (list-then-filter)
+        const allConvosForMsgs = await base44.asServiceRole.entities.Conversation.list(null, 200);
+        const convos = allConvosForMsgs
+          .filter(c => Array.isArray(c.character_ids) && c.character_ids.includes(characterId))
+          .slice(0, limit);
         const convoIds = convos.map(c => c.id);
 
         let allMsgs = [];
@@ -281,13 +281,14 @@ Deno.serve(async (req) => {
     }
 
     // ── STORY EVENTS ───────────────────────────────────────────────────────
+    // $contains is not supported for array fields in filter queries.
+    // Use list() then filter client-side instead.
     if (scope === 'story_events' || scope === 'full') {
       try {
-        const events = await base44.asServiceRole.entities.StoryEvent.filter(
-          { participant_character_ids: { $contains: characterId } },
-          null,
-          limit
-        );
+        const allEvents = await base44.asServiceRole.entities.StoryEvent.list(null, 200);
+        const events = allEvents
+          .filter(e => Array.isArray(e.participant_character_ids) && e.participant_character_ids.includes(characterId))
+          .slice(0, limit);
         if (events.length > 0) {
           const evLabels = events.map(e => ({
             id: e.id,
