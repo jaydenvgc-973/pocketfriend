@@ -178,6 +178,99 @@ function getWorkContextFromLocation(loc) {
   return 'at_work_office';
 }
 
+// ── OVERNIGHT SLEEP DRIVE ──────────────────────────────────────────────────
+// Characters do not work overnight, attend overnight school, or generally live
+// nocturnal schedules. From 10 PM onward, the system makes sleep increasingly
+// attractive as an autonomous choice. By 3 AM, sleep is the dominant default
+// unless a meaningful reason to stay awake exists.
+//
+// DESIGN: Drive multiplies energy thresholds — at night, characters feel
+// tired faster. A character at 70 energy at 3 AM (drive 2.5) behaves like
+// 28 energy → well below critical threshold → chooses sleep autonomously.
+//
+// EXCEPTIONS: Valid overnight activities (party, emergency, childcare, etc.)
+// halve the drive so characters can stay awake for meaningful reasons.
+// Night owl personality reduces drive by ~20% — they genuinely stay up later.
+//
+// AUTONOMY: No fixed bedtime is enforced. Characters choose sleep because
+// it becomes the most attractive option, not because a clock says so.
+
+function overnightSleepDriveMultiplier(nowET, character) {
+  const hour = nowET.getHours();
+  const minute = nowET.getMinutes();
+  const frac = hour + minute / 60;
+
+  // Night owl personality reduces drive — they naturally stay up later
+  const personalityMod = character.trait_night_owl ? 0.8 : 1.0;
+
+  // 3 AM – 6 AM: peak drive — characters should be asleep unless meaningful reason
+  if (frac >= 3 && frac < 6) return 2.5 * personalityMod;
+  // 2 AM – 3 AM: strong drive
+  if (frac >= 2 && frac < 3) return 2.0 * personalityMod;
+  // 1 AM – 2 AM: increased drive
+  if (frac >= 1 && frac < 2) return 1.8 * personalityMod;
+  // Midnight – 1 AM: moderate drive
+  if (frac >= 0 && frac < 1) return 1.5 * personalityMod;
+  // 11 PM – Midnight: starting drive
+  if (frac >= 23) return 1.3 * personalityMod;
+  // 10 PM – 11 PM: mild evening drive
+  if (frac >= 22 && frac < 23) return 1.1 * personalityMod;
+
+  return 1.0; // No drive before 10 PM
+}
+
+/**
+ * hasMeaningfulOvernightActivity
+ *
+ * Checks if the character has a valid, meaningful reason to be awake
+ * during overnight hours (past 11 PM). These reasons justify staying up
+ * despite the increasing sleep drive.
+ *
+ * Valid reasons: parties, celebrations, romantic intimacy, childcare,
+ * emergencies, emotional crises, important conversations, overnight work,
+ * active travel, medical situations.
+ *
+ * Characters with these reasons get a halved overnight drive — fatigue
+ * still matters, but the activity is worth staying awake for.
+ */
+function hasMeaningfulOvernightActivity(character) {
+  const activity = (character.current_activity || '').toLowerCase();
+
+  const validReasons = [
+    // Social/celebration
+    'party', 'celebration', 'wedding', 'reception', 'gathering', 'event',
+    // Romantic
+    'romantic', 'date', 'intimate', 'lover',
+    // Childcare/family
+    'child', 'baby', 'nursing', 'feeding', 'care',
+    // Emergency/crisis
+    'emergency', 'crisis', 'urgent', 'disaster',
+    // Emotional
+    'argument', 'fight', 'conflict', 'emotional', 'distress', 'grief', 'mourning',
+    'crying', 'upset', 'breakdown',
+    // Important conversation
+    'important conversation', 'serious talk', 'discussion',
+    // Overnight work (very rare — only for characters with legitimate night shifts)
+    'night shift', 'overnight', 'graveyard',
+    // Travel
+    'traveling', 'road', 'driving', 'transit',
+    // Medical
+    'hospital', 'medical', 'sick', 'ill',
+  ];
+
+  for (const reason of validReasons) {
+    if (activity.includes(reason)) return true;
+  }
+
+  // Active travel — character is in transit somewhere
+  if (character.travel_status && character.travel_status !== 'not_traveling') return true;
+
+  // Hospitalized — medical override
+  if (character.resolved_presence_status === 'hospitalized') return true;
+
+  return false;
+}
+
 // ── STALE PRESENCE THRESHOLD ─────────────────────────────────────────────────
 const STALE_PRESENCE_MS = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -832,6 +925,29 @@ function computeCorrectiveState(needs, character, locationMap) {
   if (needs.energy <= T.ENERGY_NAP_AVAILABLE && needs.energy > T.ENERGY_PASSOUT && !isInRestState) {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 
+    // ── OVERNIGHT SLEEP DRIVE ──────────────────────────────────────────
+    // From 10 PM onward, sleep becomes autonomously attractive.
+    // Energy thresholds are effectively lowered: a character's energy is
+    // divided by the drive so they feel tired faster at night.
+    //
+    // Character at 70 energy, 3 AM (drive 2.5): effective ≈ 28 → critical.
+    // Character at 90 energy, 3 AM (drive 2.5): effective ≈ 36 → nap transition.
+    //
+    // Characters with meaningful overnight activities (party, emergency,
+    // childcare) get halved drive — fatigue matters but the activity
+    // is worth staying awake for. Night owl personalities get 20% less drive.
+    const overnightDrive = overnightSleepDriveMultiplier(nowET, character);
+    const hasOvernightReason = hasMeaningfulOvernightActivity(character);
+
+    // Meaningful overnight activities halve the drive — character stays up
+    const effectiveDrive = hasOvernightReason
+      ? Math.max(1.0, overnightDrive * 0.5)
+      : overnightDrive;
+
+    // Effective energy: raw energy divided by drive. At night, characters
+    // feel fatigue faster, making sleep the natural autonomous choice.
+    const effectiveEnergy = needs.energy / effectiveDrive;
+
     // ── HARD BLOCKERS ──────────────────────────────────────────────────
     const inObligation = isOnShift(character, locationMap) ||
       presence === 'at_school' ||
@@ -843,7 +959,19 @@ function computeCorrectiveState(needs, character, locationMap) {
       presence === 'home' ||
       (character.resolved_location_type || '').toLowerCase() === 'home';
 
-    const isBlocked = inObligation || !atHome || character.sleep_lock;
+    // Overnight obligation override: between 3 AM-6 AM, "at_school" and
+    // stale work shifts are nearly impossible. Still respect jail/house_arrest.
+    const hour = nowET.getHours();
+    const isOvernightViolationWindow = hour >= 3 && hour < 6;
+    const staleOvernightObligation = isOvernightViolationWindow &&
+      (presence === 'at_school' || (inObligation && hour >= 3 && hour < 6));
+
+    // If stale overnight obligation without a meaningful reason, ignore it
+    const effectiveInObligation = staleOvernightObligation && !hasOvernightReason
+      ? false
+      : inObligation;
+
+    const isBlocked = effectiveInObligation || !atHome || character.sleep_lock;
 
     // ── SLEEP WINDOW PROXIMITY ──────────────────────────────────────────
     const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
@@ -872,11 +1000,13 @@ function computeCorrectiveState(needs, character, locationMap) {
     const closeToSleepWindow = minutesToSleep <= 90;
 
     // ═══════════════════════════════════════════════════════════════════
-    // ENERGY ≤ 25%: SLEEP URGENT
-    // Sleep is urgent but NEVER abandon obligations.
+    // Effective energy ≤ 25: SLEEP URGENT
+    // Sleep is urgent but NEVER abandon real obligations.
     // If at home + free → sleep now. If at work/school → return null.
+    //
+    // At night (3 AM drive=2.5): raw energy of ~63 triggers this.
     // ═══════════════════════════════════════════════════════════════════
-    if (needs.energy <= T.ENERGY_CRITICAL) {
+    if (effectiveEnergy <= T.ENERGY_CRITICAL) {
       if (!isBlocked) {
         return {
           resolved_presence_status: 'sleeping',
@@ -888,9 +1018,12 @@ function computeCorrectiveState(needs, character, locationMap) {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // ENERGY ≤ 35%: NAP/SLEEP TRANSITION (only if conditions valid)
+    // Effective energy ≤ 35: NAP/SLEEP TRANSITION
+    //
+    // At night (3 AM drive=2.5): raw energy of ~88 triggers this.
+    // Close to sleep window → sleep. Otherwise → nap.
     // ═══════════════════════════════════════════════════════════════════
-    if (needs.energy <= T.ENERGY_LOW) {
+    if (effectiveEnergy <= T.ENERGY_LOW) {
       if (!isBlocked) {
         if (closeToSleepWindow) {
           return {
@@ -909,9 +1042,11 @@ function computeCorrectiveState(needs, character, locationMap) {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // ENERGY ≤ 40%: STRONG NAP PRESSURE (only if conditions valid)
+    // Effective energy ≤ 40: STRONG NAP PRESSURE
+    //
+    // At midnight (drive=1.5): raw energy of ~60 triggers this.
     // ═══════════════════════════════════════════════════════════════════
-    if (needs.energy <= T.ENERGY_NAP_PRESSURE) {
+    if (effectiveEnergy <= T.ENERGY_NAP_PRESSURE) {
       if (!isBlocked) {
         return {
           resolved_presence_status: 'napping',
@@ -923,10 +1058,15 @@ function computeCorrectiveState(needs, character, locationMap) {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // ENERGY ≤ 50%: NAP AVAILABLE — NO automatic state change
-    // Nap is an available option. The character may want a nap but this
-    // does NOT force a state change. Decision engine weighs options.
+    // Effective energy ≤ 50: NAP AVAILABLE — NO automatic state change
+    // Nap is an available option. Decision engine weighs options.
+    //
+    // At 11 PM (drive=1.3): raw energy of ~65 triggers awareness.
     // ═══════════════════════════════════════════════════════════════════
+    if (effectiveEnergy <= T.ENERGY_NAP_AVAILABLE) {
+      return null; // Pressure exists but no automatic state change
+    }
+
     return null;
   }
 
