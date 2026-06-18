@@ -947,9 +947,34 @@ function computeCorrectiveState(needs, character, locationMap) {
       ? Math.max(1.0, overnightDrive * 0.5)
       : overnightDrive;
 
-    // Effective energy: raw energy divided by drive. At night, characters
-    // feel fatigue faster, making sleep the natural autonomous choice.
-    const effectiveEnergy = needs.energy / effectiveDrive;
+    // ── PASS-OUT MEMORY AMPLIFICATION ──────────────────────────────
+    // Characters who passed out recently feel exhaustion more intensely.
+    // They remember that pass-out was unpleasant and don't want to repeat it.
+    // This amplifies sleep pressure without removing autonomy — the character
+    // still chooses sleep, but the pressure to do so is stronger.
+    //
+    // Recent pass-out (< 7 days): energy feels 30% lower (multiplier 0.70)
+    // Recent pass-out (< 30 days): energy feels 15% lower (multiplier 0.85)
+    // Multiple pass-outs (≥ 2): additional 10% amplification per extra pass-out
+    let passOutAmp = 1.0;
+    if (char.last_pass_out_at) {
+      const daysSincePassOut = (nowET.getTime() - new Date(char.last_pass_out_at).getTime()) / (24 * 3_600_000);
+      if (daysSincePassOut < 7) {
+        passOutAmp = 0.70; // recent trauma — strong avoidance
+      } else if (daysSincePassOut < 30) {
+        passOutAmp = 0.85; // still fresh memory — moderate avoidance
+      }
+      // Repeated pass-outs compound the effect
+      const extraCount = Math.max(0, (char.pass_out_count ?? 0) - 1);
+      if (extraCount > 0) {
+        passOutAmp *= Math.max(0.5, 1.0 - extraCount * 0.1); // each extra pass-out adds 10% amplification
+      }
+    }
+
+    // Effective energy: raw energy divided by drive AND pass-out memory amp.
+    // At night, characters feel fatigue faster. After pass-out, they feel it
+    // even faster because they remember the consequence of ignoring it.
+    const effectiveEnergy = (needs.energy / effectiveDrive) * passOutAmp;
 
     // ── HARD BLOCKERS ──────────────────────────────────────────────────
     const inObligation = isOnShift(character, locationMap) ||
@@ -1490,15 +1515,34 @@ Deno.serve(async (req) => {
             && char.resolved_presence_status !== 'napping'
             && char.resolved_presence_status !== 'passed_out'
             && !sleepLocked) {
-          // Immediate pass-out write — collapse from exhaustion.
-          // MUST include needs values so the NEXT tick reads consistent data.
-          // Without this, energy stays frozen at the pre-pass-out value (0-10)
-          // and computeCorrectiveState overrides sleeping with hospitalized.
+          // ── PASS-OUT RECOVERY CORRECTION ──────────────────────────
+          // Pass-out is forced sleep the body demands after the character
+          // failed to choose sleep voluntarily. It IS rest — energy MUST
+          // recover using sleeping rates on subsequent ticks. It is NOT
+          // a permanent zero-energy state and must NOT bounce to awake.
+          //
+          // Stay lock prevents other automations from clearing this state
+          // before recovery begins. Release condition: energy > 35.
+          //
+          // Pass-out tracking: last_pass_out_at and pass_out_count record
+          // the event so future sleep decisions amplify pressure — the
+          // character remembers this was unpleasant and avoids repeating.
+          const passOutCount = (char.pass_out_count ?? 0) + 1;
           await base44.entities.Character.update(char.id, {
             resolved_presence_status: 'sleeping',
             current_activity: 'passed out — resting',
             last_sleep_start: nowIso,
             last_need_simulated_at: nowIso,
+            last_pass_out_at: nowIso,
+            pass_out_count: passOutCount,
+            // Stay lock: block other automations from clearing pass-out recovery
+            presence_stay_lock: true,
+            presence_stay_lock_reason: 'pass_out_recovery',
+            presence_stay_lock_authority: 'simulateActiveCharacterNeeds',
+            presence_stay_lock_set_at: nowIso,
+            presence_stay_lock_created_by: 'system_automation',
+            presence_stay_lock_release_condition: 'energy_above_35',
+            // Needs values: write current state so next tick has consistent data
             hunger_value:  Math.round(needs.hunger ?? 70),
             energy_value:  Math.round(energyBefore),
             social_value:  Math.round(needs.social ?? 65),
@@ -1507,18 +1551,37 @@ Deno.serve(async (req) => {
             hygiene_value: Math.round(needs.hygiene ?? 75),
             comfort_value: Math.round(needs.comfort ?? 70),
           });
+          // ── PASS-OUT CONSEQUENCES ─────────────────────────────────
+          // Pass-out is not neutral rest — it has real consequences.
+          // The character collapsed involuntarily due to ignored exhaustion.
+          // These consequences are recorded so the character remembers
+          // and future sleep decisions treat exhaustion more seriously.
           await base44.entities.LifeEvent.create({
             character_id: char.id,
             character_name: charName,
             event_type: 'medical_event',
             valence: 'negative',
-            severity: 'significant',
+            severity: 'major',
             title: 'Passed out from exhaustion',
-            description: `${charName} collapsed from complete energy depletion.`,
-            emotional_impact: 'physical collapse',
+            description: `${charName} collapsed from complete energy depletion. Energy was at ${Math.round(energyBefore)} when their body forced sleep. They will wake groggy, embarrassed, and with lowered comfort. This is their ${passOutCount === 1 ? 'first' : passOutCount === 2 ? 'second' : `${passOutCount}rd`} pass-out event — each one makes future exhaustion feel more threatening.`,
+            emotional_impact: 'physical collapse, embarrassment, loss of control',
             triggered_by: 'life_simulation',
             timestamp: nowIso,
-            context_tags: ['passed_out'],
+            context_tags: ['passed_out', 'forced_sleep', passOutCount > 1 ? 'repeat_pass_out' : 'first_pass_out'],
+          }).catch(() => {});
+
+          // ── PASS-OUT BEHAVIORAL MEMORY ───────────────────────────
+          // CharacterMemory records the experience so the character
+          // learns from it. Future sleep pressure is amplified when
+          // energy gets low because they remember pass-out was bad.
+          await base44.entities.CharacterMemory.create({
+            character_id: char.id,
+            memory_type: 'event',
+            memory_text: `${charName} passed out from exhaustion when their energy dropped to ${Math.round(energyBefore)}. They collapsed involuntarily — their body forced sleep because they ignored exhaustion too long. The experience was physically draining, embarrassing, and emotionally stressful. They remember how bad it felt and do not want to repeat it.`,
+            memory_summary: `Passed out at energy ${Math.round(energyBefore)} — body forced sleep. Unpleasant, embarrassing, physically draining.`,
+            importance_score: 8,
+            permanence: 'long_term',
+            related_character_id: char.id,
           }).catch(() => {});
 
           results.push({
@@ -1900,6 +1963,20 @@ Deno.serve(async (req) => {
             timestamp: nowIso,
             context_tags: ['compound_crisis'],
           }).catch(() => {});
+        }
+
+        // ── PASS-OUT STAY LOCK RELEASE ────────────────────────────────────
+        // Pass-out locks the character in sleeping state for recovery.
+        // When energy recovers above 35, the body has enough reserves to
+        // function — release the lock so natural wake/sleep rules apply.
+        if (char.presence_stay_lock &&
+            char.presence_stay_lock_reason === 'pass_out_recovery' &&
+            newNeeds.energy > 35) {
+          Object.assign(updatePayload, {
+            presence_stay_lock: false,
+            presence_stay_lock_reason: null,
+            presence_stay_lock_release_condition: null,
+          });
         }
 
         // ── STALE CORRECTIVE CLEANUP ───────────────────────────────────────

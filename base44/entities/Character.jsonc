@@ -570,6 +570,17 @@
       "format": "date-time",
       "description": "When the character last completed actual sleep (not nap) and became awake. Written by simulateActiveCharacterNeeds sleep cap and other wake-from-actual-sleep transitions. Used as the authoritative timer-start for 19-hour awake enforcement. Naps do NOT update this field."
     },
+    "last_pass_out_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the character last passed out from exhaustion (energy reaching 0-10). Used for behavioral memory: characters who passed out recently feel sleep pressure more intensely and are less likely to ignore exhaustion. Pass-out is an unpleasant, embarrassing, physically draining experience they remember and want to avoid repeating."
+    },
+    "pass_out_count": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "description": "How many times this character has passed out from exhaustion. Repeated pass-outs strengthen avoidance behavior \u2014 each additional pass-out makes the character more likely to choose sleep earlier when tired."
+    },
     "work_start_time": {
       "type": "string"
     },
