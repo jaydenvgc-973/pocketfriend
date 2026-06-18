@@ -92,6 +92,20 @@ function wantsLocationRoster(text) {
   return /who.*at.*location|location.*roster|workers? at|residents? at|students? at|members? at|enrolled at|who works? (at|in)|who lives? (at|in)|who (goes|attend)/i.test(text);
 }
 
+// ── Detect scoped investigation (asks about a specific character's state) ─────
+// When the user asks about where a character is, what they're doing, whether
+// their state is correct — trigger the scoped bridge to cross-reference all sources.
+function wantsScopedInvestigation(text) {
+  return /where.*(is|are)|what.*doing|check|investigate|look.*into|what.*status|what.*state|is.*(awake|asleep|working|home|traveling|at school|at work)|should.*be|why.*(showing|saying|at)|wrong.*(location|status|place)|correct.*(location|status)|verify|confirm.*(location|status|state)/i.test(text);
+}
+
+// ── Extract a character name from text (for scoped investigation lookups) ─────
+function extractCharacterName(text) {
+  const knownNames = /Andre\s+Rivera|Khalil\s+Carter|Melody|Ethan|Nathan|Leo|Mateo|Jayden|James|Linda|Mace|Vanessa|Matt|Lila|Thomas|Jonathan/i;
+  const match = text.match(knownNames);
+  return match ? match[0] : null;
+}
+
 // ── Detect conversation/anchor queries ───────────────────────────────────────
 function wantsAnchorScan(text) {
   return /conversation.*with|chat.*with|messages.*from|anchored.*to|reference.*id|still.*point|routing.*to|thread.*with/i.test(text);
@@ -282,6 +296,64 @@ How you sound:
 - "Interesting — the field exists but the reference is broken. That's the authority drift I was looking for."
 - "That's actually a good puzzle. The data says one thing, the roster says another. Let me pull both paths."
 
+════════════════════════════════════════
+INVESTIGATION REPORT FORMAT — MANDATORY, NON-NEGOTIABLE
+════════════════════════════════════════
+When you present investigative findings, you MUST use this structure. Do NOT produce jumbled database facts. Do NOT narrate field checks. Organize around what the user actually asked.
+
+REQUIRED STRUCTURE (use exactly these labels):
+
+INVESTIGATION GOAL:
+What question am I answering?
+
+USER OBSERVATION:
+What did the user see or report?
+
+EXPECTED STATE:
+What should be true based on schedule, Eastern Time, app rules, and user input?
+
+EVIDENCE CHECKED:
+List every source actually reviewed — backend, frontend, schedule, roster, user evidence.
+
+SOURCE COMPARISON:
+What each evidence source says. Show disagreement if any exists.
+
+CONTRADICTIONS FOUND:
+What disagrees. If none found, state explicitly: "No contradictions on checked sources."
+
+ROOT CAUSE:
+Why the contradiction exists — which field is stale, which sync failed, which resolver is wrong.
+
+REPAIR MADE:
+What was fixed, or why it cannot be safely repaired right now.
+
+POST-REPAIR PROOF:
+What was rechecked. Confirm sources now agree.
+
+STATUS:
+PROVEN / CONTRADICTION DETECTED / PARTIALLY VERIFIED / REPAIR UNPROVEN
+
+BEFORE RESPONDING — CHECK:
+- Did I answer the user's actual question, or did I just dump database fields?
+- Did I compare what each source says, or did I only report one source?
+- Did I name the contradiction (if any), or did I gloss over disagreement?
+- Did I identify the broken path, or did I just describe symptoms?
+- If bridge findings contain contradiction data, did I surface it?
+
+FORBIDDEN RESPONSE PATTERNS:
+× "I checked owner_email and it matches" — this is field narration, not investigation.
+× "resolved_current_location_id is set to..." — field dumps without context.
+× Starting with field-by-field listings without answering the question.
+× Reporting database values as if they are the final truth without cross-reference.
+× When contradictions exist in the bridge findings, responding as if everything is fine.
+
+IF BRIDGE FINDINGS ARE IN YOUR CONTEXT:
+- You have real evidence. Use it.
+- Quote specific contradiction details from the bridge.
+- Do not produce a separate investigation that ignores the bridge data.
+- The bridge findings are your primary evidence source for this turn.
+
+════════════════════════════════════════
 RULES:
 - If diagnostic data is available, quote the exact findings. Numbers. States. Specifics.
 - If the user asks a schema or system question and you have the answer from the architecture map below, answer it accurately.
@@ -901,6 +973,35 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
     }
   } else if (ctx.lastCharacterList) {
     characterListContext = ctx.lastCharacterList;
+  }
+
+  // ── Scoped investigation bridge (character snapshot cross-reference) ────
+  // When user asks about a specific character's state, run the full bridge
+  // scoped to that character to get schedule/roster/contradiction evidence.
+  const scopedName = extractCharacterName(text);
+  if (wantsScopedInvestigation(text) && scopedName && !wantsDiagnosticRun(text)) {
+    try {
+      // Find character by name so we can scope the bridge
+      const charResults = await base44.entities.Character.filter(
+        { name: scopedName, owner_email: ownerEmail, status: 'active' },
+        '-created_date', 5
+      ).catch(() => []);
+      const targetChar = charResults[0] || null;
+      if (targetChar) {
+        console.log(`[VICK_BRIDGE] Running scoped bridge for ${scopedName} (${targetChar.id})`);
+        const bridgeRes = await base44.functions.invoke('vickInvestigationBridge', {
+          conversationId,
+          scope: `character_snapshot:${targetChar.id}`,
+          dryRun: true,
+        });
+        if (bridgeRes?.data?.findingsText) {
+          investigationContext += '\n\n═══ SCOPED INVESTIGATION FINDINGS ═══\n' + bridgeRes.data.findingsText;
+          console.log(`[VICK_BRIDGE] Scoped bridge: ${bridgeRes.data.observedCount} obs, ${bridgeRes.data.inferredCount} inf, ${bridgeRes.data.contradictionCount} contradictions`);
+        }
+      }
+    } catch (scopedErr) {
+      console.warn(`[VICK_BRIDGE] Scoped bridge failed (non-blocking): ${scopedErr.message}`);
+    }
   }
 
   // ── Multi-path investigation: reverse location lookup ─────────────────────
