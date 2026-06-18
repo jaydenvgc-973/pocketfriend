@@ -86,6 +86,7 @@ import { hasVickDiagnosticIntent, isVickServicioCharacter } from "@/lib/vickDiag
 import { runVickDiagnosticIfNeeded, shouldUseVickFastPath, buildVickFastPathPrompt, executeVickDiagnosticFastPath } from "@/lib/vickDiagnosticRunner";
 import VickCharacterSpeechToggle, { useVickCharacterSpeechMode } from "@/components/chat/VickCharacterSpeechToggle";
 import { VICK_CHARACTER_BOUNDARY_PROMPT, enforceVickCharacterBoundary } from "@/lib/vickCharacterBoundary";
+import { handleFallbackResponse } from "@/lib/chatFallbackIntegration";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -1403,7 +1404,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (!isMountedRef.current) return;
       setIsTyping(false);
 
-      const { handleFallbackResponse } = await import('@/lib/chatFallbackIntegration');
+      // handleFallbackResponse imported statically at top of file
 
       const msg = err?.message || '';
       const isRateLimit = msg.includes('429') || msg.includes('Rate limit') || msg.includes('rate limit') || err?.status === 429;

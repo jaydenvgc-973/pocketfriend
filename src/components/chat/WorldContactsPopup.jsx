@@ -13,6 +13,7 @@ import { isCountableUnread } from "@/lib/canonicalUnreadResolver";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { resolveCharacterContacts } from "@/lib/characterContactsResolver";
 import { callLLMWithRetry } from "@/lib/llmUtils";
+import { handleFallbackResponse } from "@/lib/chatFallbackIntegration";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import { filterDashes } from "@/lib/dashFilter";
@@ -1021,7 +1022,7 @@ Respond ONLY with valid JSON in this exact format:
       // Record durable fallback state and trigger background recovery with full prompt.
       // npcText left null — UI will show reconnecting state instead.
       npcText = null; // null = do NOT save anything
-      const { handleFallbackResponse } = await import('@/lib/chatFallbackIntegration');
+      // handleFallbackResponse imported statically at top of file
       await handleFallbackResponse({
         characterId: contactId,
         conversationId: convoId,
