@@ -975,6 +975,9 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
     characterListContext = ctx.lastCharacterList;
   }
 
+  // ── Multi-path investigation context (accumulated across all sub-investigations) ─
+  let investigationContext = '';
+
   // ── Scoped investigation bridge (character snapshot cross-reference) ────
   // When user asks about a specific character's state, run the full bridge
   // scoped to that character to get schedule/roster/contradiction evidence.
@@ -995,8 +998,8 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
           dryRun: true,
         });
         if (bridgeRes?.data?.findingsText) {
-          investigationContext += '\n\n═══ SCOPED INVESTIGATION FINDINGS ═══\n' + bridgeRes.data.findingsText;
-          console.log(`[VICK_BRIDGE] Scoped bridge: ${bridgeRes.data.observedCount} obs, ${bridgeRes.data.inferredCount} inf, ${bridgeRes.data.contradictionCount} contradictions`);
+          investigationContext += '\n\n═══ SCOPED INVESTIGATION FINDINGS (bridge evidence — backend + frontend + schedule + roster + contradictions) ═══\n' + bridgeRes.data.findingsText;
+          console.log(`[VICK_BRIDGE] Scoped bridge: ${bridgeRes.data.observedCount} obs, ${bridgeRes.data.inferredCount} inf, ${bridgeRes.data.contradictionCount} contradictions, ${bridgeRes.data.frontendEvidenceCount} frontend evidence lines`);
         }
       }
     } catch (scopedErr) {
@@ -1007,7 +1010,6 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   // ── Multi-path investigation: reverse location lookup ─────────────────────
   // Triggered when user asks about school/work/residence/enrollment and we
   // cannot answer from the character record alone. Check location rosters first.
-  let investigationContext = '';
   const mentionedId = extractCharacterId(text);
 
   // Run reverse location lookup whenever:
@@ -1054,6 +1056,17 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
 
   const hasImages = Array.isArray(imageUrls) && imageUrls.length > 0;
 
+  // ── EVIDENCE SUMMARY — log what reached Vick this turn ──────────────────
+  console.log(`[VICK_BRIDGE] EVIDENCE SUMMARY for turn:
+  diagnostic=${!!diagContext} (${diagContext.length} chars)
+  charList=${!!characterListContext} (${characterListContext.length} chars)
+  investigation=${!!investigationContext} (${investigationContext.length} chars)
+  hasBridgeFindings=${investigationContext.includes('═══ SCOPED INVESTIGATION FINDINGS') || diagContext.includes('═══ BRIDGE FINDINGS')}
+  hasScopedBridge=${investigationContext.includes('SCOPED INVESTIGATION FINDINGS')}
+  hasReverseLookup=${investigationContext.includes('REVERSE LOCATION LOOKUP')}
+  hasAnchorScan=${investigationContext.includes('CONVERSATION ANCHOR SCAN')}
+  hasImages=${hasImages} imageCount=${imageUrls.length}`);
+
   const prompt = buildVickIntelligencePrompt({
     ownerEmail, recentHistory, diagContext, characterListContext,
     investigationContext, text, isPrivate, hasImages,
@@ -1068,7 +1081,15 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
       ...(hasImages ? { file_urls: imageUrls } : {}),
     });
     responseText = (typeof raw === 'string' ? raw : '').trim();
-    console.log(`[VICK_BRIDGE] Response received. Length: ${responseText.length}. Preview: "${responseText.substring(0, 120)}"`);
+    const hasReportFormat = /INVESTIGATION GOAL|INVESTIGATION GOAL/i.test(responseText);
+    const hasExpected = /EXPECTED STATE/i.test(responseText);
+    const hasEvidence = /EVIDENCE CHECKED/i.test(responseText);
+    const hasContradiction = /CONTRADICTIONS FOUND/i.test(responseText);
+    const hasRootCause = /ROOT CAUSE/i.test(responseText);
+    const hasStatus = /STATUS/i.test(responseText);
+    const isFieldDump = /resolved_current_location_id|owner_email matches|presence is|record shows field/i.test(responseText) && !hasEvidence;
+    const formatLabelsUsed = [hasReportFormat, hasExpected, hasEvidence, hasContradiction, hasRootCause, hasStatus].filter(Boolean).length;
+    console.log(`[VICK_BRIDGE] Response received. Length: ${responseText.length}. Format labels: ${formatLabelsUsed}/6. Field-dump detected: ${isFieldDump}. Preview: "${responseText.substring(0, 120)}"`);
   } catch (err) {
     console.error(`[VICK_BRIDGE] LLM call failed: ${err.message}`);
     responseText = "I ran into a connection issue. Try again in a moment.";
