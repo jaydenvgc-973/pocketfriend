@@ -373,7 +373,7 @@ export function getCharacterSleepState(character, locationMap) {
   // ── NPCs / untyped: accept DB truth — schedule-window governs them below ──
   if (status === 'sleeping') {
     return {
-      isSleeping: true, isNapping: false, isResting: false, displayLabel: 'sleeping',
+      isSleeping: true, isNapping: false, displayLabel: 'sleeping',
       contextLabel: 'Asleep', visible_label: 'Asleep',
       confirmed_reason: reason || 'db_sleeping', evidence_source: 'resolved_presence_status',
       confidence: 1, stale_risk: false, isLikelyStale: false, blockingCondition: null,
@@ -381,7 +381,7 @@ export function getCharacterSleepState(character, locationMap) {
   }
   if (status === 'napping') {
     return {
-      isSleeping: true, isNapping: true, isResting: false, displayLabel: 'napping',
+      isSleeping: true, isNapping: true, displayLabel: 'napping',
       contextLabel: 'Napping', visible_label: 'Napping',
       confirmed_reason: reason || 'db_napping', evidence_source: 'resolved_presence_status',
       confidence: 1, stale_risk: false, isLikelyStale: false, blockingCondition: null,
@@ -389,7 +389,7 @@ export function getCharacterSleepState(character, locationMap) {
   }
   if (status === 'resting') {
     return {
-      isSleeping: false, isNapping: false, isResting: true, displayLabel: 'resting',
+      isSleeping: false, isNapping: false, displayLabel: 'resting',
       contextLabel: 'Resting', visible_label: 'Resting',
       confirmed_reason: reason || 'db_resting', evidence_source: 'resolved_presence_status',
       confidence: 1, stale_risk: false, isLikelyStale: false, blockingCondition: null,
@@ -464,7 +464,6 @@ export function getCharacterSleepState(character, locationMap) {
         return {
           isSleeping: false,
           isNapping: false,
-          isResting: false,
           displayLabel: 'awake',
           contextLabel: null,
           visible_label: null,
