@@ -1394,7 +1394,7 @@ Deno.serve(async (req) => {
     // ── LOAD LOCATION MAP ────────────────────────────────────────────────
     // Legacy records may lack owner_email — load all, scope in loop
     let locFilterError = null;
-    const locations = await base44.asServiceRole.entities.LocationReference.list(
+    const locations = await base44.entities.LocationReference.list(
       null,
       200
     ).catch((err) => { locFilterError = err?.message || 'Unknown location filter error'; return []; });
@@ -1435,7 +1435,7 @@ Deno.serve(async (req) => {
         // ── FIRST-TIME INITIALIZATION ────────────────────────────────────
         let needs = getNeedsFromCharacter(char);
         if (needsAreUninitialized(needs) || !char.needs_initialized) {
-          await base44.asServiceRole.entities.Character.update(char.id, {
+          await base44.entities.Character.update(char.id, {
             hunger_value:  70,
             energy_value:  75,
             social_value:  65,
@@ -1485,13 +1485,13 @@ Deno.serve(async (req) => {
             && char.resolved_presence_status !== 'passed_out'
             && !sleepLocked) {
           // Immediate pass-out write — collapse from exhaustion
-          await base44.asServiceRole.entities.Character.update(char.id, {
+          await base44.entities.Character.update(char.id, {
             resolved_presence_status: 'sleeping',
             current_activity: 'passed out — resting',
             last_sleep_start: nowIso,
             last_need_simulated_at: nowIso,
           });
-          await base44.asServiceRole.entities.LifeEvent.create({
+          await base44.entities.LifeEvent.create({
             character_id: char.id,
             character_name: charName,
             event_type: 'medical_event',
@@ -1595,7 +1595,7 @@ Deno.serve(async (req) => {
                 comfort_value: Math.round(newNeeds.comfort),
                 last_need_simulated_at: nowIso,
               };
-              await base44.asServiceRole.entities.Character.update(char.id, wakePayload);
+              await base44.entities.Character.update(char.id, wakePayload);
               results.push({
                 character: charName, context,
                 event: 'hard_8h_sleep_wake',
@@ -1611,11 +1611,11 @@ Deno.serve(async (req) => {
             }
           } else {
             // Safe correction: set last_sleep_start directly (before updatePayload is built)
-            await base44.asServiceRole.entities.Character.update(char.id, {
+            await base44.entities.Character.update(char.id, {
               last_sleep_start: nowIso,
               last_need_simulated_at: nowIso,
             });
-            base44.asServiceRole.entities.LifeEvent.create({
+            base44.entities.LifeEvent.create({
               character_id: char.id, character_name: charName,
               event_type: 'medical_event', valence: 'neutral', severity: 'significant',
               title: 'Missing last_sleep_start — safe correction applied',
@@ -1649,7 +1649,7 @@ Deno.serve(async (req) => {
                 comfort_value: Math.round(newNeeds.comfort),
                 last_need_simulated_at: nowIso,
               };
-              await base44.asServiceRole.entities.Character.update(char.id, napWakePayload);
+              await base44.entities.Character.update(char.id, napWakePayload);
               results.push({
                 character: charName, context,
                 event: 'hard_3h_nap_wake',
@@ -1665,11 +1665,11 @@ Deno.serve(async (req) => {
             }
           } else {
             // Safe correction: set last_nap_time directly (before updatePayload is built)
-            await base44.asServiceRole.entities.Character.update(char.id, {
+            await base44.entities.Character.update(char.id, {
               last_nap_time: nowIso,
               last_need_simulated_at: nowIso,
             });
-            base44.asServiceRole.entities.LifeEvent.create({
+            base44.entities.LifeEvent.create({
               character_id: char.id, character_name: charName,
               event_type: 'medical_event', valence: 'neutral', severity: 'significant',
               title: 'Missing last_nap_time — safe correction applied',
@@ -1706,9 +1706,9 @@ Deno.serve(async (req) => {
                 comfort_value: Math.round(newNeeds.comfort),
                 last_need_simulated_at: nowIso,
               };
-              await base44.asServiceRole.entities.Character.update(char.id, awakeLimitPayload);
+              await base44.entities.Character.update(char.id, awakeLimitPayload);
 
-              await base44.asServiceRole.entities.LifeEvent.create({
+              await base44.entities.LifeEvent.create({
                 character_id: char.id, character_name: charName,
                 event_type: 'sleep_deprivation_event', valence: 'negative', severity: 'significant',
                 title: 'Forced sleep — 19-hour awake limit',
@@ -1732,11 +1732,11 @@ Deno.serve(async (req) => {
             }
           } else {
             // Safe correction: set last_wake_time directly (before updatePayload is built)
-            await base44.asServiceRole.entities.Character.update(char.id, {
+            await base44.entities.Character.update(char.id, {
               last_wake_time: nowIso,
               last_need_simulated_at: nowIso,
             });
-            base44.asServiceRole.entities.LifeEvent.create({
+            base44.entities.LifeEvent.create({
               character_id: char.id, character_name: charName,
               event_type: 'medical_event', valence: 'neutral', severity: 'significant',
               title: 'Missing last_wake_time — safe correction applied',
@@ -1817,7 +1817,7 @@ Deno.serve(async (req) => {
           });
 
           // Create a ScheduledEvent for the hospital recovery
-          await base44.asServiceRole.entities.ScheduledEvent.create({
+          await base44.entities.ScheduledEvent.create({
             character_id: char.id,
             character_name: charName,
             event_type: 'medical_emergency',
@@ -1829,7 +1829,7 @@ Deno.serve(async (req) => {
           }).catch(() => {});
 
           // Log the ER escalation
-          await base44.asServiceRole.entities.LifeEvent.create({
+          await base44.entities.LifeEvent.create({
             character_id: char.id,
             character_name: charName,
             event_type: 'medical_event',
@@ -1860,7 +1860,7 @@ Deno.serve(async (req) => {
           });
 
           // Create recovery ScheduledEvent
-          await base44.asServiceRole.entities.ScheduledEvent.create({
+          await base44.entities.ScheduledEvent.create({
             character_id: char.id,
             character_name: charName,
             event_type: 'compound_crisis_recovery',
@@ -1871,7 +1871,7 @@ Deno.serve(async (req) => {
             owner_email: ownerEmail,
           }).catch(() => {});
 
-          await base44.asServiceRole.entities.LifeEvent.create({
+          await base44.entities.LifeEvent.create({
             character_id: char.id,
             character_name: charName,
             event_type: 'medical_event',
@@ -1898,12 +1898,12 @@ Deno.serve(async (req) => {
         }
 
         // ── RC6: ALWAYS USE asServiceRole FOR WRITES ──────────────────────
-        await base44.asServiceRole.entities.Character.update(char.id, updatePayload);
+        await base44.entities.Character.update(char.id, updatePayload);
 
         // ── CRITICAL ESCALATION LOGGING ────────────────────────────────────
         const escalations = detectCriticalEscalations(needs, newNeeds, charName);
         for (const esc of escalations) {
-          await base44.asServiceRole.entities.LifeEvent.create({
+          await base44.entities.LifeEvent.create({
             character_id: char.id,
             character_name: charName,
             event_type: 'medical_event',
