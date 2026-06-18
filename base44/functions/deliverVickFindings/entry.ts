@@ -34,14 +34,43 @@ Deno.serve(async (req) => {
 
     const nowIso = new Date().toISOString();
 
-    // ── STEP 1: Find Vick's character record ──────────────────────────────────
-    const vicks = await base44.asServiceRole.entities.Character.filter(
-      { character_type: 'npc_world_service', owner_email: ownerEmail, status: 'active' },
-      '-created_date',
-      5
-    ).catch(() => []);
+    // ── STEP 1: Find Vick's character record (safe multi-path lookup) ───────
+    // Priority: is_world_service flag → name match → character_type fallback.
+    // Vick's character_type is NOT required — the lookup finds him regardless.
+    let vick = null;
 
-    if (vicks.length === 0) {
+    // Path 1: is_world_service flag (type-independent, safest)
+    try {
+      const results = await base44.asServiceRole.entities.Character.filter(
+        { is_world_service: true, owner_email: ownerEmail, status: 'active' },
+        '-created_date', 5
+      ).catch(() => []);
+      if (results.length > 0) vick = results[0];
+    } catch (_) {}
+
+    // Path 2: name match (works regardless of type/flag state)
+    if (!vick) {
+      try {
+        const results = await base44.asServiceRole.entities.Character.filter(
+          { name: 'Vick Servicio', owner_email: ownerEmail, status: 'active' },
+          '-created_date', 5
+        ).catch(() => []);
+        if (results.length > 0) vick = results[0];
+      } catch (_) {}
+    }
+
+    // Path 3: character_type fallback (legacy path, kept as last resort)
+    if (!vick) {
+      try {
+        const results = await base44.asServiceRole.entities.Character.filter(
+          { character_type: 'npc_world_service', owner_email: ownerEmail, status: 'active' },
+          '-created_date', 5
+        ).catch(() => []);
+        if (results.length > 0) vick = results[0];
+      } catch (_) {}
+    }
+
+    if (!vick) {
       console.log(`[deliverVickFindings] No active Vick for ${ownerEmail} — cannot deliver findings`);
       return Response.json({
         success: false,
@@ -49,8 +78,6 @@ Deno.serve(async (req) => {
         ownerEmail,
       });
     }
-
-    const vick = vicks[0];
 
     // ── STEP 2: Find or create Vick's conversation with the user ──────────────
     // Search for existing direct conversation with Vick
