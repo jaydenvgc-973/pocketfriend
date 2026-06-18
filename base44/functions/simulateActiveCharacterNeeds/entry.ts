@@ -957,15 +957,15 @@ function computeCorrectiveState(needs, character, locationMap) {
     // Recent pass-out (< 30 days): energy feels 15% lower (multiplier 0.85)
     // Multiple pass-outs (≥ 2): additional 10% amplification per extra pass-out
     let passOutAmp = 1.0;
-    if (char.last_pass_out_at) {
-      const daysSincePassOut = (nowET.getTime() - new Date(char.last_pass_out_at).getTime()) / (24 * 3_600_000);
+    if (character.last_pass_out_at) {
+      const daysSincePassOut = (nowET.getTime() - new Date(character.last_pass_out_at).getTime()) / (24 * 3_600_000);
       if (daysSincePassOut < 7) {
         passOutAmp = 0.70; // recent trauma — strong avoidance
       } else if (daysSincePassOut < 30) {
         passOutAmp = 0.85; // still fresh memory — moderate avoidance
       }
       // Repeated pass-outs compound the effect
-      const extraCount = Math.max(0, (char.pass_out_count ?? 0) - 1);
+      const extraCount = Math.max(0, (character.pass_out_count ?? 0) - 1);
       if (extraCount > 0) {
         passOutAmp *= Math.max(0.5, 1.0 - extraCount * 0.1); // each extra pass-out adds 10% amplification
       }
