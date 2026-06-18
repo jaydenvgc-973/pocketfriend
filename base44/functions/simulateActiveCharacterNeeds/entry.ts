@@ -907,9 +907,12 @@ function computeCorrectiveState(needs, character, locationMap) {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // MEDICAL DANGER (≤5%): bypass pipeline
+  // MEDICAL DANGER (≤5%): bypass pipeline — AWAKE CHARACTERS ONLY.
+  // Sleeping/napping characters get +12.5/hr energy recovery — that is
+  // the correct treatment. Hospitalization override is only for AWAKE
+  // characters whose energy crashed below 5 while conscious.
   // ═══════════════════════════════════════════════════════════════════════
-  if (needs.energy <= T.ENERGY_MEDICAL && presence !== 'hospitalized') {
+  if (needs.energy <= T.ENERGY_MEDICAL && !isInRestState) {
     return {
       resolved_presence_status: 'hospitalized',
       current_activity: 'hospitalized — energy collapse',
@@ -1487,12 +1490,22 @@ Deno.serve(async (req) => {
             && char.resolved_presence_status !== 'napping'
             && char.resolved_presence_status !== 'passed_out'
             && !sleepLocked) {
-          // Immediate pass-out write — collapse from exhaustion
+          // Immediate pass-out write — collapse from exhaustion.
+          // MUST include needs values so the NEXT tick reads consistent data.
+          // Without this, energy stays frozen at the pre-pass-out value (0-10)
+          // and computeCorrectiveState overrides sleeping with hospitalized.
           await base44.entities.Character.update(char.id, {
             resolved_presence_status: 'sleeping',
             current_activity: 'passed out — resting',
             last_sleep_start: nowIso,
             last_need_simulated_at: nowIso,
+            hunger_value:  Math.round(needs.hunger ?? 70),
+            energy_value:  Math.round(energyBefore),
+            social_value:  Math.round(needs.social ?? 65),
+            health_value:  Math.round(needs.health ?? 80),
+            mental_value:  Math.round(needs.mental ?? 70),
+            hygiene_value: Math.round(needs.hygiene ?? 75),
+            comfort_value: Math.round(needs.comfort ?? 70),
           });
           await base44.entities.LifeEvent.create({
             character_id: char.id,
