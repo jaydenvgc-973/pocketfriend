@@ -22,6 +22,34 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
  * PRIVACY: Vick is not made omniscient. Sensitive content is summarized.
  * Raw private message content is never dumped.
  */
+// ── FRONTEND EVIDENCE COLLECTOR ──────────────────────────────────────────────
+// Calls readCharacterStateSnapshot — the existing reconciler that runs the actual
+// frontend resolvers (home card, profile, travel, locations, map) AND auto-detects
+// contradictions between database records and page-facing UI state.
+// This is what restores Vick's cross-reference responsibility: the bridge now
+// supplies frontend/UI evidence, not backend records alone.
+async function collectFrontendEvidence(base44, characterId, ownerEmail) {
+  try {
+    const res = await base44.functions.invoke('readCharacterStateSnapshot', {
+      characterId, ownerEmail,
+    });
+    const data = res?.data || res;
+    if (!data || data.error) {
+      return { available: false, reason: data?.error || 'snapshot returned no data' };
+    }
+    return {
+      available: true,
+      appTimeET: data.checked_at_app_time_et || null,
+      databaseState: data.database_state || null,   // = Backend State Inspector
+      pageFacing: data.page_facing_state || null,    // = Home card, Profile, Travel, Locations, Map UI
+      contradictions: Array.isArray(data.contradictions) ? data.contradictions : [],
+      missingAccess: Array.isArray(data.missing_access) ? data.missing_access : [],
+    };
+  } catch (e) {
+    return { available: false, reason: e.message };
+  }
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -160,6 +188,54 @@ Deno.serve(async (req) => {
     const inferred = [];
     const assumed = [];
     const unknown = [];
+    const contradictionsFound = [];   // auto-detected frontend↔backend mismatches
+    const frontendLines = [];         // page-facing UI evidence lines
+
+    // Mandatory source-availability ledger. Every investigation must mark each
+    // required source as CHECKED or SOURCE NOT AVAILABLE — Vick cannot claim
+    // completion using backend-only evidence.
+    const sourceAvailability = {
+      USER_EVIDENCE: 'CHECKED AT CHAT LAYER (screenshots passed directly to Vick when provided)',
+      HOMEPAGE_CARD_UI: 'SOURCE NOT AVAILABLE',
+      CHARACTER_PROFILE_UI: 'SOURCE NOT AVAILABLE',
+      BACKEND_STATE_INSPECTOR: 'SOURCE NOT AVAILABLE',
+      CHARACTER_RECORD: 'SOURCE NOT AVAILABLE',
+      LOCATION_FILE: 'SOURCE NOT AVAILABLE',
+      LOCATION_PAGE_UI: 'SOURCE NOT AVAILABLE',
+      OCCUPATION_SCHOOL_SLEEP_SCHEDULE: 'SOURCE NOT AVAILABLE',
+      APP_TIME_USED: `${nowET} Eastern`,
+      CONTRADICTION_CHECK: 'SOURCE NOT AVAILABLE',
+    };
+
+    // Merge frontend-evidence result into the ledger + evidence arrays.
+    const applyFrontendEvidence = (fe, label) => {
+      if (!fe || !fe.available) {
+        frontendLines.push(`${label}: SOURCE NOT AVAILABLE — ${fe?.reason || 'snapshot unavailable'}`);
+        return;
+      }
+      sourceAvailability.HOMEPAGE_CARD_UI = 'CHECKED';
+      sourceAvailability.CHARACTER_PROFILE_UI = 'CHECKED';
+      sourceAvailability.BACKEND_STATE_INSPECTOR = 'CHECKED';
+      sourceAvailability.LOCATION_PAGE_UI = 'CHECKED';
+      sourceAvailability.CONTRADICTION_CHECK = 'CHECKED';
+      if (fe.appTimeET) sourceAvailability.APP_TIME_USED = `${fe.appTimeET} (Eastern, from snapshot)`;
+
+      const hc = fe.pageFacing?.home_card;
+      const pp = fe.pageFacing?.profile_page;
+      const tp = fe.pageFacing?.travel_page;
+      const lp = fe.pageFacing?.locations_page;
+      if (hc) frontendLines.push(`${label} HOMEPAGE CARD: status="${hc.displayed_status?.value}" location="${hc.displayed_location?.value}" sleeping=${hc.is_sleeping?.value}`);
+      if (pp) frontendLines.push(`${label} PROFILE UI: status="${pp.displayed_status?.value}" location="${pp.displayed_location?.value}"`);
+      if (tp) frontendLines.push(`${label} TRAVEL PAGE: available=${tp.available_for_travel?.value} reason="${tp.unavailable_reason?.value || 'n/a'}"`);
+      if (lp) frontendLines.push(`${label} LOCATIONS PAGE: shown="${lp.shown_location?.value}" presence="${lp.presence?.value}"`);
+
+      for (const c of fe.contradictions) {
+        contradictionsFound.push(`${label} [${c.severity?.toUpperCase() || 'MED'}] ${c.field}: database="${c.database_value}" vs UI="${c.resolver_value}" (page: ${c.affected_page})`);
+      }
+      for (const m of fe.missingAccess) {
+        frontendLines.push(`${label} MISSING ACCESS: ${m.resolver} — ${m.reason}`);
+      }
+    };
 
     // ═══ CHARACTER SNAPSHOT ════════════════════════════════════════════════
     if (diagnosticType === 'character_snapshot' && characterId) {
@@ -177,7 +253,19 @@ Deno.serve(async (req) => {
           observed.push(`Student: ${char.student_status || 'not_student'}`);
           observed.push(`Character type: ${char.character_type || 'not set'}, world_service: ${char.is_world_service || false}`);
 
-          // Contradiction detection
+          // Backend record + schedule sources are now confirmed checked
+          sourceAvailability.CHARACTER_RECORD = 'CHECKED';
+          sourceAvailability.OCCUPATION_SCHOOL_SLEEP_SCHEDULE = 'CHECKED';
+          if (char.current_home_location_id || char.occupation_location_id) {
+            sourceAvailability.LOCATION_FILE = 'CHECKED';
+          }
+
+          // ── FRONTEND CROSS-REFERENCE (restores Vick's core responsibility) ──
+          // Pull page-facing UI state + auto-detected contradictions.
+          const fe = await collectFrontendEvidence(base44, characterId, ownerEmail);
+          applyFrontendEvidence(fe, name);
+
+          // Local backend-only inferences (kept, but no longer the whole story)
           const presence = char.resolved_presence_status;
           if (presence === 'sleeping' || presence === 'napping') {
             if (char.work_start_time && char.work_end_time) {
@@ -199,6 +287,11 @@ Deno.serve(async (req) => {
         const char = (await base44.entities.Character.filter({ id: characterId }))[0] || null;
         const name = char?.name || characterId;
         observed.push(`—— Scoped Investigation: ${name} ——`);
+        if (char) sourceAvailability.CHARACTER_RECORD = 'CHECKED';
+
+        // ── FRONTEND CROSS-REFERENCE (page-facing UI + contradictions) ──
+        const feScoped = await collectFrontendEvidence(base44, characterId, ownerEmail);
+        applyFrontendEvidence(feScoped, name);
 
         // Conversations
         const allConvos = await base44.asServiceRole.entities.Conversation.list(null, 200).catch(() => []);
@@ -270,11 +363,42 @@ Deno.serve(async (req) => {
           { owner_email: ownerEmail, status: 'active' }, null, 100
         ).catch(() => []);
         observed.push(`Active characters: ${chars.length}`);
+        if (chars.length > 0) sourceAvailability.CHARACTER_RECORD = 'CHECKED';
+
+        // ── FRONTEND CROSS-REFERENCE SCAN (frontend↔backend per character) ──
+        // Runs the page-facing resolvers + contradiction detection per character.
+        // Runs in PARALLEL and is capped so the investigation stays fast — a slow
+        // investigation is a user-visible failure, not an acceptable cost.
+        const scanCap = 8;
+        const toScan = chars.slice(0, scanCap);
+        const feResults = await Promise.all(
+          toScan.map(c => collectFrontendEvidence(base44, c.id, ownerEmail))
+        );
+        let scannedWithContradictions = 0;
+        feResults.forEach((fe, i) => {
+          const c = toScan[i];
+          if (fe.available) {
+            sourceAvailability.HOMEPAGE_CARD_UI = 'CHECKED';
+            sourceAvailability.CHARACTER_PROFILE_UI = 'CHECKED';
+            sourceAvailability.BACKEND_STATE_INSPECTOR = 'CHECKED';
+            sourceAvailability.LOCATION_PAGE_UI = 'CHECKED';
+            sourceAvailability.CONTRADICTION_CHECK = 'CHECKED';
+            for (const ct of fe.contradictions) {
+              scannedWithContradictions++;
+              contradictionsFound.push(`${c.name} [${ct.severity?.toUpperCase() || 'MED'}] ${ct.field}: database="${ct.database_value}" vs UI="${ct.resolver_value}" (page: ${ct.affected_page})`);
+            }
+          }
+        });
+        if (chars.length > scanCap) {
+          frontendLines.push(`Frontend cross-reference scan covered ${scanCap} of ${chars.length} active characters this pass. Remaining ${chars.length - scanCap} not yet scanned — run a scoped check (character_snapshot) for those.`);
+        }
+        observed.push(`Frontend↔backend scan: ${toScan.length} characters checked, ${scannedWithContradictions} contradiction(s) detected`);
 
         const locs = await base44.entities.LocationReference.filter(
           { owner_email: ownerEmail }, null, 100
         ).catch(() => []);
         observed.push(`Locations: ${locs.length}`);
+        if (locs.length > 0) sourceAvailability.LOCATION_FILE = 'CHECKED';
 
         // Active travel
         const travel = await base44.asServiceRole.entities.TravelSession.filter(
@@ -315,6 +439,34 @@ Deno.serve(async (req) => {
     lines.push(`Generated: ${nowET} Eastern`);
     lines.push(`Scope: ${scope}`);
     lines.push('');
+
+    // SOURCE AVAILABILITY LEDGER — every required source marked CHECKED or SOURCE NOT AVAILABLE.
+    // Vick must not claim completion if mandatory frontend sources are SOURCE NOT AVAILABLE.
+    lines.push('—— SOURCE AVAILABILITY (frontend evidence is mandatory) ——');
+    Object.entries(sourceAvailability).forEach(([k, v]) => {
+      lines.push(`  ${k.replace(/_/g, ' ')}: ${v}`);
+    });
+    lines.push('');
+
+    // FRONTEND CROSS-REFERENCE — page-facing UI state pulled from the actual resolvers.
+    if (frontendLines.length > 0) {
+      lines.push('—— FRONTEND / UI STATE (what the user actually sees) ——');
+      frontendLines.forEach(l => lines.push(`  ${l}`));
+      lines.push('');
+    }
+
+    // CONTRADICTIONS — auto-detected frontend↔backend mismatches. The contradiction IS the finding.
+    if (contradictionsFound.length > 0) {
+      lines.push('—— CONTRADICTIONS DETECTED (frontend disagrees with backend — investigate, do NOT default to either) ——');
+      contradictionsFound.forEach(c => lines.push(`  ⚠ ${c}`));
+      lines.push('');
+    } else {
+      lines.push('—— CONTRADICTION CHECK ——');
+      lines.push(sourceAvailability.CONTRADICTION_CHECK === 'CHECKED'
+        ? '  No frontend↔backend contradictions detected on checked sources.'
+        : '  CONTRADICTION CHECK: SOURCE NOT AVAILABLE — frontend state could not be pulled this pass.');
+      lines.push('');
+    }
 
     if (observed.length > 0) {
       lines.push('—— OBSERVED (directly verified from database records) ——');
@@ -380,6 +532,10 @@ Deno.serve(async (req) => {
       inferredCount: inferred.length,
       assumedCount: assumed.length,
       unknownCount: unknown.length,
+      contradictionCount: contradictionsFound.length,
+      contradictions: contradictionsFound,
+      frontendEvidenceCount: frontendLines.length,
+      sourceAvailability,
     });
 
   } catch (error) {

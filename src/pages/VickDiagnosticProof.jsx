@@ -168,6 +168,8 @@ export default function VickDiagnosticProof() {
       setAuditRecord(audit);
 
       // ── STEP 8: Assemble proof ─────────────────────────────────────────
+      const sa = bridgeData?.sourceAvailability || {};
+      const frontendChecked = sa.HOMEPAGE_CARD_UI === 'CHECKED' && sa.CHARACTER_PROFILE_UI === 'CHECKED';
       setProof({
         ownerEmail,
         vickId: foundVick.id,
@@ -181,6 +183,11 @@ export default function VickDiagnosticProof() {
         inferredCount: bridgeData?.inferredCount ?? 0,
         assumedCount: bridgeData?.assumedCount ?? 0,
         unknownCount: bridgeData?.unknownCount ?? 0,
+        contradictionCount: bridgeData?.contradictionCount ?? 0,
+        contradictions: bridgeData?.contradictions || [],
+        frontendEvidenceCount: bridgeData?.frontendEvidenceCount ?? 0,
+        sourceAvailability: sa,
+        frontendChecked,
         evidenceLabelsPresent: !!(bridgeData?.findingsText?.includes("OBSERVED")),
         messageDelivered: !!deliveredMsg,
         messageContentPreview: deliveredMsg?.content?.substring(0, 500) || null,
@@ -310,6 +317,37 @@ export default function VickDiagnosticProof() {
               ))}
             </div>
 
+            {/* Source availability ledger */}
+            {proof.sourceAvailability && Object.keys(proof.sourceAvailability).length > 0 && (
+              <div className="bg-background rounded border border-border p-3">
+                <p className="text-xs font-semibold text-foreground mb-2">Source Availability (frontend evidence mandatory)</p>
+                <div className="space-y-1 text-[10px] font-mono">
+                  {Object.entries(proof.sourceAvailability).map(([k, v]) => {
+                    const checked = String(v).startsWith('CHECKED') || /Eastern/.test(String(v));
+                    return (
+                      <div key={k} className="flex items-start gap-2">
+                        <span className={checked ? "text-green-400" : "text-red-400"}>{checked ? "✓" : "✗"}</span>
+                        <span className="text-muted-foreground">{k.replace(/_/g, " ")}: <span className={checked ? "text-foreground" : "text-red-400"}>{v}</span></span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Contradictions */}
+            <div className="bg-background rounded border border-border p-3">
+              <p className="text-xs font-semibold text-foreground mb-1">
+                Frontend↔Backend Contradictions: <span className={proof.contradictionCount > 0 ? "text-yellow-400" : "text-green-400"}>{proof.contradictionCount}</span>
+                {" "}| Frontend evidence checked: <span className={proof.frontendChecked ? "text-green-400" : "text-red-400"}>{proof.frontendChecked ? "YES ✓" : "NO ✗"}</span>
+              </p>
+              {proof.contradictions?.length > 0 && (
+                <pre className="text-[10px] text-yellow-400 font-mono whitespace-pre-wrap mt-1 max-h-40 overflow-y-auto">
+                  {proof.contradictions.join("\n")}
+                </pre>
+              )}
+            </div>
+
             {/* Bridge error if any */}
             {proof.bridgeError && (
               <div className="bg-yellow-500/10 border border-yellow-500/30 rounded p-2">
@@ -363,6 +401,8 @@ export default function VickDiagnosticProof() {
                 { label: "Multi-path Vick lookup succeeded", pass: !!proof.vickId },
                 { label: "Vick record not modified", pass: proof.vickUnchanged === true },
                 { label: "Evidence collected", pass: (proof.observedCount + proof.inferredCount) > 0 },
+                { label: "Frontend/UI evidence supplied (not backend-only)", pass: proof.frontendChecked },
+                { label: "Contradiction check ran (frontend↔backend)", pass: proof.sourceAvailability?.CONTRADICTION_CHECK === 'CHECKED' },
                 { label: "Evidence labels preserved", pass: proof.evidenceLabelsPresent },
                 { label: "Message delivered to conversation", pass: proof.messageDelivered },
                 { label: "Audit record created", pass: !!proof.auditRecordId },
