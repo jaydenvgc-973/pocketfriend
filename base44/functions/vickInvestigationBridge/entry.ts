@@ -42,6 +42,8 @@ async function collectFrontendEvidence(base44, characterId, ownerEmail) {
       appTimeET: data.checked_at_app_time_et || null,
       databaseState: data.database_state || null,   // = Backend State Inspector
       pageFacing: data.page_facing_state || null,    // = Home card, Profile, Travel, Locations, Map UI
+      scheduleState: data.schedule_state || null,    // = expected state from schedule + Eastern time
+      rosterState: data.roster_state || null,        // = location-roster membership
       contradictions: Array.isArray(data.contradictions) ? data.contradictions : [],
       missingAccess: Array.isArray(data.missing_access) ? data.missing_access : [],
     };
@@ -229,8 +231,22 @@ Deno.serve(async (req) => {
       if (tp) frontendLines.push(`${label} TRAVEL PAGE: available=${tp.available_for_travel?.value} reason="${tp.unavailable_reason?.value || 'n/a'}"`);
       if (lp) frontendLines.push(`${label} LOCATIONS PAGE: shown="${lp.shown_location?.value}" presence="${lp.presence?.value}"`);
 
+      // SCHEDULE-BASED EXPECTED STATE (the previously-missing source)
+      const ss = fe.scheduleState;
+      if (ss?.available) {
+        sourceAvailability.OCCUPATION_SCHOOL_SLEEP_SCHEDULE = 'CHECKED';
+        frontendLines.push(`${label} SCHEDULE/EXPECTED: at ${ss.app_time_et} Eastern → expected="${ss.expected_state}" | on_shift=${ss.on_work_shift_now} in_sleep_window=${ss.in_sleep_window} school_in_session=${ss.school_in_session} | work=${ss.work_schedule} sleep=${ss.sleep_schedule}`);
+      }
+      // LOCATION-ROSTER MEMBERSHIP (occupation/home/school)
+      const rs = fe.rosterState;
+      if (rs) {
+        if (rs.occupation) frontendLines.push(`${label} OCCUPATION ROSTER: ${rs.occupation.location_name || rs.occupation.location_id} found=${rs.occupation.location_found} listed_as_worker=${rs.occupation.listed_as_worker}`);
+        if (rs.home) frontendLines.push(`${label} HOME ROSTER: ${rs.home.location_name || rs.home.location_id} found=${rs.home.location_found} listed_as_resident=${rs.home.listed_as_resident}`);
+        if (rs.school) frontendLines.push(`${label} SCHOOL ROSTER: ${rs.school.location_name || rs.school.location_id} found=${rs.school.location_found} listed_as_student=${rs.school.listed_as_student}`);
+      }
+
       for (const c of fe.contradictions) {
-        contradictionsFound.push(`${label} [${c.severity?.toUpperCase() || 'MED'}] ${c.field}: database="${c.database_value}" vs UI="${c.resolver_value}" (page: ${c.affected_page})`);
+        contradictionsFound.push(`${label} [${c.severity?.toUpperCase() || 'MED'}] ${c.field}: database="${c.database_value}" vs UI="${c.resolver_value}" (page: ${c.affected_page})${c.detail ? ` — ${c.detail}` : ''}`);
       }
       for (const m of fe.missingAccess) {
         frontendLines.push(`${label} MISSING ACCESS: ${m.resolver} — ${m.reason}`);
@@ -253,9 +269,10 @@ Deno.serve(async (req) => {
           observed.push(`Student: ${char.student_status || 'not_student'}`);
           observed.push(`Character type: ${char.character_type || 'not set'}, world_service: ${char.is_world_service || false}`);
 
-          // Backend record + schedule sources are now confirmed checked
+          // Character record confirmed checked. Schedule/occupation source is only
+          // marked CHECKED when the snapshot actually computes schedule state below
+          // (applyFrontendEvidence) — never from raw fields alone.
           sourceAvailability.CHARACTER_RECORD = 'CHECKED';
-          sourceAvailability.OCCUPATION_SCHOOL_SLEEP_SCHEDULE = 'CHECKED';
           if (char.current_home_location_id || char.occupation_location_id) {
             sourceAvailability.LOCATION_FILE = 'CHECKED';
           }

@@ -80,6 +80,22 @@ export default function VickDiagnosticProof() {
       if (!vickConvo) throw new Error("No Vick conversation found");
       const conversationId = vickConvo.id;
 
+      // ── STEP 3.5: Locate the proof-case character (Andre Rivera) ────────
+      // Scoped character check is the strongest proof: it forces schedule +
+      // roster + frontend cross-reference for one real character.
+      setPhase("finding_conversation");
+      let scope = "account_overview";
+      let proofCharacterName = "account (overview)";
+      try {
+        const andres = await base44.entities.Character.filter(
+          { name: "Andre Rivera", status: "active" }, "-created_date", 5
+        );
+        if (andres.length > 0) {
+          scope = `character_snapshot:${andres[0].id}`;
+          proofCharacterName = andres[0].name;
+        }
+      } catch (_) {}
+
       // ── STEP 4: Call vickInvestigationBridge ────────────────────────────
       // This is the REAL call — runs under the authenticated user's account.
       setPhase("calling_bridge");
@@ -91,7 +107,7 @@ export default function VickDiagnosticProof() {
       try {
         const res = await base44.functions.invoke("vickInvestigationBridge", {
           conversationId,
-          scope: "account_overview",
+          scope,
           dryRun: false, // Actually write findings to the conversation
         });
         bridgeData = res?.data || null;
@@ -172,6 +188,8 @@ export default function VickDiagnosticProof() {
       const frontendChecked = sa.HOMEPAGE_CARD_UI === 'CHECKED' && sa.CHARACTER_PROFILE_UI === 'CHECKED';
       setProof({
         ownerEmail,
+        scope,
+        proofCharacterName,
         vickId: foundVick.id,
         vickLookupPath: lookupPath,
         vickBefore,
@@ -263,8 +281,8 @@ export default function VickDiagnosticProof() {
                 <p className="text-foreground font-mono">{proof.ownerEmail}</p>
               </div>
               <div>
-                <span className="text-muted-foreground">Vick Lookup</span>
-                <p className="text-foreground font-mono">{proof.vickLookupPath}</p>
+                <span className="text-muted-foreground">Proof Case</span>
+                <p className="text-foreground font-mono">{proof.proofCharacterName}</p>
               </div>
               <div>
                 <span className="text-muted-foreground">Vick ID</span>

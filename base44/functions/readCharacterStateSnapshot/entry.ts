@@ -482,6 +482,95 @@ function computeWhoIsComing(targetCharId, allCharacters, locationMap) {
   };
 }
 
+// ── ROSTER MEMBERSHIP CHECKS (does the LocationReference actually list them?) ──
+function inWorkerRoster(loc, charId) {
+  if (!loc) return null;
+  return (loc.worker_character_ids || []).includes(charId) || !!(loc.worker_shifts && loc.worker_shifts[charId]);
+}
+function inResidentRoster(loc, charId) {
+  if (!loc) return null;
+  return (loc.resident_character_ids || []).includes(charId) || (loc.residents || []).some(r => r.character_id === charId);
+}
+function inStudentRoster(loc, charId) {
+  if (!loc) return null;
+  return (loc.enrolled_students || []).some(s => s.character_id === charId);
+}
+
+// ── SCHEDULE-BASED EXPECTED STATE (computed from schedule + current Eastern time) ─
+// This is the source that was previously NOT collected — the reason schedule
+// contradictions could not be detected. Computes what SHOULD be true right now.
+function computeScheduleState(character, locationMap) {
+  const day = nowETDay();
+  const nowMin = nowETMin();
+  const et = nowET();
+  const etLabel = et.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', weekday: 'short', hour12: true });
+
+  const onShiftNow = isCharacterOnWorkShift(character);
+
+  const sleepWin = computeAdaptiveSleepWindow(character, locationMap);
+  let inSleepWindow = false;
+  if (sleepWin && sleepWin.sleepStartMin != null && sleepWin.wakeMin != null) {
+    inSleepWindow = sleepWin.sleepStartMin > sleepWin.wakeMin
+      ? (nowMin >= sleepWin.sleepStartMin || nowMin < sleepWin.wakeMin)
+      : (nowMin >= sleepWin.sleepStartMin && nowMin < sleepWin.wakeMin);
+  }
+
+  let schoolInSession = false;
+  if (character.student_status === 'enrolled' && character.education_location_id) {
+    const sl = locationMap[character.education_location_id];
+    if (sl && [1, 2, 3, 4, 5].includes(day) && isLocationOpen(sl) === true) schoolInSession = true;
+  }
+
+  let expectedState = 'free';
+  if (onShiftNow) expectedState = 'at_work';
+  else if (schoolInSession) expectedState = 'at_school';
+  else if (inSleepWindow) expectedState = 'sleeping';
+
+  const fmt = (m) => m == null ? null : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+  return {
+    available: true,
+    app_time_et: etLabel,
+    has_schedule_data: !!(character.work_start_time || character.sleep_start_time || character.student_status === 'enrolled'),
+    on_work_shift_now: onShiftNow,
+    in_sleep_window: inSleepWindow,
+    sleep_window: (sleepWin && sleepWin.sleepStartMin != null) ? `${fmt(sleepWin.sleepStartMin)}-${fmt(sleepWin.wakeMin)} (${sleepWin.source})` : null,
+    school_in_session: schoolInSession,
+    expected_state: expectedState,
+    expected_source: 'schedule_plus_eastern_time',
+    work_schedule: character.work_start_time ? `${character.work_start_time}-${character.work_end_time} days[${(character.work_days || []).join(',')}]` : 'none',
+    sleep_schedule: character.sleep_start_time ? `${character.sleep_start_time}-${character.wake_up_time}` : 'none',
+    student_status: character.student_status || 'not_student',
+  };
+}
+
+function computeRosterState(character, locationMap) {
+  const occLoc = character.occupation_location_id ? locationMap[character.occupation_location_id] : null;
+  const homeLoc = character.current_home_location_id ? locationMap[character.current_home_location_id] : null;
+  const eduLoc = character.education_location_id ? locationMap[character.education_location_id] : null;
+
+  return {
+    occupation: character.occupation_location_id ? {
+      location_id: character.occupation_location_id,
+      location_name: occLoc?.name || character.occupation_location_name || null,
+      location_found: !!occLoc,
+      listed_as_worker: occLoc ? inWorkerRoster(occLoc, character.id) : null,
+    } : null,
+    home: character.current_home_location_id ? {
+      location_id: character.current_home_location_id,
+      location_name: homeLoc?.name || null,
+      location_found: !!homeLoc,
+      listed_as_resident: homeLoc ? inResidentRoster(homeLoc, character.id) : null,
+    } : null,
+    school: character.education_location_id ? {
+      location_id: character.education_location_id,
+      location_name: eduLoc?.name || character.education_location_name || null,
+      location_found: !!eduLoc,
+      listed_as_student: eduLoc ? inStudentRoster(eduLoc, character.id) : null,
+    } : null,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -623,6 +712,75 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── SCHEDULE-BASED EXPECTED STATE + ROSTER MEMBERSHIP ──────────────────
+    const scheduleState = computeScheduleState(character, locationMap);
+    const rosterState = computeRosterState(character, locationMap);
+
+    // Work schedule says on-shift now, but neither UI nor backend shows at_work
+    if (scheduleState.on_work_shift_now && homeCard.status !== 'at_work' && dbPresence !== 'at_work') {
+      contradictions.push({
+        field: 'work_schedule_vs_state',
+        database_value: dbPresence || 'not at work',
+        resolver_value: `Home card: ${homeCard.label}`,
+        affected_page: 'Home/Profile/Travel',
+        severity: 'high',
+        source: 'schedule_plus_eastern_time',
+        detail: `Work schedule (${scheduleState.work_schedule}) places this character on-shift at ${scheduleState.app_time_et} Eastern, but they are not shown at work.`,
+      });
+    }
+
+    // Sleep window active for current Eastern time, but shown awake/active
+    if (scheduleState.in_sleep_window && !homeCard.isSleeping && !dbSleepy && scheduleState.expected_state === 'sleeping') {
+      contradictions.push({
+        field: 'sleep_schedule_vs_state',
+        database_value: dbPresence || 'awake',
+        resolver_value: `Home card: ${homeCard.label}`,
+        affected_page: 'Home',
+        severity: 'medium',
+        source: 'schedule_plus_eastern_time',
+        detail: `Sleep window (${scheduleState.sleep_window}) is active at ${scheduleState.app_time_et} Eastern, but the character is shown awake.`,
+      });
+    }
+
+    // Occupation assigned on character file, but LocationReference roster doesn't list them
+    if (rosterState.occupation?.location_found && rosterState.occupation.listed_as_worker === false) {
+      contradictions.push({
+        field: 'occupation_roster_mismatch',
+        database_value: `assigned to ${rosterState.occupation.location_name}`,
+        resolver_value: 'NOT in that location\'s worker roster',
+        affected_page: 'Location',
+        severity: 'high',
+        source: 'location_roster',
+        detail: 'Character file lists occupation_location_id, but the LocationReference worker roster does not include this character — employment link is broken.',
+      });
+    }
+
+    // School enrolled on character file, but school roster doesn't list them
+    if (rosterState.school?.location_found && rosterState.school.listed_as_student === false) {
+      contradictions.push({
+        field: 'school_roster_mismatch',
+        database_value: `enrolled at ${rosterState.school.location_name}`,
+        resolver_value: 'NOT in that school\'s enrolled_students roster',
+        affected_page: 'Location',
+        severity: 'high',
+        source: 'location_roster',
+        detail: 'Character file marks student_status enrolled with an education_location_id, but the school roster does not list this character.',
+      });
+    }
+
+    // Home assigned on character file, but residents roster doesn't list them
+    if (rosterState.home?.location_found && rosterState.home.listed_as_resident === false) {
+      contradictions.push({
+        field: 'home_roster_mismatch',
+        database_value: `home set to ${rosterState.home.location_name}`,
+        resolver_value: 'NOT in that location\'s residents roster',
+        affected_page: 'Location',
+        severity: 'medium',
+        source: 'location_roster',
+        detail: 'Character file lists current_home_location_id, but the LocationReference residents roster does not include this character.',
+      });
+    }
+
     // ═════════════════════════════════════════════════════════════════════
     // MISSING ACCESS
     // ═════════════════════════════════════════════════════════════════════
@@ -645,6 +803,8 @@ Deno.serve(async (req) => {
       checked_at_app_time_et: et.toISOString(),
       database_state: db,
       page_facing_state: pageFacing,
+      schedule_state: scheduleState,
+      roster_state: rosterState,
       contradictions,
       missing_access: missingAccess,
     }), { headers: { 'Content-Type': 'application/json' } });
