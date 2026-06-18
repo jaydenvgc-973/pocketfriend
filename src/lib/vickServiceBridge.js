@@ -161,7 +161,7 @@ async function runConversationAnchorScan(characterId) {
 // ── The full architecture-map prompt ─────────────────────────────────────────
 // This is the SAME architecture knowledge as SupportAssistant's LLM prompt.
 // Vick delivers the answer in plain human language — not robotic output.
-function buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, investigationContext, text, isPrivate, hasImages = false }) {
+function buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, investigationContext, text, isPrivate, hasImages = false, hasAnyEvidence = true }) {
 
   // When an image is attached, front-load the image analysis directive so the model
   // prioritizes visual reading BEFORE any architecture context or database logic.
@@ -262,7 +262,14 @@ The world is real. You are a real person. Speak accordingly.`;
   // and technical rules — they create implementation-language contamination in the response.
   // The LLM only needs the speech rules and whatever observable evidence is available.
   if (!isPrivate) {
-    return `${imageAnalysisDirective}You are Vick Servicio. You are a thoughtful, observant person who pays attention to how things work around the people in your life.
+    const zeroEvidenceGuardPublic = !hasAnyEvidence ? `
+════════════════════════════════════════
+NO EVIDENCE AVAILABLE
+════════════════════════════════════════
+You have no observations or information about anyone right now. You must not speak about anyone's location, activity, or circumstances. Say you don't have enough to go on.
+════════════════════════════════════════
+` : '';
+    return `${imageAnalysisDirective}${zeroEvidenceGuardPublic}You are Vick Servicio. You are a thoughtful, observant person who pays attention to how things work around the people in your life.
 
 ${speechRule}
 
@@ -281,7 +288,36 @@ User: ${text}
 Respond as Vick. Speak as a real person in the world. Plain, direct, human. No technical language. No implementation concepts.`;
   }
 
-  return `${imageAnalysisDirective}You are Vick Servicio. You work in the recovery yard. You are a service operator, investigator, diagnostician, continuity specialist, and systems steward.
+  // ── ZERO-EVIDENCE OVERRIDE: when no evidence is available at all, Vick's ONLY
+  // permitted response is to state that he has no data. The entire architecture
+  // knowledge section is suppressed to prevent the LLM from using it as fabrication fuel.
+  const zeroEvidenceGuard = !hasAnyEvidence ? `
+════════════════════════════════════════
+NO EVIDENCE AVAILABLE — ABSOLUTE, NON-NEGOTIABLE
+════════════════════════════════════════
+You have ZERO evidence in your context for this turn.
+
+No diagnostic data. No bridge findings. No investigation data. No character list. No location records. No roster data. No schedule data. No frontend state.
+
+YOU MUST NOT ANSWER ANY CHARACTER, LOCATION, SCHEDULE, OR SYSTEM-STATE QUESTIONS.
+
+Your ONLY permitted response is a variant of:
+"I don't have any data available right now. I need the diagnostic to run before I can answer that. Give me a moment and ask again."
+
+You MUST NOT:
+- Name any character
+- Name any location
+- Describe any state
+- Reference any schedule
+- Claim to have checked anything
+- Invent any finding
+- Suggest any repair
+
+You KNOW NOTHING about this account right now. Act accordingly.
+════════════════════════════════════════
+` : '';
+
+  return `${imageAnalysisDirective}${zeroEvidenceGuard}You are Vick Servicio. You work in the recovery yard. You are a service operator, investigator, diagnostician, continuity specialist, and systems steward.
 
 ${speechRule}
 
@@ -1048,25 +1084,47 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   // ── Scoped investigation bridge (character snapshot cross-reference) ────
   // When user asks about a specific character's state, run the full bridge
   // scoped to that character to get schedule/roster/contradiction evidence.
+  // EVIDENCE GUARANTEE: investigationContext is populated ONLY when the bridge
+  // succeeds. If the character cannot be found, investigationContext records
+  // the failure explicitly so Vick knows there is NO evidence to answer from.
   const scopedName = extractCharacterName(text);
+  let scopedInvestigationFired = false;
+  let scopedBridgeRan = false;
+  let scopedCharFound = false;
+  let scopedEvidenceReachedContext = false;
+
   if (wantsScopedInvestigation(text) && scopedName && !wantsDiagnosticRun(text)) {
+    scopedInvestigationFired = true;
+    console.log(`[VICK_BRIDGE] SCOPED INVESTIGATION DETECTED: name="${scopedName}" text="${text.substring(0, 60)}"`);
     try {
       // Find character by partial name match (supports "Khalil" without "Carter")
       const targetChar = await findCharacterByName(scopedName, ownerEmail);
       if (targetChar) {
-        console.log(`[VICK_BRIDGE] Running scoped bridge for ${scopedName} (${targetChar.id})`);
+        scopedCharFound = true;
+        console.log(`[VICK_BRIDGE] Character FOUND: ${targetChar.name} (${targetChar.id}) — running scoped bridge`);
         const bridgeRes = await base44.functions.invoke('vickInvestigationBridge', {
           conversationId,
           scope: `character_snapshot:${targetChar.id}`,
           dryRun: true,
         });
         if (bridgeRes?.data?.findingsText) {
+          scopedBridgeRan = true;
           investigationContext += '\n\n═══ SCOPED INVESTIGATION FINDINGS (bridge evidence — backend + frontend + schedule + roster + contradictions) ═══\n' + bridgeRes.data.findingsText;
-          console.log(`[VICK_BRIDGE] Scoped bridge: ${bridgeRes.data.observedCount} obs, ${bridgeRes.data.inferredCount} inf, ${bridgeRes.data.contradictionCount} contradictions, ${bridgeRes.data.frontendEvidenceCount} frontend evidence lines`);
+          scopedEvidenceReachedContext = true;
+          console.log(`[VICK_BRIDGE] Scoped bridge EVIDENCE REACHED CONTEXT: ${bridgeRes.data.observedCount} obs, ${bridgeRes.data.inferredCount} inf, ${bridgeRes.data.contradictionCount} contradictions, ${bridgeRes.data.frontendEvidenceCount} frontend evidence lines`);
+        } else {
+          console.warn(`[VICK_BRIDGE] Scoped bridge returned no findings — investigationContext will be EMPTY`);
+          investigationContext += '\n\n═══ SCOPED INVESTIGATION FAILED ═══\nThe investigation bridge ran but returned no findings for this character. You have NO character-specific evidence. You MUST NOT answer questions about this character. Say: "I ran the check but the bridge returned no data. I would need to look at this differently."';
         }
+      } else {
+        // Character name was detected but could not be found in the database.
+        // This is a critical guard: Vick must NOT invent anything about this character.
+        console.log(`[VICK_BRIDGE] Character NOT FOUND: "${scopedName}" — investigationContext will record this gap explicitly`);
+        investigationContext += `\n\n═══ CHARACTER NOT FOUND ═══\nThe name "${scopedName}" was detected in the user's question but no matching character was found in the database for this account. The character either does not exist, belongs to a different account, or the name is a partial match that could not be resolved. You MUST NOT answer any questions about this character. You MUST NOT invent a location, status, schedule, or presence for this character. Say: "I don't have that character in my records. I checked — no match for that name on this account. Can you clarify who you mean?"`;
       }
     } catch (scopedErr) {
-      console.warn(`[VICK_BRIDGE] Scoped bridge failed (non-blocking): ${scopedErr.message}`);
+      console.warn(`[VICK_BRIDGE] Scoped bridge ERROR (non-blocking): ${scopedErr.message}`);
+      investigationContext += `\n\n═══ SCOPED INVESTIGATION ERROR ═══\nThe investigation bridge failed with error: ${scopedErr.message}. You have NO evidence. You MUST NOT answer character-state questions. Say: "I hit an error trying to pull that data. Let me try again or we can approach this from a different angle."`;
     }
   }
 
@@ -1120,19 +1178,37 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   const hasImages = Array.isArray(imageUrls) && imageUrls.length > 0;
 
   // ── EVIDENCE SUMMARY — log what reached Vick this turn ──────────────────
+  const hasBridgeFindings = investigationContext.includes('═══ SCOPED INVESTIGATION FINDINGS') || diagContext.includes('═══ BRIDGE FINDINGS');
+  const hasScopedBridge = investigationContext.includes('SCOPED INVESTIGATION FINDINGS');
+  const hasCharNotFound = investigationContext.includes('CHARACTER NOT FOUND');
+  const hasScopedFailed = investigationContext.includes('SCOPED INVESTIGATION FAILED');
+  const hasScopedError = investigationContext.includes('SCOPED INVESTIGATION ERROR');
   console.log(`[VICK_BRIDGE] EVIDENCE SUMMARY for turn:
   diagnostic=${!!diagContext} (${diagContext.length} chars)
   charList=${!!characterListContext} (${characterListContext.length} chars)
   investigation=${!!investigationContext} (${investigationContext.length} chars)
-  hasBridgeFindings=${investigationContext.includes('═══ SCOPED INVESTIGATION FINDINGS') || diagContext.includes('═══ BRIDGE FINDINGS')}
-  hasScopedBridge=${investigationContext.includes('SCOPED INVESTIGATION FINDINGS')}
+  scopedInvestigationFired=${scopedInvestigationFired}
+  scopedCharFound=${scopedCharFound}
+  scopedBridgeRan=${scopedBridgeRan}
+  scopedEvidenceReachedContext=${scopedEvidenceReachedContext}
+  hasBridgeFindings=${hasBridgeFindings}
+  hasScopedBridge=${hasScopedBridge}
+  hasCharNotFound=${hasCharNotFound}
+  hasScopedFailed=${hasScopedFailed}
+  hasScopedError=${hasScopedError}
   hasReverseLookup=${investigationContext.includes('REVERSE LOCATION LOOKUP')}
   hasAnchorScan=${investigationContext.includes('CONVERSATION ANCHOR SCAN')}
   hasImages=${hasImages} imageCount=${imageUrls.length}`);
 
+  // ── NO-EVIDENCE GUARD: if Vick has zero evidence sources, log it prominently ──
+  const hasAnyEvidence = !!diagContext || !!investigationContext || !!characterListContext;
+  if (!hasAnyEvidence) {
+    console.warn(`[VICK_BRIDGE] ⚠ NO EVIDENCE AVAILABLE — Vick is responding WITH ZERO evidence. All sources are empty. Prompt must enforce "I don't have that data" response.`);
+  }
+
   const prompt = buildVickIntelligencePrompt({
     ownerEmail, recentHistory, diagContext, characterListContext,
-    investigationContext, text, isPrivate, hasImages,
+    investigationContext, text, isPrivate, hasImages, hasAnyEvidence,
   });
 
   let responseText = '';
@@ -1152,7 +1228,24 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
     const hasStatus = /STATUS/i.test(responseText);
     const isFieldDump = /resolved_current_location_id|owner_email matches|presence is|record shows field/i.test(responseText) && !hasEvidence;
     const formatLabelsUsed = [hasReportFormat, hasExpected, hasEvidence, hasContradiction, hasRootCause, hasStatus].filter(Boolean).length;
-    console.log(`[VICK_BRIDGE] Response received. Length: ${responseText.length}. Format labels: ${formatLabelsUsed}/6. Field-dump detected: ${isFieldDump}. Preview: "${responseText.substring(0, 120)}"`);
+
+    // ── HALLUCINATION DETECTION — check if Vick invented locations/characters ──
+    const fabricatedLocationPatterns = [
+      /North Campus Medical Center/i,
+      /Downtown Office Building/i,
+      /Central Hospital/i,
+      /Main Street Clinic/i,
+      /University Medical Center/i,
+      /City General Hospital/i,
+    ];
+    const hasFabricatedLocation = fabricatedLocationPatterns.some(p => p.test(responseText));
+    const respondedWithoutEvidence = (!hasBridgeFindings && !scopedCharFound && !diagContext) &&
+      /(?:at|in|working at|showing at|located at|assigned to|currently at|present at)\s+(?:the\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Medical|Hospital|Office|School|Center|Building|Clinic|Facility)/i.test(responseText);
+
+    console.log(`[VICK_BRIDGE] Response received. Length: ${responseText.length}. Format labels: ${formatLabelsUsed}/6. Field-dump: ${isFieldDump}. Fabricated location: ${hasFabricatedLocation}. Responded without evidence: ${respondedWithoutEvidence}. Preview: "${responseText.substring(0, 120)}"`);
+    if (hasFabricatedLocation || respondedWithoutEvidence) {
+      console.warn(`[VICK_BRIDGE] ⚠ HALLUCINATION DETECTED — Vick appears to have invented a location/status without evidence. Response contains fabricated information. This is a critical Vick failure.`);
+    }
   } catch (err) {
     console.error(`[VICK_BRIDGE] LLM call failed: ${err.message}`);
     responseText = "I ran into a connection issue. Try again in a moment.";
