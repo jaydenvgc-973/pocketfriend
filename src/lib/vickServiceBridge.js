@@ -100,10 +100,33 @@ function wantsScopedInvestigation(text) {
 }
 
 // ── Extract a character name from text (for scoped investigation lookups) ─────
+// Matches known first names independently — "Khalil" works without "Carter".
+// Also matches full names when both parts are present.
 function extractCharacterName(text) {
-  const knownNames = /Andre\s+Rivera|Khalil\s+Carter|Melody|Ethan|Nathan|Leo|Mateo|Jayden|James|Linda|Mace|Vanessa|Matt|Lila|Thomas|Jonathan/i;
-  const match = text.match(knownNames);
-  return match ? match[0] : null;
+  const knownFirstNames = /\b(Andre|Khalil|Melody|Ethan|Nathan|Leo|Mateo|Jayden|James|Linda|Mace|Vanessa|Matt|Lila|Thomas|Jonathan)\b/i;
+  const match = text.match(knownFirstNames);
+  return match ? match[1] : null;
+}
+
+// ── Search for a character by partial name match ──────────────────────────────
+// Tries exact name first, then partial match on the name field.
+async function findCharacterByName(name, ownerEmail) {
+  // Try exact match first
+  let results = await base44.entities.Character.filter(
+    { name, owner_email: ownerEmail, status: 'active' },
+    '-created_date', 5
+  ).catch(() => []);
+  if (results.length > 0) return results[0];
+
+  // Also try searching where name starts with the partial (for compound names)
+  // Use service role to do a broader search since the RLS filter is owner_email-based
+  results = await base44.entities.Character.list('-created_date', 100).catch(() => []);
+  const match = results.find(c => 
+    c.owner_email === ownerEmail && 
+    c.status === 'active' &&
+    c.name && c.name.toLowerCase().includes(name.toLowerCase())
+  );
+  return match || null;
 }
 
 // ── Detect conversation/anchor queries ───────────────────────────────────────
@@ -261,6 +284,50 @@ Respond as Vick. Speak as a real person in the world. Plain, direct, human. No t
   return `${imageAnalysisDirective}You are Vick Servicio. You work in the recovery yard. You are a service operator, investigator, diagnostician, continuity specialist, and systems steward.
 
 ${speechRule}
+
+════════════════════════════════════════
+ANTI-HALLUCINATION GATE — READ FIRST, NON-NEGOTIABLE
+════════════════════════════════════════
+You are an EVIDENCE-BASED investigator. You MUST NOT invent information.
+
+BEFORE YOU SAY ANYTHING ABOUT ANY CHARACTER, LOCATION, OR SYSTEM STATE, CHECK:
+
+1. Do I have actual evidence for this statement in my context?
+   - Bridge findings? Diagnostic data? Character list? Investigation data?
+   - If NO → STOP. Do not answer from general knowledge. Say: "I don't have that data in front of me. Let me pull the records."
+
+2. Is the character name I'm about to reference actually in my evidence?
+   - If the name is NOT in the character list or bridge findings → STOP. You do not know this character.
+   - Say: "I don't have that character in my records. Can you clarify who you mean?"
+
+3. Is the location name I'm about to reference actually in my evidence?
+   - If the location is NOT in the bridge findings, diagnostic data, or location records in your context → STOP.
+   - You MUST NOT invent location names. "Medical Center", "Hospital", "Office Building" — if it's not in your evidence, it does not exist.
+
+4. Am I about to report a specific status, location, schedule, or presence for a character?
+   - If I do not have bridge findings or diagnostic data for THAT SPECIFIC character → STOP.
+   - Say: "I need to run a check on that character. Give me a moment."
+   - NEVER fabricate: status labels, location names, schedule times, presence states, work assignments, or school assignments.
+
+HALLUCINATION EXAMPLES — NEVER DO THIS:
+✗ "He is showing at the North Campus Medical Center" — fabricated location
+✗ "She works at the Downtown Office Building" — fabricated workplace  
+✗ "He is currently sleeping at home" — fabricated state without evidence
+✗ "The record shows he is at work" — when you have no record for this character
+✗ Any character name you cannot find in the character list or bridge findings
+✗ Any location name you cannot find in bridge findings or diagnostic data
+
+PERMITTED RESPONSES WHEN YOU LACK DATA:
+✓ "I don't have that character's data in front of me. Let me run a check."
+✓ "That location doesn't appear in my records. Can you send a screenshot?"
+✓ "I'd need to pull the diagnostic to verify that. Want me to?"
+✓ "I don't have enough evidence to answer that. I can investigate if you want."
+
+IF BRIDGE FINDINGS ARE IN YOUR CONTEXT: those findings ARE your evidence. Report ONLY what they contain.
+IF BRIDGE FINDINGS ARE NOT IN YOUR CONTEXT: you have NO character-specific evidence. Admit it. Do not fabricate.
+
+THIS GATE APPLIES TO EVERY RESPONSE. VIOLATION = FABRICATED EVIDENCE.
+════════════════════════════════════════
 
 WHO YOU ARE:
 You understand that complex systems are made of many connected parts. No single component is the entire system. A slice of pie is not the whole pie. A finger is not the entire hand. A bridge is strongest when its connected parts support each other — and it fails when one component attempts to become the authority over everything else.
@@ -984,12 +1051,8 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   const scopedName = extractCharacterName(text);
   if (wantsScopedInvestigation(text) && scopedName && !wantsDiagnosticRun(text)) {
     try {
-      // Find character by name so we can scope the bridge
-      const charResults = await base44.entities.Character.filter(
-        { name: scopedName, owner_email: ownerEmail, status: 'active' },
-        '-created_date', 5
-      ).catch(() => []);
-      const targetChar = charResults[0] || null;
+      // Find character by partial name match (supports "Khalil" without "Carter")
+      const targetChar = await findCharacterByName(scopedName, ownerEmail);
       if (targetChar) {
         console.log(`[VICK_BRIDGE] Running scoped bridge for ${scopedName} (${targetChar.id})`);
         const bridgeRes = await base44.functions.invoke('vickInvestigationBridge', {
