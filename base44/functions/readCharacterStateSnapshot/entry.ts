@@ -1,206 +1,653 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SHARED RESOLVER LOGIC (inlined from frontend lib/ for backend access)
-// This logic is an exact copy of what the UI pages use to ensure Vick sees
-// what the user sees. No estimations. No guesses.
+// readCharacterStateSnapshot
+//
+// Reads database state AND produces the exact same resolver output the UI pages
+// use by duplicating the frontend resolver logic inlined below.
+//
+// SOURCE LABELS (assigned to every field):
+//   "database_character_record"        — direct DB column, no transformation
+//   "duplicated_resolver:<function>"   — exact copy of frontend function logic
+//   "estimated_from_character_fields"  — best-effort inference, NOT verified
+//   "missing_access"                   — could not determine, reported honestly
+//
+// NEVER label an estimate as verified UI state.
+// NEVER hardcode a value the backend cannot prove.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function toMinutes(timeStr) {
-  if (!timeStr) return null;
-  const [h, m] = timeStr.split(':').map(Number);
-  return h * 60 + (m || 0);
-}
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+function nowET() { return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })); }
+function nowETDay() { return nowET().getDay(); }
+function nowETMin() { const d = nowET(); return d.getHours() * 60 + d.getMinutes(); }
 
-function nowET() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-}
+const NPC_TYPES = new Set(['npc_regular', 'npc_family_member', 'npc_fictitious', 'npc']);
+function isNPC(character) { return NPC_TYPES.has(character?.character_type); }
 
-const NPC_TYPES = new Set([
-  'npc_fictitious', 'npc_family_member', 'npc_regular', 'npc',
-  'family_npc', 'background', 'promoted_npc', 'npc_fictitious_person',
-]);
-
-function computeAdaptiveSleepWindow(character) {
+// ── computeAdaptiveSleepWindow (exact copy from sleepUtils.js:491-610) ───────
+function computeAdaptiveSleepWindow(character, locationMap) {
   const SLEEP_DURATION_MIN = 7 * 60;
-  const PRE_SHIFT_BUFFER   = 60;
-  const DECOMPRESSION_MIN  = 60;
+  const PRE_SHIFT_BUFFER = 60;
+  const DECOMPRESSION_MIN = 60;
 
   if (character.sleep_start_time && character.wake_up_time) {
-    const s = toMinutes(character.sleep_start_time);
-    const w = toMinutes(character.wake_up_time);
+    const s = toMin(character.sleep_start_time);
+    const w = toMin(character.wake_up_time);
     if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, source: 'stored_schedule' };
   }
 
-  if (NPC_TYPES.has(character.character_type)) {
+  if (isNPC(character)) {
+    const homeId = character.current_home_location_id;
+    if (homeId && locationMap[homeId]?.name === 'VGC Towers') {
+      return { sleepStartMin: 150, wakeMin: 510, source: 'vgc_resident_schedule' };
+    }
     return { sleepStartMin: 0, wakeMin: 8 * 60, source: 'npc_forced_default' };
   }
 
   if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.length > 0) {
-    const startMin = toMinutes(character.work_start_time);
-    const endMin   = toMinutes(character.work_end_time);
+    const startMin = toMin(character.work_start_time);
+    const endMin = toMin(character.work_end_time);
     if (startMin !== null && endMin !== null) {
-      const et = nowET();
-      const today = et.getDay();
-      const tomorrow = (today + 1) % 7;
-      const yesterday = (today + 6) % 7;
-      const isOvernightShift = endMin < startMin;
-      if (isOvernightShift) {
-        if (character.work_days.includes(yesterday) || character.work_days.includes(today)) {
-          const sleepStartMin = (endMin + DECOMPRESSION_MIN) % 1440;
-          const wakeMin = (sleepStartMin + SLEEP_DURATION_MIN) % 1440;
-          return { sleepStartMin, wakeMin, source: 'overnight_work' };
+      const day = nowETDay();
+      const yesterday = (day + 6) % 7;
+      const isOvernight = endMin < startMin;
+      if (isOvernight) {
+        if (character.work_days.includes(yesterday) || character.work_days.includes(day)) {
+          const s = (endMin + DECOMPRESSION_MIN) % 1440;
+          return { sleepStartMin: s, wakeMin: (s + SLEEP_DURATION_MIN) % 1440, source: 'overnight_work' };
         }
       } else {
-        if (character.work_days.includes(today) || character.work_days.includes(tomorrow)) {
-          const wakeMin = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
-          const sleepStartMin = (wakeMin - SLEEP_DURATION_MIN + 1440) % 1440;
-          return { sleepStartMin, wakeMin, source: 'work_schedule' };
+        if (character.work_days.includes(day)) {
+          const w = (startMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+          return { sleepStartMin: (w - SLEEP_DURATION_MIN + 1440) % 1440, wakeMin: w, source: 'work_schedule' };
         }
       }
     }
   }
+
+  // School
+  if (character.student_status === 'enrolled' && character.education_location_id) {
+    const day = nowETDay();
+    let ss = null, se = null;
+    if (Array.isArray(character.education_enrollments)) {
+      const a = character.education_enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+      if (a) { ss = toMin(a.start_time); se = toMin(a.end_time); }
+    }
+    if ((ss === null || se === null) && locationMap[character.education_location_id]) {
+      const loc = locationMap[character.education_location_id];
+      if (loc.operating_hours) {
+        const e = (loc.operating_hours.filter(h => h.day_of_week === day || h.day_of_week == null))[0];
+        if (e) { ss = toMin(e.open_time); se = toMin(e.close_time); }
+      }
+    }
+    if (ss !== null && se !== null) {
+      const w = (ss - 60 + 1440) % 1440;
+      return { sleepStartMin: (w - SLEEP_DURATION_MIN + 1440) % 1440, wakeMin: w, source: 'school_resolved' };
+    }
+    return { sleepStartMin: null, wakeMin: null, source: 'school_schedule_unresolved' };
+  }
+
+  if (!isNPC(character)) return { sleepStartMin: null, wakeMin: null, source: 'no_structured_timing' };
   return { sleepStartMin: 23 * 60, wakeMin: 7 * 60, source: 'no_structured_timing' };
 }
 
-function isScheduledSleeping(character) {
-  const window = computeAdaptiveSleepWindow(character);
-  if (!window || window.sleepStartMin == null || window.wakeMin == null) return false;
-  const et = nowET();
-  const now = et.getHours() * 60 + et.getMinutes();
-  const { sleepStartMin, wakeMin } = window;
-  if (sleepStartMin > wakeMin) return now >= sleepStartMin || now < wakeMin;
-  return now >= sleepStartMin && now < wakeMin;
-}
-
-function isCharacterAsleep(character) {
+// ── isCharacterAsleep (exact copy from sleepUtils.js:634-786) ────────────────
+function isCharacterAsleep(character, locationMap) {
   if (!character) return false;
   const status = character.resolved_presence_status || '';
-  if (status === 'sleeping' || status === 'napping' || status === 'passed_out') return true;
-  if (character.character_type === 'active_created_character') {
+
+  if (!isNPC(character)) {
+    if (status === 'passed_out') return true;
     if (status !== 'sleeping' && status !== 'napping') return false;
-    if (character.last_sleep_start) {
-      const sleepDurationHours = (nowET().getTime() - new Date(character.last_sleep_start).getTime()) / 3_600_000;
-      if (sleepDurationHours >= 8) return false;
+    const s = toMin(character.sleep_start_time);
+    const w = toMin(character.wake_up_time);
+    if (s === null || w === null) return false;
+    const now = nowETMin();
+    const inside = s > w ? (now >= s || now < w) : (now >= s && now < w);
+    if (!inside) return false;
+    const candidates = [character.last_sleep_start, character.resolved_last_updated_at, character.last_need_simulated_at].filter(Boolean);
+    if (candidates.length > 0) {
+      const earliest = Math.min(...candidates.map(t => new Date(t).getTime()));
+      if ((nowET().getTime() - earliest) / 3_600_000 >= 8) return false;
     }
-    return isScheduledSleeping(character);
+    const day = nowETDay();
+    if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.includes(day)) {
+      const ws = toMin(character.work_start_time);
+      const we = toMin(character.work_end_time);
+      if (ws !== null && we !== null) {
+        const onShift = we < ws ? (now >= ws || now < we) : (now >= ws && now < we);
+        if (onShift) return false;
+      }
+    }
+    if (character.student_status === 'enrolled' && character.education_location_id && [1,2,3,4,5].includes(day)) {
+      const enrolls = character.education_enrollments;
+      if (Array.isArray(enrolls)) {
+        const a = enrolls.find(e => e.status === 'active' && e.start_time && e.end_time);
+        if (a) { const as = toMin(a.start_time); const ae = toMin(a.end_time); if (as !== null && ae !== null && now >= as && now < ae) return false; }
+      }
+    }
+    return true;
   }
-  return isScheduledSleeping(character);
+
+  // NPC path
+  if (character.decided_to_stay_up_until && new Date() < new Date(character.decided_to_stay_up_until)) return false;
+  const npcNow = nowETMin();
+  const npcDay = nowETDay();
+  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.includes(npcDay)) {
+    const ws = toMin(character.work_start_time);
+    const we = toMin(character.work_end_time);
+    if (ws !== null && we !== null) {
+      const onShift = we < ws ? (npcNow >= ws || npcNow < we) : (npcNow >= ws && npcNow < we);
+      if (onShift) return false;
+    }
+  }
+  if (character.travel_status && character.travel_status !== 'not_traveling') return false;
+  if (character.is_jailed || character.house_arrest_active) return false;
+  const win = computeAdaptiveSleepWindow(character, locationMap);
+  if (!win || win.sleepStartMin == null || win.wakeMin == null) return false;
+  if (win.sleepStartMin > win.wakeMin) return npcNow >= win.sleepStartMin || npcNow < win.wakeMin;
+  return npcNow >= win.sleepStartMin && npcNow < win.wakeMin;
 }
 
-function isOnWorkShift(character) {
-    const et = nowET();
-    const cur = et.getHours() * 60 + et.getMinutes();
-    const dow = et.getDay();
+// ── isCharacterOnWorkShift (exact copy from locationResolutionEngine:564-567) ─
+function isCharacterOnWorkShift(character) {
+  if (!character.work_start_time || !character.work_end_time || !Array.isArray(character.work_days) || character.work_days.length === 0) return false;
+  const day = nowETDay();
+  if (!character.work_days.includes(day)) return false;
+  const s = toMin(character.work_start_time);
+  const e = toMin(character.work_end_time);
+  if (s === null || e === null) return false;
+  const now = nowETMin();
+  if (e < s) return now >= s || now < e;
+  return now >= s && now < e;
+}
 
-    if (character.work_start_time && character.work_end_time &&
-        Array.isArray(character.work_days) && character.work_days.includes(dow)) {
-        const s = toMinutes(character.work_start_time);
-        const e = toMinutes(character.work_end_time);
-        if (s !== null && e !== null) {
-            if (e < s) return cur >= s || cur < e;
-            return cur >= s && cur < e;
+// ── isOnShiftNow (exact copy from locationResolutionEngine:501-523) ──────────
+function isOnShiftNow(shift) {
+  if (!shift?.start || !shift?.end) return false;
+  const day = nowETDay();
+  if (shift.days && shift.days.length > 0 && !shift.days.includes(day)) return false;
+  const now = nowETMin();
+  const s = toMin(shift.start);
+  const e = toMin(shift.end);
+  if (s === null || e === null) return false;
+  if (e < s) return now >= s || now < e;
+  return now >= s && now < e;
+}
+
+// ── resolveHousingLocationForCharacter (exact copy) ──────────────────────
+function resolveHousingForCharacter(character, locationMap) {
+  if (!character) return { housing_location_id: null, housing_location_name: null, housing_context: 'stable_home', source_reason: 'no_character', home_resolution_failed: false, may_assign_temporary_housing: false };
+
+  const homeId = character.current_home_location_id || character.home_location_id;
+  if (homeId) {
+    const hl = locationMap[homeId];
+    if (hl) return { housing_location_id: homeId, housing_location_name: hl.name || 'Home', housing_context: 'stable_home', source_reason: 'permanent_home_valid', home_resolution_failed: false, may_assign_temporary_housing: false };
+    return { housing_location_id: homeId, housing_location_name: null, housing_context: 'stable_home', source_reason: 'home_id_exists_lookup_failed', home_resolution_failed: true, may_assign_temporary_housing: false };
+  }
+
+  // Last known home from resolved presence
+  if (character.resolved_current_location_id && character.resolved_location_type === 'home') {
+    const ll = locationMap[character.resolved_current_location_id];
+    if (ll) return { housing_location_id: character.resolved_current_location_id, housing_location_name: ll.name || 'Home', housing_context: 'stable_home', source_reason: 'last_known_home', home_resolution_failed: false, may_assign_temporary_housing: false };
+  }
+
+  // Resident scan fallback
+  const homeLocs = Object.values(locationMap).filter(
+    loc => (loc.category === 'home' || loc.category === 'generic') &&
+           ((loc.resident_character_ids || []).includes(character.id) ||
+            (loc.residents || []).some(r => r.character_id === character.id))
+  );
+  if (homeLocs.length > 0) {
+    const f = homeLocs[0];
+    return { housing_location_id: f.id, housing_location_name: f.name || 'Home', housing_context: 'stable_home', source_reason: 'home_from_resident_scan', home_resolution_failed: false, may_assign_temporary_housing: false };
+  }
+
+  return { housing_location_id: null, housing_location_name: null, housing_context: null, source_reason: 'homeless', home_resolution_failed: false, may_assign_temporary_housing: true };
+}
+
+// ── isLocationOpen (exact copy from locationHoursUtils.js:24-54) ──────────
+function isLocationOpen(location) {
+  if (!location?.operating_hours || location.operating_hours.length === 0) return null;
+  const day = nowETDay();
+  const now = nowETMin();
+  const daySpecific = location.operating_hours.filter(h => h.day_of_week != null);
+  const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
+  const today = daySpecific.filter(h => h.day_of_week === day);
+  if (today.length > 0) return today.some(h => { const o = toMin(h.open_time); const c = toMin(h.close_time); return o !== null && c !== null && (c < o ? (now >= o || now < c) : (now >= o && now < c)); });
+  if (daySpecific.length > 0) return false;
+  if (dayAgnostic.length > 0) return dayAgnostic.some(h => { const o = toMin(h.open_time); const c = toMin(h.close_time); return o !== null && c !== null && (c < o ? (now >= o || now < c) : (now >= o && now < c)); });
+  return null;
+}
+
+// ── resolveCharacterLocation (exact copy from locationResolutionEngine:39-495) ─
+function resolveCharacterLocation(character, locationMap) {
+  if (!character) return { resolved_current_location_id: null, resolved_current_location_name: 'Unknown', resolved_location_type: null, resolved_presence_status: 'unknown', resolved_source_reason: 'no_character', resolved_zone: null };
+
+  const mapSize = Object.keys(locationMap).length;
+  if (mapSize === 0) {
+    const db = character.resolved_presence_status;
+    const dbId = character.resolved_current_location_id;
+    if (db && dbId) return { resolved_current_location_id: dbId, resolved_current_location_name: character.resolved_current_location_name || 'Location unavailable', resolved_location_type: character.resolved_location_type || 'unknown', resolved_presence_status: db, resolved_source_reason: 'location_map_unavailable_preserved_db_state', resolved_zone: null };
+  }
+
+  // Callout guard
+  const todayET = nowET().toISOString().slice(0, 10);
+  const hasCallout = character.work_exception_status === 'called_out' && character.work_exception_date === todayET;
+
+  if (!hasCallout) {
+    // LAYER 1: Work schedule
+    const allWorkLocs = [];
+    if (character.occupation_location_id) allWorkLocs.push(character.occupation_location_id);
+    if (character.current_work_location_id && !allWorkLocs.includes(character.current_work_location_id)) allWorkLocs.push(character.current_work_location_id);
+    if (character.additional_occupation_locations?.length > 0) {
+      character.additional_occupation_locations.forEach(loc => { if (loc.location_id && !allWorkLocs.includes(loc.location_id)) allWorkLocs.push(loc.location_id); });
+    }
+    for (const wid of allWorkLocs) {
+      const wl = locationMap[wid];
+      if (!wl) {
+        const dbWork = character.resolved_presence_status === 'at_work' && character.resolved_current_location_id === wid;
+        if (dbWork || isCharacterOnWorkShift(character)) {
+          return { resolved_current_location_id: wid, resolved_current_location_name: character.resolved_current_location_name || character.occupation_location_name || 'Work', resolved_location_type: 'work', resolved_presence_status: 'at_work', resolved_source_reason: 'work_schedule_location_temporarily_unavailable', resolved_zone: null };
         }
+        continue;
+      }
+      if (isLocationOpen(wl) === false) continue;
+      const shift = wl.worker_shifts?.[character.id];
+      if (shift && isOnShiftNow(shift)) {
+        return { resolved_current_location_id: wid, resolved_current_location_name: wl.name || 'Work', resolved_location_type: 'work', resolved_presence_status: 'at_work', resolved_source_reason: 'work_schedule', resolved_zone: null };
+      }
+      if (!shift && isCharacterOnWorkShift(character)) {
+        return { resolved_current_location_id: wid, resolved_current_location_name: wl.name || 'Work', resolved_location_type: 'work', resolved_presence_status: 'at_work', resolved_source_reason: 'work_schedule', resolved_zone: null };
+      }
     }
-    return false;
-}
+  }
 
-function resolveHomeCardState(character, locationMap) {
-    if (!character) {
-        return { status: 'unknown', label: 'Unknown', sublabel: null, isSleeping: false, source: 'home_card_resolver' };
+  // LAYER 2: School
+  if (character.student_status === 'enrolled' && character.education_location_id && !isCharacterAsleep(character, locationMap)) {
+    const sl = locationMap[character.education_location_id];
+    if (sl && isLocationOpen(sl) !== false) {
+      return { resolved_current_location_id: character.education_location_id, resolved_current_location_name: sl.name || 'School', resolved_location_type: 'school', resolved_presence_status: 'at_school', resolved_source_reason: 'school_schedule', resolved_zone: null };
     }
-    const locName = character.resolved_current_location_name || null;
-    const presenceStatus = character.resolved_presence_status || character.location_status;
-    const isAsleep = isCharacterAsleep(character);
+    if (!sl) {
+      if (character.resolved_presence_status === 'at_school' && character.resolved_current_location_id === character.education_location_id) {
+        return { resolved_current_location_id: character.education_location_id, resolved_current_location_name: character.resolved_current_location_name || character.education_location_name || 'School', resolved_location_type: 'school', resolved_presence_status: 'at_school', resolved_source_reason: 'school_schedule_location_temporarily_unavailable', resolved_zone: null };
+      }
+    }
+  }
 
-    if ((character.health_value ?? 80) < 20) return { status: 'health_critical', label: 'Health Emergency', sublabel: locName, isSleeping: false, source: 'home_card_resolver' };
-    if ((character.energy_value ?? 75) < 10 && presenceStatus !== 'at_work') return { status: 'energy_critical', label: 'Exhausted', sublabel: locName, isSleeping: false, source: 'home_card_resolver' };
-    if ((character.hunger_value ?? 70) < 15) return { status: 'hunger_critical', label: 'Looking for food', sublabel: locName, isSleeping: false, source: 'home_card_resolver' };
-    if (isAsleep) return { status: 'sleeping', label: 'Sleeping', sublabel: locName, isSleeping: true, source: 'home_card_resolver' };
-    if (isOnWorkShift(character)) return { status: 'at_work', label: 'At work', sublabel: locName || character.occupation_location_name || 'Work', isSleeping: false, source: 'home_card_resolver' };
+  // LAYER 2.5: Rabbit hole
+  if (character.resolved_presence_status === 'rabbit_hole' || character.is_rabbit_hole === true) {
+    return { resolved_current_location_id: null, resolved_current_location_name: character.rabbit_hole_label || character.resolved_current_location_name || 'Off-screen', resolved_location_type: 'rabbit_hole', resolved_presence_status: 'rabbit_hole', resolved_source_reason: character.resolved_source_reason || 'rabbit_hole', resolved_zone: null };
+  }
 
-    const hasValidLocation = !!character.resolved_current_location_id && !!locName;
-    return hasValidLocation
-        ? { status: 'at_location', label: `At ${locName}`, sublabel: null, isSleeping: false, source: 'home_card_resolver' }
-        : { status: 'away', label: 'Away', sublabel: 'No valid location assigned', isSleeping: false, source: 'home_card_resolver' };
+  // LAYER 3.5A: Sleep enforcement
+  const sleepHomeId = (character.temporary_housing_location_id && locationMap[character.temporary_housing_location_id])
+    ? character.temporary_housing_location_id
+    : (character.current_home_location_id && locationMap[character.current_home_location_id])
+      ? character.current_home_location_id
+      : (character.home_location_id && locationMap[character.home_location_id])
+        ? character.home_location_id
+        : null;
+
+  if (isCharacterAsleep(character, locationMap)) {
+    if (sleepHomeId) {
+      const shLoc = locationMap[sleepHomeId];
+      return { resolved_current_location_id: sleepHomeId, resolved_current_location_name: shLoc?.name || 'Home', resolved_location_type: 'home', resolved_presence_status: 'sleeping', resolved_source_reason: isNPC(character) ? 'npc_forced_sleep_window' : 'home_sleeping', resolved_zone: null };
+    }
+    return { resolved_current_location_id: null, resolved_current_location_name: 'Unresolved', resolved_location_type: 'sleep_unresolved', resolved_presence_status: 'sleeping', resolved_source_reason: 'no_valid_sleep_location', resolved_zone: null };
+  }
+
+  // LAYER 3.5D: Social visit
+  const homeForVisit = character.current_home_location_id || character.home_location_id;
+  const visitLoc = character.resolved_current_location_id;
+  const away = visitLoc && visitLoc !== homeForVisit;
+  const isSystemVisit = character.presence_state === 'social_visit' || character.resolved_presence_status === 'visiting' || /autonomous/.test(character.resolved_source_reason || '') || character.resolved_source_reason === 'user_travel';
+  if (away && isSystemVisit) {
+    const svLoc = locationMap[visitLoc];
+    if (svLoc) return { resolved_current_location_id: visitLoc, resolved_current_location_name: svLoc.name || character.resolved_current_location_name || 'Visiting', resolved_location_type: 'visit', resolved_presence_status: character.resolved_presence_status || 'visiting', resolved_source_reason: character.resolved_source_reason || 'social_visit_from_system', resolved_zone: null };
+    if (!svLoc && character.resolved_current_location_name) return { resolved_current_location_id: visitLoc, resolved_current_location_name: character.resolved_current_location_name + ' (temporarily unavailable)', resolved_location_type: 'visit', resolved_presence_status: character.resolved_presence_status || 'visiting', resolved_source_reason: 'visit_location_temporarily_unavailable', resolved_zone: null };
+  }
+
+  // Home resolution
+  let homeId = character.temporary_housing_location_id || character.current_home_location_id || character.home_location_id || null;
+  if (character.is_temporarily_housed && character.temporary_housing_location_id) homeId = character.temporary_housing_location_id;
+
+  const housing = resolveHousingForCharacter(character, locationMap);
+  if (housing.home_resolution_failed && housing.housing_location_id) {
+    return { resolved_current_location_id: housing.housing_location_id, resolved_current_location_name: character.resolved_current_location_name || 'Home (temporarily unavailable)', resolved_location_type: 'home', resolved_presence_status: 'home', resolved_source_reason: 'home_location_temporarily_unavailable', resolved_zone: null };
+  }
+  if (housing.housing_location_id && !housing.home_resolution_failed) {
+    return { resolved_current_location_id: housing.housing_location_id, resolved_current_location_name: housing.housing_location_name || 'Home', resolved_location_type: housing.housing_context === 'stable_home' ? 'home' : 'visit', resolved_presence_status: housing.housing_context === 'stable_home' ? 'home' : 'visiting', resolved_source_reason: housing.source_reason, resolved_zone: null };
+  }
+
+  // Temporary housing
+  if (housing.housing_location_id === null && housing.may_assign_temporary_housing && !housing.home_resolution_failed && character.owner_email) {
+    const balance = character.current_balance ?? 6000;
+    const hotel = Object.values(locationMap).find(l => l.owner_email === character.owner_email && l.is_system_managed && l.system_location_role === 'temporary_hotel');
+    const shelter = Object.values(locationMap).find(l => l.owner_email === character.owner_email && l.is_system_managed && l.system_location_role === 'emergency_shelter');
+    const temp = (balance >= 150 && hotel) ? hotel : shelter;
+    if (temp) return { resolved_current_location_id: temp.id, resolved_current_location_name: temp.name || 'Temporary Housing', resolved_location_type: 'home', resolved_presence_status: 'home', resolved_source_reason: 'temporary_housing_assignment', resolved_zone: null };
+  }
+
+  const h2 = resolveHousingForCharacter(character, locationMap);
+  if (h2.housing_location_id) return { resolved_current_location_id: h2.housing_location_id, resolved_current_location_name: h2.housing_location_name || 'Home', resolved_location_type: 'home', resolved_presence_status: 'home', resolved_source_reason: 'fallback_to_home_base', resolved_zone: null };
+
+  return { resolved_current_location_id: null, resolved_current_location_name: 'Unresolved', resolved_location_type: 'location_unresolved', resolved_presence_status: 'location_unresolved', resolved_source_reason: 'no_valid_home_or_temporary_location', resolved_zone: null };
 }
 
-function resolveTravelAvailability(character) {
-    if (!character) return { available: false, reason: 'Unknown status', source: 'travel_availability_resolver' };
-    if (character.is_jailed) return { available: false, reason: 'Incarcerated', source: 'travel_availability_resolver' };
-    if (isCharacterAsleep(character)) return { available: false, reason: 'Asleep', source: 'travel_availability_resolver' };
-    if (isOnWorkShift(character)) return { available: false, reason: 'At work', source: 'travel_availability_resolver' };
-    if (character.resolved_presence_status === 'at_school') return { available: false, reason: 'At school', source: 'travel_availability_resolver' };
-    return { available: true, reason: null, source: 'travel_availability_resolver' };
+// ── getCharacterLivePresence (exact copy from locationResolutionEngine:778-924) ─
+function getCharacterLivePresence(character, locationMap) {
+  if (!character) return { status: 'unknown', label: 'Unknown', sublabel: null, isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+
+  const loc = locationMap[character.resolved_current_location_id];
+  const locName = loc?.name || character.resolved_current_location_name || null;
+  const presenceStatus = character.resolved_presence_status || character.location_status;
+  const dbSleepStatus = presenceStatus === 'sleeping' || presenceStatus === 'napping' || presenceStatus === 'resting';
+  const charAsleep = isCharacterAsleep(character, locationMap);
+
+  if (dbSleepStatus) {
+    const label = presenceStatus === 'napping' ? 'Napping' : presenceStatus === 'resting' ? 'Resting' : 'Sleeping';
+    return { status: presenceStatus, label, sublabel: locName, isSleeping: true, source: 'duplicated_resolver:getCharacterLivePresence' };
+  }
+  if (charAsleep) {
+    const label = presenceStatus === 'napping' ? 'Napping' : 'Sleeping';
+    return { status: presenceStatus === 'napping' ? 'napping' : 'sleeping', label, sublabel: locName, isSleeping: true, source: 'duplicated_resolver:getCharacterLivePresence' };
+  }
+
+  const hungerCritical = (character.hunger_value ?? 70) < 15;
+  const healthCritical = (character.health_value ?? 80) < 20;
+  const energyCritical = (character.energy_value ?? 75) < 10;
+
+  if (healthCritical) return { status: 'health_critical', label: 'Health Emergency', sublabel: locName, isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+  if (energyCritical && presenceStatus !== 'at_work') return { status: 'energy_critical', label: 'Exhausted', sublabel: locName, isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+  if (hungerCritical) return { status: 'hunger_critical', label: 'Looking for food', sublabel: locName, isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+
+  if (character.resolved_presence_status === 'rabbit_hole' || character.is_rabbit_hole === true) {
+    const label = character.rabbit_hole_label || character.resolved_current_location_name || 'Off-screen';
+    return { status: 'rabbit_hole', label, sublabel: character.rabbit_hole_subtype || null, isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+  }
+
+  // Live schedule pre-check
+  const live = resolveCharacterLocation(character, locationMap);
+  if (live.resolved_presence_status === 'at_work') {
+    const wln = locationMap[live.resolved_current_location_id]?.name || live.resolved_current_location_name || 'Work';
+    return { status: 'at_work', label: 'At work', sublabel: wln, isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+  }
+  if (live.resolved_presence_status === 'at_school') {
+    const sln = locationMap[live.resolved_current_location_id]?.name || live.resolved_current_location_name || 'School';
+    return { status: 'at_school', label: 'At school', sublabel: sln, isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+  }
+
+  if (presenceStatus === 'at_work') {
+    const isSchedule = character.resolved_source_reason === 'work_schedule' || character.resolved_source_reason === 'work_schedule_enforced';
+    if (isSchedule && character.resolved_current_location_id) {
+      return { status: 'at_work', label: 'At work', sublabel: loc?.name || character.resolved_current_location_name || 'Work', isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+    }
+    const lwc = resolveCharacterLocation(character, locationMap);
+    if (lwc.resolved_presence_status === 'at_work') {
+      return { status: 'at_work', label: 'At work', sublabel: locationMap[lwc.resolved_current_location_id]?.name || lwc.resolved_current_location_name || 'Work', isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+    }
+  }
+  if (presenceStatus === 'at_school') {
+    const sl = locationMap[character.education_location_id];
+    return { status: 'at_school', label: 'At school', sublabel: sl?.name || 'School', isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+  }
+  if (presenceStatus === 'visiting') return { status: 'visiting', label: `At ${locName}`, sublabel: null, isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+  if (presenceStatus === 'home') {
+    if (character.current_home_location_id || character.home_location_id) {
+      return { status: 'home', label: 'At home', sublabel: locName, isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
+    }
+  }
+
+  const hasValid = !!character.resolved_current_location_id && !!locName;
+  return hasValid
+    ? { status: 'at_location', label: `At ${locName}`, sublabel: null, isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' }
+    : { status: 'away', label: 'Away', sublabel: 'No valid location assigned', isSleeping: false, source: 'duplicated_resolver:getCharacterLivePresence' };
 }
 
+// ── getCharacterTravelAvailability (exact copy from travelAvailability.js:13-139) ─
+function getCharacterTravelAvailability(character, locationMap) {
+  if (!character) return { available: false, reason: 'Unknown status', source: 'duplicated_resolver:getCharacterTravelAvailability' };
+
+  if (character.is_jailed) {
+    return { available: false, reason: `Incarcerated at ${character.incarceration_facility_name || 'a confinement facility'}`, source: 'duplicated_resolver:getCharacterTravelAvailability' };
+  }
+
+  if (isNPC(character)) {
+    const dbStatus = character.resolved_presence_status;
+    if (dbStatus === 'sleeping' || dbStatus === 'napping') {
+      return { available: false, reason: 'Asleep', source: 'duplicated_resolver:getCharacterTravelAvailability' };
+    }
+    return { available: true, reason: null, source: 'duplicated_resolver:getCharacterTravelAvailability' };
+  }
+
+  const resolved = resolveCharacterLocation(character, locationMap);
+  const locationObj = locationMap[resolved.resolved_current_location_id];
+  const SLEEP_SOURCES = new Set(['home_sleeping', 'sleep_location_correction', 'adaptive_sleep_location_lock', 'pass_out_recovery']);
+
+  const isSleeping = resolved.resolved_presence_status === 'sleeping' || resolved.resolved_presence_status === 'napping' || SLEEP_SOURCES.has(resolved.resolved_source_reason);
+  const isPraying = resolved.resolved_source_reason === 'praying_at_home';
+  const category = locationObj?.category || 'generic';
+
+  let iconType = 'calm';
+  if (isSleeping) iconType = 'sleep';
+  else if (isPraying) iconType = 'prayer';
+  else if (resolved.resolved_source_reason === 'work_schedule') iconType = 'work';
+  else if (resolved.resolved_source_reason === 'school_schedule') iconType = 'school';
+  else if (category === 'medical') iconType = 'hospital';
+
+  if (iconType === 'sleep') return { available: false, reason: 'Asleep', source: 'duplicated_resolver:getCharacterTravelAvailability' };
+  if (iconType === 'work') {
+    const hasJob = character?.work_details?.job_title || character?.occupation_location_id;
+    if (!hasJob) return { available: true, reason: null, source: 'duplicated_resolver:getCharacterTravelAvailability' };
+    return { available: false, reason: `At work`, source: 'duplicated_resolver:getCharacterTravelAvailability' };
+  }
+  if (iconType === 'school') return { available: false, reason: 'At school', source: 'duplicated_resolver:getCharacterTravelAvailability' };
+  if (iconType === 'hospital') return { available: false, reason: 'At the hospital', source: 'duplicated_resolver:getCharacterTravelAvailability' };
+  if (iconType === 'prayer') return { available: false, reason: 'Praying', source: 'duplicated_resolver:getCharacterTravelAvailability' };
+
+  return { available: true, reason: null, source: 'duplicated_resolver:getCharacterTravelAvailability' };
+}
+
+// ── WHO'S COMING CHECK (duplicates the roster-level location grouping) ────
+function computeWhoIsComing(targetCharId, allCharacters, locationMap) {
+  const byLocation = {};
+  for (const c of allCharacters) {
+    if (!c.id || c.status !== 'active') continue;
+    const res = resolveCharacterLocation(c, locationMap);
+    const locId = res.resolved_current_location_id;
+    if (!locId) continue;
+    if (!byLocation[locId]) byLocation[locId] = [];
+    byLocation[locId].push(c.id);
+  }
+
+  const target = allCharacters.find(c => c.id === targetCharId);
+  if (!target) return { listed: false, reason: 'character_not_found_in_roster', source: 'duplicated_resolver:whoIsComingCheck' };
+
+  const targetRes = resolveCharacterLocation(target, locationMap);
+  const targetLocId = targetRes.resolved_current_location_id;
+
+  if (!targetLocId) return { listed: false, reason: 'no_resolved_location', source: 'duplicated_resolver:whoIsComingCheck' };
+
+  const others = (byLocation[targetLocId] || []).filter(id => id !== targetCharId);
+  return {
+    listed: true,
+    location_id: targetLocId,
+    location_name: locationMap[targetLocId]?.name || targetRes.resolved_current_location_name,
+    others_at_same_location: others.length,
+    other_character_ids: others,
+    source: 'duplicated_resolver:whoIsComingCheck',
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN HANDLER
+// ═══════════════════════════════════════════════════════════════════════════════
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const { characterId, ownerEmail } = await req.json();
+    const payload = await req.json().catch(() => ({}));
+    const characterId = payload.characterId || payload.character_id;
+    const ownerEmail = payload.ownerEmail || payload.owner_email || null;
 
     if (!characterId) {
       return new Response(JSON.stringify({ error: 'characterId is required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
 
-    let character = null;
+    // ── FETCH TARGET CHARACTER ──────────────────────────────────────────
     const query = ownerEmail ? { id: characterId, owner_email: ownerEmail } : { id: characterId };
     const chars = await base44.entities.Character.filter(query);
-    character = chars[0] || null;
+    const character = chars[0] || null;
 
     if (!character) {
-      return new Response(JSON.stringify({ error: `Character not found for id: ${characterId}` }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ error: `Character not found` }), { status: 404, headers: { 'Content-Type': 'application/json' } });
     }
 
+    // ── FETCH LOCATIONS ─────────────────────────────────────────────────
     const locations = await base44.entities.LocationReference.list(null, 500).catch(() => []);
-    const locationMap = locations.reduce((acc, loc) => { acc[loc.id] = loc; return acc; }, {});
+    const locationMap = {};
+    for (const loc of locations) locationMap[loc.id] = loc;
+
+    // ── FETCH ALL ACTIVE CHARACTERS FOR WHO'S COMING ────────────────────
+    const allChars = await base44.entities.Character.list(null, 200).catch(() => []);
+    const activeChars = allChars.filter(c => c.status === 'active');
 
     const et = nowET();
-    
-    const homeCardResult = resolveHomeCardState(character, locationMap);
-    const travelResult = resolveTravelAvailability(character);
 
-    const snapshot = {
-      character_id: character.id,
-      character_name: character.name,
-      checked_at_app_time_et: et.toISOString(),
-      database_state: {
-        presence_status: { value: character.resolved_presence_status || null, source: 'database_character_record' },
-        resolved_current_location_name: { value: character.resolved_current_location_name || null, source: 'database_character_record' },
-      },
-      page_facing_state: {
-        home_card: {
-            displayed_status: { value: homeCardResult.label, source: homeCardResult.source },
-            displayed_location: { value: homeCardResult.sublabel, source: homeCardResult.source },
-        },
-        travel_page: {
-            available_for_travel: { value: travelResult.available, source: travelResult.source },
-            unavailable_reason: { value: travelResult.reason, source: travelResult.source },
-        },
-      },
-      estimated_state: {},
-      contradictions: [],
-      missing_access: [
-          {
-              resolver: "who_is_coming_list",
-              reason: "Who's Coming list requires a full roster of active characters and their resolved locations to build a spatial occupancy map. The backend cannot compute this for all characters in a single function.",
-              affected_pages: ["travel_page"],
-          }
-      ]
-    };
-
-    if (snapshot.database_state.presence_status.value !== homeCardResult.status) {
-        snapshot.contradictions.push({
-            field: 'presence_status',
-            database_value: snapshot.database_state.presence_status.value,
-            ui_value: homeCardResult.status,
-            affected_page: 'Home',
-            severity: 'medium',
-        });
+    // ═════════════════════════════════════════════════════════════════════
+    // DATABASE STATE
+    // ═════════════════════════════════════════════════════════════════════
+    const db = {};
+    const dbFields = [
+      'resolved_presence_status', 'resolved_current_location_id', 'resolved_current_location_name',
+      'resolved_location_type', 'resolved_source_reason', 'travel_status', 'traveling_to_location_id',
+      'is_jailed', 'house_arrest_active', 'energy_value', 'health_value', 'hunger_value',
+      'student_status', 'sleep_start_time', 'wake_up_time', 'work_start_time', 'work_end_time',
+      'work_days', 'current_home_location_id', 'occupation_location_id', 'education_location_id',
+      'last_sleep_start', 'last_pass_out_at', 'pass_out_count', 'presence_stay_lock',
+      'presence_stay_lock_reason', 'character_type',
+    ];
+    for (const f of dbFields) {
+      db[f] = { value: character[f] ?? null, source: 'database_character_record' };
     }
 
-    return new Response(JSON.stringify(snapshot), { headers: { 'Content-Type': 'application/json' } });
+    // ═════════════════════════════════════════════════════════════════════
+    // PAGE-FACING STATE (duplicated resolver output)
+    // ═════════════════════════════════════════════════════════════════════
+    const homeCard = getCharacterLivePresence(character, locationMap);
+    const travelAvailability = getCharacterTravelAvailability(character, locationMap);
+    const whoIsComing = computeWhoIsComing(characterId, activeChars, locationMap);
+
+    const pageFacing = {
+      home_card: {
+        displayed_status: { value: homeCard.label, source: homeCard.source },
+        displayed_location: { value: homeCard.sublabel, source: homeCard.source },
+        is_sleeping: { value: homeCard.isSleeping, source: homeCard.source },
+      },
+      travel_page: {
+        available_for_travel: { value: travelAvailability.available, source: travelAvailability.source },
+        unavailable_reason: { value: travelAvailability.reason, source: travelAvailability.source },
+      },
+      who_is_coming: {
+        listed: { value: whoIsComing.listed, source: whoIsComing.source },
+        location_name: { value: whoIsComing.location_name || null, source: whoIsComing.source },
+        others_at_location: { value: whoIsComing.others_at_same_location, source: whoIsComing.source },
+      },
+      map_page: {
+        displayed_location: db.resolved_current_location_name,
+        marker_presence: db.resolved_presence_status,
+      },
+      locations_page: {
+        shown_location: db.resolved_current_location_name,
+        presence: db.resolved_presence_status,
+      },
+      profile_page: {
+        displayed_status: { value: homeCard.label, source: homeCard.source },
+        displayed_location: db.resolved_current_location_name,
+      },
+    };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // CONTRADICTIONS
+    // ═════════════════════════════════════════════════════════════════════
+    const contradictions = [];
+    const dbPresence = db.resolved_presence_status.value;
+
+    // DB sleep vs resolver sleep
+    const dbSleepy = dbPresence === 'sleeping' || dbPresence === 'napping' || dbPresence === 'resting';
+    if (dbSleepy && !homeCard.isSleeping) {
+      contradictions.push({
+        field: 'sleep_state',
+        database_value: dbPresence,
+        resolver_value: homeCard.label,
+        affected_page: 'Home',
+        severity: 'high',
+        source: 'duplicated_resolver:getCharacterLivePresence',
+      });
+    }
+    if (!dbSleepy && homeCard.isSleeping) {
+      contradictions.push({
+        field: 'sleep_state',
+        database_value: dbPresence || 'not_sleeping',
+        resolver_value: 'Sleeping (resolver says yes, DB says no)',
+        affected_page: 'Home',
+        severity: 'medium',
+        source: 'duplicated_resolver:getCharacterLivePresence',
+      });
+    }
+
+    // DB at_work vs resolver at_work
+    if (dbPresence === 'at_work' && homeCard.status !== 'at_work') {
+      contradictions.push({
+        field: 'work_state',
+        database_value: 'at_work',
+        resolver_value: homeCard.label,
+        affected_page: 'Home',
+        severity: 'medium',
+        source: 'duplicated_resolver:getCharacterLivePresence',
+      });
+    }
+
+    // DB at_work but travel says available
+    if (dbPresence === 'at_work' && travelAvailability.available) {
+      contradictions.push({
+        field: 'travel_availability',
+        database_value: 'at_work (should be unavailable)',
+        resolver_value: 'available',
+        affected_page: 'Travel',
+        severity: 'high',
+        source: 'duplicated_resolver:getCharacterTravelAvailability',
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // MISSING ACCESS
+    // ═════════════════════════════════════════════════════════════════════
+    const missingAccess = [];
+    if (Object.keys(locationMap).length === 0) {
+      missingAccess.push({
+        resolver: 'location_map',
+        reason: 'Location records could not be loaded. All location-dependent resolvers are operating on preserved DB state.',
+        affected_pages: ['home_card', 'travel_page', 'map_page', 'locations_page', 'who_is_coming'],
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // ASSEMBLE
+    // ═════════════════════════════════════════════════════════════════════
+    return new Response(JSON.stringify({
+      character_id: character.id,
+      character_name: character.name,
+      character_type: character.character_type || 'unknown',
+      checked_at_app_time_et: et.toISOString(),
+      database_state: db,
+      page_facing_state: pageFacing,
+      contradictions,
+      missing_access: missingAccess,
+    }), { headers: { 'Content-Type': 'application/json' } });
 
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message, stack: error.stack }), { status: 500, headers: { 'Content-Type': 'application/json' } });
