@@ -25,7 +25,9 @@ const T = {
   ENERGY_MEDICAL:     5,
   ENERGY_PASSOUT:    10,
   ENERGY_CRITICAL:   25,
-  ENERGY_LOW:        35,
+  ENERGY_LOW:        35,   // nap/sleep transition point
+  ENERGY_NAP_PRESSURE: 40, // strong nap pressure — should nap if at home
+  ENERGY_NAP_AVAILABLE: 50, // nap becomes appropriate
   HEALTH_ER:         15,
   HEALTH_CRITICAL:   20,
   MENTAL_CRITICAL:   15,
@@ -242,7 +244,9 @@ function evaluateNeeds(char) {
   if (needs.energy <= T.ENERGY_MEDICAL)  urgency.energy = 'emergency';
   else if (needs.energy <= T.ENERGY_PASSOUT)  urgency.energy = 'critical_collapse';
   else if (needs.energy <= T.ENERGY_CRITICAL)  urgency.energy = 'critical';
-  else if (needs.energy <= T.ENERGY_LOW)       urgency.energy = 'low';
+  else if (needs.energy <= T.ENERGY_LOW)       urgency.energy = 'nap_or_sleep';
+  else if (needs.energy <= T.ENERGY_NAP_PRESSURE) urgency.energy = 'nap_pressure';
+  else if (needs.energy <= T.ENERGY_NAP_AVAILABLE) urgency.energy = 'nap_available';
   
   if (needs.health <= T.HEALTH_ER)       urgency.health = 'emergency';
   else if (needs.health <= T.HEALTH_CRITICAL)   urgency.health = 'critical';
@@ -358,8 +362,16 @@ function computeBaseWeights(char, schedule, needs, restrictions, timeCtx, locati
     weights.work = Math.min(weights.work, 0.15);
     weights.education = Math.min(weights.education, 0.10);
     weights.social = 0.01;
-  } else if (needs.urgency.energy === 'low') {
-    weights.rest = 0.20;
+  } else if (needs.urgency.energy === 'nap_or_sleep') {
+    // Energy ≤ 35%: nap or sleep transition — strong rest push
+    weights.rest = 0.35;
+    weights.recreation = 0.01;
+  } else if (needs.urgency.energy === 'nap_pressure') {
+    // Energy ≤ 40%: strong nap pressure
+    weights.rest = 0.25;
+  } else if (needs.urgency.energy === 'nap_available') {
+    // Energy ≤ 50%: nap is becoming appropriate
+    weights.rest = 0.18;
   }
 
   // ── SOCIAL CRITICAL: mandatory social-seeking boost, suppress home ──────
@@ -484,8 +496,28 @@ function evaluateDecision(char, schedule, needs, weights, restrictions, timeCtx,
   
   if (needs.urgency.energy === 'critical') {
     options.push({ action: 'go to sleep', actionType: 'sleep', dimension: 'rest', score: 0.90, explanation: `${char.name} is critically exhausted and needs to sleep.` });
-  } else if (needs.urgency.energy === 'low') {
-    options.push({ action: 'rest at home', actionType: 'rest', dimension: 'rest', score: weights.rest + 0.15, explanation: `${char.name} is tired and should rest.` });
+  } else if (needs.urgency.energy === 'nap_or_sleep') {
+    // Energy ≤ 35%: transition should occur. Prefer sleep if in sleep window, nap otherwise
+    const atHome = locationType === 'home' || locCat === 'home' || presence === 'home';
+    if (atHome) {
+      options.push({ action: 'nap or sleep at home', actionType: 'nap', dimension: 'rest', score: weights.rest + 0.20, explanation: `${char.name} has low energy (${Math.round(needs.values.energy)}%) and should nap or sleep at home.` });
+    } else {
+      options.push({ action: 'go home to rest', actionType: 'go_home_rest', dimension: 'rest', score: weights.rest + 0.15, explanation: `${char.name} has low energy and should go home to nap or sleep.` });
+    }
+  } else if (needs.urgency.energy === 'nap_pressure') {
+    // Energy ≤ 40%: strong nap pressure
+    const atHome = locationType === 'home' || locCat === 'home' || presence === 'home';
+    if (atHome) {
+      options.push({ action: 'take a nap', actionType: 'nap', dimension: 'rest', score: weights.rest + 0.10, explanation: `${char.name} has low energy (${Math.round(needs.values.energy)}%) and should take a nap.` });
+    } else {
+      options.push({ action: 'head home for a nap', actionType: 'go_home_rest', dimension: 'rest', score: weights.rest + 0.08, explanation: `${char.name} should head home to rest — energy is low.` });
+    }
+  } else if (needs.urgency.energy === 'nap_available') {
+    // Energy ≤ 50%: nap is appropriate
+    const atHome = locationType === 'home' || locCat === 'home' || presence === 'home';
+    if (atHome) {
+      options.push({ action: 'rest and recharge', actionType: 'nap', dimension: 'rest', score: weights.rest + 0.05, explanation: `${char.name} could use a nap — energy at ${Math.round(needs.values.energy)}%.` });
+    }
   }
   
   if (needs.urgency.hunger === 'critical' || needs.urgency.hunger === 'emergency') {
