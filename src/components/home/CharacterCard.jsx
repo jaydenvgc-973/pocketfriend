@@ -256,16 +256,20 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 // ── SLEEP/REST DETECTION: DB-first ──────────────────────────
                 // DB says sleeping, napping, or resting → use it as the authoritative display state.
                 // Only suppressed when school or work is verified active.
-                const canonicalIsSleepingOrResting = !isVerifiedAtSchool && !isVerifiedAtWork &&
-                  (canonicalPresence === 'sleeping' || canonicalPresence === 'napping' || canonicalPresence === 'resting');
-
                 const sleepState = getCharacterSleepState(character);
+                // Cross-validate: DB presence must ALSO pass sleep state validation.
+                // A stale nap/sleep in resolved_presence_status is NOT authoritative without
+                // getCharacterSleepState confirming it as valid.
+                const canonicalIsSleepingOrResting = !isVerifiedAtSchool && !isVerifiedAtWork &&
+                  (canonicalPresence === 'sleeping' || canonicalPresence === 'napping' || canonicalPresence === 'resting') &&
+                  (sleepState.isSleeping || sleepState.isNapping || sleepState.displayLabel === 'resting');
+
                 // Sleep derivation is suppressed when school or work is the verified active state
                 const derivedAsleep = canonicalIsSleepingOrResting ||
                   (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isSleeping);
-                const isNapping = (canonicalPresence === 'napping' && !isVerifiedAtSchool && !isVerifiedAtWork) ||
+                const isNapping = (canonicalPresence === 'napping' && sleepState.isNapping && !isVerifiedAtSchool && !isVerifiedAtWork) ||
                   (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isNapping);
-                const isResting = canonicalPresence === 'resting';
+                const isResting = canonicalPresence === 'resting' && sleepState.displayLabel === 'resting';
 
                 // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {

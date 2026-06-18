@@ -1080,22 +1080,27 @@ Deno.serve(async (req) => {
 
     // ── LOAD CHARACTERS ──────────────────────────────────────────────────
     // Scope: active_created_character only. NPCs and world-service are excluded.
+    let charFilterError = null;
     const characters = await base44.asServiceRole.entities.Character.filter(
       { owner_email: ownerEmail, status: 'active', character_type: 'active_created_character' },
       null,
       200
-    ).catch(() => []);
+    ).catch((err) => { charFilterError = err?.message || 'Unknown filter error'; return []; });
 
     if (characters.length === 0) {
+      if (charFilterError) {
+        return Response.json({ success: false, simulated: 0, message: 'Character fetch failed — rate limit or API error prevented simulation', error: charFilterError });
+      }
       return Response.json({ success: true, simulated: 0, message: 'No active characters' });
     }
 
     // ── LOAD LOCATION MAP ────────────────────────────────────────────────
+    let locFilterError = null;
     const locations = await base44.asServiceRole.entities.LocationReference.filter(
       { owner_email: ownerEmail },
       null,
       200
-    ).catch(() => []);
+    ).catch((err) => { locFilterError = err?.message || 'Unknown location filter error'; return []; });
 
     const locationMap = {};
     for (const loc of locations) {
