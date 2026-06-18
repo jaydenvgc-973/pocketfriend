@@ -784,6 +784,33 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
       console.warn(`[VICK_BRIDGE] Diagnostic failed (non-blocking): ${err.message}`);
       diagContext = `Diagnostic unavailable right now: ${err.message}`;
     }
+
+    // ── VICK INVESTIGATION BRIDGE — evidence-labeled findings ──────────────
+    // Runs alongside userAccountDiagnostic. Collects evidence from real records,
+    // labels it as OBSERVED/INFERRED/ASSUMED/UNKNOWN, and writes findings to
+    // the conversation as a Vick message with full audit trail.
+    try {
+      console.log(`[VICK_BRIDGE] Triggering vickInvestigationBridge for ${ownerEmail}`);
+      const bridgeRes = await base44.functions.invoke('vickInvestigationBridge', {
+        conversationId,
+        scope: 'account_overview',
+        dryRun: true, // Don't write a separate message — inject into Vick's prompt instead
+      });
+      if (bridgeRes?.data?.findingsText) {
+        const bridgeFindings = bridgeRes.data.findingsText;
+        console.log(`[VICK_BRIDGE] Bridge findings received: ${bridgeRes.data.observedCount} observed, ${bridgeRes.data.inferredCount} inferred, ${bridgeRes.data.unknownCount} unknown`);
+        // Inject evidence-labeled bridge findings into Vick's prompt context
+        diagContext += `\n\n═══ BRIDGE FINDINGS (evidence-labeled investigation) ═══\n${bridgeFindings}`;
+      } else if (bridgeRes?.data?.error) {
+        console.warn(`[VICK_BRIDGE] Bridge returned error: ${bridgeRes.data.error}`);
+        diagContext += `\n\nBRIDGE INVESTIGATION: Could not complete — ${bridgeRes.data.error}. Evidence-labeled findings unavailable for this turn.`;
+      } else {
+        console.warn(`[VICK_BRIDGE] Bridge returned no findings`);
+      }
+    } catch (bridgeErr) {
+      console.warn(`[VICK_BRIDGE] Bridge invocation failed (non-blocking): ${bridgeErr.message}`);
+      diagContext += '\n\nBRIDGE INVESTIGATION: Could not run — the investigation bridge was unreachable. Evidence-labeled findings unavailable for this turn.';
+    }
   } else if (ctx.lastDiagData) {
     diagContext = buildDiagContext(ctx.lastDiagData, ownerEmail, false);
     console.log(`[VICK_BRIDGE] Using cached diagnostic data from this conversation`);

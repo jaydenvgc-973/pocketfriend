@@ -33,8 +33,9 @@ Deno.serve(async (req) => {
     const payload = await req.json().catch(() => ({}));
     const conversationId = payload.conversationId || payload.conversation_id;
     let scope = payload.scope || payload.investigationScope || 'account_overview';
+    const dryRun = payload.dryRun || payload.dry_run || false;
 
-    if (!conversationId) {
+    if (!conversationId && !dryRun) {
       return Response.json({ error: 'conversation_id is required' }, { status: 400 });
     }
 
@@ -286,29 +287,31 @@ Deno.serve(async (req) => {
 
     const findingsText = lines.join('\n');
 
-    // ── STEP 6: Write findings as Vick message ─────────────────────────────
-    await base44.asServiceRole.entities.Message.create({
-      conversation_id: conversationId,
-      sender_type: 'character',
-      character_id: vick.id,
-      character_name: vick.name || 'Vick Servicio',
-      content: findingsText,
-      recovery_signal: false,
-      memory_eligible: true,
-      relationship_eligible: true,
-      is_read: false,
-      timestamp: nowIso,
-    }).catch(err => {
-      console.error(`[vickInvestigationBridge] Message save failed: ${err.message}`);
-    });
+    // ── STEP 6: Write findings as Vick message (skip if dryRun) ────────────
+    if (!dryRun && conversationId) {
+      await base44.asServiceRole.entities.Message.create({
+        conversation_id: conversationId,
+        sender_type: 'character',
+        character_id: vick.id,
+        character_name: vick.name || 'Vick Servicio',
+        content: findingsText,
+        recovery_signal: false,
+        memory_eligible: true,
+        relationship_eligible: true,
+        is_read: false,
+        timestamp: nowIso,
+      }).catch(err => {
+        console.error(`[vickInvestigationBridge] Message save failed: ${err.message}`);
+      });
 
-    // Update conversation metadata
-    await base44.asServiceRole.entities.Conversation.update(conversationId, {
-      last_message_preview: `Recovery Yard findings ready (${scope})`,
-      last_message_date: nowIso,
-    }).catch(() => {});
+      // Update conversation metadata
+      await base44.asServiceRole.entities.Conversation.update(conversationId, {
+        last_message_preview: `Recovery Yard findings ready (${scope})`,
+        last_message_date: nowIso,
+      }).catch(() => {});
+    }
 
-    console.log(`[vickInvestigationBridge] Delivered findings to conversation ${conversationId} for ${ownerEmail}`);
+    console.log(`[vickInvestigationBridge] ${dryRun ? 'Returned' : 'Delivered'} findings ${dryRun ? '' : `to conversation ${conversationId}`} for ${ownerEmail}`);
 
     return Response.json({
       success: true,
@@ -316,6 +319,8 @@ Deno.serve(async (req) => {
       vickId: vick.id,
       conversationId,
       scope,
+      dryRun,
+      findingsText,
       observedCount: observed.length,
       inferredCount: inferred.length,
       assumedCount: assumed.length,
