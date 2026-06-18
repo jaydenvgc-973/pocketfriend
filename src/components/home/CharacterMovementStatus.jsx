@@ -43,11 +43,11 @@ function getPlainStatus(character) {
     };
   }
 
-  // Resting
+  // Resting — awake state, relaxing but not asleep
   if (status === 'resting') {
     return {
       text: `${name} is resting right now — recharging.`,
-      color: 'text-blue-300',
+      color: 'text-muted-foreground',
       needsRepair: false,
     };
   }

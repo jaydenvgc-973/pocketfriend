@@ -101,7 +101,7 @@ export default function ChatHeader({
           }
           if (ss.displayLabel === 'resting') {
             return (
-              <p className="text-xs text-muted-foreground">🛋️ Resting</p>
+              <p className="text-xs text-muted-foreground">Resting</p>
             );
           }
           return <p className="text-xs text-muted-foreground">{isPhone ? 'Texting' : 'Talking'}</p>;

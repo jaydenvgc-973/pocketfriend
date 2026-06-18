@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
+import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Coffee, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
 // Note: Sparkles is reused for prayer icon
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
@@ -253,23 +253,27 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 // SCHEDULE-VERIFIED WORK: at_work presence is authoritative
                 const isVerifiedAtWork = canonicalPresence === 'at_work' || presence.status === 'at_work';
 
-                // ── SLEEP/REST DETECTION: DB-first ──────────────────────────
-                // DB says sleeping, napping, or resting → use it as the authoritative display state.
+                // ── SLEEP DETECTION: DB-first ──────────────────────────────────
+                // Sleeping and napping are actual sleep states — character is ASLEEP.
                 // Only suppressed when school or work is verified active.
                 const sleepState = getCharacterSleepState(character);
                 // Cross-validate: DB presence must ALSO pass sleep state validation.
                 // A stale nap/sleep in resolved_presence_status is NOT authoritative without
                 // getCharacterSleepState confirming it as valid.
-                const canonicalIsSleepingOrResting = !isVerifiedAtSchool && !isVerifiedAtWork &&
-                  (canonicalPresence === 'sleeping' || canonicalPresence === 'napping' || canonicalPresence === 'resting') &&
-                  (sleepState.isSleeping || sleepState.isNapping || sleepState.displayLabel === 'resting');
+                const canonicalIsSleeping = !isVerifiedAtSchool && !isVerifiedAtWork &&
+                  (canonicalPresence === 'sleeping' || canonicalPresence === 'napping') &&
+                  (sleepState.isSleeping || sleepState.isNapping);
 
                 // Sleep derivation is suppressed when school or work is the verified active state
-                const derivedAsleep = canonicalIsSleepingOrResting ||
+                const derivedAsleep = canonicalIsSleeping ||
                   (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isSleeping);
                 const isNapping = (canonicalPresence === 'napping' && sleepState.isNapping && !isVerifiedAtSchool && !isVerifiedAtWork) ||
                   (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isNapping);
-                const isResting = canonicalPresence === 'resting' && sleepState.displayLabel === 'resting';
+
+                // RESTING: awake state — relaxing but NOT asleep.
+                // Never grouped with sleeping/napping. Uses location icon, not sleep icon.
+                const isResting = !isVerifiedAtSchool && !isVerifiedAtWork &&
+                  canonicalPresence === 'resting' && sleepState.displayLabel === 'resting';
 
                 // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {
@@ -285,19 +289,21 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 let color = 'text-muted-foreground';
                 let label = presence.label;
 
-                // ── SLEEP/REST: append location context so user sees "Sleeping at Home" not just "Sleeping"
+                // ── SLEEP/REST: append location context ───────────────────────
                 const homeLocName = locationMap[character.current_home_location_id]?.name || 'Home';
                 const resolvedLocName = character.resolved_current_location_name || homeLocName;
                 const locationSuffix = resolvedLocName ? ` at ${resolvedLocName}` : '';
 
-                if (isResting) {
-                  IconComponent = Moon;
-                  color = 'text-blue-300';
-                  label = `Resting${locationSuffix}`;
-                } else if (derivedAsleep || isNapping || (!isVerifiedAtSchool && !isVerifiedAtWork && presence.isSleeping)) {
+                // SLEEP: actual sleep states — Moon icon, blue/amber color
+                if (derivedAsleep || isNapping || (!isVerifiedAtSchool && !isVerifiedAtWork && presence.isSleeping)) {
                   IconComponent = Moon;
                   color = sleepState.confidence >= 0.8 ? 'text-blue-300' : 'text-amber-300';
                   label = `${isNapping ? 'Napping' : 'Sleeping'}${locationSuffix}`;
+                // RESTING: awake relaxing — Coffee icon, not a sleep state
+                } else if (isResting) {
+                  IconComponent = Coffee;
+                  color = 'text-amber-400';
+                  label = `Resting${locationSuffix}`;
                 } else if (presence.status === 'at_work') {
                   IconComponent = Briefcase;
                   color = 'text-blue-400';

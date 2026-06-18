@@ -150,10 +150,11 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
       const locName = char.resolved_current_location_name || homeLocName;
       currentLocationLabel = `${stateLabel} at ${locName}`;
       sleepRestTag = stateLabel;
+    // RESTING: awake state — show location with resting note, but no sleep badge
     } else if (isResting) {
       const locName = char.resolved_current_location_name || homeLocName;
       currentLocationLabel = `Resting at ${locName}`;
-      sleepRestTag = 'Resting';
+      // No sleepRestTag — resting is awake, not a sleep state
     } else if (resolvedLocName && !isHome && !isStaleTravel) {
       currentLocationLabel = `Currently at ${resolvedLocName}`;
     } else if (isStaleTravel && resolvedLocName) {
@@ -186,7 +187,9 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-semibold ${isUnavailable ? "text-muted-foreground" : "text-foreground"}`}>{char.name}</p>
           <div className="flex items-center gap-1 mt-0.5">
-            {(isSleeping || isNapping || isResting) ? (
+            {(isSleeping || isNapping) ? (
+              <p className="text-xs text-muted-foreground">{currentLocationLabel}</p>
+            ) : isResting ? (
               <p className="text-xs text-muted-foreground">{currentLocationLabel}</p>
             ) : !isAvailable && StatusIcon ? (
               <>
@@ -204,10 +207,6 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
           )}
         </div>
         {isSleeping || isNapping ? (
-          <div className="px-2 py-1 rounded-full bg-secondary border border-border flex-shrink-0">
-            <span className="text-[10px] text-muted-foreground font-medium">{sleepRestTag}</span>
-          </div>
-        ) : isResting ? (
           <div className="px-2 py-1 rounded-full bg-secondary border border-border flex-shrink-0">
             <span className="text-[10px] text-muted-foreground font-medium">{sleepRestTag}</span>
           </div>
