@@ -393,6 +393,133 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── CHARACTER STATE SNAPSHOT (page-facing resolver comparison) ─────────────
+    // Duplicates the frontend resolvers to compare DB state vs what UI pages display.
+    // Uses the same logic as readCharacterStateSnapshot but integrated into Vick's path.
+    if (diagnosticType === 'character_state_snapshot' && characterId) {
+      try {
+        ran.push('character_state_snapshot');
+        const char = (await base44.entities.Character.filter({ id: characterId }))[0] || null;
+        if (!char) {
+          errors.push(`Character ${characterId} not found`);
+        } else {
+          const locs = await base44.entities.LocationReference.list(null, 500).catch(() => []);
+          const locMap = {};
+          for (const l of locs) locMap[l.id] = l;
+
+          // Inlined resolver helpers (same as readCharacterStateSnapshot)
+          const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+          const nowET = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+          const nowETDay = () => nowET().getDay();
+          const nowETMin = () => { const d = nowET(); return d.getHours() * 60 + d.getMinutes(); };
+          const NPC_TYPES = new Set(['npc_regular', 'npc_family_member', 'npc_fictitious', 'npc']);
+          const isNPC = (c) => NPC_TYPES.has(c?.character_type);
+
+          // isCharacterAsleep (simplified inline for diagnostic)
+          const isAsleep = (c) => {
+            if (!c) return false;
+            if (!isNPC(c)) {
+              const st = c.resolved_presence_status || '';
+              if (st === 'passed_out') return true;
+              if (st !== 'sleeping' && st !== 'napping') return false;
+              const s = toMin(c.sleep_start_time), w = toMin(c.wake_up_time);
+              if (s === null || w === null) return false;
+              const now = nowETMin();
+              const inside = s > w ? (now >= s || now < w) : (now >= s && now < w);
+              if (!inside) return false;
+              return true;
+            }
+            const winS = toMin(c.sleep_start_time), winW = toMin(c.wake_up_time);
+            if (winS === null || winW === null) return false;
+            const now = nowETMin();
+            return winS > winW ? (now >= winS || now < winW) : (now >= winS && now < winW);
+          };
+
+          findings.push(`Character state snapshot for ${char.name || char.id}:`);
+          findings.push(`  DB says: ${char.resolved_presence_status} at ${char.resolved_current_location_name || 'unknown'} (${char.resolved_source_reason || 'no reason'})`);
+          findings.push(`  Resolver says sleep: ${isAsleep(char)}`);
+          findings.push(`  Energy: ${char.energy_value}, Health: ${char.health_value}, Hunger: ${char.hunger_value}`);
+          findings.push(`  Sleep window: ${char.sleep_start_time || 'none'} → ${char.wake_up_time || 'none'}`);
+          findings.push(`  Work: ${char.work_start_time || 'none'} → ${char.work_end_time || 'none'} days ${(char.work_days || []).join(',') || 'none'}`);
+          findings.push(`  Student: ${char.student_status || 'not_student'}`);
+          findings.push(`  Character type: ${char.character_type || 'not set'}, is_world_service: ${char.is_world_service || false}`);
+
+          // Contradiction detection
+          const dbSleepy = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+          const resolverSleepy = isAsleep(char);
+          if (dbSleepy && !resolverSleepy) {
+            warnings.push(`Sleep contradiction: DB says sleeping but resolver says awake`);
+          }
+          if (!dbSleepy && resolverSleepy) {
+            warnings.push(`Sleep contradiction: DB says awake but resolver says sleeping`);
+          }
+          if (char.resolved_presence_status === 'at_work' && isAsleep(char)) {
+            warnings.push(`Work/sleep contradiction: DB says at_work but sleep window is active`);
+          }
+        }
+      } catch (e) {
+        errors.push(`Character state snapshot failed: ${e.message}`);
+      }
+    }
+
+    // ── SCOPED INVESTIGATION (sensitive entity access by characterId) ──────────
+    // Accesses Conversation, Message, CharacterRelationship, CharacterMemory, StoryEvent
+    // scoped to a specific characterId. Returns evidence-labeled summaries only.
+    if (diagnosticType === 'scoped_investigation' && characterId) {
+      try {
+        ran.push('scoped_investigation');
+
+        // Conversations
+        const allConvos = await base44.asServiceRole.entities.Conversation.list(null, 200).catch(() => []);
+        const charConvos = allConvos.filter(c => Array.isArray(c.character_ids) && c.character_ids.includes(characterId));
+        findings.push(`Conversations: ${charConvos.length} found`);
+        if (charConvos.length > 0) {
+          charConvos.slice(0, 5).forEach(c => {
+            findings.push(`  • ${c.title || 'Untitled'} (${c.channel || c.type}) last: ${c.last_message_date ? new Date(c.last_message_date).toLocaleString('en-US', { timeZone: 'America/New_York' }) : 'never'} Eastern`);
+          });
+        }
+
+        // Messages (via first 3 conversations)
+        let msgCount = 0;
+        for (const c of charConvos.slice(0, 3)) {
+          const msgs = await base44.asServiceRole.entities.Message.filter({ conversation_id: c.id }, '-timestamp', 5).catch(() => []);
+          msgCount += msgs.length;
+        }
+        findings.push(`Recent messages: ${msgCount} across top conversations`);
+
+        // Relationships
+        const rels = await base44.asServiceRole.entities.CharacterRelationship.filter({ source_character_id: characterId }, null, 20).catch(() => []);
+        findings.push(`Relationships: ${rels.length} found`);
+        if (rels.length > 0) {
+          rels.forEach(r => {
+            findings.push(`  • ${r.relationship_type}: ${r.label_from_source_perspective || r.target_character_id} (friendship:${r.friendship_level} trust:${r.trust_level})`);
+          });
+        }
+
+        // Memories
+        const mems = await base44.asServiceRole.entities.CharacterMemory.filter({ character_id: characterId }, null, 20).catch(() => []);
+        findings.push(`Character memories: ${mems.length} found`);
+        if (mems.length > 0) {
+          mems.slice(0, 5).forEach(m => {
+            findings.push(`  • [${m.memory_type}] ${(m.memory_summary || m.memory_text || '').slice(0, 80)}`);
+          });
+        }
+
+        // Story events
+        const allEvents = await base44.asServiceRole.entities.StoryEvent.list(null, 100).catch(() => []);
+        const charEvents = allEvents.filter(e => Array.isArray(e.participant_character_ids) && e.participant_character_ids.includes(characterId));
+        findings.push(`Story events: ${charEvents.length} found`);
+        if (charEvents.length > 0) {
+          charEvents.slice(0, 5).forEach(e => {
+            findings.push(`  • ${e.title} (${e.event_date}) status:${e.status}`);
+          });
+        }
+
+      } catch (e) {
+        errors.push(`Scoped investigation failed: ${e.message}`);
+      }
+    }
+
     // ── FINANCIAL AUDIT ────────────────────────────────────────────────────────
     if (diagnosticType === 'finance' || diagnosticType === 'account_overview') {
       try {
