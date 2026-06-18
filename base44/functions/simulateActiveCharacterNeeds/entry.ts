@@ -1381,6 +1381,7 @@ Deno.serve(async (req) => {
     const characters = allCharacters.filter(c =>
       c.status === 'active' &&
       c.character_type === 'active_created_character' &&
+      !c.is_world_service &&
       (c.owner_email === ownerEmail || ownerEmailOverride)  // ownerEmailOverride bypasses owner check for admin/testing
     );
 
@@ -1413,10 +1414,12 @@ Deno.serve(async (req) => {
       try {
         const charName = char.name || char.display_name || char.id;
 
-        // ── VICK SERVICIO GUARD ──────────────────────────────────────────
-        // Vick is not simulated here — world_service characters are managed
-        // by their own dedicated pipelines.
-        if (char.character_type === 'npc_world_service' || char.is_world_service) {
+        // ── WORLD SERVICE GUARD ──────────────────────────────────────────
+        // World service characters (Vick Servicio, etc.) are not simulated
+        // here — they are managed by their own dedicated pipelines.
+        // is_world_service flag is the authoritative marker — character_type
+        // or legacy type fields may disagree but the flag controls exclusion.
+        if (char.is_world_service) {
           continue;
         }
 
