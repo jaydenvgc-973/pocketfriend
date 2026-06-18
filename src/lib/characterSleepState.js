@@ -205,6 +205,7 @@ export function getCharacterSleepState(character, locationMap) {
     return {
       isSleeping: false,
       isNapping: false,
+      isAsleep: false,
       isResting: false,
       displayLabel: 'unknown',
       contextLabel: null,
@@ -240,6 +241,7 @@ export function getCharacterSleepState(character, locationMap) {
       return {
         isSleeping: true,
         isNapping: false,
+        isAsleep: true,
         displayLabel: 'sleeping',
         contextLabel: 'Collapsed',
         visible_label: 'Collapsed',
@@ -349,6 +351,7 @@ export function getCharacterSleepState(character, locationMap) {
       return {
         isSleeping: true,
         isNapping: false,
+        isAsleep: true,
         displayLabel: 'sleeping',
         contextLabel: 'Sleeping',
         visible_label: 'Sleeping',
@@ -445,8 +448,9 @@ export function getCharacterSleepState(character, locationMap) {
       // Nap passed all checks: has last_nap_time, within 3h cap, no blockers.
       // NO sleep-window proximity check — naps are valid any time of day.
       return {
-        isSleeping: true,
+        isSleeping: false,
         isNapping: true,
+        isAsleep: true,
         displayLabel: 'napping',
         contextLabel: 'Napping',
         visible_label: 'Napping',
@@ -466,7 +470,7 @@ export function getCharacterSleepState(character, locationMap) {
   // ── NPCs / untyped: accept DB truth — schedule-window governs them below ──
   if (status === 'sleeping') {
     return {
-      isSleeping: true, isNapping: false, displayLabel: 'sleeping',
+      isSleeping: true, isNapping: false, isAsleep: true, displayLabel: 'sleeping',
       contextLabel: 'Asleep', visible_label: 'Asleep',
       confirmed_reason: reason || 'db_sleeping', evidence_source: 'resolved_presence_status',
       confidence: 1, stale_risk: false, isLikelyStale: false, blockingCondition: null,
@@ -474,7 +478,7 @@ export function getCharacterSleepState(character, locationMap) {
   }
   if (status === 'napping') {
     return {
-      isSleeping: true, isNapping: true, displayLabel: 'napping',
+      isSleeping: false, isNapping: true, isAsleep: true, displayLabel: 'napping',
       contextLabel: 'Napping', visible_label: 'Napping',
       confirmed_reason: reason || 'db_napping', evidence_source: 'resolved_presence_status',
       confidence: 1, stale_risk: false, isLikelyStale: false, blockingCondition: null,
