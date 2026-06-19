@@ -111,7 +111,10 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
         });
       });
 
-      // ── Source 4: AutomaticNarrative travel events ─────────────────────────
+      // ── Source 4: AutomaticNarrative travel events (INFERRED, not PROVEN) ──
+      // AutomaticNarrative is generated text — not a travel source of truth.
+      // It must never be labelled PROVEN. The correct label is INFERRED
+      // because no TravelSession or LocationHistory backs these narratives.
       const narratives = await base44.entities.AutomaticNarrative.filter(
         { character_id: characterId, owner_email: ownerEmail },
         '-timestamp', 100
@@ -124,8 +127,8 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
       travelNarratives.forEach(n => {
         allMovements.push({
           timestamp: new Date(n.timestamp),
-          type: 'proven',
-          evidenceLabel: 'PROVEN',
+          type: 'inferred',
+          evidenceLabel: 'INFERRED',
           source: 'AutomaticNarrative',
           origin: n.location_name,
           destination: null,

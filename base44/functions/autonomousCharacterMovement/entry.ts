@@ -193,6 +193,65 @@ function isLocationOpen(location) {
 // They are NOT used to enforce sleep or wake for active_created_characters.
 // Sleep onset is driven by energy levels. Wake is driven by energy recovery and real obligations.
 
+// ── CURRENT-LOCATION SATISFACTION CHECK ───────────────────────────────────────
+// Returns true if the character's urgent need can be satisfied at their current
+// location without requiring travel. This is the gate that stops destination
+// selection when the activity can already happen where they are.
+//
+// Rules:
+//   hunger → can eat at home, at a food_drink/grocery location, or at work with food
+//   energy → can rest at home
+//   social → can text/call or interact with people at current location
+//   hygiene → can shower/groom at home or gym with showers
+//   comfort → can improve comfort at home (rest, change rooms, sit)
+//   health/mental → may require specific venues
+function canSatisfyAtCurrentLocation(char, vals, currentLoc) {
+  const top = highestUrgencyEntry(vals);
+  if (!currentLoc || top.urgency < 2) return false;
+  const cat = (currentLoc.category || '').toLowerCase();
+  const name = (currentLoc.name || '').toLowerCase();
+
+  // HUNGER: satisfied if at home (can cook), food_drink, grocery, or workplace with food
+  if (top.key === 'hunger') {
+    if (cat === 'home') return true; // can cook/eat at home
+    if (cat === 'food_drink' || cat === 'grocery') return true;
+    if (cat === 'work' && char.resolved_presence_status === 'at_work') return true; // work cafeteria/break room
+    return false;
+  }
+  // ENERGY: rest works at home
+  if (top.key === 'energy') {
+    if (cat === 'home') return true;
+    return false;
+  }
+  // SOCIAL: text/call is always an option. Being at any location with people counts.
+  if (top.key === 'social') {
+    return true; // social contact can happen anywhere — texting, calling, or talking to people
+  }
+  // HYGIENE: satisfied at home (shower/bath/groom)
+  if (top.key === 'hygiene') {
+    if (cat === 'home') return true;
+    return false;
+  }
+  // COMFORT: can be improved at home (rest, change rooms, sit, relax)
+  if (top.key === 'comfort') {
+    if (cat === 'home') return true;
+    return false;
+  }
+  // HEALTH: can rest at home for minor health needs; medical venue for serious
+  if (top.key === 'health') {
+    if (cat === 'home' && top.urgency <= 2) return true; // moderate health = rest at home
+    if (cat === 'medical') return true;
+    return false;
+  }
+  // MENTAL: can reset at home or outdoor
+  if (top.key === 'mental') {
+    if (cat === 'home' || cat === 'outdoor') return true;
+    return false;
+  }
+  // FINANCIAL: no location-based solution inherently
+  return false;
+}
+
 // ── RAW NEED VALUES ────────────────────────────────────────────────────────────
 function needValues(char) {
   return {
@@ -1773,6 +1832,17 @@ Deno.serve(async (req) => {
             console.log(`[autonomousMovement] ${char.name}: low energy, already home`);
             continue;
           }
+        }
+
+        // ── CURRENT-LOCATION SATISFACTION CHECK ──────────────────────────────
+        // Before scoring destinations, check if the urgent need can be met
+        // where the character already IS. No travel if current location works.
+        const currentLoc = userLocations.find(l => l.id === char.resolved_current_location_id);
+        const canStay = currentLoc ? canSatisfyAtCurrentLocation(char, vals, currentLoc) : false;
+        if (canStay) {
+          console.log(`[autonomousMovement] ${char.name}: can satisfy ${top.key}(${Math.round(top.value)}) at current location (${currentLoc.name}) — no travel needed`);
+          skippedLog.push(`${char.name}: staying — can satisfy ${top.key} at current ${currentLoc.name}`);
+          continue;
         }
 
         // ── SELECT BEST LOCATION ──────────────────────────────────────────────

@@ -335,51 +335,53 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
   const frequentedPlaces = character.frequented_places || [];
   const candidates = [];
 
-  // ── HUNGER / FOOD ─────────────────────────────────────────────────────────
+  // ── HUNGER / FOOD — activity pressure only, NOT a destination ────────────
+  // Hunger creates pressure to EAT. Not "go to restaurant." Not "get food out."
+  // The character decides WHERE to eat later. This function only records the activity.
   if (hunger < 30) {
-    candidates.push({ weight: 85, label: pickRandom(['out getting food', 'at a restaurant', 'grabbing something to eat']), type: 'out', needsEffect: { hunger: 35 } });
+    candidates.push({ weight: 85, label: 'eating', type: 'hunger_activity', needsEffect: { hunger: 35 } });
   } else if (hunger < 50) {
-    candidates.push({ weight: 55, label: pickRandom(['out grabbing a bite', 'at a café or diner', 'picking up lunch']), type: 'out', needsEffect: { hunger: 25 } });
+    candidates.push({ weight: 55, label: 'eating', type: 'hunger_activity', needsEffect: { hunger: 25 } });
   } else if (hunger < 65 && (isMorning || isAfternoon) && financial >= 35) {
-    candidates.push({ weight: 30, label: pickRandom(['out for a meal', 'grabbing coffee and food', 'lunch run']), type: 'out', needsEffect: { hunger: 20 } });
+    candidates.push({ weight: 30, label: 'eating', type: 'hunger_activity', needsEffect: { hunger: 20 } });
   }
 
-  // Grocery / supplies
+  // Grocery / supplies — only if food at home is depleted
   if (hunger < 60 || (isAfternoon && Math.random() < 0.25)) {
-    candidates.push({ weight: hunger < 50 ? 35 : 20, label: pickRandom(['picking up groceries', 'out getting groceries', 'grocery run', 'picking up supplies']), type: 'out', needsEffect: { hunger: 15 } });
+    candidates.push({ weight: hunger < 50 ? 35 : 20, label: 'grocery shopping', type: 'hunger_activity', needsEffect: { hunger: 15 } });
   }
 
-  // ── HEALTH ─────────────────────────────────────────────────────────────────
+  // ── HEALTH — activity pressure only ──────────────────────────────────────
   if (healthNeed < 35) {
-    candidates.push({ weight: 65, label: pickRandom(['at a clinic or pharmacy', 'out — health errand', 'at the doctor', 'picking up medication']), type: 'out', needsEffect: { health: 20 } });
+    candidates.push({ weight: 65, label: 'seeking medical care', type: 'health_activity', needsEffect: { health: 20 } });
   } else if (healthNeed < 50) {
-    candidates.push({ weight: 35, label: pickRandom(['pharmacy run', 'out — quick health errand']), type: 'out', needsEffect: { health: 10 } });
+    candidates.push({ weight: 35, label: 'health maintenance', type: 'health_activity', needsEffect: { health: 10 } });
   }
 
-  // ── GYM / FITNESS ─────────────────────────────────────────────────────────
+  // ── GYM / FITNESS — activity pressure, not a destination ─────────────────
   if (energy >= 55) {
     if (isFitnessFocused) {
       if (isMorning || isAfternoon) {
-        candidates.push({ weight: 60, label: pickRandom(['at the gym', 'working out', 'at the gym — lifting', 'at the gym — cardio']), type: 'out', needsEffect: { health: 15, mental: 10 } });
+        candidates.push({ weight: 60, label: 'exercising', type: 'fitness_activity', needsEffect: { health: 15, mental: 10 } });
       } else if (isEvening && Math.random() < 0.4) {
-        candidates.push({ weight: 35, label: pickRandom(['evening workout', 'at the gym after work']), type: 'out', needsEffect: { health: 12, mental: 8 } });
+        candidates.push({ weight: 35, label: 'exercising', type: 'fitness_activity', needsEffect: { health: 12, mental: 8 } });
       }
     } else if (isDisciplined && Math.random() < 0.4) {
-      candidates.push({ weight: 35, label: 'at the gym', type: 'out', needsEffect: { health: 10 } });
+      candidates.push({ weight: 35, label: 'exercising', type: 'fitness_activity', needsEffect: { health: 10 } });
     } else if (Math.random() < 0.25) {
-      candidates.push({ weight: 20, label: 'at the gym', type: 'out', needsEffect: { health: 8 } });
+      candidates.push({ weight: 20, label: 'exercising', type: 'fitness_activity', needsEffect: { health: 8 } });
     }
   }
 
-  // ── OUTDOOR / PARK / WALK ─────────────────────────────────────────────────
+  // ── OUTDOOR / PARK / WALK — activity, not a destination ──────────────────
   if (energy >= 45) {
     const outdoorWeight = isFitnessFocused ? 40 : (isIntrovert ? 35 : 25);
     if (isMorning) {
-      candidates.push({ weight: outdoorWeight, label: pickRandom(['out for a morning walk', 'out for a run', 'at the park', 'morning walk']), type: 'out', needsEffect: { mental: 10, social: 5 } });
+      candidates.push({ weight: outdoorWeight, label: 'walking / fresh air', type: 'outdoor_activity', needsEffect: { mental: 10, social: 5 } });
     } else if (isAfternoon) {
-      candidates.push({ weight: outdoorWeight - 5, label: pickRandom(['out for a walk', 'at the park', 'getting some air', 'outside for a bit']), type: 'out', needsEffect: { mental: 8 } });
+      candidates.push({ weight: outdoorWeight - 5, label: 'walking / fresh air', type: 'outdoor_activity', needsEffect: { mental: 8 } });
     } else if (isEvening) {
-      candidates.push({ weight: outdoorWeight - 5, label: pickRandom(['evening walk', 'out for fresh air', 'evening stroll']), type: 'out', needsEffect: { mental: 8, social: 5 } });
+      candidates.push({ weight: outdoorWeight - 5, label: 'walking / fresh air', type: 'outdoor_activity', needsEffect: { mental: 8, social: 5 } });
     }
   }
 
@@ -420,51 +422,49 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
           });
       }
       
-      const label = isSocialChar
-        ? pickRandom(['out with people', 'out socializing', 'visiting someone', 'out for the evening'])
-        : pickRandom(['visiting someone', 'spending time with someone', 'out — needed company']);
-      candidates.push({ weight: 75 * socialActivityWeight, label, type: 'out', needsEffect: { social: 30, mental: 10 } });
+      // Activity pressure to seek social contact — character decides method (text, call, visit)
+      candidates.push({ weight: 75 * socialActivityWeight, label: 'seeking social contact', type: 'social_activity', needsEffect: { social: 30, mental: 10 } });
   } else if (isSocialChar && isEvening) {
-    candidates.push({ weight: 40 * socialActivityWeight, label: pickRandom(['out for the evening', 'out with friends', 'out socializing']), type: 'out', needsEffect: { social: 15 } });
+    candidates.push({ weight: 40 * socialActivityWeight, label: 'seeking social contact', type: 'social_activity', needsEffect: { social: 15 } });
   }
 
-  // ── BARS / NIGHTLIFE / DRINKS ─────────────────────────────────────────────
+  // ── BARS / NIGHTLIFE / DRINKS — social activity, not a destination ───────
   if (isEvening) {
     if (isNightlifeChar) {
-      candidates.push({ weight: 55, label: pickRandom(['out at a bar', 'at a lounge', 'out for drinks', 'out — bar or lounge', 'out tonight']), type: 'out', needsEffect: { social: 20, mental: 10 } });
+      candidates.push({ weight: 55, label: 'social drinking', type: 'social_activity', needsEffect: { social: 20, mental: 10 } });
     } else if (isSocialChar && Math.random() < 0.5) {
-      candidates.push({ weight: 40, label: pickRandom(['out for drinks', 'out tonight', 'at a bar', 'out for the evening']), type: 'out', needsEffect: { social: 15, mental: 8 } });
+      candidates.push({ weight: 40, label: 'social drinking', type: 'social_activity', needsEffect: { social: 15, mental: 8 } });
     } else if (!isIntrovert && Math.random() < 0.3) {
-      candidates.push({ weight: 28, label: pickRandom(['out for a drink', 'out this evening', 'out grabbing drinks']), type: 'out', needsEffect: { social: 10, mental: 8 } });
+      candidates.push({ weight: 28, label: 'social drinking', type: 'social_activity', needsEffect: { social: 10, mental: 8 } });
     }
   }
 
   // Post-work unwinding (evening, was working)
   if (isEvening && !isIntrovert) {
-    candidates.push({ weight: 30, label: pickRandom(['unwinding after work', 'out to decompress', 'out — needed a reset', 'grabbing a drink after work']), type: 'out', needsEffect: { mental: 12, social: 8 } });
+    candidates.push({ weight: 30, label: 'unwinding', type: 'rest_activity', needsEffect: { mental: 12, social: 8 } });
   }
 
-  // ── RESTAURANTS / CAFÉS / DINING OUT ─────────────────────────────────────
+  // ── RESTAURANTS / CAFÉS / DINING — activity pressure for eating out ──────
   if (isEvening && financial >= 30) {
-    candidates.push({ weight: isSocialChar ? 38 : 22, label: pickRandom(['out for dinner', 'at a restaurant', 'out for dinner with someone', 'dinner out']), type: 'out', needsEffect: { hunger: 25, social: 10 } });
+    candidates.push({ weight: isSocialChar ? 38 : 22, label: 'dining out', type: 'hunger_activity', needsEffect: { hunger: 25, social: 10 } });
   }
   if (isMorning && financial >= 25) {
-    candidates.push({ weight: 28, label: pickRandom(['out for coffee', 'grabbing coffee', 'at a café', 'coffee run']), type: 'out', needsEffect: { hunger: 10 } });
+    candidates.push({ weight: 28, label: 'getting coffee', type: 'hunger_activity', needsEffect: { hunger: 10 } });
   }
   if (isAfternoon && financial >= 30 && Math.random() < 0.4) {
-    candidates.push({ weight: 25, label: pickRandom(['out for lunch', 'out at a café', 'lunch out', 'grabbing lunch']), type: 'out', needsEffect: { hunger: 20, social: 8 } });
+    candidates.push({ weight: 25, label: 'dining out', type: 'hunger_activity', needsEffect: { hunger: 20, social: 8 } });
   }
 
   // Weekend brunch / social meals
   if (isWeekend && isMorning && financial >= 30) {
-    candidates.push({ weight: 40, label: pickRandom(['out for brunch', 'brunch with someone', 'weekend brunch']), type: 'out', needsEffect: { hunger: 20, social: 15 } });
+    candidates.push({ weight: 40, label: 'dining out', type: 'hunger_activity', needsEffect: { hunger: 20, social: 15 } });
   }
 
   // Weekend social / fun outings
   if (isWeekend) {
-    candidates.push({ weight: isSocialChar ? 45 : 25, label: pickRandom(['out for the day', 'out this weekend', 'out exploring', 'weekend outing']), type: 'out', needsEffect: { social: 20, mental: 15 } });
+    candidates.push({ weight: isSocialChar ? 45 : 25, label: 'weekend outing', type: 'social_activity', needsEffect: { social: 20, mental: 15 } });
     if (isAfternoon || isEvening) {
-      candidates.push({ weight: 35, label: pickRandom(['out with people today', 'hanging out this weekend', 'social plans today']), type: 'out', needsEffect: { social: 20 } });
+      candidates.push({ weight: 35, label: 'social plans', type: 'social_activity', needsEffect: { social: 20 } });
     }
   }
 
@@ -475,72 +475,72 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
   const restlessEmotions = ['bored', 'restless', 'apathy'];
 
   if (stressedEmotions.includes(emotion)) {
-    candidates.push({ weight: 55, label: pickRandom(['out clearing their head', 'out — needed air', 'out to decompress', 'out — stress relief', 'out cooling off', 'at the gym', 'out for a walk']), type: 'out', needsEffect: { mental: 15 } });
+    candidates.push({ weight: 55, label: 'stress relief', type: 'mental_activity', needsEffect: { mental: 15 } });
   }
   if (lowEmotions.includes(emotion)) {
     if (Math.random() < 0.55) {
-      candidates.push({ weight: 45, label: pickRandom(['out — went somewhere familiar', 'out — comfort outing', 'visiting someone', 'out for fresh air']), type: 'out', needsEffect: { social: 15, mental: 10 } });
+      candidates.push({ weight: 45, label: 'comfort seeking', type: 'mental_activity', needsEffect: { social: 15, mental: 10 } });
     }
   }
   if (highEmotions.includes(emotion) && isEvening) {
-    candidates.push({ weight: 45, label: pickRandom(['out — feeling good, went out', 'out tonight', 'out — good mood', 'celebrating something']), type: 'out', needsEffect: { social: 15 } });
+    candidates.push({ weight: 45, label: 'celebratory mood', type: 'social_activity', needsEffect: { social: 15 } });
   }
   if (restlessEmotions.includes(emotion)) {
     const travelWeight = isSocialChar ? 60 : 30;
-    candidates.push({ weight: travelWeight, label: 'out exploring', type: 'travel', needsEffect: { mental: 15, social: 5 } });
-
-    candidates.push({ weight: 50, label: pickRandom(['out — needed to get out of the house', 'out — restless', 'out — bored at home', 'went out — had to do something']), type: 'out', needsEffect: { mental: 12, social: 8 } });
+    candidates.push({ weight: travelWeight, label: 'exploring', type: 'travel_activity', needsEffect: { mental: 15, social: 5 } });
+    candidates.push({ weight: 50, label: 'restlessness outlet', type: 'mental_activity', needsEffect: { mental: 12, social: 8 } });
   }
 
-  // ── MENTAL / COMFORT NEEDS ────────────────────────────────────────────────
+  // ── MENTAL / COMFORT NEEDS — activity pressure, NOT destination ──────────
   if (mental < 40) {
-    candidates.push({ weight: 55, label: pickRandom(['out — mental reset', 'out — needed a change of scenery', 'out for a walk to clear head', 'out — quiet time somewhere else']), type: 'out', needsEffect: { mental: 20 } });
+    candidates.push({ weight: 55, label: 'mental reset', type: 'mental_activity', needsEffect: { mental: 20 } });
   } else if (mental < 55) {
-    candidates.push({ weight: 30, label: pickRandom(['out for some fresh air', 'out — getting a breather', 'out for a walk']), type: 'out', needsEffect: { mental: 12 } });
+    candidates.push({ weight: 30, label: 'getting fresh air', type: 'mental_activity', needsEffect: { mental: 12 } });
   }
 
   if (comfort < 40) {
-    candidates.push({ weight: 40, label: pickRandom(['out — needed a change', 'out — getting out of the house', 'somewhere that feels better']), type: 'out', needsEffect: { comfort: 15 } });
+    candidates.push({ weight: 40, label: 'improving comfort', type: 'comfort_activity', needsEffect: { comfort: 15 } });
   }
 
-  // ── HYGIENE / GROOMING / SELF-CARE ───────────────────────────────────────
+  // ── HYGIENE / GROOMING / SELF-CARE — activity, NOT destination ────────────
+  // Hygiene at home (shower, grooming) is preferred. Supplies purchase is secondary.
   if (hygiene < 45) {
-    candidates.push({ weight: 40, label: pickRandom(['out — personal errand', 'picking up hygiene items', 'grooming errand', 'out — self-care run']), type: 'out', needsEffect: { hygiene: 20 } });
+    candidates.push({ weight: 40, label: 'hygiene care', type: 'hygiene_activity', needsEffect: { hygiene: 20 } });
   }
 
-  // ── ERRANDS / PRACTICAL LIFE ──────────────────────────────────────────────
+  // ── ERRANDS / PRACTICAL LIFE — activities, not destinations ──────────────
   if (isAfternoon) {
-    candidates.push({ weight: 25, label: pickRandom(['out running errands', 'handling errands', 'out taking care of things']), type: 'out', needsEffect: {} });
+    candidates.push({ weight: 25, label: 'running errands', type: 'errand_activity', needsEffect: {} });
     if (isUnemployed) {
-      candidates.push({ weight: 35, label: pickRandom(['out job searching', 'out — handling things', 'out for the day']), type: 'out', needsEffect: {} });
+      candidates.push({ weight: 35, label: 'job searching', type: 'errand_activity', needsEffect: {} });
     }
   }
   if (isMorning) {
-    candidates.push({ weight: 22, label: pickRandom(['out running morning errands', 'out early — errands', 'morning errands']), type: 'out', needsEffect: {} });
+    candidates.push({ weight: 22, label: 'running errands', type: 'errand_activity', needsEffect: {} });
   }
 
-  // ── SELF-CARE / GROOMING OUTINGS ─────────────────────────────────────────
+  // ── SELF-CARE / GROOMING — activity, not destination ─────────────────────
   if (isImageConscious && Math.random() < 0.4) {
-    candidates.push({ weight: 30, label: pickRandom(['out — shopping', 'out getting a haircut', 'appearance errand', 'out — self-care']), type: 'out', needsEffect: { hygiene: 10 } });
+    candidates.push({ weight: 30, label: 'grooming / self-care', type: 'hygiene_activity', needsEffect: { hygiene: 10 } });
   }
 
-  // ── AMBITIOUS / NETWORKING ────────────────────────────────────────────────
+  // ── AMBITIOUS / NETWORKING — activity ────────────────────────────────────
   if (isAmbitious && isAfternoon && Math.random() < 0.4) {
-    candidates.push({ weight: 32, label: pickRandom(['out — meetings or networking', 'out on business', 'handling business']), type: 'out', needsEffect: {} });
+    candidates.push({ weight: 32, label: 'networking', type: 'social_activity', needsEffect: {} });
   }
 
-  // ── FAMILY VISIT ──────────────────────────────────────────────────────────
+  // ── FAMILY VISIT — social activity ───────────────────────────────────────
   const hasFamilyMembers = (character.family_members || []).length > 0;
   if (hasFamilyMembers && isWeekend && Math.random() < 0.35) {
-    candidates.push({ weight: 38, label: pickRandom(['visiting family', 'spending time with family', 'family visit today']), type: 'out', needsEffect: { social: 20, comfort: 10 } });
+    candidates.push({ weight: 38, label: 'family visit', type: 'social_activity', needsEffect: { social: 20, comfort: 10 } });
   }
 
-  // ── IMPULSIVE / SPONTANEOUS OUTINGS ──────────────────────────────────────
+  // ── IMPULSIVE / SPONTANEOUS — activity, not destination ──────────────────
   if (isImpulsive && Math.random() < 0.45) {
-    candidates.push({ weight: 35, label: pickRandom(['out spontaneously', 'just left the house — no specific plan', 'out on a whim', 'went out — felt like it']), type: 'out', needsEffect: { mental: 10 } });
+    candidates.push({ weight: 35, label: 'spontaneous outing', type: 'recreation_activity', needsEffect: { mental: 10 } });
   }
 
-  // ── FREQUENTED PLACES ─────────────────────────────────────────────────────
+  // ── FREQUENTED PLACES — visiting a regular spot ──────────────────────────
   if (frequentedPlaces.length > 0) {
     const timeFiltered = frequentedPlaces.filter(p => {
       const pl = p.toLowerCase();
@@ -550,8 +550,7 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
       return true;
     });
     if (timeFiltered.length > 0 && Math.random() < 0.45) {
-      const place = pickRandom(timeFiltered);
-      candidates.push({ weight: 40, label: `at ${place.toLowerCase()}`, type: 'out', needsEffect: {} });
+      candidates.push({ weight: 40, label: 'visiting regular spot', type: 'recreation_activity', needsEffect: {} });
     }
   }
 
@@ -604,19 +603,10 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
       for (const candidate of candidates) {
         rand -= candidate.weight;
         if (rand <= 0) {
-          if (candidate.type === 'travel') {
-            const availableLocations = allLocations.filter(l => l.category !== 'home' && l.category !== 'work' && l.category !== 'school');
-            const destination = pickBestFreeTimeLocation(availableLocations, character);
-            if (destination) {
-              base44.functions.invoke('createTravelSession', {
-                characterId: character.id,
-                destinationLocationId: destination.id,
-                travel_reason: 'autonomous_exploration',
-                travel_source: 'autonomous_need',
-                ownerEmail: user.email,
-              }).catch(e => console.error(`[triggerAutonomousActions] Travel session creation failed: ${e.message}`));
-              return { activity: `exploring — heading to ${destination.name}`, type: 'travel', isBusy: true, needsEffect: candidate.needsEffect || {} };
-            }
+          // TRAVEL REQUIRED: activity needs a destination — autoMovement handles routing
+          // triggerAutonomousActions only sets activity pressure, NOT destinations
+          if (candidate.type === 'travel_activity') {
+            return { activity: candidate.label, type: 'travel_activity', isBusy: false, needsEffect: candidate.needsEffect || {} };
           }
           return { activity: candidate.label, type: candidate.type, isBusy: false, needsEffect: candidate.needsEffect || {} };
         }
@@ -624,7 +614,7 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
     }
   }
 
-  // ── HOME-STAY WITH REALISTIC REASON ───────────────────────────────────────
+  // ── HOME-STAY — activities at current location, no travel implied ─────────
   const homeActivities = [];
   if (isMorning) homeActivities.push('at home — making breakfast', 'at home — getting ready', 'at home — morning routine', 'at home — slow morning');
   if (isAfternoon) homeActivities.push('at home — taking care of things', 'at home — relaxing', 'at home — doing chores', 'at home — cooking', 'at home — free time');
@@ -734,6 +724,7 @@ Deno.serve(async (req) => {
     const updated = [];
 
     for (const character of characters) {
+      if (character.is_test_character) continue; // SAFETY GATE: skip test fixtures in production
       if (!shouldTriggerAutonomy(character)) continue;
 
       // Inject world conditions into character as temporary context
@@ -748,14 +739,17 @@ Deno.serve(async (req) => {
         life_last_updated: now.toISOString(),
       };
 
-      if (resolved.type === 'out') {
-        updates.current_situation = `Out — ${resolved.activity}`;
-      } else if (resolved.type === 'home') {
+      // Write current_situation based on whether the activity requires leaving
+      // Activity types: home = stays put; all others = may require travel (decided by autoMovement)
+      if (resolved.type === 'home') {
         updates.current_situation = `Home — ${resolved.activity}`;
+      } else {
+        // Activity that may require travel — autoMovement decides destination
+        updates.current_situation = `${resolved.activity}`;
       }
 
-      // Apply needs effects when going out
-      if (resolved.type === 'out' && resolved.needsEffect) {
+      // Apply needs effects for activities
+      if (resolved.needsEffect && Object.keys(resolved.needsEffect).length > 0) {
         const needUpdates = applyNeedsEffect(character, resolved.needsEffect);
         if (needUpdates) Object.assign(updates, needUpdates);
       }
