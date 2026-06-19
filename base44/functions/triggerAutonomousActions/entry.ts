@@ -234,6 +234,7 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
 
   // Personality signals
   const isSocialChar     = personalityText.includes('extrovert') || personalityText.includes('social') || character.trait_flirty || character.social_energy === 'extrovert' || character.social_energy === 'mostly_extrovert';
+  const socialActivityWeight = isSocialChar ? 1.2 : (isIntrovert ? 0.7 : 1.0);
   const isIntrovert      = character.social_energy === 'introvert' || character.social_energy === 'mostly_introvert';
   const isAmbitious      = personalityText.includes('ambitious') || personalityText.includes('driven') || character.trait_competitive;
   const isDisciplined    = personalityText.includes('disciplined') || personalityText.includes('structured') || personalityText.includes('organized');
@@ -310,15 +311,20 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
 
   // ── SOCIAL NEED ───────────────────────────────────────────────────────────
   if (socialNeed < 35) {
+    // Autonomous social action
+    if (character.family_members?.length > 0 || character.fictional_relationships?.length > 0) {
+        base44.functions.invoke('triggerCharacterContact', { characterId: character.id, reason: 'low_social' }).catch(e => console.error(e));
+    }
+
     const label = isSocialChar
       ? pickRandom(['out with people', 'out socializing', 'visiting someone', 'out for the evening'])
       : pickRandom(['visiting someone', 'spending time with someone', 'out — needed company']);
-    candidates.push({ weight: 75, label, type: 'out', needsEffect: { social: 30, mental: 10 } });
+    candidates.push({ weight: 75 * socialActivityWeight, label, type: 'out', needsEffect: { social: 30, mental: 10 } });
   } else if (socialNeed < 55) {
     const label = pickRandom(['out with someone', 'visiting a friend', 'hanging out with someone']);
-    candidates.push({ weight: 45, label, type: 'out', needsEffect: { social: 20 } });
+    candidates.push({ weight: 45 * socialActivityWeight, label, type: 'out', needsEffect: { social: 20 } });
   } else if (isSocialChar && isEvening) {
-    candidates.push({ weight: 40, label: pickRandom(['out for the evening', 'out with friends', 'out socializing']), type: 'out', needsEffect: { social: 15 } });
+    candidates.push({ weight: 40 * socialActivityWeight, label: pickRandom(['out for the evening', 'out with friends', 'out socializing']), type: 'out', needsEffect: { social: 15 } });
   }
 
   // ── BARS / NIGHTLIFE / DRINKS ─────────────────────────────────────────────
@@ -379,6 +385,9 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
     candidates.push({ weight: 45, label: pickRandom(['out — feeling good, went out', 'out tonight', 'out — good mood', 'celebrating something']), type: 'out', needsEffect: { social: 15 } });
   }
   if (restlessEmotions.includes(emotion)) {
+    const travelWeight = isSocialChar ? 60 : 30;
+    candidates.push({ weight: travelWeight, label: 'out exploring', type: 'travel', needsEffect: { mental: 15, social: 5 } });
+
     candidates.push({ weight: 50, label: pickRandom(['out — needed to get out of the house', 'out — restless', 'out — bored at home', 'went out — had to do something']), type: 'out', needsEffect: { mental: 12, social: 8 } });
   }
 
@@ -488,12 +497,24 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
     const totalWeight = candidates.reduce((s, c) => s + c.weight, 0);
     // Lower threshold = more realistic out-of-home frequency
     // Active characters are treated as having lives, not as props
-    const HOME_STAY_THRESHOLD = isHomebody ? 55 : 40;
+    const HOME_STAY_THRESHOLD = isHomebody ? 45 : 25;
     if (totalWeight >= HOME_STAY_THRESHOLD) {
       let rand = Math.random() * totalWeight;
       for (const candidate of candidates) {
         rand -= candidate.weight;
         if (rand <= 0) {
+          if (candidate.type === 'travel') {
+            const availableLocations = allLocations.filter(l => l.category !== 'home' && l.category !== 'work' && l.category !== 'school');
+            const destination = pickBestFreeTimeLocation(availableLocations, character);
+            if (destination) {
+              base44.functions.invoke('createTravelSession', {
+                characterId: character.id,
+                destinationLocationId: destination.id,
+                travel_reason: 'autonomous_exploration'
+              }).catch(e => console.error(e));
+              return { activity: `exploring — heading to ${destination.name}`, type: 'travel', isBusy: true, needsEffect: candidate.needsEffect || {} };
+            }
+          }
           return { activity: candidate.label, type: candidate.type, isBusy: false, needsEffect: candidate.needsEffect || {} };
         }
       }
