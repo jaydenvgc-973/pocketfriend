@@ -103,12 +103,24 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── Load all characters for this owner (user-scoped — the only valid path) ──
-    const allChars = await base44.entities.Character.filter(
-      { owner_email: ownerEmail },
-      'created_date',
-      300
-    ).catch(() => []);
+    // ── Load all characters for this owner ──
+    // When called from scheduled context (no user session), fall back to asServiceRole.
+    const isScheduledContext = !user;
+    let allChars = [];
+    try {
+      allChars = await base44.entities.Character.filter(
+        { owner_email: ownerEmail },
+        'created_date',
+        300
+      ).catch(() => []);
+    } catch { /* user-scoped may fail in scheduled context */ }
+    if (allChars.length === 0 && isScheduledContext) {
+      allChars = await base44.asServiceRole.entities.Character.filter(
+        { owner_email: ownerEmail },
+        'created_date',
+        300
+      ).catch(() => []);
+    }
 
     console.log(`[completeTravelArrivalVerified] Loaded ${allChars.length} characters`);
 
@@ -200,7 +212,9 @@ Deno.serve(async (req) => {
       // ── WRITE Character to destination ────────────────────────────────────
       // RULE: Clear travel fields ONLY in the same atomic write as destination
       // RULE: Do NOT clear travel if write fails
-      await base44.entities.Character.update(char.id, {
+      // In scheduled context (no user session), use asServiceRole for Character writes.
+      const charWriter = isScheduledContext ? base44.asServiceRole.entities.Character : base44.entities.Character;
+      await charWriter.update(char.id, {
         resolved_current_location_id:   destLoc.id,
         resolved_current_location_name: destLoc.name,
         resolved_presence_status:       finalPresenceStatus,
@@ -218,8 +232,9 @@ Deno.serve(async (req) => {
         traveling_to_location_name:     null,
       });
 
-      // ── READ BACK (user-scoped — only valid verification path) ────────────
-      const freshList = await base44.entities.Character.filter(
+      // ── READ BACK — use same scope as write for consistency ─────────────
+      const charReader = isScheduledContext ? base44.asServiceRole.entities.Character : base44.entities.Character;
+      const freshList = await charReader.filter(
         { owner_email: ownerEmail }, 'created_date', 300
       ).catch(() => []);
       const charAfter = freshList.find(c => c.id === char.id);
@@ -430,7 +445,8 @@ Deno.serve(async (req) => {
         // temporary action metadata (travel_status, traveling_to_*, destination).
         // This prevents the UI from showing stale "Traveling to X" indefinitely.
         if (nextStatus === 'arrival_failed' && char) {
-          await base44.entities.Character.update(char.id, {
+          const failWriter = isScheduledContext ? base44.asServiceRole.entities.Character : base44.entities.Character;
+          await failWriter.update(char.id, {
             travel_status:                  'not_traveling',
             travel_destination_location_id: null,
             traveling_to_location_id:       null,
