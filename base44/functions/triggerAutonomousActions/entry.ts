@@ -551,7 +551,6 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
 }
 
 function shouldTriggerAutonomy(character) {
-  console.log(`Checking autonomy for ${character.name}: last updated at ${character.life_last_updated}`);
   if (character.status !== 'active') return false;
   const now = new Date();
   const lastMessage = character.life_last_updated ? new Date(character.life_last_updated) : null;
@@ -646,7 +645,7 @@ Deno.serve(async (req) => {
     const updated = [];
 
     for (const character of characters) {
-      // if (!shouldTriggerAutonomy(character)) continue;
+      if (!shouldTriggerAutonomy(character)) continue;
 
       // Inject world conditions into character as temporary context
       if (worldConditions) {

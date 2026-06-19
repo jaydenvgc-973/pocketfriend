@@ -167,7 +167,7 @@ IMPORTANT RULES:
       // Pass generate_recipient_response only for autonomous/need-driven — not user_requested
       // (user_requested is already handled by sendWorldPhoneMessage's default behavior)
       generate_recipient_response: triggerSrc !== 'user_requested',
-      autonomy_marker: autonomy_marker || null,
+      autonomy_marker: 'AUTONOMOUS_SOCIAL_ACTION_V1',
     });
 
     const wpData = wpResult?.data;
