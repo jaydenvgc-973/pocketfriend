@@ -196,7 +196,9 @@ function resolveWorshipPlaceType(religion, locationType) {
 
 // ── WARDROBE / CLOSET AWARENESS BLOCK ────────────────────────────────────────
 // Profile knowledge, not memory. Characters know what they own without retrieval.
-function buildWardrobeAwarenessBlock(character) {
+import { resolveCharacterOutfit } from './lib/resolveOutfitContext.js';
+
+function buildWardrobeAwarenessBlock(character, resolvedOutfit) {
   if (!character) return '';
 
   const closet = character.character_closet || [];
@@ -204,7 +206,7 @@ function buildWardrobeAwarenessBlock(character) {
   const hasCloset = closet.some(item => item.outfit_id);
   const rotationEnabled = character.outfit_rotation_enabled !== false;
 
-  if (!hasCloset && !currentOutfit) return '';
+    if (!hasCloset && !currentOutfit && !resolvedOutfit) return '';
 
   const lines = [];
   lines.push('WARDROBE — YOUR CLOTHING AND OUTFITS (profile knowledge — you know this without being told)');
@@ -636,6 +638,19 @@ function buildSoapOperaLifeContext(character) {
   }
   if (character.criminal_record?.length > 3 && character.criminal_record.toLowerCase() !== 'none') {
     threads.push(`LEGAL HISTORY: ${character.criminal_record.substring(0, 100)}.`);
+  }
+
+    // -- Resolved Outfit Context --
+  if (resolvedOutfit) {
+    lines.push(`\nRESOLVED OUTFIT (authoritative current state):`);
+    lines.push(`- Today\'s Outfit: ${resolvedOutfit.description || 'Not set'} [category: ${resolvedOutfit.category || 'unknown'}]`);
+    lines.push(`- Reason: ${resolvedOutfit.reason || 'daily rotation'}`);
+    lines.push(`- Source: ${resolvedOutfit.source || 'closet'}`);
+    lines.push('- Tomorrow\'s Outfit: MISSING');
+    lines.push('- Transition Outfit: MISSING');
+    lines.push('- Next Outfit in Rotation: MISSING');
+    lines.push('- Rotation Position: MISSING');
+
   }
 
   const traitFlags = [
@@ -1545,7 +1560,10 @@ Deno.serve(async (req) => {
     // Education + today location blocks come from profile data directly — no memory needed.
     // Religion block now receives the live-queried worshipLocation — no memory required.
     const educationBlock = buildEducationBlock(character);
-    const wardrobeBlock = buildWardrobeAwarenessBlock(character);
+        const locations = await base44.entities.LocationReference.filter({ owner_email: user.email }, null, 300).catch(() => []);
+    const locationMap = Object.fromEntries(locations.map(l => [l.id, l]));
+    const resolvedOutfit = resolveCharacterOutfit(character, locationMap);
+    const wardrobeBlock = buildWardrobeAwarenessBlock(character, resolvedOutfit);
     const todayLocationBlock = buildTodayLocationBlock(character);
     // travelContextBlock + communityEventsBlock injected alongside todayLocationBlock
     const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock);

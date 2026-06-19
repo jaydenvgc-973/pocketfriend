@@ -62,6 +62,77 @@ function isShiftDay(shift, currentDay) {
   return days.includes(currentDay);
 }
 
+function scoreLocationForCharacter(loc, character) {
+  let score = 0;
+  const se = character.social_energy || 'ambivert';
+  const SOCIAL_ENERGY_AFFINITIES = {
+    introvert:        { preferred: ['home','outdoor','public'], acceptable: ['food_drink','education','medical','grocery','religion'], conditional: ['social','gym'] },
+    mostly_introvert: { preferred: ['home','outdoor','public'], acceptable: ['food_drink','education','medical','grocery','religion','gym'], conditional: ['social'] },
+    ambivert:         { preferred: ['food_drink','outdoor','home','social'], acceptable: ['gym','public','education','religion','grocery','medical'], conditional: [] },
+    mostly_extrovert: { preferred: ['social','food_drink','gym'], acceptable: ['outdoor','public','home','education','religion','grocery','medical'], conditional: [] },
+    extrovert:        { preferred: ['social','food_drink'], acceptable: ['gym','outdoor','public','education','religion','grocery','medical'], conditional: ['home'] },
+  };
+  const ep = SOCIAL_ENERGY_AFFINITIES[se] || SOCIAL_ENERGY_AFFINITIES.ambivert;
+  if (ep.preferred.includes(loc.category)) score += 3;
+  else if (ep.acceptable.includes(loc.category)) score += 1;
+  else if (ep.conditional && ep.conditional.includes(loc.category)) score -= 1;
+
+  const arch = (character.archetype||'').toLowerCase();
+  const archBoosts = {'guardian':['home','religion'],'achiever':['gym','education'],'rebel':['social','outdoor'],'introvert':['home','outdoor'],'charmer':['social'],'wounded':['home','outdoor'],'chaotic':['social']};
+  const archPens  = {'guardian':['social'],'introvert':['social'],'wounded':['social'],'chaotic':['home']};
+  if (archBoosts[arch]?.includes(loc.category)) score += 2;
+  if (archPens[arch]?.includes(loc.category))   score -= 2;
+
+  const hh = (character.health_habits||'').toLowerCase();
+  if (loc.category === 'gym' && /gym|workout|fitness|exercise/.test(hh)) score += 2;
+  if (loc.category === 'outdoor' && /run|jog|walk|hike|outdoor/.test(hh)) score += 2;
+
+  const religion = (character.religion||'').toLowerCase();
+  const isDevout = character.belief_level === 'devout';
+  if (loc.category === 'religion' && religion && religion !== 'none') score += isDevout ? 4 : 2;
+  if (isDevout && religion && religion !== 'none') {
+    const vi = (loc.venue_identity||'').toLowerCase();
+    if (/gay|lgbt|queer|strip|adult/.test(vi)) score -= 8;
+    if (loc.category === 'social') score -= 1;
+  }
+
+  const EMOTIONAL_MODIFIERS = {
+    sad:{'boost':['home','outdoor'],'penalize':['social']}, anxious:{'boost':['home','outdoor'],'penalize':['social']},
+    overwhelmed:{'boost':['home','outdoor'],'penalize':['social']}, reflective:{'boost':['home','outdoor','religion'],'penalize':['social']},
+    'closed-off':{'boost':['home'],'penalize':['social','food_drink']}, 'burnt out':{'boost':['home','outdoor'],'penalize':['social','gym']},
+    grief:{'boost':['home','religion','outdoor'],'penalize':['social']}, joyful:{'boost':['social','food_drink','outdoor'],'penalize':[]},
+    excited:{'boost':['social','food_drink','outdoor','gym'],'penalize':[]}, content:{'boost':['home','outdoor','food_drink'],'penalize':[]},
+    bored:{'boost':['social','food_drink','outdoor'],'penalize':['home']}, irritated:{'boost':['outdoor','gym'],'penalize':['social']},
+    frustrated:{'boost':['gym','outdoor','home'],'penalize':['social']},
+  };
+  const em = EMOTIONAL_MODIFIERS[character.emotional_state||'calm'];
+  if (em) {
+    if (em.boost.includes(loc.category)) score += 2;
+    if (em.penalize.includes(loc.category)) score -= 2;
+  }
+
+  if (loc.category === 'home' && ['burnt out','overwhelmed','sad','anxious','grief'].includes(character.emotional_state)) score += 2;
+
+  return score;
+}
+
+function pickBestFreeTimeLocation(availableLocations, character) {
+  if (!availableLocations?.length) return null;
+  const scored = availableLocations
+    .map(loc => ({ loc, score: scoreLocationForCharacter(loc, character) }))
+    .sort((a, b) => b.score - a.score);
+  const top = scored.filter(s => s.score > 0).slice(0, 3);
+  if (!top.length) return scored[0]?.loc || null;
+  const weights = top.length === 1 ? [1] : top.length === 2 ? [0.65, 0.35] : [0.50, 0.30, 0.20];
+  const roll = Math.random();
+  let cum = 0;
+  for (let i = 0; i < top.length; i++) {
+    cum += weights[i];
+    if (roll <= cum) return top[i].loc;
+  }
+  return top[0].loc;
+}
+
 function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -312,8 +383,26 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
   // ── SOCIAL NEED ───────────────────────────────────────────────────────────
   if (socialNeed < 55) {
     // Autonomous social action
-    if (character.family_members?.length > 0 || character.fictional_relationships?.length > 0) {
-        base44.functions.invoke('triggerCharacterContact', { senderCharacterId: character.id, reason: 'low_social', autonomy_marker: 'AUTONOMOUS_SOCIAL_ACTION_V2_LOW_NEED' }).catch(e => console.error(e));
+    const contacts = [
+        ...(character.fictional_relationships || []).filter(r => r.related_character_id || r.person_name),
+        ...(character.family_members || []).filter(m => m.character_id || m.name)
+    ];
+
+    if (contacts.length > 0) {
+        const recipientContact = contacts[Math.floor(Math.random() * contacts.length)];
+        const receiverId = recipientContact.related_character_id || recipientContact.character_id;
+        const receiverName = recipientContact.person_name || recipientContact.name;
+
+        if (receiverId || receiverName) {
+            base44.functions.invoke('triggerCharacterContact', {
+                senderCharacterId: character.id,
+                receiverCharacterId: receiverId,
+                receiverCharacterName: receiverName,
+                topic: "Just thinking about you and wanted to reach out.",
+                trigger_source: "autonomous_low_social",
+                autonomy_marker: 'AUTONOMOUS_SOCIAL_ACTION_V2_LOW_NEED'
+            }).catch(e => console.error(`[triggerAutonomousActions] Social contact failed for ${character.name}: ${e.message}`));
+        }
     }
 
     const label = isSocialChar
