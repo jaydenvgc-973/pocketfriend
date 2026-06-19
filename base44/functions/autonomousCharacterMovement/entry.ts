@@ -897,6 +897,234 @@ function selectBestLocation(locations, char, vals, nowET) {
   return top[0].location;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHARED TRAVEL SESSION CREATOR — replaces all functions.invoke('createTravelSession')
+// Creates a FULL TravelSession record with Character travel field updates.
+// Equivalent to createTravelSession in field completeness. No cross-function invoke.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function deterministicFloat(...parts) {
+  const str = parts.join('|');
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+  }
+  return ((h >>> 0) % 10000) / 10000;
+}
+
+function jitterMinutes(minAdd, maxAdd, ...seedParts) {
+  const f = deterministicFloat(...seedParts);
+  return minAdd + f * (maxAdd - minAdd);
+}
+
+function estimateTravelTime(originLoc, destLoc, travelMode, characterId) {
+  const geoO = originLoc?.geo_mode || 'unknown';
+  const geoD = destLoc?.geo_mode || 'unknown';
+  const today = new Date().toISOString().slice(0, 10);
+  const seed = [characterId, originLoc?.id || 'no_origin', destLoc?.id || 'no_dest', today];
+
+  if (originLoc?.same_building_group_id && originLoc.same_building_group_id === destLoc?.same_building_group_id) {
+    const dur = 1 + jitterMinutes(0, 2, ...seed, 'same_building');
+    return { durationMinutes: dur, distanceMiles: 0.05, positioningMode: 'fictional_coordinates' };
+  }
+
+  const hasRealOrigin = geoO === 'real_world' && originLoc.latitude && originLoc.longitude;
+  const hasRealDest   = geoD === 'real_world' && destLoc?.latitude && destLoc.longitude;
+  if (hasRealOrigin && hasRealDest) {
+    const latDiff = Math.abs(originLoc.latitude - destLoc.latitude);
+    const lngDiff = Math.abs(originLoc.longitude - destLoc.longitude);
+    const distMiles = Math.sqrt((latDiff * 69) ** 2 + (lngDiff * 52) ** 2);
+    const mph = travelMode === 'walking' ? 3 : travelMode === 'bus' || travelMode === 'train' ? 18 : 22;
+    const baseMin = Math.max(3, Math.round((distMiles / mph) * 60));
+    const jitter = jitterMinutes(-baseMin * 0.1, baseMin * 0.1, ...seed, 'real_coords');
+    return {
+      durationMinutes: Math.max(2, Math.round(baseMin + jitter)),
+      distanceMiles: Math.round(distMiles * 10) / 10,
+      positioningMode: 'real_coordinates',
+    };
+  }
+
+  const hasFicO = originLoc?.map_x != null && originLoc?.map_y != null;
+  const hasFicD = destLoc?.map_x != null && destLoc?.map_y != null;
+  if (hasFicO && hasFicD) {
+    const dx = originLoc.map_x - destLoc.map_x;
+    const dy = originLoc.map_y - destLoc.map_y;
+    const mapDist = Math.sqrt(dx * dx + dy * dy);
+    const estMiles = (mapDist / 100) * 8;
+    const mph = travelMode === 'walking' ? 3 : 20;
+    const baseMin = Math.max(3, Math.round((estMiles / mph) * 60));
+    const jitter = jitterMinutes(-1, 2, ...seed, 'fictional_coords');
+    return {
+      durationMinutes: Math.max(2, Math.round(baseMin + jitter)),
+      distanceMiles: Math.round(estMiles * 10) / 10,
+      positioningMode: 'fictional_coordinates',
+    };
+  }
+
+  const anchorO = (originLoc?.anchor_city || '').toLowerCase();
+  const anchorD = (destLoc?.anchor_city || '').toLowerCase();
+  if (anchorO && anchorD && anchorO === anchorD) {
+    return {
+      durationMinutes: Math.round(3 + jitterMinutes(0, 2, ...seed, 'same_anchor')),
+      distanceMiles: 0.5,
+      positioningMode: 'fallback_estimate',
+    };
+  }
+
+  const paterRegion = ['paterson', 'haledon', 'elmwood park', 'hawthorne', 'wayne', 'clifton'];
+  const isOPaterson = paterRegion.some(c => anchorO.includes(c));
+  const isDPaterson = paterRegion.some(c => anchorD.includes(c));
+  if (isOPaterson && isDPaterson) {
+    return {
+      durationMinutes: Math.round(5 + jitterMinutes(0, 2, ...seed, 'paterson_region')),
+      distanceMiles: 1.5,
+      positioningMode: 'fallback_estimate',
+    };
+  }
+
+  return {
+    durationMinutes: Math.round(7 + jitterMinutes(0, 3, ...seed, 'unknown_region')),
+    distanceMiles: null,
+    positioningMode: 'fallback_estimate',
+  };
+}
+
+/**
+ * SHARED AUTONOMOUS TRAVEL SESSION CREATOR
+ *
+ * Creates a full TravelSession record equivalent to createTravelSession output.
+ * Also updates Character travel fields (travel_status, travel_destination_location_id, etc.)
+ * for active_created_character, resolved_presence_status is NEVER set to 'traveling'.
+ *
+ * Returns { success: true, session_id, duration_minutes, estimated_arrival }
+ *       or { success: false, blocked: true, blocker, blocker_reason }
+ *       or { success: false, error }
+ */
+async function createAutonomousTravelSession({
+  base44,
+  char,
+  destLocationId,
+  userLocations,
+  travelReason,
+  travelSource,
+  sourceMessageId,
+  sourceConversationId,
+  sourceCommitmentId,
+  travelMode,
+}) {
+  const now = new Date();
+  const ownerEmail = char.owner_email;
+  const characterId = char.id;
+  const characterName = char.name || char.display_name || char.primary_name;
+  const isActiveCreated = (char.character_type === 'active_created_character');
+
+  // ── Look up origin and destination locations ────────────────────────────
+  const originLoc = userLocations.find(l => l.id === char.resolved_current_location_id) || null;
+  const destLoc = userLocations.find(l => l.id === destLocationId);
+
+  if (!destLoc) {
+    return { success: false, error: 'Destination location not found' };
+  }
+
+  // ── Already at destination ──────────────────────────────────────────────
+  if (char.resolved_current_location_id === destLocationId) {
+    return { success: false, blocked: true, blocker: 'already_there', blocker_reason: `${characterName} is already at the destination.` };
+  }
+
+  // ── Estimate travel time ────────────────────────────────────────────────
+  const { durationMinutes, distanceMiles, positioningMode } = estimateTravelTime(
+    originLoc, destLoc, travelMode || 'unknown', characterId
+  );
+  const eta = new Date(now.getTime() + durationMinutes * 60 * 1000);
+
+  // ── Character snapshot for arrival processing ───────────────────────────
+  const characterSnapshot = {
+    id:                       characterId,
+    name:                     characterName,
+    owner_email:              ownerEmail,
+    is_jailed:                char.is_jailed || false,
+    house_arrest_active:      char.house_arrest_active || false,
+    resolved_presence_status: char.resolved_presence_status || (isActiveCreated ? 'home' : 'traveling'),
+    current_home_location_id: char.current_home_location_id || null,
+  };
+
+  // ── CREATE FULL TRAVEL SESSION ──────────────────────────────────────────
+  let session;
+  try {
+    session = await base44.asServiceRole.entities.TravelSession.create({
+      character_id:                characterId,
+      character_name:              characterName,
+      owner_email:                 ownerEmail,
+      origin_location_id:          originLoc?.id || null,
+      origin_location_name:        originLoc?.name || null,
+      destination_location_id:     destLocationId,
+      destination_location_name:   destLoc.name,
+      travel_reason:               travelReason || null,
+      travel_source:               travelSource || 'autonomous_need',
+      source_message_id:           sourceMessageId || null,
+      source_conversation_id:      sourceConversationId || null,
+      source_commitment_id:        sourceCommitmentId || null,
+      travel_mode:                 travelMode || 'unknown',
+      distance_miles:              distanceMiles || null,
+      estimated_departure_time:    now.toISOString(),
+      estimated_arrival_time:      eta.toISOString(),
+      duration_minutes:            Math.round(durationMinutes),
+      progress_percent:            0,
+      route_status:                'in_transit',
+      last_progress_update:        now.toISOString(),
+      interruption_allowed:        travelSource !== 'promise',
+      positioning_mode:            positioningMode,
+      origin_geo_mode:             originLoc?.geo_mode || 'unknown',
+      destination_geo_mode:        destLoc?.geo_mode || 'unknown',
+      created_at:                  now.toISOString(),
+      character_snapshot:          characterSnapshot,
+      character_home_location_id:  char.current_home_location_id || null,
+    });
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+
+  if (!session || !session.id) {
+    return { success: false, error: 'TravelSession.create returned no session' };
+  }
+
+  // ── UPDATE CHARACTER TRAVEL FIELDS ──────────────────────────────────────
+  const charUpdatePayload = {
+    resolved_source_reason:          `travel_session:${session.id}`,
+    travel_status:                   'traveling_to_destination',
+    travel_destination_location_id:  destLocationId,
+    traveling_to_location_id:        destLocationId,
+    traveling_to_location_name:      destLoc.name,
+    last_location_update_time:       now.toISOString(),
+  };
+
+  // For active_created_character: NEVER write resolved_presence_status: 'traveling'
+  if (!isActiveCreated) {
+    charUpdatePayload.resolved_presence_status = 'traveling';
+  }
+
+  try {
+    await base44.entities.Character.update(characterId, charUpdatePayload);
+  } catch {
+    await base44.asServiceRole.entities.Character.update(characterId, charUpdatePayload).catch(() => {});
+  }
+
+  console.log(`[autonomousMovement] ✓ TRAVEL SESSION CREATED: ${characterName} → ${destLoc.name} | session=${session.id} | ETA: ${eta.toISOString()} | ${Math.round(durationMinutes)}min`);
+
+  return {
+    success: true,
+    session_id: session.id,
+    character_name: characterName,
+    destination: destLoc.name,
+    estimated_arrival: eta.toISOString(),
+    duration_minutes: Math.round(durationMinutes),
+    distance_miles: distanceMiles,
+    positioning_mode: positioningMode,
+    origin: originLoc?.name || 'unknown origin',
+    travel_source: travelSource || 'autonomous_need',
+  };
+}
+
 // ── MAIN HANDLER ───────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
     
@@ -1437,20 +1665,20 @@ Deno.serve(async (req) => {
             if (!atHome && energyVal < 20) {
               const sleepHome = userLocations.find(loc => loc.id === homeId);
               if (sleepHome && char.resolved_current_location_id !== sleepHome.id) {
-                const travelHomeRes = await base44.asServiceRole.entities.TravelSession.create({
-                  character_id: char.id,
-                  destination_location_id: sleepHome.id,
-                  travel_reason: `energy_low_return_home_sleep energy(${Math.round(energyVal)})`,
-                  travel_source: 'autonomous_need',
-                  owner_email: char.owner_email,
-                }).catch(e => ({ success: false, error: e.message }));
-                const rtd = travelHomeRes?.data || {};
-                if (rtd.success) {
+                const result = await createAutonomousTravelSession({
+                  base44,
+                  char,
+                  destLocationId: sleepHome.id,
+                  userLocations,
+                  travelReason: `energy_low_return_home_sleep energy(${Math.round(energyVal)})`,
+                  travelSource: 'autonomous_need',
+                });
+                if (result.success) {
                   totalMoved++;
                   moveLog.push(`${char.name} → ${sleepHome.name} [TIRED_RETURN_HOME energy=${Math.round(energyVal)}]`);
                   console.log(`[autonomousMovement] ✓ ${char.name}: tired, returning home to sleep (energy=${Math.round(energyVal)})`);
                 } else {
-                  blockedLog.push(`${char.name}: tired home return blocked — ${rtd.blocker_reason || rtd.error}`);
+                  blockedLog.push(`${char.name}: tired home return blocked — ${result.blocker_reason || result.error}`);
                 }
                 continue;
               }
@@ -1568,14 +1796,14 @@ Deno.serve(async (req) => {
                     workDispatchDone = true;
                   } else {
                     // Dispatch to work via TravelSession — NO direct location write, NO teleport
-                    const workTravelRes = await base44.asServiceRole.entities.TravelSession.create( {
-                      character_id:           char.id,
-                      destination_location_id: workLoc.id,
-                      travel_reason:          `work_schedule: shift ${char.work_start_time}–${char.work_end_time}`,
-                      travel_source:          'work_schedule',
-                      owner_email:            char.owner_email,
-                    }).catch(e => ({ success: false, error: e.message }));
-                    const wtd = workTravelRes?.data || {};
+                    const wtd = await createAutonomousTravelSession({
+                      base44,
+                      char,
+                      destLocationId: workLoc.id,
+                      userLocations,
+                      travelReason: `work_schedule: shift ${char.work_start_time}–${char.work_end_time}`,
+                      travelSource: 'work_schedule',
+                    });
                     if (wtd.success) {
                       totalMoved++;
                       moveLog.push(`${char.name} → ${workLoc.name} [WORK_SCHEDULE → IN_TRANSIT ~${wtd.duration_minutes}min]`);
@@ -1655,14 +1883,14 @@ Deno.serve(async (req) => {
                 continue;
               } else {
                 // Dispatch to school via TravelSession — NO direct location write, NO teleport
-                const schoolTravelRes = await base44.asServiceRole.entities.TravelSession.create({
-                  character_id:           char.id,
-                  destination_location_id: schoolLoc.id,
-                  travel_reason:          'school_schedule',
-                  travel_source:          'school_schedule',
-                  owner_email:            char.owner_email,
-                }).catch(e => ({ success: false, error: e.message }));
-                const std = schoolTravelRes?.data || {};
+                const std = await createAutonomousTravelSession({
+                  base44,
+                  char,
+                  destLocationId: schoolLoc.id,
+                  userLocations,
+                  travelReason: 'school_schedule',
+                  travelSource: 'school_schedule',
+                });
                 if (std.success) {
                   totalMoved++;
                   moveLog.push(`${char.name} → ${schoolLoc.name} [SCHOOL_SCHEDULE → IN_TRANSIT ~${std.duration_minutes}min]`);
@@ -1842,15 +2070,15 @@ Deno.serve(async (req) => {
                     skippedLog.push(`${char.name}: personality bail on commitment (reliability=${reliabilityScore.toFixed(1)})`);
                   } else if (char.resolved_current_location_id !== destLoc.id) {
                     // Create a REAL travel session — character is in transit, NOT teleported
-                    const travelRes = await base44.asServiceRole.entities.TravelSession.create( {
-                      character_id:           char.id,
-                      destination_location_id: destLoc.id,
-                      travel_reason:          directive.promised_action || 'commitment travel directive',
-                      travel_source:          'promise',
-                      source_commitment_id:    directive.id,
-                      owner_email:            char.owner_email,
-                    }).catch(e => ({ success: false, error: e.message }));
-                    const td = travelRes?.data || {};
+                    const td = await createAutonomousTravelSession({
+                      base44,
+                      char,
+                      destLocationId: destLoc.id,
+                      userLocations,
+                      travelReason: directive.promised_action || 'commitment travel directive',
+                      travelSource: 'promise',
+                      sourceCommitmentId: directive.id,
+                    });
                     if (td.success) {
                       // Update commitment to in_progress
                       await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
@@ -1864,8 +2092,6 @@ Deno.serve(async (req) => {
                       blockedLog.push(`${char.name}: commitment directive blocked — ${td.blocker_reason || td.blocker}`);
                       console.log(`[autonomousMovement] ${char.name}: COMMITMENT DIRECTIVE BLOCKED — ${td.blocker_reason}`);
                     } else {
-                      // createTravelSession failed — LOG and block. NO teleport fallback.
-                      // A failed travel session must never silently move the character.
                       const failReason = td.error || 'createTravelSession returned failure without error detail';
                       blockedLog.push(`${char.name}: createTravelSession FAILED — ${failReason} — NO fallback teleport applied`);
                       console.error(`[autonomousMovement] ⛔ NO-TELEPORT ENFORCED: ${char.name}: createTravelSession failed — ${failReason}. Character stays at origin. Commitment NOT completed.`);
@@ -1898,15 +2124,15 @@ Deno.serve(async (req) => {
                 const destLoc = userLocations.find(l => l.id === promise.destination_location_id);
                 if (destLoc && char.resolved_current_location_id !== destLoc.id) {
                   // Create travel session — promise fulfillment is real transit
-                  const travelRes2 = await base44.asServiceRole.entities.TravelSession.create({
-                    characterId:           char.id,
-                    destinationLocationId: destLoc.id,
-                    travelReason:          promise.promised_action || 'travel promise fulfillment',
-                    travelSource:          'promise',
-                    sourceCommitmentId:    promise.id,
-                    ownerEmail:            char.owner_email,
-                  }).catch(e => ({ data: { success: false, error: e.message } }));
-                  const td2 = travelRes2?.data || {};
+                  const td2 = await createAutonomousTravelSession({
+                    base44,
+                    char,
+                    destLocationId: destLoc.id,
+                    userLocations,
+                    travelReason: promise.promised_action || 'travel promise fulfillment',
+                    travelSource: 'promise',
+                    sourceCommitmentId: promise.id,
+                  });
                   if (td2.success) {
                     await base44.asServiceRole.entities.CharacterCommitment.update(promise.id, {
                       status: 'in_progress',
@@ -1918,7 +2144,6 @@ Deno.serve(async (req) => {
                   } else if (td2.blocked) {
                     blockedLog.push(`${char.name}: promise travel blocked — ${td2.blocker_reason || td2.blocker}`);
                   } else {
-                    // createTravelSession failed — LOG and block. NO teleport fallback.
                     const failReason2 = td2.error || 'createTravelSession returned failure without error detail';
                     blockedLog.push(`${char.name}: promise createTravelSession FAILED — ${failReason2} — NO fallback teleport applied`);
                     console.error(`[autonomousMovement] ⛔ NO-TELEPORT ENFORCED: ${char.name}: promise createTravelSession failed — ${failReason2}. Character stays at origin.`);
@@ -2004,14 +2229,14 @@ Deno.serve(async (req) => {
         if (energyUrgency >= 2 && char.current_home_location_id) {
           const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
           if (ownHome && char.resolved_current_location_id !== ownHome.id) {
-            const eLowRes = await base44.asServiceRole.entities.TravelSession.create({
-              characterId:           char.id,
-              destinationLocationId: ownHome.id,
-              travelReason:          `energy_low_return_home energy(${Math.round(vals.energy)})`,
-              travelSource:          'autonomous_need',
-              ownerEmail:            char.owner_email,
-            }).catch(e => ({ data: { success: false, error: e.message } }));
-            const eLowData = eLowRes?.data || {};
+            const eLowData = await createAutonomousTravelSession({
+              base44,
+              char,
+              destLocationId: ownHome.id,
+              userLocations,
+              travelReason: `energy_low_return_home energy(${Math.round(vals.energy)})`,
+              travelSource: 'autonomous_need',
+            });
             if (eLowData.success) {
               totalMoved++;
               moveLog.push(`${char.name} → ${ownHome.name} [ENERGY_LOW_HOME → IN_TRANSIT ~${eLowData.duration_minutes}min] energy(${Math.round(vals.energy)})`);
@@ -2108,18 +2333,18 @@ Deno.serve(async (req) => {
         }
 
         // ── INITIATE TRAVEL SESSION (no teleport) ───────────────────────────
-        // Needs-driven movement MUST go through createTravelSession.
+        // Needs-driven movement via shared createAutonomousTravelSession helper.
         // The character stays at origin. processTravelArrivals commits the destination on arrival.
         // Direct location mutation is FORBIDDEN here — that is the no-teleport invariant.
         try {
-          const travelRes = await base44.asServiceRole.entities.TravelSession.create( {
-            character_id:           char.id,
-            destination_location_id: finalLocation.id,
-            travel_reason:          `autonomous_needs: ${top.key}(${Math.round(top.value)})`,
-            travel_source:          'autonomous_need',
-            owner_email:            char.owner_email,
-          }).catch(e => ({ success: false, error: e.message }));
-          const td = travelRes?.data || {};
+          const td = await createAutonomousTravelSession({
+            base44,
+            char,
+            destLocationId: finalLocation.id,
+            userLocations,
+            travelReason: `autonomous_needs: ${top.key}(${Math.round(top.value)})`,
+            travelSource: 'autonomous_need',
+          });
 
           if (td.success) {
             totalMoved++;
@@ -2139,7 +2364,6 @@ Deno.serve(async (req) => {
             blockedLog.push(`${char.name}: travel blocked — ${td.blocker_reason || td.blocker}`);
             console.log(`[autonomousMovement] ${char.name}: travel BLOCKED — ${td.blocker_reason}`);
           } else {
-            // createTravelSession failed — NO teleport fallback. Character stays at origin.
             const failReason = td.error || 'createTravelSession returned failure without error detail';
             blockedLog.push(`${char.name}: createTravelSession FAILED — ${failReason} — NO fallback teleport`);
             console.error(`[autonomousMovement] ⛔ NO-TELEPORT ENFORCED: ${char.name} → ${finalLocation.name}: ${failReason}. Character stays at origin.`);
