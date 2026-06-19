@@ -628,7 +628,7 @@ Deno.serve(async (req) => {
     const updated = [];
 
     for (const character of characters) {
-      // if (!shouldTriggerAutonomy(character)) continue;
+      if (!shouldTriggerAutonomy(character)) continue;
 
       // Inject world conditions into character as temporary context
       if (worldConditions) {
