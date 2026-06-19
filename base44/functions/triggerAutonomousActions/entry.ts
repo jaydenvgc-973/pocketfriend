@@ -62,6 +62,9 @@ function isShiftDay(shift, currentDay) {
   return days.includes(currentDay);
 }
 
+// ── SHARED LOGIC: Copied from enforceCoreLoop.js ──
+// Duplication is required (backend functions cannot import local files).
+// If this logic changes, update BOTH copies: enforceCoreLoop + triggerAutonomousActions.
 function scoreLocationForCharacter(loc, character) {
   let score = 0;
   const se = character.social_energy || 'ambivert';
@@ -382,33 +385,45 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
 
   // ── SOCIAL NEED ───────────────────────────────────────────────────────────
   if (socialNeed < 55) {
-    // Autonomous social action
-    const contacts = [
-        ...(character.fictional_relationships || []).filter(r => r.related_character_id || r.person_name),
-        ...(character.family_members || []).filter(m => m.character_id || m.name)
-    ];
+      // Autonomous social action - SAFE RECIPIENT REWORK
+      const contacts = [
+          ...(character.fictional_relationships || []).filter(r => r.related_character_id),
+          ...(character.family_members || []).filter(m => m.character_id)
+      ];
+      
+      const seen = new Set();
+      const unique = contacts.filter(c => {
+          const id = c.related_character_id || c.character_id;
+          if (!id || seen.has(id)) return false;
+          seen.add(id);
+          return true;
+      });
 
-    if (contacts.length > 0) {
-        const recipientContact = contacts[Math.floor(Math.random() * contacts.length)];
-        const receiverId = recipientContact.related_character_id || recipientContact.character_id;
-        const receiverName = recipientContact.person_name || recipientContact.name;
+      const valid = unique.filter(c => (c.related_character_id || c.character_id) !== character.id);
 
-        if (receiverId || receiverName) {
-            base44.functions.invoke('triggerCharacterContact', {
-                senderCharacterId: character.id,
-                receiverCharacterId: receiverId,
-                receiverCharacterName: receiverName,
-                topic: "Just thinking about you and wanted to reach out.",
-                trigger_source: "autonomous_low_social",
-                autonomy_marker: 'AUTONOMOUS_SOCIAL_ACTION_V2_LOW_NEED'
-            }).catch(e => console.error(`[triggerAutonomousActions] Social contact failed for ${character.name}: ${e.message}`));
-        }
-    }
+      if (valid.length === 0) {
+          console.warn(`[triggerAutonomousActions] SOCIAL BLOCKED | char=${character.name} | reason=NO_VALID_RECIPIENT`);
+      } else {
+          const chosen = valid[Math.floor(Math.random() * valid.length)];
+          const receiverId = chosen.related_character_id || chosen.character_id;
+          const receiverName = chosen.person_name || chosen.name || null;
 
-    const label = isSocialChar
-      ? pickRandom(['out with people', 'out socializing', 'visiting someone', 'out for the evening'])
-      : pickRandom(['visiting someone', 'spending time with someone', 'out — needed company']);
-    candidates.push({ weight: 75 * socialActivityWeight, label, type: 'out', needsEffect: { social: 30, mental: 10 } });
+          base44.functions.invoke('triggerCharacterContact', {
+              senderCharacterId: character.id,
+              receiverCharacterId: receiverId,
+              receiverCharacterName: receiverName,
+              topic: "Just thinking about you and wanted to reach out.",
+              trigger_source: "autonomous",
+              autonomy_marker: 'AUTONOMOUS_SOCIAL_ACTION_LOW_NEED'
+          }).catch(e => {
+              console.error(`[triggerAutonomousActions] SOCIAL FAILED | sender=${character.name} | receiver=${receiverId} | error=${e.message}`);
+          });
+      }
+      
+      const label = isSocialChar
+        ? pickRandom(['out with people', 'out socializing', 'visiting someone', 'out for the evening'])
+        : pickRandom(['visiting someone', 'spending time with someone', 'out — needed company']);
+      candidates.push({ weight: 75 * socialActivityWeight, label, type: 'out', needsEffect: { social: 30, mental: 10 } });
   } else if (isSocialChar && isEvening) {
     candidates.push({ weight: 40 * socialActivityWeight, label: pickRandom(['out for the evening', 'out with friends', 'out socializing']), type: 'out', needsEffect: { social: 15 } });
   }
@@ -596,8 +611,11 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
               base44.functions.invoke('createTravelSession', {
                 characterId: character.id,
                 destinationLocationId: destination.id,
-                travel_reason: 'autonomous_exploration'
-              }).catch(e => console.error(e));
+                travel_reason: 'autonomous_exploration',
+                travel_source: 'autonomous_need',
+                characterData: character,
+                ownerEmail: user.email,
+              }).catch(e => console.error(`[triggerAutonomousActions] Travel session creation failed: ${e.message}`));
               return { activity: `exploring — heading to ${destination.name}`, type: 'travel', isBusy: true, needsEffect: candidate.needsEffect || {} };
             }
           }

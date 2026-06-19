@@ -252,6 +252,27 @@ function buildWardrobeAwarenessBlock(character) {
     const cat = currentOutfit.category ? ` [${currentOutfit.category.replace(/_/g, ' ')}]` : '';
     lines.push(`\nCURRENT OUTFIT: "${label}"${cat}${desc}`);
     lines.push('This is what you are wearing RIGHT NOW. You know exactly what you have on — reference it naturally when relevant.');
+
+    // ── Rotation awareness (profile knowledge) ──
+    if (hasCloset && rotationEnabled && outfits.length > 1) {
+      const now = new Date();
+      const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+      const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+      
+      const todayIdx = (dayOfYear + idHash) % outfits.length;
+      const todayOutfit = outfits[todayIdx];
+      if (todayOutfit) {
+        lines.push(`\nTODAY'S OUTFIT: \"${todayOutfit.label || 'Outfit ' + (todayIdx+1)}\" [${(todayOutfit.category || 'daily_casual').replace(/_/g, ' ')}]`);
+      }
+      
+      const tomorrowIdx = (todayIdx + 1) % outfits.length;
+      const tomorrowOutfit = outfits[tomorrowIdx];
+      if (tomorrowOutfit) {
+        lines.push(`TOMORROW'S OUTFIT: \"${tomorrowOutfit.label || 'Outfit ' + (tomorrowIdx+1)}\" [${(tomorrowOutfit.category || 'daily_casual').replace(/_/g, ' ')}]`);
+      }
+      
+      lines.push(`ROTATION POSITION: ${todayIdx + 1} of ${outfits.length} outfits`);
+    }
   }
 
   // ── Appearance description ──
