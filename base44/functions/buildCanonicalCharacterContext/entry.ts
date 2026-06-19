@@ -209,11 +209,13 @@ function buildWardrobeAwarenessBlock(character) {
   const lines = [];
   lines.push('WARDROBE — YOUR CLOTHING AND OUTFITS (profile knowledge — you know this without being told)');
 
+  // Pre-compute outfits array at function scope (needed by both closet listing and rotation awareness)
+  const outfits = closet.filter(item => item.type === 'outfit' || item.outfit_id);
+
   // ── Closet contents ──
   if (hasCloset) {
     lines.push('');
     lines.push('YOUR CLOSET CONTENTS:');
-    const outfits = closet.filter(item => item.type === 'outfit' || item.outfit_id);
     const pieces = closet.filter(item => !item.outfit_id && (item.piece_id || item.label));
 
     if (outfits.length > 0) {
