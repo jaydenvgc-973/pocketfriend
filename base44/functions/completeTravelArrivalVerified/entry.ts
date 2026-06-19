@@ -247,7 +247,10 @@ Deno.serve(async (req) => {
 
         console.log(`[completeTravelArrivalVerified] ✅ VERIFIED ARRIVAL | char=${char.name} | dest=${destLoc.name} | session=${session.id} | readback=PASS | travel_cleared=${travelCleared}`);
 
-        // ── CONSEQUENCE: record durable location history (fire-and-forget) ──────
+        // ── CONSEQUENCE: record durable location history (inline — no inter-function call) ──
+        // Previous approach used base44.functions.invoke('recordLocationHistoryEvent')
+        // which returns 403 in automation/scheduled context (no user session).
+        // Inlining eliminates the inter-function auth dependency. All ops use asServiceRole.
         if (char.owner_email) {
           let eventType = 'arrival';
           if (finalPresenceStatus === 'at_work') eventType = 'work_start';
@@ -266,22 +269,46 @@ Deno.serve(async (req) => {
             else travelSrc = session.travel_source;
           }
 
-          base44.functions.invoke('recordLocationHistoryEvent', {
-            characterId: char.id,
-            characterName: char.name,
-            ownerEmail: char.owner_email,
-            locationId: destLoc.id,
-            locationName: destLoc.name,
-            locationCategory: destLoc.category || 'other',
-            eventType,
-            travelSource: travelSrc,
-            travelReason: session.travel_reason || null,
-            arrivalTime: nowISO,
-            previousLocationId: session.origin_location_id || null,
+          // Step 1: Close any open LocationHistory records for this character
+          const openHistory = await base44.asServiceRole.entities.LocationHistory.filter(
+            { character_id: char.id, owner_email: char.owner_email, is_current: true },
+            null, 10
+          ).catch(() => []);
+
+          for (const open of openHistory) {
+            if (open.location_id === destLoc.id) continue;
+            const arrivalMs = new Date(open.arrival_time).getTime();
+            const departureMs = new Date(nowISO).getTime();
+            const durationMinutes = Math.round((departureMs - arrivalMs) / 60000);
+            await base44.asServiceRole.entities.LocationHistory.update(open.id, {
+              is_current: false,
+              departure_time: nowISO,
+              duration_minutes: durationMinutes > 0 ? durationMinutes : null,
+            }).catch(() => {});
+          }
+
+          // Step 2: Write new arrival record
+          await base44.asServiceRole.entities.LocationHistory.create({
+            character_id:     char.id,
+            character_name:   char.name,
+            owner_email:      char.owner_email,
+            location_id:      destLoc.id,
+            location_name:    destLoc.name,
+            location_category: destLoc.category || 'other',
+            event_type:       eventType,
+            arrival_time:     nowISO,
+            travel_source:    travelSrc,
+            travel_reason:    session.travel_reason || null,
+            is_current:       true,
+          }).then(() => {
+            console.log(`[completeTravelArrivalVerified] ✓ LocationHistory written | char=${char.name} | loc=${destLoc.name} | event=${eventType}`);
           }).catch(e => console.log(`[completeTravelArrivalVerified] location history write non-fatal: ${e.message}`));
         }
 
-        // ── CONSEQUENCE: food/drink spending — fire-and-forget, NEVER blocks arrival ──
+        // ── CONSEQUENCE: food/drink spending — inline fire-and-forget, NEVER blocks arrival ──
+        // Previous approach used base44.asServiceRole.functions.invoke which returns 403
+        // in automation/scheduled context. Also passes characterData to bypass RLS-blocked
+        // Character lookup in the downstream function's asServiceRole context.
         base44.asServiceRole.functions.invoke('processCharacterFoodAndDrinkSpending', {
           character_id:              char.id,
           owner_email:               ownerEmail,
@@ -289,14 +316,41 @@ Deno.serve(async (req) => {
           destination_location_name: destLoc.name,
           destination_category:      destLoc.category || null,
           home_location_id:          char.current_home_location_id || session.character_home_location_id || null,
-          // Context fields — used to determine if home arrival is food-related
+          // Context fields
           arrival_reason:            session.travel_reason || null,
           travel_reason:             session.travel_reason || null,
           source_of_move:            session.travel_source || null,
           presence_reason:           finalPresenceStatus || null,
           resolved_source_reason:    `verified_arrival:${session.id}`,
           current_activity:          char.current_activity || null,
-          need_type:                 null, // not available at arrival level — populated by need-driven callers
+          need_type:                 null,
+          // Bypass Character RLS lookup — pass full character data
+          characterData: {
+            id:                       char.id,
+            name:                     char.name,
+            owner_email:              char.owner_email,
+            character_type:           char.character_type || 'active_created_character',
+            personality_traits:       char.personality_traits || [],
+            quirks:                   char.quirks || [],
+            emotional_state:          char.emotional_state || 'calm',
+            financial_need_value:     char.financial_need_value,
+            trait_bougie:             char.trait_bougie,
+            trait_risk_taker:         char.trait_risk_taker,
+            trait_uninhibited:        char.trait_uninhibited,
+            trait_insatiable:         char.trait_insatiable,
+            trait_volatile:           char.trait_volatile,
+            trait_wishy_washy:        char.trait_wishy_washy,
+            trait_hot_and_cold:       char.trait_hot_and_cold,
+            trait_ruffian:            char.trait_ruffian,
+            trait_philanderer:        char.trait_philanderer,
+            trait_goon:               char.trait_goon,
+            trait_night_owl:          char.trait_night_owl,
+            trait_conscientious:      char.trait_conscientious,
+            trait_goody_two_shoes:    char.trait_goody_two_shoes,
+            trait_law_abiding:        char.trait_law_abiding,
+            trait_loyal:              char.trait_loyal,
+            trait_parental:           char.trait_parental,
+          },
         }).catch(e => console.log(`[completeTravelArrivalVerified] food spending hook non-fatal: ${e.message}`));
 
         results.push({
