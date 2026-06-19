@@ -55,6 +55,7 @@ Deno.serve(async (req) => {
       source_media_url,           // original gallery image URL
       source_media_had_prompt,    // was original context present
       source_media_had_generation_context,
+      autonomy_marker,
     } = await req.json();
 
     // Allow null recipient_identifier when pronoun_context is provided — will be resolved below
@@ -465,6 +466,7 @@ This must be a real message — not a command, not a description, not a meta-ins
       memory_eligible: true,
       relationship_eligible: true,
       message_type: message_type || 'text',
+      autonomy_marker: autonomy_marker || null,
       // ── STEP 8: generation_context — full routing evidence ───────────────────
       generation_context: {
         // Identity anchors

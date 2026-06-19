@@ -642,6 +642,10 @@
       "type": "string",
       "format": "date-time",
       "description": "When the canon exclusion was applied."
+    },
+    "autonomy_marker": {
+      "type": "string",
+      "description": "Marker for autonomously generated messages, for analytics and filtering."
     }
   },
   "required": [

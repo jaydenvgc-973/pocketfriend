@@ -313,7 +313,7 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
   if (socialNeed < 55) {
     // Autonomous social action
     if (character.family_members?.length > 0 || character.fictional_relationships?.length > 0) {
-        base44.functions.invoke('triggerCharacterContact', { characterId: character.id, reason: 'low_social', autonomy_marker: 'AUTONOMOUS_SOCIAL_ACTION_V2_LOW_NEED' }).catch(e => console.error(e));
+        base44.functions.invoke('triggerCharacterContact', { senderCharacterId: character.id, reason: 'low_social', autonomy_marker: 'AUTONOMOUS_SOCIAL_ACTION_V2_LOW_NEED' }).catch(e => console.error(e));
     }
 
     const label = isSocialChar
@@ -628,7 +628,7 @@ Deno.serve(async (req) => {
     const updated = [];
 
     for (const character of characters) {
-      if (!shouldTriggerAutonomy(character)) continue;
+      // if (!shouldTriggerAutonomy(character)) continue;
 
       // Inject world conditions into character as temporary context
       if (worldConditions) {
