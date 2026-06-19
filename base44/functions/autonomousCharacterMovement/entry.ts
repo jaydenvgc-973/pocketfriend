@@ -899,8 +899,9 @@ function selectBestLocation(locations, char, vals, nowET) {
 
 // ── MAIN HANDLER ───────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
-  try {
     const base44 = createClientFromRequest(req);
+  try {
+    
 
     // Check if user has an active foreground session
     // Frontend writes to AppWorldState.user_active_session when in Chat/Travel/Profile/etc.
@@ -1436,13 +1437,13 @@ Deno.serve(async (req) => {
             if (!atHome && energyVal < 20) {
               const sleepHome = userLocations.find(loc => loc.id === homeId);
               if (sleepHome && char.resolved_current_location_id !== sleepHome.id) {
-                const travelHomeRes = await base44.functions.invoke('createTravelSession', {
-                  characterId:           char.id,
-                  destinationLocationId: sleepHome.id,
-                  travelReason:          `energy_low_return_home_sleep energy(${Math.round(energyVal)})`,
-                  travelSource:          'autonomous_need',
-                  ownerEmail:            char.owner_email,
-                }).catch(e => ({ data: { success: false, error: e.message } }));
+                const travelHomeRes = await base44.asServiceRole.entities.TravelSession.create({
+                  character_id: char.id,
+                  destination_location_id: sleepHome.id,
+                  travel_reason: `energy_low_return_home_sleep energy(${Math.round(energyVal)})`,
+                  travel_source: 'autonomous_need',
+                  owner_email: char.owner_email,
+                }).catch(e => ({ success: false, error: e.message }));
                 const rtd = travelHomeRes?.data || {};
                 if (rtd.success) {
                   totalMoved++;
@@ -1567,14 +1568,13 @@ Deno.serve(async (req) => {
                     workDispatchDone = true;
                   } else {
                     // Dispatch to work via TravelSession — NO direct location write, NO teleport
-                    const workTravelRes = await base44.functions.invoke('createTravelSession', {
-                      characterId:           char.id,
-                      destinationLocationId: workLoc.id,
-                      travelReason:          `work_schedule: shift ${char.work_start_time}–${char.work_end_time}`,
-                      travelSource:          'work_schedule',
-                      ownerEmail:            char.owner_email,
-                      characterData:         char,
-                    }).catch(e => ({ data: { success: false, error: e.message } }));
+                    const workTravelRes = await base44.asServiceRole.entities.TravelSession.create( {
+                      character_id:           char.id,
+                      destination_location_id: workLoc.id,
+                      travel_reason:          `work_schedule: shift ${char.work_start_time}–${char.work_end_time}`,
+                      travel_source:          'work_schedule',
+                      owner_email:            char.owner_email,
+                    }).catch(e => ({ success: false, error: e.message }));
                     const wtd = workTravelRes?.data || {};
                     if (wtd.success) {
                       totalMoved++;
@@ -1655,14 +1655,13 @@ Deno.serve(async (req) => {
                 continue;
               } else {
                 // Dispatch to school via TravelSession — NO direct location write, NO teleport
-                const schoolTravelRes = await base44.functions.invoke('createTravelSession', {
-                  characterId:           char.id,
-                  destinationLocationId: schoolLoc.id,
-                  travelReason:          'school_schedule',
-                  travelSource:          'school_schedule',
-                  ownerEmail:            char.owner_email,
-                  characterData:         char,
-                }).catch(e => ({ data: { success: false, error: e.message } }));
+                const schoolTravelRes = await base44.asServiceRole.entities.TravelSession.create({
+                  character_id:           char.id,
+                  destination_location_id: schoolLoc.id,
+                  travel_reason:          'school_schedule',
+                  travel_source:          'school_schedule',
+                  owner_email:            char.owner_email,
+                }).catch(e => ({ success: false, error: e.message }));
                 const std = schoolTravelRes?.data || {};
                 if (std.success) {
                   totalMoved++;
@@ -1843,14 +1842,14 @@ Deno.serve(async (req) => {
                     skippedLog.push(`${char.name}: personality bail on commitment (reliability=${reliabilityScore.toFixed(1)})`);
                   } else if (char.resolved_current_location_id !== destLoc.id) {
                     // Create a REAL travel session — character is in transit, NOT teleported
-                    const travelRes = await base44.functions.invoke('createTravelSession', {
-                      characterId:           char.id,
-                      destinationLocationId: destLoc.id,
-                      travelReason:          directive.promised_action || 'commitment travel directive',
-                      travelSource:          'promise',
-                      sourceCommitmentId:    directive.id,
-                      ownerEmail:            char.owner_email,
-                    }).catch(e => ({ data: { success: false, error: e.message } }));
+                    const travelRes = await base44.asServiceRole.entities.TravelSession.create( {
+                      character_id:           char.id,
+                      destination_location_id: destLoc.id,
+                      travel_reason:          directive.promised_action || 'commitment travel directive',
+                      travel_source:          'promise',
+                      source_commitment_id:    directive.id,
+                      owner_email:            char.owner_email,
+                    }).catch(e => ({ success: false, error: e.message }));
                     const td = travelRes?.data || {};
                     if (td.success) {
                       // Update commitment to in_progress
@@ -2113,14 +2112,13 @@ Deno.serve(async (req) => {
         // The character stays at origin. processTravelArrivals commits the destination on arrival.
         // Direct location mutation is FORBIDDEN here — that is the no-teleport invariant.
         try {
-          const travelRes = await base44.functions.invoke('createTravelSession', {
-            characterId:           char.id,
-            destinationLocationId: finalLocation.id,
-            travelReason:          `autonomous_needs: ${top.key}(${Math.round(top.value)})`,
-            travelSource:          'autonomous_need',
-            ownerEmail:            char.owner_email,
-            characterData:         char, // Pass full character to avoid service-role lookup failures
-          }).catch(e => ({ data: { success: false, error: e.message } }));
+          const travelRes = await base44.asServiceRole.entities.TravelSession.create( {
+            character_id:           char.id,
+            destination_location_id: finalLocation.id,
+            travel_reason:          `autonomous_needs: ${top.key}(${Math.round(top.value)})`,
+            travel_source:          'autonomous_need',
+            owner_email:            char.owner_email,
+          }).catch(e => ({ success: false, error: e.message }));
           const td = travelRes?.data || {};
 
           if (td.success) {
