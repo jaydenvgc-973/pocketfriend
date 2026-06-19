@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { senderCharacterId, receiverCharacterName, receiverCharacterId, topic, messageContent, trigger_source, user_instruction_context } = await req.json();
+        const { senderCharacterId, receiverCharacterName, receiverCharacterId, topic, messageContent, trigger_source, user_instruction_context, autonomy_marker } = await req.json();
 
     if (!senderCharacterId || (!receiverCharacterName && !receiverCharacterId)) {
       return Response.json({
@@ -167,7 +167,7 @@ IMPORTANT RULES:
       // Pass generate_recipient_response only for autonomous/need-driven — not user_requested
       // (user_requested is already handled by sendWorldPhoneMessage's default behavior)
       generate_recipient_response: triggerSrc !== 'user_requested',
-      autonomy_marker: 'AUTONOMOUS_SOCIAL_ACTION_V1',
+      autonomy_marker: autonomy_marker || null,
     });
 
     const wpData = wpResult?.data;

@@ -284,21 +284,7 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
 
   // ── GYM / FITNESS ─────────────────────────────────────────────────────────
   if (energy >= 55) {
-    if (socialNeed < 35) {
-    const contact = character.fictional_relationships?.[0] || character.family_members?.[0];
-    const contactName = contact?.person_name || contact?.name;
-    if (contactName) {
-      base44.functions.invoke('sendWorldPhoneMessage', {
-        sender_character_id: character.id,
-        recipient_identifier: contactName,
-        requested_message: 'Thinking of you',
-        source: 'character_action',
-        owner_email: character.owner_email,
-      }).catch(e => console.error(`Social autonomy failed for ${character.name}: ${e.message}`));
-    }
-  }
-
-  if (isFitnessFocused) {
+    if (isFitnessFocused) {
       if (isMorning || isAfternoon) {
         candidates.push({ weight: 60, label: pickRandom(['at the gym', 'working out', 'at the gym — lifting', 'at the gym — cardio']), type: 'out', needsEffect: { health: 15, mental: 10 } });
       } else if (isEvening && Math.random() < 0.4) {
@@ -327,16 +313,13 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
   if (socialNeed < 55) {
     // Autonomous social action
     if (character.family_members?.length > 0 || character.fictional_relationships?.length > 0) {
-        base44.functions.invoke('triggerCharacterContact', { characterId: character.id, reason: 'low_social' }).catch(e => console.error(e));
+        base44.functions.invoke('triggerCharacterContact', { characterId: character.id, reason: 'low_social', autonomy_marker: 'AUTONOMOUS_SOCIAL_ACTION_V2_LOW_NEED' }).catch(e => console.error(e));
     }
 
     const label = isSocialChar
       ? pickRandom(['out with people', 'out socializing', 'visiting someone', 'out for the evening'])
       : pickRandom(['visiting someone', 'spending time with someone', 'out — needed company']);
     candidates.push({ weight: 75 * socialActivityWeight, label, type: 'out', needsEffect: { social: 30, mental: 10 } });
-  } else if (socialNeed < 55) {
-    const label = pickRandom(['out with someone', 'visiting a friend', 'hanging out with someone']);
-    candidates.push({ weight: 45 * socialActivityWeight, label, type: 'out', needsEffect: { social: 20 } });
   } else if (isSocialChar && isEvening) {
     candidates.push({ weight: 40 * socialActivityWeight, label: pickRandom(['out for the evening', 'out with friends', 'out socializing']), type: 'out', needsEffect: { social: 15 } });
   }
@@ -511,7 +494,7 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
     const totalWeight = candidates.reduce((s, c) => s + c.weight, 0);
     // Lower threshold = more realistic out-of-home frequency
     // Active characters are treated as having lives, not as props
-    const HOME_STAY_THRESHOLD = isHomebody ? 45 : 25;
+        const HOME_STAY_THRESHOLD = isHomebody ? 55 : 40;
     if (totalWeight >= HOME_STAY_THRESHOLD) {
       let rand = Math.random() * totalWeight;
       for (const candidate of candidates) {
