@@ -1898,7 +1898,7 @@ Deno.serve(async (req) => {
                 const destLoc = userLocations.find(l => l.id === promise.destination_location_id);
                 if (destLoc && char.resolved_current_location_id !== destLoc.id) {
                   // Create travel session — promise fulfillment is real transit
-                  const travelRes2 = await base44.functions.invoke('createTravelSession', {
+                  const travelRes2 = await base44.asServiceRole.entities.TravelSession.create({
                     characterId:           char.id,
                     destinationLocationId: destLoc.id,
                     travelReason:          promise.promised_action || 'travel promise fulfillment',
@@ -2004,7 +2004,7 @@ Deno.serve(async (req) => {
         if (energyUrgency >= 2 && char.current_home_location_id) {
           const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
           if (ownHome && char.resolved_current_location_id !== ownHome.id) {
-            const eLowRes = await base44.functions.invoke('createTravelSession', {
+            const eLowRes = await base44.asServiceRole.entities.TravelSession.create({
               characterId:           char.id,
               destinationLocationId: ownHome.id,
               travelReason:          `energy_low_return_home energy(${Math.round(vals.energy)})`,
