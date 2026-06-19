@@ -1291,7 +1291,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
   // NEVER return null — always render the dashboard shell even if data is minimal
   if (!data) return <div className="flex items-center justify-center py-10"><div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" /></div>;
 
-  const { liveLocationDisplay, trendData, timelineEntries, socialStats, insights, memoryHighlights, workDisplay } = data;
+  const { liveLocationDisplay, liveStatus, trendData, timelineEntries, socialStats, insights, memoryHighlights, workDisplay } = data;
   const emotionState = character.emotional_state || "calm";
   const now = format(new Date(), "h:mm aa");
   const moodColor = eColor(emotionState);
@@ -1457,6 +1457,16 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
                   </span>
                 </div>
               ))}
+
+              <div className="pt-2 border-t border-border/40">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[10px] text-muted-foreground flex-shrink-0">Recent Activity</span>
+                  <span className="text-[10px] font-medium capitalize text-right truncate max-w-[58%]">
+                    {character.current_activity || liveStatus || "-"}
+                  </span>
+                </div>
+              </div>
+
             </div>
           </div>
 
