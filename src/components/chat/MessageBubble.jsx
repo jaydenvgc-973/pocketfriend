@@ -1009,8 +1009,6 @@ function extractCommitmentFromMessage(message) {
 
 function LocationSignalButton({ message, onLocationSignal, onShowLocationShare, onMovementCommitment, isImageOnly = false }) {
   const [open, setOpen] = useState(false);
-  const [signaling, setSignaling] = useState(false);
-  const [done, setDone] = useState(false);
   const [signalError, setSignalError] = useState(null);
 
   // Detect if this specific message contains movement intent
@@ -1035,46 +1033,32 @@ function LocationSignalButton({ message, onLocationSignal, onShowLocationShare, 
   };
 
   const handleSignal = async () => {
-    // PRIMARY ACTION: open the LocationShareTool modal using the character's authoritative state.
-    // This opens the full location share modal (character's verified current location).
-    // The modal itself shows a visible error if the character has no resolved location.
-    if (onShowLocationShare) {
+    // Open the travel scheduling modal with message context.
+    // This is the manual fallback for conversation-triggered travel scheduling.
+    if (onMovementCommitment) {
       setOpen(false);
-      onShowLocationShare();
+      const commitment = extractCommitmentFromMessage(message);
+      onMovementCommitment({
+        messageId: message.id,
+        characterName: message.character_name,
+        rawDestination: commitment.rawDestination,
+        etaMinutes: commitment.etaMinutes || 15,
+        scheduledArrivalTime: commitment.scheduledArrivalTime || new Date(Date.now() + 15 * 60000).toISOString(),
+        source: "message_bubble_manual",
+      });
       return;
     }
 
-    // FALLBACK: if modal opener not available, run the legacy silent DB update.
-    // This ensures backward compatibility if the prop is missing.
-    const signalData = isImageOnly && message.generation_context?.location_id
-      ? message.generation_context.location_id
-      : message.content;
-
-    if (!signalData) {
-      setSignalError('No location data available for this message.');
-      return;
-    }
-
-    setSignaling(true);
-    setSignalError(null);
-    try {
-      await onLocationSignal(signalData, message.character_id);
-      setDone(true);
-      setOpen(false);
-      setTimeout(() => setDone(false), 3000);
-    } catch (err) {
-      setSignalError('Failed to update location. Try again.');
-    } finally {
-      setSignaling(false);
-    }
+    // FALLBACK: if movement commitment handler not available, show error.
+    setSignalError('Travel scheduling is not available for this message.');
   };
 
   return (
     <div className="relative">
       <button
         onClick={handleClick}
-        className={`opacity-0 group-hover:opacity-100 transition-opacity bg-card border rounded-full w-5 h-5 flex items-center justify-center shadow-md ${done ? "border-primary text-primary opacity-100" : isMovementMessage ? "border-primary/50 text-primary/70 hover:text-primary hover:border-primary" : "border-border text-muted-foreground hover:text-primary hover:border-primary"}`}
-        title={isMovementMessage ? "Schedule this movement commitment" : "Signal location from this message"}
+        className={`opacity-0 group-hover:opacity-100 transition-opacity bg-card border rounded-full w-5 h-5 flex items-center justify-center shadow-md ${isMovementMessage ? "border-primary/50 text-primary/70 hover:text-primary hover:border-primary" : "border-border text-muted-foreground hover:text-primary hover:border-primary"}`}
+        title={isMovementMessage ? "Schedule this movement commitment" : "Schedule travel from this message"}
       >
         <MapPin className="w-2.5 h-2.5" />
       </button>
@@ -1087,11 +1071,9 @@ function LocationSignalButton({ message, onLocationSignal, onShowLocationShare, 
             exit={{ scale: 0.85, opacity: 0, y: 4 }}
             className="absolute bottom-6 right-0 z-50 bg-card border border-border rounded-2xl px-3 py-2.5 shadow-xl w-52"
           >
-            <p className="text-xs font-semibold text-foreground mb-1">📍 Signal Location</p>
+            <p className="text-xs font-semibold text-foreground mb-1">📍 Schedule Travel</p>
             <p className="text-[10px] text-muted-foreground mb-2 leading-relaxed">
-              {isImageOnly
-                ? `Update where this character is based on the photo location (${message.generation_context?.location_name || 'detected location'}).`
-                : 'Update where this character is based on what they said in this message.'}
+              Schedule or confirm travel based on what the character said in this message.
             </p>
             {signalError && (
               <p className="text-[10px] text-destructive mb-2 leading-relaxed">{signalError}</p>
@@ -1105,10 +1087,9 @@ function LocationSignalButton({ message, onLocationSignal, onShowLocationShare, 
               </button>
               <button
                 onClick={handleSignal}
-                disabled={signaling}
-                className="flex-1 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+                className="flex-1 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors"
               >
-                {signaling ? "Updating..." : "Apply"}
+                Apply
               </button>
             </div>
           </motion.div>
