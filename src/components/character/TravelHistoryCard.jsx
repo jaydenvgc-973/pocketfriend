@@ -19,103 +19,6 @@ const fmtTime = (d) => {
   } catch { return '—'; }
 };
 
-// ── Build schedule-derived RECONSTRUCTED segments from character fields ────────
-// If no direct records exist, we still know where the character was based on
-// work schedule, school schedule, and current location state.
-function buildScheduleSegments(character, cutoff24h, now) {
-  const segments = [];
-  const nowMs = now.getTime();
-  const cutoffMs = cutoff24h.getTime();
-
-  // ── Work schedule ─────────────────────────────────────────────────────────
-  const workStart = character.work_start_time;
-  const workEnd   = character.work_end_time;
-  const workDays  = character.work_days || [];
-  const workLocName = character.occupation_location_name || character.occupation_location_id
-    ? (character.occupation_location_name || 'Work')
-    : null;
-  const homeName = character.resolved_current_location_name || 'Home';
-
-  if (workLocName && workStart && workEnd && workDays.length > 0) {
-    // Check last 2 days for work shifts that occurred
-    for (let daysAgo = 0; daysAgo <= 1; daysAgo++) {
-      const dayDate = new Date(now);
-      dayDate.setDate(dayDate.getDate() - daysAgo);
-      const dayOfWeek = dayDate.getDay(); // 0=Sun
-
-      if (workDays.includes(dayOfWeek)) {
-        const [sh, sm] = workStart.split(':').map(Number);
-        const [eh, em] = workEnd.split(':').map(Number);
-
-        const shiftStart = new Date(dayDate);
-        shiftStart.setHours(sh, sm, 0, 0);
-
-        const shiftEnd = new Date(dayDate);
-        shiftEnd.setHours(eh, em, 0, 0);
-
-        // Only include if shift start is within our 24h window
-        if (shiftStart.getTime() >= cutoffMs && shiftStart.getTime() <= nowMs) {
-          segments.push({
-            timestamp: shiftStart,
-            endTimestamp: shiftEnd.getTime() <= nowMs ? shiftEnd : null,
-            type: 'reconstructed',
-            source: 'Work Schedule',
-            evidenceLabel: 'RECONSTRUCTED',
-            location: workLocName,
-            origin: homeName,
-            destination: workLocName,
-            description: `Work shift ${workStart}–${workEnd}`,
-            locationId: character.occupation_location_id || 'work_schedule',
-          });
-        }
-
-        // Also add departure (going home) if shift ended
-        if (shiftEnd.getTime() >= cutoffMs && shiftEnd.getTime() <= nowMs) {
-          segments.push({
-            timestamp: shiftEnd,
-            type: 'reconstructed',
-            source: 'Work Schedule',
-            evidenceLabel: 'RECONSTRUCTED',
-            location: homeName,
-            origin: workLocName,
-            destination: homeName,
-            description: `Left work after shift (${workEnd})`,
-            locationId: character.current_home_location_id || 'home',
-          });
-        }
-      }
-    }
-  }
-
-  // ── School schedule ────────────────────────────────────────────────────────
-  // REMOVED: No invented 8 AM–3 PM school hours. School reconstruction requires
-  // real enrollment override times or real location operating hours.
-  // Without explicit data, show diagnostic instead of fake timeline.
-
-  // ── Current location anchor ───────────────────────────────────────────────
-  // Always include the character's current verified location as a RECONSTRUCTED anchor
-  const currentLocName = character.resolved_current_location_name;
-  const lastArrived = character.last_arrived_time;
-  if (currentLocName && lastArrived) {
-    const arrivedAt = new Date(lastArrived);
-    if (arrivedAt.getTime() >= cutoffMs) {
-      segments.push({
-        timestamp: arrivedAt,
-        type: 'reconstructed',
-        source: 'Current Location State',
-        evidenceLabel: 'RECONSTRUCTED',
-        location: currentLocName,
-        origin: null,
-        destination: currentLocName,
-        description: `Currently at ${currentLocName} (verified by system)`,
-        locationId: character.resolved_current_location_id || 'current',
-      });
-    }
-  }
-
-  return segments;
-}
-
 export default function TravelHistoryCard({ characterId, ownerEmail, character }) {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
@@ -243,9 +146,7 @@ export default function TravelHistoryCard({ characterId, ownerEmail, character }
       locationRefs.forEach(l => { if (l?.id) locationMap[l.id] = l; });
 
       const directCount = audit.locationHistory + audit.travelSession + audit.recentLocationHistory + audit.automaticNarrative;
-      const schedSegments = buildScheduleSegments(character, cutoff24h, now, locationMap);
-      audit.scheduleSegments = schedSegments.length;
-      schedSegments.forEach(seg => allMovements.push(seg));
+      audit.scheduleSegments = 0;
 
       // ── DEDUPLICATION ──────────────────────────────────────────────────────
       // Priority: proven > inferred > reconstructed. Within same type: keep first.

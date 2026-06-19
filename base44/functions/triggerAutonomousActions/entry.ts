@@ -613,7 +613,6 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
                 destinationLocationId: destination.id,
                 travel_reason: 'autonomous_exploration',
                 travel_source: 'autonomous_need',
-                characterData: character,
                 ownerEmail: user.email,
               }).catch(e => console.error(`[triggerAutonomousActions] Travel session creation failed: ${e.message}`));
               return { activity: `exploring — heading to ${destination.name}`, type: 'travel', isBusy: true, needsEffect: candidate.needsEffect || {} };
