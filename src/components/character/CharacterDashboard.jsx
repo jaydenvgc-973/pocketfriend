@@ -1155,7 +1155,11 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         });
       });
 
-      timelineEntries.sort((a, b) => { try { return new Date(a.time) - new Date(b.time); } catch { return 0; } });
+            if (character.current_activity) {
+        timelineEntries.push({ time: new Date().toISOString(), icon: "activity", text: character.current_activity, emotion: character.emotional_state || "calm" });
+      }
+
+      timelineEntries.sort((a, b) => { try { return new Date(b.time) - new Date(a.time); } catch { return 0; } });
 
 
 
@@ -1458,14 +1462,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
                 </div>
               ))}
 
-              <div className="pt-2 border-t border-border/40">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="text-[10px] text-muted-foreground flex-shrink-0">Recent Activity</span>
-                  <span className="text-[10px] font-medium capitalize text-right truncate max-w-[58%]">
-                    {character.current_activity || liveStatus || "-"}
-                  </span>
-                </div>
-              </div>
+
 
             </div>
           </div>
