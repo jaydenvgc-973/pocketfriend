@@ -207,50 +207,119 @@ function isLocationOpen(location) {
 //   hygiene → can shower/groom at home or gym with showers
 //   comfort → can improve comfort at home (rest, change rooms, sit)
 //   health/mental → may require specific venues
-function canSatisfyAtCurrentLocation(char, vals, currentLoc) {
-  const top = highestUrgencyEntry(vals);
-  if (!currentLoc || top.urgency < 2) return false;
-  const cat = (currentLoc.category || '').toLowerCase();
-  const name = (currentLoc.name || '').toLowerCase();
+// ── REPAIRED: satisfactionQuality evaluates ALL urgent needs, not just top ──
+// Returns { quality: 'fully'|'partially'|'weakly'|'not', detail, per_need }
+// "fully" = need is well-handled here
+// "partially" = somewhat handled but not ideal
+// "weakly" = possible but not great (text/call for critical social)
+// "not" = cannot satisfy here
+// NOTE: This is a FACTOR in stay-vs-travel, NOT a hard block.
+function satisfactionQuality(char, vals, currentLoc) {
+  if (!currentLoc) return { quality: 'no_location', detail: 'No current location' };
+  const urgentNeeds = Object.entries(vals).filter(([, v]) => urgencyLevel(v) >= 2);
+  if (urgentNeeds.length === 0) return { quality: 'no_need', detail: 'No urgent need' };
 
-  // HUNGER: satisfied if at home (can cook), food_drink, grocery, or workplace with food
-  if (top.key === 'hunger') {
-    if (cat === 'home') return true;
-    if (cat === 'food_drink' || cat === 'grocery') return true;
-    if (cat === 'work' && char.resolved_presence_status === 'at_work') return true;
-    return false;
+  const cat = (currentLoc.category || '').toLowerCase();
+  const se = char.social_energy || 'ambivert';
+  const qualities = [];
+
+  for (const [key, val] of urgentNeeds) {
+    const urg = urgencyLevel(val);
+
+    if (key === 'hunger') {
+      if (cat === 'home')
+        qualities.push({ key, quality: 'fully', detail: 'Can cook/eat at home' });
+      else if (cat === 'food_drink')
+        qualities.push({ key, quality: 'fully', detail: 'At a food venue' });
+      else if (cat === 'grocery')
+        qualities.push({ key, quality: 'fully', detail: 'Can buy food' });
+      else if (cat === 'workplace' && char.resolved_presence_status === 'at_work')
+        qualities.push({ key, quality: 'partially', detail: 'May eat at work' });
+      else
+        qualities.push({ key, quality: 'not', detail: 'No food available here' });
+    }
+    else if (key === 'energy') {
+      if (cat === 'home')
+        qualities.push({ key, quality: 'fully', detail: 'Can rest at home' });
+      else
+        qualities.push({ key, quality: 'not', detail: 'Cannot properly rest here' });
+    }
+    else if (key === 'social') {
+      if (cat === 'social' || cat === 'food_drink')
+        qualities.push({ key, quality: 'fully', detail: 'Real in-person social interaction available' });
+      else if (cat === 'outdoor' || cat === 'community')
+        qualities.push({ key, quality: 'fully', detail: 'Public space with social possibilities' });
+      else if (cat === 'workplace' && char.resolved_presence_status === 'at_work')
+        qualities.push({ key, quality: 'partially', detail: 'Coworker interaction available' });
+      else if (cat === 'school')
+        qualities.push({ key, quality: 'partially', detail: 'Peer interaction available' });
+      else if (cat === 'home') {
+        if (urg <= 2 && val >= 40)
+          qualities.push({ key, quality: 'fully', detail: 'Text/call sufficient for mild social need' });
+        else if (urg >= 3 || val < 25)
+          qualities.push({ key, quality: 'weakly', detail: 'Only text/call at home — in-person would be better' });
+        else
+          qualities.push({ key, quality: 'partially', detail: 'Text/call possible but in-person better' });
+      }
+      else {
+        if (val < 30)
+          qualities.push({ key, quality: 'weakly', detail: 'Only text/call available' });
+        else
+          qualities.push({ key, quality: 'partially', detail: 'Text/call is possible' });
+      }
+    }
+    else if (key === 'hygiene') {
+      if (cat === 'home')
+        qualities.push({ key, quality: 'fully', detail: 'Can shower/groom at home' });
+      else if (cat === 'gym') {
+        const features = (currentLoc.features || []).map(f => f.toLowerCase());
+        if (features.some(f => f.includes('shower') || f.includes('locker')))
+          qualities.push({ key, quality: 'partially', detail: 'Gym has shower/locker facilities' });
+        else
+          qualities.push({ key, quality: 'weakly', detail: 'Gym without showers' });
+      }
+      else
+        qualities.push({ key, quality: 'not', detail: 'No hygiene facilities here' });
+    }
+    else if (key === 'comfort') {
+      if (cat === 'home')
+        qualities.push({ key, quality: 'fully', detail: 'Home is comfortable' });
+      else if (cat === 'outdoor')
+        qualities.push({ key, quality: 'partially', detail: 'Change of scenery helps' });
+      else
+        qualities.push({ key, quality: 'weakly', detail: 'Limited comfort options' });
+    }
+    else if (key === 'health') {
+      if (cat === 'medical')
+        qualities.push({ key, quality: 'fully', detail: 'Medical facility' });
+      else if (cat === 'home' && urg <= 2)
+        qualities.push({ key, quality: 'partially', detail: 'Can rest at home' });
+      else
+        qualities.push({ key, quality: 'not', detail: 'Cannot address health here' });
+    }
+    else if (key === 'mental') {
+      if (cat === 'home' || cat === 'outdoor' || cat === 'religion')
+        qualities.push({ key, quality: 'fully', detail: 'Calm environment' });
+      else if (cat === 'gym')
+        qualities.push({ key, quality: 'partially', detail: 'Exercise helps mental state' });
+      else
+        qualities.push({ key, quality: 'weakly', detail: 'Limited mental recovery' });
+    }
+    else {
+      qualities.push({ key, quality: 'not', detail: `Cannot satisfy ${key}` });
+    }
   }
-  // ENERGY: rest works at home
-  if (top.key === 'energy') {
-    if (cat === 'home') return true;
-    return false;
-  }
-  // SOCIAL: text/call is always an option. Being at any location with people counts.
-  if (top.key === 'social') {
-    return true;
-  }
-  // HYGIENE: satisfied at home (shower/bath/groom)
-  if (top.key === 'hygiene') {
-    if (cat === 'home') return true;
-    return false;
-  }
-  // COMFORT: can be improved at home (rest, change rooms, sit, relax)
-  if (top.key === 'comfort') {
-    if (cat === 'home') return true;
-    return false;
-  }
-  // HEALTH: can rest at home for minor health needs; medical venue for serious
-  if (top.key === 'health') {
-    if (cat === 'home' && top.urgency <= 2) return true;
-    if (cat === 'medical') return true;
-    return false;
-  }
-  // MENTAL: can reset at home or outdoor
-  if (top.key === 'mental') {
-    if (cat === 'home' || cat === 'outdoor') return true;
-    return false;
-  }
-  return false;
+
+  const rank = { fully: 3, partially: 2, weakly: 1, not: 0 };
+  qualities.sort((a, b) => rank[a.quality] - rank[b.quality]);
+  const worst = qualities[0];
+  const allDetails = qualities.map(q => `${q.key}:${q.quality}`).join(', ');
+
+  return {
+    quality: worst.quality,
+    detail: `${worst.detail} [${allDetails}]`,
+    per_need: qualities,
+  };
 }
 
 // ── STAY-VS-TRAVEL WEIGHTED DECISION ──────────────────────────────────────────
@@ -262,70 +331,79 @@ function canSatisfyAtCurrentLocation(char, vals, currentLoc) {
 //   4. Time of day (evening social hours make travel more likely)
 //
 // Returns a stay probability (0.0 to 1.0). The caller flips a weighted coin.
-function computeStayProbability(char, vals, currentLoc, nowET) {
-  const cat = (currentLoc.category || '').toLowerCase();
+// ── REPAIRED: computeStayProbability uses satisfaction QUALITY and EXACT VALUES ──
+// satQuality comes from satisfactionQuality() — per-need quality levels.
+// Severity pressure only applies for needs NOT fully satisfied at current location.
+function computeStayProbability(char, vals, currentLoc, nowET, satQuality) {
+  const cat = (currentLoc?.category || '').toLowerCase();
   const hour = nowET.getHours();
   const isEvening = hour >= 17 && hour < 23;
   const isLate = hour >= 22 || hour < 5;
-
-  // Count urgent needs (urgency >= 2)
   const urgentNeeds = Object.entries(vals).filter(([, v]) => urgencyLevel(v) >= 2);
-  const urgentCount = urgentNeeds.length;
   const urgentKeys = urgentNeeds.map(([k]) => k);
+  const urgentCount = urgentNeeds.length;
 
-  // Base stay probability: higher when the current location perfectly handles the need
-  let stayProb = 0.55; // default: slightly favor staying
+  let stayProb = 0.55;
 
-  // ── NEED SATISFACTION QUALITY ────────────────────────────────────────────
-  // At home, most needs are well-handled → higher stay probability
+  // ── SATISFACTION QUALITY WEIGHT ────────────────────────────────────────
+  if (satQuality) {
+    if (satQuality.quality === 'fully')  stayProb += 0.25;
+    if (satQuality.quality === 'partially') stayProb += 0.05;
+    if (satQuality.quality === 'weakly') stayProb -= 0.25;
+    if (satQuality.quality === 'not')    stayProb -= 0.40;
+  }
+
+  // ── LOCATION BASE ──────────────────────────────────────────────────────
   if (cat === 'home') {
-    stayProb += 0.20;
-    // But if the character is a homebody, even stronger
-    if (char.trait_night_owl === false && char.trait_risk_taker === false) {
-      stayProb += 0.10;
+    stayProb += 0.08; // reduced from 0.20 — home shouldn't dominate weakly satisfied needs
+    if (char.trait_night_owl === false && char.trait_risk_taker === false) stayProb += 0.05;
+  }
+
+  // ── NEED SEVERITY — only penalize for needs NOT fully satisfied here ─────
+  const perNeedQuality = {};
+  if (satQuality && satQuality.per_need) {
+    for (const pn of satQuality.per_need) perNeedQuality[pn.key] = pn.quality;
+  }
+  for (const [key, val] of urgentNeeds) {
+    const curSatisfied = perNeedQuality[key] || 'not';
+    if (curSatisfied === 'fully') continue; // no pressure — need is handled here
+    const severity = (100 - val) / 100;
+    if (key === 'social' && cat === 'home' && curSatisfied !== 'fully') {
+      stayProb -= severity * 0.35;
+    } else {
+      stayProb -= severity * 0.15;
     }
   }
 
-  // ── COMBINED PRESSURES — reduce stay probability when multiple needs compete ──
-  // Single need at home = likely stay. Multiple needs = travel may address more.
+  // ── COMBINED PRESSURES ─────────────────────────────────────────────────
   if (urgentCount >= 2) {
-    stayProb -= 0.12 * (urgentCount - 1); // -12% per extra urgent need
-
-    // Social + hunger together make dining out more attractive
-    if (urgentKeys.includes('social') && urgentKeys.includes('hunger') && cat === 'home') {
-      stayProb -= 0.18;
-    }
-    // Social + fitness together make the gym more attractive
-    if (urgentKeys.includes('social') && (char.trait_competitive || /gym|fitness|workout/.test((char.health_habits || '').toLowerCase()))) {
+    stayProb -= 0.10 * (urgentCount - 1);
+    if (urgentKeys.includes('social') && urgentKeys.includes('hunger') && cat === 'home')
+      stayProb -= 0.15;
+    if (urgentKeys.includes('social') && (char.trait_competitive || /gym|fitness|workout/.test((char.health_habits || '').toLowerCase())))
       stayProb -= 0.10;
-    }
-    // Hunger + low finances at home = cooking at home is smart → stay more likely
-    if (urgentKeys.includes('hunger') && (vals.financial || 60) < 40 && cat === 'home') {
-      stayProb += 0.12;
-    }
+    if (urgentKeys.includes('hunger') && (vals.financial || 60) < 40 && cat === 'home')
+      stayProb += 0.10;
   }
 
-  // ── PERSONALITY ──────────────────────────────────────────────────────────
+  // ── PERSONALITY ────────────────────────────────────────────────────────
   const se = char.social_energy || 'ambivert';
   if (se === 'extrovert' || se === 'mostly_extrovert') stayProb -= 0.12;
   if (se === 'introvert' || se === 'mostly_introvert') stayProb += 0.10;
   if (char.trait_flirty || char.trait_uninhibited) stayProb -= 0.08;
-  if (char.trait_stubborn) stayProb -= 0.05; // stubborn characters resist "should stay"
+  if (char.trait_stubborn) stayProb -= 0.05;
   if (char.trait_conscientious) stayProb += 0.06;
-  if (char.trait_impulsive === undefined && /impulsive|spontaneous/.test((char.personality_summary || '').toLowerCase())) {
-    stayProb -= 0.08;
-  }
 
-  // ── EMOTIONAL STATE ──────────────────────────────────────────────────────
+  // ── EMOTIONAL STATE ────────────────────────────────────────────────────
   const emo = (char.emotional_state || 'calm').toLowerCase();
   if (['joyful', 'excited', 'bored', 'restless'].includes(emo)) stayProb -= 0.10;
   if (['sad', 'overwhelmed', 'burnt out', 'grief'].includes(emo)) stayProb += 0.12;
 
-  // ── TIME OF DAY ──────────────────────────────────────────────────────────
+  // ── TIME OF DAY ────────────────────────────────────────────────────────
   if (isEvening && urgentKeys.includes('social')) stayProb -= 0.10;
-  if (isLate) stayProb += 0.15; // late night: stay unless strong reason
+  if (isLate) stayProb += 0.15;
 
-  // ── QUIRKS ───────────────────────────────────────────────────────────────
+  // ── QUIRKS ────────────────────────────────────────────────────────────
   const quirks = char.quirks || [];
   for (const q of quirks) {
     if (!q.active) continue;
@@ -333,8 +411,7 @@ function computeStayProbability(char, vals, currentLoc, nowET) {
     if (q.quirk_id === 'thrill_seeker') stayProb -= 0.10;
   }
 
-  // Clamp to valid range
-  return Math.max(0.08, Math.min(0.92, stayProb));
+  return Math.max(0.05, Math.min(0.92, stayProb));
 }
 
 // ── RAW NEED VALUES ────────────────────────────────────────────────────────────
@@ -520,32 +597,36 @@ function scoreLocation(location, char, vals, nowET) {
   const hygieneU = urgencyLevel(vals.hygiene);
   const comfortU = urgencyLevel(vals.comfort);
 
-  // HUNGER → food or grocery
+  // ── REPAIRED: HUNGER — introverts prefer home cooking ──────────────────
+  const isIntro = ['introvert', 'mostly_introvert'].includes(se);
   if (hungerU >= 2) {
-    if (cat === 'food_drink') score += 3 + hungerU * 2;
+    if (cat === 'food_drink') {
+      const hasSocialUrgent = socialU >= 2;
+      if (isIntro && !hasSocialUrgent) {
+        score += 2 + hungerU; // reduced — cooking at home is preferred
+      } else {
+        score += 3 + hungerU * 2;
+      }
+    }
     if (cat === 'grocery')    score += 2 + hungerU;
-    if (cat === 'home')       score += 1;       // can cook at home
+    if (cat === 'home')       score += isIntro ? (3 + hungerU * 1.5) : (1 + Math.floor(hungerU * 0.5));
   }
 
   // ENERGY → rest at home
   if (energyU >= 2) {
     if (cat === 'home') score += 3 + energyU * 2;
-    if (cat === 'gym')  score -= energyU;       // gym makes it worse
+    if (cat === 'gym')  score -= energyU;
   }
 
-  // SOCIAL → go out (extrovert/ambivert) OR quiet (introvert)
+  // SOCIAL → varies by personality
   if (socialU >= 2) {
-    const isIntro = ['introvert', 'mostly_introvert'].includes(se);
-    if (isIntro) {
-      if (cat === 'outdoor')               score += 2 + socialU;
-      if (cat === 'home')                  score -= socialU; // Home reinforces the deprivation loop — penalize
+    const intro = ['introvert', 'mostly_introvert'].includes(se);
+    if (intro) {
+      if (cat === 'outdoor') score += 2 + socialU;
+      if (cat === 'home')    score -= socialU;
     } else {
-      // NIGHTLIFE GATE: clubs/bars are NOT the default social solution.
-      // They score the same as other social venues BEFORE the nightlife penalty is applied below.
       if (cat === 'social' || cat === 'food_drink') score += 3 + socialU * 2;
       if (cat === 'outdoor' || cat === 'gym')       score += 2 + socialU;
-      // HOME PENALTY: staying home when social is critically low makes the problem worse.
-      // The character needs to be AROUND people. Home prevents that.
       if (cat === 'home')                           score -= 2 + socialU;
     }
   }
@@ -564,57 +645,51 @@ function scoreLocation(location, char, vals, nowET) {
     if (cat === 'gym') score += 1 + mentalU;
   }
 
-  // HYGIENE → home to freshen up
-  // Note: if character is already home, simulateActiveCharacterNeeds executes the shower directly.
-  // autonomousMovement only needs to route them home when they are NOT already there.
+  // ── REPAIRED: HYGIENE — home/self-care only, PENALIZE food/social/outdoor ──
   if (hygieneU >= 2) {
-    if (cat === 'home') score += 2 + hygieneU;
+    if (cat === 'home') score += 3 + hygieneU * 2;
+    if (cat === 'gym') {
+      const features = (location.features || []).map(f => f.toLowerCase());
+      if (features.some(f => f.includes('shower') || f.includes('locker')))
+        score += 2 + hygieneU;
+      else
+        score -= 1;
+    }
+    // PENALIZE food/social/outdoor — these are NOT for hygiene
+    if (cat === 'food_drink') score -= 4;
+    if (cat === 'social') score -= 4;
+    if (cat === 'outdoor') score -= 3;
+    if (cat === 'grocery') score -= 3;
   }
 
   // COMFORT → change of scenery
   if (comfortU >= 2) {
     if (cat === 'outdoor' || cat === 'food_drink') score += 1 + comfortU;
-    if (cat === 'home') score -= 1; // staying home IS the comfort problem
+    if (cat === 'home') score -= 1;
   }
 
   // BASE social energy preference (minor, overridden by urgent needs)
   if (se === 'extrovert' && ['social', 'food_drink', 'outdoor'].includes(cat))      score += 1;
   if (['introvert', 'mostly_introvert'].includes(se) && ['home', 'outdoor'].includes(cat)) score += 1;
 
-  // ── COMBINED PRESSURE BONUSES ──────────────────────────────────────────────
-  // When multiple needs are urgent simultaneously, destinations that address
-  // more than one need get a bonus. This is how "hunger + social → dining out"
-  // and "fitness + social → gym" work in the live model.
+  // ── REPAIRED: COMBINED PRESSURE BONUSES — boosted multipliers ───────────
   {
     const urgentCount = [hungerU, energyU, socialU, healthU, mentalU, hygieneU, comfortU]
       .filter(u => u >= 2).length;
 
-    // Multiple urgent needs active — destinations that solve more than one get a boost
     if (urgentCount >= 2) {
-      // Hunger + social → dining out is more attractive than eating at home
-      if (hungerU >= 2 && socialU >= 2 && cat === 'food_drink') {
-        score += 4; // dining addresses both hunger AND social
-      }
-      // Hunger + social → outdoor/park picnic is also valid
-      if (hungerU >= 2 && socialU >= 2 && cat === 'outdoor') {
-        score += 2;
-      }
-      // Fitness + social → gym is more attractive than solo workout
-      if (socialU >= 2 && /gym|fitness/.test((char.health_habits || '').toLowerCase()) && cat === 'gym') {
-        score += 3;
-      }
-      // Social + mental → outdoor/religion (calm social)
-      if (socialU >= 2 && mentalU >= 2 && (cat === 'outdoor' || cat === 'religion')) {
-        score += 2;
-      }
-      // Low finances + hunger at home = grocery shopping is practical
-      if (hungerU >= 2 && (vals.financial || 60) < 40 && cat === 'grocery') {
-        score += 3;
-      }
-      // Energy + comfort → home is a double benefit
-      if (energyU >= 2 && comfortU >= 2 && cat === 'home') {
-        score += 2;
-      }
+      // hunger + social → dining out
+      if (hungerU >= 2 && socialU >= 2 && cat === 'food_drink') score += 5;
+      // hunger + social → picnic/outdoor
+      if (hungerU >= 2 && socialU >= 2 && cat === 'outdoor')   score += 2;
+      // social + fitness → gym
+      if (socialU >= 2 && /gym|fitness|workout/.test((char.health_habits || '').toLowerCase()) && cat === 'gym') score += 4;
+      // social + mental → calm social
+      if (socialU >= 2 && mentalU >= 2 && (cat === 'outdoor' || cat === 'religion' || cat === 'community')) score += 3;
+      // hunger + broke → grocery
+      if (hungerU >= 2 && (vals.financial || 60) < 40 && cat === 'grocery') score += 3;
+      // energy + comfort → home double benefit
+      if (energyU >= 2 && comfortU >= 2 && cat === 'home') score += 3;
     }
   }
 
@@ -1956,22 +2031,22 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── CURRENT-LOCATION SATISFACTION CHECK ──────────────────────────────
-        // Check if the character's top urgent need can be satisfied at their
-        // current location. If so, make a WEIGHTED stay-vs-travel decision.
-        // "Can satisfy here" is a factor, NOT an automatic stay.
-        // Combined pressures (hunger + social, fitness + social) can override.
+        // ── CURRENT-LOCATION SATISFACTION CHECK (REPAIRED) ─────────────────
+        // Uses satisfactionQuality() — evaluates ALL urgent needs at current loc.
+        // Returns quality level: fully/partially/weakly/not.
+        // This is a FACTOR in stay-vs-travel, NOT a hard block.
         const currentLoc = userLocations.find(l => l.id === char.resolved_current_location_id);
-        const canSatisfyHere = currentLoc ? canSatisfyAtCurrentLocation(char, vals, currentLoc) : false;
-        if (canSatisfyHere) {
-          const stayProb = computeStayProbability(char, vals, currentLoc, nowET);
+        const sat = currentLoc ? satisfactionQuality(char, vals, currentLoc) : { quality: 'no_location', detail: 'No current location' };
+
+        if (sat.quality !== 'not' && sat.quality !== 'no_need' && sat.quality !== 'no_location') {
+          const stayProb = computeStayProbability(char, vals, currentLoc, nowET, sat);
           const roll = Math.random();
           if (roll < stayProb) {
-            console.log(`[autonomousMovement] ${char.name}: staying — can satisfy ${top.key}(${Math.round(top.value)}) at ${currentLoc.name} (stayProb=${(stayProb*100).toFixed(0)}%, roll=${(roll*100).toFixed(0)}%)`);
-            skippedLog.push(`${char.name}: staying — can satisfy ${top.key} at current ${currentLoc.name}`);
+            console.log(`[autonomousMovement] ${char.name}: staying — sat=${sat.quality} (${sat.detail}) stayProb=${(stayProb*100).toFixed(0)}%, roll=${(roll*100).toFixed(0)}%)`);
+            skippedLog.push(`${char.name}: staying — sat=${sat.quality} at ${currentLoc.name} (stayProb=${(stayProb*100).toFixed(0)}%)`);
             continue;
           }
-          console.log(`[autonomousMovement] ${char.name}: traveling despite can-satisfy — stayProb=${(stayProb*100).toFixed(0)}%, roll=${(roll*100).toFixed(0)}% — combined pressures or personality override`);
+          console.log(`[autonomousMovement] ${char.name}: traveling — sat=${sat.quality} but stayProb=${(stayProb*100).toFixed(0)}%, roll=${(roll*100).toFixed(0)}% — personality/combined pressures override`);
         }
 
         // ── SELECT BEST LOCATION ──────────────────────────────────────────────
