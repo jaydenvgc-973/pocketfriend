@@ -375,14 +375,16 @@ function computeStayProbability(char, vals, currentLoc, nowET, satQuality) {
     }
   }
 
-  // ── COMBINED PRESSURES ─────────────────────────────────────────────────
-  if (urgentCount >= 2) {
-    stayProb -= 0.10 * (urgentCount - 1);
-    if (urgentKeys.includes('social') && urgentKeys.includes('hunger') && cat === 'home')
+  // ── COMBINED PRESSURES — only for needs NOT fully satisfied here ─────────
+  const unmetUrgentKeys = urgentKeys.filter(k => perNeedQuality[k] !== 'fully');
+  const unmetUrgentCount = unmetUrgentKeys.length;
+  if (unmetUrgentCount >= 2) {
+    stayProb -= 0.10 * (unmetUrgentCount - 1);
+    if (unmetUrgentKeys.includes('social') && unmetUrgentKeys.includes('hunger') && cat === 'home')
       stayProb -= 0.15;
-    if (urgentKeys.includes('social') && (char.trait_competitive || /gym|fitness|workout/.test((char.health_habits || '').toLowerCase())))
+    if (unmetUrgentKeys.includes('social') && (char.trait_competitive || /gym|fitness|workout/.test((char.health_habits || '').toLowerCase())))
       stayProb -= 0.10;
-    if (urgentKeys.includes('hunger') && (vals.financial || 60) < 40 && cat === 'home')
+    if (unmetUrgentKeys.includes('hunger') && (vals.financial || 60) < 40 && cat === 'home')
       stayProb += 0.10;
   }
 
