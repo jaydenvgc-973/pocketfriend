@@ -284,7 +284,21 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
 
   // ── GYM / FITNESS ─────────────────────────────────────────────────────────
   if (energy >= 55) {
-    if (isFitnessFocused) {
+    if (socialNeed < 35) {
+    const contact = character.fictional_relationships?.[0] || character.family_members?.[0];
+    const contactName = contact?.person_name || contact?.name;
+    if (contactName) {
+      base44.functions.invoke('sendWorldPhoneMessage', {
+        sender_character_id: character.id,
+        recipient_identifier: contactName,
+        requested_message: 'Thinking of you',
+        source: 'character_action',
+        owner_email: character.owner_email,
+      }).catch(e => console.error(`Social autonomy failed for ${character.name}: ${e.message}`));
+    }
+  }
+
+  if (isFitnessFocused) {
       if (isMorning || isAfternoon) {
         candidates.push({ weight: 60, label: pickRandom(['at the gym', 'working out', 'at the gym — lifting', 'at the gym — cardio']), type: 'out', needsEffect: { health: 15, mental: 10 } });
       } else if (isEvening && Math.random() < 0.4) {
@@ -310,7 +324,7 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
   }
 
   // ── SOCIAL NEED ───────────────────────────────────────────────────────────
-  if (socialNeed < 35) {
+  if (socialNeed < 55) {
     // Autonomous social action
     if (character.family_members?.length > 0 || character.fictional_relationships?.length > 0) {
         base44.functions.invoke('triggerCharacterContact', { characterId: character.id, reason: 'low_social' }).catch(e => console.error(e));
@@ -537,6 +551,7 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
 }
 
 function shouldTriggerAutonomy(character) {
+  console.log(`Checking autonomy for ${character.name}: last updated at ${character.life_last_updated}`);
   if (character.status !== 'active') return false;
   const now = new Date();
   const lastMessage = character.life_last_updated ? new Date(character.life_last_updated) : null;
@@ -631,7 +646,7 @@ Deno.serve(async (req) => {
     const updated = [];
 
     for (const character of characters) {
-      if (!shouldTriggerAutonomy(character)) continue;
+      // if (!shouldTriggerAutonomy(character)) continue;
 
       // Inject world conditions into character as temporary context
       if (worldConditions) {

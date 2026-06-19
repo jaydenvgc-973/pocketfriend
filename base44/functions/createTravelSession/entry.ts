@@ -473,6 +473,7 @@ Deno.serve(async (req) => {
     );
     const sessionInterruptionAllowed = !isCommitmentDriven;
 
+    console.log(`AUTONOMOUS TRAVEL TRIGGERED for ${char.name} to ${destLoc.name}`);
     const session = await base44.asServiceRole.entities.TravelSession.create({
       character_id:              characterId,
       character_name:            char.name || char.display_name || char.primary_name,
