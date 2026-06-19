@@ -195,8 +195,10 @@ function isLocationOpen(location) {
 
 // ── CURRENT-LOCATION SATISFACTION CHECK ───────────────────────────────────────
 // Returns true if the character's urgent need can be satisfied at their current
-// location without requiring travel. This is the gate that stops destination
-// selection when the activity can already happen where they are.
+// location without requiring travel.
+//
+// IMPORTANT: "can satisfy here" does NOT mean "must stay here."
+// It is a factor in the stay-vs-travel decision, not a hard block.
 //
 // Rules:
 //   hunger → can eat at home, at a food_drink/grocery location, or at work with food
@@ -213,9 +215,9 @@ function canSatisfyAtCurrentLocation(char, vals, currentLoc) {
 
   // HUNGER: satisfied if at home (can cook), food_drink, grocery, or workplace with food
   if (top.key === 'hunger') {
-    if (cat === 'home') return true; // can cook/eat at home
+    if (cat === 'home') return true;
     if (cat === 'food_drink' || cat === 'grocery') return true;
-    if (cat === 'work' && char.resolved_presence_status === 'at_work') return true; // work cafeteria/break room
+    if (cat === 'work' && char.resolved_presence_status === 'at_work') return true;
     return false;
   }
   // ENERGY: rest works at home
@@ -225,7 +227,7 @@ function canSatisfyAtCurrentLocation(char, vals, currentLoc) {
   }
   // SOCIAL: text/call is always an option. Being at any location with people counts.
   if (top.key === 'social') {
-    return true; // social contact can happen anywhere — texting, calling, or talking to people
+    return true;
   }
   // HYGIENE: satisfied at home (shower/bath/groom)
   if (top.key === 'hygiene') {
@@ -239,7 +241,7 @@ function canSatisfyAtCurrentLocation(char, vals, currentLoc) {
   }
   // HEALTH: can rest at home for minor health needs; medical venue for serious
   if (top.key === 'health') {
-    if (cat === 'home' && top.urgency <= 2) return true; // moderate health = rest at home
+    if (cat === 'home' && top.urgency <= 2) return true;
     if (cat === 'medical') return true;
     return false;
   }
@@ -248,8 +250,91 @@ function canSatisfyAtCurrentLocation(char, vals, currentLoc) {
     if (cat === 'home' || cat === 'outdoor') return true;
     return false;
   }
-  // FINANCIAL: no location-based solution inherently
   return false;
+}
+
+// ── STAY-VS-TRAVEL WEIGHTED DECISION ──────────────────────────────────────────
+// When the character CAN satisfy their top need at their current location,
+// this computes a probability of staying. It considers:
+//   1. How many needs are urgent (more urgent needs = more likely to travel)
+//   2. Personality (homebodies stay more, social characters travel more)
+//   3. Combined pressures (hunger + social = dining out more attractive than eating at home)
+//   4. Time of day (evening social hours make travel more likely)
+//
+// Returns a stay probability (0.0 to 1.0). The caller flips a weighted coin.
+function computeStayProbability(char, vals, currentLoc, nowET) {
+  const cat = (currentLoc.category || '').toLowerCase();
+  const hour = nowET.getHours();
+  const isEvening = hour >= 17 && hour < 23;
+  const isLate = hour >= 22 || hour < 5;
+
+  // Count urgent needs (urgency >= 2)
+  const urgentNeeds = Object.entries(vals).filter(([, v]) => urgencyLevel(v) >= 2);
+  const urgentCount = urgentNeeds.length;
+  const urgentKeys = urgentNeeds.map(([k]) => k);
+
+  // Base stay probability: higher when the current location perfectly handles the need
+  let stayProb = 0.55; // default: slightly favor staying
+
+  // ── NEED SATISFACTION QUALITY ────────────────────────────────────────────
+  // At home, most needs are well-handled → higher stay probability
+  if (cat === 'home') {
+    stayProb += 0.20;
+    // But if the character is a homebody, even stronger
+    if (char.trait_night_owl === false && char.trait_risk_taker === false) {
+      stayProb += 0.10;
+    }
+  }
+
+  // ── COMBINED PRESSURES — reduce stay probability when multiple needs compete ──
+  // Single need at home = likely stay. Multiple needs = travel may address more.
+  if (urgentCount >= 2) {
+    stayProb -= 0.12 * (urgentCount - 1); // -12% per extra urgent need
+
+    // Social + hunger together make dining out more attractive
+    if (urgentKeys.includes('social') && urgentKeys.includes('hunger') && cat === 'home') {
+      stayProb -= 0.18;
+    }
+    // Social + fitness together make the gym more attractive
+    if (urgentKeys.includes('social') && (char.trait_competitive || /gym|fitness|workout/.test((char.health_habits || '').toLowerCase()))) {
+      stayProb -= 0.10;
+    }
+    // Hunger + low finances at home = cooking at home is smart → stay more likely
+    if (urgentKeys.includes('hunger') && (vals.financial || 60) < 40 && cat === 'home') {
+      stayProb += 0.12;
+    }
+  }
+
+  // ── PERSONALITY ──────────────────────────────────────────────────────────
+  const se = char.social_energy || 'ambivert';
+  if (se === 'extrovert' || se === 'mostly_extrovert') stayProb -= 0.12;
+  if (se === 'introvert' || se === 'mostly_introvert') stayProb += 0.10;
+  if (char.trait_flirty || char.trait_uninhibited) stayProb -= 0.08;
+  if (char.trait_stubborn) stayProb -= 0.05; // stubborn characters resist "should stay"
+  if (char.trait_conscientious) stayProb += 0.06;
+  if (char.trait_impulsive === undefined && /impulsive|spontaneous/.test((char.personality_summary || '').toLowerCase())) {
+    stayProb -= 0.08;
+  }
+
+  // ── EMOTIONAL STATE ──────────────────────────────────────────────────────
+  const emo = (char.emotional_state || 'calm').toLowerCase();
+  if (['joyful', 'excited', 'bored', 'restless'].includes(emo)) stayProb -= 0.10;
+  if (['sad', 'overwhelmed', 'burnt out', 'grief'].includes(emo)) stayProb += 0.12;
+
+  // ── TIME OF DAY ──────────────────────────────────────────────────────────
+  if (isEvening && urgentKeys.includes('social')) stayProb -= 0.10;
+  if (isLate) stayProb += 0.15; // late night: stay unless strong reason
+
+  // ── QUIRKS ───────────────────────────────────────────────────────────────
+  const quirks = char.quirks || [];
+  for (const q of quirks) {
+    if (!q.active) continue;
+    if (q.quirk_id === 'homebody') stayProb += q.intensity === 'strong' ? 0.15 : 0.08;
+    if (q.quirk_id === 'thrill_seeker') stayProb -= 0.10;
+  }
+
+  // Clamp to valid range
+  return Math.max(0.08, Math.min(0.92, stayProb));
 }
 
 // ── RAW NEED VALUES ────────────────────────────────────────────────────────────
@@ -495,6 +580,43 @@ function scoreLocation(location, char, vals, nowET) {
   // BASE social energy preference (minor, overridden by urgent needs)
   if (se === 'extrovert' && ['social', 'food_drink', 'outdoor'].includes(cat))      score += 1;
   if (['introvert', 'mostly_introvert'].includes(se) && ['home', 'outdoor'].includes(cat)) score += 1;
+
+  // ── COMBINED PRESSURE BONUSES ──────────────────────────────────────────────
+  // When multiple needs are urgent simultaneously, destinations that address
+  // more than one need get a bonus. This is how "hunger + social → dining out"
+  // and "fitness + social → gym" work in the live model.
+  {
+    const urgentCount = [hungerU, energyU, socialU, healthU, mentalU, hygieneU, comfortU]
+      .filter(u => u >= 2).length;
+
+    // Multiple urgent needs active — destinations that solve more than one get a boost
+    if (urgentCount >= 2) {
+      // Hunger + social → dining out is more attractive than eating at home
+      if (hungerU >= 2 && socialU >= 2 && cat === 'food_drink') {
+        score += 4; // dining addresses both hunger AND social
+      }
+      // Hunger + social → outdoor/park picnic is also valid
+      if (hungerU >= 2 && socialU >= 2 && cat === 'outdoor') {
+        score += 2;
+      }
+      // Fitness + social → gym is more attractive than solo workout
+      if (socialU >= 2 && /gym|fitness/.test((char.health_habits || '').toLowerCase()) && cat === 'gym') {
+        score += 3;
+      }
+      // Social + mental → outdoor/religion (calm social)
+      if (socialU >= 2 && mentalU >= 2 && (cat === 'outdoor' || cat === 'religion')) {
+        score += 2;
+      }
+      // Low finances + hunger at home = grocery shopping is practical
+      if (hungerU >= 2 && (vals.financial || 60) < 40 && cat === 'grocery') {
+        score += 3;
+      }
+      // Energy + comfort → home is a double benefit
+      if (energyU >= 2 && comfortU >= 2 && cat === 'home') {
+        score += 2;
+      }
+    }
+  }
 
   // ── SOCIAL WORKPLACE RECOGNITION ──────────────────────────────────────────
   // If the character has recently completed a shift at a people-facing workplace
@@ -1835,14 +1957,21 @@ Deno.serve(async (req) => {
         }
 
         // ── CURRENT-LOCATION SATISFACTION CHECK ──────────────────────────────
-        // Before scoring destinations, check if the urgent need can be met
-        // where the character already IS. No travel if current location works.
+        // Check if the character's top urgent need can be satisfied at their
+        // current location. If so, make a WEIGHTED stay-vs-travel decision.
+        // "Can satisfy here" is a factor, NOT an automatic stay.
+        // Combined pressures (hunger + social, fitness + social) can override.
         const currentLoc = userLocations.find(l => l.id === char.resolved_current_location_id);
-        const canStay = currentLoc ? canSatisfyAtCurrentLocation(char, vals, currentLoc) : false;
-        if (canStay) {
-          console.log(`[autonomousMovement] ${char.name}: can satisfy ${top.key}(${Math.round(top.value)}) at current location (${currentLoc.name}) — no travel needed`);
-          skippedLog.push(`${char.name}: staying — can satisfy ${top.key} at current ${currentLoc.name}`);
-          continue;
+        const canSatisfyHere = currentLoc ? canSatisfyAtCurrentLocation(char, vals, currentLoc) : false;
+        if (canSatisfyHere) {
+          const stayProb = computeStayProbability(char, vals, currentLoc, nowET);
+          const roll = Math.random();
+          if (roll < stayProb) {
+            console.log(`[autonomousMovement] ${char.name}: staying — can satisfy ${top.key}(${Math.round(top.value)}) at ${currentLoc.name} (stayProb=${(stayProb*100).toFixed(0)}%, roll=${(roll*100).toFixed(0)}%)`);
+            skippedLog.push(`${char.name}: staying — can satisfy ${top.key} at current ${currentLoc.name}`);
+            continue;
+          }
+          console.log(`[autonomousMovement] ${char.name}: traveling despite can-satisfy — stayProb=${(stayProb*100).toFixed(0)}%, roll=${(roll*100).toFixed(0)}% — combined pressures or personality override`);
         }
 
         // ── SELECT BEST LOCATION ──────────────────────────────────────────────
