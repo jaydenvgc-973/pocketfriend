@@ -157,7 +157,7 @@ function estimateTravelTime({ originLoc, destLoc, travelMode = 'unknown', charac
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
-    const base44 = createClientFromRequest(req);
+    
   try {
     
     // Allow service-role callers (scheduled automations) — user may be null

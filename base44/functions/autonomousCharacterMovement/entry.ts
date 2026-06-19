@@ -899,7 +899,7 @@ function selectBestLocation(locations, char, vals, nowET) {
 
 // ── MAIN HANDLER ───────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
-    const base44 = createClientFromRequest(req);
+    
   try {
     
 
