@@ -148,7 +148,7 @@ async function triggerSpendingForDestination(base44, char, destLocId, destLocNam
       characterData:             char,
     };
     // Use invoke and wait for the result to log it
-    const result = await base44.functions.invoke('processCharacterFoodAndDrinkSpending', payload);
+    const result = await base44.asServiceRole.functions.invoke('processCharacterFoodAndDrinkSpending', payload);
     console.log(`[triggerSpending] char=${char.name} dest=${destLocName} result: ${JSON.stringify(result.data)}`);
 
   } catch (err) {

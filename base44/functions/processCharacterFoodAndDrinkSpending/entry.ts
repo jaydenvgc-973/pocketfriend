@@ -559,21 +559,18 @@ Deno.serve(async (req) => {
     const nowISO = now.toISOString();
 
     // ── GUARD 1: active_created_character — owner_email + id scoped ───────────
-    // Prefer characterData (passed inline from caller) to bypass RLS-blocked
-    // asServiceRole Character lookups in automated/scheduled contexts where
-    // the caller already holds the character object in memory.
+    // REQUIRED: characterData MUST be passed inline from caller.
+    // asServiceRole Character lookups fail with 403 in automated/scheduled contexts
+    // where the sub-function receives a request without user auth.
+    // The caller (autonomousCharacterMovement) already holds the character object —
+    // pass it via characterData to avoid the auth-dependent Character query entirely.
     let char = characterData || null;
     if (!char) {
-      const charArr = await base44.asServiceRole.entities.Character.filter(
-        { owner_email, id: character_id }, null, 1
-      ).catch(() => []);
-      char = charArr[0];
+      log.push('no_characterData_provided — cannot query Character without auth context');
+      return Response.json({ skipped: true, reason: 'characterData_required_not_provided', character_id, owner_email, log });
     }
 
-    if (!char) {
-      return Response.json({ skipped: true, reason: 'character_not_found', character_id, owner_email, log });
-    }
-    if (char.character_type !== 'active_created_character') {
+    if (!char.character_type || char.character_type !== 'active_created_character') {
       return Response.json({ skipped: true, reason: 'not_active_created_character', character_type: char.character_type, log });
     }
     log.push(`char=${char.name} type=${char.character_type}`);
