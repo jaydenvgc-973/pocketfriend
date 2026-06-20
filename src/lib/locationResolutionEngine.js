@@ -833,7 +833,9 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   if (energyCritical && presenceStatus !== 'at_work') {
     return { status: 'energy_critical', label: 'Exhausted', sublabel: locName, isTransit: false, isSleeping: false };
   }
-  if (hungerCritical) {
+  // Hunger critical is a derived state — it must NOT override a confirmed presence like home/visiting/work/school.
+  // Only show "Looking for food" if no other authoritative presence exists.
+  if (hungerCritical && !locName && presenceStatus !== 'home' && presenceStatus !== 'at_work' && presenceStatus !== 'at_school') {
     return { status: 'hunger_critical', label: 'Looking for food', sublabel: locName, isTransit: false, isSleeping: false };
   }
 
