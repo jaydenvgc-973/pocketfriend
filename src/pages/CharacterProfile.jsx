@@ -681,12 +681,6 @@ export default function CharacterProfile() {
             <p className="text-[10px] font-bold uppercase tracking-widest text-primary">How They Are Doing / What Shaped Them</p>
           </div>
 
-          {character.is_world_service && (
-            <CollapsibleProfileSection icon={Wrench} title="Hybrid Needs Lock">
-              <HybridNeedsLockPanel character={character} />
-            </CollapsibleProfileSection>
-          )}
-          
           <CollapsibleProfileSection icon={Activity} title="Dashboard">
             <CharacterDashboard character={character} allCharacters={allCharacters} />
           </CollapsibleProfileSection>
@@ -694,6 +688,7 @@ export default function CharacterProfile() {
           <CollapsibleProfileSection icon={BarChart3} title="Life Needs">
             <CharacterNeedsPanel character={character} onRefresh={() => refetch()} />
             <ManualNeedsEditor character={character} />
+            <HybridNeedsLockPanel character={character} />
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection icon={BookOpen} title="Life Journal">
