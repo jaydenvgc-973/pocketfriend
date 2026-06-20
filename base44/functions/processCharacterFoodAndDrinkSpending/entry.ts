@@ -875,35 +875,83 @@ Deno.serve(async (req) => {
         return Response.json({ skipped: true, reason: 'household_resource_validation_failed', validation_errors: validationErrors, log });
       }
 
+      let hrOperation = null;
       if (hr) {
         const newFoodValue = Math.round(((hr.home_food_value || 0) + haulServings) * 100) / 100;
-        let updateOk = true;
-        await base44.asServiceRole.entities.HouseholdResource.update(hr.id, {
-          home_food_value: newFoodValue,
-          ...groceryMeta,
-        }).catch(e => {
-          updateOk = false;
+        let updatedHR = null;
+        try {
+          updatedHR = await base44.asServiceRole.entities.HouseholdResource.update(hr.id, {
+            home_food_value: newFoodValue,
+            ...groceryMeta,
+          });
+        } catch (e) {
           log.push(`hr_update_FAILED: ${e.message} — record_id=${hr.id} owner=${owner_email} home=${home_location_id}`);
-        });
-        if (updateOk) {
-          log.push(`HouseholdResource UPDATED — inventory=${inventoryLevel}→replenished haul=${haul.size} servings=+${haulServings} cost=$${haul.cost} total=${newFoodValue} servings`);
+        }
+        if (updatedHR && updatedHR.id) {
+          hrOperation = { action: 'updated', hrId: updatedHR.id };
+          log.push(`HR_UPDATED id=${updatedHR.id} — inventory=${inventoryLevel}→replenished haul=${haul.size} servings=+${haulServings} cost=$${haul.cost} total=${newFoodValue} servings`);
+        } else {
+          log.push('HR_UPDATE_NO_RETURN — update did not return record, persistence not proven');
         }
       } else {
-        let createOk = true;
-        await base44.asServiceRole.entities.HouseholdResource.create({
-          owner_email,
-          home_location_id,
-          resource_type:   'food',
-          home_food_value: haulServings,
-          ...groceryMeta,
-        }).catch(e => {
-          createOk = false;
+        let createdHR = null;
+        try {
+          createdHR = await base44.asServiceRole.entities.HouseholdResource.create({
+            owner_email,
+            home_location_id,
+            resource_type:   'food',
+            home_food_value: haulServings,
+            ...groceryMeta,
+          });
+        } catch (e) {
           log.push(`hr_create_FAILED: ${e.message} — owner=${owner_email} home=${home_location_id} resource_type=food`);
-        });
-        if (createOk) {
-          log.push(`HouseholdResource CREATED — haul=${haul.size} servings=${haulServings} cost=$${haul.cost}`);
+        }
+        if (createdHR && createdHR.id) {
+          hrOperation = { action: 'created', hrId: createdHR.id };
+          log.push(`HR_CREATED id=${createdHR.id} — haul=${haul.size} servings=${haulServings} cost=$${haul.cost}`);
+        } else {
+          log.push('HR_CREATE_NO_RETURN — create did not return record, persistence not proven');
         }
       }
+
+      // ── VERIFY: read back the HR record to prove persistence ──────────
+      let readBack = null;
+      if (hrOperation && hrOperation.hrId) {
+        try {
+          const verifyArr = await base44.asServiceRole.entities.HouseholdResource.filter(
+            { id: hrOperation.hrId }, null, 1
+          );
+          readBack = verifyArr[0] || null;
+        } catch (e) {
+          log.push(`hr_readback_FAILED: ${e.message} — cannot verify persistence of ${hrOperation.action}d record`);
+          hrOperation.readProof = 'READ_FAILED';
+          hrOperation.readError = e.message;
+        }
+        if (readBack) {
+          hrOperation.readProof = 'READ_OK';
+          hrOperation.readOwner = readBack.owner_email;
+          hrOperation.readHome = readBack.home_location_id;
+          hrOperation.readFoodValue = readBack.home_food_value;
+          log.push(`HR_READBACK_OK id=${hrOperation.hrId} owner=${readBack.owner_email} home=${readBack.home_location_id} food=${readBack.home_food_value}`);
+        } else if (!hrOperation.readProof) {
+          hrOperation.readProof = 'READ_EMPTY';
+          log.push('HR_READBACK_EMPTY — record was created/updated but read returned nothing');
+        }
+      }
+
+      return Response.json({
+        success:        true,
+        character_name: char.name,
+        spend_category: spendCategory,
+        amount:         effectiveAmount,
+        is_zero_amount: isZeroAmountTransaction,
+        multiplier,
+        modifier_logs:  modifierLogs,
+        new_balance:    newBalance,
+        transaction_id: tx.id,
+        hr_operation:   hrOperation,
+        log,
+      });
     }
 
     console.log(
