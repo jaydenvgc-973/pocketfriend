@@ -362,7 +362,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 17; // added liveSnapshot validation
+const DASHBOARD_CACHE_VERSION = 18; // added liveSnapshot validation
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -1456,7 +1456,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
               {[
                 { label: "Emotion",     value: emotionState, colored: true },
                 { label: "Energy",      value: character.energy_value    !== undefined ? `${character.energy_value}%`    : "—" },
-                { label: "Mental Well-being",      value: character.mental_value    !== undefined ? `${character.mental_value}%` : "—" },
+                { label: "Mental Well-being", value: character.mental_value !== undefined ? `${character.mental_value}%` : "—" },
                 { label: "Social Need", value: character.social_value    !== undefined ? `${character.social_value}%`    : "—" },
                 { label: "Hunger",      value: character.hunger_value    !== undefined ? `${character.hunger_value}%`    : "—" },
                 // Canonical live location — same source as CharacterCard (requires locationMap from LocationReference entity)
