@@ -1802,13 +1802,41 @@ Deno.serve(async (req) => {
               }
             }
             
-            // Check school (weekdays 8AM–3PM heuristic)
+            // Check school — use authoritative education_location operating_hours
+            // Same source as Tier 3.5 school dispatch. No heuristic fallback.
             if (preShiftMinutes === null && char.student_status === 'enrolled' &&
-                char.education_location_id && [1,2,3,4,5].includes(dowNow4)) {
-              const schoolStartMin = 8 * 60;
-              if (schoolStartMin > nowMin4) {
-                const minsToSchool = schoolStartMin - nowMin4;
-                if (minsToSchool <= 8 * 60) preShiftMinutes = minsToSchool;
+                char.education_location_id) {
+              const edLoc = userLocations.find(l => l.id === char.education_location_id);
+              if (edLoc) {
+                // Primary: operating_hours for today
+                const dowNow4 = nowET.getDay();
+                const todayHours = (edLoc.operating_hours || []).filter(h => h.day_of_week === dowNow4);
+                if (todayHours.length > 0) {
+                  for (const h of todayHours) {
+                    const schStartMin = toMin(h.open_time);
+                    if (schStartMin !== null && schStartMin > nowMin4) {
+                      const minsToSchool = schStartMin - nowMin4;
+                      if (minsToSchool <= 8 * 60) {
+                        preShiftMinutes = minsToSchool;
+                        break;
+                      }
+                    }
+                  }
+                }
+                // Fallback: education_details on character
+                if (preShiftMinutes === null) {
+                  const edDetails = char.education_details || {};
+                  const edStart = edDetails.start_time || edDetails.school_start_time || null;
+                  if (edStart) {
+                    const schStartMin = toMin(edStart);
+                    if (schStartMin !== null && schStartMin > nowMin4) {
+                      const minsToSchool = schStartMin - nowMin4;
+                      if (minsToSchool <= 8 * 60) {
+                        preShiftMinutes = minsToSchool;
+                      }
+                    }
+                  }
+                }
               }
             }
             
