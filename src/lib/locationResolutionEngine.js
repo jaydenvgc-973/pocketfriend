@@ -804,9 +804,15 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   const characterIsSleepingLive = isCharacterAsleepFromUtils(character, locationMap);
 
   // DB says sleeping/napping/resting — use it directly as the authoritative display state
+  // ONLY for non-active_created characters. For active_created_character, DB sleep status
+  // without window validation is stale and must not override actual presence.
   if (dbSleepStatus) {
-    const label = presenceStatus === 'napping' ? 'Napping' : presenceStatus === 'resting' ? 'Resting' : 'Sleeping';
-    return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
+    const isPlayerChar = character.character_type === 'active_created_character';
+    if (!isPlayerChar) {
+      const label = presenceStatus === 'napping' ? 'Napping' : presenceStatus === 'resting' ? 'Resting' : 'Sleeping';
+      return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
+    }
+    // active_created_character: fall through — let window validator decide below
   }
 
   // Window validator confirms sleep (even if DB doesn't explicitly say it)
