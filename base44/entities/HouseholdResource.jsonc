@@ -3,13 +3,31 @@
   "type": "object",
   "rls": {
     "create": {
-      "data.owner_email": "{{user.email}}"
+      "$or": [
+        {
+          "data.owner_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
     },
     "read": {
       "data.owner_email": "{{user.email}}"
     },
     "update": {
-      "data.owner_email": "{{user.email}}"
+      "$or": [
+        {
+          "data.owner_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
     },
     "delete": {
       "data.owner_email": "{{user.email}}"
@@ -18,7 +36,7 @@
   "properties": {
     "owner_email": {
       "type": "string",
-      "description": "Email of the user who owns this household resource. Primary ownership field. Required for all queries."
+      "description": "Email of the user who owns this household resource."
     },
     "home_location_id": {
       "type": "string",
@@ -34,37 +52,30 @@
     "home_food_value": {
       "type": "number",
       "default": 0,
-      "description": "Numeric dollar-equivalent value of food currently available at this household. Consumed before any external purchase is charged. Never goes negative."
+      "description": "Dollar-equivalent value of food available. Never goes negative."
     },
     "last_grocery_purchase_at": {
       "type": "string",
-      "format": "date-time",
-      "description": "Timestamp of the last grocery purchase made for this household."
+      "format": "date-time"
     },
     "last_grocery_purchase_character_id": {
-      "type": "string",
-      "description": "ID of the character who last purchased groceries for this household."
+      "type": "string"
     },
     "last_grocery_purchase_character_name": {
-      "type": "string",
-      "description": "Display name of the character who last purchased groceries for this household."
+      "type": "string"
     },
     "last_grocery_purchase_transaction_id": {
-      "type": "string",
-      "description": "ID of the FinancialTransaction record for the last grocery purchase. Used for deduplication and audit."
+      "type": "string"
     },
     "grocery_source_location_id": {
-      "type": "string",
-      "description": "ID of the LocationReference where the last groceries were purchased."
+      "type": "string"
     },
     "grocery_source_location_name": {
-      "type": "string",
-      "description": "Display name of the location where the last groceries were purchased."
+      "type": "string"
     },
     "last_consumed_at": {
       "type": "string",
-      "format": "date-time",
-      "description": "Timestamp when home food inventory was last consumed from this household."
+      "format": "date-time"
     }
   },
   "required": [
