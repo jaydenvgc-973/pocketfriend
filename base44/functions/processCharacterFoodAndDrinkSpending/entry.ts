@@ -24,6 +24,97 @@
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ── HOUSEHOLD & GROCERY HELPERS ──────────────────────────────────────────────
+
+/**
+ * getHouseholdSize — count residents at a home location.
+ * Uses LocationReference.residents array when available, defaults to 1.
+ */
+function getHouseholdSize(location) {
+  if (!location) return 1;
+  const residents = location.residents || [];
+  const count = residents.length;
+  return count > 0 ? count : 1;
+}
+
+/**
+ * getMonthlyGroceryBudget — US average grocery spending by household size.
+ * 1=$350, 2=$650, 3=$850, 4=$1050, 5+=$1050+$200/additional
+ */
+function getMonthlyGroceryBudget(residentCount) {
+  if (residentCount <= 1) return 350;
+  if (residentCount === 2) return 650;
+  if (residentCount === 3) return 850;
+  if (residentCount === 4) return 1050;
+  return 1050 + (residentCount - 4) * 200;
+}
+
+/**
+ * getDailyHouseholdConsumption — residents × 3 meal-servings per day.
+ */
+function getDailyHouseholdConsumption(residentCount) {
+  return residentCount * 3;
+}
+
+/**
+ * getInventoryDaysRemaining — how many days of food remain.
+ */
+function getInventoryDaysRemaining(homeFoodValue, residentCount) {
+  const daily = getDailyHouseholdConsumption(residentCount);
+  if (daily <= 0) return 0;
+  return homeFoodValue / daily;
+}
+
+/**
+ * classifyInventoryLevel — Full / Healthy / Low / Critical / Empty.
+ * Thresholds are days-remaining, household-adjusted.
+ */
+function classifyInventoryLevel(homeFoodValue, residentCount) {
+  if (homeFoodValue <= 0) return 'empty';
+  const days = getInventoryDaysRemaining(homeFoodValue, residentCount);
+  if (days < 3) return 'critical';
+  if (days < 7) return 'low';
+  if (days < 14) return 'healthy';
+  return 'full';
+}
+
+/**
+ * chooseGroceryHaul — pick haul size based on inventory status and balance.
+ * Returns { size, cost, servings } or null if unaffordable.
+ */
+function chooseGroceryHaul(inventoryLevel, monthlyBudget, balance) {
+  // Prefer large when empty/critical, medium when low.
+  let preferredSize;
+  if (inventoryLevel === 'empty' || inventoryLevel === 'critical') {
+    preferredSize = 'large';
+  } else if (inventoryLevel === 'low') {
+    preferredSize = 'medium';
+  } else {
+    return null; // healthy/full — no grocery trip needed
+  }
+
+  const HAUL_PCT = { small: 0.15, medium: 0.30, large: 0.50 };
+  const sizes = preferredSize === 'large' ? ['large', 'medium', 'small']
+    : preferredSize === 'medium' ? ['medium', 'small'] : ['small'];
+
+  for (const size of sizes) {
+    const cost = Math.round(monthlyBudget * HAUL_PCT[size] * 100) / 100;
+    if (balance >= cost) {
+      return { size, cost };
+    }
+  }
+  return null; // cannot afford even small haul
+}
+
+/**
+ * getHaulServings — convert haul size to meal-servings.
+ * Small=12×residents, Medium=25×residents, Large=52×residents
+ */
+function getHaulServings(residentCount, haulSize) {
+  const MULTIPLIER = { small: 12, medium: 25, large: 52 };
+  return Math.round(residentCount * (MULTIPLIER[haulSize] || 12));
+}
+
 // ── LOCATION CLASSIFICATION ───────────────────────────────────────────────────
 
 const CLUB_NIGHTLIFE_KEYWORDS = [
@@ -702,7 +793,46 @@ Deno.serve(async (req) => {
       ).catch(() => []);
       const hr = hrArr2[0];
 
-      const addedFoodValue = Math.round(amount * 2 * 100) / 100; // $1 spent ≈ $2 food value
+      // Resolve household size from home location
+      const homeLocArr = await base44.asServiceRole.entities.LocationReference.filter(
+        { owner_email, id: home_location_id }, null, 1
+      ).catch(() => []);
+      const homeLoc = homeLocArr[0];
+      const residentCount = getHouseholdSize(homeLoc);
+      const monthlyBudget = getMonthlyGroceryBudget(residentCount);
+
+      // Determine haul size based on inventory level and balance
+      const currentFood = hr ? (hr.home_food_value || 0) : 0;
+      const inventoryLevel = classifyInventoryLevel(currentFood, residentCount);
+      const haul = chooseGroceryHaul(inventoryLevel, monthlyBudget, balance);
+
+      if (!haul) {
+        log.push(`grocery_haul_skipped — inventory=${inventoryLevel} food=${currentFood} servings, balance=$${balance}`);
+        // Still create transaction for the amount charged, but no inventory update
+        console.log(
+          `[processCharacterFoodAndDrinkSpending] ✓` +
+          ` char=${char.name} owner=${owner_email}` +
+          ` category=${spendCategory} amount=$${effectiveAmount}` +
+          ` grocery inventory=${inventoryLevel} (${currentFood} servings) — no haul added`
+        );
+        return Response.json({
+          success: true,
+          character_name: char.name,
+          spend_category: spendCategory,
+          amount: effectiveAmount,
+          is_zero_amount: isZeroAmountTransaction,
+          grocery_haul: null,
+          inventory_level: inventoryLevel,
+          food_servings: currentFood,
+          multiplier,
+          modifier_logs: modifierLogs,
+          new_balance: newBalance,
+          transaction_id: tx.id,
+          log,
+        });
+      }
+
+      const haulServings = getHaulServings(residentCount, haul.size);
       const groceryMeta = {
         last_grocery_purchase_at:             nowISO,
         last_grocery_purchase_character_id:   character_id,
@@ -713,21 +843,21 @@ Deno.serve(async (req) => {
       };
 
       if (hr) {
-        const newFoodValue = Math.round(((hr.home_food_value || 0) + addedFoodValue) * 100) / 100;
+        const newFoodValue = Math.round(((hr.home_food_value || 0) + haulServings) * 100) / 100;
         await base44.asServiceRole.entities.HouseholdResource.update(hr.id, {
           home_food_value: newFoodValue,
           ...groceryMeta,
         }).catch(e => log.push(`hr_update_err: ${e.message}`));
-        log.push(`HouseholdResource updated food_value=$${newFoodValue}`);
+        log.push(`HouseholdResource updated — inventory=${inventoryLevel}→replenished haul=${haul.size} servings=+${haulServings} cost=$${haul.cost} total=${newFoodValue} servings`);
       } else {
         await base44.asServiceRole.entities.HouseholdResource.create({
           owner_email,
           home_location_id,
           resource_type:   'food',
-          home_food_value: addedFoodValue,
+          home_food_value: haulServings,
           ...groceryMeta,
         }).catch(e => log.push(`hr_create_err: ${e.message}`));
-        log.push(`HouseholdResource created food_value=$${addedFoodValue}`);
+        log.push(`HouseholdResource created — haul=${haul.size} servings=${haulServings} cost=$${haul.cost}`);
       }
     }
 

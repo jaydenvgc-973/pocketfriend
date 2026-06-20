@@ -1531,6 +1531,50 @@ Deno.serve(async (req) => {
         // ── RESOLVE CONTEXT ───────────────────────────────────────────────
         const context = getLocationContext(char, locationMap, now);
 
+        // ── HOME FOOD CONSUMPTION ─────────────────────────────────────────
+        // When character is at home and hungry, consume food from HouseholdResource
+        // before applying rates. Snack=0.5 serving(+16.5 hunger), Meal=1 serving(+33 hunger).
+        // Does NOT create a financial charge — food was already purchased.
+        if (!hungerLocked && (context === 'home_resting' || context === 'home_active') &&
+            (needs.hunger ?? 70) < 50 && char.current_home_location_id) {
+          try {
+            const hrArr = await base44.entities.HouseholdResource.filter(
+              { owner_email: ownerEmail, home_location_id: char.current_home_location_id, resource_type: 'food' }, null, 1
+            ).catch(() => []);
+            const hr = hrArr[0];
+            const foodAvailable = hr ? (hr.home_food_value || 0) : 0;
+
+            if (foodAvailable > 0) {
+              // Determine meal vs snack based on hunger severity
+              const isMeal = (needs.hunger ?? 70) < 30;
+              const consumed = isMeal ? 1 : 0.5;
+              const hungerRestore = isMeal ? 33 : 16.5;
+              const actualConsumed = Math.min(consumed, foodAvailable);
+              const newFood = Math.max(0, Math.round((foodAvailable - actualConsumed) * 100) / 100);
+
+              // Update HouseholdResource
+              await base44.entities.HouseholdResource.update(hr.id, {
+                home_food_value: newFood,
+                last_consumed_at: nowIso,
+              }).catch(() => {});
+
+              // Apply hunger restoration directly
+              needs.hunger = clamp((needs.hunger ?? 70) + (actualConsumed / consumed) * hungerRestore);
+
+              results.push({
+                character: charName,
+                event: isMeal ? 'home_meal_consumed' : 'home_snack_consumed',
+                food_consumed: actualConsumed,
+                food_remaining: newFood,
+                hunger_before: char.hunger_value ?? 70,
+                hunger_after: Math.round(needs.hunger),
+              });
+            }
+          } catch (e) {
+            // Non-fatal — fall through to normal rate application
+          }
+        }
+
         // ── RC2: PASS-OUT DETECTION (energy ≤ ENERGY_PASSOUT) ────────────
         // Character collapses from exhaustion. Written BEFORE the normal
         // rate application so the NEXT tick uses passed_out rates (+8/hr).

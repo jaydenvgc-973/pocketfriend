@@ -599,7 +599,7 @@ function scoreLocation(location, char, vals, nowET) {
   const hygieneU = urgencyLevel(vals.hygiene);
   const comfortU = urgencyLevel(vals.comfort);
 
-  // ── REPAIRED: HUNGER — introverts prefer home cooking ──────────────────
+  // ── HUNGER — drives eating, NOT grocery shopping ────────────────────────
   const isIntro = ['introvert', 'mostly_introvert'].includes(se);
   if (hungerU >= 2) {
     if (cat === 'food_drink') {
@@ -610,8 +610,68 @@ function scoreLocation(location, char, vals, nowET) {
         score += 3 + hungerU * 2;
       }
     }
-    if (cat === 'grocery')    score += 2 + hungerU;
+    // Grocery is NO LONGER hunger-driven — inventory-driven below
     if (cat === 'home')       score += isIntro ? (3 + hungerU * 1.5) : (1 + Math.floor(hungerU * 0.5));
+  }
+
+  // ── INVENTORY-DRIVEN GROCERY — uses preloaded HouseholdResource data ────
+  if (cat === 'grocery') {
+    const inventoryData = char._householdInventory;
+    if (inventoryData) {
+      const level = inventoryData.inventoryLevel;
+      const foodVal = inventoryData.homeFoodValue || 0;
+      if (level === 'empty') {
+        score += 4 + hungerU; // urgent — no food at home, must shop
+      } else if (level === 'critical') {
+        score += 3 + hungerU;
+      } else if (level === 'low') {
+        score += 2;
+      } else {
+        // healthy or full — grocery is not needed
+        score -= 5;
+      }
+    } else {
+      // No inventory data — default: neutral (don't assume either way)
+      score += 0;
+    }
+  }
+
+  // ── AFFORDABILITY-AWARE SCORING ─────────────────────────────────────────
+  // Penalize spending destinations when character has low funds AND food at home
+  {
+    const balance = char._financialBalance;
+    const inventoryData = char._householdInventory;
+    const hasHomeFood = inventoryData && inventoryData.homeFoodValue > 0;
+    const isSpendingCat = cat === 'food_drink' || cat === 'grocery' ||
+      (cat === 'social' && (location.name || '').toLowerCase().includes('bar'));
+
+    if (isSpendingCat && balance !== undefined && balance !== null) {
+      // Expected cost estimate
+      let expectedCost = 50; // default
+      if (cat === 'food_drink') expectedCost = 35;
+      if (cat === 'grocery') expectedCost = 80;
+      const isNightlife = (location.name || '').toLowerCase().includes('club') ||
+        (location.name || '').toLowerCase().includes('nightclub');
+
+      // If balance can't cover expected cost → heavily penalize
+      if (balance < expectedCost * 0.5) {
+        score -= 8;
+        // If home food exists, strongly redirect home
+        if (hasHomeFood) {
+          score -= 4;
+        }
+      } else if (balance < expectedCost) {
+        score -= 4;
+        if (hasHomeFood) {
+          score -= 3;
+        }
+      }
+
+      // Low funds + home food → home heavily preferred for hunger
+      if (hasHomeFood && balance < 50 && hungerU >= 2) {
+        if (cat !== 'home') score -= 3;
+      }
+    }
   }
 
   // ENERGY → rest at home
@@ -1928,6 +1988,49 @@ Deno.serve(async (req) => {
           }
         }
         // END TIER 6.5
+
+        // ── PRELOAD HOUSEHOLD INVENTORY + FINANCIAL DATA FOR SCORING ─────────
+        // These are used by scoreLocation() for inventory-driven grocery and
+        // affordability-aware destination scoring.
+        {
+          const homeId = char.current_home_location_id;
+          if (homeId) {
+            try {
+              const hrArr = await base44.asServiceRole.entities.HouseholdResource.filter(
+                { owner_email: char.owner_email, home_location_id: homeId, resource_type: 'food' }, null, 1
+              ).catch(() => []);
+              const hr = hrArr[0];
+              const homeFoodValue = hr ? (hr.home_food_value || 0) : 0;
+
+              // Resolve resident count from home location
+              const homeLoc = userLocations.find(l => l.id === homeId);
+              const residentCount = homeLoc ? ((homeLoc.residents || []).length || 1) : 1;
+              const inventoryLevel = (() => {
+                if (homeFoodValue <= 0) return 'empty';
+                const dailyConsumption = residentCount * 3;
+                const days = homeFoodValue / dailyConsumption;
+                if (days < 3) return 'critical';
+                if (days < 7) return 'low';
+                if (days < 14) return 'healthy';
+                return 'full';
+              })();
+
+              char._householdInventory = {
+                homeFoodValue,
+                residentCount,
+                inventoryLevel,
+                dailyConsumption: residentCount * 3,
+              };
+            } catch { char._householdInventory = null; }
+          }
+
+          try {
+            const finArr = await base44.asServiceRole.entities.CharacterFinancial.filter(
+              { character_id: char.id }, null, 1
+            ).catch(() => []);
+            char._financialBalance = finArr[0] ? (finArr[0].current_balance || 0) : null;
+          } catch { char._financialBalance = null; }
+        }
 
         // ── READ FULL NEEDS + DECIDE IF MOVEMENT IS REQUIRED ─────────────────
         const top = highestUrgencyEntry(vals);
