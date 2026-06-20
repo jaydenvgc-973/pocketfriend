@@ -130,6 +130,29 @@ function validateStayLock(char, nowET) {
 // Used by multiple helpers throughout this file (orphaned travel guard, work schedule check, etc.)
 function toMin(t) { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); }
 
+// ── FINANCIAL CONSEQUENCE TRIGGER ───────────────────────────────────────────────
+async function triggerSpendingForDestination(base44, char, destLocId, destLocName, destCategory, sourceReason, needType) {
+  try {
+    const payload = {
+      character_id:              char.id,
+      owner_email:               char.owner_email,
+      destination_location_id:   destLocId,
+      destination_location_name: destLocName,
+      destination_category:      destCategory || '',
+      home_location_id:          char.current_home_location_id || '',
+      arrival_reason:            sourceReason || '',
+      source_of_move:            'system',
+      resolved_source_reason:    sourceReason || '',
+      travel_reason:             sourceReason || '',
+      need_type:                 needType || '',
+      characterData:             char,
+    };
+    await base44.functions.invoke('processCharacterFoodAndDrinkSpending', payload);
+  } catch (_) {
+    // fire-and-forget — never block movement on spending failure
+  }
+}
+
 // Check if location is currently open based on operating hours
 function toMinutes(timeStr) {
   if (!timeStr) return null;
@@ -2329,6 +2352,8 @@ Deno.serve(async (req) => {
           resolvedSourceReason: `autonomous_needs: ${top.key}(${Math.round(top.value)})`,
           nowET,
         });
+        // ── FINANCIAL CONSEQUENCE: fire-and-forget spending trigger ──
+        triggerSpendingForDestination(base44, char, finalLocation.id, finalLocation.name, finalLocation.category, `autonomous_needs: ${top.key}(${Math.round(top.value)})`, top.key);
         totalMoved++;
         const urgentList = Object.entries(vals)
           .filter(([, v]) => urgencyLevel(v) >= 2)
