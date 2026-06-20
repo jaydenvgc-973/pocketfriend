@@ -1755,7 +1755,84 @@ Deno.serve(async (req) => {
             }
           }
         }
-        // END TIER 3.5
+        // ── PRE-SHIFT RETURN-HOME: route home when work/school within 8 hours ──
+        // A character with a shift starting within 8 hours should return home
+        // so they can rest, prepare, and avoid being far from the work location.
+        // This fires BEFORE Tier 4 critical energy to ensure schedule-aware routing.
+        {
+          const todayET4 = nowET.toISOString().slice(0, 10);
+          const dowNow4 = nowET.getDay();
+          const nowMin4 = nowET.getHours() * 60 + nowET.getMinutes();
+          const homeId4 = char.current_home_location_id;
+          const atHome4 = homeId4 && char.resolved_current_location_id === homeId4;
+          const alreadyAtWork4 = char.resolved_presence_status === 'at_work';
+          const alreadySleeping4 = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+          
+          if (!atHome4 && !alreadyAtWork4 && !alreadySleeping4 && homeId4 && 
+              !char.is_jailed && !char.house_arrest_active &&
+              char.resolved_presence_status !== 'incarcerated' &&
+              char.resolved_presence_status !== 'confined' &&
+              char.resolved_presence_status !== 'house_arrest') {
+            let preShiftMinutes = null; // minutes until shift start
+            
+            // Check primary work shift
+            if (Array.isArray(char.work_days) && char.work_days.length > 0 &&
+                char.work_start_time && char.occupation_location_id) {
+              const hasCallout4 = char.work_exception_status === 'called_out' && char.work_exception_date === todayET4;
+              if (!hasCallout4) {
+                // Check today's shift
+                if (char.work_days.includes(dowNow4)) {
+                  const shiftStartMin = toMin(char.work_start_time);
+                  if (shiftStartMin !== null && shiftStartMin > nowMin4) {
+                    const minsToShift = shiftStartMin - nowMin4;
+                    if (minsToShift <= 8 * 60) preShiftMinutes = minsToShift;
+                  }
+                }
+                // Check tomorrow's shift (for late-night characters)
+                if (preShiftMinutes === null) {
+                  const tomorrowDow = (dowNow4 + 1) % 7;
+                  if (char.work_days.includes(tomorrowDow)) {
+                    const shiftStartMin = toMin(char.work_start_time);
+                    if (shiftStartMin !== null) {
+                      const minsToTomorrowShift = (24 * 60 - nowMin4) + shiftStartMin;
+                      if (minsToTomorrowShift <= 8 * 60) preShiftMinutes = minsToTomorrowShift;
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Check school (weekdays 8AM–3PM heuristic)
+            if (preShiftMinutes === null && char.student_status === 'enrolled' &&
+                char.education_location_id && [1,2,3,4,5].includes(dowNow4)) {
+              const schoolStartMin = 8 * 60;
+              if (schoolStartMin > nowMin4) {
+                const minsToSchool = schoolStartMin - nowMin4;
+                if (minsToSchool <= 8 * 60) preShiftMinutes = minsToSchool;
+              }
+            }
+            
+            if (preShiftMinutes !== null) {
+              const returnHome = userLocations.find(loc => loc.id === homeId4);
+              if (returnHome && char.resolved_current_location_id !== returnHome.id) {
+                await writeCharacterToDestination(base44, char, returnHome.id, returnHome.name, {
+                  resolvedPresenceStatus: 'home',
+                  resolvedLocationType: 'home',
+                  resolvedSourceReason: `pre_shift_return_home: shift in ${Math.round(preShiftMinutes / 60)}h`,
+                  nowET,
+                });
+                totalMoved++;
+                moveLog.push(`${char.name} → ${returnHome.name} [PRE_SHIFT_RETURN shift in ${Math.round(preShiftMinutes / 60)}h]`);
+                console.log(`[autonomousMovement] ✓ ${char.name}: pre-shift return home — shift in ${Math.round(preShiftMinutes / 60)}h`);
+                if (totalMoved >= MAX_MOVES_PER_RUN) {
+                  return Response.json({ success: true, users_processed: Object.keys(byUser).length, characters_moved: totalMoved, moves: moveLog, blocked_with_reason: blockedLog, skipped: skippedLog.length, capped: true, timestamp: new Date().toISOString() });
+                }
+                continue;
+              }
+            }
+          }
+        }
+        // END PRE-SHIFT RETURN-HOME
 
         // ── TIER 4: CRITICAL ENERGY (< 25) — force home regardless of toggle ─
         // Not at pass-out level but critically low. Must go home NOW.
