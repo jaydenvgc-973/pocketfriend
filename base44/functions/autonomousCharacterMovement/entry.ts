@@ -418,15 +418,16 @@ function computeStayProbability(char, vals, currentLoc, nowET, satQuality) {
 
 // ── RAW NEED VALUES ────────────────────────────────────────────────────────────
 function needValues(char) {
+  const needs_locks = char.needs_locks || {};
   return {
-    hunger:   char.hunger_value          ?? 70,
-    energy:   char.energy_value          ?? 75,
-    social:   char.social_value          ?? 65,
-    health:   char.health_value          ?? 80,
-    mental:   char.mental_value          ?? 70,
-    hygiene:  char.hygiene_value         ?? 75,
-    comfort:  char.comfort_value         ?? 70,
-    financial: char.financial_need_value ?? 60,
+    hunger:   needs_locks.hunger ? 100 : (char.hunger_value          ?? 70),
+    energy:   needs_locks.energy ? 100 : (char.energy_value          ?? 75),
+    social:   needs_locks.social ? 100 : (char.social_value          ?? 65),
+    health:   needs_locks.health ? 100 : (char.health_value          ?? 80),
+    mental:   needs_locks.mental ? 100 : (char.mental_value          ?? 70),
+    hygiene:  needs_locks.hygiene ? 100 : (char.hygiene_value         ?? 75),
+    comfort:  needs_locks.comfort ? 100 : (char.comfort_value         ?? 70),
+    financial: needs_locks.financial ? 100 : (char.financial_need_value ?? 60),
   };
 }
 

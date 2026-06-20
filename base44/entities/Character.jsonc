@@ -37,6 +37,45 @@
       "default": false,
       "description": "Vick Servicio only. When true, hunger simulation is frozen. No decay or recovery. Resumes from current value when turned off."
     },
+    "needs_locks": {
+      "type": "object",
+      "properties": {
+        "hunger": {
+          "type": "boolean",
+          "default": false
+        },
+        "energy": {
+          "type": "boolean",
+          "default": false
+        },
+        "hygiene": {
+          "type": "boolean",
+          "default": false
+        },
+        "comfort": {
+          "type": "boolean",
+          "default": false
+        },
+        "social": {
+          "type": "boolean",
+          "default": false
+        },
+        "mental": {
+          "type": "boolean",
+          "default": false
+        },
+        "health": {
+          "type": "boolean",
+          "default": false
+        },
+        "financial": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "description": "Configurable lock for each character need. When a need is locked, it does not decay or recover, and does not trigger autonomous actions."
+    },
     "presence_stay_lock": {
       "type": "boolean",
       "default": false,

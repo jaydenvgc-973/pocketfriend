@@ -1674,13 +1674,19 @@ Deno.serve(async (req) => {
 
         // ── VICK HUNGER/SLEEP LOCK OVERRIDE ──────────────────────────────
         // If Vick locked hunger, restore original value — no decay.
-        if (hungerLocked) {
+        if (hungerLocked || char.needs_locks?.hunger) {
           newNeeds.hunger = needs.hunger ?? 70;
         }
         // If Vick locked sleep, restore original energy — no decay or recovery.
-        if (sleepLocked) {
+        if (sleepLocked || char.needs_locks?.energy) {
           newNeeds.energy = needs.energy ?? 75;
         }
+
+        if(char.needs_locks?.hygiene) newNeeds.hygiene = needs.hygiene ?? 75;
+        if(char.needs_locks?.comfort) newNeeds.comfort = needs.comfort ?? 70;
+        if(char.needs_locks?.social) newNeeds.social = needs.social ?? 65;
+        if(char.needs_locks?.mental) newNeeds.mental = needs.mental ?? 70;
+        if(char.needs_locks?.health) newNeeds.health = needs.health ?? 80;
 
         // SOCIAL FULFILLMENT MODEL: Social measures fulfillment, not current activity.
         // A bartender who worked 8h with customers is socially fulfilled (+3/hr → +24/shift).

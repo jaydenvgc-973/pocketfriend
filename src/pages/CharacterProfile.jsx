@@ -40,6 +40,7 @@ import RelationshipTensionCard from "@/components/character/RelationshipTensionC
 import CharacterEducationSection from "@/components/character/CharacterEducationSection";
 import CharacterReligionSection from "@/components/character/CharacterReligionSection";
 import CharacterDashboard from "@/components/character/CharacterDashboard";
+import HybridNeedsLockPanel from "@/components/character/HybridNeedsLockPanel";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -679,6 +680,12 @@ export default function CharacterProfile() {
           <div className="px-4 py-2 bg-secondary/30">
             <p className="text-[10px] font-bold uppercase tracking-widest text-primary">How They Are Doing / What Shaped Them</p>
           </div>
+
+          {character.is_world_service && (
+            <CollapsibleProfileSection icon={Wrench} title="Hybrid Needs Lock">
+              <HybridNeedsLockPanel character={character} />
+            </CollapsibleProfileSection>
+          )}
           
           <CollapsibleProfileSection icon={Activity} title="Dashboard">
             <CharacterDashboard character={character} allCharacters={allCharacters} />
