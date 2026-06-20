@@ -611,11 +611,17 @@ Deno.serve(async (req) => {
       if (hr && (hr.home_food_value || 0) > 0) {
         const consumed    = Math.min(hr.home_food_value, 15);
         const newFoodVal  = Math.max(0, Math.round(((hr.home_food_value || 0) - consumed) * 100) / 100);
+        let consumeOk = true;
         await base44.asServiceRole.entities.HouseholdResource.update(hr.id, {
           home_food_value:  newFoodVal,
           last_consumed_at: nowISO,
-        }).catch(e => log.push(`hr_consume_err: ${e.message}`));
-        log.push(`home_food_consumed=$${consumed} remaining=$${newFoodVal}`);
+        }).catch(e => {
+          consumeOk = false;
+          log.push(`hr_consume_FAILED: ${e.message} — record_id=${hr.id}`);
+        });
+        if (consumeOk) {
+          log.push(`home_food_consumed=$${consumed} remaining=$${newFoodVal}`);
+        }
         return Response.json({ success: true, outcome: 'home_food_consumed', consumed, remaining_food_value: newFoodVal, log });
       }
 
