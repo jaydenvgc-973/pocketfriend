@@ -508,38 +508,6 @@ const GROCERY_CONTEXT_KEYWORDS = [
   'food run', 'restock', 'shopping', 'supplies',
 ];
 
-function isActivelyWorking(character, location, nowET) {
-  const hour = nowET.getHours();
-  const minute = nowET.getMinutes();
-  const currentMinutes = hour * 60 + minute;
-  const currentDay = nowET.getDay();
-
-  function toMins(str) {
-    if (!str) return null;
-    const [h, m] = str.split(':').map(Number);
-    return h * 60 + (m || 0);
-  }
-
-  function inWindow(cur, start, end) {
-    if (start == null || end == null) return false;
-    if (start <= end) return cur >= start && cur < end;
-    return cur >= start || cur < end; // crosses midnight
-  }
-
-  if (location?.worker_shifts && character?.id) {
-    const shift = location.worker_shifts[character.id];
-    if (shift?.start && shift?.end) {
-      if (shift.days?.length > 0 && !shift.days.includes(currentDay)) return false;
-      return inWindow(currentMinutes, toMins(shift.start), toMins(shift.end));
-    }
-  }
-
-  const { work_start_time, work_end_time, work_days } = character;
-  if (!work_start_time || !work_end_time) return false;
-  if (work_days?.length > 0 && !work_days.includes(currentDay)) return false;
-  return inWindow(currentMinutes, toMins(work_start_time), toMins(work_end_time));
-}
-
 function isChargeableFoodDrinkContext(body, spendCategory) {
   const ctx = buildContextText(body);
 
@@ -671,16 +639,6 @@ Deno.serve(async (req) => {
     // A character meeting someone at a café, working at a bar, or passing through a
     // restaurant for non-food reasons does NOT get charged.
     // This guard does NOT affect movement, travel, route_status, or location history.
-        // ── WORKER VS CUSTOMER GUARD ───────────────────────────────────────────
-    const destLocArr = await base44.asServiceRole.entities.LocationReference.filter({ id: destination_location_id }, null, 1).catch(() => []);
-    const destLoc = destLocArr[0] || null;
-    const isWorking = destLoc ? isActivelyWorking(char, destLoc, now) : false;
-
-    if (isWorking) {
-        log.push(`worker_vs_customer_skipped — character is actively working at this location`);
-        return Response.json({ skipped: true, reason: 'character_is_working_at_location', log });
-    }
-
     if (!isChargeableFoodDrinkContext(body, spendCategory)) {
       log.push(`context_not_food_related — location eligible but arrival context is not food/drink/nightlife. No charge.`);
       return Response.json({ skipped: true, reason: 'location_eligible_but_context_not_food_related', spend_category: spendCategory, log });
