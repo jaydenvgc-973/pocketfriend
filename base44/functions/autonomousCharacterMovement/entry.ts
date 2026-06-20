@@ -2106,12 +2106,14 @@ Deno.serve(async (req) => {
                 { owner_email: char.owner_email, home_location_id: homeId, resource_type: 'food' }, null, 1
               ).catch(() => []);
               const hr = hrArr[0];
-              const homeFoodValue = hr ? (hr.home_food_value || 0) : 0;
+              const hasHR = !!hr;
+              const homeFoodValue = hr ? (hr.home_food_value || 0) : null; // null = no HR record
 
               // Resolve resident count from home location
               const homeLoc = userLocations.find(l => l.id === homeId);
               const residentCount = homeLoc ? ((homeLoc.residents || []).length || 1) : 1;
               const inventoryLevel = (() => {
+                if (homeFoodValue === null) return 'none'; // no household food system — not eligible for grocery
                 if (homeFoodValue <= 0) return 'empty';
                 const dailyConsumption = residentCount * 3;
                 const days = homeFoodValue / dailyConsumption;
@@ -2196,6 +2198,28 @@ Deno.serve(async (req) => {
         // ── FILTER OUT CLOSED LOCATIONS ───────────────────────────────────────
         const openLocations = userLocations.filter(loc => isLocationOpen(loc));
 
+        // ── GROCERY ELIGIBILITY GATE ────────────────────────────────────────
+        // Grocery stores, bodegas, supermarkets, convenience stores, and food
+        // markets are purchase destinations, NOT social/hangout/leisure venues.
+        // They are only eligible when the character has an actual grocery need
+        // (inventory low or empty). Otherwise they are excluded from the
+        // candidate pool entirely — not just penalized.
+        //
+        // This is an eligibility gate, not a scoring preference.
+        // A grocery location that is not eligible CANNOT be selected, regardless
+        // of other scoring inputs.
+        const inventoryData = char._householdInventory;
+        const needsGroceryRun = inventoryData && 
+          inventoryData.inventoryLevel !== 'none' && (
+          inventoryData.inventoryLevel === 'empty' ||
+          inventoryData.inventoryLevel === 'critical' ||
+          inventoryData.inventoryLevel === 'low'
+        );
+        const eligibleLocations = openLocations.filter(loc => {
+          if (loc.category !== 'grocery') return true;
+          return !!needsGroceryRun;
+        });
+
         // ── LOW ENERGY (urgent, < 50) → route home via travel session ────────
         // No teleport — initiate transit to home. processTravelArrivals delivers them.
         if (energyUrgency >= 2 && char.current_home_location_id) {
@@ -2237,7 +2261,7 @@ Deno.serve(async (req) => {
         }
 
         // ── SELECT BEST LOCATION ──────────────────────────────────────────────
-        const bestLocation = selectBestLocation(openLocations, char, vals, nowET);
+        const bestLocation = selectBestLocation(eligibleLocations, char, vals, nowET);
 
         if (!bestLocation) {
           const urgentNeeds = Object.entries(vals)
@@ -2269,7 +2293,7 @@ Deno.serve(async (req) => {
             blockedLog.push(msg);
             console.warn(`[autonomousMovement] CORRECTION_LOCK: ${msg}`);
             // Re-select excluding the locked location
-            const nonLockedOpen = openLocations.filter(loc => loc.id !== char.location_correction_previous_id);
+            const nonLockedOpen = eligibleLocations.filter(loc => loc.id !== char.location_correction_previous_id);
             const lockFallback = selectBestLocation(nonLockedOpen, char, vals, nowET);
             if (!lockFallback) {
               skippedLog.push(`${char.name}: correction lock active, no valid fallback`);
@@ -2285,7 +2309,7 @@ Deno.serve(async (req) => {
         if (finalLocation.category === 'home' && finalLocation.id !== char.current_home_location_id) {
           console.warn(`[autonomousMovement] BLOCKED_INVALID_HOME_WRITE: ${char.name} → ${finalLocation.name} (not their home). Re-selecting.`);
           blockedLog.push(`${char.name}: BLOCKED_INVALID_HOME_WRITE — ${finalLocation.name} is not their authoritative home`);
-          const nonHomeLocations = openLocations.filter(loc => loc.category !== 'home' && loc.category !== 'generic');
+          const nonHomeLocations = eligibleLocations.filter(loc => loc.category !== 'home' && loc.category !== 'generic');
           const homeFallback = selectBestLocation(nonHomeLocations, char, vals, nowET);
           if (!homeFallback) {
             console.log(`[autonomousMovement] ${char.name}: no non-home fallback, skipping`);
