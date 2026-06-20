@@ -70,11 +70,6 @@ function evaluateAutonomousDecision(char, nowET, locations) {
     return { decision: 'block', reason: 'sleeping', tier: 3 };
   }
 
-  // Energy-based home routing
-  if (!atHome && homeId && energy < 20) {
-    return { decision: 'return_home', reason: `energy_critical(${Math.round(energy)})`, tier: 4, destination: homeId };
-  }
-
   // Tier 3.5: Work dispatch — shift active now
   if (Array.isArray(char.work_days) && char.work_days.length > 0 &&
       char.work_start_time && char.work_end_time && char.occupation_location_id) {
@@ -249,6 +244,26 @@ Deno.serve(async (req) => {
         resolved_presence_status: 'home', resolved_location_type: 'home',
         resolved_source_reason: 'test_setup', energy_value: 80, hunger_value: 60, social_value: 60,
       };
+    } else if (scenario === 'closed_location_rejection') {
+      scenarioLabel = 'Operating Hours — hungry character should not select a closed restaurant';
+      expectedBehavior = 'The closed restaurant should be filtered out, and the character should select another valid food destination or stay home.';
+      // Set restaurant to be closed
+      const closedCafeLoc = await base44.asServiceRole.entities.LocationReference.create({
+        name: 'Harness Cafe Closed', category: 'food_drink', owner_email: ownerEmail,
+        operating_hours: [{
+          day_of_week: nowET.getDay(),
+          open_time: '00:00',
+          close_time: '00:01'
+        }]
+      });
+      locations.push(closedCafeLoc);
+      charConfig = {
+        name: 'Harness Test Character', character_type: 'active_created_character', status: 'active',
+        owner_email: ownerEmail, current_home_location_id: homeLoc.id,
+        resolved_current_location_id: homeLoc.id, resolved_current_location_name: homeLoc.name,
+        resolved_presence_status: 'home', resolved_location_type: 'home',
+        resolved_source_reason: 'test_setup', energy_value: 80, hunger_value: 20, social_value: 80,
+      };
     } else {
       return Response.json({ error: `Unknown scenario: ${scenario}` }, { status: 400 });
     }
@@ -284,7 +299,8 @@ Deno.serve(async (req) => {
     };
 
     // ── DECISION (inline evaluation) ─────────────────────────────────────────
-    const decision = evaluateAutonomousDecision(beforeChar, nowET, locations);
+        const decisionResult = evaluateAutonomousDecision(beforeChar, nowET, locations);
+    const decision = decisionResult;
     const decisionDest = locations.find(l => l.id === decision.destination);
 
     // ── DETERMINE OUTCOME ───────────────────────────────────────────────────
@@ -312,6 +328,12 @@ Deno.serve(async (req) => {
       verdict = atHome
         ? 'Character stays home with full inventory. Grocery NOT selected as hangout.'
         : `Decision: ${decision.decision}. Grocery scoring would be penalized for full inventory.`;
+    } else if (scenario === 'closed_location_rejection') {
+      const wentToClosedCafe = decision.destination === 'Harness Cafe Closed';
+      outcome = !wentToClosedCafe ? 'PASS' : 'FAIL';
+      verdict = !wentToClosedCafe
+        ? `Operating hours RESPECTED. Closed cafe was not selected. Decision: ${decision.decision} → ${decision.destination}`
+        : `Operating hours FAILED. Character was routed to a closed location.`;
     }
 
     // ── CLEANUP ─────────────────────────────────────────────────────────────

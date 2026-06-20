@@ -147,9 +147,12 @@ async function triggerSpendingForDestination(base44, char, destLocId, destLocNam
       need_type:                 needType || '',
       characterData:             char,
     };
-    await base44.functions.invoke('processCharacterFoodAndDrinkSpending', payload);
-  } catch (_) {
-    // fire-and-forget — never block movement on spending failure
+    // Use invoke and wait for the result to log it
+    const result = await base44.functions.invoke('processCharacterFoodAndDrinkSpending', payload);
+    console.log(`[triggerSpending] char=${char.name} dest=${destLocName} result: ${JSON.stringify(result.data)}`);
+
+  } catch (err) {
+    console.error(`[triggerSpending] FAILED for ${char.name} at ${destLocName}: ${err.message}`);
   }
 }
 

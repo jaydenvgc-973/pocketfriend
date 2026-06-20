@@ -645,6 +645,17 @@ Deno.serve(async (req) => {
     }
     log.push('context_confirmed_food_drink_related');
 
+    // ── WORKER-VS-CUSTOMER GUARD ───────────────────────────────────────────
+    const workLocIds = [
+      char.occupation_location_id,
+      char.current_work_location_id,
+      ...(char.additional_occupation_locations || []).map(l => l.location_id)
+    ].filter(Boolean);
+
+    if (workLocIds.includes(destination_location_id)) {
+        return Response.json({ skipped: true, reason: 'worker_at_workplace', log });
+    }
+
     // ── DUPLICATE PROTECTION: 15-minute window (owner_email scoped) ──────────
     const windowStart = new Date(now.getTime() - 15 * 60 * 1000).toISOString();
     const recentTxArr = await base44.asServiceRole.entities.FinancialTransaction.filter(
