@@ -533,6 +533,7 @@ export function getCharacterSleepState(character, locationMap) {
 
     // Active travel or commitment
     const isActivelyTraveling = !!(character.travel_status && character.travel_status !== 'not_traveling');
+    const isPlayerCharacter = character.character_type === 'active_created_character';
 
     const isConfinedOrWorking = character.is_jailed ||
       character.house_arrest_active ||
@@ -576,7 +577,7 @@ export function getCharacterSleepState(character, locationMap) {
         // locationMap is passed so VGC Towers residents get 'vgc_resident_schedule' (2:30–8:30 AM)
         // instead of 'npc_forced_default' (0:00–8:00 AM).
         const scheduleAsleep = isScheduledSleeping(character, nowET, locationMap);
-        if (scheduleAsleep) {
+        if (scheduleAsleep && !isPlayerCharacter) {
           const window = computeAdaptiveSleepWindow(character, nowET, locationMap);
           const wakeMin = window?.wakeMin ?? null;
           const wakeHour = wakeMin !== null ? Math.floor(wakeMin / 60) : null;
