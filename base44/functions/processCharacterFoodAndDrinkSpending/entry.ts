@@ -850,22 +850,53 @@ Deno.serve(async (req) => {
         grocery_source_location_name:         destination_location_name,
       };
 
+      // ── FUNCTION-SIDE SAFETY VALIDATION BEFORE HOUSEHOLDRESOURCE WRITE ──
+      const validationErrors = [];
+      if (char.owner_email !== owner_email) {
+        validationErrors.push(`owner_email_mismatch: char=${char.owner_email} vs payload=${owner_email}`);
+      }
+      if (char.current_home_location_id !== home_location_id) {
+        validationErrors.push(`home_mismatch: char_home=${char.current_home_location_id} vs payload_home=${home_location_id}`);
+      }
+      if (!home_location_id) {
+        validationErrors.push('missing_home_location_id');
+      }
+      if (!owner_email) {
+        validationErrors.push('missing_owner_email');
+      }
+      if (validationErrors.length > 0) {
+        log.push(`hr_validation_FAILED: ${validationErrors.join('; ')}`);
+        return Response.json({ skipped: true, reason: 'household_resource_validation_failed', validation_errors: validationErrors, log });
+      }
+
       if (hr) {
         const newFoodValue = Math.round(((hr.home_food_value || 0) + haulServings) * 100) / 100;
+        let updateOk = true;
         await base44.asServiceRole.entities.HouseholdResource.update(hr.id, {
           home_food_value: newFoodValue,
           ...groceryMeta,
-        }).catch(e => log.push(`hr_update_err: ${e.message}`));
-        log.push(`HouseholdResource updated — inventory=${inventoryLevel}→replenished haul=${haul.size} servings=+${haulServings} cost=$${haul.cost} total=${newFoodValue} servings`);
+        }).catch(e => {
+          updateOk = false;
+          log.push(`hr_update_FAILED: ${e.message} — record_id=${hr.id} owner=${owner_email} home=${home_location_id}`);
+        });
+        if (updateOk) {
+          log.push(`HouseholdResource UPDATED — inventory=${inventoryLevel}→replenished haul=${haul.size} servings=+${haulServings} cost=$${haul.cost} total=${newFoodValue} servings`);
+        }
       } else {
+        let createOk = true;
         await base44.asServiceRole.entities.HouseholdResource.create({
           owner_email,
           home_location_id,
           resource_type:   'food',
           home_food_value: haulServings,
           ...groceryMeta,
-        }).catch(e => log.push(`hr_create_err: ${e.message}`));
-        log.push(`HouseholdResource created — haul=${haul.size} servings=${haulServings} cost=$${haul.cost}`);
+        }).catch(e => {
+          createOk = false;
+          log.push(`hr_create_FAILED: ${e.message} — owner=${owner_email} home=${home_location_id} resource_type=food`);
+        });
+        if (createOk) {
+          log.push(`HouseholdResource CREATED — haul=${haul.size} servings=${haulServings} cost=$${haul.cost}`);
+        }
       }
     }
 
