@@ -16,7 +16,6 @@
 import { isLocationOpen } from '@/lib/locationHoursUtils';
 import { resolveHousingLocationForCharacter } from '@/lib/resolveHousingLocationForCharacter';
 import { isCharacterAsleep as isCharacterAsleepFromUtils, isNPCCharacterType } from '@/lib/sleepUtils';
-import { getCharacterSleepState } from '@/lib/characterSleepState';
 import { detectUnsupportedFormat } from '@/lib/imageFormatValidator';
 
 /**
@@ -804,28 +803,10 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   const dbSleepStatus = presenceStatus === 'sleeping' || presenceStatus === 'napping' || presenceStatus === 'resting';
   const characterIsSleepingLive = isCharacterAsleepFromUtils(character, locationMap);
 
-  // ── DB SLEEP STATUS: cross-validate with getCharacterSleepState ─────────
-  // DB says sleeping/napping/resting — but for active_created_character, we must
-  // validate through getCharacterSleepState (which checks sleep window, 8h cap,
-  // work/school blockers, missing timestamps). A stale "sleeping" in the DB must
-  // NOT display as "Sleeping" when the validated sleep state says otherwise.
+  // DB says sleeping/napping/resting — use it directly as the authoritative display state
   if (dbSleepStatus) {
-    const isActiveCreated = character.character_type === 'active_created_character';
-    if (isActiveCreated) {
-      const validatedSleep = getCharacterSleepState(character, locationMap);
-      // If the validated check says NOT sleeping (stale cap, outside window, missing timestamp, etc.),
-      // do NOT display sleeping — fall through to the normal presence display below.
-      if (!validatedSleep.isSleeping && !validatedSleep.isNapping && !validatedSleep.isAsleep) {
-        // DB is stale — do NOT display sleeping. Fall through.
-      } else {
-        const label = presenceStatus === 'napping' ? 'Napping' : presenceStatus === 'resting' ? 'Resting' : 'Sleeping';
-        return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
-      }
-    } else {
-      // NPCs: trust DB directly (existing behavior)
-      const label = presenceStatus === 'napping' ? 'Napping' : presenceStatus === 'resting' ? 'Resting' : 'Sleeping';
-      return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
-    }
+    const label = presenceStatus === 'napping' ? 'Napping' : presenceStatus === 'resting' ? 'Resting' : 'Sleeping';
+    return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
   }
 
   // Window validator confirms sleep (even if DB doesn't explicitly say it)
