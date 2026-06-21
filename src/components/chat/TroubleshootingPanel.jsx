@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Wrench, AlertCircle, CheckCircle2, Clock, Loader2, ChevronRight } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { useQueryClient } from '@tanstack/react-query';
 
 const ISSUE_LIST = [
   { id: 'thread_load', label: 'Thread not loading correctly', description: 'Check if conversation is properly linked to this character — detect cross-character routing' },
@@ -23,6 +24,7 @@ export default function TroubleshootingPanel({ isOpen, onClose, conversationId, 
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   const [selectedIssues, setSelectedIssues] = useState([]);
+  const queryClient = useQueryClient();
 
   const toggleIssue = (issueId) => {
     setSelectedIssues(prev => 
@@ -36,6 +38,29 @@ export default function TroubleshootingPanel({ isOpen, onClose, conversationId, 
     setIsRunning(true);
     setError(null);
     setResults(null);
+
+    if (selectedIssues.includes('fix_everything')) {
+      try {
+        const res = await base44.functions.invoke('fixEverything', {});
+        const data = res?.data;
+        setResults({
+          summary: data?.summary || 'Full system diagnostic complete.',
+          checks: (data?.systems_checked || []).map(s => ({ name: s, status: 'info', message: 'System checked' })),
+          fixes_applied: data?.corrective_actions_taken || [],
+          issues_found: [
+            ...(data?.issues_found || []),
+            ...(data?.corrective_actions_recommended || []).map(r => `RECOMMENDED: ${r}`),
+            ...(data?.unresolved_items || []).map(u => `UNRESOLVED: ${u}`),
+          ],
+        });
+      } catch (err) {
+        setError(err.message || 'Fix Everything failed');
+      } finally {
+        await queryClient.invalidateQueries();
+        setIsRunning(false);
+      }
+      return;
+    }
 
     try {
       // Route "fix_everything" to the master diagnostic function

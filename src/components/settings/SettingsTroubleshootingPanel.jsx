@@ -61,6 +61,12 @@ const MOMENTS_ISSUES = [
     label: 'Moments page not updating',
     description: 'Check freshness of the most recent life events for this account'
   },
+  { 
+    id: 'fix_everything', 
+    label: '🔧 Fix Everything — Full System Deep Diagnostic', 
+    description: 'Master cross-system scan for presence, identity, travel, and data integrity. Applies safe auto-fixes.',
+    isAction: true, // Special case handled in toggle function
+  },
 ];
 
 const SYSTEM_ISSUES = [
@@ -72,7 +78,7 @@ const SYSTEM_ISSUES = [
   {
     id: 'character_type_audit',
     label: 'Character type classification audit',
-    description: 'Verify all characters have valid character_type values: active, npc, family_npc, background, promoted_npc'
+    description: 'Verify all characters have valid character_type values: active_created_character, npc_regular, npc_family_member, npc_fictitious, npc_world_service'
   },
   {
     id: 'world_name_global',
@@ -366,10 +372,35 @@ function TabPanel({ title, icon: Icon, issues, functionName, onClose, user }) {
       setActiveAction(id);
       return;
     }
+    if (id === 'fix_everything') {
+      runFixEverything();
+      return;
+    }
     setSelected(p => p.includes(id) ? p.filter(i => i !== id) : [...p, id]);
   };
 
   const resetAction = () => setActiveAction(null);
+
+  const runFixEverything = async () => {
+    setIsRunning(true);
+    setError(null);
+    setResults(null);
+    try {
+      const res = await base44.functions.invoke('fixEverything', {});
+      const data = res?.data;
+      setResults({
+        summary: data?.summary || 'Full system diagnostic complete.',
+        fixes_applied: data?.corrective_actions_taken || [],
+        issues_found: data?.issues_found || [],
+        checks: (data?.systems_checked || []).map(s => ({ name: s, status: 'info', message: 'System checked' })),
+      });
+    } catch (err) {
+      setError(err.message || 'Fix Everything failed');
+    } finally {
+      await queryClient.invalidateQueries();
+      setIsRunning(false);
+    }
+  };
 
   const run = async () => {
     // Filter out action items — they are handled separately

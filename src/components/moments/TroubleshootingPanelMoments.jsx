@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { useQueryClient } from '@tanstack/react-query';
 
 const ISSUE_LIST = [
   { id: 'event_tracking', label: 'Event tracking not working', description: 'Verify life events are recorded' },
@@ -12,6 +13,7 @@ const ISSUE_LIST = [
   { id: 'retroactive_credit', label: 'Retroactive credit missing', description: 'Re-apply historical achievements' },
   { id: 'tracker_sync', label: 'Tracker and badge mismatch', description: 'Sync challenge progress to badges' },
   { id: 'moments_update', label: 'Moments page not updating', description: 'Force refresh latest events' },
+  { id: 'fix_everything', label: '🔧 Fix Everything — Full System Deep Diagnostic', description: 'Master cross-system scan for presence, identity, travel, and data integrity. Applies safe auto-fixes.' },
 ];
 
 export default function TroubleshootingPanelMoments({ isOpen, onClose }) {
@@ -19,6 +21,7 @@ export default function TroubleshootingPanelMoments({ isOpen, onClose }) {
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   const [selectedIssues, setSelectedIssues] = useState([]);
+  const queryClient = useQueryClient();
 
   const toggleIssue = (issueId) => {
     setSelectedIssues(prev => 
@@ -32,6 +35,25 @@ export default function TroubleshootingPanelMoments({ isOpen, onClose }) {
     setIsRunning(true);
     setError(null);
     setResults(null);
+
+    if (selectedIssues.includes('fix_everything')) {
+      try {
+        const res = await base44.functions.invoke('fixEverything', {});
+        const data = res?.data;
+        setResults({
+          summary: data?.summary || 'Full system diagnostic complete.',
+          fixed: data?.corrective_actions_taken || [],
+          issues_found: data?.issues_found || [],
+          checks: (data?.systems_checked || []).map(s => ({ name: s, status: 'info', message: 'System checked' }))
+        });
+      } catch (err) {
+        setError(err.message || 'Fix Everything failed');
+      } finally {
+        await queryClient.invalidateQueries();
+        setIsRunning(false);
+      }
+      return;
+    }
 
     try {
       const res = await base44.functions.invoke('troubleshootMoments', {
