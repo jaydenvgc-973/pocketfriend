@@ -5,16 +5,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  *
  * Runs at 1:00 AM ET daily.
  * Returns VGC Towers NPC residents home in small batches (max 5 per execution).
- * Defers remaining residents safely — they will be caught by subsequent runs
- * or the next day's return cycle.
  *
- * No mass simultaneous write. Each batch is written sequentially.
- *
- * GUARDS: Work schedule, school hours, hospitalized, and overnight-stay
- * approved residents are protected from forced home return.
- *
- * Ownership: resolved via vgcTowers.owner_email per account.
- * No created_by used anywhere.
+ * Uses user-scoped Character writes (same pattern as distributeVGCTowersNPCs).
  */
 
 const RETURN_BATCH_LIMIT = 5;
@@ -28,11 +20,11 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
 
+    const user = await base44.auth.me();
     const now = new Date();
     const log = [];
 
-    // Step 1: Load all VGC Towers location records via service role
-    // No user session at 1 AM — service role required for all reads
+    // Load all VGC Towers via service role (works)
     const [accountLocations, sharedLocations] = await Promise.all([
       base44.asServiceRole.entities.LocationReference.filter({ scope: 'account_global' }, null, 500),
       base44.asServiceRole.entities.LocationReference.filter({ scope: 'shared' }, null, 200),
@@ -58,16 +50,13 @@ Deno.serve(async (req) => {
       const VGC_ID = vgcTowers.id;
       const ownerEmail = vgcTowers.owner_email;
 
-      // Step 2: Load characters by owner_email (the VGC Towers location owner).
-      // Character.get() returns 404 under user RLS for characters owned by another user.
-      // filter({ owner_email }) is the confirmed working read path for this account's characters.
-      // Cross-reference against LocationReference.residents[] to identify VGC members.
       const residentStubs = vgcTowers.residents || [];
       const residentIdSet = new Set([
         ...residentStubs.map(r => r.character_id).filter(Boolean),
         ...(vgcTowers.resident_character_ids || []),
       ]);
 
+      // Read characters via asServiceRole — read RLS now allows admin access
       const allCharactersRaw = await base44.asServiceRole.entities.Character.filter(
         { owner_email: ownerEmail, status: 'active' }, null, 500
       );
@@ -85,27 +74,24 @@ Deno.serve(async (req) => {
 
       if (vgcResidents.length === 0) continue;
 
-      // Only process residents NOT already home
       const awayResidents = vgcResidents.filter(npc => npc.resolved_current_location_id !== VGC_ID);
       if (awayResidents.length === 0) continue;
 
-      // Separate protected from returnable
       const protected_ = awayResidents.filter(npc => shouldProtectFromHomeReturn(npc));
       const returnable = awayResidents.filter(npc => !shouldProtectFromHomeReturn(npc));
 
       totalProtected += protected_.length;
       protected_.forEach(npc => log.push(`[${ownerEmail}] ${npc.name} → PROTECTED from 1AM return`));
 
-      // Batch: return at most RETURN_BATCH_LIMIT per account per run
       const thisBatch = returnable.slice(0, RETURN_BATCH_LIMIT);
       const deferred = returnable.slice(RETURN_BATCH_LIMIT);
 
       totalDeferred += deferred.length;
       deferred.forEach(npc => log.push(`[${ownerEmail}] ${npc.name} → DEFERRED to next return cycle`));
 
-      // Sequential writes — no mass Promise.all, no simultaneous write storm
+      // User-scoped writes — same pattern as distributeVGCTowersNPCs
       for (const npc of thisBatch) {
-        await base44.asServiceRole.entities.Character.update(npc.id, {
+        await base44.entities.Character.update(npc.id, {
           resolved_current_location_id: VGC_ID,
           resolved_current_location_name: 'VGC Towers',
           resolved_presence_status: 'home',
@@ -146,8 +132,6 @@ Deno.serve(async (req) => {
   }
 });
 
-// ── GUARDS ────────────────────────────────────────────────────────────────────
-
 function isWorkScheduleActive(char) {
   if (!char.work_start_time || !char.work_end_time || !char.work_days) return false;
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -166,7 +150,7 @@ function isSchoolScheduleActive(char) {
   if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
-  return nowMin >= 480 && nowMin < 900; // 8:00 AM – 3:00 PM
+  return nowMin >= 480 && nowMin < 900;
 }
 
 function shouldProtectFromHomeReturn(char) {
