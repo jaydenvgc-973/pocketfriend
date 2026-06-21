@@ -14,15 +14,41 @@ Deno.serve(async (req) => {
     const fixes = [];
     const issuesFound = [];
 
-    // SAFETY: Always query by created_by — never load all characters globally then filter
-    const userCharacters = await base44.asServiceRole.entities.Character.filter(
+    // PRIMARY AUTHORITY: owner_email
+    // LEGACY FALLBACK: created_by (only used when owner_email is missing on a record)
+    // Records found only via created_by and missing owner_email are normalized
+    // to owner_email — but only when created_by === user.email (confirmed user scope).
+    const byOwnerEmail = await base44.asServiceRole.entities.Character.filter(
+      { owner_email: user.email }, '-created_date', 500
+    );
+
+    // Legacy fallback: find records where created_by matches but owner_email may be absent
+    const byCreatedBy = await base44.asServiceRole.entities.Character.filter(
       { created_by: user.email }, '-created_date', 500
     );
+
+    // Merge: deduplicate by id, preferring owner_email-sourced records
+    const seenIds = new Set(byOwnerEmail.map(c => c.id));
+    const legacyOnly = byCreatedBy.filter(c => !seenIds.has(c.id));
+
+    // Normalize legacy records: write owner_email only when it is missing
+    // and created_by === user.email (already confirmed by the filter above).
+    // No other fields are mutated. No records outside the user's account are touched.
+    for (const char of legacyOnly) {
+      if (!char.owner_email) {
+        await base44.asServiceRole.entities.Character.update(char.id, { owner_email: user.email });
+        fixes.push(`Normalized legacy record "${char.name || char.id}": wrote owner_email from created_by`);
+        char.owner_email = user.email; // update in-memory for downstream checks
+      }
+      seenIds.add(char.id);
+    }
+
+    const userCharacters = [...byOwnerEmail, ...legacyOnly];
 
     checks.push({
       name: 'Database query for user characters',
       status: userCharacters.length > 0 ? 'passed' : 'warning',
-      message: `Retrieved ${userCharacters.length} characters for ${user.email}`
+      message: `Retrieved ${userCharacters.length} characters for ${user.email} (${byOwnerEmail.length} by owner_email, ${legacyOnly.length} legacy fallback via created_by)`
     });
 
     // Status distribution (diagnostic only — never auto-change terminal statuses)
@@ -112,12 +138,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Final verification
-    const finalCheck = await base44.asServiceRole.entities.Character.filter({ created_by: user.email, status: 'active' }, '-created_date');
+    // Final verification — use owner_email as primary authority
+    const finalCheck = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email, status: 'active' }, '-created_date');
     checks.push({
       name: 'Final verification',
       status: 'passed',
-      message: `${finalCheck.length} active characters visible for ${user.email}`
+      message: `${finalCheck.length} active characters visible for ${user.email} (by owner_email)`
     });
 
     const summary = fixes.length > 0
