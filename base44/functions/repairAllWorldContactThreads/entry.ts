@@ -25,6 +25,36 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+/**
+ * WORLD PHONE BOUNDARY GUARD (inline — Deno functions cannot use local imports)
+ *
+ * When migrating messages from duplicate threads to a canonical thread, we must
+ * NEVER carry forward narrative records (is_narrative truthy) that lack bilateral IDs.
+ * These are contamination records from the June 2026 World Phone narrative leak.
+ * They must be excluded from migration entirely — not propagated to the canonical thread.
+ *
+ * A message is safe to migrate if EITHER:
+ * - it is NOT narrative content, OR
+ * - it IS narrative but has valid bilateral sender_character_id AND receiver_character_id
+ *   (meaning it was a deliberate bilateral narrative, not contamination)
+ */
+function isNarrativeTruthy(val) {
+  return val === true || val === 1 || val === '1' || val === 'true';
+}
+
+function isSafeToMigrateToWorldPhone(msg) {
+  // Non-narrative messages are always safe
+  if (!isNarrativeTruthy(msg.is_narrative)) return true;
+  // Narrative message: ONLY safe if it has both bilateral IDs (it was intentional bilateral content)
+  // Narrative records without bilateral IDs are contamination — never migrate them
+  if (msg.sender_character_id && msg.receiver_character_id) return true;
+  console.log(
+    `[WP_BOUNDARY] Migration blocked: narrative record without bilateral IDs | msg_id=${msg.id}` +
+    ` | char=${msg.character_name || 'unknown'} | canon_excluded=${msg.canon_excluded}`
+  );
+  return false;
+}
+
 function getCanonicalKey(idA, idB) {
   const sorted = [idA, idB].sort();
   return `world_phone::${sorted[0]}::${sorted[1]}`;
@@ -326,6 +356,11 @@ Deno.serve(async (req) => {
             if (msg.songs_heard) payload.songs_heard = msg.songs_heard;
             if (msg.videos_watched) payload.videos_watched = msg.videos_watched;
 
+            // WORLD PHONE BOUNDARY GUARD: never migrate narrative contamination
+            if (!isSafeToMigrateToWorldPhone(msg)) {
+              report.errors.push(`BOUNDARY: skipped narrative msg ${msg.id.substring(0,8)} — no bilateral IDs`);
+              continue;
+            }
             await base44.asServiceRole.entities.Message.create(payload)
               .catch(err => report.errors.push(`migrate msg ${msg.id.substring(0,8)}: ${err.message}`));
             report.messages_migrated++;
