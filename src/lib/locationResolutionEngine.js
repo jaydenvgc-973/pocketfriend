@@ -317,7 +317,50 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // returned the correct obligation location. Sleep is simply not inserted here.
   const characterIsSleeping = isCharacterSleeping(character);
 
-  if (characterIsSleeping) {
+  // VGC ACTIVE-WINDOW GUARD: VGC Towers NPC residents follow the VGC travel
+  // schedule, NOT their individual sleep schedules, during the active travel
+  // window (10 AM – 1 AM ET). If the DB says visiting/social_visit and the
+  // resident is at a non-home location, the sleep enforcement layer must NOT
+  // override it. The VGC travel system is the authority during active hours.
+  if (characterIsSleeping && isNPC) {
+    const etNow = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const hour = etNow.getHours();
+    const inActiveWindow = hour >= 10 || hour < 1; // 10 AM – 1 AM ET
+    const isVGCVisit = character.presence_state === 'social_visit' ||
+      character.resolved_presence_status === 'visiting';
+    const isAwayFromHome = character.resolved_current_location_id &&
+      character.resolved_current_location_id !== character.current_home_location_id &&
+      character.resolved_current_location_id !== character.home_location_id;
+
+    if (inActiveWindow && isVGCVisit && isAwayFromHome) {
+      // VGC travel authority overrides individual sleep clock during active window.
+      // Fall through to Layer 3.5D (social visit) which preserves the visiting state.
+      // Do NOT insert sleep here.
+    } else {
+      // Not a VGC traveling resident, or outside active window — sleep applies normally
+      const sleepSourceReason = isNPC ? 'npc_forced_sleep_window' : 'home_sleeping';
+      if (sleepHomeId) {
+        return {
+          resolved_current_location_id: sleepHomeId,
+          resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+          resolved_location_type: 'home',
+          resolved_presence_status: 'sleeping',
+          resolved_source_reason: sleepSourceReason,
+          resolved_zone: null,
+          home_resolution_failed: !sleepHomeLoc,
+        };
+      }
+      return {
+        resolved_current_location_id: null,
+        resolved_current_location_name: 'Unresolved',
+        resolved_location_type: 'sleep_unresolved',
+        resolved_presence_status: 'sleeping',
+        resolved_source_reason: isNPC ? 'npc_forced_sleep_window_no_home' : 'no_valid_sleep_location',
+        resolved_zone: null,
+        home_resolution_failed: true,
+      };
+    }
+  } else if (characterIsSleeping) {
     const sleepSourceReason = isNPC ? 'npc_forced_sleep_window' : 'home_sleeping';
     if (sleepHomeId) {
       return {
