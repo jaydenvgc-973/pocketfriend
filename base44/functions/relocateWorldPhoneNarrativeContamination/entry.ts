@@ -87,32 +87,73 @@ Deno.serve(async (req) => {
     console.log(`[relocateWorldPhoneNarrativeContamination] Found ${wpConvos.length} world_phone convos to scan`);
 
     // ── STEP 2: COLLECT ALL CONTAMINATED MESSAGES ───────────────────────────
+    // CRITICAL: Do NOT use { is_narrative: true } as a DB filter.
+    // Some records may store is_narrative as 1, "true", or other truthy non-boolean values
+    // that a strict DB equality filter misses. We fetch ALL messages per conversation and
+    // apply client-side truthy detection to catch every possible stored representation.
+
     const contaminatedMessages = [];
 
-    for (const convo of wpConvos) {
-      const msgs = await base44.asServiceRole.entities.Message.filter(
-        { conversation_id: convo.id, is_narrative: true }, '-timestamp', 100
-      ).catch(() => []);
+    // Retry helper for 429s
+    const withRetry = async (fn, maxAttempts = 4) => {
+      for (let i = 0; i < maxAttempts; i++) {
+        try { return await fn(); }
+        catch (e) {
+          if ((e.message?.includes('429') || e.message?.includes('Rate limit')) && i < maxAttempts - 1) {
+            const delay = (i + 1) * 3000;
+            console.log(`[relocate] 429 — retrying in ${delay}ms (attempt ${i + 2}/${maxAttempts})`);
+            await new Promise(r => setTimeout(r, delay));
+          } else throw e;
+        }
+      }
+    };
 
-      for (const m of msgs) {
+    for (const convo of wpConvos) {
+      // Fetch ALL messages — no is_narrative filter — then detect truthy client-side
+      let allMsgs = [];
+      let msgPage = 0;
+      const MSG_PAGE = 100;
+      while (true) {
+        const batch = await withRetry(() =>
+          base44.asServiceRole.entities.Message.filter(
+            { conversation_id: convo.id }, '-timestamp', MSG_PAGE, msgPage * MSG_PAGE
+          )
+        ).catch(() => []);
+        if (!batch || batch.length === 0) break;
+        allMsgs = allMsgs.concat(batch);
+        if (batch.length < MSG_PAGE) break;
+        msgPage++;
+      }
+
+      for (const m of allMsgs) {
+        // CLIENT-SIDE TRUTHY CHECK: catches boolean true, 1, "true", "1", etc.
+        const isNarrativeTruthy = m.is_narrative === true ||
+          m.is_narrative === 1 ||
+          m.is_narrative === '1' ||
+          m.is_narrative === 'true' ||
+          (m.is_narrative && typeof m.is_narrative === 'object');
+
+        if (!isNarrativeTruthy) continue;
+
         // RELOCATION ELIGIBILITY:
-        // - is_narrative must be true (already filtered above)
+        // - is_narrative must be truthy (checked above)
         // - Must have a character_id (identifies owner)
-        // - sender_character_id and receiver_character_id must be null (not a bilateral WP msg)
+        // - sender_character_id and receiver_character_id must be null (not a valid bilateral WP msg)
         // - Must not already be canon_excluded (already remediated)
         if (!m.character_id) {
-          console.log(`[relocate] SKIP msg ${m.id} — no character_id`);
+          console.log(`[relocate] SKIP msg ${m.id} — no character_id (is_narrative=${JSON.stringify(m.is_narrative)})`);
           continue;
         }
         if (m.sender_character_id || m.receiver_character_id) {
-          console.log(`[relocate] SKIP msg ${m.id} — has bilateral sender/receiver (valid WP bilateral narrative)`);
+          console.log(`[relocate] SKIP msg ${m.id} — bilateral (valid WP message)`);
           continue;
         }
         if (m.canon_excluded === true) {
-          console.log(`[relocate] SKIP msg ${m.id} — already canon_excluded (previously remediated)`);
+          console.log(`[relocate] SKIP msg ${m.id} — already canon_excluded`);
           continue;
         }
 
+        console.log(`[relocate] ELIGIBLE: msg ${m.id} | char=${m.character_name} | is_narrative=${JSON.stringify(m.is_narrative)} (type=${typeof m.is_narrative})`);
         contaminatedMessages.push({ msg: m, convo });
       }
     }
@@ -285,18 +326,24 @@ Deno.serve(async (req) => {
 
     // ── STEP 6: FINAL VERIFICATION ──────────────────────────────────────────
     if (!dryRun) {
-      // Verify no remaining non-excluded is_narrative messages in world_phone convos
+      // Verify no remaining non-excluded narrative messages in world_phone convos
+      // Uses same client-side truthy detection — NOT { is_narrative: true } DB filter
       let remainingContamination = 0;
       for (const convo of wpConvos) {
-        const remaining = await base44.asServiceRole.entities.Message.filter(
-          { conversation_id: convo.id, is_narrative: true }, '-timestamp', 50
+        const remaining = await withRetry(() =>
+          base44.asServiceRole.entities.Message.filter(
+            { conversation_id: convo.id }, '-timestamp', 100
+          )
         ).catch(() => []);
-        const unexcluded = remaining.filter(m =>
-          m.canon_excluded !== true &&
-          m.character_id &&
-          !m.sender_character_id &&
-          !m.receiver_character_id
-        );
+        const unexcluded = remaining.filter(m => {
+          const isNarrativeTruthy = m.is_narrative === true || m.is_narrative === 1 ||
+            m.is_narrative === '1' || m.is_narrative === 'true';
+          return isNarrativeTruthy &&
+            m.canon_excluded !== true &&
+            m.character_id &&
+            !m.sender_character_id &&
+            !m.receiver_character_id;
+        });
         remainingContamination += unexcluded.length;
       }
       proof.remaining_contamination_after_fix = remainingContamination;

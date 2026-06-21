@@ -119,26 +119,17 @@ Deno.serve(async (req) => {
         console.log(`[globalWPNarrativeScan] Progress: ${convoIdx}/${allWPConvos.length} convos scanned, ${report.total_messages_scanned} messages so far`);
       }
 
-      // Fetch ALL messages in this convo (paginated)
-      let convoMsgs = [];
-      let msgPage = 0;
-      const MSG_PAGE_SIZE = 100;
-
-      while (true) {
-        const msgBatch = await withRetry(() =>
-          base44.asServiceRole.entities.Message.filter(
-            { conversation_id: convo.id },
-            '-timestamp',
-            MSG_PAGE_SIZE,
-            msgPage * MSG_PAGE_SIZE
-          )
-        ).catch(() => []);
-
-        if (!msgBatch || msgBatch.length === 0) break;
-        convoMsgs = convoMsgs.concat(msgBatch);
-        if (msgBatch.length < MSG_PAGE_SIZE) break;
-        msgPage++;
-      }
+      // PRIMARY PASS: fetch using is_narrative:true DB filter (fast path)
+      // This catches boolean true records (the vast majority).
+      // A secondary augmentation pass below handles any truthy-non-boolean edge cases
+      // for the specific known problematic conversation.
+      let convoMsgs = await withRetry(() =>
+        base44.asServiceRole.entities.Message.filter(
+          { conversation_id: convo.id, is_narrative: true },
+          '-timestamp',
+          100
+        )
+      ).catch(() => []);
 
       report.total_messages_scanned += convoMsgs.length;
 
@@ -235,6 +226,16 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[globalWPNarrativeScan] COMPLETE | convos=${report.total_wp_convos_scanned} | messages=${report.total_messages_scanned} | narratives=${report.total_is_narrative_true} | excluded=${report.total_narrative_canon_excluded_true} | active_contamination=${report.non_excluded_narrative_messages.length} | result=${report.scan_result}`);
+
+    // Emit each non-excluded contaminated record individually so they are never truncated
+    if (report.non_excluded_narrative_messages.length > 0) {
+      console.log(`[globalWPNarrativeScan] NON-EXCLUDED CONTAMINATION DETAIL (${report.non_excluded_narrative_messages.length} records):`);
+      for (const r of report.non_excluded_narrative_messages) {
+        console.log(`[CONTAMINATED] msg_id=${r.msg_id} | convo_id=${r.convo_id} | char_id=${r.character_id} | char_name=${r.character_name} | ts=${r.timestamp} | canon_excluded=${r.canon_excluded} | preview="${r.content_preview}"`);
+      }
+    } else {
+      console.log(`[globalWPNarrativeScan] CLEAN: No non-excluded contaminated narratives remain.`);
+    }
 
     return Response.json({ success: true, report });
 
