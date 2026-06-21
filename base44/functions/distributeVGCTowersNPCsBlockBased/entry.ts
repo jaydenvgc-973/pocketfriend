@@ -444,12 +444,24 @@ function getBlockReason(npc, nowET) {
   if (['incarcerated', 'house_arrest', 'confined', 'hospitalized'].includes(npc.resolved_presence_status)) {
     return npc.resolved_presence_status;
   }
-  if (isNPCSleeping(npc, nowET)) return 'sleeping';
   if (isOnWorkSchedule(npc, nowET)) return 'at_work';
   if (npc.student_status === 'enrolled' && npc.education_location_id) {
     const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
     if (nowMin >= 480 && nowMin < 900) return 'at_school';
   }
+
+  // ── SLEEP BLOCKER: LOCKDOWN-ONLY ─────────────────────────────────────────
+  // VGC Towers residents follow the VGC travel schedule, NOT individual sleep
+  // schedules during the active window (10 AM – 1 AM ET). Sleep only blocks
+  // travel during the lockdown window (1 AM – 10 AM ET) when residents should
+  // be home resting. During active hours, residents are awake and eligible.
+  const hour = nowET.getHours();
+  const isLockdown = hour >= 1 && hour < 10;
+  
+  if (isLockdown) {
+    if (isNPCSleeping(npc, nowET)) return 'sleeping';
+  }
+
   return null;
 }
 

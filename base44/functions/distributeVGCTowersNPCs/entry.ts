@@ -387,19 +387,13 @@ Deno.serve(async (req) => {
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 
 function getBlockReason(npc, nowET, preSleepWindowMin) {
-  // Confinement / jail — hard block
+  // Confinement / jail — hard block (always enforced)
   if (npc.is_jailed) return 'jailed';
   if (npc.house_arrest_active) return 'house_arrest';
   if (['incarcerated', 'house_arrest', 'confined'].includes(npc.resolved_presence_status)) {
     return npc.resolved_presence_status;
   }
   if (['hospitalized', 'supervised'].includes(npc.presence_state)) return npc.presence_state;
-
-  // Sleep
-  if (isNPCSleeping(npc, nowET)) return 'sleeping';
-
-  // Pre-sleep window
-  if (isNPCInPreSleepWindow(npc, nowET, preSleepWindowMin)) return 'pre_sleep_window';
 
   // Work schedule
   if (isOnWorkSchedule(npc, nowET)) return 'at_work';
@@ -409,6 +403,23 @@ function getBlockReason(npc, nowET, preSleepWindowMin) {
     const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
     if (nowMin >= 480 && nowMin < 900) return 'at_school'; // 8 AM – 3 PM
   }
+
+  // ── SLEEP BLOCKER: LOCKDOWN-ONLY ─────────────────────────────────────────
+  // VGC Towers residents follow the VGC travel schedule, NOT individual sleep
+  // schedules during the active window (10 AM – 1 AM ET). Sleep only blocks
+  // travel during the lockdown window (1 AM – 10 AM ET) when residents should
+  // be home resting. During active hours, residents are awake and eligible.
+  // The 1 AM return-home automation handles bringing them back.
+  const hour = nowET.getHours();
+  const isLockdown = hour >= 1 && hour < 10;
+  
+  if (isLockdown) {
+    // During lockdown, sleep IS a valid blocker — no travel at all
+    if (isNPCSleeping(npc, nowET)) return 'sleeping';
+    if (isNPCInPreSleepWindow(npc, nowET, preSleepWindowMin)) return 'pre_sleep_window';
+  }
+  // During active window (10 AM – 1 AM): sleep is NEVER a blocker.
+  // VGC residents are awake and eligible for travel regardless of clock.
 
   return null; // eligible
 }
